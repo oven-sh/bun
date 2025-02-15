@@ -643,6 +643,37 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
+  test(`scoped bundledDependencies`, async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-bundled",
+          version: "4.4.4",
+          dependencies: {
+            "@oven/bun": "1.1.1",
+          },
+          bundledDependencies: ["@oven/bun"],
+        }),
+      ),
+      write(
+        join(packageDir, "node_modules", "@oven", "bun", "package.json"),
+        JSON.stringify({
+          name: "@oven/bun",
+          version: "1.1.1",
+        }),
+      ),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-bundled-4.4.4.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/node_modules/@oven/bun/package.json" },
+    ]);
+  });
+
   test(`invalid bundledDependencies value should throw`, async () => {
     await Promise.all([
       write(
@@ -733,7 +764,7 @@ describe("bundledDependnecies", () => {
     ]);
   });
 
-  test.todo("scoped names", async () => {
+  test("scoped names", async () => {
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -890,7 +921,7 @@ describe("files", () => {
       write(
         join(packageDir, "package.json"),
         JSON.stringify({
-          name: "pack-files-3",
+          name: "pack-files-2",
           version: "1.2.3",
           files: ["index.js"],
         }),
@@ -901,8 +932,33 @@ describe("files", () => {
     ]);
 
     await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
+    const tarball = readTarball(join(packageDir, "pack-files-2-1.2.3.tgz"));
     expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+  });
+
+  test("matches './' as the root", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-3",
+          version: "1.2.3",
+          files: ["./dist", "!./subdir", "!./dist/index.js", "./////src//index.ts"],
+        }),
+      ),
+      write(join(packageDir, "dist", "index.js"), "console.log('hello ./dist/index.js')"),
+      write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+      write(join(packageDir, "src", "dist", "index.js"), "console.log('hello ./src/dist/index.js')"),
+      write(join(packageDir, "src", "index.ts"), "console.log('hello ./src/index.ts')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/dist/index.js" },
+      { "pathname": "package/src/index.ts" },
+    ]);
   });
 
   test("recursive only if leading **/", async () => {
@@ -910,7 +966,7 @@ describe("files", () => {
       write(
         join(packageDir, "package.json"),
         JSON.stringify({
-          name: "pack-files-2",
+          name: "pack-files-4",
           version: "1.2.123",
           files: ["**/index.js"],
         }),
@@ -922,7 +978,7 @@ describe("files", () => {
     ]);
 
     await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-2-1.2.123.tgz"));
+    const tarball = readTarball(join(packageDir, "pack-files-4-1.2.123.tgz"));
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
       { "pathname": "package/index.js" },

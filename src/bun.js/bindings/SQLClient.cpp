@@ -29,14 +29,20 @@ using namespace JSC;
 
 typedef struct DataCellArray {
     struct DataCell* cells;
-    unsigned length;
+    uint32_t length;
+    uint32_t cap;
 } DataCellArray;
+
+typedef struct DataCellRaw {
+    void* ptr;
+    uint64_t length;
+} DataCellRaw;
 
 typedef struct TypedArrayDataCell {
     void* headPtr;
     void* data;
-    unsigned length;
-    unsigned byteLength;
+    uint32_t length;
+    uint32_t byteLength;
     JSC::JSType type;
 } TypedArrayDataCell;
 
@@ -53,6 +59,8 @@ typedef union DataCellValue {
     WTF::StringImpl* json;
     DataCellArray array;
     TypedArrayDataCell typed_array;
+    DataCellRaw raw;
+    uint32_t unsigned_integer;
 } DataCellValue;
 
 enum class DataCellTag : uint8_t {
@@ -68,6 +76,14 @@ enum class DataCellTag : uint8_t {
     Json = 9,
     Array = 10,
     TypedArray = 11,
+    Raw = 12,
+    UnsignedInteger = 13,
+};
+
+enum class BunResultMode : uint8_t {
+    Objects = 0,
+    Values = 1,
+    Raw = 2,
 };
 
 typedef struct DataCell {
@@ -102,15 +118,33 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Null:
         return jsNull();
         break;
+    case DataCellTag::Raw: {
+        Zig::GlobalObject* zigGlobal = jsCast<Zig::GlobalObject*>(globalObject);
+        auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
+        auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.raw.length);
+        if (UNLIKELY(uint8Array == nullptr)) {
+            return {};
+        }
+
+        if (cell.value.raw.length > 0) {
+            memcpy(uint8Array->vector(), reinterpret_cast<void*>(cell.value.raw.ptr), cell.value.raw.length);
+        }
+        return uint8Array;
+    }
     case DataCellTag::String: {
-        return jsString(vm, WTF::String(cell.value.string));
-        break;
+        if (cell.value.string) {
+            return jsString(vm, WTF::String(cell.value.string));
+        }
+        return jsEmptyString(vm);
     }
     case DataCellTag::Double:
         return jsDoubleNumber(cell.value.number);
         break;
     case DataCellTag::Integer:
         return jsNumber(cell.value.integer);
+        break;
+    case DataCellTag::UnsignedInteger:
+        return jsNumber(cell.value.unsigned_integer);
         break;
     case DataCellTag::Bigint:
         return JSC::JSBigInt::createFrom(globalObject, cell.value.bigint);
@@ -137,15 +171,17 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return uint8Array;
     }
     case DataCellTag::Json: {
-        auto str = WTF::String(cell.value.string);
-        JSC::JSValue json = JSC::JSONParse(globalObject, str);
-        return json;
-        break;
+        if (cell.value.json) {
+            auto str = WTF::String(cell.value.json);
+            JSC::JSValue json = JSC::JSONParse(globalObject, str);
+            return json;
+        }
+        return jsNull();
     }
     case DataCellTag::Array: {
         MarkedArgumentBuffer args;
-        unsigned length = cell.value.array.length;
-        for (unsigned i = 0; i < length; i++) {
+        uint32_t length = cell.value.array.length;
+        for (uint32_t i = 0; i < length; i++) {
             JSValue result = toJS(vm, globalObject, cell.value.array.cells[i]);
             if (UNLIKELY(result.isEmpty())) {
                 return {};
@@ -158,10 +194,10 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     }
     case DataCellTag::TypedArray: {
         JSC::JSType type = static_cast<JSC::JSType>(cell.value.typed_array.type);
-        unsigned length = cell.value.typed_array.length;
+        uint32_t length = cell.value.typed_array.length;
         switch (type) {
         case JSC::JSType::Int32ArrayType: {
-            JSC::JSInt32Array* array = JSC::JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeInt32, false), length);
+            JSC::JSInt32Array* array = JSC::JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt32>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -173,7 +209,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Uint32ArrayType: {
-            JSC::JSUint32Array* array = JSC::JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeUint32, false), length);
+            JSC::JSUint32Array* array = JSC::JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint32>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -184,7 +220,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Int16ArrayType: {
-            JSC::JSInt16Array* array = JSC::JSInt16Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeInt16, false), length);
+            JSC::JSInt16Array* array = JSC::JSInt16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt16>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -196,7 +232,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Uint16ArrayType: {
-            JSC::JSUint16Array* array = JSC::JSUint16Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeUint16, false), length);
+            JSC::JSUint16Array* array = JSC::JSUint16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint16>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -207,7 +243,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Float16ArrayType: {
-            JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat16, false), length);
+            JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat16>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -218,7 +254,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Float32ArrayType: {
-            JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat32, false), length);
+            JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat32>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -229,7 +265,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Float64ArrayType: {
-            JSC::JSFloat64Array* array = JSC::JSFloat64Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat64, false), length);
+            JSC::JSFloat64Array* array = JSC::JSFloat64Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat64>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -250,79 +286,104 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     }
 }
 
-static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags)
+static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode)
 {
-    auto& vm = globalObject->vm();
-    auto* object = JSC::constructEmptyObject(vm, structure);
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // TODO: once we have more tests for this, let's add another branch for
-    // "only mixed names and mixed indexed columns, no duplicates"
-    // then we cna remove this sort and instead do two passes.
-    if (flags.hasIndexedColumns() && flags.hasNamedColumns()) {
-        // sort the cells by if they're named or indexed, put named first.
-        // this is to conform to the Structure offsets from earlier.
-        std::sort(cells, cells + count, [](DataCell& a, DataCell& b) {
-            return a.isNamedColumn() && !b.isNamedColumn();
-        });
-    }
+    switch (result_mode) {
+    case BunResultMode::Objects: // objects
 
-    // Fast path: named columns only, no duplicate columns
-    if (flags.hasNamedColumns() && !flags.hasDuplicateColumns() && !flags.hasIndexedColumns()) {
-        for (unsigned i = 0; i < count; i++) {
-            auto& cell = cells[i];
-            JSValue value = toJS(vm, globalObject, cell);
-            RETURN_IF_EXCEPTION(scope, {});
-            ASSERT(!cell.isDuplicateColumn());
-            ASSERT(!cell.isIndexedColumn());
-            ASSERT(cell.isNamedColumn());
-            object->putDirectOffset(vm, i, value);
+    {
+        auto* object = JSC::constructEmptyObject(vm, structure);
+
+        // TODO: once we have more tests for this, let's add another branch for
+        // "only mixed names and mixed indexed columns, no duplicates"
+        // then we cna remove this sort and instead do two passes.
+        if (flags.hasIndexedColumns() && flags.hasNamedColumns()) {
+            // sort the cells by if they're named or indexed, put named first.
+            // this is to conform to the Structure offsets from earlier.
+            std::sort(cells, cells + count, [](DataCell& a, DataCell& b) {
+                return a.isNamedColumn() && !b.isNamedColumn();
+            });
         }
-    } else if (flags.hasIndexedColumns() && !flags.hasNamedColumns() && !flags.hasDuplicateColumns()) {
-        for (unsigned i = 0; i < count; i++) {
-            auto& cell = cells[i];
-            JSValue value = toJS(vm, globalObject, cell);
-            RETURN_IF_EXCEPTION(scope, {});
-            ASSERT(!cell.isDuplicateColumn());
-            ASSERT(cell.isIndexedColumn());
-            ASSERT(!cell.isNamedColumn());
-            // cell.index can be > count
-            // for example:
-            //   select 1 as "8", 2 as "2", 3 as "3"
-            //   -> { "8": 1, "2": 2, "3": 3 }
-            //  8 > count
-            object->putDirectIndex(globalObject, cell.index, value);
-        }
-    } else {
-        unsigned structureOffsetIndex = 0;
-        // slow path: named columns with duplicate columns or indexed columns
-        for (unsigned i = 0; i < count; i++) {
-            auto& cell = cells[i];
-            if (cell.isIndexedColumn()) {
+
+        // Fast path: named columns only, no duplicate columns
+        if (flags.hasNamedColumns() && !flags.hasDuplicateColumns() && !flags.hasIndexedColumns()) {
+            for (uint32_t i = 0; i < count; i++) {
+                auto& cell = cells[i];
                 JSValue value = toJS(vm, globalObject, cell);
                 RETURN_IF_EXCEPTION(scope, {});
-                ASSERT(cell.index < count);
-                ASSERT(!cell.isNamedColumn());
                 ASSERT(!cell.isDuplicateColumn());
-                object->putDirectIndex(globalObject, cell.index, value);
-            } else if (cell.isNamedColumn()) {
-                JSValue value = toJS(vm, globalObject, cell);
-                RETURN_IF_EXCEPTION(scope, {});
                 ASSERT(!cell.isIndexedColumn());
+                ASSERT(cell.isNamedColumn());
+                object->putDirectOffset(vm, i, value);
+            }
+        } else if (flags.hasIndexedColumns() && !flags.hasNamedColumns() && !flags.hasDuplicateColumns()) {
+            for (uint32_t i = 0; i < count; i++) {
+                auto& cell = cells[i];
+                JSValue value = toJS(vm, globalObject, cell);
+                RETURN_IF_EXCEPTION(scope, {});
                 ASSERT(!cell.isDuplicateColumn());
-                ASSERT(cell.index < count);
-                object->putDirectOffset(vm, structureOffsetIndex++, value);
-            } else if (cell.isDuplicateColumn()) {
-                // skip it!
+                ASSERT(cell.isIndexedColumn());
+                ASSERT(!cell.isNamedColumn());
+                // cell.index can be > count
+                // for example:
+                //   select 1 as "8", 2 as "2", 3 as "3"
+                //   -> { "8": 1, "2": 2, "3": 3 }
+                //  8 > count
+                object->putDirectIndex(globalObject, cell.index, value);
+            }
+        } else {
+            uint32_t structureOffsetIndex = 0;
+            // slow path: named columns with duplicate columns or indexed columns
+            for (uint32_t i = 0; i < count; i++) {
+                auto& cell = cells[i];
+                if (cell.isIndexedColumn()) {
+                    JSValue value = toJS(vm, globalObject, cell);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    ASSERT(cell.index < count);
+                    ASSERT(!cell.isNamedColumn());
+                    ASSERT(!cell.isDuplicateColumn());
+                    object->putDirectIndex(globalObject, cell.index, value);
+                } else if (cell.isNamedColumn()) {
+                    JSValue value = toJS(vm, globalObject, cell);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    ASSERT(!cell.isIndexedColumn());
+                    ASSERT(!cell.isDuplicateColumn());
+                    ASSERT(cell.index < count);
+                    object->putDirectOffset(vm, structureOffsetIndex++, value);
+                } else if (cell.isDuplicateColumn()) {
+                    // skip it!
+                }
             }
         }
+        return object;
     }
-    return object;
-}
+    case BunResultMode::Raw: // raw is just array mode with raw values
+    case BunResultMode::Values: // values
+    {
+        auto* array = JSC::constructEmptyArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), count);
+        RETURN_IF_EXCEPTION(scope, {});
 
-static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, unsigned count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags)
+        for (uint32_t i = 0; i < count; i++) {
+            auto& cell = cells[i];
+            JSValue value = toJS(vm, globalObject, cell);
+            RETURN_IF_EXCEPTION(scope, {});
+            array->putDirectIndex(globalObject, i, value);
+        }
+        return array;
+    }
+
+    default:
+        // not a valid result mode
+        ASSERT_NOT_REACHED();
+        return jsUndefined();
+    }
+}
+static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCell* cells, uint32_t count, JSC::JSGlobalObject* globalObject, Bun::BunStructureFlags flags, BunResultMode result_mode)
 {
-    JSValue value = toJS(structure, cells, count, globalObject, flags);
+    JSValue value = toJS(structure, cells, count, globalObject, flags, result_mode);
     if (value.isEmpty())
         return {};
 
@@ -342,14 +403,13 @@ static JSC::JSValue toJS(JSC::JSArray* array, JSC::Structure* structure, DataCel
 extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
     JSC::JSGlobalObject* globalObject,
     EncodedJSValue encodedArrayValue,
-    EncodedJSValue encodedStructureValue, DataCell* cells, unsigned count, unsigned flags)
+    EncodedJSValue encodedStructureValue, DataCell* cells, uint32_t count, uint32_t flags, uint8_t result_mode)
 {
     JSValue arrayValue = JSValue::decode(encodedArrayValue);
     JSValue structureValue = JSValue::decode(encodedStructureValue);
     auto* array = arrayValue ? jsDynamicCast<JSC::JSArray*>(arrayValue) : nullptr;
     auto* structure = jsDynamicCast<JSC::Structure*>(structureValue);
-
-    return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags)));
+    return JSValue::encode(toJS(array, structure, cells, count, globalObject, Bun::BunStructureFlags(flags), BunResultMode(result_mode)));
 }
 
 typedef struct ExternColumnIdentifier {
@@ -364,14 +424,14 @@ typedef struct ExternColumnIdentifier {
     bool isDuplicateColumn() const { return tag == 0; }
 } ExternColumnIdentifier;
 
-extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, unsigned int inlineCapacity, ExternColumnIdentifier* namesPtr)
+extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, uint32_t inlineCapacity, ExternColumnIdentifier* namesPtr)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     std::span<ExternColumnIdentifier> names(namesPtr, inlineCapacity);
-    unsigned nonDuplicateCount = 0;
-    for (unsigned i = 0; i < inlineCapacity; i++) {
+    uint32_t nonDuplicateCount = 0;
+    for (uint32_t i = 0; i < inlineCapacity; i++) {
         ExternColumnIdentifier& name = names[i];
         if (name.isNamedColumn()) {
             propertyNames.add(Identifier::fromString(vm, name.name.toWTFString()));
@@ -389,8 +449,8 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
 
     if (names.size() > 0) {
         PropertyOffset offset = 0;
-        unsigned indexInPropertyNamesArray = 0;
-        for (unsigned i = 0; i < inlineCapacity; i++) {
+        uint32_t indexInPropertyNamesArray = 0;
+        for (uint32_t i = 0; i < inlineCapacity; i++) {
             ExternColumnIdentifier& name = names[i];
             if (name.isNamedColumn()) {
                 structure = structure->addPropertyTransition(vm, structure, propertyNames[indexInPropertyNamesArray++], 0, offset);
@@ -403,7 +463,7 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
 
 extern "C" EncodedJSValue JSC__createEmptyObjectWithStructure(JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* object = JSC::constructEmptyObject(vm, structure);
 
     ensureStillAliveHere(object);
@@ -412,7 +472,7 @@ extern "C" EncodedJSValue JSC__createEmptyObjectWithStructure(JSC::JSGlobalObjec
     return JSValue::encode(object);
 }
 
-extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, unsigned int offset, JSC::EncodedJSValue value)
+extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, uint32_t offset, JSC::EncodedJSValue value)
 {
     JSValue::decode(object).getObject()->putDirectOffset(*vm, offset, JSValue::decode(value));
 }

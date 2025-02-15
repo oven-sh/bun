@@ -36,14 +36,13 @@
 #include "ScriptExecutionContext.h"
 #include "WebCoreOpaqueRoot.h"
 #include "wtf/DebugHeap.h"
-#include "wtf/FastMalloc.h"
+#include <wtf/TZoneMallocInlines.h>
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCast.h>
-#include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
 
-DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AbortSignal);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(AbortSignal);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {
@@ -66,7 +65,7 @@ Ref<AbortSignal> AbortSignal::timeout(ScriptExecutionContext& context, uint64_t 
     signal->setHasActiveTimeoutTimer(true);
     auto action = [signal](ScriptExecutionContext& context) mutable {
         auto* globalObject = defaultGlobalObject(context.globalObject());
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         Locker locker { vm.apiLock() };
         signal->signalAbort(toJS(globalObject, globalObject, DOMException::create(TimeoutError)));
         signal->setHasActiveTimeoutTimer(false);
@@ -195,6 +194,7 @@ void AbortSignal::cleanNativeBindings(void* ref)
     });
 
     std::exchange(m_native_callbacks, WTFMove(callbacks));
+    this->eventListenersDidChange();
 }
 
 // https://dom.spec.whatwg.org/#abortsignal-follow
@@ -218,7 +218,7 @@ void AbortSignal::signalFollow(AbortSignal& signal)
 
 void AbortSignal::eventListenersDidChange()
 {
-    m_hasAbortEventListener = hasEventListeners(eventNames().abortEvent);
+    m_hasAbortEventListener = hasEventListeners(eventNames().abortEvent) or !m_native_callbacks.isEmpty();
 }
 
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)

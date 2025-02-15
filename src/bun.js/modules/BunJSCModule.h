@@ -1,3 +1,4 @@
+#include "root.h"
 #include "_NativeModule.h"
 
 #include "ExceptionOr.h"
@@ -50,8 +51,10 @@
 
 #if OS(DARWIN)
 #if BUN_DEBUG
+#if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
+#endif
 #endif
 #endif
 
@@ -68,7 +71,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     static const char* defaultHost = "127.0.0.1\0";
     static uint16_t defaultPort = 9230; // node + 1
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue hostValue = callFrame->argument(0);
@@ -117,7 +120,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 #else
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwVMError(globalObject, scope,
         createTypeError(
@@ -215,7 +218,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     (JSGlobalObject * globalObject, CallFrame*))
 {
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     if (vm.heap.size() == 0) {
         vm.heap.collectNow(Sync, CollectionScope::Full);
@@ -229,7 +232,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         for (auto& it : *typeCounts) {
             if (it.value > 0)
                 counts.append(
-                    std::make_pair(Identifier::fromLatin1(vm, it.key), it.value));
+                    std::make_pair(Identifier::fromString(vm, it.key), it.value));
         }
 
         // Sort by count first, then by name.
@@ -270,7 +273,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
         objectTypeCounts);
 
     object->putDirect(vm,
-        Identifier::fromLatin1(vm, "protectedObjectTypeCounts"_s),
+        Identifier::fromString(vm, "protectedObjectTypeCounts"_s),
         protectedCounts);
     object->putDirect(vm, Identifier::fromString(vm, "heapSize"_s),
         jsNumber(vm.heap.size()));
@@ -401,7 +404,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
 
     JSC::JSValue directoryValue = callFrame->argument(0);
@@ -440,7 +443,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame*))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::DeferTermination deferScope(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -621,7 +624,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
 
 JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
 
     JSC::JSValue callbackValue = callFrame->argument(0);
@@ -757,7 +760,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
         CallFrame* callFrame))
 {
     auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = callFrame->argument(0);
@@ -794,9 +797,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 
     if (asNodeBuffer) {
         size_t byteLength = arrayBuffer->byteLength();
-        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(
-            lexicalGlobalObject, globalObject->JSBufferSubclassStructure(),
-            WTFMove(arrayBuffer), 0, byteLength);
+        auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, byteLength);
         return JSValue::encode(uint8Array);
     }
 
@@ -813,7 +815,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 }
 JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->argument(0);
 
@@ -895,7 +897,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue value = callFrame->argument(0);
     if (value.isCell()) {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         EnsureStillAliveScope alive = value;
         return JSValue::encode(jsDoubleNumber(alive.value().asCell()->estimatedSizeInBytes(vm)));
     }

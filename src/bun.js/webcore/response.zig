@@ -898,7 +898,7 @@ pub const Fetch = struct {
 
             pub const Empty: HTTPRequestBody = .{ .AnyBlob = .{ .Blob = .{} } };
 
-            pub fn store(this: *HTTPRequestBody) ?*JSC.WebCore.Blob.Store {
+            pub fn store(this: *HTTPRequestBody) ?*Blob.Store {
                 return switch (this.*) {
                     .AnyBlob => this.AnyBlob.store(),
                     else => null,
@@ -1127,9 +1127,9 @@ pub const Fetch = struct {
         });
         comptime {
             const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
-            @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
             const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
-            @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+            @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
         }
 
         pub fn startRequestStream(this: *FetchTasklet) void {
@@ -1522,8 +1522,8 @@ pub const Fetch = struct {
                     const cert = certificate_info.cert;
                     var cert_ptr = cert.ptr;
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
-                        defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
+                        defer x509.free();
                         const js_cert = X509.toJS(x509, globalObject) catch |err| {
                             switch (err) {
                                 error.JSError => {},
@@ -1947,6 +1947,7 @@ pub const Fetch = struct {
                 fetch_tasklet.signals.cert_errors = null;
             }
 
+            // This task gets queued on the HTTP thread.
             fetch_tasklet.http.?.* = http.AsyncHTTP.init(
                 fetch_options.memory_reporter.allocator(),
                 fetch_options.method,
@@ -1957,6 +1958,7 @@ pub const Fetch = struct {
                 fetch_tasklet.request_body.slice(),
                 http.HTTPClientResult.Callback.New(
                     *FetchTasklet,
+                    // handles response events (on headers, on body, etc.)
                     FetchTasklet.callback,
                 ).init(fetch_tasklet),
                 fetch_options.redirect_type,
@@ -2083,6 +2085,7 @@ pub const Fetch = struct {
             return node;
         }
 
+        /// Called from HTTP thread. Handles HTTP events received from socket.
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
             // at this point only this thread is accessing result to is no race condition
             const is_done = !result.has_more;
@@ -2200,7 +2203,7 @@ pub const Fetch = struct {
 
     comptime {
         const Bun__fetchPreconnect = JSC.toJSHostFunction(Bun__fetchPreconnect_);
-        @export(Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
+        @export(&Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
     }
     pub fn Bun__fetchPreconnect_(
         globalObject: *JSC.JSGlobalObject,
@@ -2261,8 +2264,10 @@ pub const Fetch = struct {
 
     comptime {
         const Bun__fetch = JSC.toJSHostFunction(Bun__fetch_);
-        @export(Bun__fetch, .{ .name = "Bun__fetch" });
+        @export(&Bun__fetch, .{ .name = "Bun__fetch" });
     }
+
+    /// Implementation of `Bun.fetch`
     pub fn Bun__fetch_(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -2513,7 +2518,7 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        // "decompression: boolean"
+        // "decompress: boolean"
         disable_decompression = extract_disable_decompression: {
             const objects_to_try = [_]JSValue{
                 options_object orelse .zero,
@@ -3243,7 +3248,7 @@ pub const Fetch = struct {
                     },
                     .result => |result| {
                         body.detach();
-                        body.AnyBlob.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
+                        body = .{ .AnyBlob = .fromOwnedSlice(allocator, @constCast(result.slice())) };
                         http_body = .{ .AnyBlob = body.AnyBlob };
                     },
                 }
@@ -3256,6 +3261,7 @@ pub const Fetch = struct {
                 .credentials = globalThis.bunVM().transpiler.env.getS3Credentials(),
                 .options = .{},
                 .acl = null,
+                .storage_class = null,
             };
             defer {
                 credentialsWithOptions.deinit();
@@ -3265,7 +3271,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
+                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, null, globalThis);
                     }
                 }
             }
@@ -3341,6 +3347,7 @@ pub const Fetch = struct {
                     globalThis,
                     credentialsWithOptions.options,
                     credentialsWithOptions.acl,
+                    credentialsWithOptions.storage_class,
                     if (headers) |h| h.getContentType() else null,
                     proxy_url,
                     @ptrCast(&Wrapper.resolve),
@@ -3476,12 +3483,52 @@ pub const Fetch = struct {
     }
 };
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Headers
+/// https://developer.mozilla.org/en-US/docs/Web/API/Headers
+// TODO: move to http.zig. this has nothing to do with JSC or WebCore
 pub const Headers = struct {
-    pub usingnamespace http.Headers;
-    entries: Headers.Entries = .{},
+    pub const Entry = struct {
+        name: Api.StringPointer,
+        value: Api.StringPointer,
+
+        pub const List = bun.MultiArrayList(Entry);
+    };
+
+    entries: Entry.List = .{},
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
+
+    pub fn memoryCost(this: *const Headers) usize {
+        return this.buf.items.len + this.entries.memoryCost();
+    }
+
+    pub fn clone(this: *Headers) !Headers {
+        return Headers{
+            .entries = try this.entries.clone(this.allocator),
+            .buf = try this.buf.clone(this.allocator),
+            .allocator = this.allocator,
+        };
+    }
+
+    pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
+        var offset: u32 = @truncate(this.buf.items.len);
+        try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
+        const name_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(name.len),
+        };
+        this.buf.appendSliceAssumeCapacity(name);
+        offset = @truncate(this.buf.items.len);
+        this.buf.appendSliceAssumeCapacity(value);
+
+        const value_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(value.len),
+        };
+        try this.entries.append(this.allocator, .{
+            .name = name_ptr,
+            .value = value_ptr,
+        });
+    }
 
     pub fn deinit(this: *Headers) void {
         this.entries.deinit(this.allocator);

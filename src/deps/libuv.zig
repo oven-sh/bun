@@ -222,6 +222,8 @@ pub const O = struct {
         if (c_flags & bun.O.RDWR != 0) flags |= RDWR;
         if (c_flags & bun.O.TRUNC != 0) flags |= TRUNC;
         if (c_flags & bun.O.APPEND != 0) flags |= APPEND;
+        if (c_flags & bun.O.EXCL != 0) flags |= EXCL;
+        if (c_flags & FILEMAP != 0) flags |= FILEMAP;
 
         return flags;
     }
@@ -241,7 +243,8 @@ const _O_SHORT_LIVED = 0x1000;
 const _O_SEQUENTIAL = 0x0020;
 const _O_RANDOM = 0x0010;
 
-// These **do not** map to std.posix.O/bun.O!
+// These **do not** map to std.posix.O/bun.O
+// To use libuv O, use libuv.O.
 pub const UV_FS_O_APPEND = 0x0008;
 pub const UV_FS_O_CREAT = _O_CREAT;
 pub const UV_FS_O_EXCL = 0x0400;
@@ -1965,6 +1968,10 @@ pub const struct_uv_statfs_s = extern struct {
     f_files: u64,
     f_ffree: u64,
     f_spare: [4]u64,
+
+    pub fn init(this: *align(1) struct_uv_statfs_s) bun.StatFS {
+        return this.*;
+    }
 };
 pub const uv_statfs_t = struct_uv_statfs_s;
 pub const struct_uv_metrics_s = extern struct {
@@ -2016,20 +2023,20 @@ pub const UV_CLOCK_MONOTONIC: c_int = 0;
 pub const UV_CLOCK_REALTIME: c_int = 1;
 pub const uv_clock_id = c_uint;
 pub const uv_timespec_t = extern struct {
-    tv_sec: c_long,
-    tv_nsec: c_long,
+    sec: c_long,
+    nsec: c_long,
 };
 pub const uv_timespec64_t = extern struct {
-    tv_sec: i64,
-    tv_nsec: i32,
+    sec: i64,
+    nsec: i32,
 };
 pub const uv_timeval_t = extern struct {
-    tv_sec: c_long,
-    tv_usec: c_long,
+    sec: c_long,
+    usec: c_long,
 };
 pub const uv_timeval64_t = extern struct {
-    tv_sec: i64,
-    tv_usec: i32,
+    sec: i64,
+    usec: i32,
 };
 pub const uv_stat_t = extern struct {
     dev: u64,
@@ -2241,19 +2248,18 @@ pub fn socketpair(stdio_flag_1: uv_stdio_flags, stdio_flag_2: uv_stdio_flags) Ma
 
     return .{ .result = pair };
 }
-pub usingnamespace struct {
-    pub fn pipe(stdio_flag_1: uv_stdio_flags, stdio_flag_2: uv_stdio_flags) Maybe([2]*anyopaque) {
-        var pair: [2]uv_file = undefined;
-        // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-socket
-        const SOCK_STREAM = 1;
 
-        if (uv_socketpair(0, SOCK_STREAM, &pair, stdio_flag_1, stdio_flag_2).toError(.open)) |err| {
-            return .{ .err = err };
-        }
+pub fn pipe(stdio_flag_1: uv_stdio_flags, stdio_flag_2: uv_stdio_flags) Maybe([2]*anyopaque) {
+    var pair: [2]uv_file = undefined;
+    // https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-socket
+    const SOCK_STREAM = 1;
 
-        return .{ .result = pair };
+    if (uv_socketpair(0, SOCK_STREAM, &pair, stdio_flag_1, stdio_flag_2).toError(.open)) |err| {
+        return .{ .err = err };
     }
-};
+
+    return .{ .result = pair };
+}
 
 const union_unnamed_463 = extern union {
     stream: *uv_stream_t,
@@ -2267,8 +2273,7 @@ pub const uv_stdio_container_t = struct_uv_stdio_container_s;
 pub const uv_process_options_t = extern struct {
     exit_cb: uv_exit_cb,
     file: [*:0]const u8,
-    // TODO(@paperdave): upstream changing libuv's args to const
-    // it is not mutated in any of their code
+    // In libuv, this is not 'const', but they never mutate it.
     args: [*:null]?[*:0]const u8,
     env: [*:null]?[*:0]const u8,
     cwd: [*:0]const u8,

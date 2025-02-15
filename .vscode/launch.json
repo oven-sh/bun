@@ -160,7 +160,7 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "${workspaceFolder}/build/debug/bun-debug",
-      "args": ["run", "${file}"],
+      "args": ["${file}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",
@@ -734,6 +734,10 @@
       "environment": [
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_SYS",
           "value": "1",
         },
         {

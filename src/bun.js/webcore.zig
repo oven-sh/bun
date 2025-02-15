@@ -34,7 +34,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
     if (has_message) {
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
-        const message = arguments[0].toSlice(globalObject, allocator);
+        const message = try arguments[0].toSlice(globalObject, allocator);
         defer message.deinit();
 
         if (message.len > 0) {
@@ -88,7 +88,7 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        const message = arguments[0].toSlice(globalObject, allocator);
+        const message = try arguments[0].toSlice(globalObject, allocator);
         defer message.deinit();
 
         output.writeAll(message.slice()) catch {
@@ -230,7 +230,7 @@ pub const Prompt = struct {
 
             // 3. Set message to the result of optionally truncating message.
             // *  Not necessary so we won't do it.
-            const message = arguments[0].toSlice(globalObject, allocator);
+            const message = try arguments[0].toSlice(globalObject, allocator);
             defer message.deinit();
 
             output.writeAll(message.slice()) catch {
@@ -251,7 +251,7 @@ pub const Prompt = struct {
         };
 
         if (has_default) {
-            const default_string = arguments[1].toSlice(globalObject, allocator);
+            const default_string = try arguments[1].toSlice(globalObject, allocator);
             defer default_string.deinit();
 
             output.print("[{s}] ", .{default_string.slice()}) catch {
@@ -267,8 +267,7 @@ pub const Prompt = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
-        else {};
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -534,7 +533,7 @@ pub const Crypto = struct {
         return globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.enum_literal), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
         if (error_type != .RangeError) @compileError("Error type not added!");
         BoringSSL.ERR_clear_error();
         return globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
@@ -635,18 +634,17 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
     ) bun.JSError!JSC.JSValue {
-        const str, var bytes = bun.String.createUninitialized(.latin1, 36);
-        defer str.deref();
+        var str, var bytes = bun.String.createUninitialized(.latin1, 36);
 
         const uuid = globalThis.bunVM().rareData().nextUUID();
 
         uuid.print(bytes[0..36]);
-        return str.toJS(globalThis);
+        return str.transferToJS(globalThis);
     }
 
     comptime {
         const Bun__randomUUIDv7 = JSC.toJSHostFunction(Bun__randomUUIDv7_);
-        @export(Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
+        @export(&Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
     }
     pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(2).slice();
@@ -716,7 +714,7 @@ pub const Crypto = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*Crypto {
-        return globalThis.throw("Crypto is not constructable", .{});
+        return JSC.Error.ERR_ILLEGAL_CONSTRUCTOR.throw(globalThis, "Crypto is not constructable", .{});
     }
 
     pub export fn CryptoObject__create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -732,19 +730,15 @@ pub const Crypto = struct {
     pub usingnamespace JSC.Codegen.JSCrypto;
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = CryptoObject__create;
-        }
+        _ = CryptoObject__create;
     }
 };
 
 comptime {
-    if (!JSC.is_bindgen) {
-        const js_alert = JSC.toJSHostFunction(alert);
-        @export(js_alert, .{ .name = "WebCore__alert" });
-        const js_prompt = JSC.toJSHostFunction(Prompt.call);
-        @export(js_prompt, .{ .name = "WebCore__prompt" });
-        const js_confirm = JSC.toJSHostFunction(confirm);
-        @export(js_confirm, .{ .name = "WebCore__confirm" });
-    }
+    const js_alert = JSC.toJSHostFunction(alert);
+    @export(&js_alert, .{ .name = "WebCore__alert" });
+    const js_prompt = JSC.toJSHostFunction(Prompt.call);
+    @export(&js_prompt, .{ .name = "WebCore__prompt" });
+    const js_confirm = JSC.toJSHostFunction(confirm);
+    @export(&js_confirm, .{ .name = "WebCore__confirm" });
 }

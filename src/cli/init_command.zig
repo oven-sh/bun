@@ -40,8 +40,7 @@ pub const InitCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
-        else {};
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -69,7 +68,7 @@ pub const InitCommand = struct {
         /// Create a new asset file, overriding anything that already exists. Known
         /// assets will have their contents pre-populated; otherwise the file will be empty.
         fn create(comptime asset_name: []const u8, args: anytype) !void {
-            const is_template = comptime (@TypeOf(args) != @TypeOf(null)) and @typeInfo(@TypeOf(args)).Struct.fields.len > 0;
+            const is_template = comptime (@TypeOf(args) != @TypeOf(null)) and @typeInfo(@TypeOf(args)).@"struct".fields.len > 0;
             return createFull(asset_name, asset_name, "", is_template, args);
         }
 
@@ -150,7 +149,7 @@ pub const InitCommand = struct {
     pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
         const print_help = brk: {
             for (argv) |arg| {
-                if (strings.eqlComptime(arg, "--help")) {
+                if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
                     break :brk true;
                 }
             }

@@ -322,7 +322,7 @@ function lookup(hostname, options, callback) {
 
 function lookupService(address, port, callback) {
   if (arguments.length < 3) {
-    throw $ERR_MISSING_ARGS('The "address", "port", and "callback" arguments must be specified');
+    throw $ERR_MISSING_ARGS("address", "port", "callback");
   }
 
   if (typeof callback !== "function") {
@@ -756,7 +756,7 @@ const promises = {
 
   lookupService(address, port) {
     if (arguments.length !== 2) {
-      throw $ERR_MISSING_ARGS('The "address" and "port" arguments must be specified');
+      throw $ERR_MISSING_ARGS("address", "port");
     }
 
     validateString(address);

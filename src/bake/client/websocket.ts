@@ -1,37 +1,40 @@
 const isLocal = location.host === "localhost" || location.host === "127.0.0.1";
 
-let wait = typeof document !== 'undefined'
-  ? () => new Promise<void>(done => {
-    let timer: Timer | null = null;
+let wait =
+  typeof document !== "undefined"
+    ? () =>
+        new Promise<void>(done => {
+          let timer: Timer | null = null;
 
-    const onBlur = () => {
-      if (timer !== null) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
+          const onBlur = () => {
+            if (timer !== null) {
+              clearTimeout(timer);
+              timer = null;
+            }
+          };
 
-    const onTimeout = () => {
-      if (timer !== null) clearTimeout(timer);
-      window.removeEventListener("focus", onTimeout);
-      window.removeEventListener("blur", onBlur);
-      done();
-    };
+          const onTimeout = () => {
+            if (timer !== null) clearTimeout(timer);
+            window.removeEventListener("focus", onTimeout);
+            window.removeEventListener("blur", onBlur);
+            done();
+          };
 
-    window.addEventListener("focus", onTimeout);
+          window.addEventListener("focus", onTimeout);
 
-    if (document.hasFocus()) {
-      timer = setTimeout(
-        () => {
-          timer = null;
-          onTimeout();
-        },
-        isLocal ? 2_500 : 2_500,
-      );
+          if (document.hasFocus()) {
+            timer = setTimeout(
+              () => {
+                timer = null;
+                onTimeout();
+              },
+              isLocal ? 2_500 : 2_500,
+            );
 
-      window.addEventListener("blur", onBlur);
-    }})
-  : () => new Promise<void>(done => setTimeout(done, 2_500));
+            window.addEventListener("blur", onBlur);
+          }
+        })
+    : () => new Promise<void>(done => setTimeout(done, 2_500));
 
 interface WebSocketWrapper {
   /** When re-connected, this is re-assigned */
@@ -41,7 +44,10 @@ interface WebSocketWrapper {
   [Symbol.dispose](): void;
 }
 
-export function initWebSocket(handlers: Record<number, (dv: DataView, ws: WebSocket) => void>, url: string = "/_bun/hmr") :WebSocketWrapper {
+export function initWebSocket(
+  handlers: Record<number, (dv: DataView<ArrayBuffer>, ws: WebSocket) => void>,
+  { url = "/_bun/hmr", displayMessage = "Live-reloading socket" }: { url?: string; displayMessage?: string } = {},
+): WebSocketWrapper {
   let firstConnection = true;
   let closed = false;
 
@@ -65,7 +71,7 @@ export function initWebSocket(handlers: Record<number, (dv: DataView, ws: WebSoc
   function onOpen() {
     if (firstConnection) {
       firstConnection = false;
-      console.info("[Bun] Hot-module-reloading socket connected, waiting for changes...");
+      console.info(`[Bun] ${displayMessage} connected, waiting for changes...`);
     }
   }
 
@@ -74,7 +80,7 @@ export function initWebSocket(handlers: Record<number, (dv: DataView, ws: WebSoc
     if (typeof data === "object") {
       const view = new DataView(data);
       if (IS_BUN_DEVELOPMENT) {
-        console.info("[WS] " + String.fromCharCode(view.getUint8(0)));
+        console.info("[WS] receive message '" + String.fromCharCode(view.getUint8(0)) + "',", new Uint8Array(data));
       }
       handlers[view.getUint8(0)]?.(view, ws);
     }
@@ -115,7 +121,7 @@ export function initWebSocket(handlers: Record<number, (dv: DataView, ws: WebSoc
     }
   }
 
-  let ws = wsProxy.wrapped = new WebSocket(url);
+  let ws = (wsProxy.wrapped = new WebSocket(url));
   ws.binaryType = "arraybuffer";
   ws.onopen = onOpen;
   ws.onmessage = onMessage;

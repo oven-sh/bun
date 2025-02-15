@@ -799,16 +799,16 @@ pub const ErrorResponse = struct {
             .{ "column", column, void },
             .{ "constraint", constraint, void },
             .{ "datatype", datatype, void },
-            .{ "errno", code, i32 },
+            // in the past this was set to i32 but postgres returns a strings lets keep it compatible
+            .{ "errno", code, void },
             .{ "position", position, i32 },
             .{ "schema", schema, void },
             .{ "table", table, void },
             .{ "where", where, void },
         };
-
         const error_code: JSC.Error =
             // https://www.postgresql.org/docs/8.1/errcodes-appendix.html
-            if (code.toInt32() orelse 0 == 42601)
+            if (code.eqlComptime("42601"))
             JSC.Error.ERR_POSTGRES_SYNTAX_ERROR
         else
             JSC.Error.ERR_POSTGRES_SERVER_ERROR;
@@ -948,7 +948,10 @@ pub const DataRow = struct {
         for (0..remaining_fields) |index| {
             const byte_length = try reader.int4();
             switch (byte_length) {
-                0 => break,
+                0 => {
+                    var empty = Data.Empty;
+                    if (!try forEach(context, @intCast(index), &empty)) break;
+                },
                 null_int4 => {
                     if (!try forEach(context, @intCast(index), null)) break;
                 },
@@ -1252,6 +1255,14 @@ pub const Flush = [_]u8{'H'} ++ toBytes(Int32(4));
 pub const SSLRequest = toBytes(Int32(8)) ++ toBytes(Int32(80877103));
 pub const NoData = [_]u8{'n'} ++ toBytes(Int32(4));
 
+pub fn writeQuery(query: []const u8, comptime Context: type, writer: NewWriter(Context)) !void {
+    const count: u32 = @sizeOf((u32)) + @as(u32, @intCast(query.len)) + 1;
+    const header = [_]u8{
+        'Q',
+    } ++ toBytes(Int32(count));
+    try writer.write(&header);
+    try writer.string(query);
+}
 pub const SASLInitialResponse = struct {
     mechanism: Data = .{ .empty = {} },
     data: Data = .{ .empty = {} },
@@ -1402,30 +1413,6 @@ pub const Describe = struct {
         });
         try writer.string(message);
         try length.write();
-    }
-
-    pub const write = writeWrap(@This(), writeInternal).write;
-};
-
-pub const Query = struct {
-    message: Data = .{ .empty = {} },
-
-    pub fn deinit(this: *@This()) void {
-        this.message.deinit();
-    }
-
-    pub fn writeInternal(
-        this: *const @This(),
-        comptime Context: type,
-        writer: NewWriter(Context),
-    ) !void {
-        const message = this.message.slice();
-        const count: u32 = @sizeOf((u32)) + message.len + 1;
-        const header = [_]u8{
-            'Q',
-        } ++ toBytes(Int32(count));
-        try writer.write(&header);
-        try writer.string(message);
     }
 
     pub const write = writeWrap(@This(), writeInternal).write;

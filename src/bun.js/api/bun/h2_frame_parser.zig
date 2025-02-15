@@ -530,7 +530,7 @@ const Handlers = struct {
     globalObject: *JSC.JSGlobalObject,
     strong_ctx: JSC.Strong = .{},
 
-    pub fn callEventHandler(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) bool {
+    pub fn callEventHandler(this: *Handlers, comptime event: @Type(.enum_literal), thisValue: JSValue, data: []const JSValue) bool {
         const callback = @field(this, @tagName(event));
         if (callback == .zero) {
             return false;
@@ -546,7 +546,7 @@ const Handlers = struct {
         return true;
     }
 
-    pub fn callEventHandlerWithResult(this: *Handlers, comptime event: @Type(.EnumLiteral), thisValue: JSValue, data: []const JSValue) JSValue {
+    pub fn callEventHandlerWithResult(this: *Handlers, comptime event: @Type(.enum_literal), thisValue: JSValue, data: []const JSValue) JSValue {
         const callback = @field(this, @tagName(event));
         if (callback == .zero) {
             return JSC.JSValue.zero;
@@ -643,8 +643,7 @@ const Handlers = struct {
 pub const H2FrameParser = struct {
     pub const log = Output.scoped(.H2FrameParser, false);
     pub usingnamespace JSC.Codegen.JSH2FrameParser;
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
-    pub const DEBUG_REFCOUNT_NAME = "H2";
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, "H2");
     const ENABLE_AUTO_CORK = true; // ENABLE CORK OPTIMIZATION
     const ENABLE_ALLOCATOR_POOL = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 
@@ -1104,7 +1103,10 @@ pub const H2FrameParser = struct {
                 this.signal = null;
                 signal.deinit();
             }
-            JSC.VirtualMachine.get().eventLoop().processGCTimer();
+            // unsafe to ask GC to run if we are already inside GC
+            if (!finalizing) {
+                JSC.VirtualMachine.get().eventLoop().processGCTimer();
+            }
         }
     };
 
@@ -1353,7 +1355,7 @@ pub const H2FrameParser = struct {
         _ = this.write(&buffer);
     }
 
-    pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) void {
+    pub fn dispatch(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue) void {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return;
@@ -1361,7 +1363,7 @@ pub const H2FrameParser = struct {
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value });
     }
 
-    pub fn call(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue) JSValue {
+    pub fn call(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue) JSValue {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return .zero;
@@ -1373,7 +1375,7 @@ pub const H2FrameParser = struct {
 
         _ = this.handlers.callWriteCallback(callback, &[_]JSC.JSValue{});
     }
-    pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue) void {
+    pub fn dispatchWithExtra(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue, extra: JSC.JSValue) void {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return;
@@ -1382,7 +1384,7 @@ pub const H2FrameParser = struct {
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra });
     }
 
-    pub fn dispatchWith2Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue) void {
+    pub fn dispatchWith2Extra(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue) void {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return;
@@ -1391,7 +1393,7 @@ pub const H2FrameParser = struct {
         extra2.ensureStillAlive();
         _ = this.handlers.callEventHandler(event, ctx_value, &[_]JSC.JSValue{ ctx_value, value, extra, extra2 });
     }
-    pub fn dispatchWith3Extra(this: *H2FrameParser, comptime event: @Type(.EnumLiteral), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue, extra3: JSC.JSValue) void {
+    pub fn dispatchWith3Extra(this: *H2FrameParser, comptime event: @Type(.enum_literal), value: JSC.JSValue, extra: JSC.JSValue, extra2: JSC.JSValue, extra3: JSC.JSValue) void {
         JSC.markBinding(@src());
 
         const ctx_value = this.strong_ctx.get() orelse return;
@@ -1756,25 +1758,38 @@ pub const H2FrameParser = struct {
                 return null;
             }
 
-            const output = brk: {
+            if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
+                var header_value = bun.String.fromUTF8(header.value);
+                const js_header_value = header_value.transferToJS(globalObject);
+                js_header_value.ensureStillAlive();
+                headers.push(globalObject, js_header_name);
+                headers.push(globalObject, js_header_value);
                 if (header.never_index) {
                     if (sensitiveHeaders.isUndefined()) {
                         sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
                         sensitiveHeaders.ensureStillAlive();
                     }
-                    break :brk sensitiveHeaders;
-                } else break :brk headers;
-            };
-
-            if (getHTTP2CommonString(globalObject, header.well_know)) |header_info| {
-                output.push(globalObject, header_info);
-                var header_value = bun.String.fromUTF8(header.value);
-                output.push(globalObject, header_value.transferToJS(globalObject));
+                    sensitiveHeaders.push(globalObject, js_header_name);
+                }
             } else {
                 var header_name = bun.String.fromUTF8(header.name);
-                output.push(globalObject, header_name.transferToJS(globalObject));
+                const js_header_name = header_name.transferToJS(globalObject);
+                js_header_name.ensureStillAlive();
+
                 var header_value = bun.String.fromUTF8(header.value);
-                output.push(globalObject, header_value.transferToJS(globalObject));
+                const js_header_value = header_value.transferToJS(globalObject);
+                js_header_value.ensureStillAlive();
+
+                headers.push(globalObject, js_header_name);
+                headers.push(globalObject, js_header_value);
+
+                if (header.never_index) {
+                    if (sensitiveHeaders.isUndefined()) {
+                        sensitiveHeaders = JSC.JSValue.createEmptyArray(globalObject, 0);
+                        sensitiveHeaders.ensureStillAlive();
+                    }
+                    sensitiveHeaders.push(globalObject, js_header_name);
+                }
             }
 
             if (offset >= payload.len) {
@@ -3321,7 +3336,7 @@ pub const H2FrameParser = struct {
                             return .zero;
                         };
 
-                        const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                        const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
@@ -3349,7 +3364,7 @@ pub const H2FrameParser = struct {
                         return .zero;
                     };
 
-                    const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();

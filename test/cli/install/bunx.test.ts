@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { describe, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, tmpdirSync, readdirSorted } from "harness";
-import { readdirSync } from "node:fs";
+import { readdirSync, copyFileSync } from "node:fs";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 
@@ -421,9 +421,7 @@ describe("bunx --no-install", () => {
   it("if the package is not installed, it should fail and print an error message", async () => {
     const [err, out, exited] = await run("--no-install", "http-server", "--version");
 
-    expect(err.trim()).toContain(
-      "Could not find an existing 'http-server' binary to run.",
-    );
+    expect(err.trim()).toContain("Could not find an existing 'http-server' binary to run.");
     expect(out).toHaveLength(0);
     expect(exited).toBe(1);
   });
@@ -469,4 +467,33 @@ describe("bunx --no-install", () => {
       expect(code).toBe(0);
     }
   });
+});
+
+it("should handle postinstall scripts correctly with symlinked bunx", async () => {
+  // Create a symlink to bun called "bunx"
+  copyFileSync(bunExe(), join(x_dir, isWindows ? "bun.exe" : "bun"));
+  copyFileSync(bunExe(), join(x_dir, isWindows ? "bunx.exe" : "bunx"));
+
+  const subprocess = spawn({
+    cmd: ["bunx", "esbuild@latest", "--version"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env: {
+      ...env,
+      PATH: `${x_dir}${isWindows ? ";" : ":"}${env.PATH || ""}`,
+    },
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("Cannot find module 'exec'");
+  expect(out.trim()).not.toContain(Bun.version);
+  expect(exited).toBe(0);
 });

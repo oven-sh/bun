@@ -1485,7 +1485,7 @@ zigInternal.line("};");
 zigInternal.line();
 zigInternal.line("comptime {");
 zigInternal.line(`    if (bun.Environment.export_cpp_apis) {`);
-zigInternal.line("        for (@typeInfo(binding_internals).Struct.decls) |decl| {");
+zigInternal.line("        for (@typeInfo(binding_internals).@\"struct\".decls) |decl| {");
 zigInternal.line("            _ = &@field(binding_internals, decl.name);");
 zigInternal.line("        }");
 zigInternal.line("    }");

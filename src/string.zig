@@ -342,11 +342,10 @@ pub const String = extern struct {
         if (this.tag == .WTFStringImpl) this.value.WTFStringImpl.ensureHash();
     }
 
+    extern fn BunString__transferToJS(this: *String, globalThis: *JSC.JSGlobalObject) JSC.JSValue;
     pub fn transferToJS(this: *String, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
-        const js_value = this.toJS(globalThis);
-        this.deref();
-        this.* = dead;
-        return js_value;
+        JSC.markBinding(@src());
+        return BunString__transferToJS(this, globalThis);
     }
 
     pub fn toOwnedSlice(this: String, allocator: std.mem.Allocator) ![]u8 {
@@ -385,6 +384,7 @@ pub const String = extern struct {
     fn createUninitializedLatin1(len: usize) struct { String, []u8 } {
         bun.assert(len > 0);
         const string = BunString__fromLatin1Unitialized(len);
+        _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
             string,
@@ -395,6 +395,7 @@ pub const String = extern struct {
     fn createUninitializedUTF16(len: usize) struct { String, []u16 } {
         bun.assert(len > 0);
         const string = BunString__fromUTF16Unitialized(len);
+        _ = validateRefCount(string);
         const wtf = string.value.WTFStringImpl;
         return .{
             string,
@@ -435,21 +436,31 @@ pub const String = extern struct {
     pub fn createLatin1(bytes: []const u8) String {
         JSC.markBinding(@src());
         if (bytes.len == 0) return String.empty;
-        return BunString__fromLatin1(bytes.ptr, bytes.len);
+        return validateRefCount(BunString__fromLatin1(bytes.ptr, bytes.len));
+    }
+
+    pub inline fn validateRefCount(this: String) String {
+        if (comptime bun.Environment.isDebug) {
+            // Newly created strings should have a ref count of 1
+            if (!this.isEmpty()) {
+                const ref_count = this.value.WTFStringImpl.refCount();
+                bun.assert(ref_count == 1);
+            }
+        }
+
+        return this;
     }
 
     pub fn createUTF8(bytes: []const u8) String {
-        JSC.markBinding(@src());
-        if (bytes.len == 0) return String.empty;
-        return BunString__fromBytes(bytes.ptr, bytes.len);
+        return JSC.WebCore.Encoder.toBunStringComptime(bytes, .utf8);
     }
 
     pub fn createUTF16(bytes: []const u16) String {
         if (bytes.len == 0) return String.empty;
         if (bun.strings.firstNonASCII16([]const u16, bytes) == null) {
-            return BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len);
+            return validateRefCount(BunString__fromUTF16ToLatin1(bytes.ptr, bytes.len));
         }
-        return BunString__fromUTF16(bytes.ptr, bytes.len);
+        return validateRefCount(BunString__fromUTF16(bytes.ptr, bytes.len));
     }
 
     pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) OOM!String {
@@ -457,7 +468,7 @@ pub const String = extern struct {
             return String.static(fmt);
         }
 
-        var sba = std.heap.stackFallback(16384, bun.default_allocator);
+        var sba = std.heap.stackFallback(512, bun.default_allocator);
         const alloc = sba.get();
         const buf = try std.fmt.allocPrint(alloc, fmt, args);
         defer alloc.free(buf);
@@ -581,10 +592,10 @@ pub const String = extern struct {
                 const info = @typeInfo(Type);
 
                 // Zig string literals
-                if (info == .Pointer and info.Pointer.size == .One and info.Pointer.is_const) {
-                    const child_info = @typeInfo(info.Pointer.child);
-                    if (child_info == .Array and child_info.Array.child == u8) {
-                        if (child_info.Array.len == 0) return String.empty;
+                if (info == .pointer and info.pointer.size == .one and info.pointer.is_const) {
+                    const child_info = @typeInfo(info.pointer.child);
+                    if (child_info == .array and child_info.array.child == u8) {
+                        if (child_info.array.len == 0) return String.empty;
                         return static(value);
                     }
                 }
@@ -643,7 +654,7 @@ pub const String = extern struct {
             }
             return dead;
         }
-        return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
+        return validateRefCount(BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback));
     }
 
     /// This should rarely be used. The WTF::StringImpl* will never be freed.
@@ -683,8 +694,8 @@ pub const String = extern struct {
         }
 
         return switch (comptime kind) {
-            .latin1 => BunString__createExternalGloballyAllocatedLatin1(bytes.ptr, bytes.len),
-            .utf16 => BunString__createExternalGloballyAllocatedUTF16(bytes.ptr, bytes.len),
+            .latin1 => validateRefCount(BunString__createExternalGloballyAllocatedLatin1(bytes.ptr, bytes.len)),
+            .utf16 => validateRefCount(BunString__createExternalGloballyAllocatedUTF16(bytes.ptr, bytes.len)),
         };
     }
 
@@ -1002,7 +1013,7 @@ pub const String = extern struct {
         };
     }
 
-    pub fn toThreadSafeSlice(this: *String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
+    pub fn toThreadSafeSlice(this: *const String, allocator: std.mem.Allocator) SliceWithUnderlyingString {
         if (this.tag == .WTFStringImpl) {
             if (!this.value.WTFStringImpl.isThreadSafe()) {
                 const slice = this.value.WTFStringImpl.toUTF8WithoutRef(allocator);
@@ -1069,6 +1080,12 @@ pub const String = extern struct {
     extern fn Bun__parseDate(*JSC.JSGlobalObject, *String) f64;
     extern fn BunString__fromJSRef(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toWTFString(this: *String) void;
+    extern fn BunString__createUTF8ForJS(globalObject: *JSC.JSGlobalObject, ptr: [*]const u8, len: usize) JSC.JSValue;
+
+    pub fn createUTF8ForJS(globalObject: *JSC.JSGlobalObject, utf8_slice: []const u8) JSC.JSValue {
+        JSC.markBinding(@src());
+        return BunString__createUTF8ForJS(globalObject, utf8_slice.ptr, utf8_slice.len);
+    }
 
     pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
         JSC.markBinding(@src());
@@ -1375,7 +1392,7 @@ pub const SliceWithUnderlyingString = struct {
     utf8: ZigString.Slice = ZigString.Slice.empty,
     underlying: String = String.dead,
 
-    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.allow_assert) false else {},
+    did_report_extra_memory_debug: bun.DebugOnly(bool) = if (bun.Environment.allow_assert) false,
 
     pub inline fn reportExtraMemory(this: *SliceWithUnderlyingString, vm: *JSC.VM) void {
         if (comptime bun.Environment.allow_assert) {
@@ -1466,6 +1483,14 @@ pub const SliceWithUnderlyingString = struct {
     }
 
     pub fn toJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return this.toJSWithOptions(globalObject, false);
+    }
+
+    pub fn transferToJS(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        return this.toJSWithOptions(globalObject, true);
+    }
+
+    fn toJSWithOptions(this: *SliceWithUnderlyingString, globalObject: *JSC.JSGlobalObject, transfer: bool) JSC.JSValue {
         if ((this.underlying.tag == .Dead or this.underlying.tag == .Empty) and this.utf8.length() > 0) {
             if (comptime bun.Environment.allow_assert) {
                 if (this.utf8.allocator.get()) |allocator| {
@@ -1487,12 +1512,23 @@ pub const SliceWithUnderlyingString = struct {
                 }
             }
 
-            const out = bun.String.createUTF8(this.utf8.slice());
-            defer out.deref();
-            return out.toJS(globalObject);
+            defer {
+                if (transfer) {
+                    this.utf8.deinit();
+                    this.utf8 = .{};
+                }
+            }
+
+            return String.createUTF8ForJS(globalObject, this.utf8.slice());
         }
 
-        return this.underlying.toJS(globalObject);
+        if (transfer) {
+            this.utf8.deinit();
+            this.utf8 = .{};
+            return this.underlying.transferToJS(globalObject);
+        } else {
+            return this.underlying.toJS(globalObject);
+        }
     }
 };
 

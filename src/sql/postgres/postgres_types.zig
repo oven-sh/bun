@@ -82,10 +82,10 @@ pub const Tag = enum(short) {
     int4 = 23,
     // regproc = 24,
     text = 25,
-    // oid = 26,
+    oid = 26,
     // tid = 27,
-    // xid = 28,
-    // cid = 29,
+    xid = 28,
+    cid = 29,
     // oidvector = 30,
     // pg_type = 71,
     // pg_attribute = 75,
@@ -175,9 +175,11 @@ pub const Tag = enum(short) {
     // Not really sure what this is.
     jsonpath = 4072,
     jsonpath_array = 4073,
+    // another oid for pg_database
+    pg_database_array2 = 10052,
     _,
 
-    pub fn name(this: Tag) ?[]const u8 {
+    pub fn tagName(this: Tag) ?[]const u8 {
         return std.enums.tagName(Tag, this);
     }
 
@@ -253,38 +255,28 @@ pub const Tag = enum(short) {
         };
     }
 
-    pub fn toJSTypedArrayType(comptime T: Tag) JSValue.JSType {
+    pub fn toJSTypedArrayType(comptime T: Tag) !JSValue.JSType {
         return comptime switch (T) {
             .int4_array => .Int32Array,
             // .int2_array => .Uint2Array,
             .float4_array => .Float32Array,
             // .float8_array => .Float64Array,
-            else => @compileError("TODO: not implemented"),
+            else => error.UnsupportedArrayType,
         };
     }
 
-    pub fn byteArrayType(comptime T: Tag) type {
+    pub fn byteArrayType(comptime T: Tag) !type {
         return comptime switch (T) {
             .int4_array => i32,
             // .int2_array => i16,
             .float4_array => f32,
             // .float8_array => f64,
-            else => @compileError("TODO: not implemented"),
+            else => error.UnsupportedArrayType,
         };
     }
 
-    pub fn unsignedByteArrayType(comptime T: Tag) type {
-        return comptime switch (T) {
-            .int4_array => u32,
-            // .int2_array => u16,
-            .float4_array => f32,
-            // .float8_array => f64,
-            else => @compileError("TODO: not implemented"),
-        };
-    }
-
-    pub fn pgArrayType(comptime T: Tag) type {
-        return PostgresBinarySingleDimensionArray(byteArrayType(T));
+    pub fn pgArrayType(comptime T: Tag) !type {
+        return PostgresBinarySingleDimensionArray(try byteArrayType(T));
     }
 
     fn toJSWithType(
@@ -355,7 +347,7 @@ pub const Tag = enum(short) {
                 return .timestamptz;
             }
 
-            if (tag.isTypedArray()) {
+            if (tag.isTypedArrayOrArrayBuffer()) {
                 if (tag == .Int32Array)
                     return .int4_array;
 
@@ -397,7 +389,7 @@ pub const Tag = enum(short) {
 
         if (value.isAnyInt()) {
             const int = value.toInt64();
-            if (int >= std.math.minInt(u32) and int <= std.math.maxInt(u32)) {
+            if (int >= std.math.minInt(i32) and int <= std.math.maxInt(i32)) {
                 return .int4;
             }
 

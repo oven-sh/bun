@@ -5,7 +5,6 @@ pub usingnamespace @import("./bun.js/bindings/exports.zig");
 pub usingnamespace @import("./bun.js/event_loop.zig");
 pub usingnamespace @import("./bun.js/javascript.zig");
 pub usingnamespace @import("./bun.js/module_loader.zig");
-pub const is_bindgen = false;
 pub const Debugger = @import("./bun.js/bindings/Debugger.zig").Debugger;
 pub const napi = @import("./napi/napi.zig");
 pub const RareData = @import("./bun.js/rare_data.zig");
@@ -53,6 +52,7 @@ pub const API = struct {
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
     pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
     pub const NativeBrotli = @import("./bun.js/node/node_zlib_binding.zig").SNativeBrotli;
+    pub const HTMLBundle = @import("./bun.js/api/server/HTMLBundle.zig");
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");
@@ -81,7 +81,6 @@ pub const jsNumber = @This().JSValue.jsNumber;
 
 const __jsc_log = Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
-    if (comptime is_bindgen) unreachable;
     __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
 pub const Subprocess = API.Bun.Subprocess;

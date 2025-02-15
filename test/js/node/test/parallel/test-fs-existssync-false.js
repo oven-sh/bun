@@ -1,6 +1,5 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
 const tmpdir = require('../common/tmpdir');
 
 // This test ensures that fs.existsSync doesn't incorrectly return false.
@@ -19,14 +18,12 @@ tmpdir.refresh();
 // Make a long path.
 for (let i = 0; i < 50; i++) {
   dir = `${dir}/1234567890`;
-  try {
-    fs.mkdirSync(dir, '0777');
-  } catch (e) {
-    if (e.code !== 'EEXIST') {
-      throw e;
-    }
-  }
 }
+
+fs.mkdirSync(dir, {
+  mode: '0777',
+  recursive: true,
+});
 
 // Test if file exists synchronously
 assert(fs.existsSync(dir), 'Directory is not accessible');

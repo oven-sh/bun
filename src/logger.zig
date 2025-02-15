@@ -116,6 +116,15 @@ pub const Location = struct {
     // TODO: document or remove
     offset: usize = 0,
 
+    pub fn memoryCost(this: *const Location) usize {
+        var cost: usize = 0;
+        cost += this.file.len;
+        cost += this.namespace.len;
+        if (this.line_text) |text| cost += text.len;
+        if (this.suggestion) |text| cost += text.len;
+        return cost;
+    }
+
     pub fn count(this: Location, builder: *StringBuilder) void {
         builder.count(this.file);
         builder.count(this.namespace);
@@ -213,6 +222,15 @@ pub const Location = struct {
 pub const Data = struct {
     text: string,
     location: ?Location = null,
+
+    pub fn memoryCost(this: *const Data) usize {
+        var cost: usize = 0;
+        cost += this.text.len;
+        if (this.location) |*loc| {
+            cost += loc.memoryCost();
+        }
+        return cost;
+    }
 
     pub fn deinit(d: *Data, allocator: std.mem.Allocator) void {
         if (d.location) |*loc| {
@@ -398,6 +416,15 @@ pub const Msg = struct {
     metadata: Metadata = .build,
     notes: []Data = &.{},
     redact_sensitive_information: bool = false,
+
+    pub fn memoryCost(this: *const Msg) usize {
+        var cost: usize = 0;
+        cost += this.data.memoryCost();
+        for (this.notes) |*note| {
+            cost += note.memoryCost();
+        }
+        return cost;
+    }
 
     pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) OOM!Msg {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
@@ -608,6 +635,14 @@ pub const Log = struct {
 
     clone_line_text: bool = false,
 
+    pub fn memoryCost(this: *const Log) usize {
+        var cost: usize = 0;
+        for (this.msgs.items) |msg| {
+            cost += msg.memoryCost();
+        }
+        return cost;
+    }
+
     pub inline fn hasErrors(this: *const Log) bool {
         return this.errors > 0;
     }
@@ -694,23 +729,23 @@ pub const Log = struct {
     }
 
     pub fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        if (!Kind.shouldPrint(.debug, log.level)) return;
-
-        @setCold(true);
-        try log.addMsg(.{
-            .kind = .debug,
-            .data = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
-        });
+        if (Kind.shouldPrint(.debug, log.level)) {
+            @branchHint(.cold);
+            try log.addMsg(.{
+                .kind = .debug,
+                .data = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, text, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            });
+        }
     }
 
     pub fn addVerbose(log: *Log, source: ?*const Source, loc: Loc, text: string) OOM!void {
-        if (!Kind.shouldPrint(.verbose, log.level)) return;
-
-        @setCold(true);
-        try log.addMsg(.{
-            .kind = .verbose,
-            .data = rangeData(source, Range{ .loc = loc }, text),
-        });
+        if (Kind.shouldPrint(.verbose, log.level)) {
+            @branchHint(.cold);
+            try log.addMsg(.{
+                .kind = .verbose,
+                .data = rangeData(source, Range{ .loc = loc }, text),
+            });
+        }
     }
 
     pub fn toJS(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, message: string) JSC.JSValue {
@@ -836,7 +871,7 @@ pub const Log = struct {
     pub const clearAndFree = deinit;
 
     pub fn addVerboseWithNotes(log: *Log, source: ?*const Source, loc: Loc, text: string, notes: []Data) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.verbose, log.level)) return;
 
         try log.addMsg(.{
@@ -847,7 +882,7 @@ pub const Log = struct {
     }
 
     inline fn allocPrint(allocator: std.mem.Allocator, comptime fmt: string, args: anytype) OOM!string {
-        return try switch (Output.enable_ansi_colors) {
+        return switch (Output.enable_ansi_colors) {
             inline else => |enable_ansi_colors| std.fmt.allocPrint(allocator, Output.prettyFmt(fmt, enable_ansi_colors), args),
         };
     }
@@ -915,7 +950,7 @@ pub const Log = struct {
         import_kind: ImportKind,
         err: anyerror,
     ) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         return try addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, false, .err, err);
     }
 
@@ -928,12 +963,12 @@ pub const Log = struct {
         args: anytype,
         import_kind: ImportKind,
     ) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         return try addResolveErrorWithLevel(log, source, r, allocator, fmt, args, import_kind, true, .err, error.ModuleNotFound);
     }
 
     pub fn addRangeError(log: *Log, source: ?*const Source, r: Range, text: string) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
@@ -942,7 +977,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeErrorFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
@@ -951,7 +986,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
@@ -961,7 +996,7 @@ pub const Log = struct {
     }
 
     pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
@@ -971,7 +1006,7 @@ pub const Log = struct {
 
     // TODO(dylan-conway): rename and replace `addErrorFmt`
     pub fn addErrorFmtOpts(log: *Log, allocator: std.mem.Allocator, comptime fmt: string, args: anytype, opts: AddErrorOptions) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
@@ -984,8 +1019,23 @@ pub const Log = struct {
         });
     }
 
+    // Use a bun.sys.Error's message in addition to some extra context.
+    pub fn addSysError(log: *Log, alloc: std.mem.Allocator, e: bun.sys.Error, comptime fmt: string, args: anytype) OOM!void {
+        const tag_name, const sys_errno = e.getErrorCodeTagName() orelse {
+            try log.addErrorFmt(null, Loc.Empty, alloc, fmt, args);
+            return;
+        };
+        try log.addErrorFmt(
+            null,
+            Loc.Empty,
+            alloc,
+            "{s}: " ++ fmt,
+            .{bun.sys.coreutils_error_map.get(sys_errno) orelse tag_name} ++ args,
+        );
+    }
+
     pub fn addZigErrorWithNote(log: *Log, allocator: std.mem.Allocator, err: anyerror, comptime noteFmt: string, args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         log.errors += 1;
 
         var notes = try allocator.alloc(Data, 1);
@@ -999,7 +1049,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarning(log: *Log, source: ?*const Source, r: Range, text: string) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(.{
@@ -1009,7 +1059,7 @@ pub const Log = struct {
     }
 
     pub fn addWarningFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(.{
@@ -1019,7 +1069,7 @@ pub const Log = struct {
     }
 
     pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
 
@@ -1039,7 +1089,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(.{
@@ -1059,7 +1109,7 @@ pub const Log = struct {
         note_args: anytype,
         note_range: Range,
     ) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
 
@@ -1074,7 +1124,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
@@ -1094,7 +1144,7 @@ pub const Log = struct {
         note_args: anytype,
         note_range: Range,
     ) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.err, log.level)) return;
         log.errors += 1;
 
@@ -1109,7 +1159,7 @@ pub const Log = struct {
     }
 
     pub fn addWarning(log: *Log, source: ?*const Source, l: Loc, text: string) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(.{
@@ -1119,7 +1169,7 @@ pub const Log = struct {
     }
 
     pub fn addWarningWithNote(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, warn: string, comptime note_fmt: string, note_args: anytype) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
 
@@ -1134,7 +1184,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeDebug(log: *Log, source: ?*const Source, r: Range, text: string) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.debug, log.level)) return;
         try log.addMsg(.{
             .kind = .debug,
@@ -1143,7 +1193,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeDebugWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.debug, log.level)) return;
         // log.de += 1;
         try log.addMsg(.{
@@ -1154,7 +1204,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeErrorWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         log.errors += 1;
         try log.addMsg(.{
             .kind = Kind.err,
@@ -1164,7 +1214,7 @@ pub const Log = struct {
     }
 
     pub fn addRangeWarningWithNotes(log: *Log, source: ?*const Source, r: Range, text: string, notes: []Data) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
         try log.addMsg(.{
@@ -1179,7 +1229,7 @@ pub const Log = struct {
     }
 
     pub fn addError(self: *Log, _source: ?*const Source, loc: Loc, text: string) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         self.errors += 1;
         try self.addMsg(.{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
     }
@@ -1193,7 +1243,7 @@ pub const Log = struct {
 
     // TODO(dylan-conway): rename and replace `addError`
     pub fn addErrorOpts(self: *Log, text: string, opts: AddErrorOptions) OOM!void {
-        @setCold(true);
+        @branchHint(.cold);
         self.errors += 1;
         try self.addMsg(.{
             .kind = .err,

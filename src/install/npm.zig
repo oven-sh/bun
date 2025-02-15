@@ -2,7 +2,7 @@ const URL = @import("../url.zig").URL;
 const bun = @import("root").bun;
 const std = @import("std");
 const MutableString = @import("../string_mutable.zig").MutableString;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const string = @import("../string_types.zig").string;
@@ -732,7 +732,7 @@ pub const OperatingSystem = enum(u16) {
         var operating_system = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+            const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             operating_system.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
@@ -849,7 +849,7 @@ pub const Architecture = enum(u16) {
         var architecture = negatable(.none);
         var iter = args.ptr[0].arrayIterator(globalObject);
         while (iter.next()) |item| {
-            const slice = item.toSlice(globalObject, bun.default_allocator);
+            const slice = try item.toSlice(globalObject, bun.default_allocator);
             defer slice.deinit();
             architecture.apply(slice.slice());
             if (globalObject.hasException()) return .zero;
@@ -1115,7 +1115,7 @@ pub const PackageManifest = struct {
             else
                 tmp_path;
 
-            var is_using_o_tmpfile = if (Environment.isLinux) false else {};
+            var is_using_o_tmpfile = if (Environment.isLinux) false;
             const file = brk: {
                 const flags = bun.O.WRONLY;
                 const mask = if (Environment.isPosix) 0o664 else 0;

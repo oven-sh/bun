@@ -212,7 +212,7 @@ pub const Request = struct {
             .zero => "Request",
             else => "BunRequest",
         };
-        try writer.print("{s} {{\n", .{class_label});
+        try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(), .{}) });
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;

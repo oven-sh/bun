@@ -104,7 +104,8 @@ const ws = initWebSocket(
           // Skip to the last route
           let nextRouteId = reader.i32();
           while (nextRouteId != null && nextRouteId !== -1) {
-            reader.cursor += 16 * Math.max(0, reader.i32());
+            const i = reader.i32();
+            reader.cursor += 16 * Math.max(0, i);
             nextRouteId = reader.i32();
           }
           break;

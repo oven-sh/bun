@@ -1518,7 +1518,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
         if (array.size() > 0) {
             any = true;
             if (data.size() > 0) {
-                result.append(","_s);
+                result.append(',');
             }
             result.append(' ');
             size_t i = 0;

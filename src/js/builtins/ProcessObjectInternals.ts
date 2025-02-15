@@ -109,22 +109,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
         // Releasing the lock is not possible as there are active reads
         // we will instead pretend we are unref'd, and release the lock once the reads are finished.
-        shouldUnref = true;
-
-        // unref the native part of the stream
-        try {
-          $getByIdDirectPrivate(
-            $getByIdDirectPrivate(native, "readableStreamController"),
-            "underlyingByteSource",
-          ).$resume(false);
-        } catch (e) {
-          if (IS_BUN_DEVELOPMENT) {
-            // we assume this isn't possible, but because we aren't sure
-            // we will ignore if error during release, but make a big deal in debug
-            console.error(e);
-            $assert(!"reachable");
-          }
-        }
+        source?.updateRef?.(false);
       }
     } else if (source) {
       source.updateRef(false);
@@ -188,25 +173,11 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   async function internalRead(stream) {
     $debug("internalRead();");
     try {
-      var done: boolean, value: Uint8Array[];
       $assert(reader);
-      const pendingRead = reader.readMany();
+      const { done, value } = await reader.read();
 
-      if ($isPromise(pendingRead)) {
-        ({ done, value } = await pendingRead);
-      } else {
-        $debug("readMany() did not return a promise");
-        ({ done, value } = pendingRead);
-      }
-
-      if (!done) {
-        stream.push(value[0]);
-
-        // shouldn't actually happen, but just in case
-        const length = value.length;
-        for (let i = 1; i < length; i++) {
-          stream.push(value[i]);
-        }
+      if (value) {
+        stream.push(value);
 
         if (shouldUnref) unref();
       } else {

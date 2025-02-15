@@ -39,7 +39,7 @@ const ca = readKey('fake-startcom-root-cert.pem', 'binary');
     session.origin('https://foo.org/a/b/c', new URL('https://bar.org'));
 
     // Won't error, but won't send anything
-    // session.origin();
+    session.origin();
 
     [0, true, {}, []].forEach((input) => {
       throws(
@@ -152,7 +152,7 @@ const ca = readKey('fake-startcom-root-cert.pem', 'binary');
     const client = connect(origin, { ca });
 
     client.on('origin', mustCall((origins) => {
-      // deepStrictEqual(client.originSet, [origin, 'https://foo.org']);
+      deepStrictEqual(client.originSet, [origin, 'https://foo.org']);
       const req = client.request({ ':authority': 'foo.org' });
       req.on('response', mustCall((headers) => {
         strictEqual(headers[':status'], 421);

@@ -488,14 +488,14 @@ WTF::String Bun::formatStackTrace(
                 }
 
                 if (remappedFrame.remapped) {
-                    sb.append(":"_s);
+                    sb.append(':');
                     sb.append(remappedFrame.position.line().oneBasedInt());
                 } else {
-                    sb.append(":"_s);
+                    sb.append(':');
                     sb.append(originalLine.oneBasedInt());
                 }
 
-                sb.append(")"_s);
+                sb.append(')');
             }
         }
     }
@@ -601,18 +601,18 @@ WTF::String Bun::formatStackTrace(
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
             if (displayLine.zeroBasedInt() > 0) {
-                sb.append(":"_s);
+                sb.append(':');
                 sb.append(displayLine.oneBasedInt());
 
                 if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(":"_s);
+                    sb.append(':');
                     sb.append(displayColumn.oneBasedInt());
                 }
             }
         }
 
         if (!functionName.isEmpty()) {
-            sb.append(")"_s);
+            sb.append(')');
         }
 
         if (i != framesCount - 1) {
@@ -1869,10 +1869,8 @@ extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(
-        globalObject,
-        isBuffer ? reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure() : globalObject->typedArrayStructure(TypeUint8, false),
-        len);
+    auto* subclassStructure = isBuffer ? reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure() : globalObject->typedArrayStructureWithTypedArrayType<TypeUint8>();
+    JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, len);
 
     if (UNLIKELY(!array)) {
         JSC::throwOutOfMemoryError(globalObject, scope);
@@ -2942,8 +2940,14 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
-
-            auto* baseStructure = globalObject->typedArrayStructure(JSC::TypeUint8, false);
+            auto* baseStructure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
+            JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
+            init.set(subclassStructure);
+        });
+    m_JSResizableOrGrowableSharedBufferSubclassStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            auto* baseStructure = globalObject->resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
             JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
             init.set(subclassStructure);
         });
@@ -3305,7 +3309,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSBufferClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            auto prototype = WebCore::createBufferPrototype(init.vm, init.global);
+            auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
             auto* structure = WebCore::createBufferStructure(init.vm, init.global, JSValue(prototype));
             auto* constructor = WebCore::createBufferConstructor(init.vm, init.global, jsCast<JSObject*>(prototype));
             init.setPrototype(prototype);
@@ -3894,6 +3898,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBufferClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSResizableOrGrowableSharedBufferSubclassStructure.visit(visitor);
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);

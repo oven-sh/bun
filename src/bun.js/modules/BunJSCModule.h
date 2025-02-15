@@ -1,3 +1,4 @@
+#include "root.h"
 #include "_NativeModule.h"
 
 #include "ExceptionOr.h"
@@ -796,9 +797,8 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 
     if (asNodeBuffer) {
         size_t byteLength = arrayBuffer->byteLength();
-        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(
-            lexicalGlobalObject, globalObject->JSBufferSubclassStructure(),
-            WTFMove(arrayBuffer), 0, byteLength);
+        auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+        JSC::JSUint8Array* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(arrayBuffer), 0, byteLength);
         return JSValue::encode(uint8Array);
     }
 

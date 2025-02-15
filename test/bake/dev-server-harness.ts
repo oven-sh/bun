@@ -792,6 +792,22 @@ export class Client extends EventEmitter {
       styleProxyHandler,
     );
   }
+
+  async expectNoWebSocketActivity(cb: () => Promise<void>) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      if (this.exited) throw new Error("Client exited while waiting for no WebSocket activity");
+
+      // Block WebSocket messages
+      this.#proc.send({ type: "set-allow-websocket-messages", args: [false] });
+
+      try {
+        await cb();
+      } finally {
+        // Re-enable WebSocket messages
+        this.#proc.send({ type: "set-allow-websocket-messages", args: [true] });
+      }
+    });
+  }
 }
 
 function expectProxy(text: Promise<string>, chain: string[], expect: any): any {
@@ -930,11 +946,10 @@ async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): P
   try {
     return await cb();
   } catch (err: any) {
-    console.log();
-    console.error(stackLine);
     stackLine = stackLine.replace("<anonymous>", "test");
     const oldStack = err.stack;
     const newError = new Error(err?.message ?? oldStack.slice(0, oldStack.indexOf("\n    at ")));
+    (newError as any).stackLine = stackLine;
     newError.stack = `${newError.message}\n${stackLine}`;
     throw newError;
   }
@@ -1073,6 +1088,30 @@ class OutputLineStream extends EventEmitter {
   }
 }
 
+export function indexHtmlScript(htmlFiles: string[]) {
+  return [
+    ...htmlFiles.map((file, i) => `import html${i} from "./${file}";`),
+    "export default {",
+    "  static: {",
+    ...(htmlFiles.length === 1 ? `    '/*': html0,` : ""),
+    ...htmlFiles.map(
+      (file, i) =>
+        `    '${
+          "/" +
+          file
+            .replace(/\.html$/, "")
+            .replace("/index", "")
+            .replace(/\/$/, "")
+        }': html${i},`,
+    ),
+    "  },",
+    "  fetch(req) {",
+    "    return new Response('Not Found', { status: 404 });",
+    "  },",
+    "};",
+  ].join("\n");
+}
+
 export function devTest<T extends DevServerTest>(description: string, options: T): T {
   if (interactive) return options;
 
@@ -1084,25 +1123,14 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
-  const indexHtmlScript = dedent`
-    import html from "./index.html";
-    export default {
-      static: {
-        '/*': html,
-      },
-      fetch(req) {
-        return new Response("Not Found", { status: 404 });
-      },
-    };
-  `;
-
   async function run() {
     const root = path.join(tempDir, basename + count);
     if ("files" in options) {
       await writeAll(root, options.files);
-      if (options.files["bun.app.ts"] == undefined && options.files["index.html"] == undefined) {
+      const htmlFiles = Object.keys(options.files).filter(file => file.endsWith(".html"));
+      if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
         if (!options.framework) {
-          throw new Error("Must specify one of: `options.framework`, `index.html`, or `bun.app.ts`");
+          throw new Error("Must specify one of: `options.framework`, `*.html`, or `bun.app.ts`");
         }
         if (options.pluginFile) {
           fs.writeFileSync(path.join(root, "pluginFile.ts"), dedent(options.pluginFile));
@@ -1119,7 +1147,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
             };
           `,
         );
-      } else if (options.files["index.html"]) {
+      } else if (htmlFiles.length > 0) {
         if (options.files["bun.app.ts"]) {
           throw new Error("Cannot provide both bun.app.ts and index.html");
         }
@@ -1194,15 +1222,17 @@ export function devTest<T extends DevServerTest>(description: string, options: T
       await options.test(dev);
     } catch (err: any) {
       while (err instanceof SuppressedError) {
-        console.error(err.suppressed);
+        logErr(err.suppressed);
         err = err.error;
       }
       if (interactive) {
-        console.error(err);
+        logErr(err);
         await maybeWaitInteractive("exit");
         process.exit(1);
       }
-      throw err;
+      logErr(err);
+      console.log("\x1b[31mFailed\x1b[0;2m. Files in " + root + "\x1b[0m\r");
+      throw "\r\x1b[K\x1b[A";
     }
 
     if (interactive) {
@@ -1243,6 +1273,16 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     }
   }
   return options;
+}
+
+function logErr(err: any) {
+  console.error();
+  if (err.stackLine) {
+    console.error(`error\x1b[0;2m:\x1b[0m`, err.message);
+    console.error(err.stackLine);
+  } else {
+    console.error(err);
+  }
 }
 
 process.on("exit", () => {

@@ -5616,6 +5616,8 @@ pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
 
     event.processFileList(dev, &entry_points, temp_alloc);
     if (entry_points.set.count() == 0) {
+        // TODO: Files which become disconnected from the incremental graph
+        // should be removed from the watcher.
         Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
         Output.debugWarn("modified files: {s}", .{
             bun.fmt.fmtSlice(event.files.keys(), ", "),

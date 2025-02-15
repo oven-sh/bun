@@ -42,6 +42,8 @@ function reset() {
   }
 }
 
+let allowWebSocketMessages = true;
+
 function createWindow(windowUrl) {
   window = new Window({
     url: windowUrl,
@@ -52,15 +54,51 @@ function createWindow(windowUrl) {
   window.fetch = fetch;
 
   // Provide WebSocket
-  window.WebSocket = class extends WebSocket {
+  const OriginalWebSocket = WebSocket;
+  window.WebSocket = class WebSocket {
+    #ws;
+    onmessage = null;
+    onclose = null;
+    onerror = null;
+    onopen = null;
+
     constructor(url, protocols, options) {
       url = new URL(url, window.location.origin).href;
-      super(url, protocols, options);
+      this.#ws = new OriginalWebSocket(url, protocols, options);
       webSockets.push(this);
+
+      // Set up proxied event handlers
+      this.#ws.onmessage = event => {
+        if (!allowWebSocketMessages) {
+          console.error("[E] WebSocket message received while messages are not allowed");
+          process.exit(2);
+        }
+        this.onmessage?.(event);
+      };
+
+      this.#ws.onclose = event => {
+        this.onclose?.(event);
+        webSockets = webSockets.filter(ws => ws !== this);
+      };
+      this.#ws.onerror = event => this.onerror?.(event);
+      this.#ws.onopen = event => this.onopen?.(event);
     }
+
+    set binaryType(type) {
+      this.#ws.binaryType = type;
+    }
+
+    get binaryType() {
+      return this.#ws.binaryType;
+    }
+
+    // Proxy other essential WebSocket methods
+    send(data) {
+      return this.#ws.send(data);
+    }
+
     close() {
-      super.close();
-      webSockets = webSockets.filter(ws => ws !== this);
+      return this.#ws.close();
     }
   };
 
@@ -176,6 +214,9 @@ process.on("message", async message => {
     if (pendingReload) {
       pendingReload();
     }
+  }
+  if (message.type === "set-allow-websocket-messages") {
+    allowWebSocketMessages = message.args[0];
   }
   if (message.type === "hard-reload") {
     expectingReload = true;

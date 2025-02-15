@@ -123,6 +123,47 @@ devTest("add new css import later", {
     await client.style("body").notFound();
   },
 });
+devTest("css import another css file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      @import "./second.css";
+      body {
+        color: red;
+      }
+    `,
+    "second.css": `
+      h1 {
+        color: blue;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    // Verify initial build
+    await c.style("h1").color.expect.toBe("blue");
+    await c.style("body").color.expect.toBe("red");
+
+    // Hot reload
+    await dev.write(
+      "second.css",
+      `
+        h1 {
+          color: green;
+        }
+      `,
+    );
+    await c.style("h1").color.expect.toBe("green");
+    await c.style("body").color.expect.toBe("red");
+
+    // Check that the styles still work after a reload
+    await c.hardReload();
+    await c.style("h1").color.expect.toBe("green");
+    await c.style("body").color.expect.toBe("red");
+  },
+});
 devTest("asset referenced in css functions", {
   files: {
     "index.html": emptyHtmlFile({
@@ -140,87 +181,13 @@ devTest("asset referenced in css functions", {
     let backgroundImage = await client.style("body").backgroundImage;
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
-
-    // TODO: track reloading
-    // await dev.write("bun.png", imageFixtures.bun2);
-    // backgroundImage = await client.style("body").backgroundImage;
-    // assert(backgroundImage);
-    // await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
+    await dev.write("bun.png", imageFixtures.bun2);
+    backgroundImage = await client.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
   },
 });
-
-// TODO: revive these tests for server components. they fail because some assertion.
-// devTest("css file with syntax error does not kill old styles", {
-//   framework: minimalFramework,
-//   files: {
-//     "routes/styles.css": `
-//       body {
-//         color: red;
-//       }
-//     `,
-//     "routes/index.ts": `
-//       import { expect } from 'bun:test';
-//       import './styles.css';
-
-//       export default function (req, meta) {
-//         expect(meta.styles).toHaveLength(1);
-//         return new Response(meta.styles[0]);
-//       }
-//     `,
-//   },
-//   async test(dev) {
-//     let css_url = await dev.fetch("/").text();
-//     await dev.fetch(css_url).equalsNoSpaces("/*routes/styles.css*/body{color:red;}");
-//     await dev.write(
-//       "routes/styles.css",
-//       `
-//         body {
-//           color: red;
-//           background-color
-//         }
-//       `,
-//     );
-//     await dev.fetch(css_url).equalsNoSpaces("/*routes/styles.css*/body{color:red;}");
-//     await dev.fetch("/").equals(css_url);
-//     await dev.write(
-//       "routes/styles.css",
-//       `
-//         body {
-//           color: red;
-//           background-color: blue;
-//         }
-//       `,
-//     );
-//     await dev.fetch(css_url).equalsNoSpaces("/*routes/styles.css*/body{color:red;background-color:#00f;}");
-//     await dev.fetch("/").equals(css_url);
-//     await dev.write("routes/styles.css", ` `);
-//     await dev.fetch(css_url).equalsNoSpaces("/*routes/styles.css*/");
-//     await dev.fetch("/").equals(css_url);
-//   },
-// });
-// devTest("css file with initial syntax error gets recovered", {
-//   framework: minimalFramework,
-//   files: {
-//     "routes/styles.css": `
-//       body {
-//         color: red;
-//     `,
-//     "routes/index.ts": `
-//       import { expect } from 'bun:test';
-//       import './styles.css';
-//       export default function (req, meta) {
-//         const input = req.json();
-//         expect(meta.styles).toHaveLength(input.len);
-//         return new Response('' + meta.styles[0]);
-//       }
-//     `,
-//   },
-//   async test(dev) {
-//     await dev.fetchJSON("/", { len: 1 }).equals("undefined");
-//   },
-// });
-
-devTest("fuzz case 1", {
+devTest("syntax error crash", {
   files: {
     "styles.css": `
       body {
@@ -237,6 +204,132 @@ devTest("fuzz case 1", {
     // previously: panic(main thread): Asset double unref: 0000000000000000
     await dev.patch("styles.css", { find: "url\n", replace: "url(\n" });
     expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
+devTest("circular css imports handle hot reload", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["a.css"],
+    }),
+    "a.css": `
+      @import "./b.css";
+      .a { color: red; }
+    `,
+    "b.css": `
+      @import "./a.css";
+      .b { color: blue; }
+    `,
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.style(".a").color.expect.toBe("red");
+    await client.style(".b").color.expect.toBe("#00f");
+
+    // Modify one of the circular dependencies
+    await dev.write(
+      "a.css",
+      `
+        @import "./b.css";
+        .a { color: green; }
+      `,
+    );
+    await client.style(".a").color.expect.toBe("green");
+    await client.style(".b").color.expect.toBe("#00f");
+  },
+});
+devTest("multiple stylesheets importing same dependency", {
+  files: {
+    "first.html": emptyHtmlFile({
+      styles: ["first.css"],
+    }),
+    "second.html": emptyHtmlFile({
+      styles: ["first.css"],
+    }),
+    "first.css": `
+      @import "./shared.css";
+      .first { color: red; }
+    `,
+    "second.css": `
+      @import "./shared.css";
+      .second { color: blue; }
+    `,
+    "shared.css": `
+      .shared { color: green; }
+    `,
+  },
+  async test(dev) {
+    await using c1 = await dev.client("/first");
+    await using c2 = await dev.client("/second");
+    await c1.style(".first").color.expect.toBe("red");
+    await c2.style(".second").color.expect.toBe("blue");
+    await c1.style(".shared").color.expect.toBe("green");
+    await c2.style(".shared").color.expect.toBe("green");
+
+    await dev.write(
+      "shared.css",
+      `
+        .shared { color: yellow; }
+      `,
+    );
+
+    await c1.style(".shared").color.expect.toBe("yellow");
+    await c2.style(".shared").color.expect.toBe("yellow");
+  },
+});
+devTest("removing and re-adding css import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["main.css"],
+    }),
+    "main.css": `
+      @import "./colors.css";
+      .main { background: white; }
+    `,
+    "colors.css": `
+      .colored { color: blue; }
+    `,
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    await client.style(".colored").color.expect.toBe("#00f");
+
+    // Remove the import
+    await dev.write(
+      "main.css",
+      `
+        /* @import "./colors.css"; */
+        .main { background: white; }
+      `,
+    );
+    await client.style(".colored").notFound();
+
+    // A change to 'colors.css' should not trigger a rebuild of 'main.css', nor notify any clients.
+    await client.expectNoWebSocketActivity(async () => {
+      await dev.write(
+        "colors.css",
+        `
+          .colored { color: yellow; }
+        `,
+      );
+      await dev.write(
+        "colors.css",
+        `
+          .colored { color: blue; }
+        `,
+      );
+    });
+    await client.style(".colored").notFound();
+
+    // Re-add the import
+    await dev.write(
+      "main.css",
+      `
+        @import "./colors.css";
+        .main { background: white; }
+      `,
+    );
+    await client.style(".colored").color.expect.toBe("#00f");
+    await client.style(".main").backgroundColor.expect.toBe("white");
   },
 });
 

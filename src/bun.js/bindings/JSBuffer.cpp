@@ -1357,24 +1357,17 @@ static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t
 
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    int64_t finalresult = 0;
     if (thisLength == 1) return -1;
-    thisLength = thisLength / 2 * 2;
     if (valueLength == 1) return -1;
-    valueLength = valueLength / 2 * 2;
-    byteOffset = byteOffset / 2 * 2;
-    while (true) {
-        auto res = indexOf(thisPtr, thisLength, valuePtr, valueLength, byteOffset);
-        if (res == -1) return -1;
-        if (res % 2 == 1) {
-            thisPtr += res + 1;
-            thisLength -= res + 1;
-            finalresult += res + 1;
-            continue;
-        }
-        finalresult += res;
-        return finalresult;
-    }
+    thisLength = thisLength / 2;
+    valueLength = valueLength / 2;
+    byteOffset = byteOffset / 2;
+    auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), thisLength).subspan(byteOffset);
+    auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
+    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
+    if (it == haystack.end()) return -1;
+    auto idx = byteOffset + std::distance(haystack.begin(), it);
+    return idx * 2;
 }
 
 static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)

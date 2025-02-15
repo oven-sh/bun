@@ -106,7 +106,7 @@ pub fn embedBinaryData(allocator: Allocator, input_elf: []const u8, data_to_embe
 
     // If we expanded, we need to:
     // 1. Update section header for .bun
-    const output_sections = @as([*]elf.Elf64_Shdr, @alignCast(@ptrCast(output.ptr + elf_header.e_shoff)))[0..elf_header.e_shnum];
+    const output_sections = @as([*]elf.Elf64_Shdr, @alignCast(@ptrCast(output.ptr + elf_header.e_shoff + size_difference)))[0..elf_header.e_shnum];
 
     // 2. Copy remaining sections and adjust their offsets
     const current_offset = data_section.sh_offset + required_size;
@@ -119,8 +119,10 @@ pub fn embedBinaryData(allocator: Allocator, input_elf: []const u8, data_to_embe
     );
 
     // Find and update our section in the output buffer
+    const strtab_out = output_sections[elf_header.e_shstrndx];
+    const strtab_data_out = output[strtab_out.sh_offset+size_difference..][0..strtab_out.sh_size];
     for (output_sections) |*section| {
-        const name = mem.sliceTo(@as([*:0]const u8, @ptrCast(strtab_data.ptr + section.sh_name)), 0);
+        const name = mem.sliceTo(@as([*:0]const u8, @ptrCast(strtab_data_out.ptr + section.sh_name)), 0);
         if (mem.eql(u8, name, ".bun")) {
             section.sh_size = required_size;
             break;

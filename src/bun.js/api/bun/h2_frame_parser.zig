@@ -3229,7 +3229,11 @@ pub const H2FrameParser = struct {
                 // https://github.com/oven-sh/bun/issues/8940
                 var value_iter = js_value.arrayIterator(globalObject);
 
-                if (SingleValueHeaders.has(name) and value_iter.len > 1) {
+                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                    const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received {s}", .{name}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
+                if (SingleValueHeaders.has(validated_name) and value_iter.len > 1) {
                     const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER, "Header field \"{s}\" must only have a single value", .{name}, globalObject);
                     return globalObject.throwValue(exception);
                 }
@@ -3245,17 +3249,13 @@ pub const H2FrameParser = struct {
                         return globalObject.throwValue(exception);
                     };
 
-                    const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();
                     const value = value_slice.slice();
-                    log("encode header {s} {s}", .{ name, value });
+                    log("encode header {s} {s}", .{ validated_name, value });
 
-                    const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
-                        const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received {s}", .{name}, globalObject);
-                        return globalObject.throwValue(exception);
-                    };
                     encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                         stream.state = .CLOSED;
                         const identifier = stream.getIdentifier();
@@ -3271,17 +3271,17 @@ pub const H2FrameParser = struct {
                     const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                     return globalObject.throwValue(exception);
                 };
-
-                const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                    const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
+                const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
 
                 const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                 defer value_slice.deinit();
                 const value = value_slice.slice();
                 log("encode header {s} {s}", .{ name, value });
-                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
-                    const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
-                    return globalObject.throwValue(exception);
-                };
+
                 encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                     stream.state = .CLOSED;
                     const identifier = stream.getIdentifier();
@@ -3611,8 +3611,12 @@ pub const H2FrameParser = struct {
                     log("array header {s}", .{name});
                     // https://github.com/oven-sh/bun/issues/8940
                     var value_iter = js_value.arrayIterator(globalObject);
+                    const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                        const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                        return globalObject.throwValue(exception);
+                    };
 
-                    if (SingleValueHeaders.has(name) and value_iter.len > 1) {
+                    if (SingleValueHeaders.has(validated_name) and value_iter.len > 1) {
                         if (!globalObject.hasException()) {
                             return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Header field \"{s}\" must only have a single value", .{name}).throw();
                         }
@@ -3634,16 +3638,13 @@ pub const H2FrameParser = struct {
                             return .zero;
                         };
 
-                        const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
+                        const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
                         const value = value_slice.slice();
-                        log("encode header {s} {s}", .{ name, value });
-                        const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
-                            const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
-                            return globalObject.throwValue(exception);
-                        };
+                        log("encode header {s} {s}", .{ validated_name, value });
+
                         encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                             const stream = this.handleReceivedStreamID(stream_id) orelse {
                                 return JSC.JSValue.jsNumber(-1);
@@ -3665,17 +3666,17 @@ pub const H2FrameParser = struct {
                         }
                         return .zero;
                     };
-
-                    const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
-
-                    const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
-                    defer value_slice.deinit();
-                    const value = value_slice.slice();
-                    log("encode header {s} {s}", .{ name, value });
                     const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
                         const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
                         return globalObject.throwValue(exception);
                     };
+                    const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
+
+                    const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
+                    defer value_slice.deinit();
+                    const value = value_slice.slice();
+                    log("encode header {s} {s}", .{ validated_name, value });
+
                     encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                         const stream = this.handleReceivedStreamID(stream_id) orelse {
                             return JSC.JSValue.jsNumber(-1);

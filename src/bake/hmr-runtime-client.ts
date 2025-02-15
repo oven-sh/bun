@@ -104,14 +104,14 @@ const ws = initWebSocket(
           // Skip to the last route
           let nextRouteId = reader.i32();
           while (nextRouteId != null && nextRouteId !== -1) {
-            reader.string32();
-            reader.cursor += 16 * reader.u32();
+            reader.cursor += 16 * Math.max(0, reader.i32());
             nextRouteId = reader.i32();
           }
           break;
         } else {
           // Skip to the next route
-          reader.cursor += 16 * reader.u32();
+          const i = reader.i32();
+          reader.cursor += 16 * Math.max(0, i);
         }
       } while (true);
       // List 3

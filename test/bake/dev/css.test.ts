@@ -284,8 +284,8 @@ devTest("multiple stylesheets importing same dependency", {
       `,
     );
 
-    await c1.style(".shared").color.expect.toBe("yellow");
-    await c2.style(".shared").color.expect.toBe("yellow");
+    await c1.style(".shared").color.expect.toBe("#ff0");
+    await c2.style(".shared").color.expect.toBe("#ff0");
   },
 });
 devTest("removing and re-adding css import", {

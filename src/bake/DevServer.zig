@@ -1180,7 +1180,7 @@ fn checkRouteFailures(
 ) !enum { stop, ok, rebuild } {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var gts = try dev.initGraphTraceState(sfa);
+    var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
     defer dev.incremental_result.failures_added.clearRetainingCapacity();
     dev.graph_safety_lock.lock();
@@ -1371,7 +1371,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     // Prepare bitsets for tracing
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var gts = try dev.initGraphTraceState(sfa);
+    var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
     // Run tracing
     dev.client_graph.reset();
@@ -1670,7 +1670,7 @@ fn indexFailures(dev: *DevServer) !void {
 
         total_len += dev.incremental_result.failures_removed.items.len * @sizeOf(u32);
 
-        var gts = try dev.initGraphTraceState(sfa);
+        var gts = try dev.initGraphTraceState(sfa, 0);
         defer gts.deinit(sfa);
 
         var payload = try std.ArrayList(u8).initCapacity(sfa, total_len);
@@ -1743,7 +1743,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     // Prepare bitsets
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var gts = try dev.initGraphTraceState(sfa);
+    var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
 
     // Run tracing
@@ -1816,7 +1816,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM!JSC.J
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
 
     const sfa = sfa_state.get();
-    var gts = try dev.initGraphTraceState(sfa);
+    var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
 
     // Run tracing
@@ -2113,7 +2113,10 @@ pub fn finalizeBundle(
         chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
     }
 
-    var gts = try dev.initGraphTraceState(bv2.graph.allocator);
+    var gts = try dev.initGraphTraceState(
+        bv2.graph.allocator,
+        if (result.cssChunks().len > 0) bv2.graph.input_files.len else 0,
+    );
     defer gts.deinit(bv2.graph.allocator);
     ctx.gts = &gts;
     ctx.server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(bv2.graph.allocator, dev.server_graph.bundled_files.count());
@@ -4741,10 +4744,13 @@ const GraphTraceState = struct {
     }
 
     fn resize(gts: *GraphTraceState, side: bake.Side, allocator: Allocator, new_size: usize) !void {
-        try switch (side) {
-            .client => gts.client_bits.resize(allocator, new_size, false),
-            .server => gts.server_bits.resize(allocator, new_size, false),
+        const b = switch (side) {
+            .client => &gts.client_bits,
+            .server => &gts.server_bits,
         };
+        if (b.bit_length < new_size) {
+            try b.resize(allocator, new_size, false);
+        }
     }
 };
 
@@ -4754,10 +4760,13 @@ const TraceImportGoal = enum {
     find_errors,
 };
 
-fn initGraphTraceState(dev: *const DevServer, sfa: Allocator) !GraphTraceState {
+/// `extra_client_bits` is specified if it is possible that the client graph may
+/// increase in size while the bits are being used. This happens with CSS files,
+/// though [TODO] might not actually be necessary.
+fn initGraphTraceState(dev: *const DevServer, sfa: Allocator, extra_client_bits: usize) !GraphTraceState {
     var server_bits = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
     errdefer server_bits.deinit(sfa);
-    const client_bits = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.client_graph.bundled_files.count());
+    const client_bits = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.client_graph.bundled_files.count() + extra_client_bits);
     return .{ .server_bits = server_bits, .client_bits = client_bits };
 }
 

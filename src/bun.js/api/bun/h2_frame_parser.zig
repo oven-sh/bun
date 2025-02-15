@@ -3247,7 +3247,7 @@ pub const H2FrameParser = struct {
                     log("encode header {s} {s}", .{ name, value });
 
                     const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
-                        const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                        const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received {s}", .{name}, globalObject);
                         return globalObject.throwValue(exception);
                     };
                     encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {

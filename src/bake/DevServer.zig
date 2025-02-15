@@ -4288,6 +4288,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
                                 it = entry.next_dependency.unwrap();
                             }
+
+                            try entry_points.appendJs(alloc, path, .client);
                         },
                         // When re-bundling SCBs, only bundle the server. Otherwise
                         // the bundler gets confused and bundles both sides without

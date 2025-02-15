@@ -1482,7 +1482,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
 
     if (valueValue.isNumber()) {
-        uint8_t byteValue = valueValue.asAnyInt() % 256;
+        uint8_t byteValue = static_cast<uint8_t>((valueValue.toInt32(lexicalGlobalObject)) % 256);
         RETURN_IF_EXCEPTION(scope, -1);
         return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, byteValue);
     }

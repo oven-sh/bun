@@ -197,7 +197,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         uint32_t length = cell.value.typed_array.length;
         switch (type) {
         case JSC::JSType::Int32ArrayType: {
-            JSC::JSInt32Array* array = JSC::JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeInt32, false), length);
+            JSC::JSInt32Array* array = JSC::JSInt32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt32>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -209,7 +209,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Uint32ArrayType: {
-            JSC::JSUint32Array* array = JSC::JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeUint32, false), length);
+            JSC::JSUint32Array* array = JSC::JSUint32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint32>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -220,7 +220,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Int16ArrayType: {
-            JSC::JSInt16Array* array = JSC::JSInt16Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeInt16, false), length);
+            JSC::JSInt16Array* array = JSC::JSInt16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeInt16>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -232,7 +232,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Uint16ArrayType: {
-            JSC::JSUint16Array* array = JSC::JSUint16Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeUint16, false), length);
+            JSC::JSUint16Array* array = JSC::JSUint16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeUint16>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -243,7 +243,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Float16ArrayType: {
-            JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat16, false), length);
+            JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat16>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -254,7 +254,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Float32ArrayType: {
-            JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat32, false), length);
+            JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat32>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }
@@ -265,7 +265,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return array;
         }
         case JSC::JSType::Float64ArrayType: {
-            JSC::JSFloat64Array* array = JSC::JSFloat64Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat64, false), length);
+            JSC::JSFloat64Array* array = JSC::JSFloat64Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypedArrayType::TypeFloat64>(), length);
             if (UNLIKELY(array == nullptr)) {
                 return {};
             }

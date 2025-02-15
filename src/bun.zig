@@ -102,7 +102,7 @@ pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
-pub const C = @import("root").C;
+pub const C = @import("c.zig");
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
@@ -138,11 +138,7 @@ pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
-pub const shell = struct {
-    pub usingnamespace @import("./shell/shell.zig");
-    pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
-    // pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
-};
+pub const shell = @import("./shell/shell.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
@@ -728,7 +724,11 @@ pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
-pub usingnamespace @import("./tagged_pointer.zig");
+const tagged_pointer = @import("./tagged_pointer.zig");
+pub const TagTypeEnumWithTypeMap = tagged_pointer.TagTypeEnumWithTypeMap;
+pub const TaggedPointer = tagged_pointer.TaggedPointer;
+pub const TaggedPointerUnion = tagged_pointer.TaggedPointerUnion;
+pub const TypeMap = tagged_pointer.TypeMap;
 
 pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
@@ -789,8 +789,7 @@ pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("root").JavaScriptCore;
-pub const AsyncIO = @import("async_io");
+pub const JSC = @import("jsc.zig");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
@@ -1464,7 +1463,7 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     @panic("TODO unsupported platform for getFdPathW");
 }
 
-fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
+fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
     switch (@typeInfo(@TypeOf(ptr))) {
         .pointer => |ptr_info| switch (ptr_info.size) {
             .one => switch (@typeInfo(ptr_info.child)) {
@@ -1508,7 +1507,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
 }
 
 /// Helper for the return type of sliceTo()
-fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
+fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
     switch (@typeInfo(T)) {
         .optional => |optional_info| {
             return ?SliceTo(optional_info.child, end);
@@ -1568,7 +1567,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
 /// resulting slice is also sentinel terminated.
 /// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
-pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
+pub fn sliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
     if (@typeInfo(@TypeOf(ptr)) == .optional) {
         const non_null = ptr orelse return null;
         return sliceTo(non_null, end);
@@ -1582,18 +1581,6 @@ pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@Typ
     } else {
         return ptr[0..length];
     }
-}
-
-pub fn cstring(input: []const u8) [:0]const u8 {
-    if (input.len == 0)
-        return "";
-
-    if (comptime Environment.allow_assert) {
-        assert(
-            input.ptr[input.len] == 0,
-        );
-    }
-    return @as([*:0]const u8, @ptrCast(input.ptr))[0..input.len :0];
 }
 
 pub const Semver = @import("./semver.zig");
@@ -3597,7 +3584,7 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
     }
     if (!Environment.allow_assert) return;
     if (a != b) {
-        Output.panic("Assertion failure: {} != {}", .{ a, b });
+        Output.panic("Assertion failure: {any} != {any}", .{ a, b });
     }
 }
 
@@ -3855,19 +3842,15 @@ pub fn OrdinalT(comptime Int: type) type {
 pub const Ordinal = OrdinalT(c_int);
 
 pub fn memmove(output: []u8, input: []const u8) void {
-    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
-    if (comptime Environment.allow_assert) {
-        assert(output.len >= input.len and output.len > 0);
+    if (output.len == 0) {
+        return;
     }
 
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len);
+    }
 
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
+    if (Environment.isNative and !@inComptime()) {
         C.memmove(output.ptr, input.ptr, input.len);
     } else {
         for (input, output) |input_byte, *out| {
@@ -4042,7 +4025,8 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
         }
 
         pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            comptime bun.assert(strings.eql(f, "d"));
+            comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
+                @compileError("Invalid format specifier: " ++ f);
             try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 

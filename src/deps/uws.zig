@@ -4578,13 +4578,11 @@ pub const udp = struct {
     extern fn us_udp_socket_set_source_specific_membership(socket: ?*udp.Socket, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: c_int) c_int;
 
     pub const PacketBuffer = opaque {
-        const This = @This();
-
-        pub fn getPeer(this: *This, index: c_int) *std.posix.sockaddr.storage {
+        pub fn getPeer(this: *PacketBuffer, index: c_int) *std.posix.sockaddr.storage {
             return us_udp_packet_buffer_peer(this, index);
         }
 
-        pub fn getPayload(this: *This, index: c_int) []u8 {
+        pub fn getPayload(this: *PacketBuffer, index: c_int) []u8 {
             const payload = us_udp_packet_buffer_payload(this, index);
             const len = us_udp_packet_buffer_payload_length(this, index);
             return payload[0..@as(usize, @intCast(len))];
@@ -4604,3 +4602,7 @@ pub fn onThreadExit() void {
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
 
 pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;
+
+export fn BUN__warn__extra_ca_load_failed(filename: [*c]const u8, error_msg: [*c]const u8) void {
+    bun.Output.warn("ignoring extra certs from {s}, load failed: {s}", .{ filename, error_msg });
+}

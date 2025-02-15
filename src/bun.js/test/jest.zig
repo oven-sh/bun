@@ -1948,10 +1948,8 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     args_idx += 1;
                 },
                 'p' => {
-                    var formatter = JSC.ConsoleObject.Formatter{
-                        .globalThis = globalThis,
-                        .quote_strings = true,
-                    };
+                    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                    defer formatter.deinit();
                     const value_fmt = current_arg.toFmt(&formatter);
                     const test_index_str = std.fmt.allocPrint(allocator, "{}", .{value_fmt}) catch bun.outOfMemory();
                     defer allocator.free(test_index_str);

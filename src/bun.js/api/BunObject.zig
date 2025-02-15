@@ -500,7 +500,6 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     if (arguments.len > 1) {
         try formatOptions.fromJS(globalThis, arguments[1..]);
     }
-    const value = arguments[0];
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
@@ -509,13 +508,13 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     var buffered_writer = &buffered_writer_;
 
     const writer = buffered_writer.writer();
-    const Writer = @TypeOf(writer);
+    const Writer = MutableString.BufferedWriter.Writer;
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     try ConsoleObject.format2(
         .Debug,
         globalThis,
-        @as([*]const JSValue, @ptrCast(&value)),
+        arguments.ptr,
         1,
         Writer,
         Writer,
@@ -533,17 +532,38 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     return ret;
 }
 
-export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString {
+export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
     var buffered_writer = MutableString.BufferedWriter{ .context = &array };
     const writer = buffered_writer.writer();
 
     var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
-    writer.print("{}", .{value.toFmt(&formatter)}) catch return ZigString.Empty;
-    buffered_writer.flush() catch return ZigString.Empty;
+    defer formatter.deinit();
+    writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
+    buffered_writer.flush() catch return .empty;
+    return bun.String.createUTF8(array.slice());
+}
 
-    return ZigString.init(array.slice()).withEncoding();
+export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+    const Writer = MutableString.BufferedWriter.Writer;
+    ConsoleObject.format2(.Debug, globalThis, (&value)[0..1].ptr, 1, Writer, Writer, writer, .{
+        .enable_colors = false,
+        .add_newline = false,
+        .flush = false,
+        .max_depth = std.math.maxInt(u16),
+        .quote_strings = true,
+        .ordered_properties = false,
+        .single_line = true,
+    }) catch return .empty;
+    if (globalThis.hasException()) return .empty;
+    buffered_writer.flush() catch return .empty;
+    return bun.String.createUTF8(array.slice());
 }
 
 pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
@@ -3104,7 +3124,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
     switch (config.ssl_config != null) {
         inline else => |has_ssl_config| {
-            switch (config.development) {
+            switch (config.isDevelopment()) {
                 inline else => |development| {
                     const ServerType = comptime switch (development) {
                         true => switch (has_ssl_config) {

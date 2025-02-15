@@ -19,8 +19,6 @@ pub const UserOptions = struct {
     framework: Framework,
     bundler_options: SplitBundlerOptions,
 
-    frontend_only: bool = false,
-
     pub fn deinit(options: *UserOptions) void {
         options.arena.deinit();
         options.allocations.free();
@@ -69,7 +67,7 @@ pub const UserOptions = struct {
         return .{
             .arena = arena,
             .allocations = allocations,
-            .root = root,
+            .root = try alloc.dupeZ(u8, root),
             .framework = framework,
             .bundler_options = bundler_options,
         };
@@ -82,9 +80,9 @@ pub const StringRefList = struct {
 
     pub const empty: StringRefList = .{ .strings = .{} };
 
-    pub fn track(al: *StringRefList, str: ZigString.Slice) [:0]const u8 {
+    pub fn track(al: *StringRefList, str: ZigString.Slice) []const u8 {
         al.strings.append(bun.default_allocator, str) catch bun.outOfMemory();
-        return str.sliceZ();
+        return str.slice();
     }
 
     pub fn free(al: *StringRefList) void {
@@ -156,7 +154,8 @@ const BuildConfigSubset = struct {
     ignoreDCEAnnotations: ?bool = null,
     conditions: bun.StringArrayHashMapUnmanaged(void) = .{},
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
-    // TODO: plugins
+    env: bun.Schema.Api.DotEnvBehavior = ._none,
+    env_prefix: ?[]const u8 = null,
 
     pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
         _ = config; // autofix
@@ -226,16 +225,26 @@ pub const Framework = struct {
     /// - If `react-refresh` is installed, enable react fast refresh with it.
     ///     - Otherwise, if `react` is installed, use a bundled copy of
     ///     react-refresh so that it still works.
+    /// - If any file system router types are provided, configure using
+    ///   the above react configuration.
     /// The provided allocator is not stored.
-    pub fn auto(arena: std.mem.Allocator, resolver: *bun.resolver.Resolver) !Framework {
+    pub fn auto(
+        arena: std.mem.Allocator,
+        resolver: *bun.resolver.Resolver,
+        file_system_router_types: []FileSystemRouterType,
+    ) !Framework {
         var fw: Framework = Framework.none;
+
+        if (file_system_router_types.len > 0) {
+            fw = try react(arena);
+            arena.free(fw.file_system_router_types);
+            fw.file_system_router_types = file_system_router_types;
+        }
 
         if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
             fw.react_fast_refresh = .{ .import_source = rfr };
         } else if (resolveOrNull(resolver, "react")) |_| {
-            fw.react_fast_refresh = .{
-                .import_source = "react-refresh/runtime/index.js",
-            };
+            fw.react_fast_refresh = .{ .import_source = "react-refresh/runtime/index.js" };
             try fw.built_in_modules.put(
                 arena,
                 "react-refresh/runtime/index.js",
@@ -255,7 +264,7 @@ pub const Framework = struct {
         .file_system_router_types = &.{},
         .server_components = null,
         .react_fast_refresh = null,
-        .built_in_modules = .{},
+        .built_in_modules = .empty,
     };
 
     pub const FileSystemRouterType = struct {
@@ -288,7 +297,7 @@ pub const Framework = struct {
         import_source: []const u8 = "react-refresh/runtime",
     };
 
-    pub const react_install_command = "bun i react@experimental react-dom@experimental react-refresh@experimental react-server-dom-bun";
+    pub const react_install_command = "bun i react@experimental react-dom@experimental react-server-dom-bun";
 
     pub fn addReactInstallCommandNote(log: *bun.logger.Log) !void {
         try log.addMsg(.{
@@ -583,13 +592,14 @@ pub const Framework = struct {
         return framework;
     }
 
-    pub fn initBundler(
+    pub fn initTranspiler(
         framework: *Framework,
         allocator: std.mem.Allocator,
         log: *bun.logger.Log,
         mode: Mode,
-        comptime renderer: Graph,
+        renderer: Graph,
         out: *bun.transpiler.Transpiler,
+        bundler_options: *const BuildConfigSubset,
     ) !void {
         out.* = try bun.Transpiler.init(
             allocator, // TODO: this is likely a memory leak
@@ -648,6 +658,11 @@ pub const Framework = struct {
             // TODO: follow user configuration
             else => .none,
         };
+        if (bundler_options.env != ._none) {
+            out.options.env.behavior = bundler_options.env;
+            out.options.env.prefix = bundler_options.env_prefix orelse "";
+        }
+        out.resolver.opts = out.options;
 
         out.configureLinker();
         try out.configureDefines();

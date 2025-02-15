@@ -1,4 +1,4 @@
-// Bundle tests are tests concerning bundling bugs that only occur in DevServer.
+// ESM tests are about various esm features in development mode.
 import { devTest, minimalFramework } from "../dev-server-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
@@ -19,15 +19,15 @@ const liveBindingTest = devTest("live bindings with `var`", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect("State: 1");
-    await dev.fetch("/").expect("State: 2");
-    await dev.fetch("/").expect("State: 3");
+    await dev.fetch("/").equals("State: 1");
+    await dev.fetch("/").equals("State: 2");
+    await dev.fetch("/").equals("State: 3");
     await dev.patch("routes/index.ts", {
       find: "State",
       replace: "Value",
     });
-    await dev.fetch("/").expect("Value: 4");
-    await dev.fetch("/").expect("Value: 5");
+    await dev.fetch("/").equals("Value: 4");
+    await dev.fetch("/").equals("Value: 5");
     await dev.write(
       "state.ts",
       `
@@ -37,8 +37,8 @@ const liveBindingTest = devTest("live bindings with `var`", {
         }
       `,
     );
-    await dev.fetch("/").expect("Value: -1");
-    await dev.fetch("/").expect("Value: -2");
+    await dev.fetch("/").equals("Value: -1");
+    await dev.fetch("/").equals("Value: -2");
   },
 });
 devTest("live bindings through export clause", {
@@ -128,13 +128,13 @@ devTest("export { x as y }", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect("Value: 2");
+    await dev.fetch("/").equals("Value: 2");
     await dev.patch("module.ts", {
       find: "1",
       replace: "2",
     });
-    await dev.fetch("/").expect("Value: 3");
-  }
+    await dev.fetch("/").equals("Value: 3");
+  },
 });
 devTest("import { x as y }", {
   framework: minimalFramework,
@@ -150,13 +150,13 @@ devTest("import { x as y }", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect("Value: 1");
+    await dev.fetch("/").equals("Value: 1");
     await dev.patch("module.ts", {
       find: "1",
       replace: "2",
     });
-    await dev.fetch("/").expect("Value: 2");
-  }
+    await dev.fetch("/").equals("Value: 2");
+  },
 });
 devTest("import { default as y }", {
   framework: minimalFramework,
@@ -172,13 +172,13 @@ devTest("import { default as y }", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect("Value: 1");
+    await dev.fetch("/").equals("Value: 1");
     await dev.patch("module.ts", {
       find: "1",
       replace: "2",
     });
-    await dev.fetch("/").expect("Value: 2");
-  }
+    await dev.fetch("/").equals("Value: 2");
+  },
 });
 devTest("export { default as y }", {
   framework: minimalFramework,
@@ -197,11 +197,11 @@ devTest("export { default as y }", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect("Value: 1");
+    await dev.fetch("/").equals("Value: 1");
     await dev.patch("module.ts", {
       find: "1",
       replace: "2",
     });
-    await dev.fetch("/").expect("Value: 2");
-  }
+    await dev.fetch("/").equals("Value: 2");
+  },
 });

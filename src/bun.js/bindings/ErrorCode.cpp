@@ -202,8 +202,8 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message, isDOMExceptionPrototype);
 }
 
-// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString
-extern "C" ZigString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
+// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String
+extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
 
 //
 WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
@@ -247,9 +247,7 @@ WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
     }
     }
 
-    ZigString zstring = Bun__inspect(globalObject, arg);
-    BunString bstring(BunStringTag::ZigString, BunStringImpl(zstring));
-    return bstring.toWTFString();
+    return Bun__inspect(globalObject, arg).transferToWTFString();
 }
 
 WTF::String determineSpecificType(JSC::JSGlobalObject* globalObject, JSValue value)
@@ -930,8 +928,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                 RETURN_IF_EXCEPTION(scope, {});
                 result.append(str);
                 result.append("\""_s);
-                if (i != argumentCount - 1) result.append(","_s);
-                result.append(" "_s);
+                if (i != argumentCount - 1) result.append(',');
+                result.append(' ');
             }
             result.append("arguments must be specified"_s);
             return JSC::JSValue::encode(createError(globalObject, error, result.toString()));

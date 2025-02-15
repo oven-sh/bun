@@ -1,3 +1,7 @@
+// This is an implementation of an ES module loader with hot-module reloading support.
+//
+// TODO: solve a major design flaw where circular dependencies initialize stuff
+// wrong, as well as the over-aggressive use of async functions.
 import * as runtimeHelpers from "../runtime.bun.js";
 
 let refreshRuntime: any;
@@ -15,6 +19,7 @@ export const enum State {
   Loading,
   Ready,
   Error,
+  Replacing,
 }
 
 // negative = sync, positive = async
@@ -66,18 +71,27 @@ export class HotModule<E = any> {
       ? exports
       : (mod._ext_exports ??= { ...(typeof exports === "object" && exports), default: exports });
 
-    if (expectedImports && mod._state === State.Ready) {
-      // for (const key of expectedImports) {
-      //   if (!(key in object)) {
-      //     throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
-      //   }
-      // }
-    }
+    // if (expectedImports && mod._state === State.Ready) {
+    //   for (const key of expectedImports) {
+    //     if (!(key in object)) {
+    //       throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+    //     }
+    //   }
+    // }
     return object;
   }
 
   /// Equivalent to `import()` in ES modules
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
+    if (!registry.has(specifier) && !input_graph[specifier]) {
+      try {
+        return await import(specifier, opts);
+      } catch (err) {
+        // fall through to loadModule, which will throw a more specific error.
+        // but still show this one.
+        console.error(err);
+      }
+    }
     const mod = await (loadModule(specifier, LoadModuleType.AsyncUserDynamic) as Promise<HotModule>);
     // insert into the map if not present
     mod._deps.set(this, mod._deps.get(this));
@@ -191,15 +205,19 @@ function isUnsupportedViteEventName(str: string) {
  * Load a module by ID. Use `type` to specify if the module is supposed to be
  * present, or is something a user is able to dynamically specify.
  */
-export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> | Promise<HotModule<T>> {
+export function loadModule<T = any>(
+  key: Id,
+  type: LoadModuleType,
+  opts?: ImportCallOptions,
+): HotModule<T> | Promise<HotModule<T>> {
   let mod = registry.get(key);
   if (mod) {
     // Preserve failures until they are re-saved.
     if (mod._state == State.Error) throw mod._cached_failure;
-
-    return mod;
+    if (mod._state != State.Replacing) return mod;
+  } else {
+    mod = new HotModule(key);
   }
-  mod = new HotModule(key);
   const load = input_graph[key];
   if (type < 0 && isAsyncFunction(load)) {
     // TODO: This is possible to implement, but requires some care.
@@ -212,7 +230,7 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
       );
     } else {
       throw new Error(
-        `Failed to resolve dynamic import '${key}'. In Bun Bake, all imports must be statically known at compile time so that the bundler can trace everything.`,
+        `Failed to resolve dynamic import '${key}'. With Bun's DevServer, all imports must be statically known at build time so that the bundler can trace everything.`,
       );
     }
   }
@@ -261,9 +279,8 @@ export const getModule = registry.get.bind(registry);
 
 export function replaceModule(key: Id, load: ModuleLoadFunction): Promise<void> | void {
   const module = registry.get(key);
-  if (module) {
+  if (module && module._state == State.Replacing) {
     module._onDispose?.forEach(cb => cb(null));
-    module.exports = {};
     const promise = load(module) as Promise<void> | undefined;
     if (promise) {
       return promise.then(() => {
@@ -281,8 +298,23 @@ export function replaceModule(key: Id, load: ModuleLoadFunction): Promise<void> 
 }
 
 export async function replaceModules(modules: any) {
+  let needsHardReload = false;
   for (const k in modules) {
     input_graph[k] = modules[k];
+    const mod = registry.get(k);
+    if (mod) {
+      mod._onDispose?.forEach(cb => cb(null));
+      mod._state = State.Replacing;
+      mod.exports = {};
+      mod._ext_exports = undefined;
+      if (side === "client" && !config.refresh && !needsHardReload) {
+        // TODO: import meta hot
+        needsHardReload = true;
+        console.info("[Bun] Reloading because there was not an `import.meta.hot.accept` boundary");
+        location.reload();
+        return;
+      }
+    }
   }
   const promises: Promise<void>[] = [];
   for (const k in modules) {
@@ -297,10 +329,16 @@ export async function replaceModules(modules: any) {
     }
   }
   if (promises.length) {
-    await Promise.all(promises);
+    try {
+      await Promise.all(promises);
+    } catch (err) {
+      console.error(err);
+    }
   }
-  if (side === "client" && refreshRuntime) {
-    refreshRuntime.performReactRefresh(window);
+  if (side === "client") {
+    if (refreshRuntime) {
+      refreshRuntime.performReactRefresh(window);
+    }
   }
 }
 

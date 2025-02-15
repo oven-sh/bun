@@ -7,6 +7,7 @@
 #include "ZigGeneratedClasses.h"
 #include "AsyncContextFrame.h"
 #include "ServerRouteList.h"
+#include "decodeURIComponentSIMD.h"
 namespace Bun {
 using namespace JSC;
 using namespace WebCore;
@@ -304,14 +305,16 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
     for (size_t i = 0; i < identifierCount; i++) {
         auto param = req->getParameter(static_cast<unsigned short>(i));
         if (!param.empty()) {
-            std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
-            args.append(jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(paramBytes)));
+            const std::span<const uint8_t> paramBytes(reinterpret_cast<const uint8_t*>(param.data()), param.size());
+            args.append(jsString(vm, decodeURIComponentSIMD(paramBytes)));
         } else {
             args.append(jsEmptyString(vm));
         }
     }
 
-    auto* structure = structureForParamsObject(vm, globalObject, index, std::span<const Identifier>(m_pathIdentifiers.subspan(offset, identifierCount)));
+    const std::span<const Identifier> identifiers = m_pathIdentifiers.subspan(offset, identifierCount);
+
+    auto* structure = structureForParamsObject(vm, globalObject, index, identifiers);
     JSObject* object = constructEmptyObject(vm, structure);
 
     if (identifierCount < JSC::JSFinalObject::maxInlineCapacity) {
@@ -320,7 +323,7 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
         }
     } else {
         for (size_t i = 0; i < identifierCount; i++) {
-            object->putDirect(vm, m_pathIdentifiers.at(offset + i), args.at(i));
+            object->putDirect(vm, identifiers[i], args.at(i));
         }
     }
 
@@ -419,7 +422,7 @@ extern "C" EncodedJSValue Bun__getParamsIfBunRequest(JSC::EncodedJSValue thisVal
             return JSValue::encode(jsUndefined());
         }
 
-        return JSValue::encode(request->params());
+        return JSValue::encode(params);
     }
 
     return JSValue::encode({});

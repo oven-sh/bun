@@ -465,64 +465,157 @@ declare module "bun" {
     | UnixWebSocketServeOptions<WebSocketDataType>
     | UnixTLSWebSocketServeOptions<WebSocketDataType>;
 
-  /**
-   * Start a fast HTTP server.
-   *
-   * @param options Server options (port defaults to $PORT || 3000)
-   *
-   * -----
-   *
-   * @example
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response("Hello World!");
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   * -----
-   *
-   * @example
-   *
-   * Send a file
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response(Bun.file("./package.json"));
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   */
-  // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
+  /***Creates an HTTP server with routing capabilities.
+    
+  @example
+  ```ts
+  Bun.serve({
+    port: 3000,
+    fetch(req) {
+      return new Response("Hello World");
+    }
+  });
+  ```
+
+    @example Route-based Handlers
+        Bun.serve({
+          routes: {
+            // Static responses
+            "/": new Response("Home page"),
+            
+            // Function handlers with type-safe parameters
+            "/users/:id": (req) => {
+              // req.params.id is typed as string
+              return new Response(`User ${req.params.id}`);
+            },
+            
+            // Method-specific handlers
+            "/api/posts": {
+              GET: () => new Response("Get posts"),
+              POST: async (req) => {
+                const body = await req.json();
+                return new Response("Created post");
+              },
+              DELETE: (req) => new Response("Deleted post")
+            },
+            
+            // Wildcard routes
+            "/static/*": (req) => {
+              // Handle any path under /static/
+              return new Response("Static file");
+            },
+            
+            // Disable route (fall through to fetch handler)
+            "/api/legacy": false
+          },
+          
+          // Fallback handler for unmatched routes
+          fetch(req) {
+            return new Response("Not Found", { status: 404 });
+          }
+        });
+
+    @example Path Parameters
+        Bun.serve({
+          routes: {
+            // Single parameter
+            "/users/:id": (req: BunRequest<"/users/:id">) => {
+              return new Response(`User ID: ${req.params.id}`);
+            },
+            
+            // Multiple parameters
+            "/posts/:postId/comments/:commentId": (
+              req: BunRequest<"/posts/:postId/comments/:commentId">
+            ) => {
+              return new Response(JSON.stringify(req.params));
+              // Output: {"postId": "123", "commentId": "456"}
+            }
+          }
+        });
+
+    @example Route Precedence
+        // Routes are matched in the following order:
+        // 1. Exact static routes ("/about")
+        // 2. Parameter routes ("/users/:id") 
+        // 3. Wildcard routes ("/api/*")
+        
+        Bun.serve({
+          routes: {
+            "/api/users": () => new Response("Users list"),
+            "/api/users/:id": (req) => new Response(`User ${req.params.id}`),
+            "/api/*": () => new Response("API catchall"),
+            "/*": () => new Response("Root catchall")
+          }
+        });
+
+    @example Error Handling
+        Bun.serve({
+          routes: {
+            "/error": () => {
+              throw new Error("Something went wrong");
+            }
+          },
+          error(error) {
+            // Custom error handler
+            console.error(error);
+            return new Response(`Error: ${error.message}`, { 
+              status: 500 
+            });
+          }
+        });
+
+    @example Server Lifecycle
+        const server = Bun.serve({
+          // Server config...
+        });
+        
+        // Update routes at runtime
+        server.reload({
+          routes: {
+            "/": () => new Response("Updated route")
+          }
+        });
+        
+        // Stop the server
+        server.stop();
+
+    @example Development Mode
+        Bun.serve({
+          development: true, // Enable hot reloading
+          routes: {
+            // Routes will auto-reload on changes
+          }
+        });
+
+    @example Type-Safe Request Handling
+        type Post = {
+          id: string;
+          title: string;
+        };
+        
+        Bun.serve({
+          routes: {
+            "/api/posts/:id": async (
+              req: BunRequest<"/api/posts/:id">
+            ) => {
+              if (req.method === "POST") {
+                const body: Post = await req.json();
+                return Response.json(body);
+              }
+              return new Response("Method not allowed", { 
+                status: 405 
+              });
+            }
+          }
+        });
+  */
   function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
     options: Serve<T> & {
-      /**
-       * Server Response objects by route.
-       *
-       * @example
-       * ```ts
-       * Bun.serve({
-       *   static: {
-       *     "/": new Response("Hello World"),
-       *     "/about": new Response("About"),
-       *   },
-       *   fetch(req) {
-       *     return new Response("Fallback response");
-       *   },
-       * });
-       * ```
-       *
-       * @experimental
-       */
       routes?: R;
+      /**
+       * Static will eventually be deprecated. Use {@link routes} instead in new code.
+       */
+      static?: R;
     },
   ): Server;
 

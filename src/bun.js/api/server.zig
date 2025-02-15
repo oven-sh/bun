@@ -365,6 +365,8 @@ pub const ServerConfig = struct {
     allow_hot: bool = true,
     ipv6_only: bool = false,
 
+    had_routes_object: bool = false,
+
     static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
     negative_routes: std.ArrayList([:0]const u8) = std.ArrayList([:0]const u8).init(bun.default_allocator),
     user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteBuilder).init(bun.default_allocator),
@@ -1268,10 +1270,11 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if ((try arg.get(global, "static")) orelse (try arg.get(global, "routes"))) |static| {
+            if ((try arg.get(global, "routes")) orelse (try arg.get(global, "static"))) |static| {
                 if (!static.isObject()) {
                     return global.throwInvalidArguments("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
                 }
+                args.had_routes_object = true;
 
                 var iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
@@ -6311,6 +6314,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         dev_server: ?*bun.bake.DevServer,
 
+        /// These associate a route to the index in RouteList.cpp.
         /// User routes may get applied multiple times due to SNI.
         /// So we have to store it.
         user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
@@ -6691,8 +6695,20 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.config.negative_routes.clearAndFree();
             this.config.negative_routes = new_config.negative_routes;
 
+            if (new_config.had_routes_object) {
+                for (this.config.user_routes_to_build.items) |*route| {
+                    route.deinit();
+                }
+                this.config.user_routes_to_build.clearAndFree();
+                this.config.user_routes_to_build = new_config.user_routes_to_build;
+                for (this.user_routes.items) |*route| {
+                    route.deinit();
+                }
+                this.user_routes.clearAndFree(bun.default_allocator);
+            }
+
             const route_list_value = this.setRoutes();
-            if (route_list_value != .zero) {
+            if (new_config.had_routes_object) {
                 NamespaceType.routeListSetCached(this.thisObject, this.globalThis, route_list_value);
             }
         }

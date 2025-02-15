@@ -502,7 +502,29 @@ declare module "bun" {
    * ```
    */
   // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
-  function serve<T>(options: Serve<T>): Server;
+  function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+    options: Serve<T> & {
+      /**
+       * Server Response objects by route.
+       *
+       * @example
+       * ```ts
+       * Bun.serve({
+       *   static: {
+       *     "/": new Response("Hello World"),
+       *     "/about": new Response("About"),
+       *   },
+       *   fetch(req) {
+       *     return new Response("Fallback response");
+       *   },
+       * });
+       * ```
+       *
+       * @experimental
+       */
+      routes?: R;
+    },
+  ): Server;
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -3685,28 +3707,29 @@ declare module "bun" {
         };
   }
 
-  type ExtractParams<T extends string> = T extends `${string}:${infer Param}/${infer Rest}`
-    ? { [K in Param]: string } & ExtractParams<Rest>
-    : T extends `${string}:${infer Param}`
-      ? { [K in Param]: string }
-      : {};
+  namespace RouterTypes {
+    type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
+      ? { [K in Param]: string } & ExtractRouteParams<Rest>
+      : T extends `${string}:${infer Param}`
+        ? { [K in Param]: string }
+        : T extends `${string}*`
+          ? {}
+          : {};
 
-  interface BunRequest<T extends string = string> extends Request {
-    params: ExtractParams<T>;
+    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
+
+    type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+
+    type RouteHandlerObject<T extends string> = {
+      [K in HTTPMethod]?: RouteHandler<T>;
+    };
+
+    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
   }
 
-  type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
-
-  type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
-
-  type RouteHandlerObject<T extends string> = Partial<Record<HTTPMethod, RouteHandler<T>>> &
-    { [K in HTTPMethod]: RouteHandler<T> }[HTTPMethod] extends never
-    ? never
-    : Partial<Record<HTTPMethod, RouteHandler<T>>>;
-
-  type RouteValue<T extends string> = Response | HTMLBundle | false | RouteHandler<T> | RouteHandlerObject<T>;
-
-  type RoutePath = `/${string}` | `/${string}/*`;
+  interface BunRequest<T extends string = string> extends Request {
+    params: RouterTypes.ExtractRouteParams<T>;
+  }
 
   interface GenericServeOptions {
     /**
@@ -3769,34 +3792,6 @@ declare module "bun" {
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */
     id?: string | null;
-
-    /**
-     * Server Response objects by route.
-     *
-     * @example
-     * ```ts
-     * Bun.serve({
-     *   static: {
-     *     "/": new Response("Hello World"),
-     *     "/about": new Response("About"),
-     *   },
-     *   fetch(req) {
-     *     return new Response("Fallback response");
-     *   },
-     * });
-     * ```
-     *
-     * @experimental
-     */
-    routes?: {
-      [P in RoutePath]?: RouteValue<P>;
-    };
-    /**
-     * Alias of {@link routes}
-     */
-    static?: {
-      [P in RoutePath]?: RouteValue<P>;
-    };
   }
 
   interface ServeOptions extends GenericServeOptions {

@@ -3493,6 +3493,27 @@ pub fn NewApp(comptime ssl: bool) type {
         ) void {
             uws_app_trace(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
+        pub fn method(
+            app: *ThisApp,
+            method_: bun.http.Method,
+            pattern: [:0]const u8,
+            comptime UserDataType: type,
+            user_data: UserDataType,
+            comptime handler: (fn (UserDataType, *Request, *Response) void),
+        ) void {
+            switch (method_) {
+                .GET => app.get(pattern, UserDataType, user_data, handler),
+                .POST => app.post(pattern, UserDataType, user_data, handler),
+                .PUT => app.put(pattern, UserDataType, user_data, handler),
+                .DELETE => app.delete(pattern, UserDataType, user_data, handler),
+                .PATCH => app.patch(pattern, UserDataType, user_data, handler),
+                .OPTIONS => app.options(pattern, UserDataType, user_data, handler),
+                .HEAD => app.head(pattern, UserDataType, user_data, handler),
+                .CONNECT => app.connect(pattern, UserDataType, user_data, handler),
+                .TRACE => app.trace(pattern, UserDataType, user_data, handler),
+                else => @panic("TODO: implement other methods"),
+            }
+        }
         pub fn any(
             app: *ThisApp,
             pattern: []const u8,

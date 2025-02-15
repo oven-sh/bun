@@ -602,6 +602,9 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
+    LazyProperty<JSGlobalObject, Structure> m_ServerRouteListStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSBunRequestStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_JSBunRequestParamsPrototype;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 

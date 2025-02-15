@@ -51,12 +51,12 @@
 #include "PerformanceUserTiming.h"
 // #include "ResourceResponse.h"
 #include "ScriptExecutionContext.h"
-#include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(Performance);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Performance);
 
 constexpr Seconds highTimePrecision { 20_us };
 static Seconds timePrecision { 1_ms };

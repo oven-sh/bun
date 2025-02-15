@@ -37,7 +37,7 @@
 namespace WebCore {
 
 class CloseEvent final : public Event {
-    WTF_MAKE_ISO_ALLOCATED(CloseEvent);
+    WTF_MAKE_TZONE_ALLOCATED(CloseEvent);
 
 public:
     static Ref<CloseEvent> create(bool wasClean, unsigned short code, const String& reason)

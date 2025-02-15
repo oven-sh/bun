@@ -653,7 +653,7 @@ pub const ZigString = extern struct {
         }
 
         pub fn sliceZ(this: Slice) [:0]const u8 {
-            return bun.cstring(this.ptr[0..this.len]);
+            return this.ptr[0..this.len :0];
         }
 
         pub fn toSliceZ(this: Slice, buf: []u8) [:0]const u8 {
@@ -671,7 +671,7 @@ pub const ZigString = extern struct {
 
             bun.copy(u8, buf, this.slice());
             buf[this.len] = 0;
-            return bun.cstring(buf[0..this.len]);
+            return buf[0..this.len :0];
         }
 
         pub fn mut(this: Slice) []u8 {
@@ -1314,13 +1314,27 @@ pub const DOMFormData = opaque {
 };
 
 pub const FetchHeaders = opaque {
-    pub const shim = Shimmer("WebCore", "FetchHeaders", @This());
-
-    pub const name = "WebCore::FetchHeaders";
-    pub const include = "FetchHeaders.h";
-    pub const namespace = "WebCore";
-
-    const cppFn = shim.cppFn;
+    extern fn WebCore__FetchHeaders__append(arg0: *FetchHeaders, arg1: *const ZigString, arg2: *const ZigString, arg3: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__cast_(JSValue0: JSValue, arg1: *VM) ?*FetchHeaders;
+    extern fn WebCore__FetchHeaders__clone(arg0: *FetchHeaders, arg1: *JSGlobalObject) JSValue;
+    extern fn WebCore__FetchHeaders__cloneThis(arg0: *FetchHeaders, arg1: *JSGlobalObject) *FetchHeaders;
+    extern fn WebCore__FetchHeaders__copyTo(arg0: *FetchHeaders, arg1: [*]StringPointer, arg2: [*]StringPointer, arg3: [*]u8) void;
+    extern fn WebCore__FetchHeaders__count(arg0: *FetchHeaders, arg1: *u32, arg2: *u32) void;
+    extern fn WebCore__FetchHeaders__createEmpty() *FetchHeaders;
+    extern fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: ?*const anyopaque) *FetchHeaders;
+    extern fn WebCore__FetchHeaders__createFromUWS(arg1: *anyopaque) *FetchHeaders;
+    extern fn WebCore__FetchHeaders__createValue(arg0: *JSGlobalObject, arg1: [*c]StringPointer, arg2: [*c]StringPointer, arg3: [*c]const ZigString, arg4: u32) JSValue;
+    extern fn WebCore__FetchHeaders__deref(arg0: *FetchHeaders) void;
+    extern fn WebCore__FetchHeaders__fastGet_(arg0: *FetchHeaders, arg1: u8, arg2: [*c]ZigString) void;
+    extern fn WebCore__FetchHeaders__fastHas_(arg0: *FetchHeaders, arg1: u8) bool;
+    extern fn WebCore__FetchHeaders__fastRemove_(arg0: *FetchHeaders, arg1: u8) void;
+    extern fn WebCore__FetchHeaders__get_(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]ZigString, arg3: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__has(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: *JSGlobalObject) bool;
+    extern fn WebCore__FetchHeaders__isEmpty(arg0: *FetchHeaders) bool;
+    extern fn WebCore__FetchHeaders__put_(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: [*c]const ZigString, arg3: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__remove(arg0: *FetchHeaders, arg1: [*c]const ZigString, arg2: *JSGlobalObject) void;
+    extern fn WebCore__FetchHeaders__toJS(arg0: *FetchHeaders, arg1: *JSGlobalObject) JSValue;
+    extern fn WebCore__FetchHeaders__toUWSResponse(arg0: *FetchHeaders, arg1: bool, arg2: ?*anyopaque) void;
 
     pub fn createValue(
         global: *JSGlobalObject,
@@ -1329,13 +1343,13 @@ pub const FetchHeaders = opaque {
         buf: *const ZigString,
         count_: u32,
     ) JSValue {
-        return shim.cppFn("createValue", .{
+        return WebCore__FetchHeaders__createValue(
             global,
             names,
             values,
             buf,
             count_,
-        });
+        );
     }
 
     extern "c" fn WebCore__FetchHeaders__createFromJS(*JSC.JSGlobalObject, JSValue) ?*FetchHeaders;
@@ -1370,27 +1384,25 @@ pub const FetchHeaders = opaque {
         buf: *const ZigString,
         count_: u32,
     ) JSValue {
-        return shim.cppFn("createValue", .{
+        return WebCore__FetchHeaders__createValue(
             global,
             names,
             values,
             buf,
             count_,
-        });
+        );
     }
 
     pub fn isEmpty(this: *FetchHeaders) bool {
-        return shim.cppFn("isEmpty", .{
-            this,
-        });
+        return WebCore__FetchHeaders__isEmpty(this);
     }
 
     pub fn createFromUWS(
         uws_request: *anyopaque,
     ) *FetchHeaders {
-        return shim.cppFn("createFromUWS", .{
+        return WebCore__FetchHeaders__createFromUWS(
             uws_request,
-        });
+        );
     }
 
     pub fn toUWSResponse(
@@ -1398,11 +1410,11 @@ pub const FetchHeaders = opaque {
         is_ssl: bool,
         uws_response: *anyopaque,
     ) void {
-        return shim.cppFn("toUWSResponse", .{
+        return WebCore__FetchHeaders__toUWSResponse(
             headers,
             is_ssl,
             uws_response,
-        });
+        );
     }
 
     const PicoHeaders = extern struct {
@@ -1411,25 +1423,23 @@ pub const FetchHeaders = opaque {
     };
 
     pub fn createEmpty() *FetchHeaders {
-        return shim.cppFn("createEmpty", .{});
+        return WebCore__FetchHeaders__createEmpty();
     }
 
     pub fn createFromPicoHeaders(
         pico_headers: anytype,
     ) *FetchHeaders {
         const out = PicoHeaders{ .ptr = pico_headers.list.ptr, .len = pico_headers.list.len };
-        const result = shim.cppFn("createFromPicoHeaders_", .{
+        const result = WebCore__FetchHeaders__createFromPicoHeaders_(
             &out,
-        });
+        );
         return result;
     }
 
     pub fn createFromPicoHeaders_(
         pico_headers: *const anyopaque,
     ) *FetchHeaders {
-        return shim.cppFn("createFromPicoHeaders_", .{
-            pico_headers,
-        });
+        return WebCore__FetchHeaders__createFromPicoHeaders_(pico_headers);
     }
 
     pub fn append(
@@ -1438,12 +1448,12 @@ pub const FetchHeaders = opaque {
         value: *const ZigString,
         global: *JSGlobalObject,
     ) void {
-        return shim.cppFn("append", .{
+        return WebCore__FetchHeaders__append(
             this,
             name_,
             value,
             global,
-        });
+        );
     }
 
     extern fn WebCore__FetchHeaders__put(this: *FetchHeaders, name_: HTTPHeaderName, value: *const ZigString, global: *JSGlobalObject) void;
@@ -1463,12 +1473,12 @@ pub const FetchHeaders = opaque {
         out: *ZigString,
         global: *JSGlobalObject,
     ) void {
-        shim.cppFn("get_", .{
+        WebCore__FetchHeaders__get_(
             this,
             name_,
             out,
             global,
-        });
+        );
     }
 
     pub fn get(
@@ -1490,11 +1500,11 @@ pub const FetchHeaders = opaque {
         name_: *const ZigString,
         global: *JSGlobalObject,
     ) bool {
-        return shim.cppFn("has", .{
+        return WebCore__FetchHeaders__has(
             this,
             name_,
             global,
-        });
+        );
     }
 
     pub fn fastHas(
@@ -1521,10 +1531,10 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         name_: u8,
     ) bool {
-        return shim.cppFn("fastHas_", .{
+        return WebCore__FetchHeaders__fastHas_(
             this,
             name_,
-        });
+        );
     }
 
     pub fn fastGet_(
@@ -1532,11 +1542,11 @@ pub const FetchHeaders = opaque {
         name_: u8,
         str: *ZigString,
     ) void {
-        return shim.cppFn("fastGet_", .{
+        return WebCore__FetchHeaders__fastGet_(
             this,
             name_,
             str,
-        });
+        );
     }
 
     pub const HTTPHeaderName = enum(u8) {
@@ -1646,10 +1656,10 @@ pub const FetchHeaders = opaque {
         this: *FetchHeaders,
         header: u8,
     ) void {
-        return shim.cppFn("fastRemove_", .{
+        return WebCore__FetchHeaders__fastRemove_(
             this,
             header,
-        });
+        );
     }
 
     pub fn remove(
@@ -1657,15 +1667,15 @@ pub const FetchHeaders = opaque {
         name_: *const ZigString,
         global: *JSGlobalObject,
     ) void {
-        return shim.cppFn("remove", .{
+        return WebCore__FetchHeaders__remove(
             this,
             name_,
             global,
-        });
+        );
     }
 
     pub fn cast_(value: JSValue, vm: *VM) ?*FetchHeaders {
-        return shim.cppFn("cast_", .{ value, vm });
+        return WebCore__FetchHeaders__cast_(value, vm);
     }
 
     pub fn cast(value: JSValue) ?*FetchHeaders {
@@ -1673,7 +1683,7 @@ pub const FetchHeaders = opaque {
     }
 
     pub fn toJS(this: *FetchHeaders, globalThis: *JSGlobalObject) JSValue {
-        return shim.cppFn("toJS", .{ this, globalThis });
+        return WebCore__FetchHeaders__toJS(this, globalThis);
     }
 
     pub fn count(
@@ -1681,79 +1691,52 @@ pub const FetchHeaders = opaque {
         names: *u32,
         buf_len: *u32,
     ) void {
-        return shim.cppFn("count", .{
+        return WebCore__FetchHeaders__count(
             this,
             names,
             buf_len,
-        });
+        );
     }
 
     pub fn clone(
         this: *FetchHeaders,
         global: *JSGlobalObject,
     ) JSValue {
-        return shim.cppFn("clone", .{
+        return WebCore__FetchHeaders__clone(
             this,
             global,
-        });
+        );
     }
 
     pub fn cloneThis(
         this: *FetchHeaders,
         global: *JSGlobalObject,
     ) ?*FetchHeaders {
-        return shim.cppFn("cloneThis", .{
+        return WebCore__FetchHeaders__cloneThis(
             this,
             global,
-        });
+        );
     }
 
     pub fn deref(
         this: *FetchHeaders,
     ) void {
-        return shim.cppFn("deref", .{
-            this,
-        });
+        return WebCore__FetchHeaders__deref(this);
     }
 
     pub fn copyTo(
         this: *FetchHeaders,
-        names: ?[*]Api.StringPointer,
-        values: ?[*]Api.StringPointer,
+        names: [*]Api.StringPointer,
+        values: [*]Api.StringPointer,
         buf: [*]u8,
     ) void {
-        return shim.cppFn("copyTo", .{
+        return WebCore__FetchHeaders__copyTo(
             this,
             names,
             values,
             buf,
-        });
+        );
     }
-
-    pub const Extern = [_][]const u8{
-        "fastRemove_",
-        "fastGet_",
-        "fastHas_",
-        "append",
-        "cast_",
-        "clone",
-        "cloneThis",
-        "copyTo",
-        "count",
-        "createFromJS",
-        "createEmpty",
-        "createFromPicoHeaders_",
-        "createFromUWS",
-        "createValue",
-        "deref",
-        "get_",
-        "has",
-        "put_",
-        "remove",
-        "toJS",
-        "toUWSResponse",
-        "isEmpty",
-    };
 };
 
 pub const SystemError = extern struct {
@@ -6540,10 +6523,10 @@ pub const CallFrame = opaque {
     /// arguments(n).mut() -> `var args = argumentsAsArray(n); &args`
     pub fn arguments_old(self: *const CallFrame, comptime max: usize) Arguments(max) {
         const slice = self.arguments();
-        comptime bun.assert(max <= 13);
+        comptime bun.assert(max <= 14);
         return switch (@as(u4, @min(slice.len, max))) {
             0 => .{ .ptr = undefined, .len = 0 },
-            inline 1...13 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
+            inline 1...14 => |count| Arguments(max).init(comptime @min(count, max), slice.ptr),
             else => unreachable,
         };
     }
@@ -6991,7 +6974,6 @@ pub const URLSearchParams = opaque {
 };
 
 pub const WTF = struct {
-    extern fn WTF__copyLCharsFromUCharSource(dest: [*]u8, source: *const anyopaque, len: usize) void;
     extern fn WTF__parseDouble(bytes: [*]const u8, length: usize, counted: *usize) f64;
 
     pub fn parseDouble(buf: []const u8) !f64 {
@@ -7006,15 +6988,6 @@ pub const WTF = struct {
         if (count == 0)
             return error.InvalidCharacter;
         return res;
-    }
-
-    /// This uses SSE2 instructions and/or ARM NEON to copy 16-bit characters efficiently
-    /// See wtf/Text/ASCIIFastPath.h for details
-    pub fn copyLCharsFromUCharSource(destination: [*]u8, comptime Source: type, source: Source) void {
-        JSC.markBinding(@src());
-
-        // This is any alignment
-        WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
     }
 };
 

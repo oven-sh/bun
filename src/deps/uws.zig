@@ -4578,13 +4578,11 @@ pub const udp = struct {
     extern fn us_udp_socket_set_source_specific_membership(socket: ?*udp.Socket, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: c_int) c_int;
 
     pub const PacketBuffer = opaque {
-        const This = @This();
-
-        pub fn getPeer(this: *This, index: c_int) *std.posix.sockaddr.storage {
+        pub fn getPeer(this: *PacketBuffer, index: c_int) *std.posix.sockaddr.storage {
             return us_udp_packet_buffer_peer(this, index);
         }
 
-        pub fn getPayload(this: *This, index: c_int) []u8 {
+        pub fn getPayload(this: *PacketBuffer, index: c_int) []u8 {
             const payload = us_udp_packet_buffer_payload(this, index);
             const len = us_udp_packet_buffer_payload_length(this, index);
             return payload[0..@as(usize, @intCast(len))];

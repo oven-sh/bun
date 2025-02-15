@@ -2968,11 +2968,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 flags: Flags,
 
                 const Flags = packed struct(u32) {
+                    /// Kind determines the data representation in `content`, as
+                    /// well as how this file behaves when tracing.
+                    kind: FileKind,
                     /// If the file has an error, the failure can be looked up
                     /// in the `.failures` map.
                     failed: bool,
                     /// For JS files, this is a component root; the server contains a matching file.
-                    /// For CSS files, this is also marked on the stylesheet that is imported from JS.
                     is_hmr_root: bool,
                     /// This is a file is an entry point to the framework.
                     /// Changing this will always cause a full page reload.
@@ -2980,10 +2982,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     /// If this file has a HTML RouteBundle. The bundle index is tucked away in:
                     /// `graph.source_maps.items[i].extra.empty.html_bundle_route_index`
                     is_html_route: bool,
-                    /// CSS files get special handling
-                    kind: FileKind,
+                    /// A CSS root is the first file in a CSS bundle, aka the
+                    /// one that the JS or HTML file points into.
+                    ///
+                    /// There are many complicated rules when CSS files
+                    /// reference each other, none of which are modelled in
+                    /// IncrementalGraph. Instead, any change to downstream
+                    /// files will find the CSS root, and queue it for a
+                    /// re-bundle. Additionally, CSS roots only have one level
+                    /// of imports, as the code in `finalizeBundle` will add all
+                    /// referenced files as edges directly to the root, creating
+                    /// a flat list instead of a tree. Those downstream files
+                    /// remaining empty; only present so that invalidation can
+                    /// trace them to this root.
+                    is_css_root: bool,
 
-                    unused: enum(u26) { unused } = .unused,
+                    unused: enum(u25) { unused } = .unused,
                 };
 
                 comptime {
@@ -3242,6 +3256,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = ctx.server_to_client_bitset.isSet(index.get()),
                         .is_special_framework_file = false,
                         .is_html_route = false,
+                        .is_css_root = content == .css, // non-root CSS files never get registered in this function
                         .kind = switch (content) {
                             .js => if (ctx.loaders[index.get()].isJavaScriptLike()) .js else .asset,
                             .css => .css,
@@ -3665,6 +3680,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const index = dev.client_graph.getFileIndex(key) orelse
                             Output.panic("Client Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
                         try dev.client_graph.traceImports(index, gts, goal);
+
+                        if (Environment.isDebug and file.kind == .css) {
+                            // Server CSS files never have imports. They are
+                            // purely a reference to the client graph.
+                            bun.assert(g.first_import.items[file_index.get()] == .none);
+                        }
                     }
                     if (goal == .find_errors and file.failed) {
                         const fail = g.owner().bundling_failures.getKeyAdapted(
@@ -3677,16 +3698,16 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 },
                 .client => {
                     if (file.flags.kind == .css) {
+                        // It is only possible to find CSS roots by tracing.
+                        bun.debugAssert(file.flags.is_css_root);
+
                         if (goal == .find_css) {
                             try g.current_css_files.append(g.owner().allocator, file.cssAssetId());
                         }
 
-                        // Do not count css files as a client module
-                        // and also do not trace its imports.
-                        //
-                        // The server version of this code does not need to
-                        // early return, since server css files never have
-                        // imports.
+                        // See the comment on `is_css_root` on how CSS roots
+                        // have a slightly different meaning for their assets.
+                        // Regardless, CSS can't import JS, so this trace is done.
                         return;
                     }
 
@@ -3752,6 +3773,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .is_html_route = is_route,
+                        .is_css_root = false,
                         .kind = .unknown,
                     };
                     if (gop.found_existing) {
@@ -3769,6 +3791,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         flags.failed = gop.value_ptr.flags.failed;
                         flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
                         flags.is_hmr_root = gop.value_ptr.flags.is_hmr_root;
+                        flags.is_css_root = gop.value_ptr.flags.is_css_root;
                     }
                     gop.value_ptr.* = File.initUnknown(flags);
                 },
@@ -3805,6 +3828,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .is_html_route = false,
+                        .is_css_root = false,
                         .kind = .unknown,
                     }),
                     .server => .{
@@ -3843,15 +3867,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             switch (side) {
                 .client => @compileError("not implemented: use receiveChunk"),
-                .server => {
-                    gop.value_ptr.* = .{
-                        .is_rsc = false,
-                        .is_ssr = false,
-                        .is_route = false,
-                        .is_client_component_boundary = false,
-                        .failed = false,
-                        .kind = .css,
-                    };
+                .server => gop.value_ptr.* = .{
+                    .is_rsc = false,
+                    .is_ssr = false,
+                    .is_route = false,
+                    .is_client_component_boundary = false,
+                    .failed = false,
+                    .kind = .css,
                 },
             }
 
@@ -3913,6 +3935,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .is_html_route = false,
+                        .is_css_root = false,
                         .kind = .unknown,
                     };
                     if (found_existing) {
@@ -3929,6 +3952,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         flags.is_html_route = gop.value_ptr.flags.is_html_route;
                         flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
                         flags.is_hmr_root = gop.value_ptr.flags.is_hmr_root;
+                        flags.is_css_root = gop.value_ptr.flags.is_css_root;
                     }
                     gop.value_ptr.* = File.initUnknown(flags);
                 },
@@ -4000,8 +4024,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
             );
         }
 
+        /// Given a set of paths, mark the relevant files as stale and append
+        /// them into `entry_points`. This is called whenever a file is changed,
+        /// and a new bundle has to be run.
         pub fn invalidate(g: *@This(), paths: []const []const u8, entry_points: *EntryPointList, alloc: Allocator) !void {
             g.owner().graph_safety_lock.assertLocked();
+            const keys = g.bundled_files.keys();
             const values = g.bundled_files.values();
             for (paths) |path| {
                 const index = g.bundled_files.getIndex(path) orelse {
@@ -4013,37 +4041,58 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 g.stale_files.set(index);
                 const data = &values[index];
                 switch (side) {
-                    .client => {
+                    .client => switch (data.flags.kind) {
+                        .css => {
+                            if (data.flags.is_css_root) {
+                                try entry_points.appendCss(alloc, path);
+                            }
+
+                            var it = g.first_dep.items[index].unwrap();
+                            while (it) |edge_index| {
+                                const entry = g.edges.items[edge_index.get()];
+                                const dep = entry.dependency;
+                                g.stale_files.set(dep.get());
+
+                                const dep_file = values[dep.get()];
+                                if (dep_file.flags.is_css_root) {
+                                    try entry_points.appendCss(alloc, keys[dep.get()]);
+                                }
+
+                                it = entry.next_dependency.unwrap();
+                            }
+                        },
+                        .asset => {
+                            var it = g.first_dep.items[index].unwrap();
+                            while (it) |edge_index| {
+                                const entry = g.edges.items[edge_index.get()];
+                                const dep = entry.dependency;
+                                g.stale_files.set(dep.get());
+
+                                const dep_file = values[dep.get()];
+                                // Assets violate the "do not reprocess
+                                // unchanged files" rule by reprocessing ALL
+                                // dependencies, instead of just the CSS roots.
+                                //
+                                // This is currently required to force HTML
+                                // bundles to become up to date with the new
+                                // asset URL. Additionally, it is currently seen
+                                // as a bit nicer in HMR to do this for all JS
+                                // files, though that could be reconsidered.
+                                if (dep_file.flags.is_css_root) {
+                                    try entry_points.appendCss(alloc, keys[dep.get()]);
+                                } else {
+                                    try entry_points.appendJs(alloc, keys[dep.get()], .client);
+                                }
+
+                                it = entry.next_dependency.unwrap();
+                            }
+                        },
                         // When re-bundling SCBs, only bundle the server. Otherwise
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
-                        if (data.flags.kind == .css)
-                            try entry_points.appendCss(alloc, path)
-                        else if (!data.flags.is_hmr_root) {
+                        .js, .unknown => if (!data.flags.is_hmr_root) {
                             try entry_points.appendJs(alloc, path, .client);
-
-                            if (data.flags.kind == .asset) {
-                                // Changing asset files directly currently
-                                // violates the "do not reprocess unchanged
-                                // files" rule. An asset invalidate will
-                                // implicitly invalidate all direct dependants.
-                                // This is currently required to force HTML
-                                // bundles to become up to date with the new
-                                // asset URL. This is also done for other files
-                                // not out of requirement, but to make HMR a bit
-                                // nicer.
-                                @branchHint(.unlikely);
-                                const keys = g.bundled_files.keys();
-                                var it = g.first_dep.items[index].unwrap();
-                                while (it) |edge_index| {
-                                    const entry = g.edges.items[edge_index.get()];
-                                    const dep = entry.dependency;
-                                    g.stale_files.set(dep.get());
-                                    try entry_points.appendJs(alloc, keys[dep.get()], .client);
-                                    it = entry.next_dependency.unwrap();
-                                }
-                            }
-                        }
+                        },
                     },
                     .server => {
                         if (data.is_rsc)

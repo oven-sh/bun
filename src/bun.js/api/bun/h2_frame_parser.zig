@@ -1126,6 +1126,7 @@ pub const H2FrameParser = struct {
 
     pub fn encode(this: *H2FrameParser, dst_buffer: []u8, dst_offset: usize, name: []const u8, value: []const u8, never_index: bool) !usize {
         if (this.hpack) |hpack| {
+            // lets make sure the name is lowercase
             return try hpack.encode(name, value, never_index, dst_buffer, dst_offset);
         }
         return error.UnableToEncode;
@@ -3120,6 +3121,38 @@ pub const H2FrameParser = struct {
         this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
         return .undefined;
     }
+    /// validate header name and convert to lowecase if needed
+    fn toValidHeaderName(in: []const u8, out: []u8) ![]const u8 {
+        var in_slice = in;
+        var out_slice = out;
+        var any = false;
+        if (in.len > 4096) return error.InvalidHeaderName;
+        bun.assert(out.len >= in.len);
+
+        begin: while (true) {
+            for (in_slice, 0..) |c, i| {
+                switch (c) {
+                    'A'...'Z' => {
+                        bun.copy(u8, out_slice, in_slice[0..i]);
+                        out_slice[i] = std.ascii.toLower(c);
+                        const end = i + 1;
+                        in_slice = in_slice[end..];
+                        out_slice = out_slice[end..];
+                        any = true;
+                        continue :begin;
+                    },
+                    'a'...'z', '0'...'9', '-', '_', '.' => {},
+
+                    else => return error.InvalidHeaderName,
+                }
+            }
+
+            if (any) bun.copy(u8, out_slice, in_slice);
+            break :begin;
+        }
+
+        return if (any) out[0..in.len] else in;
+    }
 
     pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
@@ -3156,6 +3189,9 @@ pub const H2FrameParser = struct {
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
         var encoded_size: usize = 0;
+        // max header name length for lshpack
+        var name_buffer: [4096]u8 = undefined;
+        @memset(&name_buffer, 0);
 
         var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
@@ -3207,7 +3243,12 @@ pub const H2FrameParser = struct {
                     defer value_slice.deinit();
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ name, value });
-                    encoded_size += this.encode(buffer, encoded_size, name, value, never_index) catch {
+
+                    const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                        const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                        return globalObject.throwValue(exception);
+                    };
+                    encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                         stream.state = .CLOSED;
                         const identifier = stream.getIdentifier();
                         identifier.ensureStillAlive();
@@ -3229,7 +3270,11 @@ pub const H2FrameParser = struct {
                 defer value_slice.deinit();
                 const value = value_slice.slice();
                 log("encode header {s} {s}", .{ name, value });
-                encoded_size += this.encode(buffer, encoded_size, name, value, never_index) catch {
+                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                    const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
+                encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                     stream.state = .CLOSED;
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
@@ -3482,7 +3527,9 @@ pub const H2FrameParser = struct {
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize - 5];
         var encoded_size: usize = 0;
-
+        // max header name length for lshpack
+        var name_buffer: [4096]u8 = undefined;
+        @memset(&name_buffer, 0);
         const stream_id: u32 = if (!stream_id_arg.isEmptyOrUndefinedOrNull() and stream_id_arg.isNumber()) stream_id_arg.to(u32) else this.getNextStreamID();
         if (stream_id > MAX_STREAM_ID) {
             return JSC.JSValue.jsNumber(-1);
@@ -3585,7 +3632,11 @@ pub const H2FrameParser = struct {
                         defer value_slice.deinit();
                         const value = value_slice.slice();
                         log("encode header {s} {s}", .{ name, value });
-                        encoded_size += this.encode(buffer, encoded_size, name, value, never_index) catch {
+                        const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                            const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                            return globalObject.throwValue(exception);
+                        };
+                        encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                             const stream = this.handleReceivedStreamID(stream_id) orelse {
                                 return JSC.JSValue.jsNumber(-1);
                             };
@@ -3613,7 +3664,11 @@ pub const H2FrameParser = struct {
                     defer value_slice.deinit();
                     const value = value_slice.slice();
                     log("encode header {s} {s}", .{ name, value });
-                    encoded_size += this.encode(buffer, encoded_size, name, value, never_index) catch {
+                    const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                        const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                        return globalObject.throwValue(exception);
+                    };
+                    encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                         const stream = this.handleReceivedStreamID(stream_id) orelse {
                             return JSC.JSValue.jsNumber(-1);
                         };

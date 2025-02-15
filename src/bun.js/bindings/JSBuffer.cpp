@@ -2450,6 +2450,16 @@ EncodedJSValue constructBufferFromArrayBuffer(JSC::ThrowScope& throwScope, JSGlo
         if (length > byteLength - offset) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(throwScope, lexicalGlobalObject, "length"_s);
     }
 
+    auto isResizableOrGrowableShared = jsBuffer->isResizableOrGrowableShared();
+    if (isResizableOrGrowableShared) {
+        auto* subclassStructure = globalObject->JSResizableOrGrowableSharedBufferSubclassStructure();
+        auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, std::nullopt);
+        if (UNLIKELY(!uint8Array)) {
+            throwOutOfMemoryError(globalObject, throwScope);
+            return {};
+        }
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+    }
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
     auto* uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, WTFMove(buffer), offset, length);
     if (UNLIKELY(!uint8Array)) {

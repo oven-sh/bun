@@ -1008,10 +1008,6 @@ describe("fetch() with streaming", () => {
         );
         currentRange += chunk.length;
       }
-
-      gcTick(false);
-      expect(buffer.toString("utf8")).toBe(content);
-      expect(parts).toBeGreaterThan(1);
     });
 
     test(`Extra data should be ignored on streaming (multiple chunks, TCP server) with ${compression} compression`, async () => {

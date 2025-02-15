@@ -310,7 +310,7 @@ const CountedKeepAlive = struct {
 };
 
 pub const SNativeZlib = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSNativeZlib;
     pub usingnamespace CompressionStream(@This());
 
@@ -676,7 +676,7 @@ const ZlibContext = struct {
 pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
 
 pub const SNativeBrotli = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSNativeBrotli;
     pub usingnamespace CompressionStream(@This());
 

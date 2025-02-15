@@ -19,7 +19,7 @@ pub fn throwErrInvalidArgValue(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_INVALID_ARG_VALUE(fmt, args).throw();
 }
 
@@ -28,7 +28,7 @@ pub fn throwErrInvalidArgTypeWithMessage(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
 }
 
@@ -39,7 +39,7 @@ pub fn throwErrInvalidArgType(
     comptime expected_type: []const u8,
     value: JSValue,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     const actual_type = getTypeName(globalThis, value);
     return throwErrInvalidArgTypeWithMessage(globalThis, "The \"" ++ name_fmt ++ "\" property must be of type {s}, got {s}", name_args ++ .{ expected_type, actual_type });
 }
@@ -49,7 +49,7 @@ pub fn throwRangeError(
     comptime fmt: [:0]const u8,
     args: anytype,
 ) bun.JSError {
-    @setCold(true);
+    @branchHint(.cold);
     return globalThis.ERR_OUT_OF_RANGE(fmt, args).throw();
 }
 
@@ -112,12 +112,14 @@ pub fn validateInt32(globalThis: *JSGlobalObject, value: JSValue, comptime name_
     }
     if (!value.isAnyInt()) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
         return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{value.toFmt(&formatter)});
     }
     const num = value.asNumber();
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if (num < @as(f64, @floatFromInt(min)) or num > @as(f64, @floatFromInt(max))) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
         return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @intFromFloat(num);
@@ -129,6 +131,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     }
     if (!value.isAnyInt()) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
         return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be an integer. Received {}", name_args ++ .{value.toFmt(&formatter)});
     }
     const num: i64 = value.asInt52();
@@ -136,6 +139,7 @@ pub fn validateUint32(globalThis: *JSGlobalObject, value: JSValue, comptime name
     const max: i64 = @intCast(std.math.maxInt(u32));
     if (num < min or num > max) {
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+        defer formatter.deinit();
         return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {}", name_args ++ .{ min, max, value.toFmt(&formatter) });
     }
     return @truncate(@as(u63, @intCast(num)));
@@ -261,14 +265,14 @@ pub fn validateUndefined(globalThis: *JSGlobalObject, value: JSValue, comptime n
 pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!T {
     const str = try value.toBunString2(globalThis);
     defer str.deref();
-    inline for (@typeInfo(T).Enum.fields) |enum_field| {
+    inline for (@typeInfo(T).@"enum".fields) |enum_field| {
         if (str.eqlComptime(enum_field.name))
             return @field(T, enum_field.name);
     }
 
     const values_info = comptime blk: {
         var out: []const u8 = "";
-        for (@typeInfo(T).Enum.fields, 0..) |enum_field, i| {
+        for (@typeInfo(T).@"enum".fields, 0..) |enum_field, i| {
             out = out ++ (if (i > 0) "|" else "") ++ enum_field.name;
         }
         break :blk out;

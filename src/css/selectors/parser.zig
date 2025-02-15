@@ -927,7 +927,7 @@ pub const PseudoClass = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_records);
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info);
         try serialize.serializePseudoClass(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
@@ -2153,10 +2153,6 @@ pub fn NthOfSelectorData(comptime Impl: type) type {
         pub fn nthData(this: *const @This()) NthSelectorData {
             return this.data;
         }
-
-        pub fn selectors(this: *const @This()) []GenericSelector(Impl) {
-            return this.selectors;
-        }
     };
 }
 
@@ -2250,7 +2246,7 @@ pub const SpecifityAndFlags = struct {
     flags: SelectorFlags,
 
     pub fn eql(this: *const SpecifityAndFlags, other: *const SpecifityAndFlags) bool {
-        return this.specificity == other.specificity and this.flags.eql(other.flags);
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn hasPseudoElement(this: *const SpecifityAndFlags) bool {
@@ -2602,7 +2598,7 @@ pub const PseudoElement = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_records);
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info);
         try serialize.serializePseudoElement(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }

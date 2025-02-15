@@ -158,7 +158,7 @@ pub fn GenericBorder(comptime S: type, comptime P: u8) type {
         }
 
         pub fn eql(this: *const This, other: *const This) bool {
-            return this.width.eql(&other.width) and this.style.eql(&other.style) and this.color.eql(&other.color);
+            return css.implementEql(@This(), this, other);
         }
 
         pub inline fn default() This {
@@ -200,8 +200,6 @@ pub const LineStyle = enum {
         return true;
     }
 
-    pub fn deinit(_: *const @This(), _: std.mem.Allocator) void {}
-
     pub fn default() LineStyle {
         return .none;
     }
@@ -239,24 +237,7 @@ pub const BorderSideWidth = union(enum) {
     pub fn deinit(_: *@This(), _: std.mem.Allocator) void {}
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .thin => switch (other.*) {
-                .thin => true,
-                else => false,
-            },
-            .medium => switch (other.*) {
-                .medium => true,
-                else => false,
-            },
-            .thick => switch (other.*) {
-                .thick => true,
-                else => false,
-            },
-            .length => switch (other.*) {
-                .length => this.length.eql(&other.length),
-                else => false,
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 };
 
@@ -498,7 +479,7 @@ pub const BorderInlineWidth = struct {
 };
 
 pub fn ImplFallbacks(comptime T: type) type {
-    const field_names = bun.meta.fieldNames(T);
+    const field_names = std.meta.fieldNames(T);
     return struct {
         pub fn getFallbacks(this: *T, allocator: std.mem.Allocator, targets: css.Targets) css.SmallList(T, 2) {
             const ColorFallbackKind = css.css_values.color.ColorFallbackKind;
@@ -570,79 +551,79 @@ const BorderShorthand = struct {
 };
 
 const BorderProperty = packed struct(u32) {
-    @"border-top-color": bool = false,
-    @"border-bottom-color": bool = false,
-    @"border-left-color": bool = false,
-    @"border-right-color": bool = false,
-    @"border-block-start-color": bool = false,
-    @"border-block-end-color": bool = false,
-    @"border-inline-start-color": bool = false,
-    @"border-inline-end-color": bool = false,
-    @"border-top-width": bool = false,
-    @"border-bottom-width": bool = false,
-    @"border-left-width": bool = false,
-    @"border-right-width": bool = false,
-    @"border-block-start-width": bool = false,
-    @"border-block-end-width": bool = false,
-    @"border-inline-start-width": bool = false,
-    @"border-inline-end-width": bool = false,
-    @"border-top-style": bool = false,
-    @"border-bottom-style": bool = false,
-    @"border-left-style": bool = false,
-    @"border-right-style": bool = false,
-    @"border-block-start-style": bool = false,
-    @"border-block-end-style": bool = false,
-    @"border-inline-start-style": bool = false,
-    @"border-inline-end-style": bool = false,
+    @"top-color": bool = false,
+    @"bottom-color": bool = false,
+    @"left-color": bool = false,
+    @"right-color": bool = false,
+    @"block-start-color": bool = false,
+    @"block-end-color": bool = false,
+    @"inline-start-color": bool = false,
+    @"inline-end-color": bool = false,
+    @"top-width": bool = false,
+    @"bottom-width": bool = false,
+    @"left-width": bool = false,
+    @"right-width": bool = false,
+    @"block-start-width": bool = false,
+    @"block-end-width": bool = false,
+    @"inline-start-width": bool = false,
+    @"inline-end-width": bool = false,
+    @"top-style": bool = false,
+    @"bottom-style": bool = false,
+    @"left-style": bool = false,
+    @"right-style": bool = false,
+    @"block-start-style": bool = false,
+    @"block-end-style": bool = false,
+    @"inline-start-style": bool = false,
+    @"inline-end-style": bool = false,
     __unused: u8 = 0,
 
     pub usingnamespace css.Bitflags(@This());
 
-    const @"border-top-color" = BorderProperty{ .@"border-top-color" = true };
-    const @"border-bottom-color" = BorderProperty{ .@"border-bottom-color" = true };
-    const @"border-left-color" = BorderProperty{ .@"border-left-color" = true };
-    const @"border-right-color" = BorderProperty{ .@"border-right-color" = true };
-    const @"border-block-start-color" = BorderProperty{ .@"border-block-start-color" = true };
-    const @"border-block-end-color" = BorderProperty{ .@"border-block-end-color" = true };
-    const @"border-inline-start-color" = BorderProperty{ .@"border-inline-start-color" = true };
-    const @"border-inline-end-color" = BorderProperty{ .@"border-inline-end-color" = true };
-    const @"border-top-width" = BorderProperty{ .@"border-top-width" = true };
-    const @"border-bottom-width" = BorderProperty{ .@"border-bottom-width" = true };
-    const @"border-left-width" = BorderProperty{ .@"border-left-width" = true };
-    const @"border-right-width" = BorderProperty{ .@"border-right-width" = true };
-    const @"border-block-start-width" = BorderProperty{ .@"border-block-start-width" = true };
-    const @"border-block-end-width" = BorderProperty{ .@"border-block-end-width" = true };
-    const @"border-inline-start-width" = BorderProperty{ .@"border-inline-start-width" = true };
-    const @"border-inline-end-width" = BorderProperty{ .@"border-inline-end-width" = true };
-    const @"border-top-style" = BorderProperty{ .@"border-top-style" = true };
-    const @"border-bottom-style" = BorderProperty{ .@"border-bottom-style" = true };
-    const @"border-left-style" = BorderProperty{ .@"border-left-style" = true };
-    const @"border-right-style" = BorderProperty{ .@"border-right-style" = true };
-    const @"border-block-start-style" = BorderProperty{ .@"border-block-start-style" = true };
-    const @"border-block-end-style" = BorderProperty{ .@"border-block-end-style" = true };
-    const @"border-inline-start-style" = BorderProperty{ .@"border-inline-start-style" = true };
-    const @"border-inline-end-style" = BorderProperty{ .@"border-inline-end-style" = true };
+    const @"border-top-color" = BorderProperty{ .@"top-color" = true };
+    const @"border-bottom-color" = BorderProperty{ .@"bottom-color" = true };
+    const @"border-left-color" = BorderProperty{ .@"left-color" = true };
+    const @"border-right-color" = BorderProperty{ .@"right-color" = true };
+    const @"border-block-start-color" = BorderProperty{ .@"block-start-color" = true };
+    const @"border-block-end-color" = BorderProperty{ .@"block-end-color" = true };
+    const @"border-inline-start-color" = BorderProperty{ .@"inline-start-color" = true };
+    const @"border-inline-end-color" = BorderProperty{ .@"inline-end-color" = true };
+    const @"border-top-width" = BorderProperty{ .@"top-width" = true };
+    const @"border-bottom-width" = BorderProperty{ .@"bottom-width" = true };
+    const @"border-left-width" = BorderProperty{ .@"left-width" = true };
+    const @"border-right-width" = BorderProperty{ .@"right-width" = true };
+    const @"border-block-start-width" = BorderProperty{ .@"block-start-width" = true };
+    const @"border-block-end-width" = BorderProperty{ .@"block-end-width" = true };
+    const @"border-inline-start-width" = BorderProperty{ .@"inline-start-width" = true };
+    const @"border-inline-end-width" = BorderProperty{ .@"inline-end-width" = true };
+    const @"border-top-style" = BorderProperty{ .@"top-style" = true };
+    const @"border-bottom-style" = BorderProperty{ .@"bottom-style" = true };
+    const @"border-left-style" = BorderProperty{ .@"left-style" = true };
+    const @"border-right-style" = BorderProperty{ .@"right-style" = true };
+    const @"border-block-start-style" = BorderProperty{ .@"block-start-style" = true };
+    const @"border-block-end-style" = BorderProperty{ .@"block-end-style" = true };
+    const @"border-inline-start-style" = BorderProperty{ .@"inline-start-style" = true };
+    const @"border-inline-end-style" = BorderProperty{ .@"inline-end-style" = true };
 
-    const @"border-block-color" = BorderProperty{ .@"border-block-start-color" = true, .@"border-block-end-color" = true };
-    const @"border-inline-color" = BorderProperty{ .@"border-inline-start-color" = true, .@"border-inline-end-color" = true };
-    const @"border-block-width" = BorderProperty{ .@"border-block-start-width" = true, .@"border-block-end-width" = true };
-    const @"border-inline-width" = BorderProperty{ .@"border-inline-start-width" = true, .@"border-inline-end-width" = true };
-    const @"border-block-style" = BorderProperty{ .@"border-block-start-style" = true, .@"border-block-end-style" = true };
-    const @"border-inline-style" = BorderProperty{ .@"border-inline-start-style" = true, .@"border-inline-end-style" = true };
-    const @"border-top" = BorderProperty{ .@"border-top-color" = true, .@"border-top-width" = true, .@"border-top-style" = true };
-    const @"border-bottom" = BorderProperty{ .@"border-bottom-color" = true, .@"border-bottom-width" = true, .@"border-bottom-style" = true };
-    const @"border-left" = BorderProperty{ .@"border-left-color" = true, .@"border-left-width" = true, .@"border-left-style" = true };
-    const @"border-right" = BorderProperty{ .@"border-right-color" = true, .@"border-right-width" = true, .@"border-right-style" = true };
-    const @"border-block-start" = BorderProperty{ .@"border-block-start-color" = true, .@"border-block-start-width" = true, .@"border-block-start-style" = true };
-    const @"border-block-end" = BorderProperty{ .@"border-block-end-color" = true, .@"border-block-end-width" = true, .@"border-block-end-style" = true };
-    const @"border-inline-start" = BorderProperty{ .@"border-inline-start-color" = true, .@"border-inline-start-width" = true, .@"border-inline-start-style" = true };
-    const @"border-inline-end" = BorderProperty{ .@"border-inline-end-color" = true, .@"border-inline-end-width" = true, .@"border-inline-end-style" = true };
-    const @"border-block" = BorderProperty{ .@"border-block-start-color" = true, .@"border-block-end-color" = true, .@"border-block-start-width" = true, .@"border-block-end-width" = true, .@"border-block-start-style" = true, .@"border-block-end-style" = true };
-    const @"border-inline" = BorderProperty{ .@"border-inline-start-color" = true, .@"border-inline-end-color" = true, .@"border-inline-start-width" = true, .@"border-inline-end-width" = true, .@"border-inline-start-style" = true, .@"border-inline-end-style" = true };
-    const @"border-width" = BorderProperty{ .@"border-left-width" = true, .@"border-right-width" = true, .@"border-top-width" = true, .@"border-bottom-width" = true };
-    const @"border-style" = BorderProperty{ .@"border-left-style" = true, .@"border-right-style" = true, .@"border-top-style" = true, .@"border-bottom-style" = true };
-    const @"border-color" = BorderProperty{ .@"border-left-color" = true, .@"border-right-color" = true, .@"border-top-color" = true, .@"border-bottom-color" = true };
-    const border = BorderProperty{ .@"border-left-width" = true, .@"border-right-width" = true, .@"border-top-width" = true, .@"border-bottom-width" = true, .@"border-left-style" = true, .@"border-right-style" = true, .@"border-top-style" = true, .@"border-bottom-style" = true, .@"border-left-color" = true, .@"border-right-color" = true, .@"border-top-color" = true, .@"border-bottom-color" = true };
+    const @"border-block-color" = BorderProperty{ .@"block-start-color" = true, .@"block-end-color" = true };
+    const @"border-inline-color" = BorderProperty{ .@"inline-start-color" = true, .@"inline-end-color" = true };
+    const @"border-block-width" = BorderProperty{ .@"block-start-width" = true, .@"block-end-width" = true };
+    const @"border-inline-width" = BorderProperty{ .@"inline-start-width" = true, .@"inline-end-width" = true };
+    const @"border-block-style" = BorderProperty{ .@"block-start-style" = true, .@"block-end-style" = true };
+    const @"border-inline-style" = BorderProperty{ .@"inline-start-style" = true, .@"inline-end-style" = true };
+    const @"border-top" = BorderProperty{ .@"top-color" = true, .@"top-width" = true, .@"top-style" = true };
+    const @"border-bottom" = BorderProperty{ .@"bottom-color" = true, .@"bottom-width" = true, .@"bottom-style" = true };
+    const @"border-left" = BorderProperty{ .@"left-color" = true, .@"left-width" = true, .@"left-style" = true };
+    const @"border-right" = BorderProperty{ .@"right-color" = true, .@"right-width" = true, .@"right-style" = true };
+    const @"border-block-start" = BorderProperty{ .@"block-start-color" = true, .@"block-start-width" = true, .@"block-start-style" = true };
+    const @"border-block-end" = BorderProperty{ .@"block-end-color" = true, .@"block-end-width" = true, .@"block-end-style" = true };
+    const @"border-inline-start" = BorderProperty{ .@"inline-start-color" = true, .@"inline-start-width" = true, .@"inline-start-style" = true };
+    const @"border-inline-end" = BorderProperty{ .@"inline-end-color" = true, .@"inline-end-width" = true, .@"inline-end-style" = true };
+    const @"border-block" = BorderProperty{ .@"block-start-color" = true, .@"block-end-color" = true, .@"block-start-width" = true, .@"block-end-width" = true, .@"block-start-style" = true, .@"block-end-style" = true };
+    const @"border-inline" = BorderProperty{ .@"inline-start-color" = true, .@"inline-end-color" = true, .@"inline-start-width" = true, .@"inline-end-width" = true, .@"inline-start-style" = true, .@"inline-end-style" = true };
+    const @"border-width" = BorderProperty{ .@"left-width" = true, .@"right-width" = true, .@"top-width" = true, .@"bottom-width" = true };
+    const @"border-style" = BorderProperty{ .@"left-style" = true, .@"right-style" = true, .@"top-style" = true, .@"bottom-style" = true };
+    const @"border-color" = BorderProperty{ .@"left-color" = true, .@"right-color" = true, .@"top-color" = true, .@"bottom-color" = true };
+    const border = BorderProperty{ .@"left-width" = true, .@"right-width" = true, .@"top-width" = true, .@"bottom-width" = true, .@"left-style" = true, .@"right-style" = true, .@"top-style" = true, .@"bottom-style" = true, .@"left-color" = true, .@"right-color" = true, .@"top-color" = true, .@"bottom-color" = true };
 
     pub fn tryFromPropertyId(property_id: css.PropertyIdTag) ?@This() {
         @setEvalBranchQuota(10000);
@@ -1018,30 +999,30 @@ pub const BorderHandler = struct {
             comptime block_start_width: []const u8,
             comptime block_start_style: []const u8,
             comptime block_start_color: []const u8,
-            block_start: anytype,
+            block_start: *BorderShorthand,
             comptime block_end_prop: []const u8,
             comptime block_end_width: []const u8,
             comptime block_end_style: []const u8,
             comptime block_end_color: []const u8,
-            block_end: anytype,
+            block_end: *BorderShorthand,
             comptime inline_start_prop: []const u8,
             comptime inline_start_width: []const u8,
             comptime inline_start_style: []const u8,
             comptime inline_start_color: []const u8,
-            inline_start: anytype,
+            inline_start: *BorderShorthand,
             comptime inline_end_prop: []const u8,
             comptime inline_end_width: []const u8,
             comptime inline_end_style: []const u8,
             comptime inline_end_color: []const u8,
-            inline_end: anytype,
+            inline_end: *BorderShorthand,
             comptime is_logical: bool,
         ) void {
             const State = struct {
                 f: *FlushContext,
-                block_start: @TypeOf(block_start),
-                block_end: @TypeOf(block_end),
-                inline_start: @TypeOf(inline_start),
-                inline_end: @TypeOf(inline_end),
+                block_start: *BorderShorthand,
+                block_end: *BorderShorthand,
+                inline_start: *BorderShorthand,
+                inline_end: *BorderShorthand,
 
                 inline fn shorthand(s: *@This(), comptime p: type, comptime prop_name: []const u8, comptime key: []const u8) void {
                     const has_prop = @field(s.block_start, key) != null and @field(s.block_end, key) != null and @field(s.inline_start, key) != null and @field(s.inline_end, key) != null;

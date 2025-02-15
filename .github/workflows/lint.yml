@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 env:
-  BUN_VERSION: "1.1.44"
+  BUN_VERSION: "1.2.0"
   OXLINT_VERSION: "0.15.0"
 
 jobs:

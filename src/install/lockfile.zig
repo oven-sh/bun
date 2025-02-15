@@ -56,7 +56,7 @@ const Lockfile = @This();
 
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityContext;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const GlobalStringBuilder = @import("../string_builder.zig");
@@ -259,17 +259,17 @@ pub const LoadResult = union(enum) {
         };
     }
 
-    pub fn saveFormat(this: LoadResult, manager: *const PackageManager) LockfileFormat {
+    pub fn saveFormat(this: LoadResult, options: *const PackageManager.Options) LockfileFormat {
         switch (this) {
             .not_found => {
                 // saving a lockfile for a new project. default to text lockfile
                 // unless saveTextLockfile is false in bunfig
-                const save_text_lockfile = manager.options.save_text_lockfile orelse true;
+                const save_text_lockfile = options.save_text_lockfile orelse true;
                 return if (save_text_lockfile) .text else .binary;
             },
             .err => |err| {
                 // an error occured, but we still loaded from an existing lockfile
-                if (manager.options.save_text_lockfile) |save_text_lockfile| {
+                if (options.save_text_lockfile) |save_text_lockfile| {
                     if (save_text_lockfile) {
                         return .text;
                     }
@@ -278,7 +278,7 @@ pub const LoadResult = union(enum) {
             },
             .ok => |ok| {
                 // loaded from an existing lockfile
-                if (manager.options.save_text_lockfile) |save_text_lockfile| {
+                if (options.save_text_lockfile) |save_text_lockfile| {
                     if (save_text_lockfile) {
                         return .text;
                     }
@@ -429,7 +429,7 @@ pub fn loadFromDir(
                 var buffered_writer = writer_buf.bufferedWriter();
                 const writer = buffered_writer.writer();
 
-                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, writer) catch |err| {
+                TextLockfile.Stringifier.saveFromBinary(allocator, result.ok.lockfile, &result, writer) catch |err| {
                     Output.panic("failed to convert binary lockfile to text lockfile: {s}", .{@errorName(err)});
                 };
 
@@ -962,7 +962,7 @@ pub const Tree = struct {
                                 },
                             };
 
-                            switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                            switch (bun.glob.walk.matchImpl(builder.allocator, pattern, path_or_name)) {
                                 .match, .negate_match => match = true,
 
                                 .negate_no_match => {
@@ -1704,7 +1704,7 @@ pub const Printer = struct {
         input_lockfile_path: string,
         format: Format,
     ) !void {
-        @setCold(true);
+        @branchHint(.cold);
 
         // We truncate longer than allowed paths. We should probably throw an error instead.
         const path = input_lockfile_path[0..@min(input_lockfile_path.len, bun.MAX_PATH_BYTES)];
@@ -2504,7 +2504,8 @@ pub fn verifyData(this: *const Lockfile) !void {
     }
 }
 
-pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbose_log: bool) void {
+pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *const PackageManager.Options) void {
+    const save_format = load_result.saveFormat(options);
     if (comptime Environment.allow_assert) {
         this.verifyData() catch |err| {
             Output.prettyErrorln("<r><red>error:<r> failed to verify lockfile: {s}", .{@errorName(err)});
@@ -2519,7 +2520,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
             var buffered_writer = writer_buf.bufferedWriter();
             const writer = buffered_writer.writer();
 
-            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, writer) catch |err| switch (err) {
+            TextLockfile.Stringifier.saveFromBinary(bun.default_allocator, this, load_result, writer) catch |err| switch (err) {
                 error.OutOfMemory => bun.outOfMemory(),
             };
 
@@ -2534,7 +2535,7 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
 
         var total_size: usize = 0;
         var end_pos: usize = 0;
-        Lockfile.Serializer.save(this, verbose_log, &bytes, &total_size, &end_pos) catch |err| {
+        Lockfile.Serializer.save(this, options.log_level.isVerbose(), &bytes, &total_size, &end_pos) catch |err| {
             Output.err(err, "failed to serialize lockfile", .{});
             Global.crash();
         };
@@ -2548,9 +2549,9 @@ pub fn saveToDisk(this: *Lockfile, save_format: LoadResult.LockfileFormat, verbo
     var base64_bytes: [8]u8 = undefined;
     bun.rand(&base64_bytes);
     const tmpname = if (save_format == .text)
-        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
+        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
     else
-        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
 
     const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
@@ -2686,8 +2687,8 @@ pub fn getPackageID(
     return null;
 }
 
-/// Appends `pkg` to `this.packages` if a duplicate isn't found
-pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
+/// Appends `pkg` to `this.packages`, and adds to `this.package_index`
+pub fn appendPackageNoDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
     const entry = try this.package_index.getOrPut(pkg.name_hash);
 
     if (!entry.found_existing) {
@@ -2702,11 +2703,6 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
 
     return switch (entry.value_ptr.*) {
         .id => |existing_id| {
-            if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
-                pkg.meta.id = existing_id;
-                return existing_id;
-            }
-
             const new_id: PackageID = @intCast(this.packages.len);
             pkg.meta.id = new_id;
             try this.packages.append(this.allocator, pkg.*);
@@ -2728,13 +2724,6 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
             return new_id;
         },
         .ids => |*existing_ids| {
-            for (existing_ids.items) |existing_id| {
-                if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
-                    pkg.meta.id = existing_id;
-                    return existing_id;
-                }
-            }
-
             const new_id: PackageID = @intCast(this.packages.len);
             pkg.meta.id = new_id;
             try this.packages.append(this.allocator, pkg.*);
@@ -3774,11 +3763,11 @@ pub const Package = extern struct {
         field: string,
         behavior: Behavior,
 
-        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = Behavior.prod };
-        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = Behavior.dev };
-        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = Behavior.optional };
-        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = Behavior.peer };
-        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = Behavior.workspace };
+        pub const dependencies = DependencyGroup{ .prop = "dependencies", .field = "dependencies", .behavior = .{ .prod = true } };
+        pub const dev = DependencyGroup{ .prop = "devDependencies", .field = "dev_dependencies", .behavior = .{ .dev = true } };
+        pub const optional = DependencyGroup{ .prop = "optionalDependencies", .field = "optional_dependencies", .behavior = .{ .optional = true } };
+        pub const peer = DependencyGroup{ .prop = "peerDependencies", .field = "peer_dependencies", .behavior = .{ .peer = true } };
+        pub const workspaces = DependencyGroup{ .prop = "workspaces", .field = "workspaces", .behavior = .{ .workspace = true } };
     };
 
     pub inline fn isDisabled(this: *const Lockfile.Package) bool {
@@ -5056,7 +5045,7 @@ pub const Package = extern struct {
 
             if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
-            if (Glob.Ascii.detectGlobSyntax(input_path)) {
+            if (Glob.detectGlobSyntax(input_path)) {
                 workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
             }
@@ -6085,7 +6074,7 @@ pub const Package = extern struct {
             };
         };
 
-        const FieldsEnum = @typeInfo(Lockfile.Package.List.Field).Enum;
+        const FieldsEnum = @typeInfo(Lockfile.Package.List.Field).@"enum";
 
         pub fn byteSize(list: Lockfile.Package.List) usize {
             const sizes_vector: std.meta.Vector(sizes.bytes.len, usize) = sizes.bytes;
@@ -7512,7 +7501,7 @@ pub fn jsonStringifyDependency(this: *const Lockfile, w: anytype, dep_id: Depend
         try w.beginObject();
         defer w.endObject() catch {};
 
-        const fields = @typeInfo(Behavior).Struct.fields;
+        const fields = @typeInfo(Behavior).@"struct".fields;
         inline for (fields[1 .. fields.len - 1]) |field| {
             if (@field(dep.behavior, field.name)) {
                 try w.objectField(field.name);

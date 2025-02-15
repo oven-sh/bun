@@ -183,3 +183,4 @@ complete -c bun -n "__fish_use_subcommand" -a "unlink" -d "Unregister a local np
 complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package management utilities" -f
 complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
 complete -c bun -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f
+complete -c bun -n "__fish_use_subcommand" -a "publish" -d "Publish your package from local to npm" -f

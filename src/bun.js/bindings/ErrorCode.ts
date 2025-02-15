@@ -92,6 +92,9 @@ const errors: ErrorCodeMapping = [
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
 
+  // FS
+  ["ERR_DIR_CLOSED", Error],
+
   // DNS
   ["ERR_DNS_SET_SERVERS_FAILED", Error],
 
@@ -163,14 +166,15 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT", TypeError, "PostgresError"],
   ["ERR_POSTGRES_IDLE_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_LIFETIME_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_INVALID_TRANSACTION_STATE", Error, "PostgresError"],
   ["ERR_POSTGRES_QUERY_CANCELLED", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSAFE_TRANSACTION", Error, "PostgresError"],
-
   // S3
   ["ERR_S3_MISSING_CREDENTIALS", Error],
   ["ERR_S3_INVALID_METHOD", Error],

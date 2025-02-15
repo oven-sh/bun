@@ -17,7 +17,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         formatter.indent += 1;
         defer formatter.indent -|= 1;
 
-        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else "https://s3.<region>.amazonaws.com";
+        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else (if (credentials.virtual_hosted_style) "https://<bucket>.s3.<region>.amazonaws.com" else "https://s3.<region>.amazonaws.com");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>endpoint<d>:<r> \"", enable_ansi_colors));
@@ -94,27 +94,31 @@ pub const S3Client = struct {
     credentials: *S3Credentials,
     options: bun.S3.MultiPartUploadOptions = .{},
     acl: ?bun.S3.ACL = null,
+    storage_class: ?bun.S3.StorageClass = null,
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*@This() {
         const arguments = callframe.arguments_old(1).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
-        var aws_options = try S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, args.nextEat(), null, globalThis);
+        var aws_options = try S3Credentials.getCredentialsWithOptions(globalThis.bunVM().transpiler.env.getS3Credentials(), .{}, args.nextEat(), null, null, globalThis);
         defer aws_options.deinit();
         return S3Client.new(.{
             .credentials = aws_options.credentials.dupe(),
             .options = aws_options.options,
             .acl = aws_options.acl,
+            .storage_class = aws_options.storage_class,
         });
     }
 
     pub fn writeFormat(this: *@This(), comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>S3Client<r>", enable_ansi_colors));
-        if (this.credentials.bucket.len > 0) {
+        // detect virtual host style bucket name
+        const bucket_name = if (this.credentials.virtual_hosted_style and this.credentials.endpoint.len > 0) S3Credentials.guessBucket(this.credentials.endpoint) orelse this.credentials.bucket else this.credentials.bucket;
+        if (bucket_name.len > 0) {
             try writer.print(
                 comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r> {{", enable_ansi_colors),
                 .{
-                    this.credentials.bucket,
+                    bucket_name,
                 },
             );
         } else {
@@ -138,7 +142,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl));
+        var blob = Blob.new(try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class));
         blob.allocator = bun.default_allocator;
         return blob.toJS(globalThis);
     }
@@ -156,7 +160,7 @@ pub const S3Client = struct {
         errdefer path.deinit();
 
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return S3File.getPresignUrlFrom(&blob, globalThis, options);
     }
@@ -173,7 +177,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return S3File.S3BlobStatTask.exists(globalThis, &blob);
     }
@@ -190,7 +194,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return S3File.S3BlobStatTask.size(globalThis, &blob);
     }
@@ -207,7 +211,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return S3File.S3BlobStatTask.stat(globalThis, &blob);
     }
@@ -225,7 +229,7 @@ pub const S3Client = struct {
         };
 
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         var blob_internal: PathOrBlob = .{ .blob = blob };
         return Blob.writeFileInternal(globalThis, &blob_internal, data, .{
@@ -243,7 +247,7 @@ pub const S3Client = struct {
         };
         errdefer path.deinit();
         const options = args.nextEat();
-        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl);
+        var blob = try S3File.constructS3FileWithS3CredentialsAndOptions(globalThis, path, options, ptr.credentials, ptr.options, ptr.acl, ptr.storage_class);
         defer blob.detach();
         return blob.store.?.data.s3.unlink(blob.store.?, globalThis, options);
     }

@@ -33,8 +33,10 @@ const SEND_BUFFER = false;
 const LIBUS_LISTEN_DEFAULT = 0;
 const LIBUS_LISTEN_EXCLUSIVE_PORT = 1;
 const LIBUS_SOCKET_ALLOW_HALF_OPEN = 2;
-const LIBUS_SOCKET_REUSE_PORT = 4;
+const LIBUS_LISTEN_REUSE_PORT = 4;
 const LIBUS_SOCKET_IPV6_ONLY = 8;
+const LIBUS_LISTEN_REUSE_ADDR = 16;
+const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32;
 
 const kStateSymbol = Symbol("state symbol");
 const kOwnerSymbol = Symbol("owner symbol");
@@ -165,7 +167,7 @@ function Socket(type, listener) {
     bindState: BIND_STATE_UNBOUND,
     connectState: CONNECT_STATE_DISCONNECTED,
     queue: undefined,
-    reuseAddr: options && options.reuseAddr, // Use UV_UDP_REUSEADDR if true.
+    reuseAddr: options && options.reuseAddr,
     reusePort: options && options.reusePort,
     ipv6Only: options && options.ipv6Only,
     recvBufferSize,
@@ -301,10 +303,10 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       return;
     }
 
-    let flags = 0;
+    let flags = LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE;
 
     if (state.reuseAddr) {
-      flags |= 0; //UV_UDP_REUSEADDR;
+      flags |= LIBUS_LISTEN_REUSE_ADDR;
     }
 
     if (state.ipv6Only) {
@@ -313,9 +315,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
     if (state.reusePort) {
       exclusive = true; // TODO: cluster support
-      flags |= LIBUS_SOCKET_REUSE_PORT;
-    } else {
-      flags |= LIBUS_LISTEN_EXCLUSIVE_PORT;
+      flags |= LIBUS_LISTEN_REUSE_PORT;
     }
 
     // TODO flags
@@ -456,7 +456,7 @@ function sliceBuffer(buffer, offset, length) {
   if (typeof buffer === "string") {
     buffer = Buffer.from(buffer);
   } else if (!ArrayBuffer.isView(buffer)) {
-    throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+    throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
   }
 
   offset = offset >>> 0;
@@ -562,12 +562,12 @@ Socket.prototype.send = function (buffer, offset, length, port, address, callbac
     if (typeof buffer === "string") {
       list = [Buffer.from(buffer)];
     } else if (!ArrayBuffer.isView(buffer)) {
-      throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+      throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
     } else {
       list = [buffer];
     }
   } else if (!(list = fixBufferList(buffer))) {
-    throw $ERR_INVALID_ARG_TYPE("buffer list arguments", ["Buffer", "TypedArray", "DataView", "string"], buffer);
+    throw $ERR_INVALID_ARG_TYPE("buffer list arguments", ["string", "Buffer", "TypedArray", "DataView"], buffer);
   }
 
   if (!connected) port = validatePort(port, "Port", false);
@@ -627,7 +627,12 @@ function doSend(ex, self, ip, list, address, port, callback) {
 
   let err = null;
   let success = false;
-  const data = Buffer.concat(list);
+  let data;
+  if (list === undefined) data = new $Buffer(0);
+  else if (Array.isArray(list) && list.length === 1) {
+    const { buffer, byteOffset, byteLength } = list[0];
+    data = new $Buffer(buffer).slice(byteOffset).slice(0, byteLength);
+  } else data = Buffer.concat(list);
   try {
     if (port) {
       success = socket.send(data, port, ip);
@@ -652,7 +657,7 @@ function doSend(ex, self, ip, list, address, port, callback) {
 
   /*
   const req = new SendWrap();
-  req.list = list;  // Keep reference alive.
+  req.list = list; // Keep reference alive.
   req.address = address;
   req.port = port;
   if (callback) {
@@ -661,22 +666,19 @@ function doSend(ex, self, ip, list, address, port, callback) {
   }
 
   let err;
-  if (port)
-    err = state.handle.send(req, list, list.length, port, ip, !!callback);
-  else
-    err = state.handle.send(req, list, list.length, !!callback);
+  if (port) err = state.handle.send(req, list, list.length, port, ip, !!callback);
+  else err = state.handle.send(req, list, list.length, !!callback);
 
   if (err >= 1) {
     // Synchronous finish. The return code is msg_length + 1 so that we can
     // distinguish between synchronous success and asynchronous success.
-    if (callback)
-      process.nextTick(callback, null, err - 1);
+    if (callback) process.nextTick(callback, null, err - 1);
     return;
   }
 
   if (err && callback) {
     // Don't emit as error, dgram_legacy.js compatibility
-    const ex = new ExceptionWithHostPort(err, 'send', address, port);
+    const ex = new ExceptionWithHostPort(err, "send", address, port);
     process.nextTick(callback, ex);
   }
   */

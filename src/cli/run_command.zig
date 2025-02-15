@@ -295,7 +295,7 @@ pub const RunCommand = struct {
         log("Script: \"{s}\"", .{copy_script.items});
 
         if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{copy_script.items});
+            Output.command(copy_script.items);
             Output.flush();
         }
 
@@ -757,7 +757,7 @@ pub const RunCommand = struct {
             const dir_slice = target_path_buffer[0 .. prefix.len + len + dir_name.len];
 
             if (Environment.isDebug) {
-                const dir_slice_u8 = std.unicode.utf16leToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
+                const dir_slice_u8 = std.unicode.utf16LeToUtf8Alloc(bun.default_allocator, dir_slice) catch @panic("oom");
                 defer bun.default_allocator.free(dir_slice_u8);
                 std.fs.deleteTreeAbsolute(dir_slice_u8) catch {};
                 std.fs.makeDirAbsolute(dir_slice_u8) catch @panic("huh?");
@@ -1263,12 +1263,12 @@ pub const RunCommand = struct {
         Output.flush();
     }
 
-    fn _bootAndHandleError(ctx: Command.Context, path: string) bool {
+    fn _bootAndHandleError(ctx: Command.Context, path: string, loader: ?bun.options.Loader) bool {
         Global.configureAllocator(.{ .long_running = true });
         var arena: bun.MimallocArena = .{};
         // leaking memory on exit is fine, but it makes leak detection more difficult.
         defer if (comptime bun.Environment.detect_leaks) arena.deinit();
-        Run.boot(ctx, &arena, ctx.allocator.dupe(u8, path) catch return false) catch |err| {
+        Run.boot(ctx, &arena, ctx.allocator.dupe(u8, path) catch return false, loader) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
             Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
@@ -1353,7 +1353,7 @@ pub const RunCommand = struct {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
-        _ = _bootAndHandleError(ctx, absolute_script_path.?);
+        _ = _bootAndHandleError(ctx, absolute_script_path.?, null);
         return true;
     }
     pub fn exec(
@@ -1449,7 +1449,7 @@ pub const RunCommand = struct {
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
 
-            Run.boot(ctx, null, ctx.allocator.dupe(u8, entry_path) catch return false) catch |err| {
+            Run.boot(ctx, null, ctx.allocator.dupe(u8, entry_path) catch return false, null) catch |err| {
                 ctx.log.print(Output.errorWriter()) catch {};
 
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> due to error <b>{s}<r>", .{
@@ -1530,15 +1530,26 @@ pub const RunCommand = struct {
         // TODO: run module resolution here - try the next condition if the module can't be found
 
         log("Try resolve `{s}` in `{s}`", .{ target_name, this_transpiler.fs.top_level_dir });
-        if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run)) |resolved| {
+        if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, target_name, .entry_point_run) catch
+            this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved|
+        {
             var resolved_mutable = resolved;
-            log("Resolved to: `{s}`", .{resolved_mutable.path().?.text});
-            return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
-        } else |_| if (this_transpiler.resolver.resolve(this_transpiler.fs.top_level_dir, try std.mem.join(ctx.allocator, "", &.{ "./", target_name }), .entry_point_run)) |resolved| {
-            var resolved_mutable = resolved;
-            log("Resolved with `./` to: `{s}`", .{resolved_mutable.path().?.text});
-            return _bootAndHandleError(ctx, resolved_mutable.path().?.text);
-        } else |_| {}
+            const path = resolved_mutable.path().?;
+            const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
+            if (loader.canBeRunByBun() or loader == .html) {
+                log("Resolved to: `{s}`", .{path.text});
+                return _bootAndHandleError(ctx, path.text, loader);
+            } else {
+                log("Resolved file `{s}` but ignoring because loader is {s}", .{ path.text, @tagName(loader) });
+            }
+        } else |_| {
+            // Support globs for HTML entry points.
+            if (strings.hasSuffixComptime(target_name, ".html")) {
+                if (strings.containsChar(target_name, '*')) {
+                    return _bootAndHandleError(ctx, target_name, .html);
+                }
+            }
+        }
 
         // execute a node_modules/.bin/<X> command, or (run only) a system command like 'ls'
 
@@ -1573,7 +1584,7 @@ pub const RunCommand = struct {
 
         const PATH = this_transpiler.env.get("PATH") orelse "";
         var path_for_which = PATH;
-        if (comptime bin_dirs_only) {
+        if (bin_dirs_only) {
             if (ORIGINAL_PATH.len < PATH.len) {
                 path_for_which = PATH[0 .. PATH.len - (ORIGINAL_PATH.len + 1)];
             } else {
@@ -1602,7 +1613,7 @@ pub const RunCommand = struct {
             return true;
         }
 
-        if (comptime log_errors) {
+        if (log_errors) {
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
             if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {
@@ -1627,7 +1638,7 @@ pub const RunCommand = struct {
             var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
             const cwd = try std.posix.getcwd(&entry_point_buf);
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-            try Run.boot(ctx, null, entry_point_buf[0 .. cwd.len + trigger.len]);
+            try Run.boot(ctx, null, entry_point_buf[0 .. cwd.len + trigger.len], null);
             return;
         }
 
@@ -1657,7 +1668,7 @@ pub const RunCommand = struct {
             );
         };
 
-        Run.boot(ctx, null, normalized_filename) catch |err| {
+        Run.boot(ctx, null, normalized_filename, null) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
 
             Output.err(err, "Failed to run script \"<b>{s}<r>\"", .{std.fs.path.basename(normalized_filename)});
@@ -1732,7 +1743,7 @@ pub const BunXFastPath = struct {
             bun.reinterpretSlice(u8, &direct_launch_buffer),
             wpath,
         ) catch return;
-        Run.boot(ctx, null, utf8) catch |err| {
+        Run.boot(ctx, null, utf8, null) catch |err| {
             ctx.log.print(Output.errorWriter()) catch {};
             Output.err(err, "Failed to run bin \"<b>{s}<r>\"", .{std.fs.path.basename(utf8)});
             Global.exit(1);

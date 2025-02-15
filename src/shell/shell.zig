@@ -165,7 +165,7 @@ pub const ParseError = error{
     Lex,
 };
 
-extern "C" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: i32) i32;
 
 fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
     // TODO: windows
@@ -226,7 +226,7 @@ pub const GlobalJS = struct {
         };
     }
 
-    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
+    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]const u8 {
         return this.globalThis.bunVM().transpiler.env.map.createNullDelimitedEnvMap(alloc);
     }
 
@@ -298,7 +298,7 @@ pub const GlobalMini = struct {
         };
     }
 
-    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]u8 {
+    pub inline fn createNullDelimitedEnvMap(this: @This(), alloc: Allocator) ![:null]?[*:0]const u8 {
         return this.mini.env.?.map.createNullDelimitedEnvMap(alloc);
     }
 
@@ -770,10 +770,10 @@ pub const AST = struct {
             return .{ .stdout = true, .duplicate = true };
         }
 
-        pub fn toFlags(this: RedirectFlags) bun.Mode {
-            const read_write_flags: bun.Mode = if (this.stdin) bun.O.RDONLY else bun.O.WRONLY | bun.O.CREAT;
-            const extra: bun.Mode = if (this.append) bun.O.APPEND else bun.O.TRUNC;
-            const final_flags: bun.Mode = if (this.stdin) read_write_flags else extra | read_write_flags;
+        pub fn toFlags(this: RedirectFlags) i32 {
+            const read_write_flags: i32 = if (this.stdin) bun.O.RDONLY else bun.O.WRONLY | bun.O.CREAT;
+            const extra: i32 = if (this.append) bun.O.APPEND else bun.O.TRUNC;
+            const final_flags: i32 = if (this.stdin) read_write_flags else extra | read_write_flags;
             return final_flags;
         }
 
@@ -986,7 +986,7 @@ pub const Parser = struct {
     /// If you make a subparser and call some fallible functions on it, you need to catch the errors and call `.continue_from_subparser()`, otherwise errors
     /// will not propagate upwards to the parent.
     pub fn make_subparser(this: *Parser, kind: SubshellKind) Parser {
-        const subparser = .{
+        const subparser: Parser = .{
             .strpool = this.strpool,
             .tokens = this.tokens,
             .alloc = this.alloc,
@@ -1146,7 +1146,7 @@ pub const Parser = struct {
         return expr;
     }
 
-    fn extractIfClauseTextToken(comptime if_clause_token: @TypeOf(.EnumLiteral)) []const u8 {
+    fn extractIfClauseTextToken(comptime if_clause_token: @TypeOf(.enum_literal)) []const u8 {
         const tagname = comptime switch (if_clause_token) {
             .@"if" => "if",
             .@"else" => "else",
@@ -1158,7 +1158,7 @@ pub const Parser = struct {
         return tagname;
     }
 
-    fn expectIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) Token {
+    fn expectIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.enum_literal)) Token {
         const tagname = comptime extractIfClauseTextToken(if_clause_token);
         if (bun.Environment.allow_assert) assert(@as(TokenTag, self.peek()) == .Text);
         if (self.peek() == .Text and
@@ -1172,14 +1172,14 @@ pub const Parser = struct {
         @panic("Expected: " ++ @tagName(if_clause_token));
     }
 
-    fn isIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
+    fn isIfClauseTextToken(self: *Parser, comptime if_clause_token: @TypeOf(.enum_literal)) bool {
         return switch (self.peek()) {
             .Text => |range| self.isIfClauseTextTokenImpl(range, if_clause_token),
             else => false,
         };
     }
 
-    fn isIfClauseTextTokenImpl(self: *Parser, range: Token.TextRange, comptime if_clause_token: @TypeOf(.EnumLiteral)) bool {
+    fn isIfClauseTextTokenImpl(self: *Parser, range: Token.TextRange, comptime if_clause_token: @TypeOf(.enum_literal)) bool {
         const tagname = comptime extractIfClauseTextToken(if_clause_token);
         return bun.strings.eqlComptime(self.text(range), tagname);
     }
@@ -2248,7 +2248,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
             log("[lex] make sublexer", .{});
-            var sublexer = .{
+            var sublexer: @This() = .{
                 .chars = self.chars,
                 .strpool = self.strpool,
                 .tokens = self.tokens,
@@ -2727,7 +2727,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         fn appendUnicodeCharToStrPool(self: *@This(), char: Chars.CodepointType) !void {
-            @setCold(true);
+            @branchHint(.cold);
 
             const ichar: i32 = @intCast(char);
             var bytes: [4]u8 = undefined;
@@ -4458,3 +4458,5 @@ pub const TestingAPIs = struct {
 };
 
 const assert = bun.assert;
+
+pub const ShellSubprocess = @import("subproc.zig").ShellSubprocess;

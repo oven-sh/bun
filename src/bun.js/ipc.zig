@@ -695,8 +695,8 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .Pointer => this.globalThis,
-                .Optional => brk: {
+                .pointer => this.globalThis,
+                .optional => brk: {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
@@ -842,8 +842,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             bun.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
 
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .Pointer => this.globalThis,
-                .Optional => brk: {
+                .pointer => this.globalThis,
+                .optional => brk: {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }

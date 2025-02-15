@@ -38,7 +38,7 @@ public:
 
 extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = JSValue::decode(encodedValue);
     JSC::JSObject* object = value.getObject();
 
@@ -47,6 +47,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
 
     if (UNLIKELY(object->hasNonReifiedStaticProperties())) {
         object->reifyAllStaticProperties(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
 #if OS(WINDOWS)

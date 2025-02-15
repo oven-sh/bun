@@ -356,7 +356,7 @@ namespace ProcessBindingUV {
 
 JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto arg0 = callFrame->argument(0);
 
     // Node.js crashes here:
@@ -378,7 +378,7 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
 
 JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto map = JSC::JSMap::create(vm, globalObject->mapStructure());
 
     // Inlining each of these via macros costs like 300 KB.

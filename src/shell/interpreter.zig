@@ -1792,18 +1792,15 @@ pub const Interpreter = struct {
     }
 
     pub fn hasPendingActivity(this: *ThisInterpreter) bool {
-        @fence(.seq_cst);
         return this.has_pending_activity.load(.seq_cst) > 0;
     }
 
     fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
-        @fence(.seq_cst);
         _ = has_pending_activity.fetchAdd(1, .seq_cst);
         log("Interpreter incr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
 
     fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(u32)) void {
-        @fence(.seq_cst);
         _ = has_pending_activity.fetchSub(1, .seq_cst);
         log("Interpreter decr pending activity {d}", .{has_pending_activity.load(.seq_cst)});
     }
@@ -5338,9 +5335,9 @@ pub const Interpreter = struct {
             const Blob = struct {
                 ref_count: usize = 1,
                 blob: bun.JSC.WebCore.Blob,
-                pub usingnamespace bun.NewRefCounted(Blob, Blob.deinit);
+                pub usingnamespace bun.NewRefCounted(Blob, _deinit, null);
 
-                pub fn deinit(this: *Blob) void {
+                fn _deinit(this: *Blob) void {
                     this.blob.deinit();
                     bun.destroy(this);
                 }
@@ -5680,7 +5677,7 @@ pub const Interpreter = struct {
         }
 
         /// If the stdout/stderr is supposed to be captured then get the bytelist associated with that
-        pub fn stdBufferedBytelist(this: *Builtin, comptime io_kind: @Type(.EnumLiteral)) ?*bun.ByteList {
+        pub fn stdBufferedBytelist(this: *Builtin, comptime io_kind: @Type(.enum_literal)) ?*bun.ByteList {
             if (comptime io_kind != .stdout and io_kind != .stderr) {
                 @compileError("Bad IO" ++ @tagName(io_kind));
             }
@@ -5702,7 +5699,7 @@ pub const Interpreter = struct {
         }
 
         /// **WARNING** You should make sure that stdout/stderr does not need IO (e.g. `.needsIO(.stderr)` is false before caling `.writeNoIO(.stderr, buf)`)
-        pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.EnumLiteral), buf: []const u8) Maybe(usize) {
+        pub fn writeNoIO(this: *Builtin, comptime io_kind: @Type(.enum_literal), buf: []const u8) Maybe(usize) {
             if (comptime io_kind != .stdout and io_kind != .stderr) {
                 @compileError("Bad IO" ++ @tagName(io_kind));
             }
@@ -6368,8 +6365,8 @@ pub const Interpreter = struct {
                     var node_fs = JSC.Node.NodeFS{};
                     const milliseconds: f64 = @floatFromInt(std.time.milliTimestamp());
                     const atime: JSC.Node.TimeLike = if (bun.Environment.isWindows) milliseconds / 1000.0 else JSC.Node.TimeLike{
-                        .tv_sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
-                        .tv_nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
+                        .sec = @intFromFloat(@divFloor(milliseconds, std.time.ms_per_s)),
+                        .nsec = @intFromFloat(@mod(milliseconds, std.time.ms_per_s) * std.time.ns_per_ms),
                     };
                     const mtime = atime;
                     const args = JSC.Node.Arguments.Utimes{
@@ -6906,7 +6903,7 @@ pub const Interpreter = struct {
                 }
             };
 
-            pub fn writeOutput(this: *Export, comptime io_kind: @Type(.EnumLiteral), comptime fmt: []const u8, args: anytype) Maybe(void) {
+            pub fn writeOutput(this: *Export, comptime io_kind: @Type(.enum_literal), comptime fmt: []const u8, args: anytype) Maybe(void) {
                 if (this.bltn.stdout.needsIO()) |safeguard| {
                     var output: *BuiltinIO.Output = &@field(this.bltn, @tagName(io_kind));
                     this.printing = true;
@@ -8733,16 +8730,14 @@ pub const Interpreter = struct {
                         }
                     },
 
-                    fn incrementOutputCount(this: *@This(), comptime thevar: @Type(.EnumLiteral)) void {
-                        @fence(.seq_cst);
+                    fn incrementOutputCount(this: *@This(), comptime thevar: @Type(.enum_literal)) void {
                         var atomicvar = &@field(this, @tagName(thevar));
                         const result = atomicvar.fetchAdd(1, .seq_cst);
                         log("[rm] {s}: {d} + 1", .{ @tagName(thevar), result });
                         return;
                     }
 
-                    fn getOutputCount(this: *@This(), comptime thevar: @Type(.EnumLiteral)) usize {
-                        @fence(.seq_cst);
+                    fn getOutputCount(this: *@This(), comptime thevar: @Type(.enum_literal)) usize {
                         var atomicvar = &@field(this, @tagName(thevar));
                         return atomicvar.load(.seq_cst);
                     }
@@ -10109,8 +10104,8 @@ pub const Interpreter = struct {
             bltn: *Builtin,
             state: enum { idle, waiting_io, err, done } = .idle,
             buf: std.ArrayListUnmanaged(u8) = .{},
-            start: f32 = 1,
-            end: f32 = 1,
+            _start: f32 = 1,
+            _end: f32 = 1,
             increment: f32 = 1,
             separator: string = "\n",
             terminator: string = "",
@@ -10154,28 +10149,28 @@ pub const Interpreter = struct {
                 }
 
                 const maybe1 = iter.next().?;
-                const int1 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
-                this.end = int1;
-                if (this.start > this.end) this.increment = -1;
+                const int1 = std.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
+                this._end = int1;
+                if (this._start > this._end) this.increment = -1;
 
                 const maybe2 = iter.next();
                 if (maybe2 == null) return this.do();
-                const int2 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
-                this.start = int1;
-                this.end = int2;
-                if (this.start < this.end) this.increment = 1;
-                if (this.start > this.end) this.increment = -1;
+                const int2 = std.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
+                this._start = int1;
+                this._end = int2;
+                if (this._start < this._end) this.increment = 1;
+                if (this._start > this._end) this.increment = -1;
 
                 const maybe3 = iter.next();
                 if (maybe3 == null) return this.do();
-                const int3 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
-                this.start = int1;
+                const int3 = std.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
+                this._start = int1;
                 this.increment = int2;
-                this.end = int3;
+                this._end = int3;
 
                 if (this.increment == 0) return this.fail("seq: zero increment\n");
-                if (this.start > this.end and this.increment > 0) return this.fail("seq: needs negative decrement\n");
-                if (this.start < this.end and this.increment < 0) return this.fail("seq: needs positive increment\n");
+                if (this._start > this._end and this.increment > 0) return this.fail("seq: needs negative decrement\n");
+                if (this._start < this._end and this.increment < 0) return this.fail("seq: needs positive increment\n");
 
                 return this.do();
             }
@@ -10192,11 +10187,11 @@ pub const Interpreter = struct {
             }
 
             fn do(this: *@This()) Maybe(void) {
-                var current = this.start;
+                var current = this._start;
                 var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
                 defer arena.deinit();
 
-                while (if (this.increment > 0) current <= this.end else current >= this.end) : (current += this.increment) {
+                while (if (this.increment > 0) current <= this._end else current >= this._end) : (current += this.increment) {
                     const str = std.fmt.allocPrint(arena.allocator(), "{d}", .{current}) catch bun.outOfMemory();
                     defer _ = arena.reset(.retain_capacity);
                     _ = this.print(str);
@@ -11136,8 +11131,7 @@ pub const Interpreter = struct {
         pub const ChildPtr = IOReaderChildPtr;
         pub const ReaderImpl = bun.io.BufferedReader;
 
-        pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOReaderRefCount";
-        pub usingnamespace bun.NewRefCounted(@This(), IOReader.asyncDeinit);
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOReaderRefCount");
 
         const InitFlags = packed struct(u8) {
             pollable: bool = false,
@@ -11403,8 +11397,6 @@ pub const Interpreter = struct {
         started: bool = false,
         flags: InitFlags = .{},
 
-        pub const DEBUG_REFCOUNT_NAME: []const u8 = "IOWriterRefCount";
-
         const debug = bun.Output.scoped(.IOWriter, true);
 
         const ChildPtr = IOWriterChildPtr;
@@ -11416,7 +11408,7 @@ pub const Interpreter = struct {
 
         pub const auto_poll = false;
 
-        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit);
+        pub usingnamespace bun.NewRefCounted(@This(), asyncDeinit, "IOWriterRefCount");
         const This = @This();
         pub const WriterImpl = bun.io.BufferedWriter(
             This,
@@ -11940,7 +11932,7 @@ pub fn StatePtrUnion(comptime TypesValue: anytype) type {
 
         pub fn init(_ptr: anytype) @This() {
             const tyinfo = @typeInfo(@TypeOf(_ptr));
-            if (tyinfo != .Pointer) @compileError("Only pass pointers to StatePtrUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
+            if (tyinfo != .pointer) @compileError("Only pass pointers to StatePtrUnion.init(), you gave us a: " ++ @typeName(@TypeOf(_ptr)));
             const Type = std.meta.Child(@TypeOf(_ptr));
             Ptr.assert_type(Type);
 
@@ -11957,7 +11949,7 @@ pub fn MaybeChild(comptime T: type) type {
     return switch (@typeInfo(T)) {
         .Array => |info| info.child,
         .Vector => |info| info.child,
-        .Pointer => |info| info.child,
+        .pointer => |info| info.child,
         .Optional => |info| info.child,
         else => T,
     };
@@ -12089,8 +12081,8 @@ inline fn errnocast(errno: anytype) u16 {
 
 inline fn fastMod(val: anytype, comptime rhs: comptime_int) @TypeOf(val) {
     const Value = @typeInfo(@TypeOf(val));
-    if (Value != .Int) @compileError("LHS of fastMod should be an int");
-    if (Value.Int.signedness != .unsigned) @compileError("LHS of fastMod should be unsigned");
+    if (Value != .int) @compileError("LHS of fastMod should be an int");
+    if (Value.int.signedness != .unsigned) @compileError("LHS of fastMod should be unsigned");
     if (!comptime std.math.isPowerOfTwo(rhs)) @compileError("RHS of fastMod should be power of 2");
 
     return val & (rhs - 1);
@@ -12242,7 +12234,7 @@ const ShellSyscall = struct {
         return Syscall.fstatat(dir, path_);
     }
 
-    fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: bun.Mode, perm: bun.Mode) Maybe(bun.FileDescriptor) {
+    fn openat(dir: bun.FileDescriptor, path: [:0]const u8, flags: i32, perm: bun.Mode) Maybe(bun.FileDescriptor) {
         if (bun.Environment.isWindows) {
             if (flags & bun.O.DIRECTORY != 0) {
                 if (ResolvePath.Platform.posix.isAbsolute(path[0..path.len])) {

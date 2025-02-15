@@ -1,4 +1,4 @@
-import { Subprocess } from "bun";
+import type { Subprocess, Server } from "bun";
 import { describe, test, expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
@@ -96,10 +96,15 @@ test("serve html", async () => {
     `,
   });
 
-  const { subprocess, port, hostname } = await waitForServer(dir, {
+  const {
+    subprocess: subprocess1,
+    port,
+    hostname,
+  } = await waitForServer(dir, {
     "/": join(dir, "index.html"),
     "/dashboard": join(dir, "dashboard.html"),
   });
+  await using subprocess = subprocess1;
 
   {
     const html = await (await fetch(`http://${hostname}:${port}/`)).text();
@@ -194,21 +199,21 @@ console.log("How...dashing?");
     const sourceMap = await (await fetch(new URL(sourceMapURL, "http://" + hostname + ":" + port))).json();
     sourceMap.sourcesContent = sourceMap.sourcesContent.map(a => a.trim());
     expect(JSON.stringify(sourceMap, null, 2)).toMatchInlineSnapshot(`
-"{
-  "version": 3,
-  "sources": [
-    "script.js",
-    "dashboard.js"
-  ],
-  "sourcesContent": [
-    "let count = 0;\\n      const button = document.getElementById('counter');\\n      button.addEventListener('click', () => {\\n        count++;\\n        button.textContent = \`Click me: \${count}\`;\\n      });",
-    "import './script.js';\\n      // Additional dashboard-specific code could go here\\n      console.log(\\"How...dashing?\\")"
-  ],
-  "mappings": ";AACM,IAAI,QAAQ;AACZ,IAAM,SAAS,SAAS,eAAe,SAAS;AAChD,OAAO,iBAAiB,SAAS,MAAM;AACrC;AACA,SAAO,cAAc,aAAa;AAAA,CACnC;;;ACHD,QAAQ,IAAI,gBAAgB;",
-  "debugId": "0B3DD451DC3D66B564756E2164756E21",
-  "names": []
-}"
-`);
+      "{
+        "version": 3,
+        "sources": [
+          "script.js",
+          "dashboard.js"
+        ],
+        "sourcesContent": [
+          "let count = 0;\\n      const button = document.getElementById('counter');\\n      button.addEventListener('click', () => {\\n        count++;\\n        button.textContent = \`Click me: \${count}\`;\\n      });",
+          "import './script.js';\\n      // Additional dashboard-specific code could go here\\n      console.log(\\"How...dashing?\\")"
+        ],
+        "mappings": ";AACM,IAAI,QAAQ;AACZ,IAAM,SAAS,SAAS,eAAe,SAAS;AAChD,OAAO,iBAAiB,SAAS,MAAM;AAAA,EACrC;AAAA,EACA,OAAO,cAAc,aAAa;AAAA,CACnC;;;ACHD,QAAQ,IAAI,gBAAgB;",
+        "debugId": "0B3DD451DC3D66B564756E2164756E21",
+        "names": []
+      }"
+    `);
     const headers = response.headers.toJSON();
     headers.date = "<date>";
     headers.sourcemap = headers.sourcemap.replace(/chunk-[a-z0-9]+\.js.map/g, "chunk-HASH.js.map");
@@ -225,6 +230,7 @@ console.log("How...dashing?");
 
   {
     const css = await (await fetch(cssSrc!)).text();
+    /* the order of the properties may change because we made add more handlers to DeclarationHandler which changes the order in which they are flushed, but semantically it should be the same */
     expect(css).toMatchInlineSnapshot(`
 "/* styles.css */
 .container {
@@ -236,11 +242,11 @@ console.log("How...dashing?");
 
 button {
   cursor: pointer;
-  transition: all .2s;
   background: #fff;
   border: 2px solid #000;
   border-radius: .25rem;
   padding: .5rem 1rem;
+  transition: all .2s;
   font-size: 1.25rem;
 }
 
@@ -309,9 +315,14 @@ export default p;
 `,
     });
 
-    const { subprocess, port, hostname } = await waitForServer(dir, {
+    const {
+      subprocess: subprocess1,
+      port,
+      hostname,
+    } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
     });
+    await using subprocess = subprocess1;
     const response = await fetch(`http://${hostname}:${port}/`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/html;charset=utf-8");
@@ -389,9 +400,14 @@ export default p;
 `,
     });
 
-    const { subprocess, port, hostname } = await waitForServer(dir, {
+    const {
+      subprocess: subprocess1,
+      port,
+      hostname,
+    } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
     });
+    await using subprocess = subprocess1;
     const response = await fetch(`http://${hostname}:${port}/`);
     expect(response.status).toBe(500);
 
@@ -438,9 +454,14 @@ export default p;
 plugins = []`,
     });
 
-    const { subprocess, port, hostname } = await waitForServer(dir, {
+    const {
+      subprocess: subprocess1,
+      port,
+      hostname,
+    } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
     });
+    await using subprocess = subprocess1;
     const response = await fetch(`http://${hostname}:${port}/`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/html");
@@ -509,7 +530,11 @@ export default {
     });
 
     console.log("Waiting for server");
-    const { subprocess, port, hostname } = await waitForServer(dir, {
+    const {
+      subprocess: subprocess1,
+      port,
+      hostname,
+    } = await waitForServer(dir, {
       "/": join(dir, "index.html"),
       "/about": join(dir, "about.html"),
       "/contact": join(dir, "contact.html"),
@@ -522,7 +547,7 @@ export default {
       "/ooga": join(dir, "ooga.html"),
     });
     console.log("done waiting for server");
-
+    await using subprocess = subprocess1;
     // Make concurrent requests to all routes while plugins are loading
     const responses = await Promise.all([
       fetch(`http://${hostname}:${port}/`),
@@ -568,6 +593,7 @@ async function waitForServer(
   port: number;
   hostname: string;
 }> {
+  console.log("waitForServer", dir, entryPoints);
   let defer = Promise.withResolvers<{
     subprocess: Subprocess;
     port: number;
@@ -580,6 +606,7 @@ async function waitForServer(
       NODE_ENV: undefined,
     },
     cwd: dir,
+    stdio: ["inherit", "inherit", "inherit"],
     ipc(message, subprocess) {
       subprocess.send({
         files: entryPoints,
@@ -592,4 +619,243 @@ async function waitForServer(
     },
   });
   return defer.promise;
+}
+
+test("serve html error handling", async () => {
+  const dir = tempDirWithFiles("bun-serve-html-error-handling", {
+    "index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Error Page</title>
+        </head>
+        <body>
+          <h1>Error Page</h1>
+          <script type="module" src="error.js"></script>
+        </body>
+      </html>
+    `,
+    "error.js": /*js*/ `
+      throw new Error("Error on purpose");
+    `,
+  });
+  async function getServers() {
+    const path = join(dir, "index.html");
+
+    const { default: html } = await import(path);
+    let servers: Server[] = [];
+    for (let i = 0; i < 10; i++) {
+      servers.push(
+        Bun.serve({
+          port: 0,
+          static: {
+            "/": html,
+          },
+          development: true,
+          fetch(req) {
+            return new Response("Not found", { status: 404 });
+          },
+        }),
+      );
+    }
+
+    delete require.cache[path];
+
+    return servers;
+  }
+
+  {
+    let servers = await getServers();
+    Bun.gc();
+    await Bun.sleep(1);
+    for (const server of servers) {
+      await server.stop(true);
+    }
+    servers = [];
+    Bun.gc();
+  }
+
+  Bun.gc(true);
+});
+
+test("wildcard static routes", async () => {
+  const dir = tempDirWithFiles("bun-serve-html-error-handling", {
+    "index.html": /*html*/ `
+      <!DOCTYPE html>
+      <html>
+        <head>         
+        </head>
+        <body>
+          <title>Error Page</title>
+          <h1>Error Page</h1>
+          <script type="module" src="error.js"></script>
+        </body>
+      </html>
+    `,
+    "error.js": /*js*/ `
+      throw new Error("Error on purpose");
+    `,
+  });
+  const { default: html } = await import(join(dir, "index.html"));
+  for (let development of [true, false]) {
+    using server = Bun.serve({
+      port: 0,
+      static: {
+        "/*": html,
+      },
+      development,
+      fetch(req) {
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    for (let url of [server.url, new URL("/potato", server.url)]) {
+      const response = await fetch(url);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      const text = await response.text();
+      expect(text).toContain("<title>Error Page</title>");
+    }
+  }
+});
+
+test("serve html with JSX runtime in development mode", async () => {
+  const dir = join(import.meta.dir, "jsx-runtime");
+  const { default: html } = await import(join(dir, "index.html"));
+
+  using server = Bun.serve({
+    port: 0,
+    development: true,
+    static: {
+      "/": html,
+    },
+    fetch(req) {
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  const htmlText = await response.text();
+  const jsSrc = htmlText.match(/<script type="module" crossorigin async src="([^"]+)"/)?.[1]!;
+  const js = await (await fetch(new URL(jsSrc, server.url))).text();
+
+  // Development mode should use jsxDEV
+  expect(js).toContain("jsx_dev_runtime.jsxDEV");
+  expect(js).not.toContain("jsx_runtime.jsx");
+});
+
+test("serve html with JSX runtime in production mode", async () => {
+  const dir = join(import.meta.dir, "jsx-runtime");
+  const { default: html } = await import(join(dir, "index.html"));
+
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    static: {
+      "/": html,
+    },
+    fetch(req) {
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  const response = await fetch(server.url);
+  expect(response.status).toBe(200);
+  const htmlText = await response.text();
+  const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+  const js = await (await fetch(new URL(jsSrc, server.url))).text();
+  // jsxDEV looks like this:
+  //  jsxDEV("button", {
+  //    children: "Click me"
+  //  }, undefined, false, undefined, this)
+  expect(js).toContain(`("h1",{children:"Hello from JSX"})`);
+});
+
+for (let development of [true, false, { hmr: false }]) {
+  test(`mixed api and html routes with non-* false routes`, async () => {
+    const dir = join(import.meta.dir, "jsx-runtime");
+    const { default: html } = await import(join(dir, "index.html"));
+
+    using server = Bun.serve({
+      port: 0,
+      development,
+      static: {
+        "/*": html,
+        "/api": false,
+        "/api/": false,
+      },
+      fetch(req) {
+        console.log({
+          url: req.url,
+        });
+        if (req.url.includes("/api")) {
+          return Response.json({ url: req.url, method: req.method });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    const htmlroutes = [
+      new URL("/", server.url),
+      new URL("/potato", server.url),
+      new URL("/api-potato", server.url),
+      new URL("/apiii", server.url),
+    ];
+    for (const url of htmlroutes) {
+      const response = await fetch(url);
+      expect(response.status).toBe(200);
+      const htmlText = await response.text();
+      const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+      await (await fetch(new URL(jsSrc, server.url))).text();
+    }
+    for (const url of [new URL("/api", server.url), new URL("/api/", server.url)]) {
+      const response = await fetch(url);
+      const json = await response.json();
+      expect(json).toEqual({ url: url.href, method: "GET" });
+    }
+  });
+
+  test(`mixed api and html routes with development: ${JSON.stringify(development)}`, async () => {
+    const dir = join(import.meta.dir, "jsx-runtime");
+    const { default: html } = await import(join(dir, "index.html"));
+
+    using server = Bun.serve({
+      port: 0,
+      development,
+      static: {
+        "/*": html,
+        "/api/*": false,
+      },
+      fetch(req) {
+        if (req.url.includes("/api")) {
+          return Response.json({ url: req.url, method: req.method });
+        }
+        return new Response("Not found", { status: 404 });
+      },
+    });
+
+    const htmlroutes = [
+      new URL("/", server.url),
+      new URL("/potato", server.url),
+      new URL("/api-potato", server.url),
+      new URL("/apiii", server.url),
+    ];
+    const apiroutes = [
+      new URL("/api/", server.url),
+      new URL("/api/potato", server.url),
+      new URL("/api/apiii", server.url),
+    ];
+    for (const url of htmlroutes) {
+      const response = await fetch(url);
+      expect(response.status).toBe(200);
+      const htmlText = await response.text();
+      const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
+      await (await fetch(new URL(jsSrc, server.url))).text();
+    }
+    for (const url of apiroutes) {
+      const response = await fetch(url);
+      expect(await response.json()).toEqual({ url: url.toString(), method: "GET" });
+    }
+  });
 }

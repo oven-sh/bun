@@ -47,6 +47,7 @@ pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 const OOM = bun.OOM;
 
+export var Bun__Node__ZeroFillBuffers = false;
 export var Bun__Node__ProcessNoDeprecation = false;
 export var Bun__Node__ProcessThrowDeprecation = false;
 
@@ -108,7 +109,7 @@ const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     diag.name.long = "target";
     diag.arg = _target;
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
@@ -241,6 +242,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-deprecation                  Suppress all reporting of the custom deprecation.") catch unreachable,
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
+        clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -295,12 +297,12 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
-        clap.parseParam("--css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an affect when multiple entrypoints import CSS") catch unreachable,
+        clap.parseParam("--css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
         clap.parseParam("--server-components              (EXPERIMENTAL) Enable server components") catch unreachable,
-        clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'inline'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'. To disable, use 'disable'. In Bun v1.2+, the default is 'disable'.") catch unreachable,
+        clap.parseParam("--env <inline|prefix*|disable>   Inline environment variables into the bundle as process.env.${name}. Defaults to 'disable'. To inline environment variables matching a prefix, use my prefix like 'FOO_PUBLIC_*'.") catch unreachable,
         clap.parseParam("--windows-hide-console           When using --compile targeting Windows, prevent a Command prompt from opening alongside the executable") catch unreachable,
         clap.parseParam("--windows-icon <STR>             When using --compile targeting Windows, assign an executable icon") catch unreachable,
     } ++ if (FeatureFlags.bake_debugging_features) [_]ParamType{
@@ -813,6 +815,9 @@ pub const Arguments = struct {
             if (args.option("--title")) |title| {
                 Bun__Node__ProcessTitle = title;
             }
+            if (args.flag("--zero-fill-buffers")) {
+                Bun__Node__ZeroFillBuffers = true;
+            }
         }
 
         if (opts.port != null and opts.origin == null) {
@@ -1245,7 +1250,7 @@ const AutoCommand = struct {
 
 pub const HelpCommand = struct {
     pub fn exec(allocator: std.mem.Allocator) !void {
-        @setCold(true);
+        @branchHint(.cold);
         execWithReason(allocator, .explicit);
     }
 
@@ -1339,7 +1344,7 @@ pub const HelpCommand = struct {
     ;
 
     pub fn printWithReason(comptime reason: Reason, show_all_flags: bool) void {
-        var rand_state = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
+        var rand_state = std.Random.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
         const rand = rand_state.random();
 
         const package_x_i = rand.uintAtMost(usize, packages_to_x_filler.len - 1);
@@ -1383,7 +1388,7 @@ pub const HelpCommand = struct {
     }
 
     pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
-        @setCold(true);
+        @branchHint(.cold);
         printWithReason(reason, false);
 
         if (reason == .invalid_command) {
@@ -1395,7 +1400,7 @@ pub const HelpCommand = struct {
 
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
-        @setCold(true);
+        @branchHint(.cold);
         const command_name = for (bun.argv[1..]) |arg| {
             if (arg.len > 1 and arg[0] == '-') continue;
             break arg;
@@ -1631,10 +1636,10 @@ pub const Command = struct {
             // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
             // want to recursively run bunx. so this check lets us peek back into bun install.
             if (args_iter.next()) |next| {
-                if (bun.strings.eqlComptime(next, "add") and
-                    bun.getenvZ("BUN_INTERNAL_BUNX_INSTALL") != null)
-                {
+                if (bun.strings.eqlComptime(next, "add") and bun.getRuntimeFeatureFlag("BUN_INTERNAL_BUNX_INSTALL")) {
                     return .AddCommand;
+                } else if (bun.strings.eqlComptime(next, "exec") and bun.getRuntimeFeatureFlag("BUN_INTERNAL_BUNX_INSTALL")) {
+                    return .ExecCommand;
                 }
             }
 
@@ -1797,7 +1802,7 @@ pub const Command = struct {
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BuildCommand);
-                try BuildCommand.exec(ctx);
+                try BuildCommand.exec(ctx, null);
             },
             .InstallCompletionsCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCompletionsCommand) unreachable;
@@ -2191,7 +2196,7 @@ pub const Command = struct {
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
                     const cwd = try std.posix.getcwd(&entry_point_buf);
                     @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
-                    try BunJS.Run.boot(ctx, null, entry_point_buf[0 .. cwd.len + trigger.len]);
+                    try BunJS.Run.boot(ctx, null, entry_point_buf[0 .. cwd.len + trigger.len], null);
                     return;
                 }
 
@@ -2452,21 +2457,32 @@ pub const Command = struct {
                 },
                 Command.Tag.CreateCommand => {
                     const intro_text =
-                        \\<b>Usage<r>:
-                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r>
-                        \\  <b><green>bun create<r> <magenta>\<username/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
+                        \\<b>Usage<r><d>:<r>
+                        \\  <b><green>bun create<r> <magenta>\<MyReactComponent.(jsx|tsx)\><r> 
+                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r> 
+                        \\  <b><green>bun create<r> <magenta>\<github-org/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\
-                        \\<b>Environment variables:<r>
-                        \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
-                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
-                        \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
+                        \\<b>Environment variables<r><d>:<r>
+                        \\  <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                        \\  <cyan>GITHUB_API_DOMAIN<r>    <d>Configure custom/enterprise GitHub domain. Default "api.github.com"<r>
+                        \\  <cyan>NPM_CLIENT<r>           <d>Absolute path to the npm client executable<r>
+                        \\  <cyan>BUN_CREATE_DIR<r>       <d>Custom path for global templates (default: $HOME/.bun-create)<r>
                     ;
 
                     const outro_text =
-                        \\If given a GitHub repository name, Bun will download it and use it as a template,
-                        \\otherwise it will run <b><magenta>bunx create-\<template\><r> with the given arguments.
+                        \\<b>React Component Projects<r><d>:<r>
+                        \\  • Turn an existing React component into a complete frontend dev environment
+                        \\  • Automatically starts a hot-reloading dev server
+                        \\  • Auto-detects & configures TailwindCSS and shadcn/ui
                         \\
-                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/cli/bun-create<r>
+                        \\  <b><magenta>bun create \<MyReactComponent.(jsx|tsx)\><r>
+                        \\
+                        \\<b>Templates<r><d>:<r>
+                        \\  • NPM: Runs <b><magenta>bunx create-\<template\><r> with given arguments
+                        \\  • GitHub: Downloads repository contents as template
+                        \\  • Local: Uses templates from $HOME/.bun-create/\<name\> or ./.bun-create/\<name\>
+                        \\
+                        \\Learn more: <magenta>https://bun.sh/docs/cli/bun-create<r>
                         \\
                     ;
 
@@ -2646,13 +2662,13 @@ pub const Command = struct {
 };
 
 pub fn printVersionAndExit() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
     Global.exit(0);
 }
 
 pub fn printRevisionAndExit() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
     Global.exit(0);
 }

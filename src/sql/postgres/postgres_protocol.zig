@@ -1255,6 +1255,14 @@ pub const Flush = [_]u8{'H'} ++ toBytes(Int32(4));
 pub const SSLRequest = toBytes(Int32(8)) ++ toBytes(Int32(80877103));
 pub const NoData = [_]u8{'n'} ++ toBytes(Int32(4));
 
+pub fn writeQuery(query: []const u8, comptime Context: type, writer: NewWriter(Context)) !void {
+    const count: u32 = @sizeOf((u32)) + @as(u32, @intCast(query.len)) + 1;
+    const header = [_]u8{
+        'Q',
+    } ++ toBytes(Int32(count));
+    try writer.write(&header);
+    try writer.string(query);
+}
 pub const SASLInitialResponse = struct {
     mechanism: Data = .{ .empty = {} },
     data: Data = .{ .empty = {} },
@@ -1405,30 +1413,6 @@ pub const Describe = struct {
         });
         try writer.string(message);
         try length.write();
-    }
-
-    pub const write = writeWrap(@This(), writeInternal).write;
-};
-
-pub const Query = struct {
-    message: Data = .{ .empty = {} },
-
-    pub fn deinit(this: *@This()) void {
-        this.message.deinit();
-    }
-
-    pub fn writeInternal(
-        this: *const @This(),
-        comptime Context: type,
-        writer: NewWriter(Context),
-    ) !void {
-        const message = this.message.slice();
-        const count: u32 = @sizeOf((u32)) + message.len + 1;
-        const header = [_]u8{
-            'Q',
-        } ++ toBytes(Int32(count));
-        try writer.write(&header);
-        try writer.string(message);
     }
 
     pub const write = writeWrap(@This(), writeInternal).write;

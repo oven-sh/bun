@@ -42,7 +42,7 @@ import fs, {
   writevSync,
 } from "node:fs";
 import * as os from "node:os";
-import { dirname, relative, resolve } from "node:path";
+import path, { dirname, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -2431,7 +2431,9 @@ describe("fs/promises", () => {
     expect(bun.length).toEqual(node.length);
     expect([...new Set(node.map(v => v.parentPath ?? v.path))]).toEqual([full]);
     expect([...new Set(bun.map(v => v.parentPath ?? v.path))]).toEqual([full]);
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+      node.map(v => join(v.path, v.name)).sort(),
+    );
   }, 100000);
 
   it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2466,7 +2468,9 @@ describe("fs/promises", () => {
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
     expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+      node.map(v => join(v.path, v.name)).sort(),
+    );
   }, 100000);
 
   it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
@@ -2501,7 +2505,9 @@ describe("fs/promises", () => {
     const node = JSON.parse(text);
     expect(bun.length).toEqual(node.length);
     expect(new Set(bun.map(v => v.parentPath ?? v.path))).toEqual(new Set(node.map(v => v.path)));
-    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+    expect(bun.map(v => join(v.parentPath ?? v.path, v.name)).sort()).toEqual(
+      node.map(v => join(v.path, v.name)).sort(),
+    );
   }, 100000);
 
   for (let withFileTypes of [false, true] as const) {
@@ -3527,4 +3533,130 @@ it("fs.statfs should work with bigint", async () => {
     expect(stats).toHaveProperty(k);
     expect(stats[k]).toBeTypeOf("bigint");
   }
+});
+
+it("fs.Stat constructor", () => {
+  expect(new Stats()).toMatchObject({
+    "atimeMs": undefined,
+    "birthtimeMs": undefined,
+    "blksize": undefined,
+    "blocks": undefined,
+    "ctimeMs": undefined,
+    "dev": undefined,
+    "gid": undefined,
+    "ino": undefined,
+    "mode": undefined,
+    "mtimeMs": undefined,
+    "nlink": undefined,
+    "rdev": undefined,
+    "size": undefined,
+    "uid": undefined,
+  });
+});
+
+it("fs.Stat constructor with options", () => {
+  // @ts-ignore
+  expect(new Stats(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)).toMatchObject({
+    atimeMs: 10,
+    birthtimeMs: 13,
+    blksize: 6,
+    blocks: 9,
+    ctimeMs: 12,
+    dev: 0,
+    gid: 4,
+    ino: 7,
+    mode: 1,
+    mtimeMs: 11,
+    nlink: 2,
+    rdev: 5,
+    size: 8,
+    uid: 3,
+  });
+});
+
+it("fs.Stat.atime reflects date matching Node.js behavior", () => {
+  {
+    const date = new Date();
+    const stats = new Stats(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    stats.atime = date;
+    expect(stats.atime).toBe(date);
+  }
+
+  {
+    const stats = new Stats();
+    expect(stats.atime.getTime()).toEqual(new Date(undefined).getTime());
+  }
+
+  {
+    const stats = new Stats();
+    const now = Date.now();
+    stats.atimeMs = now;
+    expect(stats.atime).toEqual(new Date(now));
+  }
+
+  {
+    const stats = new Stats();
+    stats.atimeMs = 0;
+    expect(stats.atime).toEqual(new Date(0));
+    const now = Date.now();
+    stats.atimeMs = now;
+    expect(stats.atime).toEqual(new Date(0));
+  }
+});
+
+describe('kernel32 long path conversion does not mangle "../../path" into "path"', () => {
+  const tmp1 = tempDirWithFiles("longpath", {
+    "a/b/config": "true",
+  });
+  const tmp2 = tempDirWithFiles("longpath", {
+    "a/b/hello": "true",
+    "config": "true",
+  });
+  const workingDir1 = path.join(tmp1, "a/b");
+  const workingDir2 = path.join(tmp2, "a/b");
+  const nonExistTests = [
+    ["existsSync", 'assert.strictEqual(fs.existsSync("../../config"), false)'],
+    ["accessSync", 'assert.throws(() => fs.accessSync("../../config"), { code: "ENOENT" })'],
+  ];
+  const existTests = [
+    ["existsSync", 'assert.strictEqual(fs.existsSync("../../config"), true)'],
+    ["accessSync", 'assert.strictEqual(fs.accessSync("../../config"), null)'],
+  ];
+
+  for (const [name, code] of nonExistTests) {
+    it(`${name} (not existing)`, () => {
+      const { success } = spawnSync({
+        cmd: [bunExe(), "-e", code],
+        cwd: workingDir1,
+        stdio: ["ignore", "inherit", "inherit"],
+        env: bunEnv,
+      });
+      expect(success).toBeTrue();
+    });
+  }
+  for (const [name, code] of existTests) {
+    it(`${name} (existing)`, () => {
+      const { success } = spawnSync({
+        cmd: [bunExe(), "-e", code],
+        cwd: workingDir2,
+        stdio: ["ignore", "inherit", "inherit"],
+        env: bunEnv,
+      });
+      expect(success).toBeTrue();
+    });
+  }
+});
+
+it("overflowing mode doesn't crash", () => {
+  // this is easiest to test on windows since mode_t is a u16 there
+  expect(() => openSync("./a.txt", 65 * 1024)).toThrow(
+    expect.objectContaining({
+      name: "Error",
+      message: `ENOENT: no such file or directory, open './a.txt'`,
+      code: "ENOENT",
+      syscall: "open",
+      // errno: -4058,
+      path: "./a.txt",
+    }),
+  );
 });

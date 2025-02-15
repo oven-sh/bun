@@ -79,7 +79,7 @@ pub const PatchTask = struct {
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,
-        resolution: *const Resolution,
+
         patchfilepath: []const u8,
         pkgname: String,
 
@@ -262,14 +262,13 @@ pub const PatchTask = struct {
         debug("apply patch task", .{});
         bun.assert(this.callback == .apply);
 
-        const strbuf: []const u8 = this.manager.lockfile.buffers.string_bytes.items;
-
         const patch: *const ApplyPatch = &this.callback.apply;
         const dir = this.project_dir;
         const patchfile_path = patch.patchfilepath;
 
+        var absolute_patchfile_path_buf: bun.PathBuffer = undefined;
         // 1. Parse the patch file
-        const absolute_patchfile_path = bun.path.joinZ(&[_][]const u8{
+        const absolute_patchfile_path = bun.path.joinZBuf(&absolute_patchfile_path_buf, &[_][]const u8{
             dir,
             patchfile_path,
         }, .auto);
@@ -310,13 +309,17 @@ pub const PatchTask = struct {
 
         const pkg_name = this.callback.apply.pkgname;
 
-        var resolution_buf: [512]u8 = undefined;
-        const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{this.callback.apply.resolution.fmt(strbuf, .posix)}) catch unreachable;
-
-        const dummy_node_modules = .{
+        const dummy_node_modules: PackageManager.NodeModulesFolder = .{
             .path = std.ArrayList(u8).init(this.manager.allocator),
             .tree_id = 0,
         };
+
+        const resolution_label, const resolution_tag = brk: {
+            // TODO: fix this threadsafety issue.
+            const resolution = &this.manager.lockfile.packages.items(.resolution)[patch.pkg_id];
+            break :brk .{ std.fmt.allocPrint(bun.default_allocator, "{}", .{resolution.fmt(this.manager.lockfile.buffers.string_bytes.items, .posix)}) catch bun.outOfMemory(), resolution.tag };
+        };
+        defer this.manager.allocator.free(resolution_label);
 
         // 3. copy the unpatched files into temp dir
         var pkg_install = PreparePatchPackageInstall{
@@ -333,9 +336,9 @@ pub const PatchTask = struct {
             .lockfile = this.manager.lockfile,
         };
 
-        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, this.callback.apply.resolution.tag)) {
+        switch (pkg_install.installImpl(true, system_tmpdir, .copyfile, resolution_tag)) {
             .success => {},
-            .fail => |reason| {
+            .failure => |reason| {
                 return try log.addErrorFmtOpts(
                     this.manager.allocator,
                     "{s} while executing step: {s}",
@@ -345,50 +348,62 @@ pub const PatchTask = struct {
             },
         }
 
-        var patch_pkg_dir = system_tmpdir.openDir(tempdir_name, .{}) catch |e| return try log.addErrorFmtOpts(
-            this.manager.allocator,
-            "failed trying to open temporary dir to apply patch to package: {s}",
-            .{@errorName(e)},
-            .{},
-        );
-        defer patch_pkg_dir.close();
+        {
+            const patch_pkg_dir = switch (bun.sys.openat(
+                bun.toFD(system_tmpdir.fd),
+                tempdir_name,
+                bun.O.RDONLY | bun.O.DIRECTORY,
+                0,
+            )) {
+                .result => |fd| fd,
+                .err => |e| return try log.addSysError(
+                    this.manager.allocator,
+                    e,
+                    "failed trying to open temporary dir to apply patch to package: {s}",
+                    .{resolution_label},
+                ),
+            };
+            defer _ = bun.sys.close(patch_pkg_dir);
 
-        // 4. apply patch
-        if (patchfile.apply(this.manager.allocator, bun.toFD(patch_pkg_dir.fd))) |e| {
-            return try log.addErrorFmtOpts(
-                this.manager.allocator,
-                "failed applying patch file: {}",
-                .{e},
-                .{},
-            );
-        }
-
-        // 5. Add bun tag
-        const bun_tag_prefix = bun_hash_tag;
-        var buntagbuf: BuntagHashBuf = undefined;
-        @memcpy(buntagbuf[0..bun_tag_prefix.len], bun_tag_prefix);
-        const hashlen = (std.fmt.bufPrint(buntagbuf[bun_tag_prefix.len..], "{x}", .{this.callback.apply.patch_hash}) catch unreachable).len;
-        buntagbuf[bun_tag_prefix.len + hashlen] = 0;
-        const buntagfd = switch (bun.sys.openat(
-            bun.toFD(patch_pkg_dir.fd),
-            buntagbuf[0 .. bun_tag_prefix.len + hashlen :0],
-            bun.O.RDWR | bun.O.CREAT,
-            0o666,
-        )) {
-            .result => |fd| fd,
-            .err => |e| {
+            // 4. apply patch
+            if (patchfile.apply(this.manager.allocator, patch_pkg_dir)) |e| {
                 return try log.addErrorFmtOpts(
                     this.manager.allocator,
-                    "failed adding bun tag: {}",
-                    .{e.withPath(buntagbuf[0 .. bun_tag_prefix.len + hashlen :0])},
+                    "failed applying patch file: {}",
+                    .{e.withoutPath()},
                     .{},
                 );
-            },
-        };
-        _ = bun.sys.close(buntagfd);
+            }
+
+            // 5. Add bun tag
+            const bun_tag_prefix = bun_hash_tag;
+            var buntagbuf: BuntagHashBuf = undefined;
+            @memcpy(buntagbuf[0..bun_tag_prefix.len], bun_tag_prefix);
+            const hashlen = (std.fmt.bufPrint(buntagbuf[bun_tag_prefix.len..], "{x}", .{this.callback.apply.patch_hash}) catch unreachable).len;
+            buntagbuf[bun_tag_prefix.len + hashlen] = 0;
+            const buntagfd = switch (bun.sys.openat(
+                patch_pkg_dir,
+                buntagbuf[0 .. bun_tag_prefix.len + hashlen :0],
+                bun.O.RDWR | bun.O.CREAT,
+                0o666,
+            )) {
+                .result => |fd| fd,
+                .err => |e| {
+                    return try log.addErrorFmtOpts(
+                        this.manager.allocator,
+                        "failed adding bun tag: {}",
+                        .{e.withPath(buntagbuf[0 .. bun_tag_prefix.len + hashlen :0])},
+                        .{},
+                    );
+                },
+            };
+            _ = bun.sys.close(buntagfd);
+        }
 
         // 6. rename to cache dir
-        const path_in_tmpdir = bun.path.joinZ(
+        var path_in_tmpdir_buf: bun.PathBuffer = undefined;
+        const path_in_tmpdir = bun.path.joinZBuf(
+            &path_in_tmpdir_buf,
             &[_][]const u8{
                 tempdir_name,
                 // tempdir_name,
@@ -417,11 +432,16 @@ pub const PatchTask = struct {
         const dir = this.project_dir;
         const patchfile_path = this.callback.calc_hash.patchfile_path;
 
+        var absolute_patchfile_path_buf: bun.PathBuffer = undefined;
         // parse the patch file
-        const absolute_patchfile_path = bun.path.joinZ(&[_][]const u8{
-            dir,
-            patchfile_path,
-        }, .auto);
+        const absolute_patchfile_path = bun.path.joinZBuf(
+            &absolute_patchfile_path_buf,
+            &[_][]const u8{
+                dir,
+                patchfile_path,
+            },
+            .auto,
+        );
 
         const stat: bun.Stat = switch (bun.sys.stat(absolute_patchfile_path)) {
             .err => |e| {
@@ -543,7 +563,8 @@ pub const PatchTask = struct {
         name_and_version_hash: u64,
     ) *PatchTask {
         const pkg_name = pkg_manager.lockfile.packages.items(.name)[pkg_id];
-        const resolution: *const Resolution = &pkg_manager.lockfile.packages.items(.resolution)[pkg_id];
+
+        const resolution = &pkg_manager.lockfile.packages.items(.resolution)[pkg_id];
 
         var folder_path_buf: bun.PathBuffer = undefined;
         const stuff = pkg_manager.computeCacheDirAndSubpath(
@@ -560,7 +581,6 @@ pub const PatchTask = struct {
             .callback = .{
                 .apply = .{
                     .pkg_id = pkg_id,
-                    .resolution = resolution,
                     .patch_hash = patch_hash,
                     .name_and_version_hash = name_and_version_hash,
                     .cache_dir = stuff.cache_dir,

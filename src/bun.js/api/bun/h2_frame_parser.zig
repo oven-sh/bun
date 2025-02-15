@@ -54,6 +54,8 @@ const FrameType = enum(u8) {
     HTTP_FRAME_GOAWAY = 0x07,
     HTTP_FRAME_WINDOW_UPDATE = 0x08,
     HTTP_FRAME_CONTINUATION = 0x09,
+    HTTP_FRAME_ALTSVC = 0x0A, // https://datatracker.ietf.org/doc/html/rfc7838#section-7.2
+    HTTP_FRAME_ORIGIN = 0x0C, // https://datatracker.ietf.org/doc/html/rfc8336#section-2
 };
 
 const PingFrameFlags = enum(u8) {
@@ -523,7 +525,8 @@ const Handlers = struct {
     onEnd: JSC.JSValue = .zero,
     onGoAway: JSC.JSValue = .zero,
     onAborted: JSC.JSValue = .zero,
-
+    onAltSvc: JSC.JSValue = .zero,
+    onOrigin: JSC.JSValue = .zero,
     binary_type: BinaryType = .Buffer,
 
     vm: *JSC.VirtualMachine,
@@ -580,6 +583,8 @@ const Handlers = struct {
             .{ "onGoAway", "goaway" },
             .{ "onAborted", "aborted" },
             .{ "onWrite", "write" },
+            .{ "onAltSvc", "altsvc" },
+            .{ "onOrigin", "origin" },
         };
 
         inline for (pairs) |pair| {
@@ -1275,6 +1280,32 @@ pub const H2FrameParser = struct {
         }
     }
 
+    pub fn sendAltSvc(this: *H2FrameParser, streamIdentifier: u32, origin_str: []const u8, alt: []const u8) void {
+        log("HTTP_FRAME_ALTSVC stream {} origin {s} alt {s}", .{ streamIdentifier, origin_str, alt });
+
+        var buffer: [FrameHeader.byteSize + 2]u8 = undefined;
+        @memset(&buffer, 0);
+        var stream = std.io.fixedBufferStream(&buffer);
+        const writer = stream.writer();
+
+        var frame: FrameHeader = .{
+            .type = @intFromEnum(FrameType.HTTP_FRAME_ALTSVC),
+            .flags = 0,
+            .streamIdentifier = streamIdentifier,
+            .length = @intCast(origin_str.len + alt.len + 2),
+        };
+        _ = frame.write(@TypeOf(writer), writer);
+        _ = writer.writeInt(u16, @intCast(origin_str.len), .big) catch 0;
+        _ = this.write(&buffer);
+        if (origin_str.len > 0) {
+            _ = this.write(origin_str);
+        }
+        if (alt.len > 0) {
+            _ = this.write(alt);
+        }
+        _ = this.ajustWindowSize(null, @intCast(frame.length + FrameHeader.byteSize));
+    }
+
     pub fn sendPing(this: *H2FrameParser, ack: bool, payload: []const u8) void {
         log("HTTP_FRAME_PING ack {} payload {s}", .{ ack, payload });
 
@@ -1759,8 +1790,7 @@ pub const H2FrameParser = struct {
             }
 
             if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
-                var header_value = bun.String.fromUTF8(header.value);
-                const js_header_value = header_value.transferToJS(globalObject);
+                const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
                 js_header_value.ensureStillAlive();
                 headers.push(globalObject, js_header_name);
                 headers.push(globalObject, js_header_value);
@@ -1772,12 +1802,10 @@ pub const H2FrameParser = struct {
                     sensitiveHeaders.push(globalObject, js_header_name);
                 }
             } else {
-                var header_name = bun.String.fromUTF8(header.name);
-                const js_header_name = header_name.transferToJS(globalObject);
+                const js_header_name = bun.String.createUTF8ForJS(globalObject, header.name);
                 js_header_name.ensureStillAlive();
 
-                var header_value = bun.String.fromUTF8(header.value);
-                const js_header_value = header_value.transferToJS(globalObject);
+                const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
                 js_header_value.ensureStillAlive();
 
                 headers.push(globalObject, js_header_name);
@@ -1903,6 +1931,93 @@ pub const H2FrameParser = struct {
             const chunk = this.handlers.binary_type.toJS(payload[8..], this.handlers.globalObject);
             this.readBuffer.reset();
             this.dispatchWith2Extra(.onGoAway, JSC.JSValue.jsNumber(error_code), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
+            return content.end;
+        }
+        return data.len;
+    }
+
+    fn stringOrEmptyToJS(this: *H2FrameParser, payload: []const u8) JSC.JSValue {
+        if (payload.len == 0) {
+            return bun.String.empty.toJS(this.handlers.globalObject);
+        }
+        return bun.String.createUTF8ForJS(this.handlers.globalObject, payload);
+    }
+
+    pub fn handleOriginFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, _: ?*Stream) usize {
+        log("handleOriginFrame {s}", .{data});
+        if (this.isServer) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "ORIGIN frame on server", this.lastStreamID, true);
+            return data.len;
+        }
+        if (frame.streamIdentifier != 0) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "ORIGIN frame on stream", this.lastStreamID, true);
+            return data.len;
+        }
+        if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            var payload = content.data;
+            var originValue = JSC.JSValue.jsUndefined();
+            var count: usize = 0;
+            while (payload.len > 0) {
+                var stream = std.io.fixedBufferStream(payload);
+                const origin_length = stream.reader().readInt(u16, .big) catch {
+                    // origin length is the first 2 bytes of the payload
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
+                    return data.len;
+                };
+                var origin_str = payload[2..];
+                if (origin_str.len < origin_length) {
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
+                    return data.len;
+                }
+                origin_str = origin_str[0..origin_length];
+                if (count == 0) {
+                    originValue = this.stringOrEmptyToJS(origin_str);
+                    originValue.ensureStillAlive();
+                } else if (count == 1) {
+                    // need to create an array
+                    const array = JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0);
+                    array.ensureStillAlive();
+                    array.push(this.handlers.globalObject, originValue);
+                    array.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                    originValue = array;
+                } else {
+                    // we already have an array, just add the origin to it
+                    originValue.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                }
+                count += 1;
+                payload = origin_str[origin_length..];
+            }
+            this.dispatch(.onOrigin, originValue);
+            this.readBuffer.reset();
+            return content.end;
+        }
+        return data.len;
+    }
+    pub fn handleAltsvcFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, _: ?*Stream) usize {
+        log("handleAltsvcFrame {s}", .{data});
+        if (this.isServer) {
+            // client should not send ALTSVC frame
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "ALTSVC frame on server", this.lastStreamID, true);
+            return data.len;
+        }
+        if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            const payload = content.data;
+
+            var stream = std.io.fixedBufferStream(payload);
+            const origin_length = stream.reader().readInt(u16, .big) catch {
+                // origin length is the first 2 bytes of the payload
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ALTSVC frame size", this.lastStreamID, true);
+                return data.len;
+            };
+            const origin_and_value = payload[2..];
+
+            if (origin_and_value.len < origin_length) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ALTSVC frame size", this.lastStreamID, true);
+                return data.len;
+            }
+
+            this.dispatchWith2Extra(.onAltSvc, this.stringOrEmptyToJS(origin_and_value[0..origin_length]), this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
+            this.readBuffer.reset();
             return content.end;
         }
         return data.len;
@@ -2215,6 +2330,8 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes, stream),
+                @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes, stream),
+                @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => this.handleOriginFrame(header, bytes, stream),
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
@@ -2512,6 +2629,132 @@ pub const H2FrameParser = struct {
         }
 
         return globalObject.throw("Expected payload to be a Buffer", .{});
+    }
+
+    pub fn origin(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+        const origin_arg = callframe.argument(0);
+        if (origin_arg.isEmptyOrUndefinedOrNull()) {
+            // empty origin frame
+            var buffer: [FrameHeader.byteSize]u8 = undefined;
+            @memset(&buffer, 0);
+            var stream = std.io.fixedBufferStream(&buffer);
+            const writer = stream.writer();
+
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_ORIGIN),
+                .flags = 0,
+                .streamIdentifier = 0,
+                .length = 0,
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = this.write(&buffer);
+            _ = this.ajustWindowSize(null, @intCast(FrameHeader.byteSize));
+            return .undefined;
+        }
+
+        if (origin_arg.isString()) {
+            const origin_string = try origin_arg.toSlice(globalObject, bun.default_allocator);
+            defer origin_string.deinit();
+            const slice = origin_string.slice();
+            if (slice.len + 2 > std.math.maxInt(u16)) {
+                const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "Origin length is too long", .{}, globalObject);
+                return globalObject.throwValue(exception);
+            }
+
+            var buffer: [FrameHeader.byteSize + 2]u8 = undefined;
+            @memset(&buffer, 0);
+            var stream = std.io.fixedBufferStream(&buffer);
+            const writer = stream.writer();
+
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_ORIGIN),
+                .flags = 0,
+                .streamIdentifier = 0,
+                .length = @intCast(slice.len + 2),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = writer.writeInt(u16, @intCast(slice.len), .big) catch 0;
+            _ = this.write(&buffer);
+            if (slice.len > 0) {
+                _ = this.write(slice);
+            }
+            _ = this.ajustWindowSize(null, @as(u32, @intCast(frame.length)) + @as(u32, @intCast(FrameHeader.byteSize)));
+        } else if (origin_arg.asArrayBuffer(globalObject)) |array_buffer| {
+            // multiple origin as encoded buffer we trust the caller to pass in a valid buffer
+            // aka u16 length followed by u8 origin
+            const payload = array_buffer.byteSlice();
+            if (payload.len > std.math.maxInt(u16)) {
+                const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "Origin length is too long", .{}, globalObject);
+                return globalObject.throwValue(exception);
+            }
+            var buffer: [FrameHeader.byteSize]u8 = undefined;
+            @memset(&buffer, 0);
+            var stream = std.io.fixedBufferStream(&buffer);
+            const writer = stream.writer();
+
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_ORIGIN),
+                .flags = 0,
+                .streamIdentifier = 0,
+                .length = @intCast(payload.len),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = this.write(&buffer);
+            _ = writer.writeAll(payload) catch 0;
+
+            _ = this.ajustWindowSize(null, @as(u32, @intCast(frame.length)) + @as(u32, @intCast(FrameHeader.byteSize)));
+            return .undefined;
+        }
+
+        return .undefined;
+    }
+
+    pub fn altsvc(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+        var origin_slice: ?bun.String.Slice = null;
+        var value_slice: ?bun.String.Slice = null;
+        defer {
+            if (origin_slice) |slice| {
+                slice.deinit();
+            }
+            if (value_slice) |slice| {
+                slice.deinit();
+            }
+        }
+
+        var origin_str: []const u8 = "";
+        var value_str: []const u8 = "";
+        var stream_id: u32 = 0;
+        const origin_string = callframe.argument(0);
+        if (!origin_string.isEmptyOrUndefinedOrNull()) {
+            if (!origin_string.isString()) {
+                return globalObject.throwInvalidArgumentTypeValue("origin", "origin", origin_string);
+            }
+
+            origin_slice = try origin_string.toSlice(globalObject, bun.default_allocator);
+            origin_str = origin_slice.?.slice();
+        }
+
+        const value_string = callframe.argument(1);
+        if (!value_string.isEmptyOrUndefinedOrNull()) {
+            if (!value_string.isString()) {
+                return globalObject.throwInvalidArgumentTypeValue("value", "value", value_string);
+            }
+            value_slice = try value_string.toSlice(globalObject, bun.default_allocator);
+            value_str = value_slice.?.slice();
+        }
+
+        const stream_id_js = callframe.argument(2);
+        if (!stream_id_js.isEmptyOrUndefinedOrNull()) {
+            if (!stream_id_js.isNumber()) {
+                return globalObject.throw("Expected streamId to be a number", .{});
+            }
+            stream_id = stream_id_js.toU32();
+        }
+
+        this.sendAltSvc(stream_id, origin_str, value_str);
+        return .undefined;
     }
 
     pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

@@ -9,6 +9,7 @@ const fs = require("node:fs");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
+const kQuotedString = /^[\x09\x20-\x5b\x5d-\x7e\x80-\xff]*$/;
 
 const Stream = require("node:stream");
 const { Readable } = Stream;
@@ -46,6 +47,7 @@ const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
+const bunHTTP2OriginSet = Symbol("::bunhttp2originset::");
 const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
 
 const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
@@ -1488,7 +1490,10 @@ type Settings = {
   maxHeaderSize: number;
 };
 
-class Http2Session extends EventEmitter {}
+class Http2Session extends EventEmitter {
+  [bunHTTP2Socket]: TLSSocket | Socket | null;
+  [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
+}
 
 function streamErrorFromCode(code: number) {
   return $ERR_HTTP2_STREAM_ERROR(`Stream closed with error code ${nameForErrorCode[code] || code}`);
@@ -1506,7 +1511,7 @@ function assertSession(session) {
 }
 hideFromStack(assertSession);
 
-function pushToStream(stream, data) {;
+function pushToStream(stream, data) {
   stream.push(data);
 }
 
@@ -1768,7 +1773,6 @@ class Http2Stream extends Duplex {
   _read(_size) {
     // we always use the internal stream queue now
   }
-
 
   end(chunk, encoding, callback) {
     const status = this[bunHTTP2StreamStatus];
@@ -2194,6 +2198,32 @@ function toHeaderObject(headers, sensitiveHeadersValue) {
   }
   return obj;
 }
+
+function getOrigin(origin: any, isAltSvc: boolean): string {
+  if (typeof origin === "string") {
+    try {
+      origin = new URL(origin).origin;
+    } catch (e) {
+      if (isAltSvc) {
+        throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN("HTTP/2 ALTSVC frames require a valid origin");
+      } else {
+        throw $ERR_HTTP2_INVALID_ORIGIN("HTTP/2 ORIGIN frames require a valid origin");
+      }
+    }
+  } else if (origin != null && typeof origin === "object") {
+    origin = origin.origin;
+  }
+  validateString(origin, "origin");
+  if (!origin) {
+    if (isAltSvc) {
+      throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN("HTTP/2 ALTSVC frames require a valid origin");
+    } else {
+      throw $ERR_HTTP2_INVALID_ORIGIN("HTTP/2 ORIGIN frames require a valid origin");
+    }
+  }
+
+  return origin;
+}
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
   /// close indicates that we called closed
@@ -2201,11 +2231,9 @@ class ServerHttp2Session extends Http2Session {
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
   #connections: number = 0;
-  [bunHTTP2Socket]: TLSSocket | Socket | null;
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
-  #originSet = new Set<string>();
   #isServer: boolean = false;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
@@ -2401,11 +2429,76 @@ class ServerHttp2Session extends Http2Session {
     }
   }
 
-  altsvc() {
-    // throwNotImplemented("ServerHttp2Stream.prototype.altsvc()");
+  altsvc(alt: string, originOrStream) {
+    const MAX_LENGTH = 16382;
+    const parser = this.#parser;
+    if (this.destroyed || !parser) throw $ERR_HTTP2_INVALID_SESSION(`The session has been destroyed`);
+    let stream = 0;
+    let origin;
+
+    if (typeof originOrStream === "string") {
+      origin = getOrigin(originOrStream, true);
+    } else if (typeof originOrStream === "number") {
+      if (originOrStream >>> 0 !== originOrStream || originOrStream === 0) {
+        throw $ERR_OUT_OF_RANGE("originOrStream", `> 0 && < ${2 ** 32}`, originOrStream);
+      }
+      stream = originOrStream;
+    } else if (originOrStream !== undefined) {
+      // Allow origin to be passed a URL or object with origin property
+      if (originOrStream !== null && typeof originOrStream === "object") origin = originOrStream.origin;
+      // Note: if originOrStream is an object with an origin property other
+      // than a URL, then it is possible that origin will be malformed.
+      // We do not verify that here. Users who go that route need to
+      // ensure they are doing the right thing or the payload data will
+      // be invalid.
+      if (typeof origin !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("originOrStream", ["string", "number", "URL", "object"], originOrStream);
+      } else if (!origin) {
+        throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN("HTTP/2 ALTSVC frames require a valid origin");
+      } else {
+        origin = getOrigin(origin, true);
+      }
+    }
+
+    validateString(alt, "alt");
+    if (!kQuotedString.test(alt)) throw $ERR_INVALID_CHAR("alt");
+    origin = origin || "";
+    if (Buffer.byteLength(origin) + Buffer.byteLength(alt) > MAX_LENGTH) {
+      throw $ERR_HTTP2_ALTSVC_LENGTH("HTTP/2 ALTSVC frames are limited to 16382 bytes");
+    }
+    parser.altsvc(origin, alt, stream);
   }
-  origin() {
-    // throwNotImplemented("ServerHttp2Stream.prototype.origin()");
+  origin(...origins) {
+    const MAX_LENGTH = 16384;
+    const parser = this.#parser;
+    if (this.destroyed || !parser) throw $ERR_HTTP2_INVALID_SESSION(`The session has been destroyed`);
+    if (origins.length === 1) {
+      const origin = getOrigin(origins[0], false);
+      if (Buffer.byteLength(origin) + 2 > MAX_LENGTH) {
+        throw $ERR_HTTP2_ORIGIN_LENGTH("HTTP/2 ORIGIN frames are limited to 16382 bytes");
+      }
+      parser.origin(origin);
+    }
+    let totalSize = 0;
+    let validOrigins: string[] = [];
+    for (const origin of origins) {
+      const validOrigin = getOrigin(origin, false);
+      totalSize += Buffer.byteLength(validOrigin) + 2;
+      validOrigins.push(validOrigin);
+    }
+    if (totalSize > MAX_LENGTH) {
+      throw $ERR_HTTP2_ORIGIN_LENGTH("HTTP/2 ORIGIN frames are limited to 16382 bytes");
+    }
+
+    // encode origins into a buffer
+    const buffer = Buffer.allocUnsafe(totalSize);
+    let offset = 0;
+    for (const origin of validOrigins) {
+      offset += buffer.writeUInt16BE(origin.length, offset);
+      offset += buffer.write(origin, offset);
+    }
+
+    parser.origin(buffer);
   }
 
   constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server?: Http2Server) {
@@ -2415,10 +2508,6 @@ class ServerHttp2Session extends Http2Session {
     if (socket instanceof TLSSocket) {
       // server will receive the preface to know if is or not h2
       this.#alpnProtocol = socket.alpnProtocol || "h2";
-
-      const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;
-      this.#originSet.add(origin);
-      this.emit("origin", this.originSet);
     } else {
       this.#alpnProtocol = "h2c";
     }
@@ -2444,7 +2533,7 @@ class ServerHttp2Session extends Http2Session {
 
   get originSet() {
     if (this.encrypted) {
-      return Array.from(this.#originSet);
+      return Array.from(initOriginSet(this));
     }
   }
 
@@ -2599,17 +2688,36 @@ class ServerHttp2Session extends Http2Session {
     this.emit("close");
   }
 }
+function initOriginSet(session: Http2Session) {
+  let originSet = session[bunHTTP2OriginSet];
+  if (originSet === undefined) {
+    const socket = session[bunHTTP2Socket];
+    session[bunHTTP2OriginSet] = originSet = new Set<string>();
+    let hostName = socket.servername;
+    if (hostName === null || hostName === false) {
+      if (socket.remoteFamily === "IPv6") {
+        hostName = `[${socket.remoteAddress}]`;
+      } else {
+        hostName = socket.remoteAddress;
+      }
+    }
+    let originString = `https://${hostName}`;
+    if (socket.remotePort != null) originString += `:${socket.remotePort}`;
+    originSet.add(originString);
+  }
+  return originSet;
+}
+
 class ClientHttp2Session extends Http2Session {
   /// close indicates that we called closed
   #closed: boolean = false;
   /// connected indicates that the connection/socket is connected
   #connected: boolean = false;
   #connections: number = 0;
-  [bunHTTP2Socket]: TLSSocket | Socket | null;
+
   #socket_proxy: Proxy<TLSSocket | Socket>;
   #parser: typeof H2FrameParser | null;
   #url: URL;
-  #originSet = new Set<string>();
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = {
     headerTableSize: 4096,
@@ -2764,6 +2872,26 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       self.destroy();
     },
+    altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {
+      if (!self) return;
+      // node.js emits value, origin, streamId
+      self.emit("altsvc", value, origin, streamId);
+    },
+    origin(self: ClientHttp2Session, origin: string | Array<string> | undefined) {
+      if (!self) return;
+      if (self.encrypted) {
+        const originSet = initOriginSet(self);
+        if ($isArray(origin)) {
+          for (const item of origin) {
+            originSet.add(item);
+          }
+          self.emit("origin", origin);
+        } else if (origin) {
+          originSet.add(origin);
+          self.emit("origin", [origin]);
+        }
+      }
+    },
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return -1;
       const socket = self[bunHTTP2Socket];
@@ -2781,7 +2909,7 @@ class ClientHttp2Session extends Http2Session {
 
   get originSet() {
     if (this.encrypted) {
-      return Array.from(this.#originSet);
+      return Array.from(initOriginSet(this));
     }
   }
   get alpnProtocol() {
@@ -2800,10 +2928,6 @@ class ClientHttp2Session extends Http2Session {
         this.emit("error", error);
       }
       this.#alpnProtocol = "h2";
-
-      const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;
-      this.#originSet.add(origin);
-      this.emit("origin", this.originSet);
     } else {
       this.#alpnProtocol = "h2c";
     }

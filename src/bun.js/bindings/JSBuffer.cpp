@@ -1510,6 +1510,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
 
         if (UNLIKELY(castedThis->hasNonReifiedStaticProperties())) {
             castedThis->reifyAllStaticProperties(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
         }
         castedThis->getOwnNonIndexPropertyNames(globalObject, array, filter);
         RETURN_IF_EXCEPTION(scope, {});
@@ -1528,6 +1529,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
                 auto value = castedThis->get(globalObject, ident);
                 RETURN_IF_EXCEPTION(scope, {});
                 auto inspected = Bun__inspect_singleline(globalObject, value).transferToWTFString();
+                RETURN_IF_EXCEPTION(scope, {});
                 result.append(inspected);
                 i++;
             }

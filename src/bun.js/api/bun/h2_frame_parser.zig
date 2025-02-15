@@ -3143,7 +3143,7 @@ pub const H2FrameParser = struct {
                         }
                         continue;
                     },
-                    'a'...'z', '0'...'9', '-', '_', '.' => {},
+                    'a'...'z', '0'...'9', '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~' => {},
 
                     else => return error.InvalidHeaderName,
                 }

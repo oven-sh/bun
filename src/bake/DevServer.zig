@@ -4226,6 +4226,21 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // knowledge of the boundary between them.
                         .js, .unknown => if (!data.flags.is_hmr_root) {
                             try entry_points.appendJs(alloc, path, .client);
+
+                            // TODO(@paperclover): do not loop here
+                            var it = g.first_dep.items[index].unwrap();
+                            while (it) |edge_index| {
+                                const entry = g.edges.items[edge_index.get()];
+                                const dep = entry.dependency;
+                                g.stale_files.set(dep.get());
+
+                                const dep_file = values[dep.get()];
+                                if (dep_file.flags.is_css_root) {
+                                    try entry_points.appendCss(alloc, keys[dep.get()]);
+                                }
+
+                                it = entry.next_dependency.unwrap();
+                            }
                         },
                     },
                     .server => {

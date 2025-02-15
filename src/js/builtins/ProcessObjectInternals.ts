@@ -222,16 +222,17 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
       }
     } catch (err) {
       if (err?.code === "ERR_STREAM_RELEASE_LOCK") {
-        // The stream was unref()ed, but it may be ref()ed again in the future.
-        // Next time it is ref()ed, run internalRead() again.
-        needsInternalReadRefresh = true;
+        // The stream was unref()ed. It may be ref()ed again in the future,
+        // or maybe it has already been ref()ed again and we just need to
+        // restart the internalRead() function. triggerRead() will figure that out.
+        triggerRead.$call(stream, undefined);
         return;
       }
       stream.destroy(err);
     }
   }
 
-  stream._read = function (size) {
+  function triggerRead(size) {
     $debug("_read();", reader);
 
     if (reader && !shouldUnref) {
@@ -241,7 +242,8 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
       // run internalRead()
       needsInternalReadRefresh = true;
     }
-  };
+  }
+  stream._read = triggerRead;
 
   stream.on("resume", () => {
     $debug('on("resume");');

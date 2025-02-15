@@ -3128,7 +3128,7 @@ pub const H2FrameParser = struct {
         var any = false;
         if (in.len > 4096) return error.InvalidHeaderName;
         bun.assert(out.len >= in.len);
-
+        // lets validate and convert to lowercase in one pass
         begin: while (true) {
             for (in_slice, 0..) |c, i| {
                 switch (c) {
@@ -3144,7 +3144,13 @@ pub const H2FrameParser = struct {
                         continue;
                     },
                     'a'...'z', '0'...'9', '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~' => {},
-
+                    ':' => {
+                        // only allow pseudoheaders at the beginning
+                        if (i != 0 or any) {
+                            return error.InvalidHeaderName;
+                        }
+                        continue;
+                    },
                     else => return error.InvalidHeaderName,
                 }
             }

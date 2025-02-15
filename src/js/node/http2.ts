@@ -2224,6 +2224,25 @@ function getOrigin(origin: any, isAltSvc: boolean): string {
 
   return origin;
 }
+function initOriginSet(session: Http2Session) {
+  let originSet = session[bunHTTP2OriginSet];
+  if (originSet === undefined) {
+    const socket = session[bunHTTP2Socket];
+    session[bunHTTP2OriginSet] = originSet = new Set<string>();
+    let hostName = socket.servername;
+    if (hostName === null || hostName === false) {
+      if (socket.remoteFamily === "IPv6") {
+        hostName = `[${socket.remoteAddress}]`;
+      } else {
+        hostName = socket.remoteAddress;
+      }
+    }
+    let originString = `https://${hostName}`;
+    if (socket.remotePort != null) originString += `:${socket.remotePort}`;
+    originSet.add(originString);
+  }
+  return originSet;
+}
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
   /// close indicates that we called closed
@@ -2687,25 +2706,6 @@ class ServerHttp2Session extends Http2Session {
 
     this.emit("close");
   }
-}
-function initOriginSet(session: Http2Session) {
-  let originSet = session[bunHTTP2OriginSet];
-  if (originSet === undefined) {
-    const socket = session[bunHTTP2Socket];
-    session[bunHTTP2OriginSet] = originSet = new Set<string>();
-    let hostName = socket.servername;
-    if (hostName === null || hostName === false) {
-      if (socket.remoteFamily === "IPv6") {
-        hostName = `[${socket.remoteAddress}]`;
-      } else {
-        hostName = socket.remoteAddress;
-      }
-    }
-    let originString = `https://${hostName}`;
-    if (socket.remotePort != null) originString += `:${socket.remotePort}`;
-    originSet.add(originString);
-  }
-  return originSet;
 }
 
 class ClientHttp2Session extends Http2Session {

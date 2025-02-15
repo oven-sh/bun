@@ -117,8 +117,6 @@ pub const Url = struct {
             var buf = ArrayList(u8){};
             // PERF(alloc) we could use stack fallback here?
             var bufw = buf.writer(dest.allocator);
-            const BufW = @TypeOf(bufw);
-            _ = BufW; // autofix
             defer buf.deinit(dest.allocator);
             css.Token.toCssGeneric(&css.Token{ .unquoted_url = url }, &bufw) catch return dest.addFmtError();
 
@@ -140,7 +138,7 @@ pub const Url = struct {
             try dest.writeStr(buf.items);
         } else {
             try dest.writeStr("url(");
-            css.serializer.serializeString(import_record.path.text, dest) catch return dest.addFmtError();
+            css.serializer.serializeString(url, dest) catch return dest.addFmtError();
             try dest.writeChar(')');
         }
     }

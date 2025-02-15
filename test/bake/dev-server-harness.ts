@@ -1,6 +1,6 @@
 /// <reference path="../../src/bake/bake.d.ts" />
-import { Bake, Subprocess } from "bun";
-import fs, { realpathSync } from "node:fs";
+import { Bake, BunFile, Subprocess } from "bun";
+import fs, { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert";
@@ -26,6 +26,17 @@ export const minimalFramework: Bake.Framework = {
     serverRegisterClientReferenceExport: "registerClientReference",
   },
 };
+
+export const imageFixtures = {
+  bun: imageFixture("test/integration/sharp/bun.png"),
+  bun2: imageFixture("test/bundler/fixtures/with-assets/img.png"),
+};
+
+function imageFixture(relative: string) {
+  const buf: any = readFileSync(path.join(import.meta.dir, "../../", relative));
+  buf.sourcePath = relative;
+  return buf;
+}
 
 /// Workaround to enable hot-module-reloading
 export const reactRefreshStub = {
@@ -127,7 +138,7 @@ const hmrClientInitRegex = /\[Bun\] (Live|Hot-module)-reloading socket connected
 
 type ErrorSpec = string;
 
-type FileObject = Record<string, string | Buffer>;
+type FileObject = Record<string, string | Buffer | BunFile>;
 
 export class Dev {
   rootDir: string;
@@ -321,6 +332,14 @@ class DevFetchPromise extends Promise<Response> {
     return (await this).json();
   }
 
+  async arrayBuffer() {
+    return (await this).arrayBuffer();
+  }
+
+  async blob() {
+    return (await this).blob();
+  }
+
   /// Usage: await dev.fetch("/").expect.toInclude("Hello");
   get expect(): Matchers<string> {
     return expectProxy(this.text(), [], expect(""));
@@ -336,6 +355,32 @@ class DevFetchPromise extends Promise<Response> {
           throw new Error("DevServer crashed");
         }
         throw err;
+      }
+    });
+  }
+
+  expectFile(expected: Buffer) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const res = await this;
+      expect(res.status).toBe(200);
+      let actual: any = new Uint8Array(await res.arrayBuffer());
+      try {
+        expect(actual).toEqual(expected);
+      } catch (e) {
+        // better printing
+        display_as_string: {
+          for (let i = 0; i < actual.byteLength; i++) {
+            if (actual[i] > 127 || actual[i] < 20) {
+              break display_as_string;
+            }
+          }
+          actual = new TextDecoder().decode(actual);
+          if ((expected as any).sourcePath) {
+            expected[Bun.inspect.custom] = () => `[File] ${(expected as any).sourcePath}`;
+          }
+          expect(actual).toEqual(expected);
+        }
+        throw e;
       }
     });
   }
@@ -903,14 +948,17 @@ const counts: Record<string, number> = {};
 
 console.log("Dev server testing directory:", tempDir);
 
-function writeAll(root: string, files: FileObject) {
+async function writeAll(root: string, files: FileObject) {
+  const promises: Promise<any>[] = [];
   for (const [file, contents] of Object.entries(files)) {
     const filename = path.join(root, file);
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     const formattedContents =
       typeof contents === "string" ? dedent(contents).replaceAll("{{root}}", root.replaceAll("\\", "\\\\")) : contents;
-    fs.writeFileSync(filename, formattedContents as string);
+    // @ts-expect-error the type of Bun.write is too strict
+    promises.push(Bun.write(filename, formattedContents));
   }
+  await Promise.all(promises);
 }
 
 class OutputLineStream extends EventEmitter {
@@ -1051,7 +1099,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   async function run() {
     const root = path.join(tempDir, basename + count);
     if ("files" in options) {
-      writeAll(root, options.files);
+      await writeAll(root, options.files);
       if (options.files["bun.app.ts"] == undefined && options.files["index.html"] == undefined) {
         if (!options.framework) {
           throw new Error("Must specify one of: `options.framework`, `index.html`, or `bun.app.ts`");

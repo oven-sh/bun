@@ -1,6 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework, reactRefreshStub } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework, reactRefreshStub } from "../dev-server-harness";
+import assert from "node:assert";
 
 devTest("css file with syntax error does not kill old styles", {
   files: {
@@ -122,6 +123,31 @@ devTest("add new css import later", {
     await client.style("body").notFound();
   },
 });
+devTest("asset referenced in css functions", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      body {
+        background-image: url(./bun.png);
+      }
+    `,
+    "bun.png": imageFixtures.bun,
+  },
+  async test(dev) {
+    await using client = await dev.client("/");
+    let backgroundImage = await client.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+
+    // TODO: track reloading
+    // await dev.write("bun.png", imageFixtures.bun2);
+    // backgroundImage = await client.style("body").backgroundImage;
+    // assert(backgroundImage);
+    // await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
+  },
+});
 
 // TODO: revive these tests for server components. they fail because some assertion.
 // devTest("css file with syntax error does not kill old styles", {
@@ -213,3 +239,11 @@ devTest("fuzz case 1", {
     expect((await dev.fetch("/")).status).toBe(500);
   },
 });
+
+function extractCssUrl(backgroundImage: string): string {
+  const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
+  if (!url) {
+    throw new Error("No url found in background-image: " + backgroundImage);
+  }
+  return url[2];
+}

@@ -1359,7 +1359,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
 
     const payload_size = bundled_html.len +
         ("<link rel=\"stylesheet\" href=\"" ++ asset_prefix ++ "/0000000000000000.css\">").len * css_ids.len +
-        "<script type=\"module\" crossorigin src=\"\"></script>".len +
+        "<script type=\"module\" crossorigin async src=\"\"></script>".len +
         client_prefix.len + "/".len +
         display_name.len +
         "-0000000000000000.js".len;
@@ -1375,7 +1375,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     }
     array.appendSliceAssumeCapacity(before_body_end);
     // Insert the client script tag before "</body>"
-    array.appendSliceAssumeCapacity("<script type=\"module\" crossorigin src=\"");
+    array.appendSliceAssumeCapacity("<script type=\"module\" crossorigin async src=\"");
     array.appendSliceAssumeCapacity(client_prefix);
     array.appendSliceAssumeCapacity("/");
     array.appendSliceAssumeCapacity(display_name);
@@ -4228,11 +4228,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                             &source_map_strings,
                         ) catch |err| {
                             switch (err) {
-                                error.IncompleteUTF8 => {
-                                    @panic("Unexpected: asset with incomplete UTF-8 as file path");
-                                },
-                                // TODO: file an issue. This shouldn't be necessary.
-                                else => |e| return e,
+                                error.IncompleteUTF8 => @panic("Unexpected: source file with incomplete UTF-8 as file path"),
+                                error.OutOfMemory => |e| return e,
                             }
                         };
                     } else {
@@ -4242,11 +4239,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // -> file:///C:/path/to/file.js
                         bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| {
                             switch (err) {
-                                error.IncompleteUTF8 => {
-                                    @panic("Unexpected: asset with incomplete UTF-8 as file path");
-                                },
-                                // TODO: file an issue. This shouldn't be necessary.
-                                else => |e| return e,
+                                error.IncompleteUTF8 => @panic("Unexpected: source file with incomplete UTF-8 as file path"),
+                                error.OutOfMemory => |e| return e,
                             }
                         };
                     }
@@ -4255,11 +4249,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     try source_map_strings.appendSlice("\"bun://");
                     bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| {
                         switch (err) {
-                            error.IncompleteUTF8 => {
-                                @panic("Unexpected: asset with incomplete UTF-8 as file path");
-                            },
-                            // TODO: file an issue. This shouldn't be necessary.
-                            else => |e| return e,
+                            error.IncompleteUTF8 => @panic("Unexpected: source file with incomplete UTF-8 as file path"),
+                            error.OutOfMemory => |e| return e,
                         }
                     };
                     try source_map_strings.appendSlice("\"");

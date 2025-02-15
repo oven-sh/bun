@@ -3685,6 +3685,29 @@ declare module "bun" {
         };
   }
 
+  type ExtractParams<T extends string> = T extends `${string}:${infer Param}/${infer Rest}`
+    ? { [K in Param]: string } & ExtractParams<Rest>
+    : T extends `${string}:${infer Param}`
+      ? { [K in Param]: string }
+      : {};
+
+  interface BunRequest<T extends string = string> extends Request {
+    params: ExtractParams<T>;
+  }
+
+  type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
+
+  type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+
+  type RouteHandlerObject<T extends string> = Partial<Record<HTTPMethod, RouteHandler<T>>> &
+    { [K in HTTPMethod]: RouteHandler<T> }[HTTPMethod] extends never
+    ? never
+    : Partial<Record<HTTPMethod, RouteHandler<T>>>;
+
+  type RouteValue<T extends string> = Response | HTMLBundle | false | RouteHandler<T> | RouteHandlerObject<T>;
+
+  type RoutePath = `/${string}` | `/${string}/*`;
+
   interface GenericServeOptions {
     /**
      * What URI should be used to make {@link Request.url} absolute?
@@ -3748,7 +3771,7 @@ declare module "bun" {
     id?: string | null;
 
     /**
-     * Server static Response objects by route.
+     * Server Response objects by route.
      *
      * @example
      * ```ts
@@ -3765,18 +3788,15 @@ declare module "bun" {
      *
      * @experimental
      */
-    static?: Record<
-      `/${string}`,
-      | Response
-      /**
-       * An HTML import.
-       */
-      | HTMLBundle
-      /**
-       * false to force fetch() to handle the route
-       */
-      | false
-    >;
+    routes?: {
+      [P in RoutePath]?: RouteValue<P>;
+    };
+    /**
+     * Alias of {@link routes}
+     */
+    static?: {
+      [P in RoutePath]?: RouteValue<P>;
+    };
   }
 
   interface ServeOptions extends GenericServeOptions {

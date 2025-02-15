@@ -742,20 +742,6 @@ pub const String = extern struct {
         }
     }
 
-    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) bun.JSError!String {
-        JSC.markBinding(@src());
-
-        var out: String = String.dead;
-        if (BunString__fromJSRef(globalObject, value, &out)) {
-            return out;
-        } else {
-            if (comptime bun.Environment.isDebug) {
-                bun.assert(globalObject.hasException());
-            }
-            return error.JSError;
-        }
-    }
-
     pub fn tryFromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) ?String {
         JSC.markBinding(@src());
 
@@ -1078,7 +1064,6 @@ pub const String = extern struct {
     extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *const String, usize) JSC.JSValue;
     extern fn BunString__toJSDOMURL(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
     extern fn Bun__parseDate(*JSC.JSGlobalObject, *String) f64;
-    extern fn BunString__fromJSRef(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toWTFString(this: *String) void;
     extern fn BunString__createUTF8ForJS(globalObject: *JSC.JSGlobalObject, ptr: [*]const u8, len: usize) JSC.JSValue;
 

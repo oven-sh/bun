@@ -462,10 +462,7 @@ pub const MatchedRoute = struct {
             map.deinit();
         }
         if (this.needs_deinit) {
-            if (this.route.pathname.len > 0 and bun.Mimalloc.mi_is_in_heap_region(this.route.pathname.ptr)) {
-                bun.Mimalloc.mi_free(@constCast(this.route.pathname.ptr));
-            }
-
+            bun.default_allocator.free(this.route.pathname);
             this.params_list_holder.deinit(bun.default_allocator);
             this.params_list_holder = .{};
         }

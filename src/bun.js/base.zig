@@ -471,8 +471,8 @@ pub const ArrayBuffer = extern struct {
                 ctx,
                 this.ptr,
                 this.byte_len,
-                MarkedArrayBuffer_deallocator,
-                @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
+                null,
+                null,
                 exception,
             ));
         }
@@ -482,8 +482,8 @@ pub const ArrayBuffer = extern struct {
             this.typed_array_type.toC(),
             this.ptr,
             this.byte_len,
-            MarkedArrayBuffer_deallocator,
-            @as(*anyopaque, @ptrFromInt(@intFromPtr(&bun.default_allocator))),
+            null,
+            null,
             exception,
         ));
     }
@@ -496,7 +496,7 @@ pub const ArrayBuffer = extern struct {
         }
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
-        if (this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
+        if (bun.use_mimalloc and this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
             log("toJS but will never free: {d} bytes", .{this.len});
 
             if (this.typed_array_type == .ArrayBuffer) {
@@ -655,7 +655,7 @@ pub const MarkedArrayBuffer = struct {
     }
 
     pub fn toNodeBuffer(this: *const MarkedArrayBuffer, ctx: js.JSContextRef) JSC.JSValue {
-        return JSC.JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, MarkedArrayBuffer_deallocator);
+        return JSC.JSValue.createBufferWithCtx(ctx, this.buffer.byteSlice(), this.buffer.ptr, null);
     }
 
     pub fn toJSObjectRef(this: *const MarkedArrayBuffer, ctx: js.JSContextRef, exception: js.ExceptionRef) js.JSObjectRef {
@@ -677,8 +677,8 @@ pub const MarkedArrayBuffer = struct {
             this.buffer.ptr,
 
             this.buffer.byte_len,
-            MarkedArrayBuffer_deallocator,
-            this.buffer.ptr,
+            null,
+            null,
             exception,
         );
     }
@@ -759,19 +759,6 @@ pub const RefString = struct {
 
 comptime {
     std.testing.refAllDecls(RefString);
-}
-
-pub export fn MarkedArrayBuffer_deallocator(bytes_: *anyopaque, _: *anyopaque) void {
-    const mimalloc = @import("../allocators/mimalloc.zig");
-    // zig's memory allocator interface won't work here
-    // mimalloc knows the size of things
-    // but we don't
-    // if (comptime Environment.allow_assert) {
-    //     bun.assert(mimalloc.mi_check_owned(bytes_) or
-    //         mimalloc.mi_heap_check_owned(JSC.VirtualMachine.get().arena.heap.?, bytes_));
-    // }
-
-    mimalloc.mi_free(bytes_);
 }
 
 pub export fn BlobArrayBuffer_deallocator(_: *anyopaque, blob: *anyopaque) void {

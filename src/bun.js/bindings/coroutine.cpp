@@ -3,11 +3,6 @@
 // #include "mimalloc.h"
 #include <JavaScriptCore/VM.h>
 
-// #define MCO_API
-// #define MCO_MALLOC mi_malloc
-// #define MCO_FREE mi_free
-// #define MCO_USE_ASM
-
 // #define MINICORO_IMPL
 // #include "minicoro.h"
 

@@ -11,7 +11,7 @@ const bun = @This();
 
 pub const Environment = @import("env.zig");
 
-pub const use_mimalloc = true;
+pub const use_mimalloc = !Environment.build_options.enable_asan;
 
 pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
@@ -36,6 +36,43 @@ else
 
 pub const callmod_inline: std.builtin.CallModifier = if (builtin.mode == .Debug) .auto else .always_inline;
 pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .Debug) .Unspecified else .Inline;
+
+pub fn AllocZone(comptime label: stringZ) type {
+    return struct {
+        pub fn malloc(len_: usize) callconv(.C) *anyopaque {
+            if (bun.heap_breakdown.enabled) {
+                const zone = bun.heap_breakdown.getZone(label);
+                return zone.malloc_zone_malloc(len_) orelse bun.outOfMemory();
+            }
+            return std.c.malloc(len_) orelse bun.outOfMemory();
+        }
+
+        pub fn calloc(num_items: usize, size: usize) callconv(.C) *anyopaque {
+            if (bun.heap_breakdown.enabled) {
+                const zone = bun.heap_breakdown.getZone(label);
+                return zone.malloc_zone_calloc(num_items, size) orelse bun.outOfMemory();
+            }
+            return bun.C.calloc(num_items, size) orelse bun.outOfMemory();
+        }
+
+        pub fn realloc(data: ?*anyopaque, size: usize) callconv(.C) *anyopaque {
+            if (bun.heap_breakdown.enabled) {
+                const zone = bun.heap_breakdown.getZone(label);
+                return zone.malloc_zone_realloc(data, size) orelse bun.outOfMemory();
+            }
+            return std.c.realloc(data, size) orelse bun.outOfMemory();
+        }
+
+        pub fn free(data: ?*anyopaque) callconv(.C) void {
+            if (bun.heap_breakdown.enabled) {
+                const zone = bun.heap_breakdown.getZone(label);
+                zone.malloc_zone_free(data);
+                return;
+            }
+            std.c.free(data);
+        }
+    };
+}
 
 pub extern "c" fn powf(x: f32, y: f32) f32;
 pub extern "c" fn pow(x: f64, y: f64) f64;

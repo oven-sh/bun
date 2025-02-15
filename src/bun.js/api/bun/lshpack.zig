@@ -13,8 +13,6 @@ const lshpack_header = extern struct {
 pub const HPACK = extern struct {
     self: *anyopaque,
 
-    const mimalloc = @import("../../../allocators/mimalloc.zig");
-
     pub const DecodeResult = struct {
         name: []const u8,
         value: []const u8,
@@ -27,7 +25,7 @@ pub const HPACK = extern struct {
     pub const LSHPACK_MAX_HEADER_SIZE: usize = 65536;
 
     pub fn init(max_capacity: u32) *HPACK {
-        return lshpack_wrapper_init(mimalloc.mi_malloc, mimalloc.mi_free, max_capacity) orelse bun.outOfMemory();
+        return lshpack_wrapper_init(bun.AllocZone("lshpack.HPACK").malloc, bun.AllocZone("lshpack.HPACK").free, max_capacity) orelse bun.outOfMemory();
     }
 
     /// DecodeResult name and value uses a thread_local shared buffer and should be copy/cloned before the next decode/encode call

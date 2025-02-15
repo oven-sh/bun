@@ -92,6 +92,7 @@ const BunBuildOptions = struct {
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
         opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
+        opts.addOption(bool, "enable_asan", this.enable_asan);
 
         const mod = opts.createModule();
         this.cached_options_module = mod;

@@ -356,8 +356,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);
-JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
-    (JSGlobalObject * globalObject, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint, (JSGlobalObject * globalObject, CallFrame*))
 {
 
     size_t elapsed_msecs = 0;
@@ -369,8 +368,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
     size_t peak_commit = 0;
     size_t page_faults = 0;
 
-    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss,
-        &peak_rss, &current_commit, &peak_commit, &page_faults);
+    mi_process_info(&elapsed_msecs, &user_msecs, &system_msecs, &current_rss, &peak_rss, &current_commit, &peak_commit, &page_faults);
 
     // mi_process_info produces incorrect rss size on linux.
     Bun::getRSS(&current_rss);

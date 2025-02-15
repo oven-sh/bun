@@ -97,7 +97,7 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
             const auto destructorPtr = [](const void* ptr) {
-                mi_free(const_cast<void*>(ptr));
+                free(const_cast<void*>(ptr));
             };
             const auto destructorNoOp = [](const void* ptr) {
                 // no-op, for bun build --compile.

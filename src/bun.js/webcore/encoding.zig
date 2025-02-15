@@ -998,7 +998,7 @@ pub const Encoder = struct {
             .base64 => constructFromU8(input, len, bun.default_allocator, .base64),
             else => unreachable,
         };
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice);
     }
     export fn Bun__encoding__constructFromUTF16(globalObject: *JSGlobalObject, input: [*]const u16, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
@@ -1012,7 +1012,7 @@ pub const Encoder = struct {
             .latin1 => constructFromU16(input, len, bun.default_allocator, .latin1),
             else => unreachable,
         };
-        return JSC.JSValue.createBuffer(globalObject, slice, globalObject.bunVM().allocator);
+        return JSC.JSValue.createBuffer(globalObject, slice);
     }
 
     // for SQL statement

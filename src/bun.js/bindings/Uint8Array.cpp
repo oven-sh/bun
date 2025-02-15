@@ -12,7 +12,7 @@ extern "C" JSC::EncodedJSValue JSUint8Array__fromDefaultAllocator(JSC::JSGlobalO
 
     if (LIKELY(length > 0)) {
         auto buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            mi_free(p);
+            free(p);
         }));
 
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::TypeUint8, false), WTFMove(buffer), 0, length);
@@ -30,7 +30,7 @@ extern "C" JSC::EncodedJSValue JSArrayBuffer__fromDefaultAllocator(JSC::JSGlobal
 
     if (LIKELY(length > 0)) {
         RefPtr<ArrayBuffer> buffer = ArrayBuffer::createFromBytes({ ptr, length }, createSharedTask<void(void*)>([](void* p) {
-            mi_free(p);
+            free(p);
         }));
 
         arrayBuffer = JSC::JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructure(), WTFMove(buffer));

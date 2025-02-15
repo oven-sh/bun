@@ -1008,7 +1008,7 @@ pub const ZigString = extern struct {
     }
 
     inline fn assertGlobal(this: *const ZigString) void {
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.allow_assert and bun.use_mimalloc) {
             bun.assert(this.len == 0 or
                 bun.Mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
                 bun.Mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
@@ -4414,14 +4414,10 @@ pub const JSValue = enum(i64) {
     extern fn JSBuffer__bufferFromLength(*JSGlobalObject, i64) JSValue;
 
     /// Must come from globally-allocated memory if allocator is not null
-    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8, allocator: ?std.mem.Allocator) JSValue {
+    pub fn createBuffer(globalObject: *JSGlobalObject, slice: []u8) JSValue {
         JSC.markBinding(@src());
         @setRuntimeSafety(false);
-        if (allocator) |alloc| {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, alloc.ptr, JSC.MarkedArrayBuffer_deallocator);
-        } else {
-            return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
-        }
+        return JSBuffer__bufferFromPointerAndLengthAndDeinit(globalObject, slice.ptr, slice.len, null, null);
     }
 
     pub fn createUninitializedUint8Array(globalObject: *JSGlobalObject, len: usize) JSValue {

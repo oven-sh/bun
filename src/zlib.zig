@@ -145,14 +145,6 @@ pub fn NewZlibReader(comptime Writer: type, comptime buffer_size: usize) type {
         allocator: std.mem.Allocator,
         state: State = State.Uninitialized,
 
-        pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-            return mimalloc.mi_malloc(items * len) orelse unreachable;
-        }
-
-        pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-            mimalloc.mi_free(data);
-        }
-
         pub fn deinit(this: *ZlibReader) void {
             var allocator = this.allocator;
             this.end();
@@ -309,22 +301,11 @@ pub const ZlibError = error{
 
 const ZlibAllocator = struct {
     pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-        if (bun.heap_breakdown.enabled) {
-            const zone = bun.heap_breakdown.getZone("zlib");
-            return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory();
-        }
-
-        return mimalloc.mi_calloc(items, len) orelse bun.outOfMemory();
+        return bun.AllocZone("zlib").calloc(items, len);
     }
 
     pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-        if (bun.heap_breakdown.enabled) {
-            const zone = bun.heap_breakdown.getZone("zlib");
-            zone.malloc_zone_free(data);
-            return;
-        }
-
-        mimalloc.mi_free(data);
+        return bun.AllocZone("zlib").free(data);
     }
 };
 
@@ -764,14 +745,6 @@ pub const ZlibCompressorArrayList = struct {
     allocator: std.mem.Allocator,
     state: State = State.Uninitialized,
 
-    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-        return mimalloc.mi_malloc(items * len) orelse unreachable;
-    }
-
-    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-        mimalloc.mi_free(data);
-    }
-
     pub fn deinit(this: *ZlibCompressor) void {
         var allocator = this.allocator;
         this.end();
@@ -810,8 +783,8 @@ pub const ZlibCompressorArrayList = struct {
             .total_out = @truncate(zlib_reader.list.items.len),
 
             .err_msg = null,
-            .alloc_func = ZlibCompressor.alloc,
-            .free_func = ZlibCompressor.free,
+            .alloc_func = null,
+            .free_func = null,
 
             .internal_state = null,
             .user_data = zlib_reader,

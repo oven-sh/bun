@@ -1189,7 +1189,7 @@ pub const BundleV2 = struct {
 
             if (comptime FeatureFlags.help_catch_memory_issues) {
                 this.graph.heap.gc(true);
-                bun.Mimalloc.mi_collect(true);
+                if (bun.use_mimalloc) bun.Mimalloc.mi_collect(true);
             }
 
             module_scope.generated = try module_scope.generated.clone(this.linker.allocator);
@@ -3483,7 +3483,7 @@ pub fn BundleThread(CompletionStruct: type) type {
                 instance.generation +|= 1;
 
                 if (has_bundled) {
-                    bun.Mimalloc.mi_collect(false);
+                    if (bun.use_mimalloc) bun.Mimalloc.mi_collect(false);
                     has_bundled = false;
                 }
 

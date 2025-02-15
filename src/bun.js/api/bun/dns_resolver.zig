@@ -91,7 +91,7 @@ const LibInfo = struct {
         name_buf[query.name.len] = 0;
         const name_z = name_buf[0..query.name.len :0];
 
-        var request = GetAddrInfoRequest.init(
+        var request = GetAddrInfoRequest.create(
             cache,
             .{ .libinfo = undefined },
             this,
@@ -155,7 +155,7 @@ const LibC = struct {
 
         const query = query_init.clone();
 
-        var request = GetAddrInfoRequest.init(
+        var request = GetAddrInfoRequest.create(
             cache,
             .{ .libc = .{ .query = query } },
             this,
@@ -215,7 +215,7 @@ const LibUVBackend = struct {
             return dns_lookup.promise.value();
         }
 
-        var request = GetAddrInfoRequest.init(
+        var request = GetAddrInfoRequest.create(
             cache,
             .{
                 .libc = .{
@@ -650,7 +650,7 @@ pub const GetAddrInfoRequest = struct {
     tail: *DNSLookup = undefined,
     task: bun.ThreadPool.Task = undefined,
 
-    pub fn init(
+    pub fn create(
         cache: DNSResolver.CacheHit,
         backend: Backend,
         resolver: ?*DNSResolver,
@@ -701,7 +701,7 @@ pub const GetAddrInfoRequest = struct {
     pub const PendingCacheKey = struct {
         hash: u64,
         len: u16,
-        lookup: *GetAddrInfoRequest = undefined,
+        lookup: *GetAddrInfoRequest,
 
         pub fn append(this: *PendingCacheKey, dns_lookup: *DNSLookup) void {
             var tail = this.lookup.tail;
@@ -889,9 +889,8 @@ pub const GetAddrInfoRequest = struct {
             }
         }
 
-        var head = this.head;
-        head.processGetAddrInfoNative(uv_info.retcode.int(), uv_info.addrinfo);
-        head.globalThis.allocator().destroy(this);
+        this.head.processGetAddrInfoNative(uv_info.retcode.int(), uv_info.addrinfo);
+        bun.default_allocator.destroy(this);
     }
 };
 
@@ -1050,9 +1049,9 @@ pub const DNSLookup = struct {
     const log = Output.scoped(.DNSLookup, false);
 
     resolver: ?*DNSResolver,
-    globalThis: *JSC.JSGlobalObject = undefined,
+    globalThis: *JSC.JSGlobalObject,
     promise: JSC.JSPromise.Strong,
-    allocated: bool = false,
+    allocated: bool,
     next: ?*DNSLookup = null,
     poll_ref: Async.KeepAlive,
 
@@ -2071,8 +2070,7 @@ pub const DNSResolver = struct {
 
         var array = result.toJS(globalObject) orelse {
             var pending: ?*DNSLookup = key.lookup.head.next;
-            var head = key.lookup.head;
-            head.processGetAddrInfoNative(err, null);
+            key.lookup.head.processGetAddrInfoNative(err, null);
             bun.default_allocator.destroy(key.lookup);
 
             while (pending) |value| {
@@ -3053,7 +3051,7 @@ pub const DNSResolver = struct {
         }
 
         const hints_buf = &[_]c_ares.AddrInfo_hints{query.toCAres()};
-        var request = GetAddrInfoRequest.init(
+        var request = GetAddrInfoRequest.create(
             cache,
             .{ .c_ares = {} },
             this,

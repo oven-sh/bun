@@ -1308,7 +1308,7 @@ pub const Crypto = struct {
 
                     const output_slice = this.output;
                     assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
-                    const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
+                    const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice);
                     if (buffer_value == .zero) {
                         promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
                         return;
@@ -4208,7 +4208,7 @@ pub const FFIObject = struct {
                     return JSC.JSValue.createBufferWithCtx(globalThis, slice, ctx, callback);
                 }
 
-                return JSC.JSValue.createBuffer(globalThis, slice, null);
+                return JSC.JSValue.createBuffer(globalThis, slice);
             },
         }
     }
@@ -4309,8 +4309,7 @@ pub const JSZlib = struct {
         reader.deinit();
     }
     export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
-        comptime assert(bun.use_mimalloc);
-        bun.Mimalloc.mi_free(ctx);
+        std.c.free(ctx);
     }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);

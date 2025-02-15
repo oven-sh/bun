@@ -649,6 +649,7 @@ pub const TimeoutObject = struct {
 
     pub fn dispose(this: *TimeoutObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         _ = this;
+        // clearTimeout works on both timeouts and intervals
         _ = Timer.All.clearTimeout(globalThis, callFrame.this());
         return .undefined;
     }

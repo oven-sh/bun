@@ -1502,7 +1502,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     switch (argumentCount) {
     case 0: {
-        JSC::throwTypeError(globalObject, scope, "setTimeout requires 1 argument (a function)"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setTimeout requires 1 argument (a function)"_s);
         return {};
     }
     case 1:
@@ -1528,7 +1528,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 
     if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
-        JSC::throwTypeError(globalObject, scope, "setTimeout expects a function"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setTimeout expects a function"_s);
         return {};
     }
 
@@ -1558,7 +1558,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
 
     switch (argumentCount) {
     case 0: {
-        JSC::throwTypeError(globalObject, scope, "setInterval requires 1 argument (a function)"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setInterval requires 1 argument (a function)"_s);
         return {};
     }
     case 1: {
@@ -1587,7 +1587,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     }
 
     if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
-        JSC::throwTypeError(globalObject, scope, "setInterval expects a function"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setInterval expects a function"_s);
         return {};
     }
 
@@ -3411,14 +3411,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
 
     auto argCount = callFrame->argumentCount();
     if (argCount == 0) {
-        JSC::throwTypeError(globalObject, scope, "setImmediate requires 1 argument (a function)"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setImmediate requires 1 argument (a function)"_s);
         return {};
     }
 
     auto job = callFrame->argument(0);
 
     if (!job.isObject() || !job.getObject()->isCallable()) {
-        JSC::throwTypeError(globalObject, scope, "setImmediate expects a function"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setImmediate expects a function"_s);
         return {};
     }
 

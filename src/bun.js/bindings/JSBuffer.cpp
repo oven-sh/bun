@@ -1403,16 +1403,15 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, 1, !last);
     if (byteOffset == -1) return -1;
     if (last) {
-#if OS(LINUX)
-#ifdef __GNU_LIBRARY__
+#if (OS(LINUX) && defined(__GNU_LIBRARY__))
         const void* offset = memrchr(reinterpret_cast<const void*>(typedVector), byteValue, byteOffset + 1);
         if (offset != NULL) return static_cast<const uint8_t*>(offset) - (typedVector);
         return -1;
-#endif
-#endif
+#else
         for (int64_t i = byteOffset; i >= 0; --i) {
             if (byteValue == typedVector[i]) return i;
         }
+#endif
     } else {
         const void* offset = memchr(reinterpret_cast<const void*>(typedVector + byteOffset), byteValue, byteLength - byteOffset);
         if (offset != NULL) return static_cast<const uint8_t*>(offset) - typedVector;

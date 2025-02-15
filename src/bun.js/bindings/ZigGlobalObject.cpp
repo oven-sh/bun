@@ -1605,6 +1605,27 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+
+    JSC::JSValue timer_or_num = callFrame->argument(0);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return Bun__Timer__clearImmediate(globalObject, JSC::JSValue::encode(timer_or_num));
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {

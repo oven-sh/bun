@@ -460,7 +460,7 @@ pub const All = struct {
         } else return null;
     }
 
-    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject) void {
+    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, kind: Kind) void {
         JSC.markBinding(@src());
 
         const vm = globalThis.bunVM();
@@ -510,7 +510,9 @@ pub const All = struct {
             break :brk if (TimeoutObject.fromJS(timer_id_value)) |timeout|
                 &timeout.internals
             else if (ImmediateObject.fromJS(timer_id_value)) |immediate|
-                &immediate.internals
+                // setImmediate can only be cleared by clearImmediate, not by clearTimeout or clearInterval.
+                // setTimeout and setInterval can be cleared by any of the 3 clear functions.
+                if (kind == .setImmediate) &immediate.internals else return
             else
                 null;
         } orelse return;
@@ -518,12 +520,20 @@ pub const All = struct {
         timer.cancel(vm);
     }
 
+    pub fn clearImmediate(
+        globalThis: *JSGlobalObject,
+        id: JSValue,
+    ) callconv(.C) JSValue {
+        JSC.markBinding(@src());
+        clearTimer(id, globalThis, .setImmediate);
+        return JSValue.jsUndefined();
+    }
     pub fn clearTimeout(
         globalThis: *JSGlobalObject,
         id: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        clearTimer(id, globalThis);
+        clearTimer(id, globalThis, .setTimeout);
         return JSValue.jsUndefined();
     }
     pub fn clearInterval(
@@ -531,7 +541,7 @@ pub const All = struct {
         id: JSValue,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
-        clearTimer(id, globalThis);
+        clearTimer(id, globalThis, .setInterval);
         return JSValue.jsUndefined();
     }
 
@@ -545,17 +555,16 @@ pub const All = struct {
     pub const Export = shim.exportFunctions(.{
         .setTimeout = setTimeout,
         .setInterval = setInterval,
+        .clearImmediate = clearImmediate,
         .clearTimeout = clearTimeout,
         .clearInterval = clearInterval,
         .getNextID = getNextID,
     });
 
     comptime {
-        @export(&setTimeout, .{ .name = Export[0].symbol_name });
-        @export(&setInterval, .{ .name = Export[1].symbol_name });
-        @export(&clearTimeout, .{ .name = Export[2].symbol_name });
-        @export(&clearInterval, .{ .name = Export[3].symbol_name });
-        @export(&getNextID, .{ .name = Export[4].symbol_name });
+        for (Export) |e| {
+            @export(&@field(e.Parent, e.local_name), .{ .name = e.symbol_name });
+        }
     }
 };
 

@@ -786,6 +786,7 @@ extern "C" SYSV_ABI void Bun__ConsoleObject__timeStamp(void* arg0, JSC__JSGlobal
 
 #ifdef __cplusplus
 
+ZIG_DECL JSC__JSValue Bun__Timer__clearImmediate(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 ZIG_DECL JSC__JSValue Bun__Timer__clearInterval(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 ZIG_DECL JSC__JSValue Bun__Timer__clearTimeout(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 ZIG_DECL int32_t Bun__Timer__getNextID();

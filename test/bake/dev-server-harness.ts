@@ -106,7 +106,7 @@ let activeClient: Client | null = null;
 async function maybeWaitInteractive(message: string) {
   if (interactive) {
     while (activeClient) {
-      const input = prompt("\x1b[32mPress return to " + message + "; JS>\x1b[0m");
+      const input = prompt("\x1b[36mPress return to " + message + "; JS>\x1b[0m");
       if (input === "q" || input === "exit") {
         process.exit(0);
         return;
@@ -115,7 +115,7 @@ async function maybeWaitInteractive(message: string) {
       const result = await activeClient.jsInteractive(input);
       console.log(result);
     }
-    console.log("\x1b[32mPress return to " + message + "\x1b[0m");
+    console.log("\x1b[36mPress return to " + message + "\x1b[0m");
     await new Promise(resolve => {
       // Enable raw mode
       process.stdin.setRawMode(true);
@@ -184,7 +184,10 @@ export class Dev {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
       const wait = this.waitForHotReload();
-      await Bun.write(this.join(file), (options.dedent ?? true) ? dedent(contents) : contents);
+      await Bun.write(
+        this.join(file),
+        ((typeof contents === "string" && options.dedent) ?? true) ? dedent(contents) : contents,
+      );
       await wait;
 
       let errors = options.errors;
@@ -216,7 +219,7 @@ export class Dev {
       if (contents === source) {
         throw new Error(`Couldn't find and replace ${JSON.stringify(find)} in ${file}`);
       }
-      await Bun.write(filename, shouldDedent ? dedent(contents) : contents);
+      await Bun.write(filename, typeof contents === "string" && shouldDedent ? dedent(contents) : contents);
       await wait;
 
       if (errors !== null) {
@@ -374,7 +377,7 @@ class DevFetchPromise extends Promise<Response> {
               break display_as_string;
             }
           }
-          actual = new TextDecoder().decode(actual);
+          actual = new TextDecoder("utf8").decode(actual);
           if ((expected as any).sourcePath) {
             expected[Bun.inspect.custom] = () => `[File] ${(expected as any).sourcePath}`;
           }
@@ -600,6 +603,7 @@ export class Client extends EventEmitter {
       this.suppressInteractivePrompt = false;
       if (errors && errors.length > 0) {
         if (!hasVisibleModal) {
+          await maybeWaitInteractive("expectErrorOverlay");
           throw new Error("Expected errors, but none found");
         }
 
@@ -869,7 +873,6 @@ const styleProxyHandler: ProxyHandler<any> = {
     }
     const subpromise = target.then(style => {
       if (style === undefined) {
-        console.error(target.capturedStack);
         throw new Error(`Selector '${target.selector}' was not found`);
       }
       return style[prop];
@@ -985,6 +988,7 @@ class OutputLineStream extends EventEmitter {
   cursor: number = 0;
   disposed = false;
   closes = 0;
+  panicked = false;
 
   constructor(name: string, readable1: ReadableStream, readable2: ReadableStream) {
     super();
@@ -1016,6 +1020,7 @@ class OutputLineStream extends EventEmitter {
           for (const line of lines) {
             this.lines.push(line);
             if (line.includes("============================================================")) {
+              this.panicked = true;
               this.emit("panic");
             }
             // These can be noisy due to symlinks.
@@ -1038,6 +1043,13 @@ class OutputLineStream extends EventEmitter {
     regex: RegExp,
     timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
   ): Promise<RegExpMatchArray> {
+    if (this.panicked) {
+      return new Promise((_, reject) => {
+        this.on("close", () => {
+          reject(new Error("Panicked while waiting for line " + JSON.stringify(regex.toString())));
+        });
+      });
+    }
     return new Promise((resolve, reject) => {
       let ran = false;
       let timer: any;
@@ -1093,17 +1105,18 @@ export function indexHtmlScript(htmlFiles: string[]) {
     ...htmlFiles.map((file, i) => `import html${i} from "./${file}";`),
     "export default {",
     "  static: {",
-    ...(htmlFiles.length === 1 ? `    '/*': html0,` : ""),
-    ...htmlFiles.map(
-      (file, i) =>
-        `    '${
-          "/" +
-          file
-            .replace(/\.html$/, "")
-            .replace("/index", "")
-            .replace(/\/$/, "")
-        }': html${i},`,
-    ),
+    ...(htmlFiles.length === 1
+      ? [`    '/*': html0,`]
+      : htmlFiles.map(
+          (file, i) =>
+            `    ${JSON.stringify(
+              "/" +
+                file
+                  .replace(/\.html$/, "")
+                  .replace("/index", "")
+                  .replace(/\/$/, ""),
+            )}: html${i},`,
+        )),
     "  },",
     "  fetch(req) {",
     "    return new Response('Not Found', { status: 404 });",
@@ -1126,8 +1139,8 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   async function run() {
     const root = path.join(tempDir, basename + count);
     if ("files" in options) {
-      await writeAll(root, options.files);
       const htmlFiles = Object.keys(options.files).filter(file => file.endsWith(".html"));
+      await writeAll(root, options.files);
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
         if (!options.framework) {
           throw new Error("Must specify one of: `options.framework`, `*.html`, or `bun.app.ts`");
@@ -1151,7 +1164,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
         if (options.files["bun.app.ts"]) {
           throw new Error("Cannot provide both bun.app.ts and index.html");
         }
-        fs.writeFileSync(path.join(root, "bun.app.ts"), indexHtmlScript);
+        fs.writeFileSync(path.join(root, "bun.app.ts"), indexHtmlScript(htmlFiles));
       }
     } else {
       if (!options.fixture) {
@@ -1164,7 +1177,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
         if (!fs.existsSync(path.join(root, "index.html"))) {
           throw new Error(`Fixture ${fixture} must contain a bun.app.ts or index.html file.`);
         } else {
-          fs.writeFileSync(path.join(root, "bun.app.ts"), indexHtmlScript);
+          fs.writeFileSync(path.join(root, "bun.app.ts"), indexHtmlScript(["index.html"]));
         }
       }
       if (!fs.existsSync(path.join(root, "node_modules"))) {
@@ -1210,6 +1223,9 @@ export function devTest<T extends DevServerTest>(description: string, options: T
       },
     });
     danglingProcesses.add(devProcess);
+    if (interactive) {
+      console.log("\x1b[35mDev Server PID: " + devProcess.pid + "\x1b[0m");
+    }
     // @ts-expect-error
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
@@ -1242,7 +1258,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     }
   }
 
-  const name = `DevServer > ${basename}.${count}: ${description}`;
+  const name = `DevServer > ${basename}-${count}: ${description}`;
   try {
     // TODO: resolve ci flakiness.
     if (isCI && isWindows) {
@@ -1267,7 +1283,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     }
     if (name.includes(arg)) {
       interactive = true;
-      console.log("\x1b[32m" + name + " (Interactive)\x1b[0m");
+      console.log("\x1b[32;1m" + name + " (Interactive)\x1b[0m");
       run();
       return options;
     }

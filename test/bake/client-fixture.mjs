@@ -54,51 +54,21 @@ function createWindow(windowUrl) {
   window.fetch = fetch;
 
   // Provide WebSocket
-  const OriginalWebSocket = WebSocket;
-  window.WebSocket = class WebSocket {
-    #ws;
-    onmessage = null;
-    onclose = null;
-    onerror = null;
-    onopen = null;
-
+  window.WebSocket = class extends WebSocket {
     constructor(url, protocols, options) {
       url = new URL(url, window.location.origin).href;
-      this.#ws = new OriginalWebSocket(url, protocols, options);
+      super(url, protocols, options);
       webSockets.push(this);
-
-      // Set up proxied event handlers
-      this.#ws.onmessage = event => {
+      this.addEventListener("message", event => {
         if (!allowWebSocketMessages) {
           console.error("[E] WebSocket message received while messages are not allowed");
           process.exit(2);
         }
-        this.onmessage?.(event);
-      };
-
-      this.#ws.onclose = event => {
-        this.onclose?.(event);
-        webSockets = webSockets.filter(ws => ws !== this);
-      };
-      this.#ws.onerror = event => this.onerror?.(event);
-      this.#ws.onopen = event => this.onopen?.(event);
+      });
     }
-
-    set binaryType(type) {
-      this.#ws.binaryType = type;
-    }
-
-    get binaryType() {
-      return this.#ws.binaryType;
-    }
-
-    // Proxy other essential WebSocket methods
-    send(data) {
-      return this.#ws.send(data);
-    }
-
     close() {
-      return this.#ws.close();
+      super.close();
+      webSockets = webSockets.filter(ws => ws !== this);
     }
   };
 

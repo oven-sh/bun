@@ -2396,12 +2396,10 @@ pub const BundleV2 = struct {
 
             const asts = this.graph.ast.slice();
             const css_asts = asts.items(.css);
-            const urls_for_css = asts.items(.url_for_css);
 
             const input_files = this.graph.input_files.slice();
             const loaders = input_files.items(.loader);
             const sources = input_files.items(.source);
-            const unique_key_for_additional_files = input_files.items(.unique_key_for_additional_file);
             for (
                 asts.items(.parts)[1..],
                 asts.items(.import_records)[1..],
@@ -2427,8 +2425,6 @@ pub const BundleV2 = struct {
                             css_asts,
                             sources,
                             loaders,
-                            urls_for_css,
-                            unique_key_for_additional_files,
                             &log,
                         ) == .errors) {
                             // TODO: it could be possible for a plugin to change
@@ -2987,7 +2983,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
-                if (loader != .css) {
+                if (loader == .css) {
                     // Do not use cached files for CSS.
                     break :brk;
                 }
@@ -7345,7 +7341,11 @@ pub const LinkerContext = struct {
                             scratchbuf,
                             writer,
                             bun.css.PrinterOptions.default(),
-                            &entry.condition_import_records,
+                            .{
+                                .import_records = &entry.condition_import_records,
+                                .ast_urls_for_css = this.parse_graph.ast.items(.url_for_css),
+                                .ast_unique_key_for_additional_file = this.parse_graph.input_files.items(.unique_key_for_additional_file),
+                            },
                         );
 
                         condition.toCss(W, &printer) catch unreachable;
@@ -7729,14 +7729,12 @@ pub const LinkerContext = struct {
             const tla_checks = this.parse_graph.ast.items(.tla_check);
             const input_files = this.parse_graph.input_files.items(.source);
             const loaders: []const Loader = this.parse_graph.input_files.items(.loader);
-            const unique_key_for_additional_file = this.parse_graph.input_files.items(.unique_key_for_additional_file);
 
             const export_star_import_records: [][]u32 = this.graph.ast.items(.export_star_import_records);
             const exports_refs: []Ref = this.graph.ast.items(.exports_ref);
             const module_refs: []Ref = this.graph.ast.items(.module_ref);
             const ast_flags_list = this.graph.ast.items(.flags);
 
-            const urls_for_css = this.graph.ast.items(.url_for_css);
             const css_asts: []?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
 
             var symbols = &this.graph.symbols;
@@ -7762,8 +7760,6 @@ pub const LinkerContext = struct {
                         css_asts,
                         input_files,
                         loaders,
-                        urls_for_css,
-                        unique_key_for_additional_file,
                         this.log,
                     );
                     // TODO:
@@ -8557,8 +8553,6 @@ pub const LinkerContext = struct {
         css_asts: []const ?*bun.css.BundlerStyleSheet,
         sources: []const Logger.Source,
         loaders: []const Loader,
-        urls_for_css: []const []const u8,
-        unique_key_for_additional_file: []const []const u8,
         log: *Logger.Log,
     ) enum { ok, errors } {
         for (file_import_records) |*record| {
@@ -8579,16 +8573,6 @@ pub const LinkerContext = struct {
                             ) catch bun.outOfMemory();
                         },
                         .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
-                    }
-
-                    // It has an inlined url for CSS
-                    if (urls_for_css[record.source_index.get()].len > 0) {
-                        record.path.text = urls_for_css[record.source_index.get()];
-                    }
-
-                    // It is some external URL
-                    else if (unique_key_for_additional_file[record.source_index.get()].len > 0) {
-                        record.path.text = unique_key_for_additional_file[record.source_index.get()];
                     }
                 }
             }
@@ -9939,7 +9923,11 @@ pub const LinkerContext = struct {
                     worker.allocator,
                     &buffer_writer,
                     printer_options,
-                    &css_import.condition_import_records,
+                    .{
+                        .import_records = &css_import.condition_import_records,
+                        .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
+                        .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
+                    },
                 )) {
                     .result => {},
                     .err => {
@@ -9969,7 +9957,11 @@ pub const LinkerContext = struct {
                     worker.allocator,
                     &buffer_writer,
                     printer_options,
-                    &import_records,
+                    .{
+                        .import_records = &import_records,
+                        .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
+                        .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
+                    },
                 )) {
                     .result => {},
                     .err => {
@@ -9999,7 +9991,11 @@ pub const LinkerContext = struct {
                     worker.allocator,
                     &buffer_writer,
                     printer_options,
-                    &c.graph.ast.items(.import_records)[idx.get()],
+                    .{
+                        .import_records = &c.graph.ast.items(.import_records)[idx.get()],
+                        .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
+                        .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
+                    },
                 )) {
                     .result => {},
                     .err => {
@@ -10137,7 +10133,7 @@ pub const LinkerContext = struct {
                             .license_comments = .{},
                             .options = bun.css.ParserOptions.default(allocator, null),
                         };
-                        wrapRulesWithConditions(&ast, allocator, &entry.conditions, &entry.condition_import_records);
+                        wrapRulesWithConditions(&ast, allocator, &entry.conditions);
                         chunk.content.css.asts[i] = ast;
                     },
                     .external_path => |*p| {
@@ -10187,7 +10183,15 @@ pub const LinkerContext = struct {
                                     .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
                                 };
 
-                                const print_result = switch (ast_import.toCss(allocator, printer_options, &entry.condition_import_records)) {
+                                const print_result = switch (ast_import.toCss(
+                                    allocator,
+                                    printer_options,
+                                    .{
+                                        .import_records = &entry.condition_import_records,
+                                        .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
+                                        .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
+                                    },
+                                )) {
                                     .result => |v| v,
                                     .err => |e| {
                                         c.log.addErrorFmt(null, Loc.Empty, c.allocator, "Error generating CSS for import: {}", .{e}) catch bun.outOfMemory();
@@ -10252,7 +10256,7 @@ pub const LinkerContext = struct {
                             ast.rules.v.items.len = 0;
                         }
 
-                        wrapRulesWithConditions(ast, allocator, &entry.conditions, &entry.condition_import_records);
+                        wrapRulesWithConditions(ast, allocator, &entry.conditions);
                         // TODO: Remove top-level duplicate rules across files
                     },
                 }
@@ -10264,7 +10268,6 @@ pub const LinkerContext = struct {
         ast: *bun.css.BundlerStyleSheet,
         temp_allocator: std.mem.Allocator,
         conditions: *const BabyList(bun.css.ImportConditions),
-        _: *const BabyList(ImportRecord),
     ) void {
         var dummy_import_records = bun.BabyList(bun.ImportRecord){};
         defer bun.debugAssert(dummy_import_records.len == 0);

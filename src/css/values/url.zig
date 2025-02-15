@@ -111,7 +111,7 @@ pub const Url = struct {
         }
 
         const import_record = try dest.importRecord(this.import_record_idx);
-        const url = import_record.path.text;
+        const url = try dest.getImportRecordUrl(this.import_record_idx);
 
         if (dest.minify and !import_record.is_internal) {
             var buf = ArrayList(u8){};

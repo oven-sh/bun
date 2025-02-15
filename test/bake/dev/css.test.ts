@@ -1,6 +1,6 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, imageFixtures, minimalFramework, reactRefreshStub } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, imageFixtures, reactRefreshStub } from "../dev-server-harness";
 import assert from "node:assert";
 
 devTest("css file with syntax error does not kill old styles", {
@@ -143,7 +143,7 @@ devTest("css import another css file", {
   async test(dev) {
     await using c = await dev.client("/");
     // Verify initial build
-    await c.style("h1").color.expect.toBe("blue");
+    await c.style("h1").color.expect.toBe("#00f");
     await c.style("body").color.expect.toBe("red");
 
     // Hot reload
@@ -164,7 +164,7 @@ devTest("css import another css file", {
     await c.style("body").color.expect.toBe("red");
   },
 });
-devTest("asset referenced in css functions", {
+devTest("asset referenced in css", {
   files: {
     "index.html": emptyHtmlFile({
       styles: ["styles.css"],
@@ -210,6 +210,10 @@ devTest("circular css imports handle hot reload", {
   files: {
     "index.html": emptyHtmlFile({
       styles: ["a.css"],
+      body: `
+        <div class="a">hello</div>
+        <div class="b">hello</div>
+      `,
     }),
     "a.css": `
       @import "./b.css";
@@ -241,9 +245,17 @@ devTest("multiple stylesheets importing same dependency", {
   files: {
     "first.html": emptyHtmlFile({
       styles: ["first.css"],
+      body: `
+        <div class="first">hello</div>
+        <div class="shared">hello</div>
+      `,
     }),
     "second.html": emptyHtmlFile({
-      styles: ["first.css"],
+      styles: ["second.css"],
+      body: `
+        <div class="second">hello</div>
+        <div class="shared">hello</div>
+      `,
     }),
     "first.css": `
       @import "./shared.css";
@@ -261,7 +273,7 @@ devTest("multiple stylesheets importing same dependency", {
     await using c1 = await dev.client("/first");
     await using c2 = await dev.client("/second");
     await c1.style(".first").color.expect.toBe("red");
-    await c2.style(".second").color.expect.toBe("blue");
+    await c2.style(".second").color.expect.toBe("#00f");
     await c1.style(".shared").color.expect.toBe("green");
     await c2.style(".shared").color.expect.toBe("green");
 
@@ -329,7 +341,7 @@ devTest("removing and re-adding css import", {
       `,
     );
     await client.style(".colored").color.expect.toBe("#00f");
-    await client.style(".main").backgroundColor.expect.toBe("white");
+    await client.style(".main").backgroundColor.expect.toBe("#fff");
   },
 });
 

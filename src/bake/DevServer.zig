@@ -896,6 +896,12 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
             dev,
             wrapGenericRequestHandler(onIncrementalVisualizer, is_ssl),
         );
+        app.get(
+            internal_prefix ++ "/iv",
+            *DevServer,
+            dev,
+            redirectHandler(internal_prefix ++ "/incremental_visualizer", is_ssl),
+        );
     }
 
     // Only attach a catch-all handler if the framework has filesystem router
@@ -988,6 +994,22 @@ inline fn wrapGenericRequestHandler(
     return struct {
         fn handle(dev: *DevServer, req: *Request, resp: *uws.NewApp(is_ssl).Response) void {
             handler(dev, req, if (uses_any_response) AnyResponse.init(resp) else resp);
+        }
+    }.handle;
+}
+
+inline fn redirectHandler(comptime path: []const u8, comptime is_ssl: bool) fn (
+    dev: *DevServer,
+    req: *Request,
+    resp: *uws.NewApp(is_ssl).Response,
+) void {
+    return struct {
+        fn handle(dev: *DevServer, req: *Request, resp: *uws.NewApp(is_ssl).Response) void {
+            _ = dev;
+            _ = req;
+            resp.writeStatus("302 Found");
+            resp.writeHeader("Location", path);
+            resp.endWithoutBody(false);
         }
     }.handle;
 }
@@ -1107,7 +1129,7 @@ fn ensureRouteIsBundled(
                 switch (try checkRouteFailures(dev, route_bundle_index, resp)) {
                     .stop => return,
                     .ok => {}, // Errors were cleared or not in the way.
-                    .rebuild => continue :sw .unqueued,
+                    .rebuild => continue :sw .unqueued, // Do the build all over again
                 }
             }
 
@@ -1995,29 +2017,13 @@ pub fn finalizeBundle(
     for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
         assert(chunk.content == .css);
 
-        for (chunk.content.css.imports_in_chunk_in_order.slice()) |css_import| {
-            switch (css_import.kind) {
-                // a CSS import which was made redundant by an later import, we can skip
-                // this here
-                .layers => {},
-                // TODO: i don't know how external/assets are handled in the dev server
-                .external_path => {},
-                .source_index => |src_idx| {
-                    const index = src_idx;
-
-                    const abs_path = ctx.sources[index.get()].path.keyForIncrementalGraph();
-                    _ = try dev.client_graph.insertEmpty(abs_path, .css);
-                },
-            }
-        }
-
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
 
         const code = try chunk.intermediate_output.code(
             dev.allocator,
             &bv2.graph,
             &bv2.linker.graph,
-            "/_bun/TODO-import-prefix-where-is-this-used?",
+            "THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
             chunk,
             result.chunks,
             null,
@@ -2129,14 +2135,9 @@ pub fn finalizeBundle(
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
         try dev.client_graph.processChunkDependencies(&ctx, .normal, index, bv2.graph.allocator);
     }
-    {
-        for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
-            _ = metadata;
-            const entry_index = bun.JSAst.Index.init(chunk.entry_point.source_index);
-            // TODO: index css deps. this must add all recursively referenced files
-            // as dependencies of the entry point, instead of building a recursive tree.
-            try dev.client_graph.processChunkDependencies(&ctx, .css, entry_index, bv2.graph.allocator);
-        }
+    for (result.cssChunks()) |*chunk| {
+        const entry_index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        try dev.client_graph.processChunkDependencies(&ctx, .css, entry_index, bv2.graph.allocator);
     }
 
     // Index all failed files now that the incremental graph has been updated.
@@ -3045,7 +3046,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
 
                 fn initUnknown(flags: Flags) @This() {
-                    assert(flags.kind == .unknown);
                     return .{
                         .content = .{ .unknown = .unknown }, // unused
                         .code_len = 0, // unused
@@ -3412,9 +3412,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
             });
 
+            // Build a map from the existing import list. Later, entries that
+            // were not marked as `.seen = true` will be freed.
             var quick_lookup: TempLookup.HashTable = .{};
             defer quick_lookup.deinit(temp_alloc);
-
             {
                 var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
                 while (it) |edge_index| {
@@ -3434,6 +3435,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // removing edges.
             const quick_lookup_values_to_care_len = quick_lookup.count();
 
+            // A new import linked list is constructed. A side effect of this
+            // approach is that the order of the imports is reversed on every
+            // save. However, the ordering here doesn't matter.
             var new_imports: EdgeIndex.Optional = .none;
             defer g.first_import.items[file_index.get()] = new_imports;
 
@@ -3456,8 +3460,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
-            // TODO: for CSS, iterate over all referenced files and assets, recursively. add all to this single node.
-            // Note: some referenced files may not be in IncrementalGraph yet (maybe use insertEmpty)
             switch (mode) {
                 .normal => try g.processChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
                 .css => try g.processCSSChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
@@ -3477,7 +3479,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
-            // TODO: a chance that this does not need to trace for CSS
             if (side == .server) {
                 // Follow this file to the route to mark it as stale.
                 try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary, file_index);
@@ -3516,95 +3517,157 @@ pub fn IncrementalGraph(side: bake.Side) type {
             quick_lookup: *TempLookup.HashTable,
             new_imports: *EdgeIndex.Optional,
             file_index: FileIndex,
-            index_: bun.JSAst.Index,
+            bundler_index: bun.JSAst.Index,
         ) !void {
-            bun.assert(index_.isValid());
-            // don't call this function for non-CSS sources
-            bun.assert(ctx.loaders[index_.get()] == .css);
+            bun.assert(bundler_index.isValid());
+            bun.assert(ctx.loaders[bundler_index.get()] == .css);
 
-            const log = bun.Output.scoped(.processChunkDependencies, false);
-            var sfb = std.heap.stackFallback(@sizeOf(bun.JSAst.Index) * 20, temp_alloc);
-            const alloc = sfb.get();
-            var stack = std.ArrayList(bun.JSAst.Index).init(alloc);
-            defer stack.deinit();
-            try stack.append(index_);
+            var sfb = std.heap.stackFallback(@sizeOf(bun.JSAst.Index) * 64, temp_alloc);
+            const queue_alloc = sfb.get();
 
-            while (stack.popOrNull()) |index| {
+            // This queue avoids stack overflow.
+            // Infinite loop is prevented by the tracing bits in `processEdgeAttachment`.
+            var queue: ArrayListUnmanaged(bun.JSAst.Index) = .empty;
+            defer queue.deinit(queue_alloc);
+
+            for (ctx.import_records[bundler_index.get()].slice()) |import_record| {
+                const result = try processEdgeAttachment(g, ctx, temp_alloc, quick_lookup, new_imports, file_index, import_record, .css);
+                if (result == .@"continue" and import_record.source_index.isValid()) {
+                    try queue.append(queue_alloc, import_record.source_index);
+                }
+            }
+
+            while (queue.popOrNull()) |index| {
                 for (ctx.import_records[index.get()].slice()) |import_record| {
-                    // When an import record is duplicated, it gets marked unused.
-                    // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
-                    // There is still a case where deduplication must happen.
-                    if (import_record.is_unused) continue;
-
-                    if (!import_record.source_index.isRuntime()) try_index_record: {
-                        // TODO: move this block into a fucntion
-                        const key = import_record.path.keyForIncrementalGraph();
-                        const imported_file_index: FileIndex = brk: {
-                            if (import_record.source_index.isValid()) {
-                                if (ctx.getCachedIndex(side, import_record.source_index).*.unwrap()) |i| {
-                                    break :brk i;
-                                }
-                            }
-                            break :brk .init(@intCast(
-                                g.bundled_files.getIndex(key) orelse
-                                    break :try_index_record,
-                            ));
-                        };
-
-                        if (Environment.isDebug) {
-                            bun.assert(imported_file_index.get() < g.bundled_files.count());
-                        }
-
-                        if (import_record.source_index.isValid()) {
-                            try stack.append(import_record.source_index);
-                        }
-
-                        const gop = try quick_lookup.getOrPut(temp_alloc, imported_file_index);
-                        if (gop.found_existing) {
-                            // If the edge has already been seen, it will be skipped
-                            // to ensure duplicate edges never exist.
-                            if (gop.value_ptr.seen) continue;
-                            const lookup = gop.value_ptr;
-                            lookup.seen = true;
-                            const dep = &g.edges.items[lookup.edge_index.get()];
-                            dep.next_import = new_imports.*;
-                            new_imports.* = lookup.edge_index.toOptional();
-                        } else {
-                            // A new edge is needed to represent the dependency and import.
-                            const first_dep = &g.first_dep.items[imported_file_index.get()];
-                            const edge = try g.newEdge(.{
-                                .next_import = new_imports.*,
-                                .next_dependency = first_dep.*,
-                                .prev_dependency = .none,
-                                .imported = imported_file_index,
-                                .dependency = file_index,
-                            });
-                            if (first_dep.*.unwrap()) |dep| {
-                                g.edges.items[dep.get()].prev_dependency = edge.toOptional();
-                            }
-                            new_imports.* = edge.toOptional();
-                            first_dep.* = edge.toOptional();
-
-                            g.owner().incremental_result.had_adjusted_edges = true;
-
-                            // To prevent duplicates, add into the quick lookup map
-                            // the file index so that it does exist.
-                            gop.value_ptr.* = .{
-                                .edge_index = edge,
-                                .seen = true,
-                            };
-
-                            log("attach edge={d} | id={d} {} -> id={d} {}", .{
-                                edge.get(),
-                                file_index.get(),
-                                bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
-                                imported_file_index.get(),
-                                bun.fmt.quote(g.bundled_files.keys()[imported_file_index.get()]),
-                            });
-                        }
+                    const result = try processEdgeAttachment(g, ctx, temp_alloc, quick_lookup, new_imports, file_index, import_record, .css);
+                    if (result == .@"continue" and import_record.source_index.isValid()) {
+                        try queue.append(queue_alloc, import_record.source_index);
                     }
                 }
             }
+        }
+
+        fn processEdgeAttachment(
+            g: *@This(),
+            ctx: *HotUpdateContext,
+            temp_alloc: Allocator,
+            quick_lookup: *TempLookup.HashTable,
+            new_imports: *EdgeIndex.Optional,
+            file_index: FileIndex,
+            import_record: bun.ImportRecord,
+            comptime mode: enum {
+                js_or_html,
+                /// When set, the graph tracing state bits are used to prevent
+                /// infinite recursion. This is only done for CSS, since it:
+                /// - Recursively processes its imports
+                /// - Does not use its tracing bits for anything else
+                css,
+            },
+        ) bun.OOM!enum { @"continue", stop } {
+            const log = bun.Output.scoped(.processEdgeAttachment, false);
+
+            // When an import record is duplicated, it gets marked unused.
+            // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
+            // There is still a case where deduplication must happen.
+            if (import_record.is_unused) return .stop;
+            if (import_record.source_index.isRuntime()) return .stop;
+
+            const key = import_record.path.keyForIncrementalGraph();
+            log("processEdgeAttachment({s}, {})", .{ key, import_record.source_index });
+
+            // Attempt to locate the FileIndex from bundle_v2's Source.Index
+            const imported_file_index: FileIndex, const kind = brk: {
+                if (import_record.source_index.isValid()) {
+                    const kind: FileKind = if (mode == .css)
+                        switch (ctx.loaders[import_record.source_index.get()]) {
+                            .css => .css,
+                            else => .asset,
+                        };
+                    if (ctx.getCachedIndex(side, import_record.source_index).*.unwrap()) |i| {
+                        break :brk .{ i, kind };
+                    } else if (mode == .css) {
+                        const index = (try g.insertEmpty(key, kind)).index;
+                        // TODO: make this more clear that:
+                        // temp_alloc == bv2.graph.allocator
+                        try ctx.gts.resize(side, temp_alloc, index.get() + 1);
+                        break :brk .{ index, kind };
+                    }
+                }
+
+                break :brk switch (mode) {
+                    // All invalid source indices are external URLs that cannot be watched.
+                    .css => return .stop,
+                    // Check IncrementalGraph to find an file from a prior build.
+                    .js_or_html => .{
+                        .init(@intCast(
+                            g.bundled_files.getIndex(key) orelse
+                                // Not tracked in IncrementalGraph. This can be hit for
+                                // certain external files.
+                                return .@"continue",
+                        )),
+                        {},
+                    },
+                };
+            };
+
+            if (Environment.isDebug) {
+                bun.assert(imported_file_index.get() < g.bundled_files.count());
+            }
+
+            // For CSS files visiting other CSS files, prevent infinite
+            // recursion.  CSS files visiting assets cannot cause recursion
+            // since assets cannot import other files.
+            if (mode == .css and kind == .css) {
+                if (ctx.gts.bits(side).isSet(imported_file_index.get()))
+                    return .stop;
+                ctx.gts.bits(side).set(imported_file_index.get());
+            }
+
+            const gop = try quick_lookup.getOrPut(temp_alloc, imported_file_index);
+            if (gop.found_existing) {
+                // If the edge has already been seen, it will be skipped
+                // to ensure duplicate edges never exist.
+                if (gop.value_ptr.seen) return .@"continue";
+                const lookup = gop.value_ptr;
+                lookup.seen = true;
+                const dep = &g.edges.items[lookup.edge_index.get()];
+                dep.next_import = new_imports.*;
+                new_imports.* = lookup.edge_index.toOptional();
+            } else {
+                // A new edge is needed to represent the dependency and import.
+                const first_dep = &g.first_dep.items[imported_file_index.get()];
+                const edge = try g.newEdge(.{
+                    .next_import = new_imports.*,
+                    .next_dependency = first_dep.*,
+                    .prev_dependency = .none,
+                    .imported = imported_file_index,
+                    .dependency = file_index,
+                });
+                if (first_dep.*.unwrap()) |dep| {
+                    g.edges.items[dep.get()].prev_dependency = edge.toOptional();
+                }
+                new_imports.* = edge.toOptional();
+                first_dep.* = edge.toOptional();
+
+                g.owner().incremental_result.had_adjusted_edges = true;
+
+                // To prevent duplicates, add into the quick lookup map
+                // the file index so that it does exist.
+                gop.value_ptr.* = .{
+                    .edge_index = edge,
+                    .seen = true,
+                };
+
+                log("attach edge={d} | id={d} {} -> id={d} {}", .{
+                    edge.get(),
+                    file_index.get(),
+                    bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
+                    imported_file_index.get(),
+                    bun.fmt.quote(g.bundled_files.keys()[imported_file_index.get()]),
+                });
+            }
+
+            return .@"continue";
         }
 
         fn processChunkImportRecords(
@@ -3628,7 +3691,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 if (import_record.is_unused) continue;
 
                 if (!import_record.source_index.isRuntime()) try_index_record: {
-                    // TODO: move this block into a fucntion
+                    // TODO: move this block into a function
                     const key = import_record.path.keyForIncrementalGraph();
                     const imported_file_index: FileIndex = brk: {
                         if (import_record.source_index.isValid()) {
@@ -3949,9 +4012,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         /// Returns the key that was inserted.
-        pub fn insertEmpty(g: *@This(), abs_path: []const u8, kind_: FileKind) bun.OOM![]const u8 {
-            _ = kind_;
-            const kind = .unknown;
+        pub fn insertEmpty(g: *@This(), abs_path: []const u8, kind: FileKind) bun.OOM!struct {
+            index: FileIndex,
+            key: []const u8,
+        } {
             g.owner().graph_safety_lock.assertLocked();
             const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
             if (!gop.found_existing) {
@@ -3978,8 +4042,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 try g.first_import.append(g.owner().allocator, .none);
                 if (side == .client)
                     try g.source_maps.append(g.owner().allocator, .empty);
+                try g.ensureStaleBitCapacity(true);
             }
-            return gop.key_ptr.*;
+            return .{ .index = .init(@intCast(gop.index)), .key = gop.key_ptr.* };
         }
 
         /// Server CSS files are just used to be targets for graph traversal.
@@ -4226,21 +4291,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         // knowledge of the boundary between them.
                         .js, .unknown => if (!data.flags.is_hmr_root) {
                             try entry_points.appendJs(alloc, path, .client);
-
-                            // TODO(@paperclover): do not loop here
-                            var it = g.first_dep.items[index].unwrap();
-                            while (it) |edge_index| {
-                                const entry = g.edges.items[edge_index.get()];
-                                const dep = entry.dependency;
-                                g.stale_files.set(dep.get());
-
-                                const dep_file = values[dep.get()];
-                                if (dep_file.flags.is_css_root) {
-                                    try entry_points.appendCss(alloc, keys[dep.get()]);
-                                }
-
-                                it = entry.next_dependency.unwrap();
-                            }
                         },
                     },
                     .server => {
@@ -4689,6 +4739,13 @@ const GraphTraceState = struct {
         gts.server_bits.setAll(false);
         gts.client_bits.setAll(false);
     }
+
+    fn resize(gts: *GraphTraceState, side: bake.Side, allocator: Allocator, new_size: usize) !void {
+        try switch (side) {
+            .client => gts.client_bits.resize(allocator, new_size, false),
+            .server => gts.server_bits.resize(allocator, new_size, false),
+        };
+    }
 };
 
 const TraceImportGoal = enum {
@@ -4758,8 +4815,8 @@ const DirectoryWatchStore = struct {
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
         const owned_file_path = switch (renderer) {
-            .client => try dev.client_graph.insertEmpty(import_source, .unknown),
-            .server, .ssr => try dev.server_graph.insertEmpty(import_source, .unknown),
+            .client => (try dev.client_graph.insertEmpty(import_source, .unknown)).key,
+            .server, .ssr => (try dev.server_graph.insertEmpty(import_source, .unknown)).key,
         };
 
         store.insert(dir, owned_file_path, specifier) catch |err| switch (err) {
@@ -5710,29 +5767,29 @@ pub const HotReloadEvent = struct {
         alloc: Allocator,
     ) void {
         const changed_file_paths = event.files.keys();
-        // TODO: check for .delete and remove items from graph. this has to be done
-        // with care because some editors save by deleting and recreating the file.
-        // delete events are not to be trusted at face value. also, merging of
-        // events can cause .write and .delete to be true at the same time.
-        const changed_file_attributes = event.files.values();
-        _ = changed_file_attributes;
 
-        {
-            dev.graph_safety_lock.lock();
-            defer dev.graph_safety_lock.unlock();
+        dev.graph_safety_lock.lock();
+        defer dev.graph_safety_lock.unlock();
 
-            inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
-                g.invalidate(changed_file_paths, entry_points, alloc) catch bun.outOfMemory();
+        inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
+            g.invalidate(changed_file_paths, entry_points, alloc) catch bun.outOfMemory();
+        }
+
+        if (dev.has_tailwind_plugin_hack) |*map| {
+            for (map.keys()) |abs_path| {
+                const file = dev.client_graph.bundled_files.get(abs_path) orelse
+                    continue;
+                if (file.flags.kind == .css)
+                    entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
             }
+        }
 
-            if (dev.has_tailwind_plugin_hack) |*map| {
-                for (map.keys()) |abs_path| {
-                    const file = dev.client_graph.bundled_files.get(abs_path) orelse
-                        continue;
-                    if (file.flags.kind == .css)
-                        entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
-                }
-            }
+        if (entry_points.set.count() == 0) {
+            Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
+            Output.debugWarn("modified files: {s}", .{
+                bun.fmt.fmtSlice(changed_file_paths, ", "),
+            });
+            return;
         }
     }
 
@@ -5750,14 +5807,13 @@ pub const HotReloadEvent = struct {
             return;
         }
 
-        // defer event.files.clearRetainingCapacity();
-
         var sfb = std.heap.stackFallback(4096, bun.default_allocator);
         const temp_alloc = sfb.get();
         var entry_points: EntryPointList = EntryPointList.empty;
         defer entry_points.deinit(temp_alloc);
 
         first.processFileList(dev, &entry_points, temp_alloc);
+
         const timer = first.timer;
 
         if (dev.watcher_atomics.recycleEventFromDevServer(first)) |second| {
@@ -5766,10 +5822,6 @@ pub const HotReloadEvent = struct {
         }
 
         if (entry_points.set.count() == 0) {
-            Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
-            Output.debugWarn("modified files: {s}", .{
-                bun.fmt.fmtSlice(first.files.keys(), ", "),
-            });
             return;
         }
 
@@ -6324,7 +6376,7 @@ pub const Assets = struct {
         const gop = try assets.path_map.getOrPut(alloc, abs_path);
         if (!gop.found_existing) {
             // Locate a stable pointer for the file path
-            const stable_abs_path = try assets.owner().client_graph.insertEmpty(abs_path, .unknown);
+            const stable_abs_path = (try assets.owner().client_graph.insertEmpty(abs_path, .unknown)).key;
             gop.key_ptr.* = stable_abs_path;
         } else {
             const entry_index = gop.value_ptr.*;

@@ -646,6 +646,12 @@ pub const TimeoutObject = struct {
         _ = globalThis;
         return .jsBoolean(this.internals.getDestroyed());
     }
+
+    pub fn dispose(this: *TimeoutObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+        _ = this;
+        _ = Timer.All.clearTimeout(globalThis, callFrame.this());
+        return .undefined;
+    }
 };
 
 pub const ImmediateObject = struct {
@@ -721,6 +727,12 @@ pub const ImmediateObject = struct {
     pub fn getDestroyed(this: *ImmediateObject, globalThis: *JSGlobalObject) JSValue {
         _ = globalThis;
         return .jsBoolean(this.internals.getDestroyed());
+    }
+
+    pub fn dispose(this: *ImmediateObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+        _ = this;
+        _ = Timer.All.clearImmediate(globalThis, callFrame.this());
+        return .undefined;
     }
 };
 

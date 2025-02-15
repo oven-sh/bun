@@ -160,6 +160,10 @@ export default [
       _destroyed: {
         getter: "getDestroyed",
       },
+      ["@@dispose"]: {
+        fn: "dispose",
+        length: 0,
+      },
     },
     values: ["arguments", "callback"],
   }),
@@ -193,6 +197,10 @@ export default [
       },
       _destroyed: {
         getter: "getDestroyed",
+      },
+      ["@@dispose"]: {
+        fn: "dispose",
+        length: 0,
       },
     },
     values: ["arguments", "callback"],

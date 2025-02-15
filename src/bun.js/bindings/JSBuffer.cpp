@@ -1315,13 +1315,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(castedThis));
 }
 
-#if OS(WINDOWS)
-extern "C" void* zig_memmem(const void* haystack, size_t haystack_len, const void* needle, size_t needle_len);
-#define MEMMEM_IMPL zig_memmem
-#else
-#define MEMMEM_IMPL memmem
-#endif
-
 static ssize_t indexOfOffset(size_t length, ssize_t offset_i64, ssize_t needle_length, bool is_forward)
 {
     ssize_t length_i64 = static_cast<ssize_t>(length);
@@ -1355,14 +1348,11 @@ static ssize_t indexOfOffset(size_t length, ssize_t offset_i64, ssize_t needle_l
 
 static int64_t indexOf(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)
 {
-    if (thisLength < valueLength + byteOffset)
-        return -1;
-    auto start = thisPtr + byteOffset;
-    auto it = static_cast<uint8_t*>(MEMMEM_IMPL(start, static_cast<size_t>(thisLength - byteOffset), valuePtr, static_cast<size_t>(valueLength)));
-    if (it != NULL) {
-        return it - thisPtr;
-    }
-    return -1;
+    auto haystack = std::span<const uint8_t>(thisPtr, thisLength).subspan(byteOffset);
+    auto needle = std::span<const uint8_t>(valuePtr, valueLength);
+    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());
+    if (it == haystack.end()) return -1;
+    return byteOffset + std::distance(haystack.begin(), it);
 }
 
 static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8_t* valuePtr, int64_t valueLength, int64_t byteOffset)

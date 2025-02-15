@@ -503,3 +503,5 @@ pub const getpwuid_r = translated.getpwuid_r;
 export fn Bun__errnoName(err: c_int) ?[*:0]const u8 {
     return @tagName(bun.C.SystemErrno.init(err) orelse return null);
 }
+
+pub extern "c" fn calloc(nmemb: usize, size: usize) ?*anyopaque; // added upstream in https://github.com/ziglang/zig/pull/22853

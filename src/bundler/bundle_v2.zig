@@ -2395,17 +2395,11 @@ pub const BundleV2 = struct {
             var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
 
             const asts = this.graph.ast.slice();
-            const css_asts = asts.items(.css);
-            const urls_for_css = asts.items(.url_for_css);
-
-            const input_files = this.graph.input_files.slice();
-            const loaders = input_files.items(.loader);
-            const sources = input_files.items(.source);
-            const unique_key_for_additional_files = input_files.items(.unique_key_for_additional_file);
+            const loaders = this.graph.input_files.items(.loader);
             for (
                 asts.items(.parts)[1..],
                 asts.items(.import_records)[1..],
-                css_asts[1..],
+                asts.items(.css)[1..],
                 asts.items(.target)[1..],
                 1..,
             ) |part_list, import_records, maybe_css, target, index| {
@@ -2415,39 +2409,9 @@ pub const BundleV2 = struct {
                 // Actual empty files will contain a part exporting an empty object.
                 if (part_list.len != 0) {
                     if (maybe_css != null) {
-                        // CSS has restrictions on what files can be imported.
-                        // This means the file can become an error after
-                        // resolution, which is not usually the case.
+                        @branchHint(.unlikely);
                         css_total_files.appendAssumeCapacity(Index.init(index));
-                        var log = Logger.Log.init(this.graph.allocator);
-                        defer log.deinit();
-                        if (this.linker.scanCSSImports(
-                            @intCast(index),
-                            import_records.slice(),
-                            css_asts,
-                            sources,
-                            loaders,
-                            urls_for_css,
-                            unique_key_for_additional_files,
-                            &log,
-                        ) == .errors) {
-                            // TODO: it could be possible for a plugin to change
-                            // the type of loader from whatever it was into a
-                            // css-compatible loader.
-                            try dev_server.handleParseTaskFailure(
-                                error.InvalidCssImport,
-                                .client,
-                                sources[index].path.text,
-                                &log,
-                            );
-                            // Since there is an error, do not treat it as a
-                            // valid CSS chunk.
-                            _ = start.css_entry_points.swapRemove(Index.init(index));
-                        }
                     } else {
-                        // HTML files are special cased because they correspond
-                        // to routes in DevServer. They have a JS chunk too,
-                        // derived off of the import record list.
                         if (loaders[index] == .html) {
                             try html_files.put(this.graph.allocator, Index.init(index), {});
                         } else {
@@ -2476,7 +2440,6 @@ pub const BundleV2 = struct {
                         }
                     }
                 } else {
-                    // Treat empty CSS files for removal.
                     _ = start.css_entry_points.swapRemove(Index.init(index));
                 }
             }
@@ -2510,8 +2473,8 @@ pub const BundleV2 = struct {
         // a new npm dependency), where one file that fails doesnt prevent the
         // passing files to get cached in the incremental graph.
 
-        // The linker still has to be initialized as code generation expects
-        // much of its state to be valid memory, even if empty.
+        // The linker still has to be initialized as code generation expects it
+        // TODO: ???
         try this.linker.load(
             this,
             this.graph.entry_points.items,
@@ -2986,12 +2949,7 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            if (this.transpiler.options.dev_server) |dev_server| brk: {
-                if (loader != .css) {
-                    // Do not use cached files for CSS.
-                    break :brk;
-                }
-
+            if (this.transpiler.options.dev_server) |dev_server| {
                 import_record.source_index = Index.invalid;
 
                 if (dev_server.isFileCached(path.text, bake_graph)) |entry| {
@@ -3011,7 +2969,7 @@ pub const BundleV2 = struct {
                         import_record.path.text = path.text;
                         import_record.path.pretty = rel;
                         import_record.path = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
-                        if (loader == .html or entry.kind == .css) {
+                        if (entry.kind == .css or loader == .html) {
                             import_record.path.is_disabled = true;
                         }
                     }
@@ -3290,8 +3248,7 @@ pub const BundleV2 = struct {
 
                 const input_file_loaders = this.graph.input_files.items(.loader);
                 const save_import_record_source_index = this.transpiler.options.dev_server == null or
-                    result.loader == .html or
-                    result.loader == .css;
+                    result.loader == .html;
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
                     for (pending_entry.value.slice()) |to_assign| {
@@ -7756,16 +7713,46 @@ pub const LinkerContext = struct {
                 // Is it CSS?
                 if (css_asts[id] != null) {
                     // Inline URLs for non-CSS files into the CSS file
-                    _ = this.scanCSSImports(
-                        id,
-                        import_records,
-                        css_asts,
-                        input_files,
-                        loaders,
-                        urls_for_css,
-                        unique_key_for_additional_file,
-                        this.log,
-                    );
+                    for (import_records) |*record| {
+                        if (record.source_index.isValid()) {
+                            // Other file is not CSS
+                            if (css_asts[record.source_index.get()] == null) {
+                                const source = &input_files[id];
+                                const loader = loaders[record.source_index.get()];
+                                switch (loader) {
+                                    .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .html => {
+                                        this.log.addErrorFmt(
+                                            source,
+                                            record.range.loc,
+                                            this.allocator,
+                                            "Cannot import a \".{s}\" file into a CSS file",
+                                            .{@tagName(loader)},
+                                        ) catch bun.outOfMemory();
+                                    },
+                                    .sqlite_embedded => {
+                                        this.log.addErrorFmt(
+                                            source,
+                                            record.range.loc,
+                                            this.allocator,
+                                            "Cannot import a \"sqlite_embedded\" file into a CSS file",
+                                            .{},
+                                        ) catch bun.outOfMemory();
+                                    },
+                                    .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
+                                }
+
+                                // It has an inlined url for CSS
+                                if (urls_for_css[record.source_index.get()].len > 0) {
+                                    record.path.text = urls_for_css[record.source_index.get()];
+                                }
+                                // It is some external URL
+                                else if (unique_key_for_additional_file[record.source_index.get()].len > 0) {
+                                    record.path.text = unique_key_for_additional_file[record.source_index.get()];
+                                }
+                            }
+                        }
+                        // else if (record.copy_source_index.isValid()) {}
+                    }
                     // TODO:
                     // Validate cross-file "composes: ... from" named imports
                     continue;
@@ -8547,53 +8534,6 @@ pub const LinkerContext = struct {
                 }
             }
         }
-    }
-
-    pub fn scanCSSImports(
-        this: *LinkerContext,
-        file_source_index: u32,
-        file_import_records: []ImportRecord,
-        // slices from Graph
-        css_asts: []const ?*bun.css.BundlerStyleSheet,
-        sources: []const Logger.Source,
-        loaders: []const Loader,
-        urls_for_css: []const []const u8,
-        unique_key_for_additional_file: []const []const u8,
-        log: *Logger.Log,
-    ) enum { ok, errors } {
-        for (file_import_records) |*record| {
-            if (record.source_index.isValid()) {
-                // Other file is not CSS
-                if (css_asts[record.source_index.get()] == null) {
-                    const source = &sources[file_source_index];
-                    const loader = loaders[record.source_index.get()];
-
-                    switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .html, .sqlite_embedded => {
-                            log.addErrorFmt(
-                                source,
-                                record.range.loc,
-                                this.allocator,
-                                "Cannot import a \".{s}\" file into a CSS file",
-                                .{@tagName(loader)},
-                            ) catch bun.outOfMemory();
-                        },
-                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
-                    }
-
-                    // It has an inlined url for CSS
-                    if (urls_for_css[record.source_index.get()].len > 0) {
-                        record.path.text = urls_for_css[record.source_index.get()];
-                    }
-
-                    // It is some external URL
-                    else if (unique_key_for_additional_file[record.source_index.get()].len > 0) {
-                        record.path.text = unique_key_for_additional_file[record.source_index.get()];
-                    }
-                }
-            }
-        }
-        return if (log.errors > 0) .errors else .ok;
     }
 
     pub fn createExportsForFile(

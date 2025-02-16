@@ -156,7 +156,7 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
 ---
 
 - `.js` `.jsx`, `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx`
-- Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms including dead code elimination and tree shaking. At the moment Bun does not attempt to down-convert syntax; if you use recently ECMAScript syntax, that will be reflected in the bundled code.
+- Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms including dead code elimination and tree shaking. At the moment Bun does not attempt to down-convert syntax; if you use recent ECMAScript syntax, that will be reflected in the bundled code.
 
 ---
 
@@ -709,6 +709,8 @@ Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-
 //# debugId=<DEBUG ID>
 ```
 
+{% /callout %}
+
 ---
 
 - `"inline"`
@@ -721,8 +723,6 @@ Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-
   ```
 
   The associated `*.js.map` sourcemap will be a JSON file containing an equivalent `debugId` property.
-
-{% /callout %}
 
 ### `minify`
 

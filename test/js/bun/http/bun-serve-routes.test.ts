@@ -409,3 +409,25 @@ describe("many route params", () => {
     }
   });
 });
+
+it("throws a validation error when a route parameter name starts with a number", () => {
+  expect(() => {
+    Bun.serve({
+      routes: { "/test/:123": () => new Response("test") },
+      fetch(req) {
+        return new Response("test");
+      },
+    });
+  }).toThrow("Route parameter names cannot start with a number.");
+});
+
+it("throws a validation error when a route parameter name is duplicated", () => {
+  expect(() => {
+    Bun.serve({
+      routes: { "/test/:a123/:a123": () => new Response("test") },
+      fetch(req) {
+        return new Response("test");
+      },
+    });
+  }).toThrow("Support for duplicate route parameter names is not yet implemented.");
+});

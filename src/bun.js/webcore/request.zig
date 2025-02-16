@@ -192,8 +192,20 @@ pub const Request = struct {
         return this.reported_estimated_size;
     }
 
+    pub fn getRemoteSocketInfo(this: *Request, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+        if (this.request_context.getRemoteSocketInfo()) |info| {
+            return JSC.JSSocketAddress.create(globalObject, info.ip, info.port, info.is_ipv6);
+        }
+
+        return null;
+    }
+
     pub fn calculateEstimatedByteSize(this: *Request) void {
         this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    }
+
+    pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
+        this.calculateEstimatedByteSize();
     }
 
     pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {

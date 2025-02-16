@@ -149,6 +149,40 @@ fn getContentType(headers: ?*JSC.FetchHeaders, blob: *const JSC.WebCore.AnyBlob,
     return .{ content_type, needs_content_type, content_type_needs_free };
 }
 
+fn validateRouteName(global: *JSC.JSGlobalObject, path: []const u8) !void {
+    // Already validated by the caller
+    bun.debugAssert(path.len > 0 and path[0] == '/');
+
+    // For now, we don't support params that start with a number.
+    // Mostly because it makes the params object more complicated to implement and it's easier to cut scope this way for now.
+    var remaining = path;
+    var duped_route_names = bun.StringHashMap(void).init(bun.default_allocator);
+    defer duped_route_names.deinit();
+    while (strings.indexOfChar(remaining, ':')) |index| {
+        remaining = remaining[index + 1 ..];
+        const end = strings.indexOfChar(remaining, '/') orelse remaining.len;
+        const route_name = remaining[0..end];
+        if (route_name.len > 0 and std.ascii.isDigit(route_name[0])) {
+            return global.throwTODO(
+                \\Route parameter names cannot start with a number.
+                \\
+                \\If you run into this, please file an issue and we will add support for it.
+            );
+        }
+
+        const entry = duped_route_names.getOrPut(route_name) catch bun.outOfMemory();
+        if (entry.found_existing) {
+            return global.throwTODO(
+                \\Support for duplicate route parameter names is not yet implemented.
+                \\
+                \\If you run into this, please file an issue and we will add support for it.
+            );
+        }
+
+        remaining = remaining[end..];
+    }
+}
+
 fn writeHeaders(
     headers: *JSC.FetchHeaders,
     comptime ssl: bool,
@@ -1331,12 +1365,13 @@ pub const ServerConfig = struct {
                     }
 
                     if (value.isCallable(global.vm())) {
+                        try validateRouteName(global, path);
                         args.user_routes_to_build.append(.{
                             .route = .{
                                 .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
                                 .method = .any,
                             },
-                            .callback = JSC.Strong.create(value, global),
+                            .callback = JSC.Strong.create(value.withAsyncContextIfNeeded(global), global),
                         }) catch bun.outOfMemory();
                         bun.default_allocator.free(path);
                         continue;
@@ -1358,13 +1393,16 @@ pub const ServerConfig = struct {
                                 if (!function.isCallable(global.vm())) {
                                     return global.throwInvalidArguments("Expected {s} to be a function", .{@tagName(method)});
                                 }
+                                if (!found) {
+                                    try validateRouteName(global, path);
+                                }
                                 found = true;
                                 args.user_routes_to_build.append(.{
                                     .route = .{
                                         .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
                                         .method = .{ .specific = method },
                                     },
-                                    .callback = JSC.Strong.create(function, global),
+                                    .callback = JSC.Strong.create(function.withAsyncContextIfNeeded(global), global),
                                 }) catch bun.outOfMemory();
                             }
                         }
@@ -6381,21 +6419,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return globalThis.throw("Server() is not a constructor", .{});
         }
 
-        extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
-
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
             if (this.config.address == .unix) {
                 return JSValue.jsNull();
             }
-            return if (request.request_context.getRemoteSocketInfo()) |info|
-                JSSocketAddress__create(
-                    this.globalThis,
-                    bun.String.createUTF8ForJS(this.globalThis, info.ip),
-                    info.port,
-                    info.is_ipv6,
-                )
-            else
-                JSValue.jsNull();
+            return request.getRemoteSocketInfo(this.globalThis) orelse .null;
         }
 
         pub fn memoryCost(this: *ThisServer) usize {
@@ -6945,11 +6973,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         var is_ipv6: bool = false;
 
                         if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
-                            var ip = bun.String.createUTF8(slice);
-                            defer ip.deref();
-                            return JSSocketAddress__create(
+                            return JSC.JSSocketAddress.create(
                                 this.globalThis,
-                                ip.toJS(this.globalThis),
+                                slice,
                                 port,
                                 is_ipv6,
                             );

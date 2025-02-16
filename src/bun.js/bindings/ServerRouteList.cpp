@@ -8,128 +8,32 @@
 #include "AsyncContextFrame.h"
 #include "ServerRouteList.h"
 #include "decodeURIComponentSIMD.h"
+#include "JSBunRequest.h"
+#include <JavaScriptCore/PropertyName.h>
+
 namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 
-static JSC_DECLARE_CUSTOM_GETTER(jsJSBunRequestGetParams);
+/**
+  ServerRouteList holds all the callbacks used by routes in Bun.serve()
 
-static const HashTableValue JSBunRequestPrototypeValues[] = {
-    { "params"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsJSBunRequestGetParams, nullptr } },
-};
+  The easier approach would be an std.ArrayList of JSC.Strong in Zig, but that
+  would mean that now we're holding a Strong reference for every single
+  callback. This would show up in profiling, and it's a lot of strong
+  references. We could use a JSArray instead, but that would incur unnecessary
+  overhead when reading values from the array.
 
-class JSBunRequest final : public WebCore::JSRequest {
-public:
-    using Base = WebCore::JSRequest;
+  So instead, we have this class that uses a FixedVector of WriteBarriers to
+  the JSCell of the callback.
 
-    static JSBunRequest* create(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, JSObject* params)
-    {
-        JSBunRequest* ptr = new (NotNull, JSC::allocateCell<JSBunRequest>(vm)) JSBunRequest(vm, structure, sinkPtr);
-        ptr->finishCreation(vm, params);
-        return ptr;
-    }
+  When the ServerRouteList is destroyed, it will clear the FixedVector and
+  allow the callbacks to be GC'd.
 
-    DECLARE_VISIT_CHILDREN;
-    DECLARE_INFO;
-
-    JSObject* params() const
-    {
-        if (m_params) {
-            return m_params.get();
-        }
-
-        return nullptr;
-    }
-    void setParams(JSObject* params) { m_params.set(vm(), this, params); }
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info());
-    }
-
-    template<typename, JSC::SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSBunRequest, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForBunRequest.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBunRequest = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForBunRequest.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForBunRequest = std::forward<decltype(space)>(space); });
-    }
-
-private:
-    JSBunRequest(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr)
-        : Base(vm, structure, sinkPtr)
-    {
-    }
-
-    mutable JSC::WriteBarrier<JSC::JSObject> m_params;
-
-    void finishCreation(JSC::VM& vm, JSObject* params)
-    {
-        Base::finishCreation(vm);
-        m_params.setMayBeNull(vm, this, params);
-    }
-};
-
-template<typename Visitor>
-void JSBunRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSBunRequest* thisCallSite = jsCast<JSBunRequest*>(cell);
-    Base::visitChildren(thisCallSite, visitor);
-    visitor.append(thisCallSite->m_params);
-}
-
-DEFINE_VISIT_CHILDREN(JSBunRequest);
-
-class JSBunRequestPrototype final : public JSNonFinalObject {
-public:
-    using Base = JSNonFinalObject;
-
-    static JSBunRequestPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-    {
-        auto* ptr = new (NotNull, JSC::allocateCell<JSBunRequestPrototype>(vm)) JSBunRequestPrototype(vm, structure);
-        ptr->finishCreation(vm, globalObject);
-        return ptr;
-    }
-
-    static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        auto* structure = Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), NonArray);
-        structure->setMayBePrototype(true);
-        return structure;
-    }
-
-    DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBunRequestPrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
-private:
-    JSBunRequestPrototype(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-    {
-        Base::finishCreation(vm);
-        reifyStaticProperties(vm, JSBunRequestPrototype::info(), JSBunRequestPrototypeValues, *this);
-
-        JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
-    }
-};
-
-const JSC::ClassInfo JSBunRequestPrototype::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequestPrototype) };
-const JSC::ClassInfo JSBunRequest::s_info = { "BunRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunRequest) };
-
+  This also lets us hold structures for the params objects for each route, which
+  we create lazily. This makes it fast to create the params object for a route.
+  and is generally better for the JIT since it will see the same structure repeatedly.
+ */
 class ServerRouteList final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
@@ -267,6 +171,7 @@ void ServerRouteList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
 }
 DEFINE_VISIT_CHILDREN(ServerRouteList);
+
 Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<const Identifier> identifiers)
 {
 
@@ -296,6 +201,7 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
 JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, uWS::HttpRequest* req)
 {
 
+    // Ensure that the object doesn't get GC'd before we've had a chance to initialize it.
     MarkedArgumentBuffer args;
     IdentifierRange range = m_pathIdentifierRanges.at(index);
     size_t offset = range.start;
@@ -330,23 +236,7 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
     return object;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsJSBunRequestGetParams, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
-{
-    JSBunRequest* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue));
-    if (!request)
-        return JSValue::encode(jsUndefined());
-
-    auto* params = request->params();
-    if (!params) {
-        auto* prototype = defaultGlobalObject(globalObject)->m_JSBunRequestParamsPrototype.get(globalObject);
-        params = JSC::constructEmptyObject(globalObject, prototype);
-        request->setParams(params);
-    }
-
-    return JSValue::encode(params);
-}
-
-JSC::JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, uWS::HttpRequest* req)
+JSValue ServerRouteList::callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, uWS::HttpRequest* req)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -398,13 +288,6 @@ Structure* createServerRouteListStructure(JSC::VM& vm, Zig::GlobalObject* global
     return ServerRouteList::createStructure(vm, globalObject);
 }
 
-Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObject)
-{
-    auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, globalObject->JSRequestPrototype());
-    auto* prototype = JSBunRequestPrototype::create(vm, globalObject, prototypeStructure);
-    return JSBunRequest::createStructure(vm, globalObject, prototype);
-}
-
 JSObject* createJSBunRequestParamsPrototype(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
     auto* prototype = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
@@ -414,17 +297,4 @@ JSObject* createJSBunRequestParamsPrototype(JSC::VM& vm, Zig::GlobalObject* glob
     return JSC::constructEmptyObject(vm, structure);
 }
 
-extern "C" EncodedJSValue Bun__getParamsIfBunRequest(JSC::EncodedJSValue thisValue)
-{
-    if (auto* request = jsDynamicCast<JSBunRequest*>(JSValue::decode(thisValue))) {
-        auto* params = request->params();
-        if (!params) {
-            return JSValue::encode(jsUndefined());
-        }
-
-        return JSValue::encode(params);
-    }
-
-    return JSValue::encode({});
-}
-}
+} // namespace Bun

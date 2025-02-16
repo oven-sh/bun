@@ -165,6 +165,7 @@
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
 
+#include "JSBunRequest.h"
 #include "ServerRouteList.h"
 
 #if ENABLE(REMOTE_INSPECTOR)

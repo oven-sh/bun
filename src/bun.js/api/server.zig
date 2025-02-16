@@ -2776,6 +2776,39 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
+        fn writeHeaders(
+            this: *RequestContext,
+            headers: *JSC.FetchHeaders,
+        ) void {
+            ctxLog("writeHeaders", .{});
+            headers.fastRemove(.ContentLength);
+            headers.fastRemove(.TransferEncoding);
+            if (!ssl_enabled) headers.fastRemove(.StrictTransportSecurity);
+            if (this.resp) |resp| {
+                headers.toUWSResponse(ssl_enabled, resp);
+            }
+        }
+
+        pub fn writeStatus(this: *RequestContext, status: u16) void {
+            var status_text_buf: [48]u8 = undefined;
+            assert(!this.flags.has_written_status);
+            this.flags.has_written_status = true;
+
+            if (this.resp) |resp| {
+                var response: *JSC.WebCore.Response = this.response_ptr.?;
+                const status_text = response.statusText();
+
+                if (status_text.length() != 0) {
+                    resp.writeStatus(std.fmt.bufPrint(&status_text_buf, "{d} {s}", .{ status, status_text.byteSlice() }) catch unreachable);
+                } else if (HTTPStatusText.get(status)) |text| {
+                    resp.writeStatus(text);
+                } else {
+                    resp.writeStatus(std.fmt.bufPrint(&status_text_buf, "{d} HM", .{status}) catch unreachable);
+                }
+            }
+        }
+
+
         pub fn endSendFile(this: *RequestContext, writeOffSet: usize, closeConnection: bool) void {
             if (this.resp) |resp| {
                 defer this.deref();

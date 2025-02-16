@@ -148,7 +148,7 @@ const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
-const GlobalStringBuilder = @import("../string_builder.zig");
+const GlobalStringBuilder = bun.StringBuilder;
 const SlicedString = Semver.SlicedString;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Bin = @import("./bin.zig").Bin;

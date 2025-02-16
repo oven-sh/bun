@@ -315,10 +315,6 @@ pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
-pub const PathString = StringTypes.PathString;
-pub const HashedString = StringTypes.HashedString;
-pub const strings = @import("string_immutable.zig");
-pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
@@ -548,7 +544,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
     return try allocator.dupe(Child, item);
 }
 
-pub const StringBuilder = @import("./string_builder.zig");
+pub const StringBuilder = @import("./string.zig").StringBuilder;
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
@@ -1595,7 +1591,6 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
-pub const StringJoiner = @import("./StringJoiner.zig");
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
@@ -2089,12 +2084,18 @@ pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
-pub const String = @import("./string.zig").String;
-pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
+const _string = @import("./string.zig");
+pub const strings = @import("string_immutable.zig");
+pub const String = _string.String;
+pub const StringJoiner = _string.StringJoiner;
+pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
+pub const PathString = _string.PathString;
+pub const HashedString = _string.HashedString;
+pub const MutableString = _string.MutableString;
 
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.
-    pub const StringImpl = @import("./string.zig").WTFStringImpl;
+    pub const StringImpl = _string.WTFStringImpl;
 };
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;

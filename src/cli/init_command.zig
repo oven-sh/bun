@@ -23,6 +23,7 @@ const logger = bun.logger;
 const JSPrinter = bun.js_printer;
 const exists = bun.sys.exists;
 const existsZ = bun.sys.existsZ;
+const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");
 
 pub const InitCommand = struct {
     pub fn prompt(
@@ -57,6 +58,158 @@ pub const InitCommand = struct {
         } else {
             return default;
         }
+    }
+
+    extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
+
+    fn processRadioButton(
+        label: string,
+        comptime choices: []const []const u8,
+        comptime choices_uncolored: []const []const u8,
+        default_value: usize,
+    ) !usize {
+        // Print the question prompt
+        Output.prettyln("<r><cyan>?<r> {s} <d>› - Use arrow-keys. Return to submit.<r>", .{label});
+
+        var selected = default_value;
+        var initial_draw = true;
+        var reprint_menu = true;
+        errdefer reprint_menu = false;
+        defer {
+            if (!initial_draw) {
+                // Move cursor up to prompt line
+                Output.print("\x1B[{}A", .{choices.len + 1});
+            }
+
+            // Clear from cursor to end of screen
+            Output.print("\x1B[J", .{});
+
+            if (reprint_menu) {
+                // Print final selection
+                if (Output.enable_ansi_colors_stdout) {
+                    Output.prettyln("<r><cyan>?<r> {s} <d>› {s}<r>", .{ label, choices[selected] });
+                } else {
+                    Output.prettyln("<r><cyan>?<r> {s} <d>› {s}<r>", .{ label, choices_uncolored[selected] });
+                }
+            }
+        }
+
+        switch (Output.enable_ansi_colors_stdout) {
+            inline else => |colors| {
+                while (true) {
+                    if (!initial_draw) {
+                        // Move cursor up by number of choices + 1 (for prompt)
+                        Output.print("\x1B[{}A", .{choices.len + 1});
+                    }
+                    initial_draw = false;
+
+                    // Clear from cursor to end of screen
+                    Output.print("\x1B[J", .{});
+
+                    // Print options vertically
+                    inline for (choices, choices_uncolored, 0..) |option_colored, option_uncolored, i| {
+                        const option = if (colors) option_colored else option_uncolored;
+                        if (i == selected) {
+                            Output.pretty("<r><cyan>❯<r>   ", .{});
+                            if (colors) {
+                                Output.print("\x1B[4m" ++ option ++ "\x1B[24m\n", .{});
+                            } else {
+                                Output.print("    " ++ option ++ "\n", .{});
+                            }
+                        } else {
+                            Output.print("    " ++ option ++ "\n", .{});
+                        }
+                    }
+
+                    Output.flush();
+
+                    // Read a single character
+                    const byte = std.io.getStdIn().reader().readByte() catch return selected;
+
+                    switch (byte) {
+                        '\n', '\r' => {
+                            return selected;
+                        },
+                        3, 4 => return error.EndOfStream, // ctrl+c, ctrl+d
+                        '1'...'9' => {
+                            const choice = byte - '1';
+                            if (choice < choices.len) {
+                                return choice;
+                            }
+                        },
+                        27 => { // ESC sequence
+                            // Return immediately on plain ESC
+                            const next = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                            if (next != '[') return error.EndOfStream;
+
+                            // Read arrow key
+                            const arrow = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                            switch (arrow) {
+                                'A' => { // Up arrow
+                                    if (selected == 0) {
+                                        selected = choices.len - 1;
+                                    } else {
+                                        selected -= 1;
+                                    }
+                                },
+                                'B' => { // Down arrow
+                                    if (selected == choices.len - 1) {
+                                        selected = 0;
+                                    } else {
+                                        selected += 1;
+                                    }
+                                },
+                                else => {},
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            },
+        }
+    }
+
+    pub fn radio(
+        label: string,
+        comptime choices: []const []const u8,
+        comptime choices_uncolored: []const []const u8,
+        default_value: usize,
+    ) !usize {
+
+        // Set raw mode to read single characters without echo
+        const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+
+        if (Environment.isPosix)
+            _ = Bun__ttySetMode(0, 1);
+
+        defer {
+            if (comptime Environment.isWindows) {
+                if (original_mode) |mode| {
+                    _ = bun.windows.SetConsoleMode(
+                        bun.win32.STDIN_FD.cast(),
+                        mode,
+                    );
+                }
+            } else {
+                _ = Bun__ttySetMode(0, 0);
+            }
+        }
+
+        const selection = processRadioButton(label, choices, choices_uncolored, default_value) catch |err| {
+            if (err == error.EndOfStream) {
+                Output.flush();
+                // Add an "x" cancelled
+                Output.prettyln("<r><red>x<r> Cancelled", .{});
+                Global.exit(0);
+            }
+
+            return err;
+        };
+
+        Output.flush();
+
+        return selection;
     }
 
     const Assets = struct {
@@ -144,6 +297,7 @@ pub const InitCommand = struct {
         type: string = "module",
         object: *js_ast.E.Object = undefined,
         entry_point: string = "",
+        private: bool = true,
     };
 
     pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
@@ -284,30 +438,95 @@ pub const InitCommand = struct {
             break :brk false;
         };
 
+        var template: Template = .blank;
+
         if (!auto_yes) {
             if (!did_load_package_json) {
-                Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
+                Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press CTRL + C anytime to quit<r>\n\n", .{});
                 Output.flush();
 
-                const name = prompt(
-                    alloc,
-                    "<r><cyan>package name<r> ",
-                    fields.name,
-                ) catch |err| {
-                    if (err == error.EndOfStream) return;
-                    return err;
+                const choices = &[_][]const u8{
+                    "TypeScript",
+                    "React",
+                    "TypeScript Library",
+                };
+                const choices_colored = &[_][]const u8{
+                    // <blue>TypeScript (blank)
+                    "\x1B[34mTypeScript\x1B[39m\x1B[0m (blank)",
+                    // <cyan>React
+                    "\x1B[36mReact\x1B[39m",
+                    // <blue>TypeScript library
+                    "\x1B[34mTypeScript\x1B[39m\x1B[0m (library)",
                 };
 
-                fields.name = try normalizePackageName(alloc, name);
+                const selected = try radio(
+                    "Select a project",
+                    choices_colored,
+                    choices,
+                    0,
+                );
 
-                fields.entry_point = prompt(
-                    alloc,
-                    "<r><cyan>entry point<r> ",
-                    fields.entry_point,
-                ) catch |err| {
-                    if (err == error.EndOfStream) return;
-                    return err;
-                };
+                switch (selected) {
+                    2 => {
+                        template = .typescript_library;
+                        fields.name = prompt(
+                            alloc,
+                            "<r><cyan>package name<r> ",
+                            fields.name,
+                        ) catch |err| {
+                            if (err == error.EndOfStream) return;
+                            return err;
+                        };
+                        fields.name = try normalizePackageName(alloc, fields.name);
+                        fields.entry_point = prompt(
+                            alloc,
+                            "<r><cyan>entry point<r> ",
+                            fields.entry_point,
+                        ) catch |err| {
+                            if (err == error.EndOfStream) return;
+                            return err;
+                        };
+                        fields.private = false;
+                    },
+                    1 => {
+                        const react_choices = &[_][]const u8{
+                            "Default (blank)",
+                            "Tailwind CSS",
+                            "Shadcn UI + Tailwind CSS",
+                        };
+                        const react_choices_colored = &[_][]const u8{
+                            "Default (blank)",
+                            // <magenta>Tailwind CSS
+                            "\x1B[36mTailwind CSS\x1B[39m",
+                            // <green>Shadcn + Tailwind CSS
+                            "\x1B[32mshadcn + Tailwind CSS\x1B[39m\x1B[0m",
+                        };
+
+                        const react_selected = try radio(
+                            "Select a React template",
+                            react_choices_colored,
+                            react_choices,
+                            0,
+                        );
+
+                        switch (react_selected) {
+                            0 => {
+                                template = .react_blank;
+                            },
+                            1 => {
+                                template = .react_tailwind;
+                            },
+                            2 => {
+                                template = .react_tailwind_shadcn;
+                            },
+                            else => unreachable,
+                        }
+                    },
+                    0 => {
+                        template = .blank;
+                    },
+                    else => unreachable,
+                }
 
                 try Output.writer().writeAll("\n");
                 Output.flush();
@@ -355,14 +574,41 @@ pub const InitCommand = struct {
                 }
             }
 
-            const needs_dev_dependencies = brk: {
-                if (fields.object.get("devDependencies")) |deps| {
-                    if (deps.hasAnyPropertyNamed(&.{"bun-types"})) {
-                        break :brk false;
+            if (fields.private) {
+                try fields.object.put(alloc, "private", js_ast.Expr.init(js_ast.E.Boolean, .{ .value = true }, logger.Loc.Empty));
+            }
+        }
+        {
+            const all_dependencies = template.dependencies();
+            const dependencies = all_dependencies.dependencies;
+            const dev_dependencies = all_dependencies.devDependencies;
+            var needed_dependencies = bun.bit_set.IntegerBitSet(64).initEmpty();
+            var needed_dev_dependencies = bun.bit_set.IntegerBitSet(64).initEmpty();
+            needed_dependencies.setRangeValue(.{ .start = 0, .end = dependencies.len }, true);
+            needed_dev_dependencies.setRangeValue(.{ .start = 0, .end = dev_dependencies.len }, true);
+
+            const needs_dependencies = brk: {
+                if (fields.object.get("dependencies")) |deps| {
+                    for (dependencies, 0..) |*dep, i| {
+                        if (deps.get(dep.name) != null) {
+                            needed_dependencies.unset(i);
+                        }
                     }
                 }
 
-                break :brk true;
+                break :brk needed_dependencies.count() > 0;
+            };
+
+            const needs_dev_dependencies = brk: {
+                if (fields.object.get("devDependencies")) |deps| {
+                    for (dev_dependencies, 0..) |*dep, i| {
+                        if (deps.get(dep.name) != null) {
+                            needed_dev_dependencies.unset(i);
+                        }
+                    }
+                }
+
+                break :brk needed_dev_dependencies.count() > 0;
             };
 
             const needs_typescript_dependency = brk: {
@@ -381,17 +627,35 @@ pub const InitCommand = struct {
                 break :brk true;
             };
 
+            if (needs_dependencies) {
+                var dependencies_object = fields.object.get("dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                var iter = needed_dependencies.iterator(.{ .kind = .set });
+                while (iter.next()) |index| {
+                    const dep = dependencies[index];
+                    try dependencies_object.data.e_object.putString(alloc, dep.name, dep.version);
+                }
+                try fields.object.put(alloc, "dependencies", dependencies_object);
+            }
+
             if (needs_dev_dependencies) {
-                var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
-                try dev_dependencies.data.e_object.putString(alloc, "@types/bun", "latest");
-                try fields.object.put(alloc, "devDependencies", dev_dependencies);
+                var object = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                var iter = needed_dev_dependencies.iterator(.{ .kind = .set });
+                while (iter.next()) |index| {
+                    const dep = dev_dependencies[index];
+                    try object.data.e_object.putString(alloc, dep.name, dep.version);
+                }
+                try fields.object.put(alloc, "devDependencies", object);
             }
 
             if (needs_typescript_dependency) {
-                var peer_dependencies = fields.object.get("peer_dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
-                try peer_dependencies.data.e_object.putString(alloc, "typescript", "^5.0.0");
+                var peer_dependencies = fields.object.get("peerDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
+                try peer_dependencies.data.e_object.putString(alloc, "typescript", "^5");
                 try fields.object.put(alloc, "peerDependencies", peer_dependencies);
             }
+        }
+
+        if (template.isReact()) {
+            try template.writeToPackageJson(alloc, &fields);
         }
 
         write_package_json: {
@@ -416,77 +680,200 @@ pub const InitCommand = struct {
             package_json_file.?.close();
         }
 
-        if (package_json_file != null) {
-            Output.prettyln("<r><green>Done!<r> A package.json file was saved in the current directory.", .{});
-        }
-
-        if (fields.entry_point.len > 0 and !exists(fields.entry_point)) {
-            const cwd = std.fs.cwd();
-            if (std.fs.path.dirname(fields.entry_point)) |dirname| {
-                if (!strings.eqlComptime(dirname, ".")) {
-                    cwd.makePath(dirname) catch {};
-                }
-            }
-
-            Assets.createNew(fields.entry_point, "console.log(\"Hello via Bun!\");") catch {
-                // suppress
-            };
-        }
-
         if (steps.write_gitignore) {
             Assets.create(".gitignore", .{}) catch {
                 // suppressed
             };
         }
 
-        if (steps.write_tsconfig) {
-            brk: {
-                const extname = std.fs.path.extension(fields.entry_point);
-                const loader = options.defaultLoaders.get(extname) orelse options.Loader.ts;
-                const filename = if (loader.isTypeScript())
-                    "tsconfig.json"
-                else
-                    "jsconfig.json";
-                Assets.createFull("tsconfig.json", filename, " (for editor autocomplete)", false, .{}) catch break :brk;
-            }
-        }
+        switch (template) {
+            .blank, .typescript_library => {
+                if (package_json_file != null) {
+                    Output.prettyln("<r><green>Done!<r> A package.json file was saved in the current directory.", .{});
+                }
 
-        if (steps.write_readme) {
-            Assets.create("README.md", .{
-                .name = fields.name,
-                .bunVersion = Environment.version_string,
-                .entryPoint = fields.entry_point,
-            }) catch {
-                // suppressed
-            };
-        }
+                if (fields.entry_point.len > 0 and !exists(fields.entry_point)) {
+                    const cwd = std.fs.cwd();
+                    if (std.fs.path.dirname(fields.entry_point)) |dirname| {
+                        if (!strings.eqlComptime(dirname, ".")) {
+                            cwd.makePath(dirname) catch {};
+                        }
+                    }
 
-        if (fields.entry_point.len > 0) {
-            Output.prettyln("\nTo get started, run:", .{});
-            if (strings.containsAny(
-                " \"'",
-                fields.entry_point,
-            )) {
-                Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
-            } else {
-                Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
-            }
-        }
+                    Assets.createNew(fields.entry_point, "console.log(\"Hello via Bun!\");") catch {
+                        // suppress
+                    };
+                }
 
-        Output.flush();
+                if (steps.write_tsconfig) {
+                    brk: {
+                        const extname = std.fs.path.extension(fields.entry_point);
+                        const loader = options.defaultLoaders.get(extname) orelse options.Loader.ts;
+                        const filename = if (loader.isTypeScript())
+                            "tsconfig.json"
+                        else
+                            "jsconfig.json";
+                        Assets.createFull("tsconfig.json", filename, " (for editor autocomplete)", false, .{}) catch break :brk;
+                    }
+                }
 
-        if (existsZ("package.json")) {
-            var process = std.process.Child.init(
-                &.{
-                    try bun.selfExePath(),
-                    "install",
-                },
-                alloc,
-            );
-            process.stderr_behavior = .Ignore;
-            process.stdin_behavior = .Ignore;
-            process.stdout_behavior = .Ignore;
-            _ = try process.spawnAndWait();
+                if (steps.write_readme) {
+                    Assets.create("README.md", .{
+                        .name = fields.name,
+                        .bunVersion = Environment.version_string,
+                        .entryPoint = fields.entry_point,
+                    }) catch {
+                        // suppressed
+                    };
+                }
+
+                if (fields.entry_point.len > 0) {
+                    Output.prettyln("\nTo get started, run:", .{});
+                    if (strings.containsAny(
+                        " \"'",
+                        fields.entry_point,
+                    )) {
+                        Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                    } else {
+                        Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
+                    }
+                }
+
+                Output.flush();
+
+                if (existsZ("package.json")) {
+                    var process = std.process.Child.init(
+                        &.{
+                            try bun.selfExePath(),
+                            "install",
+                        },
+                        alloc,
+                    );
+                    process.stderr_behavior = .Ignore;
+                    process.stdin_behavior = .Ignore;
+                    process.stdout_behavior = .Ignore;
+                    _ = try process.spawnAndWait();
+                }
+            },
+            .react_blank, .react_tailwind, .react_tailwind_shadcn => {},
         }
+    }
+};
+
+const DependencyNeeded = struct {
+    name: []const u8,
+    version: []const u8,
+};
+
+const DependencyGroup = struct {
+    dependencies: []const DependencyNeeded,
+    devDependencies: []const DependencyNeeded,
+
+    pub const blank = DependencyGroup{
+        .dependencies = &[_]DependencyNeeded{},
+        .devDependencies = &[_]DependencyNeeded{
+            .{ .name = "@types/bun", .version = "latest" },
+        },
+    };
+
+    pub const react = DependencyGroup{
+        .dependencies = &[_]DependencyNeeded{
+            .{ .name = "react", .version = "^19" },
+            .{ .name = "react-dom", .version = "^19" },
+        },
+        .devDependencies = &[_]DependencyNeeded{
+            .{ .name = "@types/react", .version = "^19" },
+            .{ .name = "@types/react-dom", .version = "^19" },
+        } ++ blank.devDependencies[0..1].*,
+    };
+
+    pub const tailwind = DependencyGroup{
+        .dependencies = &[_]DependencyNeeded{
+            .{ .name = "tailwindcss", .version = "^4" },
+        } ++ react.dependencies[0..react.dependencies.len].*,
+        .devDependencies = &[_]DependencyNeeded{
+            .{ .name = "bun-plugin-tailwind", .version = "latest" },
+        } ++ react.devDependencies[0..react.devDependencies.len].*,
+    };
+
+    pub const shadcn = DependencyGroup{
+        .dependencies = &[_]DependencyNeeded{
+            .{ .name = "tailwindcss-animate", .version = "latest" },
+            .{ .name = "class-variance-authority", .version = "latest" },
+            .{ .name = "clsx", .version = "latest" },
+            .{ .name = "tailwind-merge", .version = "latest" },
+        } ++ tailwind.dependencies[0..tailwind.dependencies.len].*,
+        .devDependencies = &[_]DependencyNeeded{} ++ tailwind.devDependencies[0..tailwind.devDependencies.len].*,
+    };
+};
+
+const Template = enum {
+    blank,
+    react_blank,
+    react_tailwind,
+    react_tailwind_shadcn,
+    typescript_library,
+    pub fn shouldUseSourceFileProjectGenerator(this: Template) bool {
+        return switch (this) {
+            .blank, .typescript_library => false,
+            else => true,
+        };
+    }
+    pub fn isReact(this: Template) bool {
+        return switch (this) {
+            .react_blank, .react_tailwind, .react_tailwind_shadcn => true,
+            else => false,
+        };
+    }
+    pub fn writeToPackageJson(this: Template, alloc: std.mem.Allocator, fields: *InitCommand.PackageJSONFields) !void {
+        const Rope = js_ast.E.Object.Rope;
+        fields.name = this.name();
+        const key = try alloc.create(Rope);
+        key.* = Rope{
+            .head = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = "scripts" }, logger.Loc.Empty),
+            .next = null,
+        };
+        var scripts_json = try fields.object.getOrPutObject(key, alloc);
+        const the_scripts = this.scripts();
+        var i: usize = 0;
+        while (i < the_scripts.len) : (i += 2) {
+            const script_name = the_scripts[i];
+            const script_command = the_scripts[i + 1];
+
+            try scripts_json.data.e_object.putString(alloc, script_name, script_command);
+        }
+    }
+    pub fn dependencies(this: Template) DependencyGroup {
+        return switch (this) {
+            .blank => DependencyGroup.blank,
+            .react_blank => DependencyGroup.react,
+            .react_tailwind => DependencyGroup.tailwind,
+            .react_tailwind_shadcn => DependencyGroup.shadcn,
+            .typescript_library => DependencyGroup.blank,
+        };
+    }
+    pub fn name(this: Template) []const u8 {
+        return switch (this) {
+            .blank => "bun-blank-template",
+            .typescript_library => "bun-typescript-library-template",
+            .react_blank => "bun-react-template",
+            .react_tailwind => "bun-react-tailwind-template",
+            .react_tailwind_shadcn => "bun-react-tailwind-shadcn-template",
+        };
+    }
+    pub fn scripts(this: Template) []const []const u8 {
+        const s: []const []const u8 = switch (this) {
+            .blank, .typescript_library => &.{},
+            .react_tailwind, .react_tailwind_shadcn => &.{
+                "dev",   "bun './**/*.html'",
+                "build", "bun 'REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts'",
+            },
+            .react_blank => &.{
+                "dev",    "bun ./src/",
+                "static", "bun build ./src/index.html --outdir=dist --sourcemap=linked --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+            },
+        };
+
+        return s;
     }
 };

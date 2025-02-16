@@ -159,7 +159,8 @@ function upload_s3_file() {
 }
 
 function send_discord_announcement() {
-  if [ -z "$BUN_ANNOUNCE_CANARY_WEBHOOK_URL" ]; then
+  local value=$(buildkite-agent secret get "BUN_ANNOUNCE_CANARY_WEBHOOK_URL")
+  if [ -z "$value" ]; then
     echo "warn: BUN_ANNOUNCE_CANARY_WEBHOOK_URL not set, skipping Discord announcement"
     return
   fi
@@ -184,7 +185,7 @@ EOF
     curl -H "Content-Type: application/json" \
          -d "$json_payload" \
          -sf \
-         "$BUN_ANNOUNCE_CANARY_WEBHOOK_URL" >/dev/null
+         "$value" >/dev/null
   fi
 }
 

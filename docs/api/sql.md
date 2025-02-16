@@ -456,11 +456,11 @@ By default, Bun's SQL client automatically creates prepared statements for queri
 ```ts
 const sql = new SQL({
   // ... other options ...
-  prepare: false,
+  prepare: false, // Disable persisting named prepared statements on the server
 });
 ```
 
-When `prepared: false` is set:
+When `prepare: false` is set:
 
 Queries are still executed using the "extended" protocol, but they are executed using [unnamed prepared statements](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY), an unnamed prepared statement lasts only until the next Parse statement specifying the unnamed statement as destination is issued.
 
@@ -468,7 +468,7 @@ Queries are still executed using the "extended" protocol, but they are executed 
 - Each query is parsed and planned from scratch by the server
 - Queries will not be [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
 
-You might want to use `prepared: false` when:
+You might want to use `prepare: false` when:
 
 - Using PGBouncer in transaction mode (though since PGBouncer 1.21.0, protocol-level named prepared statements are supported when configured properly)
 - Debugging query execution plans

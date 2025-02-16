@@ -35,4 +35,37 @@ Local<Value> Function::GetName() const
     return handleScope->createLocal<Value>(globalObject->vm(), jsString);
 }
 
+MaybeLocal<Value> Function::Call(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[])
+{
+    JSC::JSCell* func = localToCell();
+    JSC::CallData callData = JSC::getCallData(func);
+
+    auto* globalObject = context->globalObject();
+    auto& vm = globalObject->vm();
+
+    JSC::MarkedArgumentBuffer args;
+    if (argc > 0 && LIKELY(argv != nullptr)) {
+        auto* end = argv + argc;
+        for (auto* it = argv; it != end; ++it) {
+            args.append((*it)->localToJSValue());
+        }
+    }
+
+    JSC::JSValue thisValue = recv->localToJSValue();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (thisValue.isEmpty()) {
+        thisValue = JSC::jsUndefined();
+    }
+
+    JSC::JSValue result = call(globalObject, func, callData, thisValue, args);
+    if (result.isEmpty()) {
+        result = JSC::jsUndefined();
+    }
+
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
+
+    auto* handleScope = globalObject->V8GlobalInternals()->currentHandleScope();
+    RELEASE_AND_RETURN(scope, MaybeLocal<Value>(handleScope->createLocal<Value>(vm, result)));
+}
+
 } // namespace v8

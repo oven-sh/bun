@@ -66,15 +66,11 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
 
     HandleScope hs(isolate);
 
-    // V8 function calls always run in "sloppy mode," even if the JS side is in strict mode. So if
-    // `this` is null or undefined, we use globalThis instead; otherwise, we convert `this` to an
-    // object.
-    JSC::JSObject* jscThis = globalObject->globalThis();
-    if (!callFrame->thisValue().isUndefinedOrNull()) {
-        jscThis = callFrame->thisValue().toObject(globalObject);
-    }
-    Local<Object> thisObject = hs.createLocal<Object>(vm, jscThis);
-    args[0] = thisObject.tagged();
+    // Functions created in the V8 API act like they were declared in a sloppy scope, even if the JS
+    // side is in strict mode, so we should always convert `this` according to the sloppy rules
+    JSC::JSValue jscThis = callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy());
+    Local<Value> thisValue = hs.createLocal<Value>(vm, jscThis);
+    args[0] = thisValue.tagged();
 
     for (size_t i = 0; i < callFrame->argumentCount(); i++) {
         Local<Value> argValue = hs.createLocal<Value>(vm, callFrame->argument(i));

@@ -72,7 +72,7 @@ const URL = @import("../../url.zig").URL;
 const VirtualMachine = JSC.VirtualMachine;
 const IOTask = JSC.IOTask;
 
-const TCC = @import("../../tcc.zig");
+const TCC = @import("../../deps/tcc.zig");
 extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
 const Offsets = extern struct {

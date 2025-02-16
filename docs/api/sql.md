@@ -451,28 +451,29 @@ try {
 
 ## Prepared Statements
 
-By default, Bun's SQL client automatically creates prepared statements for queries where it can be inferred that the query is static. This provides better performance and security. However, you can disable prepared statements by setting `prepare: false` in the connection options:
+By default, Bun's SQL client automatically creates prepared statements for queries where it can be inferred that the query is static. This provides better performance. However, you can disable prepared statements by setting `prepare: false` in the connection options:
 
 ```ts
 const sql = new SQL({
   // ... other options ...
-  prepare: false, // Disable prepared statements
+  prepare: false,
 });
 ```
 
-When prepared statements are disabled:
+When `prepared: false` is set:
 
-- Queries are executed using simple query protocol
-- Each query is sent to the server as a raw SQL string
-- Multiple statements can be executed in a single query (using `sql``.simple()`)
-- Parameter binding is still safe against SQL injection, but simple queries cannot include parameters
+Queries are still executed using the "extended" protocol, but they are executed using [unnamed prepared statements](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY), an unnamed prepared statement lasts only until the next Parse statement specifying the unnamed statement as destination is issued.
+
+- Parameter binding is still safe against SQL injection
 - Each query is parsed and planned from scratch by the server
+- Queries will not be [pipelined](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-PIPELINING)
 
-You might want to disable prepared statements when:
+You might want to use `prepared: false` when:
 
 - Using PGBouncer in transaction mode (though since PGBouncer 1.21.0, protocol-level named prepared statements are supported when configured properly)
 - Debugging query execution plans
 - Working with dynamic SQL where query plans need to be regenerated frequently
+- More than one command per query will not be supported (unless you use `sql``.simple()`)
 
 Note that disabling prepared statements may impact performance for queries that are executed frequently with different parameters, as the server needs to parse and plan each query from scratch.
 

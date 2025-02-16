@@ -164,38 +164,38 @@ pub const Symbol = opaque {
 
 pub const State = opaque {
     /// Create a new TCC compilation context
-    pub fn init() Allocator.Error!*TCCState {
+    pub fn init() Allocator.Error!*State {
         return tcc_new() orelse error.OutOfMemory;
     }
 
     /// Free a TCC compilation context
-    pub fn deinit(s: *TCCState) void {
+    pub fn deinit(s: *State) void {
         tcc_delete(s);
         s.* = undefined;
     }
 
     /// Set `CONFIG_TCCDIR` at runtime
-    pub fn setLibPath(s: *TCCState, path: [:0]const u8) void {
+    pub fn setLibPath(s: *State, path: [:0]const u8) void {
         tcc_set_lib_path(s, path.ptr);
     }
 
     /// Set error/warning display callback
-    pub fn setErrorFunc(s: *TCCState, errorOpaque: ?*anyopaque, errorFunc: TCCErrorFunc) void {
+    pub fn setErrorFunc(s: *State, errorOpaque: ?*anyopaque, errorFunc: TCCErrorFunc) void {
         tcc_set_error_func(s, errorOpaque, errorFunc);
     }
 
     /// Return error/warning callback
-    pub fn getErrorFunc(s: *TCCState) TCCErrorFunc {
+    pub fn getErrorFunc(s: *State) TCCErrorFunc {
         return tcc_get_error_func(s);
     }
 
     /// Return error/warning callback opaque pointer
-    pub fn getErrorOpaque(s: *TCCState) ?*anyopaque {
+    pub fn getErrorOpaque(s: *State) ?*anyopaque {
         return tcc_get_error_opaque(s);
     }
 
     /// Set options as from command line (multiple supported)
-    pub fn setOptions(s: *TCCState, str: [:0]const u8) Error!void {
+    pub fn setOptions(s: *State, str: [:0]const u8) Error!void {
         // TODO: is errno set?
         if (tcc_set_options(s, str.ptr) != 0) {
             @branchHint(.unlikely);
@@ -206,7 +206,7 @@ pub const State = opaque {
     // ======================== Preprocessor ========================
 
     /// Add include path
-    pub fn addIncludePath(s: *TCCState, pathname: [:0]const u8) Error!void {
+    pub fn addIncludePath(s: *State, pathname: [:0]const u8) Error!void {
         if (tcc_add_include_path(s, pathname.ptr) != 0) {
             @branchHint(.unlikely);
             return error.InvalidIncludePath;
@@ -214,7 +214,7 @@ pub const State = opaque {
     }
 
     /// Add in system include path
-    pub fn addSysincludePath(s: *TCCState, pathname: [:0]const u8) Error!void {
+    pub fn addSysincludePath(s: *State, pathname: [:0]const u8) Error!void {
         if (tcc_add_sysinclude_path(s, pathname.ptr) != 0) {
             @branchHint(.unlikely);
             return error.InvalidIncludePath;
@@ -222,7 +222,7 @@ pub const State = opaque {
     }
 
     /// Define preprocessor symbol 'sym'. value can be NULL, sym can be "sym=val"
-    pub fn defineSymbol(s: *TCCState, sym: [:0]const u8, value: [:0]const u8) void {
+    pub fn defineSymbol(s: *State, sym: [:0]const u8, value: [:0]const u8) void {
         tcc_define_symbol(s, sym.ptr, value.ptr);
     }
 
@@ -233,7 +233,7 @@ pub const State = opaque {
     /// ## Errors
     /// - File not found
     /// - Syntax/formatting error
-    pub fn addFile(s: *TCCState, filename: [:0]const u8) Error!void {
+    pub fn addFile(s: *State, filename: [:0]const u8) Error!void {
         if (tcc_add_file(s, filename.ptr) == -1) {
             @branchHint(.unlikely);
             return error.CompileError;
@@ -241,7 +241,7 @@ pub const State = opaque {
     }
 
     /// Compile a string containing a C source.
-    pub fn compileString(s: *TCCState, buf: [:0]const u8) Error!void {
+    pub fn compileString(s: *State, buf: [:0]const u8) Error!void {
         if (tcc_compile_string(s, buf.ptr) == -1) {
             @branchHint(.unlikely);
             return error.CompileError;
@@ -266,7 +266,7 @@ pub const State = opaque {
     const OutputError = error{OutputError};
 
     /// Set output type. MUST BE CALLED before any compilation
-    pub fn setOutputType(s: *TCCState, outputType: OutputFormat) Error!void {
+    pub fn setOutputType(s: *State, outputType: OutputFormat) Error!void {
         if (tcc_set_output_type(s, @intFromEnum(outputType)) == -1) {
             @branchHint(.unlikely);
             return error.InvalidOutputType;
@@ -275,7 +275,7 @@ pub const State = opaque {
 
     pub const LibraryError = error{InvalidLibraryPath};
     /// Add a library. Equivalent to `-Lpath` option
-    pub fn addLibraryPath(s: *TCCState, pathname: [:0]const u8) Error!void {
+    pub fn addLibraryPath(s: *State, pathname: [:0]const u8) Error!void {
         if (tcc_add_library_path(s, pathname.ptr) != 0) {
             @branchHint(.unlikely);
             return error.InvalidLibraryPath;
@@ -283,7 +283,7 @@ pub const State = opaque {
     }
 
     /// Add a library. The library name is the same as the argument of the `-l` option
-    pub fn addLibrary(s: *TCCState, libraryname: [:0]const u8) Error!void {
+    pub fn addLibrary(s: *State, libraryname: [:0]const u8) Error!void {
         if (tcc_add_library(s, libraryname.ptr) != 0) {
             @branchHint(.unlikely);
             return error.InvalidLibraryPath;
@@ -291,15 +291,37 @@ pub const State = opaque {
     }
 
     /// Add a symbol to the compiled program
-    pub fn addSymbol(s: *TCCState, name: [:0]const u8, val: ?*const anyopaque) Error!void {
+    pub fn addSymbol(s: *State, name: [:0]const u8, val: ?*const anyopaque) Error!void {
         if (tcc_add_symbol(s, name.ptr, val) != 0) {
             @branchHint(.unlikely);
             return error.InvalidSymbol;
         }
     }
 
+    /// Add all public declarations on a namespace struct as symbols to the
+    /// compiled program.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const libfoo = struct {
+    ///     pub extern "c" fn foo() c_int;
+    ///     pub extern "c" fn bar(x: c_int) c_int;
+    /// };
+    /// const state = TCC.State.init() catch @panic("ahhh");
+    /// state.addSymbols(libfoo) catch @panic("failed to add symbols");
+    /// ```
+    /// 
+    /// Returns an error if any call to `addSymbol` fails.
+    pub fn addSymbols(s: *State, symbols: type) Error!void {
+        const info = @typeInfo(symbols);
+        inline for (info.@"struct".decls) |decl| {
+            const value = &@field(symbols, decl.name);
+            try s.addSymbol(s, decl.name, value);
+        }
+    }
+
     /// Output an executable, library or object file. DO NOT call `relocate` before.
-    pub fn outputFile(s: *TCCState, filename: [:0]const u8) Error!void {
+    pub fn outputFile(s: *State, filename: [:0]const u8) Error!void {
         if (tcc_output_file(s, filename.ptr) == -1) {
             @branchHint(.unlikely);
             return error.OutputError;
@@ -308,7 +330,7 @@ pub const State = opaque {
 
     /// Link and run `main()` function and return its value. DO NOT call `relocate` before.
     /// Returns the status code returned by the program's `main()` function.
-    pub fn run(s: *TCCState, argc: c_int, argv: [*:0]const [*:0]const u8) c_int {
+    pub fn run(s: *State, argc: c_int, argv: [*:0]const [*:0]const u8) c_int {
         return tcc_run(s, argc, argv);
     }
 
@@ -318,7 +340,7 @@ pub const State = opaque {
     /// - `TCC_RELOCATE_AUTO`: Allocate and manage memory internally
     /// - `NULL`: return required memory size for the step below
     /// - memory address: copy code to memory passed by the caller
-    pub fn relocate(s1: *TCCState, ptr: ?*anyopaque) Error!void {
+    pub fn relocate(s1: *State, ptr: ?*anyopaque) Error!void {
         if (tcc_relocate(s1, ptr) == -1) {
             @branchHint(.unlikely);
             return error.RelocationError;
@@ -326,12 +348,12 @@ pub const State = opaque {
     }
 
     /// Return symbol value or NULL if not found
-    pub fn getSymbol(s: *TCCState, name: [:0]const u8) ?*Symbol {
+    pub fn getSymbol(s: *State, name: [:0]const u8) ?*Symbol {
         return tcc_get_symbol(s, name.ptr);
     }
 
     /// Return symbol value or NULL if not found
-    pub fn listSymbols(s: *TCCState, ctx: ?*anyopaque, symbolCb: ?*const Symbol.Callback) void {
+    pub fn listSymbols(s: *State, ctx: ?*anyopaque, symbolCb: ?*const Symbol.Callback) void {
         tcc_list_symbols(s, ctx, symbolCb);
     }
 };

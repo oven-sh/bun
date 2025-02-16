@@ -123,6 +123,8 @@ my.test.ts:
 With this flag, failing todo tests will not cause an error, but todo tests which pass will be marked as failing so you can remove the todo mark or
 fix the test.
 
+To mark a file to always run todo tests, use `import { test } from "bun:test" with { todo: true }` in the file.
+
 ## `test.only`
 
 To run a particular test or suite of tests use `test.only()` or `describe.only()`. Once declared, running `bun test --only` will only execute tests/suites that have been marked with `.only()`. Running `bun test` without the `--only` option with `test.only()` declared will result in all tests in the given suite being executed _up to_ the test with `.only()`. `describe.only()` functions the same in both execution scenarios.

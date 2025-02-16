@@ -2577,7 +2577,7 @@ pub const Resolver = struct {
             ) orelse return null;
         }
 
-        return PackageJSON.new(pkg);
+        return PackageJSON.new(pkg); // FIXME: memory leak. Looks like both Transpiler and VirtualMachine parse package.json
     }
 
     fn dirInfoCached(r: *ThisResolver, path: string) !?*DirInfo {
@@ -3930,6 +3930,7 @@ pub const Resolver = struct {
 
     fn dirInfoUncached(
         r: *ThisResolver,
+        // This gets initialized.
         info: *DirInfo,
         path: string,
         _entries: *Fs.FileSystem.RealFS.EntriesOption,

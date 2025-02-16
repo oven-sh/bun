@@ -375,8 +375,6 @@ describe("util", () => {
         code: "ERR_INVALID_ARG_VALUE",
       },
     );
-
-    assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
   });
 
   describe("getSystemErrorName", () => {

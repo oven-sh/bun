@@ -262,8 +262,6 @@ public:
     Structure* ImportMetaObjectStructure() const { return m_importMetaObjectStructure.getInitializedOnMainThread(this); }
     Structure* AsyncContextFrameStructure() const { return m_asyncBoundFunctionStructure.getInitializedOnMainThread(this); }
 
-    Structure* JSSocketAddressStructure() const { return m_JSSocketAddressStructure.getInitializedOnMainThread(this); }
-
     JSWeakMap* vmModuleContextMap() const { return m_vmModuleContextMap.getInitializedOnMainThread(this); }
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
@@ -577,7 +575,6 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_cachedNodeVMGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
-    LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressStructure;
     LazyProperty<JSGlobalObject, Structure> m_memoryFootprintStructure;
     LazyProperty<JSGlobalObject, JSObject> m_requireFunctionUnbound;
     LazyProperty<JSGlobalObject, JSObject> m_requireResolveFunctionUnbound;

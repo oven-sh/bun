@@ -370,4 +370,45 @@ export default [
     },
     klass: {},
   }),
+  define({
+    name: "SocketAddress",
+    construct: true,
+    finalize: true,
+    estimatedSize: true,
+    JSType: "0b11101110",
+    klass: {},
+    proto: {
+      address: {
+        getter: "getAddress",
+        // setter: "setAddress",
+        enumerable: true,
+        configurable: true,
+        cache: true,
+      },
+      port: {
+        getter: "getPort",
+        enumerable: true,
+        configurable: true,
+      },
+      family: {
+        getter: "getFamily",
+        enumerable: true,
+        configurable: true,
+      },
+      addrfamily: {
+        getter: "getAddrFamily",
+        enumerable: false,
+        configurable: false,
+      },
+      flowlabel: {
+        getter: "getFlowLabel",
+        enumerable: true,
+        configurable: true,
+      },
+      toJSON: {
+        fn: "toJSON",
+        length: 0,
+      },
+    },
+  }),
 ];

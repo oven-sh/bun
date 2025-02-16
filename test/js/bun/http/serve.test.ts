@@ -1467,65 +1467,69 @@ it("#5859 arrayBuffer", async () => {
   expect(async () => await Bun.file(tmp).json()).toThrow();
 });
 
-it.if(isIPv4())("server.requestIP (v4)", async () => {
-  using server = Bun.serve({
-    port: 0,
-    fetch(req, server) {
-      return Response.json(server.requestIP(req));
-    },
-    hostname: "127.0.0.1",
-  });
-
-  const response = await fetch(server.url.origin).then(x => x.json());
-  expect(response).toEqual({
-    address: "127.0.0.1",
-    family: "IPv4",
-    port: expect.any(Number),
-  });
-});
-
-it.if(isIPv6())("server.requestIP (v6)", async () => {
-  using server = Bun.serve({
-    port: 0,
-    fetch(req, server) {
-      return Response.json(server.requestIP(req));
-    },
-    hostname: "::1",
-  });
-
-  const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
-  expect(response).toEqual({
-    address: "::1",
-    family: "IPv6",
-    port: expect.any(Number),
-  });
-});
-
-it.if(isPosix)("server.requestIP (unix)", async () => {
-  const unix = join(tmpdirSync(), "serve.sock");
-  using server = Bun.serve({
-    unix,
-    fetch(req, server) {
-      return Response.json(server.requestIP(req));
-    },
-  });
-  const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
-  const received: Buffer[] = [];
-  const { resolve, promise } = Promise.withResolvers<void>();
-  const connection = await Bun.connect({
-    unix,
-    socket: {
-      data(socket, data) {
-        received.push(data);
-        resolve();
+describe("server.requestIP", () => {
+  it.if(isIPv4())("v4", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        const ip = server.requestIP(req);
+        console.log(ip);
+        return Response.json(ip);
       },
-    },
+      hostname: "127.0.0.1",
+    });
+
+    const response = await fetch(server.url.origin).then(x => x.json());
+    expect(response).toMatchObject({
+      address: "127.0.0.1",
+      family: "IPv4",
+      port: expect.any(Number),
+    });
   });
-  connection.write(requestText);
-  connection.flush();
-  await promise;
-  expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
-  connection.end();
+
+  it.if(isIPv6())("v6", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        return Response.json(server.requestIP(req));
+      },
+      hostname: "::1",
+    });
+
+    const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
+    expect(response).toMatchObject({
+      address: "::1",
+      family: "IPv6",
+      port: expect.any(Number),
+    });
+  });
+
+  it.if(isPosix)("server.requestIP (unix)", async () => {
+    const unix = join(tmpdirSync(), "serve.sock");
+    using server = Bun.serve({
+      unix,
+      fetch(req, server) {
+        return Response.json(server.requestIP(req));
+      },
+    });
+    const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+    const received: Buffer[] = [];
+    const { resolve, promise } = Promise.withResolvers<void>();
+    const connection = await Bun.connect({
+      unix,
+      socket: {
+        data(socket, data) {
+          received.push(data);
+          resolve();
+        },
+      },
+    });
+    connection.write(requestText);
+    connection.flush();
+    await promise;
+    expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
+    connection.end();
+  });
 });
 
 it("should response with HTTP 413 when request body is larger than maxRequestBodySize, issue#6031", async () => {

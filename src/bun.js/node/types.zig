@@ -2029,8 +2029,9 @@ pub const Process = struct {
         return JSC.toJSHostValue(globalObject, getCwd_(globalObject));
     }
     fn getCwd_(globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
-        var buf: bun.PathBuffer = undefined;
-        switch (Path.getCwd(&buf)) {
+        const buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
+        switch (Path.getCwd(buf)) {
             .result => |r| return JSC.ZigString.init(r).withEncoding().toJS(globalObject),
             .err => |e| {
                 return globalObject.throwValue(e.toJSC(globalObject));
@@ -2048,8 +2049,9 @@ pub const Process = struct {
         const vm = globalObject.bunVM();
         const fs = vm.transpiler.fs;
 
-        var buf: bun.PathBuffer = undefined;
-        const slice = to.sliceZBuf(&buf) catch return globalObject.throw("Invalid path", .{});
+        var buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
+        const slice = to.sliceZBuf(buf) catch return globalObject.throw("Invalid path", .{});
 
         switch (Syscall.chdir(fs.top_level_dir, slice)) {
             .result => {

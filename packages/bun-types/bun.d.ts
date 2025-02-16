@@ -1383,6 +1383,18 @@ declare module "bun" {
     endpoint?: string;
 
     /**
+     * Use virtual hosted style endpoint. default to false, when true if `endpoint` is informed it will ignore the `bucket`
+     *
+     * @example
+     *     // Using virtual hosted style
+     *     const file = s3("my-file.txt", {
+     *       virtualHostedStyle: true,
+     *       endpoint: "https://my-bucket.s3.us-east-1.amazonaws.com"
+     *     });
+     */
+    virtualHostedStyle?: boolean;
+
+    /**
      * The size of each part in multipart uploads (in bytes).
      * - Minimum: 5 MiB
      * - Maximum: 5120 MiB
@@ -2054,6 +2066,8 @@ declare module "bun" {
     max?: number;
     /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
     bigint?: boolean;
+    /** Automatic creation of prepared statements, defaults to true */
+    prepare?: boolean;
   };
 
   /**
@@ -2067,6 +2081,8 @@ declare module "bun" {
     cancelled: boolean;
     /** Cancels the executing query */
     cancel(): SQLQuery;
+    /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
+    simple(): SQLQuery;
     /** Executes the query */
     execute(): SQLQuery;
     /** Returns the raw query result */
@@ -3749,7 +3765,18 @@ declare module "bun" {
      *
      * @experimental
      */
-    static?: Record<`/${string}`, Response>;
+    static?: Record<
+      `/${string}`,
+      | Response
+      /**
+       * An HTML import.
+       */
+      | HTMLBundle
+      /**
+       * false to force fetch() to handle the route
+       */
+      | false
+    >;
   }
 
   interface ServeOptions extends GenericServeOptions {

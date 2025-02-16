@@ -787,7 +787,7 @@ public:
 
     DECLARE_INFO;
 
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     template<typename CellType, JSC::SubspaceAccess>
@@ -885,7 +885,6 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 
     // :'(
     object->reifyAllStaticProperties(lexicalGlobalObject);
-
     RETURN_IF_EXCEPTION(scope, void());
 
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);

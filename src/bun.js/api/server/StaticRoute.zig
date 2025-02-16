@@ -18,18 +18,19 @@ pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 pub const InitFromBytesOptions = struct {
     server: AnyServer,
-    mime_type: ?bun.http.MimeType = null,
+    mime_type: ?*const bun.http.MimeType = null,
 };
 
-pub fn initFromAnyBlob(blob: AnyBlob, options: InitFromBytesOptions) *StaticRoute {
-    var headers = Headers.from(null, bun.default_allocator, .{ .body = &blob }) catch bun.outOfMemory();
+/// Ownership of `blob` is transferred to this function.
+pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
+    var headers = Headers.from(null, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
     if (options.mime_type) |mime_type| {
         if (headers.getContentType() == null) {
             headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
         }
     }
     return StaticRoute.new(.{
-        .blob = blob,
+        .blob = blob.*,
         .cached_blob_size = blob.size(),
         .has_content_disposition = false,
         .headers = headers,

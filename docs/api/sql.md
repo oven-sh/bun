@@ -185,11 +185,19 @@ Note that simple queries cannot use parameters (`${value}`). If you need paramet
 
 ### Unsafe Queries
 
-You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input.
+You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input. Executing multiple commands with `sql.unsafe` is allowed if no parameters are used.
 
 ```ts
+// Multiple commands without parameters
+const result = await sql.unsafe(`
+  SELECT ${userColumns} FROM users;
+  SELECT ${accountColumns} FROM accounts;
+`);
+
+// Using parameters (only one command is allowed)
 const result = await sql.unsafe(
-  "SELECT " + columns + " FROM users WHERE id = " + id,
+  "SELECT " + dangerous + " FROM users WHERE id = $1",
+  [id],
 );
 ```
 

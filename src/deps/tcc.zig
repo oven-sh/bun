@@ -139,13 +139,12 @@ pub const TCC_OUTPUT_EXE = @as(c_int, 2);
 pub const TCC_OUTPUT_DLL = @as(c_int, 3);
 pub const TCC_OUTPUT_OBJ = @as(c_int, 4);
 pub const TCC_OUTPUT_PREPROCESS = @as(c_int, 5);
-// pub const TCC_RELOCATE_AUTO = @import("std").zig.c_translation.cast(?*anyopaque, @as(c_int, 1));
 pub const TCC_RELOCATE_AUTO: ?*anyopaque = @ptrCast(&1);
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-pub const Error = error {
+pub const Error = error{
     InvalidOption,
     InvalidIncludePath,
     CompileError,
@@ -155,19 +154,25 @@ pub const Error = error {
     InvalidLibraryPath,
     InvalidSymbol,
     ExecError,
+    /// Could not get a symbol for some reason
+    RelocationError,
+};
+
+pub const Symbol = opaque {
+    const Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void;
 };
 
 pub const State = opaque {
-   /// Create a new TCC compilation context
-   pub fn init() Allocator.Error!*TCCState {
-      return tcc_new() orelse error.OutOfMemory;
-   }
+    /// Create a new TCC compilation context
+    pub fn init() Allocator.Error!*TCCState {
+        return tcc_new() orelse error.OutOfMemory;
+    }
 
-   /// Free a TCC compilation context
-   pub fn deinit(s: *TCCState) void {
-      tcc_delete(s);
-      s.* = undefined;
-   }
+    /// Free a TCC compilation context
+    pub fn deinit(s: *TCCState) void {
+        tcc_delete(s);
+        s.* = undefined;
+    }
 
     /// Set `CONFIG_TCCDIR` at runtime
     pub fn setLibPath(s: *TCCState, path: [:0]const u8) void {
@@ -224,7 +229,7 @@ pub const State = opaque {
     // ======================== Compiling ========================
 
     /// Add a file (C file, dll, object, library, ld script).
-    /// 
+    ///
     /// ## Errors
     /// - File not found
     /// - Syntax/formatting error
@@ -258,7 +263,7 @@ pub const State = opaque {
         Preprocess = TCC_OUTPUT_PREPROCESS,
     };
 
-    const OutputError = error { OutputError };
+    const OutputError = error{OutputError};
 
     /// Set output type. MUST BE CALLED before any compilation
     pub fn setOutputType(s: *TCCState, outputType: OutputFormat) Error!void {
@@ -268,7 +273,7 @@ pub const State = opaque {
         }
     }
 
-    pub const LibraryError = error { InvalidLibraryPath };
+    pub const LibraryError = error{InvalidLibraryPath};
     /// Add a library. Equivalent to `-Lpath` option
     pub fn addLibraryPath(s: *TCCState, pathname: [:0]const u8) Error!void {
         if (tcc_add_library_path(s, pathname.ptr) != 0) {
@@ -277,7 +282,7 @@ pub const State = opaque {
         }
     }
 
-    /// Add a library. The library name is the same as the argument of the `-l` option  
+    /// Add a library. The library name is the same as the argument of the `-l` option
     pub fn addLibrary(s: *TCCState, libraryname: [:0]const u8) Error!void {
         if (tcc_add_library(s, libraryname.ptr) != 0) {
             @branchHint(.unlikely);
@@ -308,7 +313,7 @@ pub const State = opaque {
     }
 
     /// Do all relocations (needed before using `getSymbol`)
-    /// 
+    ///
     /// Possible values for `ptr`:
     /// - `TCC_RELOCATE_AUTO`: Allocate and manage memory internally
     /// - `NULL`: return required memory size for the step below
@@ -316,9 +321,17 @@ pub const State = opaque {
     pub fn relocate(s1: *TCCState, ptr: ?*anyopaque) Error!void {
         if (tcc_relocate(s1, ptr) == -1) {
             @branchHint(.unlikely);
-            return error.OutputError;
+            return error.RelocationError;
         }
     }
 
-    
+    /// Return symbol value or NULL if not found
+    pub fn getSymbol(s: *TCCState, name: [:0]const u8) ?*Symbol {
+        return tcc_get_symbol(s, name.ptr);
+    }
+
+    /// Return symbol value or NULL if not found
+    pub fn listSymbols(s: *TCCState, ctx: ?*anyopaque, symbolCb: ?*const Symbol.Callback) void {
+        tcc_list_symbols(s, ctx, symbolCb);
+    }
 };

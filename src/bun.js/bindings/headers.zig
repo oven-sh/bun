@@ -89,9 +89,6 @@ pub extern fn ZigString__toExternalValueWithCallback(arg0: [*c]const ZigString, 
 pub extern fn ZigString__toRangeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toSyntaxErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toTypeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn WebCore__DOMURL__cast_(JSValue0: JSC__JSValue, arg1: *bindings.VM) ?*bindings.DOMURL;
-pub extern fn WebCore__DOMURL__href_(arg0: ?*bindings.DOMURL, arg1: [*c]ZigString) void;
-pub extern fn WebCore__DOMURL__pathname_(arg0: ?*bindings.DOMURL, arg1: [*c]ZigString) void;
 pub extern fn WebCore__DOMFormData__append(arg0: ?*bindings.DOMFormData, arg1: [*c]ZigString, arg2: [*c]ZigString) void;
 pub extern fn WebCore__DOMFormData__appendBlob(arg0: ?*bindings.DOMFormData, arg1: *bindings.JSGlobalObject, arg2: [*c]ZigString, arg3: ?*anyopaque, arg4: [*c]ZigString) void;
 pub extern fn WebCore__DOMFormData__count(arg0: ?*bindings.DOMFormData) usize;
@@ -122,11 +119,6 @@ pub extern fn JSC__JSGlobalObject__queueMicrotaskJob(arg0: *bindings.JSGlobalObj
 pub extern fn JSC__JSGlobalObject__reload(arg0: *bindings.JSGlobalObject) void;
 pub extern fn JSC__JSGlobalObject__startRemoteInspector(arg0: *bindings.JSGlobalObject, arg1: [*c]u8, arg2: u16) bool;
 pub extern fn JSC__JSGlobalObject__vm(arg0: *bindings.JSGlobalObject) *bindings.VM;
-pub extern fn JSC__JSMap__create(arg0: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn JSC__JSMap__get_(arg0: ?*bindings.Map, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) JSC__JSValue;
-pub extern fn JSC__JSMap__has(arg0: ?*bindings.Map, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
-pub extern fn JSC__JSMap__remove(arg0: ?*bindings.Map, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
-pub extern fn JSC__JSMap__set(arg0: ?*bindings.Map, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, JSValue3: JSC__JSValue) void;
 pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?bun.JSC.JSHostFunctionPtr, ArgFn4: ?bun.JSC.JSHostFunctionPtr) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asBigIntCompare(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) u8;

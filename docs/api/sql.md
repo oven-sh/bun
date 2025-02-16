@@ -185,7 +185,7 @@ Note that simple queries cannot use parameters (`${value}`). If you need paramet
 
 ### Unsafe Queries
 
-You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input. Executing multiple commands with `sql.unsafe` is allowed if no parameters are used.
+You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input. Executing more than one command per query is allowed if no parameters are used.
 
 ```ts
 // Multiple commands without parameters

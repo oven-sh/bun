@@ -70,7 +70,7 @@ In the Render UI, provide the following values during web service creation:
 | ----------------- | ------------- |
 | **Runtime**       | `Node`        |
 | **Build Command** | `bun install` |
-| **Start Command** | `bun app.js`  |
+| **Start Command** | `bun app.ts`  |
 
 ---
 

@@ -82,6 +82,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["MODULE_NOT_FOUND", Error],
+  ["ERR_CHILD_PROCESS_IPC_REQUIRED", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

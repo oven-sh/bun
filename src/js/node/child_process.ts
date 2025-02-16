@@ -295,11 +295,11 @@ function execFile(file, args, options, callback) {
 
     if (args?.length) cmd += ` ${ArrayPrototypeJoin.$call(args, " ")}`;
     if (!ex) {
+      const { getSystemErrorName } = require("node:util");
       let message = `Command failed: ${cmd}`;
       if (stderr) message += `\n${stderr}`;
       ex = genericNodeError(message, {
-        // code: code < 0 ? getSystemErrorName(code) : code, // TODO: Add getSystemErrorName
-        code: code,
+        code: code < 0 ? getSystemErrorName(code) : code,
         killed: child.killed || killed,
         signal: signal,
       });
@@ -572,6 +572,7 @@ function spawnSync(file, args, options) {
       stdio: bunStdio,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
+      argv0: options.argv0,
     });
   } catch (err) {
     error = err;
@@ -770,7 +771,7 @@ function fork(modulePath, args = [], options) {
     // and stderr from the parent if silent isn't set.
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
   } else if (!ArrayPrototypeIncludes.$call(options.stdio, "ipc")) {
-    throw ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
+    throw $ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
   }
 
   return spawn(options.execPath, args, options);
@@ -959,11 +960,7 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   // Handle argv0
-  if (typeof options.argv0 === "string") {
-    ArrayPrototypeUnshift.$call(args, options.argv0);
-  } else {
-    ArrayPrototypeUnshift.$call(args, file);
-  }
+  ArrayPrototypeUnshift.$call(args, file);
 
   const env = options.env || process.env;
   const envPairs = {};
@@ -1010,6 +1007,7 @@ function normalizeSpawnArguments(file, args, options) {
     file,
     windowsHide: !!options.windowsHide,
     windowsVerbatimArguments: !!windowsVerbatimArguments,
+    argv0: options.argv0,
   };
 }
 
@@ -1244,8 +1242,6 @@ class ChildProcess extends EventEmitter {
     validateString(options.file, "options.file");
     // NOTE: This is confusing... So node allows you to pass a file name
     // But also allows you to pass a command in the args and it should execute
-    // To add another layer of confusion, they also give the option to pass an explicit "argv0"
-    // which overrides the actual command of the spawned process...
     var file;
     file = this.spawnfile = options.file;
 
@@ -1259,9 +1255,9 @@ class ChildProcess extends EventEmitter {
 
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
-    const argv0 = file || options.argv0;
+    const argv0 = options.argv0 || file;
 
-    const has_ipc = $isJSArray(stdio) && stdio[3] === "ipc";
+    const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");
     var env = options.envPairs || process.env;
 
     const detachedOption = options.detached;
@@ -1270,55 +1266,64 @@ class ChildProcess extends EventEmitter {
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
-    this.#handle = Bun.spawn({
-      cmd: spawnargs,
-      stdio: bunStdio,
-      cwd: options.cwd || undefined,
-      env: env,
-      detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
-      onExit: (handle, exitCode, signalCode, err) => {
-        this.#handle = handle;
-        this.pid = this.#handle.pid;
-        $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+    try {
+      this.#handle = Bun.spawn({
+        cmd: spawnargs,
+        stdio: bunStdio,
+        cwd: options.cwd || undefined,
+        env: env,
+        detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
+        onExit: (handle, exitCode, signalCode, err) => {
+          this.#handle = handle;
+          this.pid = this.#handle.pid;
+          $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
-        if (hasSocketsToEagerlyLoad) {
-          process.nextTick(() => {
-            this.stdio;
-            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
-          });
-        }
+          if (hasSocketsToEagerlyLoad) {
+            process.nextTick(() => {
+              this.stdio;
+              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+            });
+          }
 
-        process.nextTick(
-          (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
-          exitCode,
-          signalCode,
-          err,
-        );
-      },
-      lazy: true,
-      ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
-      onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
-      serialization,
-      argv0,
-      windowsHide: !!options.windowsHide,
-      windowsVerbatimArguments: !!options.windowsVerbatimArguments,
-    });
-    this.pid = this.#handle.pid;
+          process.nextTick(
+            (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
+            exitCode,
+            signalCode,
+            err,
+          );
+        },
+        lazy: true,
+        ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+        onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
+        serialization,
+        argv0,
+        windowsHide: !!options.windowsHide,
+        windowsVerbatimArguments: !!options.windowsVerbatimArguments,
+      });
+      this.pid = this.#handle.pid;
 
-    $debug("ChildProcess: spawn", this.pid, spawnargs);
+      $debug("ChildProcess: spawn", this.pid, spawnargs);
 
-    onSpawnNT(this);
+      onSpawnNT(this);
 
-    if (has_ipc) {
-      this.send = this.#send;
-      this.disconnect = this.#disconnect;
-      if (options[kFromNode]) this.#closesNeeded += 1;
-    }
-
-    if (hasSocketsToEagerlyLoad) {
-      for (let item of this.stdio) {
-        item?.ref?.();
+      if (has_ipc) {
+        this.send = this.#send;
+        this.disconnect = this.#disconnect;
+        if (options[kFromNode]) this.#closesNeeded += 1;
       }
+
+      if (hasSocketsToEagerlyLoad) {
+        for (let item of this.stdio) {
+          item?.ref?.();
+        }
+      }
+    } catch (ex) {
+      if ((ex as Error).name !== "SystemError") throw ex;
+      this.#handle = null;
+      process.nextTick(() => {
+        this.emit("error", ex);
+        this.emit("close", (ex as SystemError).errno ?? -1);
+      });
     }
   }
 
@@ -1352,7 +1357,7 @@ class ChildProcess extends EventEmitter {
     // Bun does not handle handles yet
     try {
       this.#handle.send(message);
-      if (callback) process.nextTick(callback);
+      if (callback) process.nextTick(callback, null);
       return true;
     } catch (error) {
       if (callback) {
@@ -1597,6 +1602,10 @@ class ShimmedStdioOutStream extends EventEmitter {
   }
 
   destroy() {
+    return this;
+  }
+
+  setEncoding() {
     return this;
   }
 }
@@ -1849,12 +1858,6 @@ function ERR_UNKNOWN_SIGNAL(name) {
 function ERR_INVALID_OPT_VALUE(name, value) {
   const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
   err.code = "ERR_INVALID_OPT_VALUE";
-  return err;
-}
-
-function ERR_CHILD_PROCESS_IPC_REQUIRED(name) {
-  const err = new TypeError(`Forked processes must have an IPC channel, missing value 'ipc' in ${name}`);
-  err.code = "ERR_CHILD_PROCESS_IPC_REQUIRED";
   return err;
 }
 

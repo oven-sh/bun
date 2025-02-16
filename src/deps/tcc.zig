@@ -1,12 +1,15 @@
 pub const TCCState = State;
 pub const TCCErrorFunc = ?*const fn (?*anyopaque, [*:0]const u8) callconv(.C) void;
+fn ErrorFunc(Ctx: type) type {
+    return fn (ctx: ?*Ctx, msg: [*:0]const u8) callconv(.C) void;
+}
 pub extern fn tcc_new() ?*TCCState;
 pub extern fn tcc_delete(s: *TCCState) void;
 pub extern fn tcc_set_lib_path(s: *TCCState, path: [*:0]const u8) void;
 pub extern fn tcc_set_error_func(s: *TCCState, error_opaque: ?*anyopaque, error_func: TCCErrorFunc) void;
 pub extern fn tcc_get_error_func(s: *TCCState) TCCErrorFunc;
 pub extern fn tcc_get_error_opaque(s: *TCCState) ?*anyopaque;
-pub extern fn tcc_set_options(s: *TCCState, str: [*:0]const u8) void;
+pub extern fn tcc_set_options(s: *TCCState, str: [*:0]const u8) c_int;
 pub extern fn tcc_add_include_path(s: *TCCState, pathname: [*:0]const u8) c_int;
 pub extern fn tcc_add_sysinclude_path(s: *TCCState, pathname: [*:0]const u8) c_int;
 pub extern fn tcc_define_symbol(s: *TCCState, sym: [*:0]const u8, value: [*:0]const u8) void;
@@ -33,7 +36,7 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 pub const Error = error{
-    InvalidOption,
+    InvalidOptions,
     InvalidIncludePath,
     CompileError,
     // output
@@ -51,9 +54,36 @@ pub const Symbol = opaque {
 };
 
 pub const State = opaque {
+    pub fn Config(ErrCtx: type) type {
+        return struct {
+            options: ?[*:0]const u8 = null,
+            outputType: ?OutputFormat = null,
+            err: struct {
+                ctx: ?*ErrCtx = null,
+                handler: *const ErrorFunc(ErrCtx),
+            } = .{},
+        };
+    }
+
     /// Create a new TCC compilation context
-    pub fn init() Allocator.Error!*State {
+    pub fn new() Allocator.Error!*State {
         return tcc_new() orelse error.OutOfMemory;
+    }
+
+    /// Create and initialize a new TCC compilation context
+    pub fn init(ErrCtx: type, config: Config(ErrCtx)) (Allocator.Error || Error)!State {
+        var state = try State.new();
+        errdefer state.deinit();
+
+        if (config.options) |options|
+            try state.setOptions(options);
+        if (config.outputType) |outputType|
+            try state.setOutputType(outputType);
+        if (config.err) |err_| {
+            state.setErrorFunc(ErrCtx, err_.ctx, err_.handler);
+        }
+
+        return state;
     }
 
     /// Free a TCC compilation context
@@ -68,12 +98,12 @@ pub const State = opaque {
     }
 
     /// Set error/warning display callback
-    pub fn setErrorFunc(s: *State, errorOpaque: ?*anyopaque, errorFunc: TCCErrorFunc) void {
+    pub fn setErrorFunc(s: *State, Context: type, errorOpaque: ?*Context, errorFunc: *const ErrorFunc(Context)) void {
         tcc_set_error_func(s, errorOpaque, errorFunc);
     }
 
     /// Return error/warning callback
-    pub fn getErrorFunc(s: *State) TCCErrorFunc {
+    pub fn getErrorFunc(s: *State) ?*const ErrorFunc(anyopaque) {
         return tcc_get_error_func(s);
     }
 
@@ -87,7 +117,7 @@ pub const State = opaque {
         // TODO: is errno set?
         if (tcc_set_options(s, str.ptr) != 0) {
             @branchHint(.unlikely);
-            return error.InvalidOption;
+            return error.InvalidOptions;
         }
     }
 
@@ -102,7 +132,7 @@ pub const State = opaque {
     }
 
     /// Add in system include path
-    pub fn addSysincludePath(s: *State, pathname: [:0]const u8) Error!void {
+    pub fn addSysIncludePath(s: *State, pathname: [:0]const u8) Error!void {
         if (tcc_add_sysinclude_path(s, pathname.ptr) != 0) {
             @branchHint(.unlikely);
             return error.InvalidIncludePath;
@@ -110,8 +140,21 @@ pub const State = opaque {
     }
 
     /// Define preprocessor symbol 'sym'. value can be NULL, sym can be "sym=val"
+    ///
+    /// ```c
+    /// #define sym value
+    /// ```
     pub fn defineSymbol(s: *State, sym: [:0]const u8, value: [:0]const u8) void {
         tcc_define_symbol(s, sym.ptr, value.ptr);
+    }
+
+    /// Undefine preprocess symbol 'sym'
+    ///
+    /// ```c
+    /// #undef sym
+    /// ```
+    pub fn undefineSymbol(s: *State, sym: [:0]const u8) void {
+        tcc_undefine_symbol(s, sym.ptr);
     }
 
     // ======================== Compiling ========================
@@ -198,7 +241,7 @@ pub const State = opaque {
     /// const state = TCC.State.init() catch @panic("ahhh");
     /// state.addSymbols(libfoo) catch @panic("failed to add symbols");
     /// ```
-    /// 
+    ///
     /// Returns an error if any call to `addSymbol` fails.
     pub fn addSymbols(s: *State, symbols: type) Error!void {
         const info = @typeInfo(symbols);

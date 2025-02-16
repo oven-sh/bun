@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cinttypes>
 #include <cmath>
+#include <codecvt>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -152,6 +153,53 @@ test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   }
   std::cout << std::endl;
   std::cout << "Value str: " << buf << std::endl;
+  return ok(env);
+}
+
+napi_value test_napi_create_string_utf16(const Napi::CallbackInfo &info) {
+  const size_t BUFSIZE = 256;
+  Napi::Env env = info.Env();
+
+  napi_value *result = nullptr;
+
+  // test with a string that will definitely end up utf16-encoded.
+
+  std::u16string cpp_str_utf16 = u"Bun's napi support is 👌";
+
+  assert(napi_create_string_utf16(env, cpp_str_utf16.data(),
+                                  cpp_str_utf16.length(), result) == napi_ok);
+  assert(result != nullptr);
+
+  char16_t utf16buf[BUFSIZE];
+  size_t result_len = 0;
+
+  assert(napi_get_value_string_utf16(env, *result, utf16buf, BUFSIZE,
+                                     &result_len) == napi_ok);
+  assert(result_len == cpp_str_utf16.length());
+
+  std::u16string recast_str_utf16(utf16buf, result_len);
+  assert(recast_str_utf16 == cpp_str_utf16);
+  delete result;
+
+  // since this string is all ASCII, it should end up Latin-1 encoded.
+
+  result = nullptr;
+  std::u16string cpp_str_latin1 = u"Bun's napi support is awesome";
+  assert(napi_create_string_utf16(env, cpp_str_latin1.data(),
+                                  cpp_str_latin1.length(), result) == napi_ok);
+  assert(result != nullptr);
+
+  char latin1buf[BUFSIZE];
+  result_len = 0;
+
+  assert(napi_get_value_string_latin1(env, *result, latin1buf, BUFSIZE,
+                                      &result_len) == napi_ok);
+
+  // stop
+  assert(result_len == cpp_str_latin1.length());
+  std::string recast_str_latin1(latin1buf, result_len);
+  assert(recast_str_latin1 == "Bun's napi support is awesome");
+
   return ok(env);
 }
 

@@ -340,15 +340,8 @@ pub export fn napi_create_string_latin1(env: napi_env, str: ?[*]const u8, length
 
     log("napi_create_string_latin1: {s}", .{slice});
 
-    if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env.toJS()));
-        return env.ok();
-    }
-
-    var string, const bytes = bun.String.createUninitialized(.latin1, slice.len);
+    var string = bun.String.createWTF(.latin1, slice) catch bun.outOfMemory();
     defer string.deref();
-
-    @memcpy(bytes, slice);
 
     result.set(env, string.toJS(env.toJS()));
     return env.ok();
@@ -401,12 +394,8 @@ pub export fn napi_create_string_utf16(env: napi_env, str: ?[*]const char16_t, l
     if (comptime bun.Environment.allow_assert)
         log("napi_create_string_utf16: {d} {any}", .{ slice.len, bun.fmt.FormatUTF16{ .buf = slice[0..@min(slice.len, 512)] } });
 
-    if (slice.len == 0) {
-        result.set(env, bun.String.empty.toJS(env.toJS()));
-    }
-
-    var string, const chars = bun.String.createUninitialized(.utf16, slice.len);
-    @memcpy(chars, slice);
+    var string = bun.String.createWTF(.utf16, slice) catch bun.outOfMemory();
+    defer string.deref();
 
     result.set(env, string.transferToJS(env.toJS()));
     return env.ok();

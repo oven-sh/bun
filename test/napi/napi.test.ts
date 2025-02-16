@@ -178,6 +178,12 @@ describe("napi", () => {
     });
   });
 
+  describe("napi_create_string_*", () => {
+    it("ut16 strings", () => {
+      checkSameOutput("test_napi_create_string_utf16");
+    });
+  });
+
   it("#1288", async () => {
     const result = checkSameOutput("self", []);
     expect(result).toBe("hello world!");

@@ -618,6 +618,7 @@ pub const ParseResult = union(enum) {
     success: ParsedSourceMap,
 };
 
+/// Reference counted.
 pub const ParsedSourceMap = struct {
     input_line_count: usize = 0,
     mappings: Mapping.List = .{},

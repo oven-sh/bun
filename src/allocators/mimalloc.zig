@@ -134,6 +134,7 @@ pub extern fn mi_reserve_os_memory_ex(size: usize, commit: bool, allow_large: bo
 pub extern fn mi_manage_os_memory_ex(start: ?*anyopaque, size: usize, is_committed: bool, is_large: bool, is_zero: bool, numa_node: c_int, exclusive: bool, arena_id: *ArenaID) bool;
 pub extern fn mi_heap_new_in_arena(arena_id: ArenaID) ?*Heap;
 pub extern fn mi_reserve_huge_os_pages(pages: usize, max_secs: f64, pages_reserved: [*c]usize) c_int;
+pub extern fn mi_thread_set_in_threadpool() void;
 pub const Option = enum(c_uint) {
     show_errors = 0,
     show_stats = 1,

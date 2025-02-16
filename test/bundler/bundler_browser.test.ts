@@ -253,11 +253,8 @@ describe("bundler", () => {
   const bunModules: Record<string, "no-op" | "polyfill" | "error"> = {
     "bun": "error",
     "bun:ffi": "error",
-    "bun:dns": "error",
     "bun:test": "error",
     "bun:sqlite": "error",
-    // "bun:wrap": "error",
-    "bun:internal": "error",
     "bun:jsc": "error",
   };
 
@@ -306,7 +303,33 @@ describe("bundler", () => {
     bundleErrors: {
       "/entry.js": Object.keys(bunModules)
         .filter(x => bunModules[x] === "error")
-        .map(x => `Could not resolve: "${x}". Maybe you need to "bun install"?`),
+        .map(
+          x =>
+            `Browser build cannot import Bun builtin: "${x}". To use Bun builtins, set target to 'bun' or feature-detect the Bun global at runtime.`,
+        ),
+    },
+  });
+
+  itBundled("browser/ImportBunErrorInNode", {
+    skipOnEsbuild: true,
+    files: {
+      "/entry.js": `
+        ${Object.keys(bunModules)
+          .map((x, i) => `import * as bun_${i} from "${x}";`)
+          .join("\n")}
+        ${Object.keys(bunModules)
+          .map((x, i) => `console.log("${x.padEnd(12, " ")}:", !!bun_${i});`)
+          .join("\n")}
+      `,
+    },
+    target: "node",
+    bundleErrors: {
+      "/entry.js": Object.keys(bunModules)
+        .filter(x => bunModules[x] === "error")
+        .map(
+          x =>
+            `Node build cannot import Bun builtin: "${x}". To use Bun builtins, set target to 'bun' or feature-detect the Bun global at runtime.`,
+        ),
     },
   });
 

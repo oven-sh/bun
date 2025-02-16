@@ -92,6 +92,10 @@ pub const ExternalModules = struct {
         return bun.JSC.HardcodedModule.Aliases.has(str, .node);
     }
 
+    pub fn isBunBuiltin(str: string) bool {
+        return bun.JSC.HardcodedModule.Aliases.has(str, .bun);
+    }
+
     const default_wildcard_patterns = &[_]WildcardPattern{
         .{
             .prefix = "/bun:",

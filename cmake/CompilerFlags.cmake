@@ -144,17 +144,19 @@ if(UNIX)
   )
 endif()
 
-register_compiler_flags(
-  DESCRIPTION "Place each function in its own section"
-  -ffunction-sections ${UNIX}
-  /Gy ${WIN32}
-)
+if (NOT ENABLE_LTO)
+  register_compiler_flags(
+    DESCRIPTION "Place each function in its own section"
+    -ffunction-sections ${UNIX}
+    /Gy ${WIN32}
+  )
 
-register_compiler_flags(
-  DESCRIPTION "Place each data item in its own section"
-  -fdata-sections ${UNIX}
-  /Gw ${WIN32}
-)
+  register_compiler_flags(
+    DESCRIPTION "Place each data item in its own section"
+    -fdata-sections ${UNIX}
+    /Gw ${WIN32}
+  )
+endif()
 
 # having this enabled in debug mode on macOS >=14 causes libarchive to fail to configure with the error:
 # > pid_t doesn't exist on this platform?
@@ -257,6 +259,17 @@ if(ENABLE_LTO)
     -flto=full ${UNIX}
     -flto ${WIN32}
   )
+
+  if (LINUX)
+    register_compiler_flags(
+      DESCRIPTION "Disable semantic interposition"
+      -fno-semantic-interposition
+    )
+
+    # Pass -emit-llvm to the compiler, and not the linker.
+    # It must NOT appear in any linking flags.
+    add_compile_options(-emit-llvm)
+  endif()
 
   if(UNIX)
     register_compiler_flags(

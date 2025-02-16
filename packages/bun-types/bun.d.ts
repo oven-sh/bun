@@ -2250,12 +2250,12 @@ declare module "bun" {
      * @example
      * const sql = new SQL("postgres://localhost:5432/mydb", { idleTimeout: 1000 });
      */
-    new (connectionString: string | URL, options: SQLOptions): SQL;
+    new (connectionString: string | URL, options: Partial<SQLOptions>): SQL;
     /** Creates a new SQL client instance with options
      * @example
      * const sql = new SQL({ url: "postgres://localhost:5432/mydb", idleTimeout: 1000 });
      */
-    new (options?: SQLOptions): SQL;
+    new (options?: Partial<SQLOptions>): SQL;
     /** Executes a SQL query using template literals
      * @example
      * const [user] = await sql`select * from users where id = ${1}`;

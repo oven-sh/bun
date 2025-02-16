@@ -1,33 +1,39 @@
-Using `Bun.serve()`'s `static` option, you can run your frontend and backend in the same app with no extra steps.
+Using `Bun.serve()`'s `routes` option, you can run your frontend and backend in the same app with no extra steps.
 
-To get started, import HTML files and pass them to the `static` option in `Bun.serve()`.
+To get started, import HTML files and pass them to the `routes` option in `Bun.serve()`.
 
 ```ts
 import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 
 const server = Bun.serve({
-  // Add HTML imports to `static`
-  static: {
+  // Add HTML imports to `routes` (before Bun v1.2.3, this was called `static`)
+  routes: {
     // Bundle & route index.html to "/"
     "/": homepage,
     // Bundle & route dashboard.html to "/dashboard"
     "/dashboard": dashboard,
+
+    // API endpoints:
+    "/api/users": async req => {
+      const users = await Bun.sql`SELECT * FROM users`;
+      return Response.json(users);
+    },
+
+    "/api/users/:id": async req => {
+      const { id } = req.params;
+      const [user] = await Bun.sql`SELECT * FROM users WHERE id = ${id}`;
+      return Response.json(user);
+    },
   },
 
   // Enable development mode for:
   // - Detailed error messages
-  // - Rebuild on request
+  // - Hot reloading (Bun v1.2.3+ required)
   development: true,
 
   // Handle API requests
   async fetch(req) {
-    // ...your API code
-    if (req.url.endsWith("/api/users")) {
-      const users = await Bun.sql`SELECT * FROM users`;
-      return Response.json(users);
-    }
-
     // Return 404 for unmatched routes
     return new Response("Not Found", { status: 404 });
   },
@@ -55,7 +61,7 @@ These HTML files are used as routes in Bun's dev server you can pass to `Bun.ser
 
 ```ts
 Bun.serve({
-  static: {
+  routes: {
     "/": homepage,
     "/dashboard": dashboard,
   }
@@ -113,7 +119,7 @@ import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
-  static: {
+  routes: {
     "/": dashboard,
   },
 
@@ -171,7 +177,7 @@ import homepage from "./index.html";
 import dashboard from "./dashboard.html";
 
 Bun.serve({
-  static: {
+  routes: {
     "/": homepage,
     "/dashboard": dashboard,
   }
@@ -249,6 +255,8 @@ plugins = ["./my-plugin-implementation.ts"]
 
 Bun will lazily resolve and load each plugin and use them to bundle your routes.
 
+Note: this is currently in `bunfig.toml` to make it possible to know statically which plugins are in use when we eventually integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s JS API, but are not yet supported in the CLI.
+
 ## How this works
 
 Bun uses [`HTMLRewriter`](/docs/api/html-rewriter) to scan for `<script>` and `<link>` tags in HTML files, uses them as entrypoints for [Bun's bundler](/docs/bundler), generates an optimized bundle for the JavaScript/TypeScript/TSX/JSX and CSS files, and serves the result.
@@ -293,5 +301,5 @@ This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/htm
 
 ## This is a work in progress
 
-- Client-side hot reloading isn't wired up yet. It will be in the future.
+- ~Client-side hot reloading isn't wired up yet. It will be in the future.~ New in Bun v1.2.3
 - This doesn't support `bun build` yet. It also will in the future.

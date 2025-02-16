@@ -7471,10 +7471,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 response_value = exception;
             }
 
-            server.handleRequest(should_deinit_context, prepared, req, response_value);
+            server.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
-        fn handleRequest(this: *ThisServer, should_deinit_context: bool, prepared: PreparedRequest, req: *uws.Request, response_value: JSC.JSValue) void {
+        fn handleRequest(this: *ThisServer, should_deinit_context: *bool, prepared: PreparedRequest, req: *uws.Request, response_value: JSC.JSValue) void {
             const ctx = prepared.ctx;
 
             defer {
@@ -7488,7 +7488,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             ctx.defer_deinit_until_callback_completes = null;
 
-            if (should_deinit_context) {
+            if (should_deinit_context.*) {
                 ctx.deinit();
                 return;
             }
@@ -7515,7 +7515,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }) catch |err|
                 this.globalThis.takeException(err);
 
-            this.handleRequest(should_deinit_context, prepared, req, response_value);
+            this.handleRequest(&should_deinit_context, prepared, req, response_value);
         }
 
         pub fn onRequestFromSaved(

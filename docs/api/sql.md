@@ -451,7 +451,7 @@ try {
 
 ## Prepared Statements
 
-By default, Bun's SQL client automatically creates prepared statements for queries where it can be inferred that the query is static. This provides better performance. However, you can disable prepared statements by setting `prepare: false` in the connection options:
+By default, Bun's SQL client automatically creates named prepared statements for queries where it can be inferred that the query is static. This provides better performance. However, you can change this behavior by setting `prepare: false` in the connection options:
 
 ```ts
 const sql = new SQL({

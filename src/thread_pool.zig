@@ -648,6 +648,8 @@ pub const Thread = struct {
     var counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
+        bun.Mimalloc.mi_thread_set_in_threadpool();
+
         {
             var counter_buf: [100]u8 = undefined;
             const int = counter.fetchAdd(1, .seq_cst);

@@ -834,6 +834,15 @@ Date)
 
                   indentation"
     \``)});
+    expect("keeps no\\n\\nindentation").toMatchInlineSnapshot(${v(`\`
+"no existing
+
+indentation" 
+\``, `\`
+"keeps no
+
+indentation"
+\``)});
         });
       `,
     );

@@ -3039,7 +3039,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onMessage, .{
+                @call(bun.callmod_inline, Type.onMessage, .{
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
@@ -3079,7 +3079,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn onClose(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onClose, .{
+                @call(bun.callmod_inline, Type.onClose, .{
                     this,
                     ws,
                     code,
@@ -3088,7 +3088,7 @@ pub const WebSocketBehavior = extern struct {
             }
 
             pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
-                @call(.always_inline, Server.onWebSocketUpgrade, .{
+                @call(bun.callmod_inline, Server.onWebSocketUpgrade, .{
                     bun.cast(*Server, ptr),
                     @as(*NewApp(is_ssl).Response, @ptrCast(res)),
                     req,
@@ -3191,7 +3191,7 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
-    pub fn init(response: anytype) AnyResponse {
+    pub inline fn init(response: anytype) AnyResponse {
         return switch (@TypeOf(response)) {
             *NewApp(true).Response => .{ .SSL = response },
             *NewApp(false).Response => .{ .TCP = response },
@@ -3220,12 +3220,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn write(this: AnyResponse, data: []const u8) void {
-        return switch (this) {
-            .SSL => |resp| resp.write(data),
-            .TCP => |resp| resp.write(data),
-        };
-    }
+    pub const write = @compileError("this function is not provided to discourage repeatedly checking the response type. use `switch(...) { inline else => ... }` so that multiple calls");
 
     pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
         return switch (this) {
@@ -3292,7 +3287,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
                 handler(user_data, .{ .SSL = resp });
@@ -3302,8 +3297,8 @@ pub const AnyResponse = union(enum) {
             }
         };
         return switch (this) {
-            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, opcional_data),
-            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, opcional_data),
+            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, optional_data),
+            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, optional_data),
         };
     }
 
@@ -3357,7 +3352,8 @@ pub const AnyResponse = union(enum) {
 };
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {
-        const ssl_flag = @as(i32, @intFromBool(ssl));
+        pub const is_ssl = ssl;
+        const ssl_flag: i32 = @intFromBool(ssl);
         const ThisApp = @This();
 
         pub fn close(this: *ThisApp) void {
@@ -3496,6 +3492,27 @@ pub fn NewApp(comptime ssl: bool) type {
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
             uws_app_trace(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+        }
+        pub fn method(
+            app: *ThisApp,
+            method_: bun.http.Method,
+            pattern: [:0]const u8,
+            comptime UserDataType: type,
+            user_data: UserDataType,
+            comptime handler: (fn (UserDataType, *Request, *Response) void),
+        ) void {
+            switch (method_) {
+                .GET => app.get(pattern, UserDataType, user_data, handler),
+                .POST => app.post(pattern, UserDataType, user_data, handler),
+                .PUT => app.put(pattern, UserDataType, user_data, handler),
+                .DELETE => app.delete(pattern, UserDataType, user_data, handler),
+                .PATCH => app.patch(pattern, UserDataType, user_data, handler),
+                .OPTIONS => app.options(pattern, UserDataType, user_data, handler),
+                .HEAD => app.head(pattern, UserDataType, user_data, handler),
+                .CONNECT => app.connect(pattern, UserDataType, user_data, handler),
+                .TRACE => app.trace(pattern, UserDataType, user_data, handler),
+                else => @panic("TODO: implement other methods"),
+            }
         }
         pub fn any(
             app: *ThisApp,
@@ -4582,13 +4599,11 @@ pub const udp = struct {
     extern fn us_udp_socket_set_source_specific_membership(socket: ?*udp.Socket, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: c_int) c_int;
 
     pub const PacketBuffer = opaque {
-        const This = @This();
-
-        pub fn getPeer(this: *This, index: c_int) *std.posix.sockaddr.storage {
+        pub fn getPeer(this: *PacketBuffer, index: c_int) *std.posix.sockaddr.storage {
             return us_udp_packet_buffer_peer(this, index);
         }
 
-        pub fn getPayload(this: *This, index: c_int) []u8 {
+        pub fn getPayload(this: *PacketBuffer, index: c_int) []u8 {
             const payload = us_udp_packet_buffer_payload(this, index);
             const len = us_udp_packet_buffer_payload_length(this, index);
             return payload[0..@as(usize, @intCast(len))];
@@ -4608,3 +4623,7 @@ pub fn onThreadExit() void {
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
 
 pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;
+
+export fn BUN__warn__extra_ca_load_failed(filename: [*c]const u8, error_msg: [*c]const u8) void {
+    bun.Output.warn("ignoring extra certs from {s}, load failed: {s}", .{ filename, error_msg });
+}

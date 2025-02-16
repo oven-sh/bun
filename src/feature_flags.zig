@@ -13,9 +13,6 @@ pub const jsx_runtime_is_cjs = true;
 
 pub const tracing = true;
 
-// TODO: remove this flag, it should use bun.Output.scoped
-pub const verbose_watcher = false;
-
 pub const css_supports_fence = true;
 
 pub const enable_entry_cache = true;
@@ -155,12 +152,13 @@ pub fn isLibdeflateEnabled() bool {
     return !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE");
 }
 
-/// Enable Bun Kit's experimental bundler tools.
+/// Enable the "app" option in Bun.serve. This option will likely be removed
+/// in favor of HTML loaders and configuring framework options in bunfig.toml
 pub fn bake() bool {
     // In canary or if an environment variable is specified.
     return env.is_canary or env.isDebug or bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE");
 }
 
-/// Additional debugging features for Bake, such as the incremental visualizer.
+/// Additional debugging features for bake.DevServer, such as the incremental visualizer.
 /// To use them, extra flags are passed in addition to this one.
 pub const bake_debugging_features = env.is_canary or env.isDebug;

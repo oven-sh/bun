@@ -179,6 +179,32 @@ register_command(
     ${BUN_NODE_FALLBACKS_OUTPUTS}
 )
 
+# An embedded copy of react-refresh is used when the user forgets to install it.
+# The library is not versioned alongside React.
+set(BUN_REACT_REFRESH_OUTPUT ${BUN_NODE_FALLBACKS_OUTPUT}/react-refresh.js)
+register_command(
+  TARGET
+    bun-node-fallbacks-react-refresh
+  COMMENT
+    "Building node-fallbacks/react-refresh.js"
+  CWD
+    ${BUN_NODE_FALLBACKS_SOURCE}
+  COMMAND
+    ${BUN_EXECUTABLE} build
+      ${BUN_NODE_FALLBACKS_SOURCE}/node_modules/react-refresh/cjs/react-refresh-runtime.development.js
+      --outfile=${BUN_REACT_REFRESH_OUTPUT}
+      --target=browser
+      --format=cjs
+      --minify
+      --define:process.env.NODE_ENV=\"'development'\"
+  SOURCES
+    ${BUN_NODE_FALLBACKS_SOURCE}/package.json
+    ${BUN_NODE_FALLBACKS_SOURCE}/bun.lock
+    ${BUN_NODE_FALLBACKS_NODE_MODULES}
+  OUTPUTS
+    ${BUN_REACT_REFRESH_OUTPUT}
+)
+
 set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
 
 set(BUN_ERROR_CODE_SOURCES
@@ -404,6 +430,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ZigGlobalObject.lut.txt
   ${CWD}/src/bun.js/bindings/JSBuffer.cpp
   ${CWD}/src/bun.js/bindings/BunProcess.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingBuffer.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
@@ -415,6 +442,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
   ${CODEGEN_PATH}/JSBuffer.lut.h
   ${CODEGEN_PATH}/BunProcess.lut.h
+  ${CODEGEN_PATH}/ProcessBindingBuffer.lut.h
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
@@ -498,8 +526,7 @@ file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
-  ${CWD}/root.zig
-  ${CWD}/root_wasm.zig
+  ${CWD}/src/main.zig
   ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
@@ -508,6 +535,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_FALLBACK_DECODER_OUTPUT}
   ${BUN_RUNTIME_JS_OUTPUT}
   ${BUN_NODE_FALLBACKS_OUTPUTS}
+  ${BUN_REACT_REFRESH_OUTPUT}
   ${BUN_ERROR_CODE_OUTPUTS}
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
@@ -827,6 +855,15 @@ if(NOT WIN32)
       )
     endif()
 
+    if (ENABLE_ASAN)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=address
+      )
+      target_link_libraries(${bun} PUBLIC
+        -fsanitize=address
+      )
+    endif()
+
     target_compile_options(${bun} PUBLIC
       -Werror=return-type
       -Werror=return-stack-address
@@ -1052,6 +1089,7 @@ add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)
+  target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
 endif()
 
 if(USE_STATIC_SQLITE)

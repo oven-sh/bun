@@ -5,6 +5,7 @@ export default [
     name: "Request",
     construct: true,
     finalize: true,
+    final: false,
     klass: {},
     JSType: "0b11101110",
     estimatedSize: true,

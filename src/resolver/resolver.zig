@@ -1629,6 +1629,13 @@ pub const Resolver = struct {
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
     pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source: []const u8, specifier: []const u8) bool {
+        if (std.fs.path.isAbsolute(specifier)) {
+            const dir = bun.path.dirname(specifier, .auto);
+            const a = r.bustDirCache(dir);
+            const b = r.bustDirCache(specifier);
+            return a or b;
+        }
+
         if (!(bun.strings.startsWith(specifier, "./") or
             bun.strings.startsWith(specifier, "../"))) return false;
         if (!std.fs.path.isAbsolute(import_source)) return false;

@@ -301,7 +301,13 @@ pub fn crashHandler(
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
-                const trace = error_return_trace orelse get_backtrace: {
+                const trace = @as(?*std.builtin.StackTrace, if (error_return_trace) |ert|
+                    if (ert.index > 0)
+                        ert
+                    else
+                        null
+                else
+                    null) orelse get_backtrace: {
                     trace_buf = std.builtin.StackTrace{
                         .index = 0,
                         .instruction_addresses = &addr_buf,
@@ -1681,6 +1687,12 @@ pub const StoredTrace = struct {
         var frame = stored.trace();
         std.debug.captureStackTrace(begin orelse @returnAddress(), &frame);
         stored.index = frame.index;
+        for (frame.instruction_addresses[0..frame.index], 0..) |addr, i| {
+            if (addr == 0) {
+                stored.index = i;
+                break;
+            }
+        }
         return stored;
     }
 

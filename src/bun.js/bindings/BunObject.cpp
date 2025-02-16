@@ -492,12 +492,12 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
 
     JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
     JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
-    JSC::JSValue arg3 = callFrame->argument(2);
+    JSC::JSValue strict = callFrame->argument(2);
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
     MarkedArgumentBuffer gcBuffer;
 
-    if (arg3.isBoolean() && arg3.asBoolean()) {
+    if (strict.isBoolean() && strict.asBoolean()) {
 
         bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, &scope, true);
         RETURN_IF_EXCEPTION(scope, {});
@@ -787,7 +787,7 @@ public:
 
     DECLARE_INFO;
 
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     template<typename CellType, JSC::SubspaceAccess>
@@ -885,7 +885,6 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 
     // :'(
     object->reifyAllStaticProperties(lexicalGlobalObject);
-
     RETURN_IF_EXCEPTION(scope, void());
 
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);

@@ -1,6 +1,7 @@
 import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { gc } from "harness";
+import vm from "node:vm";
 
 const BufferModule = await import("buffer");
 
@@ -2116,7 +2117,7 @@ for (let withOverridenBufferWrite of [false, true]) {
         const buf = Buffer.from(ab);
 
         expect(buf instanceof Buffer).toBe(true);
-        // expect(buf.parent, buf.buffer);
+        expect(buf.parent, buf.buffer);
         expect(buf.buffer).toBe(ab);
         expect(buf.length).toBe(ab.byteLength);
 
@@ -2136,13 +2137,12 @@ for (let withOverridenBufferWrite of [false, true]) {
 
         // Now test protecting users from doing stupid things
 
-        // expect(function () {
-        //   function AB() {}
-        //   Object.setPrototypeOf(AB, ArrayBuffer);
-        //   Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
-        //   // Buffer.from(new AB());
-        // }).toThrow();
-        // console.log(origAB !== ab);
+        expect(function () {
+          function AB() {}
+          Object.setPrototypeOf(AB, ArrayBuffer);
+          Object.setPrototypeOf(AB.prototype, ArrayBuffer.prototype);
+          Buffer.from(new AB());
+        }).toThrow();
 
         // Test the byteOffset and length arguments
         {
@@ -2670,8 +2670,8 @@ for (let withOverridenBufferWrite of [false, true]) {
           });
 
         // Test that ArrayBuffer from a different context is detected correctly
-        // const arrayBuf = vm.runInNewContext("new ArrayBuffer()");
-        // expect(Buffer.byteLength(arrayBuf)).toBe(0);
+        const arrayBuf = vm.runInNewContext("new ArrayBuffer()");
+        expect(Buffer.byteLength(arrayBuf)).toBe(0);
 
         // Verify that invalid encodings are treated as utf8
         for (let i = 1; i < 10; i++) {
@@ -2979,4 +2979,32 @@ it("should not trim utf-8 start bytes at end of string", () => {
   // bugged
   const buf2 = Buffer.from("36e1", "hex");
   expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
+});
+
+it("Buffer.from(arrayBuffer)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab);
+  expect(buf.length).toBe(10);
+  expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(0);
+  expect(buf.byteLength).toBe(10);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+});
+it("Buffer.from(arrayBuffer, byteOffset)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab, 2);
+  expect(buf.length).toBe(8);
+  expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(2);
+  expect(buf.byteLength).toBe(8);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([12, 13, 14, 15, 16, 17, 18, 19]);
+});
+it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab, 3, 5);
+  expect(buf.length).toBe(5);
+  expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(3);
+  expect(buf.byteLength).toBe(5);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
 });

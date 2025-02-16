@@ -322,8 +322,6 @@ void NapiRef::clear()
 // class Reference
 // }
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
-
 static uint32_t getPropertyAttributes(napi_property_attributes attributes_)
 {
     const uint32_t attributes = static_cast<uint32_t>(attributes_);
@@ -892,6 +890,30 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
         *data = jsArrayBuffer->impl()->data();
     }
     *result = toNapi(jsArrayBuffer, globalObject);
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_is_buffer(napi_env env, napi_value value, bool* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+
+    auto jsValue = toJS(value);
+    // Despite documentation, Node.js's version of this function returns true for all kinds of
+    // TypedArray, not just Uint8Array
+    *result = jsValue.isCell() && isTypedArrayTypeIncludingDataView(jsValue.asCell()->type());
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_is_typedarray(napi_env env, napi_value value, bool* result)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ARG(env, value);
+    NAPI_CHECK_ARG(env, result);
+
+    auto jsValue = toJS(value);
+    *result = jsValue.isCell() && isTypedArrayType(jsValue.asCell()->type());
     NAPI_RETURN_SUCCESS(env);
 }
 

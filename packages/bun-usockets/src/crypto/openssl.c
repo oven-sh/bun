@@ -1589,22 +1589,40 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
                                            socket_ext_size, error);
 }
 
+// https://github.com/oven-sh/bun/issues/16995
+static void us_internal_zero_ssl_data_for_connected_socket_before_onopen(struct us_internal_ssl_socket_t *s) {
+  s->ssl = NULL;
+  s->ssl_write_wants_read = 0;
+  s->ssl_read_wants_write = 0;
+  s->fatal_error = 0;
+  s->handshake_state = HANDSHAKE_PENDING;
+}
+
 // TODO does this need more changes?
-struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
+struct us_socket_t *us_internal_ssl_socket_context_connect(
     struct us_internal_ssl_socket_context_t *context, const char *host,
-    int port, int options, int socket_ext_size, int* is_connected) {
-  return us_socket_context_connect(
+    int port, int options, int socket_ext_size, int* is_connecting) {
+  struct us_internal_ssl_socket_t *s = (struct us_internal_ssl_socket_t *)us_socket_context_connect(
       2, &context->sc, host, port, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
-          socket_ext_size, is_connected);
+          socket_ext_size, is_connecting);
+  if (*is_connecting) {
+    us_internal_zero_ssl_data_for_connected_socket_before_onopen(s);
+  }
+
+  return (struct us_socket_t*)s;
 }
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
+struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     struct us_internal_ssl_socket_context_t *context, const char *server_path,
     size_t pathlen, int options, int socket_ext_size) {
-  return (struct us_internal_ssl_socket_t *)us_socket_context_connect_unix(
+  struct us_socket_t *s = (struct us_socket_t *)us_socket_context_connect_unix(
       0, &context->sc, server_path, pathlen, options,
       sizeof(struct us_internal_ssl_socket_t) - sizeof(struct us_socket_t) +
           socket_ext_size);
+  if (s) {
+    us_internal_zero_ssl_data_for_connected_socket_before_onopen((struct us_internal_ssl_socket_t*) s);
+  }
+  return s;
 }
 
 static void ssl_on_open_without_sni(struct us_internal_ssl_socket_t *s, int is_client, char *ip, int ip_length) {

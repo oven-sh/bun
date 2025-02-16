@@ -1678,7 +1678,7 @@ pub const Api = struct {
         no_summary: ?bool = null,
 
         /// disable_hmr
-        disable_hmr: ?bool = null,
+        disable_hmr: bool = false,
 
         /// port
         port: ?u16 = null,
@@ -1705,6 +1705,12 @@ pub const Api = struct {
         serve_minify_syntax: ?bool = null,
         serve_minify_whitespace: ?bool = null,
         serve_minify_identifiers: ?bool = null,
+        serve_env_behavior: DotEnvBehavior = ._none,
+        serve_env_prefix: ?[]const u8 = null,
+        serve_splitting: bool = false,
+        serve_public_path: ?[]const u8 = null,
+        serve_hmr: ?bool = null,
+
         bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {

@@ -230,15 +230,13 @@ pub const CssColor = union(enum) {
             },
             .light_dark => |*light_dark| {
                 if (!dest.targets.isCompatible(css.compat.Feature.light_dark)) {
-                    // TODO(zack): lightningcss -> buncss
-                    try dest.writeStr("var(--lightningcss-light");
+                    try dest.writeStr("var(--buncss-light");
                     try dest.delim(',', false);
                     try light_dark.light.toCss(W, dest);
                     try dest.writeChar(')');
                     try dest.whitespace();
-                    try dest.writeStr("var(--lightningcss-dark");
+                    try dest.writeStr("var(--buncss-dark");
                     try dest.delim(',', false);
-                    try light_dark.dark.toCss(W, dest);
                     try light_dark.dark.toCss(W, dest);
                     return dest.writeChar(')');
                 }
@@ -365,7 +363,7 @@ pub const CssColor = union(enum) {
 
         if (this.* == .light_dark or other.* == .light_dark) {
             const this_light_dark = this.toLightDark(allocator);
-            const other_light_dark = this.toLightDark(allocator);
+            const other_light_dark = other.toLightDark(allocator);
 
             const al = this_light_dark.light_dark.light;
             const ad = this_light_dark.light_dark.dark;
@@ -508,7 +506,8 @@ pub const CssColor = union(enum) {
         }
 
         if (fallbacks.contains(ColorFallbackKind{ .lab = true })) {
-            this.* = this.toLAB(allocator).?;
+            const foo = this.toLAB(allocator).?;
+            this.* = foo;
         }
 
         return res;
@@ -532,7 +531,7 @@ pub const CssColor = union(enum) {
                 if (lab.* == .lab or lab.* == .lch and targets.shouldCompileSame(.lab_colors))
                     break :brk ColorFallbackKind.andBelow(.{ .lab = true });
                 if (lab.* == .oklab or lab.* == .oklch and targets.shouldCompileSame(.oklab_colors))
-                    break :brk ColorFallbackKind.andBelow(.{ .lab = true });
+                    break :brk ColorFallbackKind.andBelow(.{ .oklab = true });
                 return ColorFallbackKind.empty();
             },
             .predefined => |predefined| brk: {
@@ -2791,6 +2790,7 @@ pub fn parseColorMix(input: *css.Parser) Result(CssColor) {
     } else .{ .result = HueInterpolationMethod.shorter };
 
     const hue_method = hue_method_.unwrapOr(HueInterpolationMethod.shorter);
+    if (input.expectComma().asErr()) |e| return .{ .err = e };
 
     const first_percent_ = input.tryParse(css.Parser.expectPercentage, .{});
     const first_color = switch (CssColor.parse(input)) {
@@ -2820,9 +2820,9 @@ pub fn parseColorMix(input: *css.Parser) Result(CssColor) {
     };
 
     // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
-    const p1, const p2 = if (first_percent == null and second_percent == null) .{ 0.5, 0.5 } else brk: {
-        const p2 = second_percent orelse (1.0 - first_percent.?);
-        const p1 = first_percent orelse (1.0 - second_percent.?);
+    const p1: f32, const p2: f32 = if (first_percent == null and second_percent == null) .{ @as(f32, 0.5), @as(f32, 0.5) } else brk: {
+        const p2 = second_percent orelse (@as(f32, 1.0) - first_percent.?);
+        const p1 = first_percent orelse (@as(f32, 1.0) - second_percent.?);
         break :brk .{ p1, p2 };
     };
 
@@ -4011,7 +4011,7 @@ const color_conversions = struct {
             const xyz = _xyz.resolveMissing();
             const x = xyz.x / D50[0];
             const y = xyz.y / D50[1];
-            const z = xyz.y / D50[2];
+            const z = xyz.z / D50[2];
 
             // now compute f
 
@@ -4023,7 +4023,7 @@ const color_conversions = struct {
 
             const l = ((116.0 * f1) - 16.0) / 100.0;
             const a = 500.0 * (f0 - f1);
-            const b = 500.0 * (f1 - f2);
+            const b = 200.0 * (f1 - f2);
 
             return LAB{
                 .l = l,

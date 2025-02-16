@@ -705,7 +705,7 @@ pub const Blob = struct {
             const store = this.store.?;
             switch (store.data) {
                 .s3 => |*s3| {
-                    try S3File.writeFormat(s3, Formatter, formatter, writer, enable_ansi_colors);
+                    try S3File.writeFormat(s3, Formatter, formatter, writer, enable_ansi_colors, this.content_type, this.offset);
                 },
                 .file => |file| {
                     try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));
@@ -752,7 +752,7 @@ pub const Blob = struct {
         }
 
         const show_name = (this.is_jsdom_file and this.getNameString() != null) or (!this.name.isEmpty() and this.store != null and this.store.?.data == .bytes);
-        if (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0) {
+        if (!this.isS3() and (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0)) {
             try writer.writeAll(" {\n");
             {
                 formatter.indent += 1;
@@ -2060,7 +2060,7 @@ pub const Blob = struct {
                     .bytes = ByteStore.init(bytes, allocator),
                 },
                 .allocator = allocator,
-                .ref_count = std.atomic.Value(u32).init(1),
+                .ref_count = .init(1),
             });
             return store;
         }
@@ -5791,9 +5791,16 @@ pub const Blob = struct {
 
 pub const AnyBlob = union(enum) {
     Blob: Blob,
-    // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
     WTFStringImpl: bun.WTF.StringImpl,
+
+    pub fn fromOwnedSlice(allocator: std.mem.Allocator, bytes: []u8) AnyBlob {
+        return .{ .InternalBlob = .{ .bytes = .fromOwnedSlice(allocator, bytes) } };
+    }
+
+    pub fn fromArrayList(list: std.ArrayList(u8)) AnyBlob {
+        return .{ .InternalBlob = .{ .bytes = list } };
+    }
 
     /// Assumed that AnyBlob itself is covered by the caller.
     pub fn memoryCost(this: *const AnyBlob) usize {
@@ -5823,8 +5830,16 @@ pub const AnyBlob = union(enum) {
     pub inline fn fastSize(this: *const AnyBlob) Blob.SizeType {
         return switch (this.*) {
             .Blob => this.Blob.size,
-            .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteLength())),
-            else => @as(Blob.SizeType, @truncate(this.slice().len)),
+            .WTFStringImpl => @truncate(this.WTFStringImpl.byteLength()),
+            .InternalBlob => @truncate(this.slice().len),
+        };
+    }
+
+    pub inline fn size(this: *const AnyBlob) Blob.SizeType {
+        return switch (this.*) {
+            .Blob => this.Blob.size,
+            .WTFStringImpl => @truncate(this.WTFStringImpl.utf8ByteLength()),
+            else => @truncate(this.slice().len),
         };
     }
 
@@ -6056,22 +6071,6 @@ pub const AnyBlob = union(enum) {
                 return JSC.ArrayBuffer.create(global, out_bytes.slice(), TypedArrayView);
             },
         }
-    }
-
-    pub inline fn size(this: *const AnyBlob) Blob.SizeType {
-        return switch (this.*) {
-            .Blob => this.Blob.size,
-            .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
-            else => @as(Blob.SizeType, @truncate(this.slice().len)),
-        };
-    }
-
-    pub fn from(this: *AnyBlob, list: std.ArrayList(u8)) void {
-        this.* = .{
-            .InternalBlob = InternalBlob{
-                .bytes = list,
-            },
-        };
     }
 
     pub fn isDetached(this: *const AnyBlob) bool {

@@ -165,6 +165,24 @@ await sql`
 `;
 ```
 
+## `sql``.simple()`
+
+The PostgreSQL wire protocol supports two types of queries: "simple" and "extended". Simple queries can contain multiple statements but don't support parameters, while extended queries (the default) support parameters but only allow one statement.
+
+To run multiple statements in a single query, use `sql``.simple()`:
+
+```ts
+// Multiple statements in one query
+await sql`
+  SELECT 1;
+  SELECT 2;
+`.simple();
+```
+
+Simple queries are often useful for database migrations and setup scripts.
+
+Note that simple queries cannot use parameters (`${value}`). If you need parameters, you must split your query into separate statements.
+
 ### Unsafe Queries
 
 You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input.
@@ -431,6 +449,33 @@ try {
 } // Automatically released
 ```
 
+## Prepared Statements
+
+By default, Bun's SQL client automatically creates prepared statements for queries where it can be inferred that the query is static. This provides better performance and security. However, you can disable prepared statements by setting `prepare: false` in the connection options:
+
+```ts
+const sql = new SQL({
+  // ... other options ...
+  prepare: false, // Disable prepared statements
+});
+```
+
+When prepared statements are disabled:
+
+- Queries are executed using simple query protocol
+- Each query is sent to the server as a raw SQL string
+- Multiple statements can be executed in a single query (using `sql``.simple()`)
+- Parameter binding is still safe against SQL injection, but simple queries cannot include parameters
+- Each query is parsed and planned from scratch by the server
+
+You might want to disable prepared statements when:
+
+- Using PGBouncer in transaction mode (though since PGBouncer 1.21.0, protocol-level named prepared statements are supported when configured properly)
+- Debugging query execution plans
+- Working with dynamic SQL where query plans need to be regenerated frequently
+
+Note that disabling prepared statements may impact performance for queries that are executed frequently with different parameters, as the server needs to parse and plan each query from scratch.
+
 ## Error Handling
 
 The client provides typed errors for different failure scenarios:
@@ -501,7 +546,7 @@ The client provides typed errors for different failure scenarios:
 
 ## Numbers and BigInt
 
-Bun's SQL client includes special handling for large numbers that exceed the range of a 53-bit integer. Here’s how it works:
+Bun's SQL client includes special handling for large numbers that exceed the range of a 53-bit integer. Here's how it works:
 
 ```ts
 import { sql } from "bun";

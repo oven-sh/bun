@@ -135,7 +135,7 @@ type _Body = typeof globalThis extends { onerror: any }
       readonly text: () => Promise<string>;
     };
 
-import { S3FileOptions } from "bun";
+import { S3Options } from "bun";
 import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
 import type { MessagePort } from "worker_threads";
 import type { WebSocket as _WebSocket } from "ws";
@@ -675,15 +675,10 @@ declare global {
       };
 
   interface WritableStream<W = any> extends _WritableStream<W> {}
-  var WritableStream: typeof globalThis extends {
-    onerror: any;
-    WritableStream: infer T;
-  }
-    ? T
-    : {
-        prototype: WritableStream;
-        new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
-      };
+  var WritableStream: {
+    prototype: WritableStream;
+    new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
+  };
 
   interface Worker extends _Worker {}
   var Worker: typeof globalThis extends {
@@ -820,7 +815,7 @@ declare global {
     /**
      * Override the default S3 options
      */
-    s3?: S3FileOptions;
+    s3?: S3Options;
   }
 
   /**
@@ -943,8 +938,6 @@ declare global {
      */
     preconnect(url: string | URL): void;
   }
-
-  var fetch: Fetch;
 
   function queueMicrotask(callback: (...args: any[]) => void): void;
   /**
@@ -1956,24 +1949,15 @@ declare global {
     ? T
     : typeof Blob;
 
-  var Response: typeof globalThis extends {
-    onerror: any;
-    Response: infer T;
-  }
-    ? T
-    : typeof import("./fetch").Response;
+  var Response: typeof import("./fetch").Response;
 
-  var Request: typeof globalThis extends {
-    onerror: any;
-    Request: infer T;
-  }
-    ? T
-    : {
-        prototype: Request;
-        new (requestInfo: string, requestInit?: RequestInit): Request;
-        new (requestInfo: RequestInit & { url: string }): Request;
-        new (requestInfo: Request, requestInit?: RequestInit): Request;
-      };
+  var Request: {
+    prototype: Request;
+    new (requestInfo: string, requestInit?: RequestInit): Request;
+    new (requestInfo: RequestInit & { url: string }): Request;
+    new (requestInfo: Request, requestInit?: RequestInit): Request;
+    headers: Headers;
+  };
 
   interface Headers {
     /**

@@ -15,6 +15,7 @@
     },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true
+    // "types": ["../packages/bun-types"]
   },
   "include": [
     //

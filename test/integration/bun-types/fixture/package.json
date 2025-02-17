@@ -1,0 +1,14 @@
+{
+  "name": "fixture",
+  "module": "index.ts",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "type": "module"
+}

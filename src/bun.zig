@@ -3769,13 +3769,6 @@ pub const timespec = extern struct {
         return getRoughTickCount();
     }
 
-    /// This only exists for `process.binding('timers').getLibuvNow()`. See `ProcessBindingTimers.h`
-    /// for the rationale. That code needs to measure time the same way that our timers
-    /// implementation does; right now that means `timespec.now()`.
-    pub export fn Bun__timespecNowMs() i64 {
-        return now().ms();
-    }
-
     pub fn sinceNow(start: *const timespec) u64 {
         return now().duration(start).ns();
     }

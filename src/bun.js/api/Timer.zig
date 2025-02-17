@@ -1477,3 +1477,23 @@ pub const WTFTimer = struct {
 
     extern fn WTFTimer__fire(this: *RunLoopTimer) void;
 };
+
+pub const internal_bindings = struct {
+    /// Node.js has some tests that check whether timers fire at the right time. They check this
+    /// with the internal binding `getLibuvNow()`, which returns an integer in milliseconds. This
+    /// works because `getLibuvNow()` is also the clock that their timers implementation uses to
+    /// choose when to schedule timers.
+    ///
+    /// I've tried changing those tests to use `performance.now()` or `Date.now()`. But that always
+    /// introduces spurious failures, because neither of those functions use the same clock that the
+    /// timers implementation uses (for Bun this is `bun.timespec.now()`), so the tests end up
+    /// thinking that the timing is wrong (this also happens when I run the modified test in
+    /// Node.js). So the best course of action is for Bun to also expose a function that reveals the
+    /// clock that is used to schedule timers.
+    pub fn timerClockMs(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
+        _ = globalThis;
+        _ = callFrame;
+        const now = timespec.now().ms();
+        return .jsNumberFromInt64(now);
+    }
+};

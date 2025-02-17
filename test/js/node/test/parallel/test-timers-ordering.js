@@ -29,7 +29,7 @@ if (typeof Bun === 'undefined') {
   const { internalBinding } = require('internal/test/binding');
   binding = internalBinding('timers');
 } else {
-  binding = process.binding('timers');
+  binding = { getLibuvNow: require('bun:internal-for-testing').timerInternals.timerClockMs };
 }
 
 const N = 30;

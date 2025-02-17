@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define, InvalidThisBehavior } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -140,22 +140,27 @@ export default [
       ref: {
         fn: "doRef",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       refresh: {
         fn: "doRefresh",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       unref: {
         fn: "doUnref",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       hasRef: {
         fn: "hasRef",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       _destroyed: {
         getter: "getDestroyed",
@@ -163,6 +168,7 @@ export default [
       ["@@dispose"]: {
         fn: "dispose",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
     values: ["arguments", "callback"],
@@ -178,22 +184,27 @@ export default [
       ref: {
         fn: "doRef",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       refresh: {
         fn: "doRefresh",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       unref: {
         fn: "doUnref",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       hasRef: {
         fn: "hasRef",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       _destroyed: {
         getter: "getDestroyed",
@@ -201,6 +212,7 @@ export default [
       ["@@dispose"]: {
         fn: "dispose",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
     values: ["arguments", "callback"],

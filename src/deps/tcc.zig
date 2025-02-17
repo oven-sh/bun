@@ -218,6 +218,7 @@ pub const State = opaque {
     /// - Syntax/formatting error
     pub fn addFile(s: *State, filename: [:0]const u8) Error!void {
         if (tcc_add_file(s, filename.ptr) != 0) {
+            @branchHint(.unlikely);
             return error.CompileError;
         }
     }

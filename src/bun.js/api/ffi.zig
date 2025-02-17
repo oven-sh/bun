@@ -189,9 +189,6 @@ pub const FFI = struct {
                 var ffi_stderrp: *anyopaque = @extern(*anyopaque, .{ .name = "__stderrp" });
 
                 pub fn inject(state: *TCC.State) void {
-                    // _ = TCC.tcc_add_symbol(state, "__stdinp", ffi_stdinp);
-                    // _ = TCC.tcc_add_symbol(state, "__stdoutp", ffi_stdoutp);
-                    // _ = TCC.tcc_add_symbol(state, "__stderrp", ffi_stderrp);
                     state.addSymbolsComptime(.{
                         .__stdinp = ffi_stdinp,
                         .__stdoutp = ffi_stdoutp,

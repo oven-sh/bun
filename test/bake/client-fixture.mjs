@@ -42,6 +42,8 @@ function reset() {
   }
 }
 
+let allowWebSocketMessages = true;
+
 function createWindow(windowUrl) {
   window = new Window({
     url: windowUrl,
@@ -57,6 +59,12 @@ function createWindow(windowUrl) {
       url = new URL(url, window.location.origin).href;
       super(url, protocols, options);
       webSockets.push(this);
+      this.addEventListener("message", event => {
+        if (!allowWebSocketMessages) {
+          console.error("[E] WebSocket message received while messages are not allowed");
+          process.exit(2);
+        }
+      });
     }
     close() {
       super.close();
@@ -176,6 +184,9 @@ process.on("message", async message => {
     if (pendingReload) {
       pendingReload();
     }
+  }
+  if (message.type === "set-allow-websocket-messages") {
+    allowWebSocketMessages = message.args[0];
   }
   if (message.type === "hard-reload") {
     expectingReload = true;

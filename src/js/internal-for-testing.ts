@@ -172,3 +172,9 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
   "jsFunction_arrayBufferViewHasBuffer",
   1,
 );
+
+export const decodeURIComponentSIMD = $newCppFunction(
+  "decodeURIComponentSIMD.cpp",
+  "jsFunctionDecodeURIComponentSIMD",
+  1,
+);

@@ -40,7 +40,7 @@ const server = serve({
   // - Hot reloading (Bun v1.2.3+ required)
   development: true,
 
-  // < Bun v1.2.3, you could use the `fetch` option to handle API requests
+  // Prior to v1.2.3, the `fetch` option was used to handle all API requests. It is now optional.
   // async fetch(req) {
   //   // Return 404 for unmatched routes
   //   return new Response("Not Found", { status: 404 });

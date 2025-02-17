@@ -75,13 +75,13 @@ pub const State = opaque {
         var state = try State.new();
         errdefer state.deinit();
 
-        if (config.options) |options|
-            try state.setOptions(options);
-        if (config.outputType) |outputType|
-            try state.setOutputType(outputType);
-        if (config.err) |err_| {
+        // register error handler first so that other methods can stick error
+        // data in the context
+        if (config.err) |err_|
             state.setErrorFunc(ErrCtx, err_.ctx, err_.handler);
-        }
+
+        if (config.options) |options| try state.setOptions(options);
+        if (config.outputType) |outputType| try state.setOutputType(outputType);
 
         return state;
     }

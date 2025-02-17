@@ -48,7 +48,21 @@ pub const Error = error{
     /// Could not get a symbol for some reason
     RelocationError,
 };
+pub const OutputFormat = enum(c_int) {
+    /// Output will be run in memory
+    Memory = TCC_OUTPUT_MEMORY,
+    /// Executable file
+    Exe = TCC_OUTPUT_EXE,
+    /// Dynamic library
+    Dll = TCC_OUTPUT_DLL,
+    /// Object file
+    Obj = TCC_OUTPUT_OBJ,
+    /// Only preprocess
+    Preprocess = TCC_OUTPUT_PREPROCESS,
+};
 
+/// Nominal type for some registered symbol. Used to force `@ptrCast` usage without
+/// allowing for interop with other APIs taking `*anyopaque` pointers.
 pub const Symbol = opaque {
     const Callback = fn (?*anyopaque, [*:0]const u8, ?*const Symbol) void;
 };
@@ -56,12 +70,12 @@ pub const Symbol = opaque {
 pub const State = opaque {
     pub fn Config(ErrCtx: type) type {
         return struct {
-            options: ?[*:0]const u8 = null,
-            outputType: ?OutputFormat = null,
+            options: ?[:0]const u8 = null,
+            output_type: OutputFormat = .Memory,
             err: struct {
                 ctx: ?*ErrCtx = null,
                 handler: *const ErrorFunc(ErrCtx),
-            } = .{},
+            },
         };
     }
 
@@ -71,17 +85,27 @@ pub const State = opaque {
     }
 
     /// Create and initialize a new TCC compilation context
-    pub fn init(ErrCtx: type, config: Config(ErrCtx)) (Allocator.Error || Error)!State {
+    pub fn init(ErrCtx: type, config: Config(ErrCtx), comptime validate_options: bool) (Allocator.Error || Error)!*State {
         var state = try State.new();
         errdefer state.deinit();
 
+        // setOutputType has side effects that are conditional on existing
+        // options, so this must be called after setOptions
+        if (comptime !validate_options) {
+            if (config.options) |options| state.setOptions(options) catch if (comptime @import("builtin").mode == .Debug) {
+                @panic("Failed to set options");
+            };
+        }
+
         // register error handler first so that other methods can stick error
         // data in the context
-        if (config.err) |err_|
-            state.setErrorFunc(ErrCtx, err_.ctx, err_.handler);
+        state.setErrorFunc(ErrCtx, config.err.ctx, config.err.handler);
 
-        if (config.options) |options| try state.setOptions(options);
-        if (config.outputType) |outputType| try state.setOutputType(outputType);
+        if (comptime validate_options) {
+            if (config.options) |options| try state.setOptions(options);
+        }
+
+        try state.setOutputType(config.output_type);
 
         return state;
     }
@@ -89,7 +113,6 @@ pub const State = opaque {
     /// Free a TCC compilation context
     pub fn deinit(s: *State) void {
         tcc_delete(s);
-        s.* = undefined;
     }
 
     /// Set `CONFIG_TCCDIR` at runtime
@@ -99,7 +122,7 @@ pub const State = opaque {
 
     /// Set error/warning display callback
     pub fn setErrorFunc(s: *State, Context: type, errorOpaque: ?*Context, errorFunc: *const ErrorFunc(Context)) void {
-        tcc_set_error_func(s, errorOpaque, errorFunc);
+        tcc_set_error_func(s, errorOpaque, @ptrCast(errorFunc));
     }
 
     /// Return error/warning callback
@@ -114,7 +137,6 @@ pub const State = opaque {
 
     /// Set options as from command line (multiple supported)
     pub fn setOptions(s: *State, str: [:0]const u8) Error!void {
-        // TODO: is errno set?
         if (tcc_set_options(s, str.ptr) != 0) {
             @branchHint(.unlikely);
             return error.InvalidOptions;
@@ -146,6 +168,36 @@ pub const State = opaque {
     /// ```
     pub fn defineSymbol(s: *State, sym: [:0]const u8, value: [:0]const u8) void {
         tcc_define_symbol(s, sym.ptr, value.ptr);
+    }
+
+    /// Define multiple preprocessor symbols with comptime-known values.
+    /// ## Example
+    /// ```zig
+    /// const state = TCC.State.init() catch @panic("ahhh");
+    /// state.defineSymbols(.{
+    ///     .foo = "bar",
+    ///     .baz = 42, // ints will be stringified to "42"
+    /// });
+    /// ```
+    pub fn defineSymbolsComptime(s: *State, symbols: anytype) void {
+        const info = @typeInfo(@TypeOf(symbols));
+        var buf: [256]u8 = undefined;
+
+        inline for (info.@"struct".fields) |field| {
+            const value = @field(symbols, field.name);
+            switch (@typeInfo(field.type)) {
+                .int, .comptime_int => {
+                    s.defineSymbol(
+                        field.name,
+                        std.fmt.bufPrintZ(&buf, "{d}", .{value}) catch unreachable,
+                    );
+                },
+                .pointer => {
+                    s.defineSymbol(s, field.name, value);
+                },
+                else => @compileError("Macro '" ++ field.name ++ "' has unsupported symbol type: " ++ @typeName(@TypeOf(value))),
+            }
+        }
     }
 
     /// Undefine preprocess symbol 'sym'
@@ -181,19 +233,6 @@ pub const State = opaque {
 
     // ======================== Linking Commands ========================
 
-    pub const OutputFormat = enum(c_int) {
-        /// Output will be run in memory
-        Memory = TCC_OUTPUT_MEMORY,
-        /// Executable file
-        Exe = TCC_OUTPUT_EXE,
-        /// Dynamic library
-        Dll = TCC_OUTPUT_DLL,
-        /// Object file
-        Obj = TCC_OUTPUT_OBJ,
-        /// Only preprocess
-        Preprocess = TCC_OUTPUT_PREPROCESS,
-    };
-
     const OutputError = error{OutputError};
 
     /// Set output type. MUST BE CALLED before any compilation
@@ -222,7 +261,7 @@ pub const State = opaque {
     }
 
     /// Add a symbol to the compiled program
-    pub fn addSymbol(s: *State, name: [:0]const u8, val: ?*const anyopaque) Error!void {
+    pub fn addSymbol(s: *State, name: [:0]const u8, val: *const anyopaque) Error!void {
         if (tcc_add_symbol(s, name.ptr, val) != 0) {
             @branchHint(.unlikely);
             return error.InvalidSymbol;
@@ -271,16 +310,18 @@ pub const State = opaque {
     /// - `TCC_RELOCATE_AUTO`: Allocate and manage memory internally
     /// - `NULL`: return required memory size for the step below
     /// - memory address: copy code to memory passed by the caller
-    pub fn relocate(s1: *State, ptr: ?*anyopaque) Error!void {
-        if (tcc_relocate(s1, ptr) == -1) {
+    pub fn relocate(s: *State, ptr: ?*anyopaque) Error!usize {
+        const size = tcc_relocate(s, ptr);
+        if (size < 0) {
             @branchHint(.unlikely);
             return error.RelocationError;
         }
+        return @intCast(size);
     }
 
     /// Return symbol value or NULL if not found
     pub fn getSymbol(s: *State, name: [:0]const u8) ?*Symbol {
-        return tcc_get_symbol(s, name.ptr);
+        return @ptrCast(tcc_get_symbol(s, name.ptr));
     }
 
     /// Return symbol value or NULL if not found

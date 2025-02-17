@@ -146,17 +146,13 @@ pub const FFI = struct {
                 switch (this.*) {
                     .file => {
                         current_file_for_errors.* = this.file;
-                        if (TCC.tcc_add_file(state, this.file) != 0) {
-                            return error.CompilationError;
-                        }
+                        state.addFile(this.file) catch return error.CompilationError;
                         current_file_for_errors.* = "";
                     },
                     .files => {
                         for (this.files.items) |file| {
                             current_file_for_errors.* = file;
-                            if (TCC.tcc_add_file(state, file) != 0) {
-                                return error.CompilationError;
-                            }
+                            state.addFile(file) catch return error.CompilationError;
                             current_file_for_errors.* = "";
                         }
                     },
@@ -241,7 +237,8 @@ pub const FFI = struct {
             }
         };
 
-        pub fn handleCompilationError(this: *CompileC, message: ?[*:0]const u8) callconv(.C) void {
+        pub fn handleCompilationError(this_: ?*CompileC, message: ?[*:0]const u8) callconv(.C) void {
+            const this = this_ orelse return;
             var msg = std.mem.span(message orelse "");
             if (msg.len == 0) return;
 
@@ -254,6 +251,20 @@ pub const FFI = struct {
             msg = msg[offset..];
 
             this.deferred_errors.append(bun.default_allocator, bun.default_allocator.dupe(u8, msg) catch bun.outOfMemory()) catch bun.outOfMemory();
+        }
+
+        const DeferredError = error{DeferredErrors};
+
+        inline fn hasDeferredErrors(this: *CompileC) bool {
+            return this.deferred_errors.items.len > 0;
+        }
+
+        /// Returns DeferredError if any errors from tinycc were registered
+        /// via `handleCompilationError`
+        inline fn errorCheck(this: *CompileC) DeferredError!void {
+            if (this.deferred_errors.items.len > 0) {
+                return error.DeferredErrors;
+            }
         }
 
         pub const default_tcc_options: [:0]const u8 = "-std=c11 -Wl,--export-all-symbols -g -O2";
@@ -334,26 +345,31 @@ pub const FFI = struct {
         }
 
         pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.TCCState, []u8 } {
-            const state = TCC.tcc_new() orelse {
-                return globalThis.throw("TinyCC failed to initialize", .{});
+            const compile_options: [:0]const u8 = if (this.flags.len > 0)
+                this.flags
+            else if (bun.getenvZ("BUN_TCC_OPTIONS")) |tcc_options|
+                @ptrCast(tcc_options)
+            else
+                default_tcc_options;
+
+            // TODO: correctly handle invalid user-provided options
+            const state = TCC.State.init(CompileC, .{
+                .options = compile_options,
+                .err = .{ .ctx = this, .handler = &handleCompilationError },
+            }, true) catch |e| switch (e) {
+                error.OutOfMemory => return error.OutOfMemory,
+                else => {
+                    bun.debugAssert(this.hasDeferredErrors());
+                    return error.DeferredErrors;
+                },
             };
-            TCC.tcc_set_error_func(state, this, @ptrCast(&handleCompilationError));
-            if (this.flags.len > 0) {
-                TCC.tcc_set_options(state, this.flags.ptr);
-            } else if (bun.getenvZ("BUN_TCC_OPTIONS")) |tcc_options| {
-                TCC.tcc_set_options(state, @ptrCast(tcc_options));
-            } else {
-                TCC.tcc_set_options(state, default_tcc_options);
-            }
-            _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
-            errdefer TCC.tcc_delete(state);
 
             var pathbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
 
             if (CompilerRT.dir()) |compiler_rt_dir| {
-                if (TCC.tcc_add_sysinclude_path(state, compiler_rt_dir) == -1) {
+                state.addSysIncludePath(compiler_rt_dir) catch {
                     debug("TinyCC failed to add sysinclude path", .{});
-                }
+                };
             }
 
             if (Environment.isMac) {
@@ -366,14 +382,11 @@ pub const FFI = struct {
                     for (dirs_to_try) |sdkroot| {
                         if (sdkroot.len > 0) {
                             const include_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "include" }, .auto);
-                            if (TCC.tcc_add_sysinclude_path(state, include_dir.ptr) == -1) {
-                                return globalThis.throw("TinyCC failed to add sysinclude path", .{});
-                            }
+                            state.addSysIncludePath(include_dir) catch return globalThis.throw("TinyCC failed to add sysinclude path", .{});
 
                             const lib_dir = bun.path.joinAbsStringBufZ(sdkroot, &pathbuf, &.{ "usr", "lib" }, .auto);
-                            if (TCC.tcc_add_library_path(state, lib_dir.ptr) == -1) {
-                                return globalThis.throw("TinyCC failed to add library path", .{});
-                            }
+                            state.addLibraryPath(lib_dir) catch return globalThis.throw("TinyCC failed to add library path", .{});
+
                             break :add_system_include_dir;
                         }
                     }
@@ -381,80 +394,70 @@ pub const FFI = struct {
 
                 if (Environment.isAarch64) {
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/include").isTrue()) {
-                        if (TCC.tcc_add_include_path(state, "/opt/homebrew/include") == -1) {
+                        state.addSysIncludePath("/opt/homebrew/include") catch {
                             debug("TinyCC failed to add library path", .{});
-                        }
+                        };
                     }
 
                     if (bun.sys.directoryExistsAt(std.fs.cwd(), "/opt/homebrew/lib").isTrue()) {
-                        if (TCC.tcc_add_library_path(state, "/opt/homebrew/lib") == -1) {
+                        state.addLibraryPath("/opt/homebrew/lib") catch {
                             debug("TinyCC failed to add library path", .{});
-                        }
+                        };
                     }
                 }
             } else if (Environment.isLinux) {
                 if (getSystemIncludeDir()) |include_dir| {
-                    if (TCC.tcc_add_sysinclude_path(state, include_dir) == -1) {
-                        debug("TinyCC failed to add library path", .{});
-                    }
+                    state.addSysIncludePath(include_dir) catch {
+                        debug("TinyCC failed to add sysinclude path", .{});
+                    };
                 }
 
                 if (getSystemLibraryDir()) |library_dir| {
-                    if (TCC.tcc_add_library_path(state, library_dir) == -1) {
+                    state.addLibraryPath(library_dir) catch {
                         debug("TinyCC failed to add library path", .{});
-                    }
+                    };
                 }
             }
 
             if (Environment.isPosix) {
                 if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/include").isTrue()) {
-                    if (TCC.tcc_add_sysinclude_path(state, "/usr/local/include") == -1) {
-                        debug("TinyCC failed to add library path", .{});
-                    }
+                    state.addSysIncludePath("/usr/local/include") catch {
+                        debug("TinyCC failed to add sysinclude path", .{});
+                    };
                 }
 
                 if (bun.sys.directoryExistsAt(std.fs.cwd(), "/usr/local/lib").isTrue()) {
-                    if (TCC.tcc_add_library_path(state, "/usr/local/lib") == -1) {
+                    state.addLibraryPath("/usr/local/lib") catch {
                         debug("TinyCC failed to add library path", .{});
-                    }
+                    };
                 }
             }
 
-            if (this.deferred_errors.items.len > 0) {
-                return error.DeferredErrors;
-            }
+            try this.errorCheck();
 
             for (this.include_dirs.items) |include_dir| {
-                if (TCC.tcc_add_include_path(state, include_dir) == -1) {}
-
-                if (this.deferred_errors.items.len > 0) {
+                state.addSysIncludePath(include_dir) catch {
+                    bun.debugAssert(this.hasDeferredErrors());
                     return error.DeferredErrors;
-                }
+                };
             }
 
-            if (this.deferred_errors.items.len > 0) {
-                return error.DeferredErrors;
-            }
+            try this.errorCheck();
 
             CompilerRT.define(state);
 
-            if (this.deferred_errors.items.len > 0) {
-                return error.DeferredErrors;
-            }
+            try this.errorCheck();
 
             for (this.symbols.map.values()) |*symbol| {
                 if (symbol.needsNapiEnv()) {
-                    _ = TCC.tcc_add_symbol(state, "Bun__thisFFIModuleNapiEnv", globalThis);
+                    state.addSymbol("Bun__thisFFIModuleNapiEnv", globalThis) catch return error.DeferredErrors;
                     break;
                 }
             }
 
             for (this.define.items) |define| {
-                TCC.tcc_define_symbol(state, define[0], define[1]);
-
-                if (this.deferred_errors.items.len > 0) {
-                    return error.DeferredErrors;
-                }
+                state.defineSymbol(define[0], define[1]);
+                try this.errorCheck();
             }
 
             this.source.add(state, &this.current_file_for_errors) catch {
@@ -471,38 +474,26 @@ pub const FFI = struct {
             CompilerRT.inject(state);
             stdarg.inject(state);
 
-            if (this.deferred_errors.items.len > 0) {
-                return error.DeferredErrors;
-            }
+            try this.errorCheck();
 
             for (this.library_dirs.items) |library_dir| {
-                if (TCC.tcc_add_library_path(state, library_dir) == -1) {}
+                // register all, even if some fail. Only fail after all have been registered.
+                state.addLibraryPath(library_dir) catch {
+                    debug("TinyCC failed to add library path", .{});
+                };
             }
-
-            if (this.deferred_errors.items.len > 0) {
-                return error.DeferredErrors;
-            }
+            try this.errorCheck();
 
             for (this.libraries.items) |library| {
-                _ = TCC.tcc_add_library(state, library);
-
-                if (this.deferred_errors.items.len > 0) {
-                    break;
-                }
+                // register all, even if some fail.
+                state.addLibrary(library) catch {};
             }
+            try this.errorCheck();
 
-            if (this.deferred_errors.items.len > 0) {
+            const relocation_size = state.relocate(null) catch {
+                bun.debugAssert(this.hasDeferredErrors());
                 return error.DeferredErrors;
-            }
-
-            const relocation_size = TCC.tcc_relocate(state, null);
-            if (this.deferred_errors.items.len > 0) {
-                return error.DeferredErrors;
-            }
-
-            if (relocation_size < 0) {
-                return globalThis.throw("Unexpected: tcc_relocate returned a negative value", .{});
-            }
+            };
 
             const bytes: []u8 = try bun.default_allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
             // We cannot free these bytes, evidently.
@@ -510,28 +501,26 @@ pub const FFI = struct {
             if (comptime Environment.isAarch64 and Environment.isMac) {
                 pthread_jit_write_protect_np(false);
             }
-            _ = TCC.tcc_relocate(state, bytes.ptr);
+            // FIXME: do we need to relocate twice?
+            _ = state.relocate(bytes.ptr) catch return error.DeferredErrors;
             if (comptime Environment.isAarch64 and Environment.isMac) {
                 pthread_jit_write_protect_np(true);
             }
 
-            if (this.deferred_errors.items.len > 0) {
-                return error.DeferredErrors;
-            }
+            // if errors got added, we would have returned in the relocation catch.
+            bun.debugAssert(this.deferred_errors.items.len == 0);
 
             for (this.symbols.map.keys(), this.symbols.map.values()) |symbol, *function| {
+                // FIXME: why are we duping here? can we at least use a stack
+                // fallback allocator?
                 const duped = bun.default_allocator.dupeZ(u8, symbol) catch bun.outOfMemory();
                 defer bun.default_allocator.free(duped);
-                if (TCC.tcc_get_symbol(state, duped)) |function_ptr| {
-                    function.symbol_from_dynamic_library = function_ptr;
-                } else {
+                function.symbol_from_dynamic_library = state.getSymbol(duped) orelse {
                     return globalThis.throw("{} is missing from {s}. Was it included in the source code?", .{ bun.fmt.quote(symbol), this.source.first() });
-                }
+                };
             }
 
-            if (this.deferred_errors.items.len > 0) {
-                return error.DeferredErrors;
-            }
+            try this.errorCheck();
 
             return .{ state, bytes };
         }
@@ -784,9 +773,7 @@ pub const FFI = struct {
             }
         };
         defer {
-            if (tcc_state) |state| {
-                TCC.tcc_delete(state);
-            }
+            if (tcc_state) |state| state.deinit();
 
             // TODO: upgrade tinycc because they improved the way memory management works for this
             // we are unable to free memory safely in certain cases here.
@@ -832,6 +819,7 @@ pub const FFI = struct {
             }
         }
 
+        // TODO: pub usingnamespace bun.New(FFI)
         var lib = bun.default_allocator.create(FFI) catch bun.outOfMemory();
         lib.* = .{
             .dylib = null,
@@ -920,7 +908,7 @@ pub const FFI = struct {
 
         if (this.shared_state) |state| {
             this.shared_state = null;
-            TCC.tcc_delete(state);
+            state.deinit();
         }
 
         const allocator = VirtualMachine.get().allocator;
@@ -1523,6 +1511,13 @@ pub const FFI = struct {
             },
         };
 
+        fn fail(this: *Function, comptime msg: []const u8) void {
+            if (this.step != .failed) {
+                @branchHint(.likely);
+                this.step = .{ .failed = .{ .msg = msg, .allocated = false } };
+            }
+        }
+
         pub fn ffiHeader() string {
             return if (Environment.codegen_embed)
                 @embedFile("./FFI.h")
@@ -1530,8 +1525,8 @@ pub const FFI = struct {
                 bun.runtimeEmbedFile(.src, "bun.js/api/FFI.h");
         }
 
-        pub fn handleTCCError(ctx: ?*anyopaque, message: [*c]const u8) callconv(.C) void {
-            var this = bun.cast(*Function, ctx.?);
+        pub fn handleTCCError(ctx: ?*Function, message: [*c]const u8) callconv(.C) void {
+            var this = ctx.?;
             var msg = std.mem.span(message);
             if (msg.len > 0) {
                 var offset: usize = 0;
@@ -1559,81 +1554,58 @@ pub const FFI = struct {
 
             try source_code.append(0);
             defer source_code.deinit();
+            const state = TCC.State.init(Function, .{
+                .options = tcc_options,
+                .err = .{ .ctx = this, .handler = handleTCCError },
+            }, false) catch return error.TCCMissing;
 
-            const state = TCC.tcc_new() orelse return error.TCCMissing;
-            TCC.tcc_set_options(state, tcc_options);
-            // addSharedLibPaths(state);
-            TCC.tcc_set_error_func(state, this, handleTCCError);
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    TCC.tcc_delete(state);
+                    state.deinit();
                     this.state = null;
                 }
             }
 
-            _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
-
-            _ = TCC.tcc_add_symbol(state, "Bun__thisFFIModuleNapiEnv", globalObject);
+            _ = state.addSymbol("Bun__thisFFIModuleNapiEnv", globalObject) catch {
+                this.fail("Failed to add NAPI env symbol");
+                return;
+            };
 
             CompilerRT.define(state);
 
-            // TCC.tcc_define_symbol(
-            //     state,
-            //     "Bun_FFI_PointerOffsetToArgumentsCount",
-            //     std.fmt.bufPrintZ(symbol_buf[8..], "{d}", .{Bun_FFI_PointerOffsetToArgumentsCount}) catch unreachable,
-            // );
-
-            const compilation_result = TCC.tcc_compile_string(
-                state,
-                @ptrCast(source_code.items.ptr),
-            );
-            // did tcc report an error?
-            if (this.step == .failed) {
+            state.compileString(@ptrCast(source_code.items)) catch {
+                this.fail("Failed to compile source code");
                 return;
-            }
+            };
 
-            // did tcc report failure but never called the error callback?
-            if (compilation_result == -1) {
-                this.step = .{ .failed = .{ .msg = "tcc returned -1, which means it failed" } };
-                return;
-            }
             CompilerRT.inject(state);
-            _ = TCC.tcc_add_symbol(state, this.base_name.?, this.symbol_from_dynamic_library.?);
-
-            if (this.step == .failed) {
+            state.addSymbol(this.base_name.?, this.symbol_from_dynamic_library.?) catch {
+                bun.debugAssert(this.step == .failed);
                 return;
-            }
+            };
 
-            const relocation_size = TCC.tcc_relocate(state, null);
-            if (this.step == .failed) {
+            const relocation_size = state.relocate(null) catch {
+                this.fail("tcc_relocate returned a negative value");
                 return;
-            }
+            };
 
-            if (relocation_size < 0) {
-                if (this.step != .failed)
-                    this.step = .{ .failed = .{ .msg = "tcc_relocate returned a negative value" } };
-                return;
-            }
-
-            const bytes: []u8 = try allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
+            const bytes: []u8 = try allocator.alloc(u8, relocation_size);
             defer {
-                if (this.step == .failed) {
-                    allocator.free(bytes);
-                }
+                if (this.step == .failed) allocator.free(bytes);
             }
 
             if (comptime Environment.isAarch64 and Environment.isMac) {
                 pthread_jit_write_protect_np(false);
             }
+            // FIXME: do we need to relocate twice?
             _ = TCC.tcc_relocate(state, bytes.ptr);
             if (comptime Environment.isAarch64 and Environment.isMac) {
                 pthread_jit_write_protect_np(true);
             }
 
-            const symbol = TCC.tcc_get_symbol(state, "JSFunctionCall") orelse {
-                this.step = .{ .failed = .{ .msg = "missing generated symbol in source code" } };
-
+            const symbol = state.getSymbol("JSFunctionCall") orelse {
+                this.fail("missing generated symbol in source code");
                 return;
             };
 
@@ -1670,42 +1642,40 @@ pub const FFI = struct {
 
             try source_code.append(0);
             // defer source_code.deinit();
-            const state = TCC.tcc_new() orelse return error.TCCMissing;
-            TCC.tcc_set_options(state, tcc_options);
-            TCC.tcc_set_error_func(state, this, handleTCCError);
+
+            const state = TCC.State.init(Function, .{
+                .options = tcc_options,
+                .err = .{ .ctx = this, .handler = handleTCCError },
+            }, false) catch |e| switch (e) {
+                error.OutOfMemory => return error.TCCMissing,
+                // 1. .Memory is always a valid option, so InvalidOptions is
+                //    impossible
+                // 2. other throwable functions arent called, so their errors
+                //    aren't possible
+                else => unreachable,
+            };
             this.state = state;
             defer {
                 if (this.step == .failed) {
-                    TCC.tcc_delete(state);
+                    state.deinit();
                     this.state = null;
                 }
             }
 
-            _ = TCC.tcc_set_output_type(state, TCC.TCC_OUTPUT_MEMORY);
-
-            _ = TCC.tcc_add_symbol(state, "Bun__thisFFIModuleNapiEnv", js_context);
+            state.addSymbol("Bun__thisFFIModuleNapiEnv", js_context) catch {
+                this.fail("Failed to add NAPI env symbol");
+                return;
+            };
 
             CompilerRT.define(state);
 
-            const compilation_result = TCC.tcc_compile_string(
-                state,
-                @ptrCast(source_code.items.ptr),
-            );
-            // did tcc report an error?
-            if (this.step == .failed) {
+            state.compileString(@ptrCast(source_code.items)) catch {
+                this.fail("Failed to compile source code");
                 return;
-            }
-
-            // did tcc report failure but never called the error callback?
-            if (compilation_result == -1) {
-                this.step = .{ .failed = .{ .msg = "tcc returned -1, which means it failed" } };
-
-                return;
-            }
+            };
 
             CompilerRT.inject(state);
-            _ = TCC.tcc_add_symbol(
-                state,
+            _ = state.addSymbol(
                 "FFI_Callback_call",
                 // TODO: stage2 - make these ptrs
                 if (is_threadsafe)
@@ -1721,16 +1691,16 @@ pub const FFI = struct {
                     7 => FFI_Callback_call_7,
                     else => FFI_Callback_call,
                 },
-            );
-            const relocation_size = TCC.tcc_relocate(state, null);
-
-            if (relocation_size < 0) {
-                if (this.step != .failed)
-                    this.step = .{ .failed = .{ .msg = "tcc_relocate returned a negative value" } };
+            ) catch {
+                this.fail("Failed to add FFI callback symbol");
                 return;
-            }
+            };
+            const relocation_size = state.relocate(null) catch {
+                this.fail("tcc_relocate returned a negative value");
+                return;
+            };
 
-            const bytes: []u8 = try allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
+            const bytes: []u8 = try allocator.alloc(u8, relocation_size);
             defer {
                 if (this.step == .failed) {
                     allocator.free(bytes);
@@ -1740,14 +1710,14 @@ pub const FFI = struct {
             if (comptime Environment.isAarch64 and Environment.isMac) {
                 pthread_jit_write_protect_np(false);
             }
+            // FIXME: do we need to relocate twice?
             _ = TCC.tcc_relocate(state, bytes.ptr);
             if (comptime Environment.isAarch64 and Environment.isMac) {
                 pthread_jit_write_protect_np(true);
             }
 
-            const symbol = TCC.tcc_get_symbol(state, "my_callback_function") orelse {
-                this.step = .{ .failed = .{ .msg = "missing generated symbol in source code" } };
-
+            const symbol = state.getSymbol("my_callback_function") orelse {
+                this.fail("missing generated symbol in source code");
                 return;
             };
 
@@ -2472,38 +2442,46 @@ const CompilerRT = struct {
         }
 
         const Sizes = @import("../bindings/sizes.zig");
-        var symbol_buf: [256]u8 = undefined;
-        TCC.tcc_define_symbol(
-            state,
-            "Bun_FFI_PointerOffsetToArgumentsList",
-            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{Sizes.Bun_FFI_PointerOffsetToArgumentsList}) catch unreachable,
-        );
         const offsets = Offsets.get();
-        TCC.tcc_define_symbol(
-            state,
-            "JSArrayBufferView__offsetOfLength",
-            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSArrayBufferView__offsetOfLength}) catch unreachable,
-        );
-        TCC.tcc_define_symbol(
-            state,
-            "JSArrayBufferView__offsetOfVector",
-            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSArrayBufferView__offsetOfVector}) catch unreachable,
-        );
-        TCC.tcc_define_symbol(
-            state,
-            "JSCell__offsetOfType",
-            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSCell__offsetOfType}) catch unreachable,
-        );
-        TCC.tcc_define_symbol(
-            state,
-            "JSTypeArrayBufferViewMin",
-            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{@intFromEnum(JSC.JSValue.JSType.min_typed_array)}) catch unreachable,
-        );
-        TCC.tcc_define_symbol(
-            state,
-            "JSTypeArrayBufferViewMax",
-            std.fmt.bufPrintZ(&symbol_buf, "{d}", .{@intFromEnum(JSC.JSValue.JSType.max_typed_array)}) catch unreachable,
-        );
+        // TCC.tcc_define_symbol(
+        //     state,
+        //     "Bun_FFI_PointerOffsetToArgumentsList",
+        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{Sizes.Bun_FFI_PointerOffsetToArgumentsList}) catch unreachable,
+        // );
+        // const offsets = Offsets.get();
+        // TCC.tcc_define_symbol(
+        //     state,
+        //     "JSArrayBufferView__offsetOfLength",
+        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSArrayBufferView__offsetOfLength}) catch unreachable,
+        // );
+        // TCC.tcc_define_symbol(
+        //     state,
+        //     "JSArrayBufferView__offsetOfVector",
+        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSArrayBufferView__offsetOfVector}) catch unreachable,
+        // );
+        // TCC.tcc_define_symbol(
+        //     state,
+        //     "JSCell__offsetOfType",
+        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSCell__offsetOfType}) catch unreachable,
+        // );
+        // TCC.tcc_define_symbol(
+        //     state,
+        //     "JSTypeArrayBufferViewMin",
+        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{@intFromEnum(JSC.JSValue.JSType.min_typed_array)}) catch unreachable,
+        // );
+        // TCC.tcc_define_symbol(
+        //     state,
+        //     "JSTypeArrayBufferViewMax",
+        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{@intFromEnum(JSC.JSValue.JSType.max_typed_array)}) catch unreachable,
+        // );
+        state.defineSymbolsComptime(.{
+            .Bun_FFI_PointerOffsetToArgumentsList = Sizes.Bun_FFI_PointerOffsetToArgumentsList,
+            .JSArrayBufferView__offsetOfLength = offsets.JSArrayBufferView__offsetOfLength,
+            .JSArrayBufferView__offsetOfVector = offsets.JSArrayBufferView__offsetOfVector,
+            .JSCell__offsetOfType = offsets.JSCell__offsetOfType,
+            .JSTypeArrayBufferViewMin = @intFromEnum(JSC.JSValue.JSType.min_typed_array),
+            .JSTypeArrayBufferViewMax = @intFromEnum(JSC.JSValue.JSType.max_typed_array),
+        });
     }
 
     pub fn inject(state: *TCC.TCCState) void {

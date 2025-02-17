@@ -2389,8 +2389,8 @@ const CompilerRT = struct {
 
     pub fn define(state: *TCC.State) void {
         if (comptime Environment.isX64) {
-            state.defineSymbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
-            state.compileString(state, @embedFile(("libtcc1.c"))) catch {
+            state.defineSymbol("NEEDS_COMPILER_RT_FUNCTIONS", "1");
+            state.compileString(@embedFile(("libtcc1.c"))) catch {
                 if (bun.Environment.isDebug) {
                     @panic("Failed to compile libtcc1.c");
                 }

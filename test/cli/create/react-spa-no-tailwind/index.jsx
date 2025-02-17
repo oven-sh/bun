@@ -1,5 +1,3 @@
-import classNames from "classnames";
-import React from "react";
 import "./styles.css";
 
 import Features from "./components/Features";
@@ -8,7 +6,7 @@ import Hero from "./components/Hero";
 
 function App() {
   return (
-    <div className={classNames("app")}>
+    <div className="app">
       <main className="container">
         <Hero />
         <Features />

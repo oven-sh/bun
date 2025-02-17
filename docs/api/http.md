@@ -8,19 +8,393 @@ To start a high-performance HTTP server with a clean API, the recommended approa
 
 ## `Bun.serve()`
 
-Start an HTTP server in Bun with `Bun.serve`.
+Use `Bun.serve` to start an HTTP server in Bun.
 
 ```ts
 Bun.serve({
+  // `routes` requires Bun v1.2.3+
+  routes: {
+    // Static routes
+    "/api/status": new Response("OK"),
+
+    // Dynamic routes
+    "/users/:id": req => {
+      return new Response(`Hello User ${req.params.id}!`);
+    },
+
+    // Per-HTTP method handlers
+    "/api/posts": {
+      GET: () => new Response("List posts"),
+      POST: async req => {
+        const body = await req.json();
+        return Response.json({ created: true, ...body });
+      },
+    },
+
+    // Wildcard route for all routes that start with "/api/" and aren't otherwise matched
+    "/api/*": Response.json({ message: "Not found" }, { status: 404 }),
+
+    // Redirect from /blog/hello to /blog/hello/world
+    "/blog/hello": Response.redirect("/blog/hello/world"),
+
+    // Serve a file by buffering it in memory
+    "/favicon.ico": new Response(await Bun.file("./favicon.ico").bytes(), {
+      headers: {
+        "Content-Type": "image/x-icon",
+      },
+    }),
+  },
+
+  // (optional) fallback for unmatched routes:
+  // Required if < Bun v1.2.3
   fetch(req) {
-    return new Response("Bun!");
+    return new Response("Not Found", { status: 404 });
   },
 });
 ```
 
+### Routing
+
+Routes in `Bun.serve()` receive a `BunRequest` (which extends [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request)) and return a [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) or `Promise<Response>`. This makes it easier to use the same code for both sending & receiving HTTP requests.
+
+```ts
+// Simplified for brevity
+interface BunRequest<T extends string> extends Request {
+  params: Record<T, string>;
+}
+```
+
+#### Async/await in routes
+
+You can use async/await in route handlers to return a `Promise<Response>`.
+
+```ts
+import { sql, serve } from "bun";
+
+serve({
+  port: 3001,
+  routes: {
+    "/api/version": async () => {
+      const [version] = await sql`SELECT version()`;
+      return Response.json(version);
+    },
+  },
+});
+```
+
+#### Promise in routes
+
+You can also return a `Promise<Response>` from a route handler.
+
+```ts
+import { sql, serve } from "bun";
+
+serve({
+  routes: {
+    "/api/version": () => {
+      return new Promise(resolve => {
+        setTimeout(async () => {
+          const [version] = await sql`SELECT version()`;
+          resolve(Response.json(version));
+        }, 100);
+      });
+    },
+  },
+});
+```
+
+#### Type-safe route parameters
+
+TypeScript parses route parameters when passed as a string literal, so that your editor will show autocomplete when accessing `request.params`.
+
+```ts
+import type { BunRequest } from "bun";
+
+Bun.serve({
+  routes: {
+    // TypeScript knows the shape of params when passed as a string literal
+    "/orgs/:orgId/repos/:repoId": req => {
+      const { orgId, repoId } = req.params;
+      return Response.json({ orgId, repoId });
+    },
+
+    "/orgs/:orgId/repos/:repoId/settings": (
+      // optional: you can explicitly pass a type to BunRequest:
+      req: BunRequest<"/orgs/:orgId/repos/:repoId/settings">,
+    ) => {
+      const { orgId, repoId } = req.params;
+      return Response.json({ orgId, repoId });
+    },
+  },
+});
+```
+
+Percent-encoded route parameter values are automatically decoded. Unicode characters are supported. Invalid unicode is replaced with the unicode replacement character `&0xFFFD;`.
+
+### Static responses
+
+Routes can also be `Response` objects (without the handler function). Bun.serve() optimizes it for zero-allocation dispatch - perfect for health checks, redirects, and fixed content:
+
+```ts
+Bun.serve({
+  routes: {
+    // Health checks
+    "/health": new Response("OK"),
+    "/ready": new Response("Ready", {
+      headers: {
+        // Pass custom headers
+        "X-Ready": "1",
+      },
+    }),
+
+    // Redirects
+    "/blog": Response.redirect("https://bun.sh/blog"),
+
+    // API responses
+    "/api/config": Response.json({
+      version: "1.0.0",
+      env: "production",
+    }),
+  },
+});
+```
+
+Static responses do not allocate additional memory after initialization. You can generally expect at least a 15% performance improvement over manually returning a `Response` object.
+
+You can reload static responses without downtime using `server.reload()`.
+
+```ts
+const server = Bun.serve({
+  routes: {
+    "/api/version": Response.json({ version: "1.0.0" }),
+  },
+});
+
+// sometime later:
+await Bun.sleep(1);
+
+server.reload({
+  routes: {
+    "/api/version": Response.json({ version: "2.0.0" }),
+  },
+});
+```
+
+### Route precedence
+
+Routes are matched in order of specificity:
+
+1. Exact routes (`/users/all`)
+2. Parameter routes (`/users/:id`)
+3. Wildcard routes (`/users/*`)
+4. Global catch-all (`/*`)
+
+```ts
+Bun.serve({
+  routes: {
+    // Most specific first
+    "/api/users/me": () => new Response("Current user"),
+    "/api/users/:id": req => new Response(`User ${req.params.id}`),
+    "/api/*": () => new Response("API catch-all"),
+    "/*": () => new Response("Global catch-all"),
+  },
+});
+```
+
+### Per-HTTP Method Routes
+
+Route handlers can be specialized by HTTP method:
+
+```ts
+Bun.serve({
+  routes: {
+    "/api/posts": {
+      // Different handlers per method
+      GET: () => new Response("List posts"),
+      POST: async req => {
+        const post = await req.json();
+        return Response.json({ id: crypto.randomUUID(), ...post });
+      },
+      PUT: async req => {
+        const updates = await req.json();
+        return Response.json({ updated: true, ...updates });
+      },
+      DELETE: () => new Response(null, { status: 204 }),
+    },
+  },
+});
+```
+
+You can pass any of the following methods:
+
+| Method    | Usecase example                 |
+| --------- | ------------------------------- |
+| `GET`     | Fetch a resource                |
+| `HEAD`    | Check if a resource exists      |
+| `OPTIONS` | Get allowed HTTP methods (CORS) |
+| `DELETE`  | Delete a resource               |
+| `PATCH`   | Update a resource               |
+| `POST`    | Create a resource               |
+| `PUT`     | Update a resource               |
+
+When passing a function instead of an object, all methods will be handled by that function:
+
+```ts
+const server = Bun.serve({
+  routes: {
+    "/api/version": () => Response.json({ version: "1.0.0" }),
+  },
+});
+
+await fetch(new URL("/api/version", server.url));
+await fetch(new URL("/api/version", server.url), { method: "PUT" });
+// ... etc
+```
+
+### Hot Route Reloading
+
+Update routes without server restarts using `server.reload()`:
+
+```ts
+const server = Bun.serve({
+  routes: {
+    "/api/version": () => Response.json({ version: "1.0.0" }),
+  },
+});
+
+// Deploy new routes without downtime
+server.reload({
+  routes: {
+    "/api/version": () => Response.json({ version: "2.0.0" }),
+  },
+});
+```
+
+### Error Handling
+
+Bun provides structured error handling for routes:
+
+```ts
+Bun.serve({
+  routes: {
+    // Errors are caught automatically
+    "/api/risky": () => {
+      throw new Error("Something went wrong");
+    },
+  },
+  // Global error handler
+  error(error) {
+    console.error(error);
+    return new Response(`Internal Error: ${error.message}`, {
+      status: 500,
+      headers: {
+        "Content-Type": "text/plain",
+      },
+    });
+  },
+});
+```
+
+### HTML imports
+
+To add a client-side single-page app, you can use an HTML import:
+
+```ts
+import myReactSinglePageApp from "./index.html";
+
+Bun.serve({
+  routes: {
+    "/": myReactSinglePageApp,
+  },
+});
+```
+
+HTML imports don't just serve HTML. It's a full-featured frontend bundler, transpiler, and toolkit built using Bun's [bundler](https://bun.sh/docs/bundler), JavaScript transpiler and CSS parser.
+
+You can use this to build a full-featured frontend with React, TypeScript, Tailwind CSS, and more. Check out [/docs/bundler/fullstack](https://bun.sh/docs/bundler/fullstack) to learn more.
+
+### Practical example: REST API
+
+Here's a basic database-backed REST API using Bun's router with zero dependencies:
+
+{% codetabs %}
+
+```ts#server.ts
+import type { Post } from "./types.ts";
+import { Database } from "bun:sqlite";
+
+const db = new Database("posts.db");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS posts (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )
+`);
+
+Bun.serve({
+  routes: {
+    // List posts
+    "/api/posts": {
+      GET: () => {
+        const posts = db.query("SELECT * FROM posts").all();
+        return Response.json(posts);
+      },
+
+      // Create post
+      POST: async req => {
+        const post: Omit<Post, "id" | "created_at"> = await req.json();
+        const id = crypto.randomUUID();
+
+        db.query(
+          `INSERT INTO posts (id, title, content, created_at)
+           VALUES (?, ?, ?, ?)`,
+        ).run(id, post.title, post.content, new Date().toISOString());
+
+        return Response.json({ id, ...post }, { status: 201 });
+      },
+    },
+
+    // Get post by ID
+    "/api/posts/:id": req => {
+      const post = db
+        .query("SELECT * FROM posts WHERE id = ?")
+        .get(req.params.id);
+
+      if (!post) {
+        return new Response("Not Found", { status: 404 });
+      }
+
+      return Response.json(post);
+    },
+  },
+
+  error(error) {
+    console.error(error);
+    return new Response("Internal Server Error", { status: 500 });
+  },
+});
+```
+
+```ts#types.ts
+export interface Post {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string;
+}
+```
+
+{% /codetabs %}
+
+### Routing performance
+
+`Bun.serve()`'s router builds on top uWebSocket's [trie-based approach](https://github.com/oven-sh/bun/blob/0d1a00fa0f7830f8ecd99c027fce8096c9d459b6/packages/bun-uws/src/HttpRouter.h#L57-L64) to add [SIMD-accelerated route parameter decoding](https://github.com/oven-sh/bun/blob/jarred/optional-fetch/src/bun.js/bindings/decodeURIComponentSIMD.cpp#L21-L271) and [JavaScriptCore structure caching](https://github.com/oven-sh/bun/blob/jarred/optional-fetch/src/bun.js/bindings/ServerRouteList.cpp#L100-L101) to push the performance limits of what modern hardware allows.
+
 ### `fetch` request handler
 
-The `fetch` handler handles incoming requests. It receives a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object and returns a [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) or `Promise<Response>`.
+The `fetch` handler handles incoming requests that weren't matched by any route. It receives a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object and returns a [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) or [`Promise<Response>`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise).
 
 ```ts
 Bun.serve({
@@ -86,18 +460,6 @@ Bun.serve({
 
     // serve static text
     "/": new Response("Hello World"),
-
-    // serve a file by buffering it in memory
-    "/index.html": new Response(await Bun.file("./index.html").bytes(), {
-      headers: {
-        "Content-Type": "text/html",
-      },
-    }),
-    "/favicon.ico": new Response(await Bun.file("./favicon.ico").bytes(), {
-      headers: {
-        "Content-Type": "image/x-icon",
-      },
-    }),
 
     // serve JSON
     "/api/version.json": Response.json({ version: "1.0.0" }),

@@ -7953,12 +7953,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn on404(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            // Rely on browser default page for now.
             if (comptime Environment.enable_logs)
                 httplog("{s} - {s} 404", .{ req.method(), req.url() });
 
             resp.writeStatus("404 Not Found");
-            resp.endWithoutBody(false);
+
+            // Rely on browser default page for now.
+            resp.end("", false);
         }
 
         // TODO: make this return JSError!void, and do not deinitialize on synchronous failure, to allow errdefer in caller scope

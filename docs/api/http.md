@@ -46,7 +46,7 @@ Bun.serve({
   },
 
   // (optional) fallback for unmatched routes:
-  // Required if < Bun v1.2.3
+  // Required if Bun's version < 1.2.3
   fetch(req) {
     return new Response("Not Found", { status: 404 });
   },

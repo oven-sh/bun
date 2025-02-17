@@ -26,7 +26,7 @@ const VM = bun.JSC.VM;
 const VirtualMachine = JSC.VirtualMachine;
 
 const TCC = @import("../../deps/tcc.zig");
-extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
+extern fn pthread_jit_write_protect_np(enable: c_int) void;
 
 /// Run a function that needs to write to JIT-protected memory.
 ///
@@ -34,8 +34,8 @@ extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 /// Do not pass in user-defined functions (including JSFunctions).
 fn dangerouslyRunWithoutJitProtections(R: type, func: anytype, args: anytype) R {
     const has_protection = (Environment.isAarch64 and Environment.isMac);
-    if (comptime has_protection) pthread_jit_write_protect_np(false);
-    defer if (comptime has_protection) pthread_jit_write_protect_np(true);
+    if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(false));
+    defer if (comptime has_protection) pthread_jit_write_protect_np(@intFromBool(true));
     return @call(.always_inline, func, args);
 }
 
@@ -164,39 +164,46 @@ pub const FFI = struct {
             };
 
             pub fn inject(state: *TCC.State) void {
-                state.addSymbol("vfprintf", ffi_vfprintf) catch unreachable;
-                state.addSymbol("vprintf", ffi_vprintf) catch unreachable;
-                state.addSymbol("fprintf", ffi_fprintf) catch unreachable;
-                state.addSymbol("printf", ffi_printf) catch unreachable;
-                state.addSymbol("fscanf", ffi_fscanf) catch unreachable;
-                state.addSymbol("scanf", ffi_scanf) catch unreachable;
-                state.addSymbol("sscanf", ffi_sscanf) catch unreachable;
-                state.addSymbol("vsscanf", ffi_vsscanf) catch unreachable;
-
-                state.addSymbol("fopen", ffi_fopen) catch unreachable;
-                state.addSymbol("fclose", ffi_fclose) catch unreachable;
-                state.addSymbol("fgetc", ffi_fgetc) catch unreachable;
-                state.addSymbol("fputc", ffi_fputc) catch unreachable;
-                state.addSymbol("feof", ffi_feof) catch unreachable;
-                state.addSymbol("fileno", ffi_fileno) catch unreachable;
-                state.addSymbol("fwrite", std.c.fwrite) catch unreachable;
-                state.addSymbol("ungetc", ffi_ungetc) catch unreachable;
-                state.addSymbol("ftell", ffi_ftell) catch unreachable;
-                state.addSymbol("fseek", ffi_fseek) catch unreachable;
-                state.addSymbol("fflush", ffi_fflush) catch unreachable;
-                state.addSymbol("malloc", std.c.malloc) catch unreachable;
-                state.addSymbol("free", std.c.free) catch unreachable;
-                state.addSymbol("fread", std.c.fread) catch unreachable;
-                state.addSymbol("realloc", std.c.realloc) catch unreachable;
-                state.addSymbol("calloc", calloc) catch unreachable;
-                state.addSymbol("perror", perror) catch unreachable;
+                state.addSymbolsComptime(.{
+                    // printf family
+                    .vfprintf = ffi_vfprintf,
+                    .vprintf = ffi_vprintf,
+                    .fprintf = ffi_fprintf,
+                    .printf = ffi_printf,
+                    .fscanf = ffi_fscanf,
+                    .scanf = ffi_scanf,
+                    .sscanf = ffi_sscanf,
+                    .vsscanf = ffi_vsscanf,
+                    // files
+                    .fopen = ffi_fopen,
+                    .fclose = ffi_fclose,
+                    .fgetc = ffi_fgetc,
+                    .fputc = ffi_fputc,
+                    .feof = ffi_feof,
+                    .fileno = ffi_fileno,
+                    .fwrite = std.c.fwrite,
+                    .ungetc = ffi_ungetc,
+                    .ftell = ffi_ftell,
+                    .fseek = ffi_fseek,
+                    .fflush = ffi_fflush,
+                    .fread = std.c.fread,
+                    // memory
+                    .malloc = std.c.malloc,
+                    .realloc = std.c.realloc,
+                    .calloc = calloc,
+                    .free = std.c.free,
+                    // error
+                    .perror = perror,
+                }) catch @panic("Failed to add std.c symbols");
 
                 if (Environment.isPosix) {
-                    state.addSymbol("posix_memalign", std.c.posix_memalign) catch unreachable;
-                    state.addSymbol("dlopen", std.c.dlopen) catch unreachable;
-                    state.addSymbol("dlclose", std.c.dlclose) catch unreachable;
-                    state.addSymbol("dlsym", std.c.dlsym) catch unreachable;
-                    state.addSymbol("dlerror", std.c.dlerror) catch unreachable;
+                    state.addSymbolsComptime(.{
+                        .posix_memalign = std.c.posix_memalign,
+                        .dlopen = std.c.dlopen,
+                        .dlclose = std.c.dlclose,
+                        .dlsym = std.c.dlsym,
+                        .dlerror = std.c.dlerror,
+                    }) catch @panic("Failed to add posix symbols");
                 }
 
                 mac.inject(state);

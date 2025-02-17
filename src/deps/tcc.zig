@@ -265,6 +265,20 @@ pub const State = opaque {
         }
     }
 
+    /// Add multiple symbols to the compiled program.
+    ///
+    /// ## Example
+    /// ```zig
+    /// const state = TCC.State.init() catch @panic("ahhh");
+    /// fn add(a: c_int, b: c_int) callconv(.C) c_int {
+    ///     return a + b;
+    /// }
+    /// extern "c" fn sub(a: c_int, b: c_int) callconv(.C) c_int;
+    /// state.addSymbolsComptime(.{
+    ///     .add = add,
+    ///     .sub = sub,
+    /// }) catch @panic("Failed to add symbols");
+    /// ```
     pub fn addSymbolsComptime(s: *State, symbols: anytype) Error!void {
         const info = @typeInfo(@TypeOf(symbols));
         inline for (info.@"struct".fields) |field| {

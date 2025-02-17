@@ -10,7 +10,7 @@ describe("path parameters", () => {
       port: 0,
       fetch: () => new Response("fallback"),
       routes: {
-        "/users/:id": (req: BunRequest<"/users/:id">) => {
+        "/users/:id": req => {
           return new Response(
             JSON.stringify({
               id: req.params.id,
@@ -430,4 +430,114 @@ it("throws a validation error when a route parameter name is duplicated", () => 
       },
     });
   }).toThrow("Support for duplicate route parameter names is not yet implemented.");
+});
+
+it("fetch() is optional when routes are specified", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    routes: { "/test": () => new Response("test") },
+  });
+
+  expect(await fetch(new URL("/test", server.url)).then(res => res.text())).toBe("test");
+  expect(await fetch(new URL("/test1", server.url)).then(res => res.status)).toBe(404);
+
+  server.reload({
+    routes: {
+      "/test": () => new Response("test2"),
+    },
+  });
+
+  expect(await fetch(new URL("/test", server.url)).then(res => res.text())).toBe("test2");
+});
+
+it("throws a validation error when passing invalid routes", () => {
+  expect(() => {
+    Bun.serve({ routes: { "/test": 123 } });
+  }).toThrowErrorMatchingInlineSnapshot(`
+    "'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
+
+    To bundle frontend apps on-demand with Bun.serve(), import HTML files.
+
+    Example:
+
+    \`\`\`js
+    import { serve } from "bun";
+    import app from "./app.html";
+
+    serve({
+      routes: {
+        "/index.json": Response.json({ message: "Hello World" }),
+        "/app": app,
+        "/path/:param": (req) => {
+          const param = req.params.param;
+          return Response.json({ message: \`Hello \${param}\` });
+        },
+        "/path": {
+          GET(req) {
+            return Response.json({ message: "Hello World" });
+          },
+          POST(req) {
+            return Response.json({ message: "Hello World" });
+          },
+        },
+      },
+
+      fetch(request) {
+        return new Response("fallback response");
+      },
+    });
+    \`\`\`
+
+    See https://bun.sh/docs/api/http for more information."
+  `);
+});
+
+it("throws a validation error when routes object is empty and fetch is not specified", async () => {
+  expect(() =>
+    Bun.serve({
+      port: 0,
+      routes: {},
+    }),
+  ).toThrowErrorMatchingInlineSnapshot(`
+    "Bun.serve() needs either:
+
+      - A routes object:
+         routes: {
+           "/path": {
+             GET: (req) => new Response("Hello")
+           }
+         }
+
+      - Or a fetch handler:
+         fetch: (req) => {
+           return new Response("Hello")
+         }
+
+    Learn more at https://bun.sh/docs/api/http"
+  `);
+});
+
+it("throws a validation error when routes object is undefined and fetch is not specified", async () => {
+  expect(() =>
+    Bun.serve({
+      port: 0,
+      routes: undefined,
+    }),
+  ).toThrowErrorMatchingInlineSnapshot(`
+    "Bun.serve() needs either:
+
+      - A routes object:
+         routes: {
+           "/path": {
+             GET: (req) => new Response("Hello")
+           }
+         }
+
+      - Or a fetch handler:
+         fetch: (req) => {
+           return new Response("Hello")
+         }
+
+    Learn more at https://bun.sh/docs/api/http"
+  `);
 });

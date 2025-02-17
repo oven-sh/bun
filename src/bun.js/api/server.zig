@@ -1210,12 +1210,17 @@ pub const ServerConfig = struct {
         }
     };
 
+    pub const FromJSOptions = struct {
+        allow_bake_config: bool = true,
+        is_fetch_required: bool = true,
+        has_user_routes: bool = false,
+    };
+
     pub fn fromJS(
         global: *JSC.JSGlobalObject,
         args: *ServerConfig,
         arguments: *JSC.Node.ArgumentsSlice,
-        allow_bake_config: bool,
-        is_fetch_required: bool,
+        opts: FromJSOptions,
     ) bun.JSError!void {
         const vm = arguments.vm;
         const env = vm.transpiler.env;
@@ -1306,7 +1311,20 @@ pub const ServerConfig = struct {
 
             if ((try arg.get(global, "routes")) orelse (try arg.get(global, "static"))) |static| {
                 if (!static.isObject()) {
-                    return global.throwInvalidArguments("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
+                    return global.throwInvalidArguments(
+                        \\Bun.serve() expects 'routes' to be an object shaped like:
+                        \\
+                        \\  {
+                        \\    "/path": {
+                        \\      GET: (req) => new Response("Hello"),
+                        \\      POST: (req) => new Response("Hello"),
+                        \\    },
+                        \\    "/path2/:param": new Response("Hello"),
+                        \\    "/path3/:param1/:param2": (req) => new Response("Hello")
+                        \\  }
+                        \\
+                        \\Learn more at https://bun.sh/docs/api/http
+                    , .{});
                 }
                 args.had_routes_object = true;
 
@@ -1350,11 +1368,11 @@ pub const ServerConfig = struct {
                     }
 
                     if (path.len == 0 or (path[0] != '/')) {
-                        return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
+                        return global.throwInvalidArguments("Invalid route {}. Path must start with '/'", .{bun.fmt.quote(path)});
                     }
 
                     if (!is_ascii) {
-                        return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
+                        return global.throwInvalidArguments("Invalid route {}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
                     }
 
                     if (value == .false) {
@@ -1391,7 +1409,7 @@ pub const ServerConfig = struct {
                         inline for (methods) |method| {
                             if (value.getOwn(global, @tagName(method))) |function| {
                                 if (!function.isCallable(global.vm())) {
-                                    return global.throwInvalidArguments("Expected {s} to be a function", .{@tagName(method)});
+                                    return global.throwInvalidArguments("Expected {s} in {} route to be a function", .{ @tagName(method), bun.fmt.quote(path) });
                                 }
                                 if (!found) {
                                     try validateRouteName(global, path);
@@ -1566,22 +1584,22 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (try arg.getTruthy(global, "app")) |bake_args_js| brk: {
-                if (!bun.FeatureFlags.bake()) {
-                    break :brk;
-                }
-                if (args.bake != null) {
-                    // "app" is likely to be removed in favor of the HTML loader.
-                    return global.throwInvalidArguments("'app' + HTML loader not supported.", .{});
-                }
-                if (!allow_bake_config) {
-                    return global.throwInvalidArguments("To use the \"app\" option, change from calling \"Bun.serve({ app })\" to \"export default { app: ... }\"", .{});
-                }
-                if (args.development == .production) {
-                    return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
-                }
+            if (opts.allow_bake_config) {
+                if (try arg.getTruthy(global, "app")) |bake_args_js| brk: {
+                    if (!bun.FeatureFlags.bake()) {
+                        break :brk;
+                    }
+                    if (args.bake != null) {
+                        // "app" is likely to be removed in favor of the HTML loader.
+                        return global.throwInvalidArguments("'app' + HTML loader not supported.", .{});
+                    }
 
-                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
+                    if (args.development == .production) {
+                        return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
+                    }
+
+                    args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
+                }
             }
 
             if (try arg.get(global, "reusePort")) |dev| {
@@ -1627,9 +1645,25 @@ pub const ServerConfig = struct {
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
-            } else if (args.bake == null and is_fetch_required) {
+            } else if (args.bake == null and ((args.static_routes.items.len + args.user_routes_to_build.items.len) == 0 and !opts.has_user_routes) and opts.is_fetch_required) {
                 if (global.hasException()) return error.JSError;
-                return global.throwInvalidArguments("Expected fetch() to be a function", .{});
+                return global.throwInvalidArguments(
+                    \\Bun.serve() needs either:
+                    \\
+                    \\  - A routes object:
+                    \\     routes: {
+                    \\       "/path": {
+                    \\         GET: (req) => new Response("Hello")
+                    \\       }
+                    \\     }
+                    \\
+                    \\  - Or a fetch handler:
+                    \\     fetch: (req) => {
+                    \\       return new Response("Hello")
+                    \\     }
+                    \\
+                    \\Learn more at https://bun.sh/docs/api/http
+                , .{});
             } else {
                 if (global.hasException()) return error.JSError;
             }
@@ -6765,7 +6799,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer args_slice.deinit();
 
             var new_config: ServerConfig = .{};
-            try ServerConfig.fromJS(globalThis, &new_config, &args_slice, false, false);
+            try ServerConfig.fromJS(globalThis, &new_config, &args_slice, .{
+                .allow_bake_config = false,
+                .is_fetch_required = true,
+                .has_user_routes = this.user_routes.items.len > 0,
+            });
             if (globalThis.hasException()) {
                 new_config.deinit();
                 return error.JSError;
@@ -7427,37 +7465,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             resp.end(buffer, false);
         }
 
-        pub fn onSrcRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            JSC.markBinding(@src());
-            this.pending_requests += 1;
-            defer this.pending_requests -= 1;
-            req.setYield(false);
-
-            if (req.header("open-in-editor") == null) {
-                resp.writeStatus("501 Not Implemented");
-                resp.end("Viewing source without opening in editor is not implemented yet!", false);
-                return;
-            }
-
-            var ctx = &JSC.VirtualMachine.get().rareData().editor_context;
-            ctx.autoDetectEditor(JSC.VirtualMachine.get().transpiler.env);
-            const line: ?string = req.header("editor-line");
-            const column: ?string = req.header("editor-column");
-
-            if (ctx.editor) |editor| {
-                resp.writeStatus("200 Opened");
-                resp.end("Opened in editor", false);
-                var url = req.url()["/src:".len..];
-                if (strings.indexOfChar(url, ':')) |colon| {
-                    url = url[0..colon];
-                }
-                editor.open(ctx.path, url, line, column, this.allocator) catch Output.prettyErrorln("Failed to open editor", .{});
-            } else {
-                resp.writeStatus("500 Missing Editor :(");
-                resp.end("Please set your editor in bunfig.toml", false);
-            }
-        }
-
         pub fn onPendingRequest(this: *ThisServer) void {
             this.pending_requests += 1;
         }
@@ -7907,8 +7914,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     JSC.markBinding(@src());
                     Bun__addInspector(ssl_enabled, app, this.globalThis);
                 }
-
-                app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
 
             var has_dev_catch_all = false;
@@ -7917,14 +7922,13 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 has_dev_catch_all = dev.attachRoutes(this) catch bun.outOfMemory();
             }
 
-            if (!has_dev_catch_all) {
+            if (!has_dev_catch_all and this.config.onRequest != .zero) {
                 // "/*" routes are added backwards, so if they have a static route,
                 // it will never be matched so we need to check for that first
                 if (!has_html_catch_all) {
-                    bun.assert(this.config.onRequest != .zero);
                     app.any("/*", *ThisServer, this, onRequest);
-                } else if (this.config.onRequest != .zero) {
-                    // The HTML catch-all receives GET, HEAD, and OPTIONS
+                } else {
+                    // The HTML catch-all receives GET, HEAD.
                     app.post("/*", *ThisServer, this, onRequest);
                     app.put("/*", *ThisServer, this, onRequest);
                     app.patch("/*", *ThisServer, this, onRequest);
@@ -7933,9 +7937,29 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.trace("/*", *ThisServer, this, onRequest);
                     app.connect("/*", *ThisServer, this, onRequest);
                 }
+            } else if (!has_dev_catch_all and this.config.onRequest == .zero and !has_html_catch_all) {
+                app.any("/*", *ThisServer, this, on404);
+            } else if (!has_dev_catch_all and this.config.onRequest == .zero) {
+                app.post("/*", *ThisServer, this, on404);
+                app.put("/*", *ThisServer, this, on404);
+                app.patch("/*", *ThisServer, this, on404);
+                app.delete("/*", *ThisServer, this, on404);
+                app.options("/*", *ThisServer, this, on404);
+                app.trace("/*", *ThisServer, this, on404);
+                app.connect("/*", *ThisServer, this, on404);
             }
 
             return route_list_value;
+        }
+
+        pub fn on404(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            if (comptime Environment.enable_logs)
+                httplog("{s} - {s} 404", .{ req.method(), req.url() });
+
+            resp.writeStatus("404 Not Found");
+
+            // Rely on browser default page for now.
+            resp.end("", false);
         }
 
         // TODO: make this return JSError!void, and do not deinitialize on synchronous failure, to allow errdefer in caller scope

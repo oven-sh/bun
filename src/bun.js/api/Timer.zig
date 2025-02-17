@@ -345,7 +345,7 @@ pub const All = struct {
         id: i32,
         globalThis: *JSGlobalObject,
         callback: JSValue,
-        interval: i32,
+        interval: u31,
         arguments_array_or_zero: JSValue,
         repeat: bool,
     ) !JSC.JSValue {
@@ -425,32 +425,40 @@ pub const All = struct {
         ) catch unreachable;
     }
 
-    fn jsValueToTimeout(
+    const CountdownOverflowBehavior = enum(u8) {
+        /// If the countdown overflows the range of int32_t, use a countdown of 1ms instead. Behavior of `setTimeout` and friends.
+        one_ms,
+        /// If the countdown overflows the range of int32_t, clamp to the nearest value within the range. Behavior of `Bun.sleep`.
+        clamp,
+    };
+
+    /// Convert an arbitrary JavaScript value to a number of milliseconds used to schedule a timer.
+    fn jsValueToCountdown(
         this: *All,
         globalThis: *JSGlobalObject,
         countdown: JSValue,
-        /// True for Bun.sleep, false for setTimeout/setInterval
-        saturateTimeoutOnOverflowInsteadOfZeroing: bool,
-    ) i32 {
+        overflow_behavior: CountdownOverflowBehavior,
+    ) u31 {
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
-        // TODO: this is wrong as it clears exceptions
+        // TODO: this is wrong as it clears exceptions (e.g `setTimeout(()=>{}, { [Symbol.toPrimitive]() { throw 'oops'; } })`)
         const countdown_double = countdown.coerceToDouble(globalThis);
 
-        const countdown_int: i32 = if (saturateTimeoutOnOverflowInsteadOfZeroing)
-            std.math.lossyCast(i32, countdown_double)
-        else if (!(countdown_double >= 1 and countdown_double <= std.math.maxInt(i32))) one: {
-            if (countdown_double > std.math.maxInt(i32)) {
-                warnInvalidCountdown(globalThis, countdown_double, .TimeoutOverflowWarning);
-            } else if (countdown_double < 0 and !this.warned_negative_number) {
-                this.warned_negative_number = true;
-                warnInvalidCountdown(globalThis, countdown_double, .TimeoutNegativeWarning);
-            } else if (std.math.isNan(countdown_double) and !this.warned_not_number) {
-                this.warned_not_number = true;
-                warnInvalidCountdown(globalThis, countdown_double, .TimeoutNaNWarning);
-            }
-            break :one 1;
-        } else @intFromFloat(countdown_double);
+        const countdown_int: u31 = switch (overflow_behavior) {
+            .clamp => std.math.lossyCast(u31, countdown_double),
+            .one_ms => if (!(countdown_double >= 1 and countdown_double <= std.math.maxInt(u31))) one: {
+                if (countdown_double > std.math.maxInt(u31)) {
+                    warnInvalidCountdown(globalThis, countdown_double, .TimeoutOverflowWarning);
+                } else if (countdown_double < 0 and !this.warned_negative_number) {
+                    this.warned_negative_number = true;
+                    warnInvalidCountdown(globalThis, countdown_double, .TimeoutNegativeWarning);
+                } else if (std.math.isNan(countdown_double) and !this.warned_not_number) {
+                    this.warned_not_number = true;
+                    warnInvalidCountdown(globalThis, countdown_double, .TimeoutNaNWarning);
+                }
+                break :one 1;
+            } else @intFromFloat(countdown_double),
+        };
 
         return countdown_int;
     }
@@ -460,13 +468,13 @@ pub const All = struct {
         callback: JSValue,
         countdown: JSValue,
         arguments: JSValue,
-        saturateTimeoutOnOverflowInsteadOfZeroing: bool,
+        overflow_behavior: CountdownOverflowBehavior,
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        const countdown_int = globalThis.bunVM().timer.jsValueToTimeout(globalThis, countdown, saturateTimeoutOnOverflowInsteadOfZeroing);
+        const countdown_int = globalThis.bunVM().timer.jsValueToCountdown(globalThis, countdown, overflow_behavior);
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
@@ -485,7 +493,7 @@ pub const All = struct {
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
-        const countdown_int = globalThis.bunVM().timer.jsValueToTimeout(globalThis, countdown, false);
+        const countdown_int = globalThis.bunVM().timer.jsValueToCountdown(globalThis, countdown, .one_ms);
 
         return set(id, globalThis, wrappedCallback, countdown_int, arguments, true) catch
             return JSValue.jsUndefined();
@@ -629,7 +637,7 @@ pub const TimeoutObject = struct {
         globalThis: *JSGlobalObject,
         id: i32,
         kind: Kind,
-        interval: i32,
+        interval: u31,
         callback: JSValue,
         arguments_array_or_zero: JSValue,
     ) struct { *TimeoutObject, JSValue } {

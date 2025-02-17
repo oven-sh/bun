@@ -791,7 +791,15 @@ ZIG_DECL JSC__JSValue Bun__Timer__clearInterval(JSC__JSGlobalObject* arg0, JSC__
 ZIG_DECL JSC__JSValue Bun__Timer__clearTimeout(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 ZIG_DECL int32_t Bun__Timer__getNextID();
 ZIG_DECL JSC__JSValue Bun__Timer__setInterval(JSC__JSGlobalObject* globalThis, JSC__JSValue callback, JSC__JSValue countdown, JSC__JSValue arguments);
-ZIG_DECL JSC__JSValue Bun__Timer__setTimeout(JSC__JSGlobalObject* globalThis, JSC__JSValue callback, JSC__JSValue countdown, JSC__JSValue arguments, bool saturateTimeoutOnOverflowInsteadOfZeroing);
+namespace Bun {
+enum class CountdownOverflowBehavior : uint8_t {
+  // If the countdown overflows the range of int32_t, use a countdown of 1ms instead. Behavior of `setTimeout` and friends.
+  OneMs,
+  // If the countdown overflows the range of int32_t, clamp to the nearest value within the range. Behavior of `Bun.sleep`.
+  Clamp,
+};
+} // namespace Bun
+ZIG_DECL JSC__JSValue Bun__Timer__setTimeout(JSC__JSGlobalObject* globalThis, JSC__JSValue callback, JSC__JSValue countdown, JSC__JSValue arguments, Bun::CountdownOverflowBehavior behavior);
 
 #endif
 

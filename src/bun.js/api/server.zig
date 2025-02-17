@@ -7937,9 +7937,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.trace("/*", *ThisServer, this, onRequest);
                     app.connect("/*", *ThisServer, this, onRequest);
                 }
-            } else if (this.config.onRequest == .zero and !has_html_catch_all) {
+            } else if (!has_dev_catch_all and this.config.onRequest == .zero and !has_html_catch_all) {
                 app.any("/*", *ThisServer, this, on404);
-            } else if (this.config.onRequest == .zero) {
+            } else if (!has_dev_catch_all and this.config.onRequest == .zero) {
                 app.post("/*", *ThisServer, this, on404);
                 app.put("/*", *ThisServer, this, on404);
                 app.patch("/*", *ThisServer, this, on404);

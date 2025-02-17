@@ -29,7 +29,7 @@ const TCC = @import("../../deps/tcc.zig");
 extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
 /// Run a function that needs to write to JIT-protected memory.
-/// 
+///
 /// This is dangerous as it allows overwriting executable regions of memory.
 /// Do not pass in user-defined functions (including JSFunctions).
 fn dangerouslyRunWithoutJitProtections(R: type, func: anytype, args: anytype) R {

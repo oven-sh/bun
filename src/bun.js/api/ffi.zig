@@ -98,7 +98,7 @@ pub const FFI = struct {
     relocated_bytes_to_free: ?[]u8 = null,
     functions: bun.StringArrayHashMapUnmanaged(Function) = .{},
     closed: bool = false,
-    shared_state: ?*TCC.TCCState = null,
+    shared_state: ?*TCC.State = null,
 
     pub usingnamespace JSC.Codegen.JSFFI;
 
@@ -142,7 +142,7 @@ pub const FFI = struct {
                 this.* = .{ .file = "" };
             }
 
-            pub fn add(this: *Source, state: *TCC.TCCState, current_file_for_errors: *[:0]const u8) !void {
+            pub fn add(this: *Source, state: *TCC.State, current_file_for_errors: *[:0]const u8) !void {
                 switch (this.*) {
                     .file => {
                         current_file_for_errors.* = this.file;
@@ -188,49 +188,54 @@ pub const FFI = struct {
                 var ffi_stdoutp: *anyopaque = @extern(*anyopaque, .{ .name = "__stdoutp" });
                 var ffi_stderrp: *anyopaque = @extern(*anyopaque, .{ .name = "__stderrp" });
 
-                pub fn inject(state: *TCC.TCCState) void {
-                    _ = TCC.tcc_add_symbol(state, "__stdinp", ffi_stdinp);
-                    _ = TCC.tcc_add_symbol(state, "__stdoutp", ffi_stdoutp);
-                    _ = TCC.tcc_add_symbol(state, "__stderrp", ffi_stderrp);
+                pub fn inject(state: *TCC.State) void {
+                    // _ = TCC.tcc_add_symbol(state, "__stdinp", ffi_stdinp);
+                    // _ = TCC.tcc_add_symbol(state, "__stdoutp", ffi_stdoutp);
+                    // _ = TCC.tcc_add_symbol(state, "__stderrp", ffi_stderrp);
+                    state.addSymbolsComptime(.{
+                        .__stdinp = ffi_stdinp,
+                        .__stdoutp = ffi_stdoutp,
+                        .__stderrp = ffi_stderrp,
+                    }) catch @panic("Failed to add macos symbols");
                 }
             } else struct {
-                pub fn inject(_: *TCC.TCCState) void {}
+                pub fn inject(_: *TCC.State) void {}
             };
 
-            pub fn inject(state: *TCC.TCCState) void {
-                _ = TCC.tcc_add_symbol(state, "vfprintf", ffi_vfprintf);
-                _ = TCC.tcc_add_symbol(state, "vprintf", ffi_vprintf);
-                _ = TCC.tcc_add_symbol(state, "fprintf", ffi_fprintf);
-                _ = TCC.tcc_add_symbol(state, "printf", ffi_printf);
-                _ = TCC.tcc_add_symbol(state, "fscanf", ffi_fscanf);
-                _ = TCC.tcc_add_symbol(state, "scanf", ffi_scanf);
-                _ = TCC.tcc_add_symbol(state, "sscanf", ffi_sscanf);
-                _ = TCC.tcc_add_symbol(state, "vsscanf", ffi_vsscanf);
+            pub fn inject(state: *TCC.State) void {
+                state.addSymbol("vfprintf", ffi_vfprintf) catch unreachable;
+                state.addSymbol("vprintf", ffi_vprintf) catch unreachable;
+                state.addSymbol("fprintf", ffi_fprintf) catch unreachable;
+                state.addSymbol("printf", ffi_printf) catch unreachable;
+                state.addSymbol("fscanf", ffi_fscanf) catch unreachable;
+                state.addSymbol("scanf", ffi_scanf) catch unreachable;
+                state.addSymbol("sscanf", ffi_sscanf) catch unreachable;
+                state.addSymbol("vsscanf", ffi_vsscanf) catch unreachable;
 
-                _ = TCC.tcc_add_symbol(state, "fopen", ffi_fopen);
-                _ = TCC.tcc_add_symbol(state, "fclose", ffi_fclose);
-                _ = TCC.tcc_add_symbol(state, "fgetc", ffi_fgetc);
-                _ = TCC.tcc_add_symbol(state, "fputc", ffi_fputc);
-                _ = TCC.tcc_add_symbol(state, "feof", ffi_feof);
-                _ = TCC.tcc_add_symbol(state, "fileno", ffi_fileno);
-                _ = TCC.tcc_add_symbol(state, "fwrite", std.c.fwrite);
-                _ = TCC.tcc_add_symbol(state, "ungetc", ffi_ungetc);
-                _ = TCC.tcc_add_symbol(state, "ftell", ffi_ftell);
-                _ = TCC.tcc_add_symbol(state, "fseek", ffi_fseek);
-                _ = TCC.tcc_add_symbol(state, "fflush", ffi_fflush);
-                _ = TCC.tcc_add_symbol(state, "malloc", std.c.malloc);
-                _ = TCC.tcc_add_symbol(state, "free", std.c.free);
-                _ = TCC.tcc_add_symbol(state, "fread", std.c.fread);
-                _ = TCC.tcc_add_symbol(state, "realloc", std.c.realloc);
-                _ = TCC.tcc_add_symbol(state, "calloc", calloc);
-                _ = TCC.tcc_add_symbol(state, "perror", perror);
+                state.addSymbol("fopen", ffi_fopen) catch unreachable;
+                state.addSymbol("fclose", ffi_fclose) catch unreachable;
+                state.addSymbol("fgetc", ffi_fgetc) catch unreachable;
+                state.addSymbol("fputc", ffi_fputc) catch unreachable;
+                state.addSymbol("feof", ffi_feof) catch unreachable;
+                state.addSymbol("fileno", ffi_fileno) catch unreachable;
+                state.addSymbol("fwrite", std.c.fwrite) catch unreachable;
+                state.addSymbol("ungetc", ffi_ungetc) catch unreachable;
+                state.addSymbol("ftell", ffi_ftell) catch unreachable;
+                state.addSymbol("fseek", ffi_fseek) catch unreachable;
+                state.addSymbol("fflush", ffi_fflush) catch unreachable;
+                state.addSymbol("malloc", std.c.malloc) catch unreachable;
+                state.addSymbol("free", std.c.free) catch unreachable;
+                state.addSymbol("fread", std.c.fread) catch unreachable;
+                state.addSymbol("realloc", std.c.realloc) catch unreachable;
+                state.addSymbol("calloc", calloc) catch unreachable;
+                state.addSymbol("perror", perror) catch unreachable;
 
                 if (Environment.isPosix) {
-                    _ = TCC.tcc_add_symbol(state, "posix_memalign", std.c.posix_memalign);
-                    _ = TCC.tcc_add_symbol(state, "dlopen", std.c.dlopen);
-                    _ = TCC.tcc_add_symbol(state, "dlclose", std.c.dlclose);
-                    _ = TCC.tcc_add_symbol(state, "dlsym", std.c.dlsym);
-                    _ = TCC.tcc_add_symbol(state, "dlerror", std.c.dlerror);
+                    state.addSymbol("posix_memalign", std.c.posix_memalign) catch unreachable;
+                    state.addSymbol("dlopen", std.c.dlopen) catch unreachable;
+                    state.addSymbol("dlclose", std.c.dlclose) catch unreachable;
+                    state.addSymbol("dlsym", std.c.dlsym) catch unreachable;
+                    state.addSymbol("dlerror", std.c.dlerror) catch unreachable;
                 }
 
                 mac.inject(state);
@@ -344,7 +349,7 @@ pub const FFI = struct {
             return cached_default_system_library_dir;
         }
 
-        pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.TCCState, []u8 } {
+        pub fn compile(this: *CompileC, globalThis: *JSGlobalObject) !struct { *TCC.State, []u8 } {
             const compile_options: [:0]const u8 = if (this.flags.len > 0)
                 this.flags
             else if (bun.getenvZ("BUN_TCC_OPTIONS")) |tcc_options|
@@ -754,7 +759,7 @@ pub const FFI = struct {
         }
 
         // Now we compile the code with tinycc.
-        var tcc_state: ?*TCC.TCCState, var bytes_to_free_on_error = compile_c.compile(globalThis) catch |err| {
+        var tcc_state: ?*TCC.State, var bytes_to_free_on_error = compile_c.compile(globalThis) catch |err| {
             switch (err) {
                 error.DeferredErrors => {
                     var combined = std.ArrayList(u8).init(bun.default_allocator);
@@ -1441,7 +1446,7 @@ pub const FFI = struct {
     pub const Function = struct {
         symbol_from_dynamic_library: ?*anyopaque = null,
         base_name: ?[:0]const u8 = null,
-        state: ?*TCC.TCCState = null,
+        state: ?*TCC.State = null,
 
         return_type: ABIType = ABIType.void,
         arg_types: std.ArrayListUnmanaged(ABIType) = .{},
@@ -1473,7 +1478,7 @@ pub const FFI = struct {
             val.arg_types.clearAndFree(allocator);
 
             if (val.state) |state| {
-                TCC.tcc_delete(state);
+                state.deinit();
                 val.state = null;
             }
 
@@ -1599,7 +1604,10 @@ pub const FFI = struct {
                 pthread_jit_write_protect_np(false);
             }
             // FIXME: do we need to relocate twice?
-            _ = TCC.tcc_relocate(state, bytes.ptr);
+            _ = state.relocate(bytes.ptr) catch {
+                this.fail("tcc_relocate returned a negative value");
+                return;
+            };
             if (comptime Environment.isAarch64 and Environment.isMac) {
                 pthread_jit_write_protect_np(true);
             }
@@ -1711,7 +1719,10 @@ pub const FFI = struct {
                 pthread_jit_write_protect_np(false);
             }
             // FIXME: do we need to relocate twice?
-            _ = TCC.tcc_relocate(state, bytes.ptr);
+            _ = state.relocate(bytes.ptr) catch {
+                this.fail("tcc_relocate returned a negative value");
+                return;
+            };
             if (comptime Environment.isAarch64 and Environment.isMac) {
                 pthread_jit_write_protect_np(true);
             }
@@ -2233,13 +2244,7 @@ pub const FFI = struct {
                         try writer.writeAll("JSVALUE_TO_TYPED_ARRAY_VECTOR(");
                     },
                 }
-                // if (self.fromi64) {
-                //     try writer.writeAll("EncodedJSValue{ ");
-                // }
                 try writer.writeAll(self.symbol);
-                // if (self.fromi64) {
-                //     try writer.writeAll(", }");
-                // }
                 try writer.writeAll(")");
             }
         };
@@ -2434,46 +2439,18 @@ const CompilerRT = struct {
         @memcpy(dest[0..byte_count], source[0..byte_count]);
     }
 
-    pub fn define(state: *TCC.TCCState) void {
+    pub fn define(state: *TCC.State) void {
         if (comptime Environment.isX64) {
-            _ = TCC.tcc_define_symbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
-            // there
-            _ = TCC.tcc_compile_string(state, @embedFile(("libtcc1.c")));
+            state.defineSymbol(state, "NEEDS_COMPILER_RT_FUNCTIONS", "1");
+            state.compileString(state, @embedFile(("libtcc1.c"))) catch {
+                if (bun.Environment.isDebug) {
+                    @panic("Failed to compile libtcc1.c");
+                }
+            };
         }
 
         const Sizes = @import("../bindings/sizes.zig");
         const offsets = Offsets.get();
-        // TCC.tcc_define_symbol(
-        //     state,
-        //     "Bun_FFI_PointerOffsetToArgumentsList",
-        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{Sizes.Bun_FFI_PointerOffsetToArgumentsList}) catch unreachable,
-        // );
-        // const offsets = Offsets.get();
-        // TCC.tcc_define_symbol(
-        //     state,
-        //     "JSArrayBufferView__offsetOfLength",
-        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSArrayBufferView__offsetOfLength}) catch unreachable,
-        // );
-        // TCC.tcc_define_symbol(
-        //     state,
-        //     "JSArrayBufferView__offsetOfVector",
-        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSArrayBufferView__offsetOfVector}) catch unreachable,
-        // );
-        // TCC.tcc_define_symbol(
-        //     state,
-        //     "JSCell__offsetOfType",
-        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{offsets.JSCell__offsetOfType}) catch unreachable,
-        // );
-        // TCC.tcc_define_symbol(
-        //     state,
-        //     "JSTypeArrayBufferViewMin",
-        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{@intFromEnum(JSC.JSValue.JSType.min_typed_array)}) catch unreachable,
-        // );
-        // TCC.tcc_define_symbol(
-        //     state,
-        //     "JSTypeArrayBufferViewMax",
-        //     std.fmt.bufPrintZ(&symbol_buf, "{d}", .{@intFromEnum(JSC.JSValue.JSType.max_typed_array)}) catch unreachable,
-        // );
         state.defineSymbolsComptime(.{
             .Bun_FFI_PointerOffsetToArgumentsList = Sizes.Bun_FFI_PointerOffsetToArgumentsList,
             .JSArrayBufferView__offsetOfLength = offsets.JSArrayBufferView__offsetOfLength,
@@ -2484,36 +2461,20 @@ const CompilerRT = struct {
         });
     }
 
-    pub fn inject(state: *TCC.TCCState) void {
-        _ = TCC.tcc_add_symbol(state, "memset", &memset);
-        _ = TCC.tcc_add_symbol(state, "memcpy", &memcpy);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open);
-        _ = TCC.tcc_add_symbol(state, "NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close);
+    pub fn inject(state: *TCC.State) void {
+        state.addSymbol("memset", &memset) catch unreachable;
+        state.addSymbol("memcpy", &memcpy) catch unreachable;
+        state.addSymbol("NapiHandleScope__open", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__open) catch unreachable;
+        state.addSymbol("NapiHandleScope__close", &bun.JSC.napi.NapiHandleScope.NapiHandleScope__close) catch unreachable;
 
-        _ = TCC.tcc_add_symbol(
-            state,
-            "JSVALUE_TO_INT64_SLOW",
-            workaround.JSVALUE_TO_INT64,
-        );
-        _ = TCC.tcc_add_symbol(
-            state,
-            "JSVALUE_TO_UINT64_SLOW",
-            workaround.JSVALUE_TO_UINT64,
-        );
+        state.addSymbol("JSVALUE_TO_INT64_SLOW", workaround.JSVALUE_TO_INT64) catch unreachable;
+        state.addSymbol("JSVALUE_TO_UINT64_SLOW", workaround.JSVALUE_TO_UINT64) catch unreachable;
         std.mem.doNotOptimizeAway(headers.JSC__JSValue__toUInt64NoTruncate);
         std.mem.doNotOptimizeAway(headers.JSC__JSValue__toInt64);
         std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromInt64NoTruncate);
         std.mem.doNotOptimizeAway(headers.JSC__JSValue__fromUInt64NoTruncate);
-        _ = TCC.tcc_add_symbol(
-            state,
-            "INT64_TO_JSVALUE_SLOW",
-            workaround.INT64_TO_JSVALUE,
-        );
-        _ = TCC.tcc_add_symbol(
-            state,
-            "UINT64_TO_JSVALUE_SLOW",
-            workaround.UINT64_TO_JSVALUE,
-        );
+        state.addSymbol("INT64_TO_JSVALUE_SLOW", workaround.INT64_TO_JSVALUE) catch unreachable;
+        state.addSymbol("UINT64_TO_JSVALUE_SLOW", workaround.UINT64_TO_JSVALUE) catch unreachable;
     }
 };
 

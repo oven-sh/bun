@@ -1,36 +1,36 @@
 pub const TCCState = State;
-pub const TCCErrorFunc = ?*const fn (?*anyopaque, [*:0]const u8) callconv(.C) void;
+const TCCErrorFunc = ?*const fn (?*anyopaque, [*:0]const u8) callconv(.C) void;
 fn ErrorFunc(Ctx: type) type {
     return fn (ctx: ?*Ctx, msg: [*:0]const u8) callconv(.C) void;
 }
-pub extern fn tcc_new() ?*TCCState;
-pub extern fn tcc_delete(s: *TCCState) void;
-pub extern fn tcc_set_lib_path(s: *TCCState, path: [*:0]const u8) void;
-pub extern fn tcc_set_error_func(s: *TCCState, error_opaque: ?*anyopaque, error_func: TCCErrorFunc) void;
-pub extern fn tcc_get_error_func(s: *TCCState) TCCErrorFunc;
-pub extern fn tcc_get_error_opaque(s: *TCCState) ?*anyopaque;
-pub extern fn tcc_set_options(s: *TCCState, str: [*:0]const u8) c_int;
-pub extern fn tcc_add_include_path(s: *TCCState, pathname: [*:0]const u8) c_int;
-pub extern fn tcc_add_sysinclude_path(s: *TCCState, pathname: [*:0]const u8) c_int;
-pub extern fn tcc_define_symbol(s: *TCCState, sym: [*:0]const u8, value: [*:0]const u8) void;
-pub extern fn tcc_undefine_symbol(s: *TCCState, sym: [*:0]const u8) void;
-pub extern fn tcc_add_file(s: *TCCState, filename: [*:0]const u8) c_int;
-pub extern fn tcc_compile_string(s: *TCCState, buf: [*:0]const u8) c_int;
-pub extern fn tcc_set_output_type(s: *TCCState, output_type: c_int) c_int;
-pub extern fn tcc_add_library_path(s: *TCCState, pathname: [*:0]const u8) c_int;
-pub extern fn tcc_add_library(s: *TCCState, libraryname: [*:0]const u8) c_int;
-pub extern fn tcc_add_symbol(s: *TCCState, name: [*:0]const u8, val: *const anyopaque) c_int;
-pub extern fn tcc_output_file(s: *TCCState, filename: [*:0]const u8) c_int;
-pub extern fn tcc_run(s: *TCCState, argc: c_int, argv: [*c][*c]u8) c_int;
-pub extern fn tcc_relocate(s1: *TCCState, ptr: ?*anyopaque) c_int;
-pub extern fn tcc_get_symbol(s: *TCCState, name: [*:0]const u8) ?*anyopaque;
-pub extern fn tcc_list_symbols(s: *TCCState, ctx: ?*anyopaque, symbol_cb: ?*const fn (?*anyopaque, [*:0]const u8, ?*const anyopaque) callconv(.C) void) void;
-pub const TCC_OUTPUT_MEMORY = @as(c_int, 1);
-pub const TCC_OUTPUT_EXE = @as(c_int, 2);
-pub const TCC_OUTPUT_DLL = @as(c_int, 3);
-pub const TCC_OUTPUT_OBJ = @as(c_int, 4);
-pub const TCC_OUTPUT_PREPROCESS = @as(c_int, 5);
-pub const TCC_RELOCATE_AUTO: ?*anyopaque = @ptrCast(&1);
+extern fn tcc_new() ?*TCCState;
+extern fn tcc_delete(s: *TCCState) void;
+extern fn tcc_set_lib_path(s: *TCCState, path: [*:0]const u8) void;
+extern fn tcc_set_error_func(s: *TCCState, error_opaque: ?*anyopaque, error_func: TCCErrorFunc) void;
+extern fn tcc_get_error_func(s: *TCCState) TCCErrorFunc;
+extern fn tcc_get_error_opaque(s: *TCCState) ?*anyopaque;
+extern fn tcc_set_options(s: *TCCState, str: [*:0]const u8) c_int;
+extern fn tcc_add_include_path(s: *TCCState, pathname: [*:0]const u8) c_int;
+extern fn tcc_add_sysinclude_path(s: *TCCState, pathname: [*:0]const u8) c_int;
+extern fn tcc_define_symbol(s: *TCCState, sym: [*:0]const u8, value: [*:0]const u8) void;
+extern fn tcc_undefine_symbol(s: *TCCState, sym: [*:0]const u8) void;
+extern fn tcc_add_file(s: *TCCState, filename: [*:0]const u8) c_int;
+extern fn tcc_compile_string(s: *TCCState, buf: [*:0]const u8) c_int;
+extern fn tcc_set_output_type(s: *TCCState, output_type: c_int) c_int;
+extern fn tcc_add_library_path(s: *TCCState, pathname: [*:0]const u8) c_int;
+extern fn tcc_add_library(s: *TCCState, libraryname: [*:0]const u8) c_int;
+extern fn tcc_add_symbol(s: *TCCState, name: [*:0]const u8, val: *const anyopaque) c_int;
+extern fn tcc_output_file(s: *TCCState, filename: [*:0]const u8) c_int;
+extern fn tcc_run(s: *TCCState, argc: c_int, argv: [*c][*c]u8) c_int;
+extern fn tcc_relocate(s1: *TCCState, ptr: ?*anyopaque) c_int;
+extern fn tcc_get_symbol(s: *TCCState, name: [*:0]const u8) ?*anyopaque;
+extern fn tcc_list_symbols(s: *TCCState, ctx: ?*anyopaque, symbol_cb: ?*const fn (?*anyopaque, [*:0]const u8, ?*const anyopaque) callconv(.C) void) void;
+const TCC_OUTPUT_MEMORY = @as(c_int, 1);
+const TCC_OUTPUT_EXE = @as(c_int, 2);
+const TCC_OUTPUT_DLL = @as(c_int, 3);
+const TCC_OUTPUT_OBJ = @as(c_int, 4);
+const TCC_OUTPUT_PREPROCESS = @as(c_int, 5);
+const TCC_RELOCATE_AUTO: ?*anyopaque = @ptrCast(&1);
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
@@ -218,7 +218,6 @@ pub const State = opaque {
     /// - Syntax/formatting error
     pub fn addFile(s: *State, filename: [:0]const u8) Error!void {
         if (tcc_add_file(s, filename.ptr) == -1) {
-            @branchHint(.unlikely);
             return error.CompileError;
         }
     }
@@ -233,8 +232,6 @@ pub const State = opaque {
 
     // ======================== Linking Commands ========================
 
-    const OutputError = error{OutputError};
-
     /// Set output type. MUST BE CALLED before any compilation
     pub fn setOutputType(s: *State, outputType: OutputFormat) Error!void {
         if (tcc_set_output_type(s, @intFromEnum(outputType)) == -1) {
@@ -243,7 +240,6 @@ pub const State = opaque {
         }
     }
 
-    pub const LibraryError = error{InvalidLibraryPath};
     /// Add a library. Equivalent to `-Lpath` option
     pub fn addLibraryPath(s: *State, pathname: [:0]const u8) Error!void {
         if (tcc_add_library_path(s, pathname.ptr) != 0) {
@@ -268,25 +264,12 @@ pub const State = opaque {
         }
     }
 
-    /// Add all public declarations on a namespace struct as symbols to the
-    /// compiled program.
-    ///
-    /// ## Example
-    /// ```zig
-    /// const libfoo = struct {
-    ///     pub extern "c" fn foo() c_int;
-    ///     pub extern "c" fn bar(x: c_int) c_int;
-    /// };
-    /// const state = TCC.State.init() catch @panic("ahhh");
-    /// state.addSymbols(libfoo) catch @panic("failed to add symbols");
-    /// ```
-    ///
-    /// Returns an error if any call to `addSymbol` fails.
-    pub fn addSymbols(s: *State, symbols: type) Error!void {
-        const info = @typeInfo(symbols);
-        inline for (info.@"struct".decls) |decl| {
-            const value = &@field(symbols, decl.name);
-            try s.addSymbol(s, decl.name, value);
+    pub fn addSymbolsComptime(s: *State, symbols: anytype) Error!void {
+        const info = @typeInfo(@TypeOf(symbols));
+        inline for (info.@"struct".fields) |field| {
+            const value = @field(symbols, field.name);
+            std.mem.doNotOptimizeAway(value); // just in case
+            try s.addSymbol(field.name, value);
         }
     }
 

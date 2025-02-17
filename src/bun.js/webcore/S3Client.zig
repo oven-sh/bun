@@ -17,7 +17,7 @@ pub fn writeFormatCredentials(credentials: *S3Credentials, options: bun.S3.Multi
         formatter.indent += 1;
         defer formatter.indent -|= 1;
 
-        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else "https://s3.<region>.amazonaws.com";
+        const endpoint = if (credentials.endpoint.len > 0) credentials.endpoint else (if (credentials.virtual_hosted_style) "https://<bucket>.s3.<region>.amazonaws.com" else "https://s3.<region>.amazonaws.com");
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>endpoint<d>:<r> \"", enable_ansi_colors));
@@ -112,11 +112,13 @@ pub const S3Client = struct {
 
     pub fn writeFormat(this: *@This(), comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         try writer.writeAll(comptime bun.Output.prettyFmt("<r>S3Client<r>", enable_ansi_colors));
-        if (this.credentials.bucket.len > 0) {
+        // detect virtual host style bucket name
+        const bucket_name = if (this.credentials.virtual_hosted_style and this.credentials.endpoint.len > 0) S3Credentials.guessBucket(this.credentials.endpoint) orelse this.credentials.bucket else this.credentials.bucket;
+        if (bucket_name.len > 0) {
             try writer.print(
                 comptime bun.Output.prettyFmt(" (<green>\"{s}\"<r>)<r> {{", enable_ansi_colors),
                 .{
-                    this.credentials.bucket,
+                    bucket_name,
                 },
             );
         } else {

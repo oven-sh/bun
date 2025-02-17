@@ -699,7 +699,6 @@ if (isDockerEnabled()) {
       await sql.beginDistributed("tx1", async sql => {
         await sql`insert into test values(1)`;
       });
-
       await sql.commitDistributed("tx1");
       expect((await sql`select count(1) from test`)[0].count).toBe("1");
     } finally {
@@ -1288,6 +1287,14 @@ if (isDockerEnabled()) {
     expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
   });
 
+  test("simple query with multiple statements", async () => {
+    const result = await sql`select 1 as x;select 2 as x`.simple();
+    expect(result).toBeDefined();
+    expect(result.length).toEqual(2);
+    expect(result[0][0].x).toEqual(1);
+    expect(result[1][0].x).toEqual(2);
+  });
+
   // t('unsafe simple includes columns', async() => {
   //   return ['x', (await sql.unsafe('select 1 as x').values()).columns[0].name]
   // })
@@ -1304,21 +1311,13 @@ if (isDockerEnabled()) {
   //   ]
   // })
 
-  test.todo("simple query using unsafe with multiple statements", async () => {
-    // bun always uses prepared statements, so this is not supported
-    //     PostgresError: cannot insert multiple commands into a prepared statement
-    //  errno: "42601",
-    //   code: "ERR_POSTGRES_SYNTAX_ERROR"
-    expect(await sql.unsafe("select 1 as x;select 2 as x")).toEqual([{ x: 1 }, { x: 2 }]);
-    // return ["1,2", (await sql.unsafe("select 1 as x;select 2 as x")).map(x => x[0].x).join()];
+  test("simple query using unsafe with multiple statements", async () => {
+    const result = await sql.unsafe("select 1 as x;select 2 as x");
+    expect(result).toBeDefined();
+    expect(result.length).toEqual(2);
+    expect(result[0][0].x).toEqual(1);
+    expect(result[1][0].x).toEqual(2);
   });
-
-  // t('simple query using simple() with multiple statements', async() => {
-  //   return [
-  //     '1,2',
-  //     (await sql`select 1 as x;select 2 as x`.simple()).map(x => x[0].x).join()
-  //   ]
-  // })
 
   // t('listen and notify', async() => {
   //   const sql = postgres(options)
@@ -1556,45 +1555,47 @@ if (isDockerEnabled()) {
     expect(await sql`select 1; select 2`.catch(e => e.errno)).toBe("42601");
   });
 
-  // t('await sql() throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     await sql('select 1')
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("await sql() throws not tagged error", async () => {
+    try {
+      await sql("select 1");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().then throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     sql('select 1').then(() => { /* noop */ })
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().then throws not tagged error", async () => {
+    try {
+      await sql("select 1").then(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().catch throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     await sql('select 1')
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().catch throws not tagged error", async () => {
+    try {
+      sql("select 1").catch(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().finally throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     sql('select 1').finally(() => { /* noop */ })
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().finally throws not tagged error", async () => {
+    try {
+      sql("select 1").finally(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
   test("little bobby tables", async () => {
     const name = "Robert'); DROP TABLE students;--";

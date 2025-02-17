@@ -315,10 +315,6 @@ pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
-pub const PathString = StringTypes.PathString;
-pub const HashedString = StringTypes.HashedString;
-pub const strings = @import("string_immutable.zig");
-pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
@@ -548,7 +544,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
     return try allocator.dupe(Child, item);
 }
 
-pub const StringBuilder = @import("./string_builder.zig");
+pub const StringBuilder = @import("./string.zig").StringBuilder;
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
@@ -1595,7 +1591,6 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
-pub const StringJoiner = @import("./StringJoiner.zig");
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
@@ -2089,12 +2084,18 @@ pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
-pub const String = @import("./string.zig").String;
-pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
+const _string = @import("./string.zig");
+pub const strings = @import("string_immutable.zig");
+pub const String = _string.String;
+pub const StringJoiner = _string.StringJoiner;
+pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
+pub const PathString = _string.PathString;
+pub const HashedString = _string.HashedString;
+pub const MutableString = _string.MutableString;
 
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.
-    pub const StringImpl = @import("./string.zig").WTFStringImpl;
+    pub const StringImpl = _string.WTFStringImpl;
 };
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
@@ -3114,132 +3115,8 @@ pub fn New(comptime T: type) type {
     };
 }
 
-/// Reference-counted heap-allocated instance value.
-///
-/// `ref_count` is expected to be defined on `T` with a default value set to `1`
-pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
-    if (!@hasField(T, "ref_count")) {
-        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-    }
-
-    for (std.meta.fields(T)) |field| {
-        if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-            }
-        }
-    }
-
-    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
-    const log = Output.scoped(output_name, true);
-
-    return struct {
-        pub fn destroy(self: *T) void {
-            if (Environment.allow_assert) {
-                assert(self.ref_count == 0);
-            }
-
-            bun.destroy(self);
-        }
-
-        pub fn ref(self: *T) void {
-            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
-
-            self.ref_count += 1;
-        }
-
-        pub fn deref(self: *T) void {
-            const ref_count = self.ref_count;
-            if (Environment.isDebug) {
-                if (ref_count == 0 or ref_count == std.math.maxInt(@TypeOf(ref_count))) {
-                    @panic("Use after-free detected on " ++ output_name);
-                }
-            }
-
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-
-            self.ref_count = ref_count - 1;
-
-            if (ref_count == 1) {
-                if (comptime deinit_fn) |deinit| {
-                    deinit(self);
-                } else {
-                    self.destroy();
-                }
-            }
-        }
-
-        pub inline fn new(t: T) *T {
-            const ptr = bun.new(T, t);
-
-            if (Environment.enable_logs) {
-                if (ptr.ref_count == 0) {
-                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
-                }
-            }
-
-            return ptr;
-        }
-    };
-}
-
-pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
-    if (!@hasField(T, "ref_count")) {
-        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-    }
-
-    for (std.meta.fields(T)) |field| {
-        if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-            }
-        }
-    }
-
-    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
-    const log = Output.scoped(output_name, true);
-
-    return struct {
-        pub fn destroy(self: *T) void {
-            if (Environment.allow_assert) {
-                assert(self.ref_count.load(.seq_cst) == 0);
-            }
-
-            bun.destroy(self);
-        }
-
-        pub fn ref(self: *T) void {
-            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
-            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-            bun.debugAssert(ref_count > 0);
-        }
-
-        pub fn deref(self: *T) void {
-            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
-
-            if (ref_count == 1) {
-                if (comptime deinit_fn) |deinit| {
-                    deinit(self);
-                } else {
-                    self.destroy();
-                }
-            }
-        }
-
-        pub inline fn new(t: T) *T {
-            const ptr = bun.new(T, t);
-
-            if (Environment.enable_logs) {
-                if (ptr.ref_count.load(.seq_cst) != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
-                }
-            }
-
-            return ptr;
-        }
-    };
-}
+pub const NewRefCounted = @import("ref_count.zig").NewRefCounted;
+pub const NewThreadSafeRefCounted = @import("ref_count.zig").NewThreadSafeRefCounted;
 
 pub fn exitThread() noreturn {
     const exiter = struct {

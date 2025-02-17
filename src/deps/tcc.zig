@@ -217,14 +217,14 @@ pub const State = opaque {
     /// - File not found
     /// - Syntax/formatting error
     pub fn addFile(s: *State, filename: [:0]const u8) Error!void {
-        if (tcc_add_file(s, filename.ptr) == -1) {
+        if (tcc_add_file(s, filename.ptr) != 0) {
             return error.CompileError;
         }
     }
 
     /// Compile a string containing a C source.
     pub fn compileString(s: *State, buf: [:0]const u8) Error!void {
-        if (tcc_compile_string(s, buf.ptr) == -1) {
+        if (tcc_compile_string(s, buf.ptr) != 0) {
             @branchHint(.unlikely);
             return error.CompileError;
         }

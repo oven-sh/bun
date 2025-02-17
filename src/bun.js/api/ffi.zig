@@ -876,6 +876,10 @@ pub const FFI = struct {
             val.deinit(globalThis, allocator);
         }
         this.functions.deinit(allocator);
+
+        // NOTE: `relocated_bytes_to_free` points to a memory region that was
+        // relocated by tinycc. Attempts to free it will cause a bus error,
+        // even if jit protections are disabled.
         // if (this.relocated_bytes_to_free) |relocated_bytes_to_free| {
         //     this.relocated_bytes_to_free = null;
         //     bun.default_allocator.free(relocated_bytes_to_free);
@@ -1554,7 +1558,6 @@ pub const FFI = struct {
                 if (this.step == .failed) allocator.free(bytes);
             }
 
-            // FIXME: do we need to relocate twice?
             _ = dangerouslyRunWithoutJitProtections(TCC.Error!usize, TCC.State.relocate, .{ state, bytes.ptr }) catch {
                 this.fail("tcc_relocate returned a negative value");
                 return;

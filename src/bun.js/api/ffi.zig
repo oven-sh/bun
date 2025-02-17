@@ -28,6 +28,17 @@ const VirtualMachine = JSC.VirtualMachine;
 const TCC = @import("../../deps/tcc.zig");
 extern fn pthread_jit_write_protect_np(enable: bool) callconv(.C) void;
 
+/// Run a function that needs to write to JIT-protected memory.
+/// 
+/// This is dangerous as it allows overwriting executable regions of memory.
+/// Do not pass in user-defined functions (including JSFunctions).
+fn dangerouslyRunWithoutJitProtections(R: type, func: anytype, args: anytype) R {
+    const has_protection = (Environment.isAarch64 and Environment.isMac);
+    if (comptime has_protection) pthread_jit_write_protect_np(false);
+    defer if (comptime has_protection) pthread_jit_write_protect_np(true);
+    return @call(.always_inline, func, args);
+}
+
 const Offsets = extern struct {
     JSArrayBufferView__offsetOfLength: u32,
     JSArrayBufferView__offsetOfByteOffset: u32,
@@ -453,14 +464,7 @@ pub const FFI = struct {
             const bytes: []u8 = try bun.default_allocator.alloc(u8, @as(usize, @intCast(relocation_size)));
             // We cannot free these bytes, evidently.
 
-            if (comptime Environment.isAarch64 and Environment.isMac) {
-                pthread_jit_write_protect_np(false);
-            }
-            // FIXME: do we need to relocate twice?
-            _ = state.relocate(bytes.ptr) catch return error.DeferredErrors;
-            if (comptime Environment.isAarch64 and Environment.isMac) {
-                pthread_jit_write_protect_np(true);
-            }
+            _ = dangerouslyRunWithoutJitProtections(TCC.Error!usize, TCC.State.relocate, .{ state, bytes.ptr }) catch return error.DeferredErrors;
 
             // if errors got added, we would have returned in the relocation catch.
             bun.debugAssert(this.deferred_errors.items.len == 0);
@@ -872,10 +876,10 @@ pub const FFI = struct {
             val.deinit(globalThis, allocator);
         }
         this.functions.deinit(allocator);
-        if (this.relocated_bytes_to_free) |relocated_bytes_to_free| {
-            this.relocated_bytes_to_free = null;
-            bun.default_allocator.free(relocated_bytes_to_free);
-        }
+        // if (this.relocated_bytes_to_free) |relocated_bytes_to_free| {
+        //     this.relocated_bytes_to_free = null;
+        //     bun.default_allocator.free(relocated_bytes_to_free);
+        // }
 
         return .undefined;
     }
@@ -1550,17 +1554,11 @@ pub const FFI = struct {
                 if (this.step == .failed) allocator.free(bytes);
             }
 
-            if (comptime Environment.isAarch64 and Environment.isMac) {
-                pthread_jit_write_protect_np(false);
-            }
             // FIXME: do we need to relocate twice?
-            _ = state.relocate(bytes.ptr) catch {
+            _ = dangerouslyRunWithoutJitProtections(TCC.Error!usize, TCC.State.relocate, .{ state, bytes.ptr }) catch {
                 this.fail("tcc_relocate returned a negative value");
                 return;
             };
-            if (comptime Environment.isAarch64 and Environment.isMac) {
-                pthread_jit_write_protect_np(true);
-            }
 
             const symbol = state.getSymbol("JSFunctionCall") orelse {
                 this.fail("missing generated symbol in source code");
@@ -1665,17 +1663,10 @@ pub const FFI = struct {
                 }
             }
 
-            if (comptime Environment.isAarch64 and Environment.isMac) {
-                pthread_jit_write_protect_np(false);
-            }
-            // FIXME: do we need to relocate twice?
-            _ = state.relocate(bytes.ptr) catch {
+            _ = dangerouslyRunWithoutJitProtections(TCC.Error!usize, TCC.State.relocate, .{ state, bytes.ptr }) catch {
                 this.fail("tcc_relocate returned a negative value");
                 return;
             };
-            if (comptime Environment.isAarch64 and Environment.isMac) {
-                pthread_jit_write_protect_np(true);
-            }
 
             const symbol = state.getSymbol("my_callback_function") orelse {
                 this.fail("missing generated symbol in source code");

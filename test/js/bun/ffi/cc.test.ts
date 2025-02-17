@@ -51,8 +51,7 @@ describe("given an add(a, b) function", () => {
     });
 
     afterAll(() => {
-      // FIXME: causes a segfault
-      // res.close();
+      res.close();
     });
 
     it("provides an add symbol", () => {

@@ -14,12 +14,19 @@ const server = Bun.serve({
     // Bundle & route dashboard.html to "/dashboard"
     "/dashboard": dashboard,
 
-    // API endpoints:
-    "/api/users": async req => {
-      const users = await Bun.sql`SELECT * FROM users`;
-      return Response.json(users);
+    // API endpoints: (Bun v1.2.3+ required)
+    "/api/users": {
+      async GET(req) {
+        const users = await Bun.sql`SELECT * FROM users`;
+        return Response.json(users);
+      },
+      async POST(req) {
+        const { name, email } = await req.json();
+        const [user] =
+          await Bun.sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
+        return Response.json(user);
+      },
     },
-
     "/api/users/:id": async req => {
       const { id } = req.params;
       const [user] = await Bun.sql`SELECT * FROM users WHERE id = ${id}`;

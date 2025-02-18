@@ -2326,3 +2326,18 @@ it("should allow to follow redirect if connection is closed, abort should work e
     }
   }
 });
+
+it("should not allow credentials in url", async () => {
+  try {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return new Response(req.body);
+      },
+    });
+    await fetch(`${server.url.protocol}://user:pass@${server.url.host}`);
+    expect.unreachable();
+  } catch (e: any) {
+    expect(e.name).toBe("TypeError");
+  }
+});

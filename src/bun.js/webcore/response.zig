@@ -3129,6 +3129,12 @@ pub const Fetch = struct {
             }
         }
 
+        if (url.username.len > 0 or url.password.len > 0) {
+            const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "url cannot include credentials", .{}, ctx);
+            is_error = true;
+            return JSPromise.rejectedPromiseValue(globalThis, err);
+        }
+
         if (!method.hasRequestBody() and body.hasBody()) {
             const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_unexpected_body, .{}, ctx);
             is_error = true;

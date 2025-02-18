@@ -359,10 +359,7 @@ pub const All = struct {
 
         switch (request) {
             .setImmediate => {
-                const immediate_object, const js = ImmediateObject.init(globalThis, id, callback, arguments_array_or_zero);
-                // TODO(@190n) why is this necessary but not on the TimeoutObject below?
-                immediate_object.ref();
-                vm.enqueueImmediateTask(JSC.Task.init(immediate_object));
+                const js = ImmediateObject.init(globalThis, id, callback, arguments_array_or_zero);
                 if (vm.isInspectorEnabled()) {
                     Debugger.didScheduleAsyncCall(
                         globalThis,
@@ -374,7 +371,7 @@ pub const All = struct {
                 return js;
             },
             inline else => |countdown, kind| {
-                _, const js = TimeoutObject.init(globalThis, id, kind, countdown, callback, arguments_array_or_zero);
+                const js = TimeoutObject.init(globalThis, id, kind, countdown, callback, arguments_array_or_zero);
                 if (vm.isInspectorEnabled()) {
                     Debugger.didScheduleAsyncCall(
                         globalThis,
@@ -656,7 +653,7 @@ pub const TimeoutObject = struct {
         interval: u31,
         callback: JSValue,
         arguments_array_or_zero: JSValue,
-    ) struct { *TimeoutObject, JSValue } {
+    ) JSValue {
         // internals are initialized by init()
         const timeout = TimeoutObject.new(.{ .internals = undefined });
         const js = timeout.toJS(globalThis);
@@ -670,7 +667,7 @@ pub const TimeoutObject = struct {
             callback,
             arguments_array_or_zero,
         );
-        return .{ timeout, js };
+        return js;
     }
 
     pub fn deinit(this: *TimeoutObject) void {
@@ -739,7 +736,7 @@ pub const ImmediateObject = struct {
         id: i32,
         callback: JSValue,
         arguments_array_or_zero: JSValue,
-    ) struct { *ImmediateObject, JSValue } {
+    ) JSValue {
         // internals are initialized by init()
         const immediate = ImmediateObject.new(.{ .internals = undefined });
         const js = immediate.toJS(globalThis);
@@ -753,7 +750,7 @@ pub const ImmediateObject = struct {
             callback,
             arguments_array_or_zero,
         );
-        return .{ immediate, js };
+        return js;
     }
 
     pub fn deinit(this: *ImmediateObject) void {
@@ -1019,10 +1016,15 @@ const TimerObjectInternals = struct {
             if (arguments != .zero)
                 ImmediateObject.argumentsSetCached(timer_js, globalThis, arguments);
             ImmediateObject.callbackSetCached(timer_js, globalThis, callback);
+            const parent: *ImmediateObject = @fieldParentPtr("internals", this);
+            globalThis.bunVM().enqueueImmediateTask(JSC.Task.init(parent));
+            // ref'd by event loop
+            parent.ref();
         } else {
             if (arguments != .zero)
                 TimeoutObject.argumentsSetCached(timer_js, globalThis, arguments);
             TimeoutObject.callbackSetCached(timer_js, globalThis, callback);
+            // this increments the refcount
             this.reschedule(globalThis.bunVM());
         }
 

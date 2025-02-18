@@ -3933,15 +3933,17 @@ pub const PostgresCachedStructure = struct {
     fields: ?[]JSC.JSObject.ExternColumnIdentifier = null,
 
     pub fn has(this: *@This()) bool {
-        return this.structure.has();
+        return this.structure.has() or this.fields != null;
     }
 
     pub fn jsValue(this: *const @This()) ?JSC.JSValue {
         return this.structure.get();
     }
 
-    pub fn set(this: *@This(), globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, fields: ?[]JSC.JSObject.ExternColumnIdentifier) void {
-        this.structure.set(globalObject, value);
+    pub fn set(this: *@This(), globalObject: *JSC.JSGlobalObject, value: ?JSC.JSValue, fields: ?[]JSC.JSObject.ExternColumnIdentifier) void {
+        if (value) |v| {
+            this.structure.set(globalObject, v);
+        }
         this.fields = fields;
     }
 
@@ -4089,15 +4091,13 @@ pub const PostgresSQLStatement = struct {
                 nonDuplicatedCount -= 1;
             }
         }
-        const ids = stack_ids[0..@min(nonDuplicatedCount, stack_ids.len)];
-        // only keep in the heap the fields that exceed the inline capacity
-        const heap_ids = if (nonDuplicatedCount < stack_ids.len) null else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount - JSC.JSObject.maxInlineCapacity) catch bun.outOfMemory();
+        const ids = if (nonDuplicatedCount <= JSC.JSObject.maxInlineCapacity) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
 
         var i: usize = 0;
         for (this.fields) |*field| {
             if (field.name_or_index == .duplicate) continue;
 
-            var id: *JSC.JSObject.ExternColumnIdentifier = if (i >= ids.len) &heap_ids.?[i - ids.len] else &ids[i];
+            var id: *JSC.JSObject.ExternColumnIdentifier = &ids[i];
             switch (field.name_or_index) {
                 .name => |name| {
                     id.value.name = String.createAtomIfPossible(name.slice());
@@ -4114,14 +4114,18 @@ pub const PostgresSQLStatement = struct {
             };
             i += 1;
         }
-        const structure_ = JSC.JSObject.createStructure(
-            globalObject,
-            owner,
-            @truncate(ids.len),
-            ids.ptr,
-        );
 
-        this.cached_structure.set(globalObject, structure_, heap_ids);
+        if (nonDuplicatedCount > JSC.JSObject.maxInlineCapacity) {
+            this.cached_structure.set(globalObject, null, ids);
+        } else {
+            this.cached_structure.set(globalObject, JSC.JSObject.createStructure(
+                globalObject,
+                owner,
+                @truncate(ids.len),
+                ids.ptr,
+            ), null);
+        }
+
         return this.cached_structure;
     }
 };

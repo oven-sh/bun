@@ -310,7 +310,7 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
     case BunResultMode::Objects: // objects
 
     {
-        auto* object = JSC::constructEmptyObject(vm, structure);
+        auto* object = structure ? JSC::constructEmptyObject(vm, structure) : JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 0);
 
         // TODO: once we have more tests for this, let's add another branch for
         // "only mixed names and mixed indexed columns, no duplicates"
@@ -332,11 +332,11 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                 ASSERT(!cell.isDuplicateColumn());
                 ASSERT(!cell.isIndexedColumn());
                 ASSERT(cell.isNamedColumn());
-                if (i >= JSC::JSFinalObject::maxInlineCapacity) {
-                    if (names.has_value()) {
-                        auto name = names.value()[i - JSC::JSFinalObject::maxInlineCapacity];
-                        object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
-                    }
+                if (names.has_value()) {
+
+                    auto name = names.value()[i];
+                    object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
+
                 } else {
                     object->putDirectOffset(vm, i, value);
                 }
@@ -375,15 +375,12 @@ static JSC::JSValue toJS(JSC::Structure* structure, DataCell* cells, uint32_t co
                     ASSERT(!cell.isDuplicateColumn());
                     ASSERT(cell.index < count);
 
-                    if (structureOffsetIndex >= JSC::JSFinalObject::maxInlineCapacity) {
-                        if (names.has_value()) {
-                            auto name = names.value()[structureOffsetIndex - JSC::JSFinalObject::maxInlineCapacity];
-                            object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
-                        }
+                    if (names.has_value()) {
+                        auto name = names.value()[structureOffsetIndex++];
+                        object->putDirect(vm, Identifier::fromString(vm, name.name.toWTFString()), value);
                     } else {
-                        object->putDirectOffset(vm, structureOffsetIndex, value);
+                        object->putDirectOffset(vm, structureOffsetIndex++, value);
                     }
-                    structureOffsetIndex++;
                 } else if (cell.isDuplicateColumn()) {
                     // skip it!
                 }

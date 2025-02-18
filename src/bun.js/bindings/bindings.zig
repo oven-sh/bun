@@ -21,10 +21,12 @@ const String = bun.String;
 const ErrorableString = JSC.ErrorableString;
 const JSError = bun.JSError;
 const OOM = bun.OOM;
-
+pub extern const JSC__JSObject__maxInlineCapacity: c_uint;
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     const cppFn = shim.cppFn;
+    // lets make zig know that in comptime and assert at runtime on main.zig
+    pub const maxInlineCapacity = if (bun.Environment.isDebug) 62 else 64;
 
     pub fn toJS(obj: *JSObject) JSValue {
         return JSValue.fromCell(obj);
@@ -100,7 +102,7 @@ pub const JSObject = extern struct {
         }
     }
 
-    extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]ExternColumnIdentifier, flags: u32) JSC.JSValue;
+    extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
 
     pub const ExternColumnIdentifier = extern struct {
         tag: u8 = 0,
@@ -122,9 +124,9 @@ pub const JSObject = extern struct {
             }
         }
     };
-    pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier, flags: u32) JSValue {
+    pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
         JSC.markBinding(@src());
-        return JSC__createStructure(global, owner.asCell(), length, names, flags);
+        return JSC__createStructure(global, owner.asCell(), length, names);
     }
 
     const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;
@@ -1101,13 +1103,12 @@ pub const ZigString = extern struct {
 };
 
 pub const DOMURL = opaque {
-    pub const shim = Shimmer("WebCore", "DOMURL", @This());
-
-    const cppFn = shim.cppFn;
-    pub const name = "WebCore::DOMURL";
+    pub extern fn WebCore__DOMURL__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMURL;
+    pub extern fn WebCore__DOMURL__href_(arg0: ?*DOMURL, arg1: *ZigString) void;
+    pub extern fn WebCore__DOMURL__pathname_(arg0: ?*DOMURL, arg1: *ZigString) void;
 
     pub fn cast_(value: JSValue, vm: *VM) ?*DOMURL {
-        return shim.cppFn("cast_", .{ value, vm });
+        return WebCore__DOMURL__cast_(value, vm);
     }
 
     pub fn cast(value: JSValue) ?*DOMURL {
@@ -1115,7 +1116,7 @@ pub const DOMURL = opaque {
     }
 
     pub fn href_(this: *DOMURL, out: *ZigString) void {
-        return shim.cppFn("href_", .{ this, out });
+        return WebCore__DOMURL__href_(this, out);
     }
 
     pub fn href(this: *DOMURL) ZigString {
@@ -1144,7 +1145,7 @@ pub const DOMURL = opaque {
     }
 
     pub fn pathname_(this: *DOMURL, out: *ZigString) void {
-        return shim.cppFn("pathname_", .{ this, out });
+        return WebCore__DOMURL__pathname_(this, out);
     }
 
     pub fn pathname(this: *DOMURL) ZigString {
@@ -1152,42 +1153,31 @@ pub const DOMURL = opaque {
         this.pathname_(&out);
         return out;
     }
-
-    pub const Extern = [_][]const u8{
-        "cast_",
-        "href_",
-        "pathname_",
-        "fileSystemPath",
-    };
 };
 
 const Api = @import("../../api/schema.zig").Api;
 
 pub const DOMFormData = opaque {
-    pub const shim = Shimmer("WebCore", "DOMFormData", @This());
-
-    pub const name = "WebCore::DOMFormData";
-    pub const include = "DOMFormData.h";
-    pub const namespace = "WebCore";
-
-    const cppFn = shim.cppFn;
+    extern fn WebCore__DOMFormData__cast_(JSValue0: JSValue, arg1: *VM) ?*DOMFormData;
+    extern fn WebCore__DOMFormData__create(arg0: *JSGlobalObject) JSValue;
+    extern fn WebCore__DOMFormData__createFromURLQuery(arg0: *JSGlobalObject, arg1: *ZigString) JSValue;
+    extern fn WebCore__DOMFormData__toQueryString(arg0: *DOMFormData, arg1: *anyopaque, arg2: *const fn (arg0: *anyopaque, *ZigString) callconv(.C) void) void;
+    extern fn WebCore__DOMFormData__fromJS(JSValue0: JSValue) ?*DOMFormData;
+    extern fn WebCore__DOMFormData__append(arg0: *DOMFormData, arg1: *ZigString, arg2: *ZigString) void;
+    extern fn WebCore__DOMFormData__appendBlob(arg0: *DOMFormData, arg1: *JSGlobalObject, arg2: *ZigString, arg3: *anyopaque, arg4: *ZigString) void;
+    extern fn WebCore__DOMFormData__count(arg0: *DOMFormData) usize;
 
     pub fn create(
         global: *JSGlobalObject,
     ) JSValue {
-        return shim.cppFn("create", .{
-            global,
-        });
+        return WebCore__DOMFormData__create(global);
     }
 
     pub fn createFromURLQuery(
         global: *JSGlobalObject,
         query: *ZigString,
     ) JSValue {
-        return shim.cppFn("createFromURLQuery", .{
-            global,
-            query,
-        });
+        return WebCore__DOMFormData__createFromURLQuery(global, query);
     }
 
     extern fn DOMFormData__toQueryString(
@@ -1209,13 +1199,11 @@ pub const DOMFormData = opaque {
             }
         };
 
-        DOMFormData__toQueryString(this, ctx, &Wrapper.run);
+        WebCore__DOMFormData__toQueryString(this, ctx, &Wrapper.run);
     }
 
     pub fn fromJS(value: JSValue) ?*DOMFormData {
-        return shim.cppFn("fromJS", .{
-            value,
-        });
+        return WebCore__DOMFormData__fromJS(value);
     }
 
     pub fn append(
@@ -1223,11 +1211,7 @@ pub const DOMFormData = opaque {
         name_: *ZigString,
         value_: *ZigString,
     ) void {
-        return shim.cppFn("append", .{
-            this,
-            name_,
-            value_,
-        });
+        WebCore__DOMFormData__append(this, name_, value_);
     }
 
     pub fn appendBlob(
@@ -1237,21 +1221,13 @@ pub const DOMFormData = opaque {
         blob: *anyopaque,
         filename_: *ZigString,
     ) void {
-        return shim.cppFn("appendBlob", .{
-            this,
-            global,
-            name_,
-            blob,
-            filename_,
-        });
+        return WebCore__DOMFormData__appendBlob(this, global, name_, blob, filename_);
     }
 
     pub fn count(
         this: *DOMFormData,
     ) usize {
-        return shim.cppFn("count", .{
-            this,
-        });
+        return WebCore__DOMFormData__count(this);
     }
 
     const ForEachFunction = *const fn (
@@ -3516,24 +3492,22 @@ pub const JSArrayIterator = struct {
 };
 
 pub const JSMap = opaque {
-    pub const shim = Shimmer("JSC", "JSMap", @This());
-    pub const Type = JSMap;
-    const cppFn = shim.cppFn;
-
-    pub const include = "JavaScriptCore/JSMap.h";
-    pub const name = "JSC::JSMap";
-    pub const namespace = "JSC";
+    extern fn JSC__JSMap__create(*JSGlobalObject) JSValue;
+    extern fn JSC__JSMap__get_(?*JSMap, *JSGlobalObject, JSValue) JSValue;
+    extern fn JSC__JSMap__has(arg0: ?*JSMap, arg1: *JSGlobalObject, JSValue2: JSValue) bool;
+    extern fn JSC__JSMap__remove(arg0: ?*JSMap, arg1: *JSGlobalObject, JSValue2: JSValue) bool;
+    extern fn JSC__JSMap__set(arg0: ?*JSMap, arg1: *JSGlobalObject, JSValue2: JSValue, JSValue3: JSValue) void;
 
     pub fn create(globalObject: *JSGlobalObject) JSValue {
-        return cppFn("create", .{globalObject});
+        return JSC__JSMap__create(globalObject);
     }
 
     pub fn set(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue, value: JSValue) void {
-        return cppFn("set", .{ this, globalObject, key, value });
+        return JSC__JSMap__set(this, globalObject, key, value);
     }
 
     pub fn get_(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) JSValue {
-        return cppFn("get", .{ this, globalObject, key });
+        return JSC__JSMap__get_(this, globalObject, key);
     }
 
     pub fn get(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) ?JSValue {
@@ -3545,11 +3519,11 @@ pub const JSMap = opaque {
     }
 
     pub fn has(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) bool {
-        return cppFn("has", .{ this, globalObject, key });
+        return JSC__JSMap__has(this, globalObject, key);
     }
 
     pub fn remove(this: *JSMap, globalObject: *JSGlobalObject, key: JSValue) bool {
-        return cppFn("remove", .{ this, globalObject, key });
+        return JSC__JSMap__remove(this, globalObject, key);
     }
 
     pub fn fromJS(value: JSValue) ?*JSMap {
@@ -3559,14 +3533,6 @@ pub const JSMap = opaque {
 
         return null;
     }
-
-    pub const Extern = [_][]const u8{
-        "create",
-        "set",
-        "get_",
-        "has",
-        "remove",
-    };
 };
 
 // TODO: this should not need to be `pub`
@@ -7117,3 +7083,5 @@ pub const DeferredError = struct {
         return err;
     }
 };
+
+pub const JSSocketAddress = @import("./JSSocketAddress.zig").JSSocketAddress;

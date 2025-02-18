@@ -784,7 +784,6 @@ pub const FormatOptions = struct {
             if (try arg1.getBooleanLoose(globalThis, "sorted")) |opt| {
                 formatOptions.ordered_properties = opt;
             }
-
             if (try arg1.getBooleanLoose(globalThis, "compact")) |opt| {
                 formatOptions.single_line = opt;
             }
@@ -2541,7 +2540,7 @@ pub const Formatter = struct {
                     response.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.WebCore.Request)) |request| {
-                    request.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    request.writeFormat(value, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.API.BuildArtifact)) |build| {
                     build.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};

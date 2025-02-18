@@ -293,6 +293,7 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
+    /// You must call `sourcemap.map.deref()` or you will leak memory
     fn getWithContent(
         this: *SavedSourceMap,
         path: string,
@@ -365,6 +366,7 @@ pub const SavedSourceMap = struct {
         }
     }
 
+    /// You must `deref()` the returned value or you will leak memory
     pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
         return this.getWithContent(path, .mappings_only).map;
     }

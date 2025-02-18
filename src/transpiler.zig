@@ -362,16 +362,6 @@ pub const Transpiler = struct {
 
     pub const isCacheEnabled = cache_files;
 
-    pub fn clone(this: *Transpiler, allocator: std.mem.Allocator, to: *Transpiler) !void {
-        to.* = this.*;
-        to.setAllocator(allocator);
-        to.log = try allocator.create(logger.Log);
-        to.log.* = logger.Log.init(allocator);
-        to.setLog(to.log);
-        to.macro_context = null;
-        to.linker.resolver = &to.resolver;
-    }
-
     pub inline fn getPackageManager(this: *Transpiler) *PackageManager {
         return this.resolver.getPackageManager();
     }
@@ -645,205 +635,7 @@ pub const Transpiler = struct {
         empty: bool = false,
     };
 
-    pub fn buildWithResolveResult(
-        transpiler: *Transpiler,
-        resolve_result: _resolver.Result,
-        allocator: std.mem.Allocator,
-        loader: options.Loader,
-        comptime Writer: type,
-        writer: Writer,
-        comptime import_path_format: options.BundleOptions.ImportPathFormat,
-        file_descriptor: ?StoredFileDescriptorType,
-        filepath_hash: u32,
-        comptime WatcherType: type,
-        watcher: *WatcherType,
-        client_entry_point: ?*EntryPoints.ClientEntryPoint,
-        origin: URL,
-        comptime is_source_map: bool,
-        source_map_handler: ?js_printer.SourceMapHandler,
-    ) !BuildResolveResultPair {
-        if (resolve_result.is_external) {
-            return BuildResolveResultPair{
-                .written = 0,
-                .input_fd = null,
-            };
-        }
-
-        errdefer transpiler.resetStore();
-
-        var file_path = (resolve_result.pathConst() orelse {
-            return BuildResolveResultPair{
-                .written = 0,
-                .input_fd = null,
-            };
-        }).*;
-
-        if (strings.indexOf(file_path.text, transpiler.fs.top_level_dir)) |i| {
-            file_path.pretty = file_path.text[i + transpiler.fs.top_level_dir.len ..];
-        } else if (!file_path.is_symlink) {
-            file_path.pretty = allocator.dupe(u8, transpiler.fs.relativeTo(file_path.text)) catch unreachable;
-        }
-
-        const old_bundler_allocator = transpiler.allocator;
-        transpiler.allocator = allocator;
-        defer transpiler.allocator = old_bundler_allocator;
-        const old_linker_allocator = transpiler.linker.allocator;
-        defer transpiler.linker.allocator = old_linker_allocator;
-        transpiler.linker.allocator = allocator;
-
-        switch (loader) {
-            .css => {
-                const CSSBundlerHMR = Css.NewBundler(
-                    Writer,
-                    @TypeOf(&transpiler.linker),
-                    @TypeOf(&transpiler.resolver.caches.fs),
-                    WatcherType,
-                    @TypeOf(transpiler.fs),
-                    true,
-                    import_path_format,
-                );
-
-                const CSSBundler = Css.NewBundler(
-                    Writer,
-                    @TypeOf(&transpiler.linker),
-                    @TypeOf(&transpiler.resolver.caches.fs),
-                    WatcherType,
-                    @TypeOf(transpiler.fs),
-                    false,
-                    import_path_format,
-                );
-
-                const written = brk: {
-                    if (transpiler.options.hot_module_reloading) {
-                        break :brk (try CSSBundlerHMR.bundle(
-                            file_path.text,
-                            transpiler.fs,
-                            writer,
-                            watcher,
-                            &transpiler.resolver.caches.fs,
-                            filepath_hash,
-                            file_descriptor,
-                            allocator,
-                            transpiler.log,
-                            &transpiler.linker,
-                            origin,
-                        )).written;
-                    } else {
-                        break :brk (try CSSBundler.bundle(
-                            file_path.text,
-                            transpiler.fs,
-                            writer,
-                            watcher,
-                            &transpiler.resolver.caches.fs,
-                            filepath_hash,
-                            file_descriptor,
-                            allocator,
-                            transpiler.log,
-                            &transpiler.linker,
-                            origin,
-                        )).written;
-                    }
-                };
-
-                return BuildResolveResultPair{
-                    .written = written,
-                    .input_fd = file_descriptor,
-                };
-            },
-            else => {
-                var result = transpiler.parse(
-                    ParseOptions{
-                        .allocator = allocator,
-                        .path = file_path,
-                        .loader = loader,
-                        .dirname_fd = resolve_result.dirname_fd,
-                        .file_descriptor = file_descriptor,
-                        .file_hash = filepath_hash,
-                        .macro_remappings = transpiler.options.macro_remap,
-                        .emit_decorator_metadata = resolve_result.emit_decorator_metadata,
-                        .jsx = resolve_result.jsx,
-                    },
-                    client_entry_point,
-                ) orelse {
-                    transpiler.resetStore();
-                    return BuildResolveResultPair{
-                        .written = 0,
-                        .input_fd = null,
-                    };
-                };
-
-                if (result.empty) {
-                    return BuildResolveResultPair{ .written = 0, .input_fd = result.input_fd, .empty = true };
-                }
-
-                if (transpiler.options.target.isBun()) {
-                    if (!transpiler.options.transform_only) {
-                        try transpiler.linker.link(file_path, &result, origin, import_path_format, false, true);
-                    }
-
-                    return BuildResolveResultPair{
-                        .written = switch (result.ast.exports_kind) {
-                            .esm => try transpiler.printWithSourceMapMaybe(
-                                result.ast,
-                                &result.source,
-                                Writer,
-                                writer,
-                                .esm_ascii,
-                                is_source_map,
-                                source_map_handler,
-                                null,
-                            ),
-                            .cjs => try transpiler.printWithSourceMapMaybe(
-                                result.ast,
-                                &result.source,
-                                Writer,
-                                writer,
-                                .cjs,
-                                is_source_map,
-                                source_map_handler,
-                                null,
-                            ),
-                            else => unreachable,
-                        },
-                        .input_fd = result.input_fd,
-                    };
-                }
-
-                if (!transpiler.options.transform_only) {
-                    try transpiler.linker.link(file_path, &result, origin, import_path_format, false, false);
-                }
-
-                return BuildResolveResultPair{
-                    .written = switch (result.ast.exports_kind) {
-                        .none, .esm => try transpiler.printWithSourceMapMaybe(
-                            result.ast,
-                            &result.source,
-                            Writer,
-                            writer,
-                            .esm,
-                            is_source_map,
-                            source_map_handler,
-                            null,
-                        ),
-                        .cjs => try transpiler.printWithSourceMapMaybe(
-                            result.ast,
-                            &result.source,
-                            Writer,
-                            writer,
-                            .cjs,
-                            is_source_map,
-                            source_map_handler,
-                            null,
-                        ),
-                        else => unreachable,
-                    },
-                    .input_fd = result.input_fd,
-                };
-            },
-        }
-    }
-
-    pub fn buildWithResolveResultEager(
+    fn buildWithResolveResultEager(
         transpiler: *Transpiler,
         resolve_result: _resolver.Result,
         comptime import_path_format: options.BundleOptions.ImportPathFormat,
@@ -1001,7 +793,7 @@ pub const Transpiler = struct {
         return output_file;
     }
 
-    pub fn printWithSourceMapMaybe(
+    fn printWithSourceMapMaybe(
         transpiler: *Transpiler,
         ast: js_ast.Ast,
         source: *const logger.Source,
@@ -1582,106 +1374,7 @@ pub const Transpiler = struct {
         return null;
     }
 
-    // This is public so it can be used by the HTTP handler when matching against public dir.
-    pub threadlocal var tmp_buildfile_buf: bun.PathBuffer = undefined;
-    threadlocal var tmp_buildfile_buf2: bun.PathBuffer = undefined;
-    threadlocal var tmp_buildfile_buf3: bun.PathBuffer = undefined;
-
-    pub fn buildFile(
-        transpiler: *Transpiler,
-        log: *logger.Log,
-        path_to_use_: string,
-        comptime client_entry_point_enabled: bool,
-    ) !ServeResult {
-        const old_log = transpiler.log;
-
-        transpiler.setLog(log);
-        defer transpiler.setLog(old_log);
-
-        var path_to_use = path_to_use_;
-
-        defer {
-            js_ast.Expr.Data.Store.reset();
-            js_ast.Stmt.Data.Store.reset();
-        }
-
-        // All non-absolute paths are ./paths
-        if (path_to_use[0] != '/' and path_to_use[0] != '.') {
-            tmp_buildfile_buf3[0..2].* = "./".*;
-            @memcpy(tmp_buildfile_buf3[2..][0..path_to_use.len], path_to_use);
-            path_to_use = tmp_buildfile_buf3[0 .. 2 + path_to_use.len];
-        }
-
-        const resolved = if (comptime !client_entry_point_enabled) (try transpiler.resolver.resolve(transpiler.fs.top_level_dir, path_to_use, .stmt)) else brk: {
-            const absolute_pathname = Fs.PathName.init(path_to_use);
-
-            const loader_for_ext = transpiler.options.loader(absolute_pathname.ext);
-
-            // The expected pathname looks like:
-            // /pages/index.entry.tsx
-            // /pages/index.entry.js
-            // /pages/index.entry.ts
-            // /pages/index.entry.jsx
-            if (loader_for_ext.supportsClientEntryPoint()) {
-                const absolute_pathname_pathname = Fs.PathName.init(absolute_pathname.base);
-
-                if (strings.eqlComptime(absolute_pathname_pathname.ext, ".entry")) {
-                    const trail_dir = absolute_pathname.dirWithTrailingSlash();
-                    var len = trail_dir.len;
-
-                    bun.copy(u8, &tmp_buildfile_buf2, trail_dir);
-                    bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname_pathname.base);
-                    len += absolute_pathname_pathname.base.len;
-                    bun.copy(u8, tmp_buildfile_buf2[len..], absolute_pathname.ext);
-                    len += absolute_pathname.ext.len;
-
-                    if (comptime Environment.allow_assert) bun.assert(len > 0);
-
-                    const decoded_entry_point_path = tmp_buildfile_buf2[0..len];
-                    break :brk try transpiler.resolver.resolve(transpiler.fs.top_level_dir, decoded_entry_point_path, .entry_point);
-                }
-            }
-
-            break :brk (try transpiler.resolver.resolve(transpiler.fs.top_level_dir, path_to_use, .stmt));
-        };
-
-        const path = (resolved.pathConst() orelse return error.ModuleNotFound);
-
-        const loader = transpiler.options.loader(path.name.ext);
-        const mime_type_ext = transpiler.options.out_extensions.get(path.name.ext) orelse path.name.ext;
-
-        switch (loader) {
-            .js, .jsx, .ts, .tsx, .css => {
-                return ServeResult{
-                    .file = options.OutputFile.initPending(loader, resolved),
-                    .mime_type = MimeType.byLoader(
-                        loader,
-                        mime_type_ext[1..],
-                    ),
-                };
-            },
-            .toml, .json => {
-                return ServeResult{
-                    .file = options.OutputFile.initPending(loader, resolved),
-                    .mime_type = MimeType.transpiled_json,
-                };
-            },
-            else => {
-                const abs_path = path.text;
-                const file = try std.fs.openFileAbsolute(abs_path, .{ .mode = .read_only });
-                const size = try file.getEndPos();
-                return ServeResult{
-                    .file = options.OutputFile.initFile(file, abs_path, size),
-                    .mime_type = MimeType.byLoader(
-                        loader,
-                        mime_type_ext[1..],
-                    ),
-                };
-            },
-        }
-    }
-
-    pub fn normalizeEntryPointPath(transpiler: *Transpiler, _entry: string) string {
+    fn normalizeEntryPointPath(transpiler: *Transpiler, _entry: string) string {
         var paths = [_]string{_entry};
         var entry = transpiler.fs.abs(&paths);
 
@@ -1788,25 +1481,6 @@ pub const Transpiler = struct {
             }
         }
 
-        // if (log.level == .verbose) {
-        //     for (log.msgs.items) |msg| {
-        //         try msg.writeFormat(std.io.getStdOut().writer());
-        //     }
-        // }
-
-        if (transpiler.linker.any_needs_runtime) {
-            // try transpiler.output_files.append(
-            //     options.OutputFile.initBuf(
-            //         runtime.Runtime.source_code,
-            //         bun.default_allocator,
-            //         Linker.runtime_source_path,
-            //         .js,
-            //         null,
-            //         null,
-            //     ),
-            // );
-        }
-
         if (FeatureFlags.tracing and transpiler.options.log.level.atLeast(.info)) {
             Output.prettyErrorln(
                 "<r><d>\n---Tracing---\nResolve time:      {d}\nParsing time:      {d}\n---Tracing--\n\n<r>",
@@ -1822,21 +1496,16 @@ pub const Transpiler = struct {
         return final_result;
     }
 
-    // pub fn processResolveQueueWithThreadPool(transpiler)
-
-    pub fn processResolveQueue(
+    fn processResolveQueue(
         transpiler: *Transpiler,
         comptime import_path_format: options.BundleOptions.ImportPathFormat,
         comptime wrap_entry_point: bool,
         comptime Outstream: type,
         outstream: Outstream,
     ) !void {
-        // var count: u8 = 0;
         while (transpiler.resolve_queue.readItem()) |item| {
             js_ast.Expr.Data.Store.reset();
             js_ast.Stmt.Data.Store.reset();
-
-            // defer count += 1;
 
             if (comptime wrap_entry_point) {
                 const path = item.pathConst() orelse unreachable;
@@ -1884,8 +1553,6 @@ pub const Transpiler = struct {
                 null,
             ) catch continue orelse continue;
             transpiler.output_files.append(output_file) catch unreachable;
-
-            // if (count >= 3) return try transpiler.processResolveQueueWithThreadPool(import_path_format, wrap_entry_point, Outstream, outstream);
         }
     }
 };

@@ -168,13 +168,14 @@ function send_discord_announcement() {
   local version="$1"
   local commit="$BUILDKITE_COMMIT"
   local short_sha="${commit:0:7}"
-  
+  local commit_url="https://github.com/oven-sh/bun/commit/$commit"
+
   if [ "$version" == "canary" ]; then
     local json_payload=$(cat <<EOF
 {
   "embeds": [{
-    "title": "Bun Canary ${short_sha} now available",
-    "description": "A new canary build of Bun has been automatically uploaded. To upgrade, run:\n\n\`\`\`shell\nbun upgrade --canary\n# bun upgrade --stable <- to downgrade\n\`\`\`\n\nCommit: \`${commit}\`",
+    "title": "New Bun Canary now available",
+    "description": "A new canary build of Bun has been automatically uploaded ([${short_sha}](${commit_url})). To upgrade, run:\n\n\`\`\`shell\nbun upgrade --canary\n\`\`\`\nCommit: \`${commit}\`",
     "color": 16023551,
     "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   }]

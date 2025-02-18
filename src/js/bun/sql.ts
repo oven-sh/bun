@@ -21,7 +21,11 @@ const enum SSLMode {
 function connectionClosedError() {
   return $ERR_POSTGRES_CONNECTION_CLOSED("Connection closed");
 }
+function notTaggedCallError() {
+  return $ERR_POSTGRES_NOT_TAGGED_CALL("Query not called as a tagged template literal");
+}
 hideFromStack(connectionClosedError);
+hideFromStack(notTaggedCallError);
 
 enum SQLQueryResultMode {
   objects = 0,
@@ -92,6 +96,7 @@ enum SQLQueryFlags {
   unsafe = 1 << 1,
   bigint = 1 << 2,
   simple = 1 << 3,
+  notTagged = 1 << 4,
 }
 
 function getQueryHandle(query) {
@@ -131,13 +136,19 @@ class Query extends PublicPromise {
     return `PostgresQuery { ${active ? "active" : ""} ${cancelled ? "cancelled" : ""} ${executed ? "executed" : ""} ${error ? "error" : ""} }`;
   }
 
-  constructor(strings, values, allowUnsafeTransaction, poolSize, handler) {
+  constructor(strings, values, flags, poolSize, handler) {
     var resolve_, reject_;
     super((resolve, reject) => {
       resolve_ = resolve;
       reject_ = reject;
     });
-
+    if (typeof strings === "string") {
+      if (!(flags & SQLQueryFlags.unsafe)) {
+        // identifier (cannot be executed in safe mode)
+        flags |= SQLQueryFlags.notTagged;
+        strings = escapeIdentifier(strings);
+      }
+    }
     this[_resolve] = resolve_;
     this[_reject] = reject_;
     this[_handle] = null;
@@ -146,7 +157,8 @@ class Query extends PublicPromise {
     this[_poolSize] = poolSize;
     this[_strings] = strings;
     this[_values] = values;
-    this[_flags] = allowUnsafeTransaction;
+    this[_flags] = flags;
+
     this[_results] = null;
   }
 
@@ -154,6 +166,10 @@ class Query extends PublicPromise {
     const { [_handler]: handler, [_queryStatus]: status } = this;
 
     if (status & (QueryStatus.executed | QueryStatus.error | QueryStatus.cancelled | QueryStatus.invalidHandle)) {
+      return;
+    }
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      this.reject(notTaggedCallError());
       return;
     }
     this[_queryStatus] |= QueryStatus.executed;
@@ -254,6 +270,9 @@ class Query extends PublicPromise {
   }
 
   then() {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw notTaggedCallError();
+    }
     this[_run](true);
     const result = super.$then.$apply(this, arguments);
     $markPromiseAsHandled(result);
@@ -261,6 +280,9 @@ class Query extends PublicPromise {
   }
 
   catch() {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw notTaggedCallError();
+    }
     this[_run](true);
     const result = super.catch.$apply(this, arguments);
     $markPromiseAsHandled(result);
@@ -268,6 +290,9 @@ class Query extends PublicPromise {
   }
 
   finally() {
+    if (this[_flags] & SQLQueryFlags.notTagged) {
+      throw notTaggedCallError();
+    }
     this[_run](true);
     return super.finally.$apply(this, arguments);
   }
@@ -1009,10 +1034,6 @@ function handleQueryFragment(strings, values) {
         let sub_strings = value[_strings];
         var is_unsafe = value[_flags] & SQLQueryFlags.unsafe;
         if (typeof sub_strings === "string") {
-          if (!is_unsafe) {
-            // identifier
-            sub_strings = escapeIdentifier(sub_strings);
-          }
           if (final_strings.length === 0) {
             // we are the first value
             let final_string_value = strings[strings_idx] + sub_strings;
@@ -1558,9 +1579,9 @@ function SQL(o, e = {}) {
       assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
-          return await reserved_sql(`COMMIT PREPARED '${name}'`);
+          return await reserved_sql.unsafe(`COMMIT PREPARED '${name}'`);
         case "mysql":
-          return await reserved_sql(`XA COMMIT '${name}'`);
+          return await reserved_sql.unsafe(`XA COMMIT '${name}'`);
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically committed.`);
         case "sqlite":
@@ -1574,9 +1595,9 @@ function SQL(o, e = {}) {
       const adapter = connectionInfo.adapter;
       switch (adapter) {
         case "postgres":
-          return await reserved_sql(`ROLLBACK PREPARED '${name}'`);
+          return await reserved_sql.unsafe(`ROLLBACK PREPARED '${name}'`);
         case "mysql":
-          return await reserved_sql(`XA ROLLBACK '${name}'`);
+          return await reserved_sql.unsafe(`XA ROLLBACK '${name}'`);
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically rolled back.`);
         case "sqlite":
@@ -1841,11 +1862,11 @@ function SQL(o, e = {}) {
     const onClose = onTransactionDisconnected.bind(state);
     pooledConnection.onClose(onClose);
 
-    function run_internal_transaction_sql(strings, ...values) {
+    function run_internal_transaction_sql(string) {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
       }
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries);
     }
     function transaction_sql(strings, ...values) {
       if (
@@ -1886,9 +1907,9 @@ function SQL(o, e = {}) {
       assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
-          return await transaction_sql(`COMMIT PREPARED '${name}'`);
+          return await run_internal_transaction_sql(`COMMIT PREPARED '${name}'`);
         case "mysql":
-          return await transaction_sql(`XA COMMIT '${name}'`);
+          return await run_internal_transaction_sql(`XA COMMIT '${name}'`);
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically committed.`);
         case "sqlite":
@@ -1901,9 +1922,9 @@ function SQL(o, e = {}) {
       assertValidTransactionName(name);
       switch (adapter) {
         case "postgres":
-          return await transaction_sql(`ROLLBACK PREPARED '${name}'`);
+          return await run_internal_transaction_sql(`ROLLBACK PREPARED '${name}'`);
         case "mysql":
-          return await transaction_sql(`XA ROLLBACK '${name}'`);
+          return await run_internal_transaction_sql(`XA ROLLBACK '${name}'`);
         case "mssql":
           throw Error(`MSSQL distributed transaction is automatically rolled back.`);
         case "sqlite":
@@ -2124,9 +2145,9 @@ function SQL(o, e = {}) {
     const adapter = connectionInfo.adapter;
     switch (adapter) {
       case "postgres":
-        return await sql(`ROLLBACK PREPARED '${name}'`);
+        return await sql.unsafe(`ROLLBACK PREPARED '${name}'`);
       case "mysql":
-        return await sql(`XA ROLLBACK '${name}'`);
+        return await sql.unsafe(`XA ROLLBACK '${name}'`);
       case "mssql":
         throw Error(`MSSQL distributed transaction is automatically rolled back.`);
       case "sqlite":
@@ -2144,9 +2165,9 @@ function SQL(o, e = {}) {
     const adapter = connectionInfo.adapter;
     switch (adapter) {
       case "postgres":
-        return await sql(`COMMIT PREPARED '${name}'`);
+        return await sql.unsafe(`COMMIT PREPARED '${name}'`);
       case "mysql":
-        return await sql(`XA COMMIT '${name}'`);
+        return await sql.unsafe(`XA COMMIT '${name}'`);
       case "mssql":
         throw Error(`MSSQL distributed transaction is automatically committed.`);
       case "sqlite":

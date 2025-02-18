@@ -245,12 +245,12 @@ slow_path:
         } else {
             // Look ahead for next % using SIMD
             const uint8_t* lookAhead = cursor;
-            while (lookAhead + 16 <= end) {
+            while (lookAhead + stride <= end) {
                 auto chunk = SIMD::load(lookAhead);
                 if (SIMD::isNonZero(SIMD::equal(chunk, percentVector))) {
                     break;
                 }
-                lookAhead += 16;
+                lookAhead += stride;
             }
 
             // Append everything up to lookAhead

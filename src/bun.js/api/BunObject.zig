@@ -3076,8 +3076,11 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
             globalObject,
             &config,
             &args,
-            callframe.isFromBunMain(globalObject.vm()),
-            true,
+            .{
+                .allow_bake_config = bun.FeatureFlags.bake() and callframe.isFromBunMain(globalObject.vm()),
+                .is_fetch_required = true,
+                .has_user_routes = false,
+            },
         );
 
         if (globalObject.hasException()) {

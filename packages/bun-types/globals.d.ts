@@ -1,139 +1,91 @@
-type _ReadableStream<T> = typeof globalThis extends {
-  onerror: any;
-  ReadableStream: infer T;
-}
-  ? T
-  : import("stream/web").ReadableStream<T>;
-type _WritableStream<T> = typeof globalThis extends {
-  onerror: any;
-  WritableStream: infer T;
-}
-  ? T
-  : import("stream/web").WritableStream<T>;
+type _ReadableStream<T> = import("stream/web").ReadableStream<T>;
+type _WritableStream<T> = import("stream/web").WritableStream<T>;
 
-type _TextEncoder = typeof globalThis extends {
-  onerror: any;
-  TextEncoder: infer T;
-}
-  ? T
-  : Bun.TextEncoder;
+type _TextEncoder = Bun.TextEncoder;
 
-type _TextDecoder = typeof globalThis extends {
-  onerror: any;
-  TextDecoder: infer T;
-}
-  ? T
-  : Bun.TextDecoder;
+type _TextDecoder = Bun.TextDecoder;
 
-type _Performance = typeof globalThis extends {
-  onerror: any;
-}
-  ? {}
-  : import("perf_hooks").Performance;
+type _Performance = import("perf_hooks").Performance;
 
-type _Worker = typeof globalThis extends { onerror: any; Worker: infer T } ? T : Bun.Worker;
+type _Worker = Bun.Worker;
 
-type _Event = typeof globalThis extends { onerror: any; Event: any }
-  ? {}
-  : {
-      /** This is not used in Node.js and is provided purely for completeness. */
-      readonly bubbles: boolean;
-      /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
-      cancelBubble: () => void;
-      /** True if the event was created with the cancelable option */
-      readonly cancelable: boolean;
-      /** This is not used in Node.js and is provided purely for completeness. */
-      readonly composed: boolean;
-      /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
-      composedPath(): [EventTarget?];
-      /** Alias for event.target. */
-      readonly currentTarget: EventTarget | null;
-      /** Is true if cancelable is true and event.preventDefault() has been called. */
-      readonly defaultPrevented: boolean;
-      /** This is not used in Node.js and is provided purely for completeness. */
-      readonly eventPhase: 0 | 2;
-      /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
-      readonly isTrusted: boolean;
-      /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
-      preventDefault(): void;
-      /** This is not used in Node.js and is provided purely for completeness. */
-      returnValue: boolean;
-      /** Alias for event.target. */
-      readonly srcElement: EventTarget | null;
-      /** Stops the invocation of event listeners after the current one completes. */
-      stopImmediatePropagation(): void;
-      /** This is not used in Node.js and is provided purely for completeness. */
-      stopPropagation(): void;
-      /** The `EventTarget` dispatching the event */
-      readonly target: EventTarget | null;
-      /** The millisecond timestamp when the Event object was created. */
-      readonly timeStamp: number;
-      /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
-      readonly type: string;
-    };
+type _Event = {
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly bubbles: boolean;
+  /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
+  cancelBubble: () => void;
+  /** True if the event was created with the cancelable option */
+  readonly cancelable: boolean;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly composed: boolean;
+  /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
+  composedPath(): [EventTarget?];
+  /** Alias for event.target. */
+  readonly currentTarget: EventTarget | null;
+  /** Is true if cancelable is true and event.preventDefault() has been called. */
+  readonly defaultPrevented: boolean;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly eventPhase: 0 | 2;
+  /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
+  readonly isTrusted: boolean;
+  /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
+  preventDefault(): void;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  returnValue: boolean;
+  /** Alias for event.target. */
+  readonly srcElement: EventTarget | null;
+  /** Stops the invocation of event listeners after the current one completes. */
+  stopImmediatePropagation(): void;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  stopPropagation(): void;
+  /** The `EventTarget` dispatching the event */
+  readonly target: EventTarget | null;
+  /** The millisecond timestamp when the Event object was created. */
+  readonly timeStamp: number;
+  /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+  readonly type: string;
+};
 
-type _EventTarget = typeof globalThis extends {
-  onerror: any;
-  EventTarget: any;
-}
-  ? {}
-  : {
-      /**
-       * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
-       *
-       * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
-       *
-       * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
-       * Specifically, the `capture` option is used as part of the key when registering a `listener`.
-       * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
-       */
-      addEventListener(
-        type: string,
-        listener: EventListener | EventListenerObject,
-        options?: AddEventListenerOptions | boolean,
-      ): void;
-      /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
-      dispatchEvent(event: Event): boolean;
-      /** Removes the event listener in target's event listener list with the same type, callback, and options. */
-      removeEventListener(
-        type: string,
-        listener: EventListener | EventListenerObject,
-        options?: Bun.EventListenerOptions | boolean,
-      ): void;
-    };
+type _EventTarget = {
+  /**
+   * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
+   *
+   * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
+   *
+   * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
+   * Specifically, the `capture` option is used as part of the key when registering a `listener`.
+   * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
+   */
+  addEventListener(
+    type: string,
+    listener: EventListener | EventListenerObject,
+    options?: AddEventListenerOptions | boolean,
+  ): void;
+  /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
+  dispatchEvent(event: Event): boolean;
+  /** Removes the event listener in target's event listener list with the same type, callback, and options. */
+  removeEventListener(
+    type: string,
+    listener: EventListener | EventListenerObject,
+    options?: Bun.EventListenerOptions | boolean,
+  ): void;
+};
 
-type _Crypto = typeof globalThis extends {
-  onerror: any;
-  Crypto: infer T;
-}
-  ? T
-  : import("crypto").webcrypto.Crypto;
+type _Crypto = import("crypto").webcrypto.Crypto;
 
-type _SubtleCrypto = typeof globalThis extends {
-  onerror: any;
-  SubtleCrypto: infer T;
-}
-  ? T
-  : import("crypto").webcrypto.SubtleCrypto;
+type _SubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
 
-type _CryptoKey = typeof globalThis extends {
-  onerror: any;
-  CryptoKey: infer T;
-}
-  ? T
-  : import("crypto").webcrypto.CryptoKey;
+type _CryptoKey = import("crypto").webcrypto.CryptoKey;
 
-type _Body = typeof globalThis extends { onerror: any }
-  ? {}
-  : {
-      readonly body: ReadableStream | null;
-      readonly bodyUsed: boolean;
-      readonly arrayBuffer: () => Promise<ArrayBuffer>;
-      readonly blob: () => Promise<Blob>;
-      readonly formData: () => Promise<FormData>;
-      readonly json: () => Promise<unknown>;
-      readonly text: () => Promise<string>;
-    };
+type _Body = {
+  readonly body: ReadableStream | null;
+  readonly bodyUsed: boolean;
+  readonly arrayBuffer: () => Promise<ArrayBuffer>;
+  readonly blob: () => Promise<Blob>;
+  readonly formData: () => Promise<FormData>;
+  readonly json: () => Promise<unknown>;
+  readonly text: () => Promise<string>;
+};
 
 import { S3Options } from "bun";
 import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
@@ -1942,12 +1894,8 @@ declare global {
      */
     bytes(): Promise<Uint8Array>;
   }
-  var Blob: typeof globalThis extends {
-    onerror: any;
-    Blob: infer T;
-  }
-    ? T
-    : typeof Blob;
+
+  var Blob: typeof Blob;
 
   var Response: typeof import("./fetch").Response;
 

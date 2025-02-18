@@ -1987,7 +1987,7 @@ pub const H2FrameParser = struct {
                     originValue.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
                 }
                 count += 1;
-                payload = origin_str[origin_length..];
+                payload = payload[origin_length + 2 ..];
             }
             this.dispatch(.onOrigin, originValue);
             this.readBuffer.reset();

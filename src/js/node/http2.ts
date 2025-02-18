@@ -2207,7 +2207,7 @@ function getOrigin(origin: any, isAltSvc: boolean): string {
       if (isAltSvc) {
         throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN("HTTP/2 ALTSVC frames require a valid origin");
       } else {
-        throw $ERR_HTTP2_INVALID_ORIGIN("HTTP/2 ORIGIN frames require a valid origin");
+        throw $ERR_INVALID_URL("HTTP/2 ORIGIN frames require a valid origin");
       }
     }
   } else if (origin != null && typeof origin === "object") {
@@ -2511,7 +2511,6 @@ class ServerHttp2Session extends Http2Session {
     for (let i = 0; i < length; i++) {
       validOrigins[i] = getOrigin(origins[i], false);
     }
-
     parser.origin(validOrigins);
   }
 

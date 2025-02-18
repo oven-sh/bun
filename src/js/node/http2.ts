@@ -3338,6 +3338,13 @@ function connectionListener(socket: Socket) {
   const timeout = this.timeout;
   if (timeout) session.setTimeout(timeout, sessionOnTimeout);
   this.emit("session", session);
+  if (options.origins && $isArray(options.origins)) {
+    try {
+      session.origin(...options.origins);
+    } catch (e) {
+      session.emit("frameError", HTTP2_HEADER_ORIGIN, e, 0);
+    }
+  }
 }
 class Http2Server extends net.Server {
   timeout = 0;

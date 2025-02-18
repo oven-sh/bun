@@ -2,7 +2,7 @@
   "name": "fixture",
   "module": "index.ts",
   "dependencies": {
-    "bun-types": "bun-types-no-release.tgz"
+    "@types/node": "^22.13.4"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"

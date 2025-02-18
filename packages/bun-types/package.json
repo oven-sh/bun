@@ -1,7 +1,6 @@
 {
   "name": "bun-types",
   "license": "MIT",
-  "version": "no-release",
   "main": "./index.cjs",
   "types": "./index.d.ts",
   "description": "Type definitions and documentation for Bun, an incredibly fast JavaScript runtime",

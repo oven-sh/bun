@@ -93,8 +93,7 @@ import type { MessagePort } from "worker_threads";
 import type { WebSocket as _WebSocket } from "ws";
 
 declare global {
-  declare var onmessage: never;
-
+  var onmessage: never;
   var Bun: typeof import("bun");
 
   namespace NodeJS {
@@ -1834,17 +1833,20 @@ declare global {
 
   var Blob: typeof Blob;
 
+  type _RequestInit = typeof import("undici-types").RequestInit;
+  interface RequestInit extends _RequestInit {}
+
+  interface Response extends import("./fetch").Response {}
   var Response: typeof import("./fetch").Response;
 
   interface Request {
     headers: Headers;
   }
-
   var Request: {
     prototype: Request;
-    new (requestInfo: string, requestInit?: RequestInit): Request;
-    new (requestInfo: RequestInit & { url: string }): Request;
-    new (requestInfo: Request, requestInit?: RequestInit): Request;
+    new (requestInfo: string, requestInit?: FetchRequestInit): Request;
+    new (requestInfo: FetchRequestInit & { url: string }): Request;
+    new (requestInfo: Request, requestInit?: FetchRequestInit): Request;
   };
 
   type _UndiciHeaders = import("undici-types").Headers;

@@ -28,6 +28,14 @@ new WeakMap();
 
 const statuses = [200, 400, 401, 403, 404, 500, 501, 502, 503, 504];
 
+const r = new Request("", {
+  body: "",
+});
+
+r.method;
+r.body;
+r.headers.get("content-type");
+
 Bun.serve({
   fetch(req) {
     const headers = req.headers.toJSON();

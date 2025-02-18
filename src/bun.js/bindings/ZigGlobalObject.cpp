@@ -3889,6 +3889,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_JSSocketAddressDTOStructure.visit(visitor);
     thisObject->m_cryptoObject.visit(visitor);
     thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
     thisObject->m_esmRegistryMap.visit(visitor);

@@ -186,11 +186,6 @@ export default [
         length: 0,
         invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
-      refresh: {
-        fn: "doRefresh",
-        length: 0,
-        invalidThisBehavior: InvalidThisBehavior.NoOp,
-      },
       unref: {
         fn: "doUnref",
         length: 0,

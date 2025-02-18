@@ -781,10 +781,6 @@ pub const ImmediateObject = struct {
         return this.internals.doUnref(globalThis, callFrame);
     }
 
-    pub fn doRefresh(this: *ImmediateObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
-        return this.internals.doRefresh(globalThis, callFrame);
-    }
-
     pub fn hasRef(this: *ImmediateObject, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         return this.internals.hasRef(globalThis, callFrame);
     }
@@ -1049,6 +1045,10 @@ const TimerObjectInternals = struct {
 
     pub fn doRefresh(this: *TimerObjectInternals, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         const this_value = callframe.this();
+        // Immediates do not have a refresh function, and our binding generator should not let this
+        // function be reached even if you override the `this` value calling a Timeout object's
+        // `refresh` method
+        assert(this.kind != .setImmediate);
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
         if (this.id == -1 or this.kind == .setImmediate or this.has_cleared_timer) {

@@ -6473,12 +6473,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 .port = @intCast(info.port),
             }) catch bun.outOfMemory();
             return addr.toJS(this.globalThis);
-// =======
-//             if (this.config.address == .unix) {
-//                 return JSValue.jsNull();
-//             }
-//             return request.getRemoteSocketInfo(this.globalThis) orelse .null;
-// >>>>>>> 1de31292fb2625636a6720360d56adfc95ff0240
+            // =======
+            //             if (this.config.address == .unix) {
+            //                 return JSValue.jsNull();
+            //             }
+            //             return request.getRemoteSocketInfo(this.globalThis) orelse .null;
+            // >>>>>>> 1de31292fb2625636a6720360d56adfc95ff0240
         }
 
         pub fn memoryCost(this: *ThisServer) usize {

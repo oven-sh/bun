@@ -231,7 +231,7 @@ pub fn finalize(this: *SocketAddress) void {
 // =============================================================================
 
 /// Turn this address into a DTO. `this` is consumed and undefined after this call.
-/// 
+///
 /// This is similar to `.toJS`, but differs in the following ways:
 /// - `this` is consumed
 /// - result object is not an instance of `SocketAddress`, so
@@ -393,7 +393,6 @@ inline fn asV6(this: *const SocketAddress) *const inet.sockaddr_in6 {
 
 const IPv6 = bun.String.static("IPv6");
 const IPv4 = bun.String.static("IPv4");
-
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 pub const AF = enum(inet.sa_family_t) {

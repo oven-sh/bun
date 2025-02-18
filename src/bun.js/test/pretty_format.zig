@@ -1233,7 +1233,7 @@ pub const JestPrettyFormat = struct {
                             return error.JSError;
                         };
                     } else if (value.as(JSC.WebCore.Request)) |request| {
-                        request.writeFormat(Formatter, this, writer_, enable_ansi_colors) catch |err| {
+                        request.writeFormat(value, Formatter, this, writer_, enable_ansi_colors) catch |err| {
                             this.failed = true;
                             // TODO: make this better
                             if (!this.globalThis.hasException()) {

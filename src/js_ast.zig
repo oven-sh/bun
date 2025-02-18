@@ -7165,7 +7165,7 @@ pub const BundledAst = struct {
         };
     }
 
-    /// TODO: I don't like having to do this extra allocation. Is there a way to only do this if we know it is imported by a CSS file?
+    /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
     pub fn addUrlForCss(
         this: *BundledAst,
         allocator: std.mem.Allocator,

@@ -1520,6 +1520,7 @@ pub const EventLoop = struct {
 
         this.flushImmediateQueue();
         ctx.onAfterEventLoop();
+        this.global.handleRejectedPromises();
     }
 
     pub fn flushImmediateQueue(this: *EventLoop) void {

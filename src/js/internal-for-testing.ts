@@ -176,3 +176,9 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 export const timerInternals = {
   timerClockMs: $newZigFunction("Timer.zig", "internal_bindings.timerClockMs", 0),
 };
+
+export const decodeURIComponentSIMD = $newCppFunction(
+  "decodeURIComponentSIMD.cpp",
+  "jsFunctionDecodeURIComponentSIMD",
+  1,
+);

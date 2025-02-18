@@ -1709,6 +1709,7 @@ pub const Api = struct {
         serve_env_prefix: ?[]const u8 = null,
         serve_splitting: bool = false,
         serve_public_path: ?[]const u8 = null,
+        serve_hmr: ?bool = null,
 
         bunfig_path: []const u8,
 

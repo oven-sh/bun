@@ -174,7 +174,7 @@ pub fn BabyList(comptime Type: type) type {
             bun.assert(this.cap >= this.len);
         }
 
-        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {
+        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) std.mem.Allocator.Error!ListType {
             return initWithBuffer(try allocator.alloc(Type, len));
         }
 

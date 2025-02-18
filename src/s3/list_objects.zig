@@ -64,42 +64,42 @@ pub const S3ListObjectsV2Result = struct {
         const jsResult = JSValue.createEmptyObject(globalObject, 12);
 
         if (this.name) |name| {
-            jsResult.put(globalObject, JSC.ZigString.static("Name"), bun.String.init(name).toJS(globalObject));
+            jsResult.put(globalObject, JSC.ZigString.static("name"), bun.String.init(name).toJS(globalObject));
         }
 
         if (this.prefix) |prefix| {
-            jsResult.put(globalObject, JSC.ZigString.static("Prefix"), bun.String.init(prefix).toJS(globalObject));
+            jsResult.put(globalObject, JSC.ZigString.static("prefix"), bun.String.init(prefix).toJS(globalObject));
         }
 
         if (this.delimiter) |delimiter| {
-            jsResult.put(globalObject, JSC.ZigString.static("Delimiter"), bun.String.init(delimiter).toJS(globalObject));
+            jsResult.put(globalObject, JSC.ZigString.static("delimiter"), bun.String.init(delimiter).toJS(globalObject));
         }
 
         if (this.start_after) |start_after| {
-            jsResult.put(globalObject, JSC.ZigString.static("StartAfter"), bun.String.init(start_after).toJS(globalObject));
+            jsResult.put(globalObject, JSC.ZigString.static("startAfter"), bun.String.init(start_after).toJS(globalObject));
         }
         if (this.encoding_type) |encoding_type| {
-            jsResult.put(globalObject, JSC.ZigString.static("EncodingType"), bun.String.init(encoding_type).toJS(globalObject));
+            jsResult.put(globalObject, JSC.ZigString.static("encodingType"), bun.String.init(encoding_type).toJS(globalObject));
         }
 
         if (this.continuation_token) |continuation_token| {
-            jsResult.put(globalObject, JSC.ZigString.static("ContinuationToken"), bun.String.init(continuation_token).toJS(globalObject));
+            jsResult.put(globalObject, JSC.ZigString.static("continuationToken"), bun.String.init(continuation_token).toJS(globalObject));
         }
 
         if (this.next_continuation_token) |next_continuation_token| {
-            jsResult.put(globalObject, JSC.ZigString.static("NextContinuationToken"), bun.String.init(next_continuation_token).toJS(globalObject));
+            jsResult.put(globalObject, JSC.ZigString.static("nextContinuationToken"), bun.String.init(next_continuation_token).toJS(globalObject));
         }
 
         if (this.is_truncated) |is_truncated| {
-            jsResult.put(globalObject, JSC.ZigString.static("IsTruncated"), JSValue.jsBoolean(is_truncated));
+            jsResult.put(globalObject, JSC.ZigString.static("isTruncated"), JSValue.jsBoolean(is_truncated));
         }
 
         if (this.key_count) |key_count| {
-            jsResult.put(globalObject, JSC.ZigString.static("KeyCount"), JSValue.jsNumber(key_count));
+            jsResult.put(globalObject, JSC.ZigString.static("keyCount"), JSValue.jsNumber(key_count));
         }
 
         if (this.max_keys) |max_keys| {
-            jsResult.put(globalObject, JSC.ZigString.static("MaxKeys"), JSValue.jsNumber(max_keys));
+            jsResult.put(globalObject, JSC.ZigString.static("maxKeys"), JSValue.jsNumber(max_keys));
         }
 
         if (this.contents) |contents| {
@@ -107,49 +107,49 @@ pub const S3ListObjectsV2Result = struct {
 
             for (contents.items, 0..) |item, i| {
                 const objectInfo = JSValue.createEmptyObject(globalObject, 1);
-                objectInfo.put(globalObject, JSC.ZigString.static("Key"), bun.String.init(item.key).toJS(globalObject));
+                objectInfo.put(globalObject, JSC.ZigString.static("key"), bun.String.init(item.key).toJS(globalObject));
 
                 if (item.etag) |etag| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("ETag"), bun.String.init(etag).toJS(globalObject));
+                    objectInfo.put(globalObject, JSC.ZigString.static("eTag"), bun.String.init(etag).toJS(globalObject));
                 }
 
                 if (item.checksum_algorithme) |checksum_algorithme| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("ChecksumAlgorithme"), bun.String.init(checksum_algorithme).toJS(globalObject));
+                    objectInfo.put(globalObject, JSC.ZigString.static("checksumAlgorithme"), bun.String.init(checksum_algorithme).toJS(globalObject));
                 }
 
                 if (item.checksum_type) |checksum_type| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("ChecksumType"), bun.String.init(checksum_type).toJS(globalObject));
+                    objectInfo.put(globalObject, JSC.ZigString.static("checksumType"), bun.String.init(checksum_type).toJS(globalObject));
                 }
 
                 if (item.last_modified) |last_modified| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("LastModified"), bun.String.init(last_modified).toJS(globalObject));
+                    objectInfo.put(globalObject, JSC.ZigString.static("lastModified"), bun.String.init(last_modified).toJS(globalObject));
                 }
 
                 if (item.object_size) |object_size| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("Size"), JSValue.jsNumber(object_size));
+                    objectInfo.put(globalObject, JSC.ZigString.static("size"), JSValue.jsNumber(object_size));
                 }
 
                 if (item.storage_class) |storage_class| {
-                    objectInfo.put(globalObject, JSC.ZigString.static("StorageClass"), bun.String.init(storage_class).toJS(globalObject));
+                    objectInfo.put(globalObject, JSC.ZigString.static("storageClass"), bun.String.init(storage_class).toJS(globalObject));
                 }
 
                 if (item.owner) |owner| {
                     const jsOwner = JSValue.createEmptyObject(globalObject, 2);
                     if (owner.id) |id| {
-                        jsOwner.put(globalObject, JSC.ZigString.static("Id"), bun.String.init(id).toJS(globalObject));
+                        jsOwner.put(globalObject, JSC.ZigString.static("id"), bun.String.init(id).toJS(globalObject));
                     }
 
                     if (owner.display_name) |display_name| {
-                        jsOwner.put(globalObject, JSC.ZigString.static("DisplayName"), bun.String.init(display_name).toJS(globalObject));
+                        jsOwner.put(globalObject, JSC.ZigString.static("displayName"), bun.String.init(display_name).toJS(globalObject));
                     }
 
-                    objectInfo.put(globalObject, JSC.ZigString.static("Owner"), jsOwner);
+                    objectInfo.put(globalObject, JSC.ZigString.static("owner"), jsOwner);
                 }
 
                 jsContents.putIndex(globalObject, @intCast(i), objectInfo);
             }
 
-            jsResult.put(globalObject, JSC.ZigString.static("Contents"), jsContents);
+            jsResult.put(globalObject, JSC.ZigString.static("contents"), jsContents);
         }
 
         if (this.common_prefixes) |common_prefixes| {
@@ -157,11 +157,11 @@ pub const S3ListObjectsV2Result = struct {
 
             for (common_prefixes.items, 0..) |prefix, i| {
                 const jsPrefix = JSValue.createEmptyObject(globalObject, 1);
-                jsPrefix.put(globalObject, JSC.ZigString.static("Prefix"), bun.String.init(prefix).toJS(globalObject));
+                jsPrefix.put(globalObject, JSC.ZigString.static("prefix"), bun.String.init(prefix).toJS(globalObject));
                 jsCommonPrefixes.putIndex(globalObject, @intCast(i), jsPrefix);
             }
 
-            jsResult.put(globalObject, JSC.ZigString.static("CommonPrefixes"), jsCommonPrefixes);
+            jsResult.put(globalObject, JSC.ZigString.static("commonPrefixes"), jsCommonPrefixes);
         }
 
         return jsResult;
@@ -500,7 +500,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
         return listObjectsOptions;
     }
 
-    if (try listOptions.getTruthyComptime(globalThis, "ContinuationToken")) |val| {
+    if (try listOptions.getTruthyComptime(globalThis, "continuationToken")) |val| {
         if (val.isString()) {
             var zig_val: JSC.ZigString = JSC.ZigString.Empty;
             val.toZigString(&zig_val, globalThis);
@@ -509,7 +509,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
         }
     }
 
-    if (try listOptions.getTruthyComptime(globalThis, "Delimiter")) |val| {
+    if (try listOptions.getTruthyComptime(globalThis, "delimiter")) |val| {
         if (val.isString()) {
             var zig_val: JSC.ZigString = JSC.ZigString.Empty;
             val.toZigString(&zig_val, globalThis);
@@ -518,7 +518,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
         }
     }
 
-    if (try listOptions.getTruthyComptime(globalThis, "EncodingType")) |val| {
+    if (try listOptions.getTruthyComptime(globalThis, "encodingType")) |val| {
         if (val.isString()) {
             var zig_val: JSC.ZigString = JSC.ZigString.Empty;
             val.toZigString(&zig_val, globalThis);
@@ -527,17 +527,17 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
         }
     }
 
-    if (try listOptions.getBooleanLoose(globalThis, "FetchOwner")) |val| {
+    if (try listOptions.getBooleanLoose(globalThis, "fetchOwner")) |val| {
         listObjectsOptions.fetch_owner = val;
     }
 
-    if (try listOptions.getTruthyComptime(globalThis, "MaxKeys")) |val| {
+    if (try listOptions.getTruthyComptime(globalThis, "maxKeys")) |val| {
         if (val.isNumber()) {
             listObjectsOptions.max_keys = val.toInt32();
         }
     }
 
-    if (try listOptions.getTruthyComptime(globalThis, "Prefix")) |val| {
+    if (try listOptions.getTruthyComptime(globalThis, "prefix")) |val| {
         if (val.isString()) {
             var zig_val: JSC.ZigString = JSC.ZigString.Empty;
             val.toZigString(&zig_val, globalThis);
@@ -546,7 +546,7 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
         }
     }
 
-    if (try listOptions.getTruthyComptime(globalThis, "StartAfter")) |val| {
+    if (try listOptions.getTruthyComptime(globalThis, "startAfter")) |val| {
         if (val.isString()) {
             var zig_val: JSC.ZigString = JSC.ZigString.Empty;
             val.toZigString(&zig_val, globalThis);

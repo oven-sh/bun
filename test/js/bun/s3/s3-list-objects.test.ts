@@ -38,7 +38,7 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      ContinuationToken: "continue=ation-_m^token",
+      continuationToken: "continue=ation-_m^token",
     });
 
     expect(reqUrl!).toEndWith("/?continuation-token=continue%3Dation-_m%5Etoken&list-type=2");
@@ -62,7 +62,7 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      Delimiter: "files/",
+      delimiter: "files/",
     });
 
     expect(reqUrl!).toEndWith("/?delimiter=files%2F&list-type=2");
@@ -86,7 +86,7 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      EncodingType: "url",
+      encodingType: "url",
     });
 
     expect(reqUrl!).toEndWith("/?encoding-type=url&list-type=2");
@@ -110,7 +110,7 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      FetchOwner: true,
+      fetchOwner: true,
     });
 
     expect(reqUrl!).toEndWith("/?fetch-owner=true&list-type=2");
@@ -134,7 +134,7 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      FetchOwner: false,
+      fetchOwner: false,
     });
 
     expect(reqUrl!).toEndWith("/?fetch-owner=false&list-type=2");
@@ -158,7 +158,7 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      MaxKeys: 2034,
+      maxKeys: 2034,
     });
 
     expect(reqUrl!).toEndWith("/?list-type=2&max-keys=2034");
@@ -182,7 +182,7 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      Prefix: "some/sub/&folder",
+      prefix: "some/sub/&folder",
     });
 
     expect(reqUrl!).toEndWith("/?list-type=2&prefix=some%2Fsub%2F%26folder");
@@ -206,7 +206,7 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      StartAfter: "àwsôme/fìles",
+      startAfter: "àwsôme/fìles",
     });
 
     expect(reqUrl!).toEndWith("/?list-type=2&start-after=%E0ws%F4me%2Ff%ECles");
@@ -230,13 +230,13 @@ describe("S3 - List Objects", () => {
     });
 
     await client.listObjects({
-      Prefix: "some/sub/&folder",
-      StartAfter: "àwsôme/fìles",
-      MaxKeys: 2034,
-      FetchOwner: true,
-      EncodingType: "url",
-      Delimiter: "files/",
-      ContinuationToken: "continue=ation-_m^token",
+      prefix: "some/sub/&folder",
+      startAfter: "àwsôme/fìles",
+      maxKeys: 2034,
+      fetchOwner: true,
+      encodingType: "url",
+      delimiter: "files/",
+      continuationToken: "continue=ation-_m^token",
     });
 
     expect(reqUrl!).toEndWith(
@@ -267,7 +267,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      Name: "my_bucket",
+      name: "my_bucket",
     });
   });
 
@@ -326,7 +326,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      Name: "my_bucket",
+      name: "my_bucket",
     });
   });
 
@@ -353,7 +353,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      Name: "my_bucket",
+      name: "my_bucket",
     });
   });
   it("Should return parsed response with Prefix", async () => {
@@ -379,7 +379,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      Prefix: "some/prefix",
+      prefix: "some/prefix",
     });
   });
 
@@ -406,7 +406,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      KeyCount: 18,
+      keyCount: 18,
     });
   });
 
@@ -433,7 +433,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      MaxKeys: 2323,
+      maxKeys: 2323,
     });
   });
 
@@ -460,7 +460,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      Delimiter: "good@&/de$</limiter",
+      delimiter: "good@&/de$</limiter",
     });
   });
 
@@ -487,7 +487,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      ContinuationToken: "current pagination token",
+      continuationToken: "current pagination token",
     });
   });
 
@@ -514,7 +514,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      EncodingType: "url",
+      encodingType: "url",
     });
   });
 
@@ -541,7 +541,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      NextContinuationToken: "some next token",
+      nextContinuationToken: "some next token",
     });
   });
 
@@ -568,7 +568,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      IsTruncated: false,
+      isTruncated: false,
     });
   });
 
@@ -595,7 +595,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      IsTruncated: true,
+      isTruncated: true,
     });
   });
 
@@ -626,7 +626,7 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      StartAfter: "some/file/name.pdf",
+      startAfter: "some/file/name.pdf",
     });
   });
 
@@ -656,15 +656,15 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      CommonPrefixes: [
+      commonPrefixes: [
         {
-          Prefix: "photos/",
+          prefix: "photos/",
         },
         {
-          Prefix: "videos/",
+          prefix: "videos/",
         },
         {
-          Prefix: "documents/public",
+          prefix: "documents/public",
         },
       ],
     });
@@ -733,33 +733,33 @@ describe("S3 - List Objects", () => {
     const res = await client.listObjects();
 
     expect(res).toEqual({
-      Contents: [
+      contents: [
         {
-          Key: "my_files/important/bun.js",
-          ETag: '"4c6426ac7ef186464ecbb0d81cbfcb1e"',
-          LastModified: "2025-01-20T22:12:38.000Z",
-          Size: 102400,
-          StorageClass: "STANDARD",
-          Owner: {
-            Id: "someId23Sodgopez",
+          key: "my_files/important/bun.js",
+          eTag: '"4c6426ac7ef186464ecbb0d81cbfcb1e"',
+          lastModified: "2025-01-20T22:12:38.000Z",
+          size: 102400,
+          storageClass: "STANDARD",
+          owner: {
+            id: "someId23Sodgopez",
           },
         },
         {
-          Key: "my_files/important/bun1.2.3.js",
-          ETag: '"etag-with-quotes"',
-          LastModified: "2025-02-07",
-          StorageClass: "GLACIER",
-          Owner: {
-            Id: "someId23Sodgopez",
-            DisplayName: "some display name",
+          key: "my_files/important/bun1.2.3.js",
+          eTag: '"etag-with-quotes"',
+          lastModified: "2025-02-07",
+          storageClass: "GLACIER",
+          owner: {
+            id: "someId23Sodgopez",
+            displayName: "some display name",
           },
         },
         {
-          Key: "all-empty_file",
-          ETag: "",
-          LastModified: "",
+          key: "all-empty_file",
+          eTag: "",
+          lastModified: "",
           // @ts-expect-error
-          StorageClass: "",
+          storageClass: "",
         },
       ],
     });
@@ -813,42 +813,42 @@ describe("S3 - List Objects", () => {
 
     const res = await client.listObjects(
       {
-        ContinuationToken: "token",
-        Prefix: "files/",
+        continuationToken: "token",
+        prefix: "files/",
       },
       {},
     );
 
     expect(res).toEqual({
-      Name: "inqnuam",
-      Prefix: "/",
-      Delimiter: "awsome.<files>dummy thing</files>",
-      StartAfter: "some/file/name.pdf",
-      EncodingType: "url",
-      ContinuationToken: "current pagination token",
-      NextContinuationToken: "some next token",
-      IsTruncated: false,
-      KeyCount: 0,
-      MaxKeys: 10000,
-      Contents: [
+      name: "inqnuam",
+      prefix: "/",
+      delimiter: "awsome.<files>dummy thing</files>",
+      startAfter: "some/file/name.pdf",
+      encodingType: "url",
+      continuationToken: "current pagination token",
+      nextContinuationToken: "some next token",
+      isTruncated: false,
+      keyCount: 0,
+      maxKeys: 10000,
+      contents: [
         {
-          Key: "from_static_file",
-          ETag: '"ef2b83534e23713ee9751d492178109e"',
-          LastModified: "2025-01-20T23:02:53.000Z",
-          Size: 922282819299999,
-          StorageClass: "STANDARD_IA",
-          Owner: {
-            DisplayName: "some display name",
-            Id: "some_id_",
+          key: "from_static_file",
+          eTag: '"ef2b83534e23713ee9751d492178109e"',
+          lastModified: "2025-01-20T23:02:53.000Z",
+          size: 922282819299999,
+          storageClass: "STANDARD_IA",
+          owner: {
+            displayName: "some display name",
+            id: "some_id_",
           },
         },
       ],
-      CommonPrefixes: [
+      commonPrefixes: [
         {
-          Prefix: "photos/",
+          prefix: "photos/",
         },
         {
-          Prefix: "videos/",
+          prefix: "videos/",
         },
       ],
     });
@@ -871,30 +871,31 @@ describe("S3 - List Objects", () => {
       );
     });
 
-    const res = await S3Client.listObjects({ Prefix: "some/prefix" }, { ...options, endpoint: server.url.href });
+    const res = await S3Client.listObjects({ prefix: "some/prefix" }, { ...options, endpoint: server.url.href });
     expect(reqUrl!).toEndWith("/my_bucket/?list-type=2&prefix=some%2Fprefix");
     expect(res).toEqual({
-      NextContinuationToken: "some next token",
+      nextContinuationToken: "some next token",
     });
   });
 
   it("Should work with big responses", async () => {
-    const Contents = new Array(40 * 1000).fill("").map(x => ({
-      Key: randomUUIDv7(),
-      ETag: '"4c6426ac7ef186464ecbb0d81cbfcb1e"',
-      LastModified: new Date().toISOString(),
-      Size: 922282819299999,
-      StorageClass: "STANDARD_IA",
-      Owner: {
-        Id: "some_id_",
+    const contents = new Array(40 * 1000).fill("").map(x => ({
+      key: randomUUIDv7(),
+      eTag: '"4c6426ac7ef186464ecbb0d81cbfcb1e"',
+      lastModified: new Date().toISOString(),
+      size: 922282819299999,
+      storageClass: "STANDARD_IA",
+      owner: {
+        id: "some_id_",
       },
     }));
 
     using server = createBunServer(async => {
-      const asXml = Contents.map(
-        x => `<Contents>
-        <Key>${x.Key}</Key>
-        <LastModified>${x.LastModified}</LastModified>
+      const asXml = contents
+        .map(
+          x => `<Contents>
+        <Key>${x.key}</Key>
+        <LastModified>${x.lastModified}</LastModified>
         <ETag>&quot;4c6426ac7ef186464ecbb0d81cbfcb1e&quot;</ETag>
         <Size>922282819299999</Size>
         <Owner>
@@ -902,7 +903,8 @@ describe("S3 - List Objects", () => {
         </Owner>
         <StorageClass>STANDARD_IA</StorageClass>
     </Contents>`,
-      ).join("");
+        )
+        .join("");
 
       return new Response(`<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>${asXml}</ListBucketResult>`, {
         headers: {
@@ -921,7 +923,7 @@ describe("S3 - List Objects", () => {
 
     expect(res).toEqual({
       // @ts-ignore
-      Contents,
+      contents,
     });
   });
 

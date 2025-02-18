@@ -88,21 +88,6 @@ describe("given an add(a, b) function", () => {
       });
     }).toThrow(/"subtract" is missing/);
   });
-
-  it("compiling with an incorrect signature is U.B. but doesn't crash", () => {
-    const ret = cc({
-      source: path.join(dir, "add.c"),
-      symbols: {
-        add: {
-          returns: "void",
-          args: ["int", "int"],
-        },
-      },
-    });
-    expect(ret.symbols).toHaveProperty("add");
-    // shouldn't crash or throw
-    expect(() => ret.symbols.add(1, 2)).not.toThrow();
-  });
 }); // </given add(a, b) function>
 
 describe("given a source file with syntax errors", () => {

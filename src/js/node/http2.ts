@@ -2243,6 +2243,13 @@ function initOriginSet(session: Http2Session) {
   }
   return originSet;
 }
+function removeOriginFromSet(session: Http2Session, stream: ClientHttp2Stream) {
+  const originSet = session[bunHTTP2OriginSet];
+  const origin = `https://${stream.authority}`;
+  if (originSet && origin) {
+    originSet.delete(origin);
+  }
+}
 class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
   /// close indicates that we called closed
@@ -2490,7 +2497,6 @@ class ServerHttp2Session extends Http2Session {
     parser.altsvc(origin, alt, stream);
   }
   origin(...origins) {
-    const MAX_LENGTH = 16384;
     const parser = this.#parser;
     if (this.destroyed || !parser) throw $ERR_HTTP2_INVALID_SESSION(`The session has been destroyed`);
     let length = origins.length;
@@ -2498,38 +2504,15 @@ class ServerHttp2Session extends Http2Session {
       return;
     }
     if (length === 1) {
-      const origin = getOrigin(origins[0], false);
-      if (Buffer.byteLength(origin) + 2 > MAX_LENGTH) {
-        throw $ERR_HTTP2_ORIGIN_LENGTH("HTTP/2 ORIGIN frames are limited to 16382 bytes");
-      }
-      parser.origin(origin);
-    }
-    let totalSize = 0;
-    let validOrigins: any[] = [];
-    for (const origin of origins) {
-      const validOrigin = getOrigin(origin, false);
-      const size = Buffer.byteLength(validOrigin, "ascii");
-      totalSize += size + 2;
-      validOrigins.push(validOrigin, size);
-    }
-    if (totalSize > MAX_LENGTH) {
-      throw $ERR_HTTP2_ORIGIN_LENGTH("HTTP/2 ORIGIN frames are limited to 16382 bytes");
+      return parser.origin(getOrigin(origins[0], false));
     }
 
-    // encode origins into a buffer
-    const buffer = Buffer.allocUnsafe(totalSize);
-    let offset = 0;
-    length = validOrigins.length;
-    for (let i = 0; i < length; i += 2) {
-      const origin = validOrigins[i] as string;
-      const size = validOrigins[i + 1] as number;
-
-      buffer.writeUInt16BE(size, offset);
-      buffer.write(origin, offset + 2, totalSize, "ascii");
-      offset += size + 2;
+    let validOrigins: string[] = new Array(length);
+    for (let i = 0; i < length; i++) {
+      validOrigins[i] = getOrigin(origins[i], false);
     }
 
-    parser.origin(buffer);
+    parser.origin(validOrigins);
   }
 
   constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server?: Http2Server) {
@@ -2824,7 +2807,10 @@ class ClientHttp2Session extends Http2Session {
         if (header_status >= 100 && header_status < 200) {
           self.emit("headers", stream, headers, flags, rawheaders);
         } else {
-          stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
+          if (header_status === 421) {
+            // 421 Misdirected Request
+            removeOriginFromSet(self, stream);
+          }
           self.emit("stream", stream, headers, flags, rawheaders);
           stream.emit("response", headers, flags, rawheaders);
         }

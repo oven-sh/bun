@@ -1960,15 +1960,16 @@ pub const H2FrameParser = struct {
             var count: usize = 0;
             while (payload.len > 0) {
                 var stream = std.io.fixedBufferStream(payload);
-                const origin_length = stream.reader().readInt(u16, .big) catch {
+                const origin_length = stream.reader().readInt(u16, .big) catch |err| {
+                    log("error reading ORIGIN frame size: {s}", .{@errorName(err)});
                     // origin length is the first 2 bytes of the payload
                     this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
-                    return data.len;
+                    return content.end;
                 };
                 var origin_str = payload[2..];
                 if (origin_str.len < origin_length) {
                     this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
-                    return data.len;
+                    return content.end;
                 }
                 origin_str = origin_str[0..origin_length];
                 if (count == 0) {
@@ -2008,13 +2009,13 @@ pub const H2FrameParser = struct {
             const origin_length = stream.reader().readInt(u16, .big) catch {
                 // origin length is the first 2 bytes of the payload
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ALTSVC frame size", this.lastStreamID, true);
-                return data.len;
+                return content.end;
             };
             const origin_and_value = payload[2..];
 
             if (origin_and_value.len < origin_length) {
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ALTSVC frame size", this.lastStreamID, true);
-                return data.len;
+                return content.end;
             }
             if (frame.streamIdentifier != 0 and stream_ == null) {
                 // dont error but stream dont exist so we can ignore it
@@ -2108,7 +2109,7 @@ pub const H2FrameParser = struct {
             const stream_identifier = UInt31WithReserved.from(priority.streamIdentifier);
             if (stream_identifier.uint31 == stream.id) {
                 this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Priority frame with self dependency", this.lastStreamID, true);
-                return data.len;
+                return content.end;
             }
             stream.streamDependency = stream_identifier.uint31;
             stream.exclusive = stream_identifier.reserved;
@@ -2196,7 +2197,7 @@ pub const H2FrameParser = struct {
             if (offset > end) {
                 this.readBuffer.reset();
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
-                return data.len;
+                return content.end;
             }
             stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags) orelse {
                 this.readBuffer.reset();
@@ -2665,8 +2666,8 @@ pub const H2FrameParser = struct {
             const origin_string = try origin_arg.toSlice(globalObject, bun.default_allocator);
             defer origin_string.deinit();
             const slice = origin_string.slice();
-            if (slice.len + 2 > std.math.maxInt(u16)) {
-                const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "Origin length is too long", .{}, globalObject);
+            if (slice.len + 2 > 16384) {
+                const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes", .{}, globalObject);
                 return globalObject.throwValue(exception);
             }
 
@@ -2688,33 +2689,44 @@ pub const H2FrameParser = struct {
                 _ = this.write(slice);
             }
             _ = this.ajustWindowSize(null, @as(u32, @intCast(frame.length)) + @as(u32, @intCast(FrameHeader.byteSize)));
-        } else if (origin_arg.asArrayBuffer(globalObject)) |array_buffer| {
-            // multiple origin as encoded buffer we trust the caller to pass in a valid buffer
-            // aka u16 length followed by u8 origin
-            const payload = array_buffer.byteSlice();
-            if (payload.len > std.math.maxInt(u16)) {
-                const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "Origin length is too long", .{}, globalObject);
-                return globalObject.throwValue(exception);
-            }
-            var buffer: [FrameHeader.byteSize]u8 = undefined;
+        } else if (origin_arg.isArray()) {
+            var buffer: [FrameHeader.byteSize + 16384]u8 = undefined;
             @memset(&buffer, 0);
             var stream = std.io.fixedBufferStream(&buffer);
             const writer = stream.writer();
+            stream.seekTo(FrameHeader.byteSize) catch {};
+            var value_iter = origin_arg.arrayIterator(globalObject);
 
+            while (value_iter.next()) |item| {
+                if (!item.isString()) {
+                    return globalObject.throwInvalidArguments("Expected origin to be a string or an array of strings", .{});
+                }
+                const origin_string = try item.toSlice(globalObject, bun.default_allocator);
+                defer origin_string.deinit();
+                const slice = origin_string.slice();
+                _ = writer.writeInt(u16, @intCast(slice.len), .big) catch {
+                    const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes", .{}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
+
+                _ = writer.write(slice) catch {
+                    const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes", .{}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
+            }
+
+            const total_length: u32 = @intCast(stream.getPos() catch FrameHeader.byteSize);
             var frame: FrameHeader = .{
                 .type = @intFromEnum(FrameType.HTTP_FRAME_ORIGIN),
                 .flags = 0,
                 .streamIdentifier = 0,
-                .length = @intCast(payload.len),
+                .length = @intCast(total_length - FrameHeader.byteSize), // payload length
             };
+            stream.reset();
             _ = frame.write(@TypeOf(writer), writer);
-            _ = this.write(&buffer);
-            _ = writer.writeAll(payload) catch 0;
-
-            _ = this.ajustWindowSize(null, @as(u32, @intCast(frame.length)) + @as(u32, @intCast(FrameHeader.byteSize)));
-            return .undefined;
+            _ = this.write(buffer[0..total_length]);
+            _ = this.ajustWindowSize(null, total_length);
         }
-
         return .undefined;
     }
 

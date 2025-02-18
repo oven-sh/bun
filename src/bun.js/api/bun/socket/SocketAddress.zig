@@ -230,6 +230,34 @@ pub fn finalize(this: *SocketAddress) void {
 
 // =============================================================================
 
+/// Turn this address into a DTO. `this` is consumed and undefined after this call.
+/// 
+/// This is similar to `.toJS`, but differs in the following ways:
+/// - `this` is consumed
+/// - result object is not an instance of `SocketAddress`, so
+///   `SocketAddress.isSocketAddress(dto) === false`
+/// - address, port, etc. are put directly onto the object instead of being
+///    accessed via getters on the prototype.
+///
+/// This method is slightly faster if you are creating a lot of socket addresses
+/// that will not be around for very long. `createDTO` is even faster, but
+/// requires callers to already have a presentation-formatted address.
+pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
+    var addr_str = this.address();
+    defer this._presentation = .dead;
+    defer this.* = undefined; // removed in release builds, so setting _presentation to dead is still needed.
+    return JSSocketAddressDTO__create(global, addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
+}
+
+pub fn createDTO(this: *SocketAddress, addr_: []const u8, port_: i32, is_ipv6: bool) JSC.JSValue {
+    bun.debugAssert(port_ >= 0 and port_ <= std.math.maxInt(i32));
+    return JSSocketAddressDTO__create(this.globalThis, bun.String.createUTF8ForJS(addr_).toJS(this.globalThis), port_, is_ipv6);
+}
+
+extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, address_: JSC.JSValue, port_: c_int, is_ipv6: bool) JSC.JSValue;
+
+// =============================================================================
+
 pub fn getAddress(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
     // toJS increments ref count
     return this.address().toJS(global);
@@ -365,6 +393,7 @@ inline fn asV6(this: *const SocketAddress) *const inet.sockaddr_in6 {
 
 const IPv6 = bun.String.static("IPv6");
 const IPv4 = bun.String.static("IPv4");
+
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 pub const AF = enum(inet.sa_family_t) {

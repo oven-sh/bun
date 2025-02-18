@@ -856,8 +856,8 @@ pub const UDPSocket = struct {
     }
 
     fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
-        const sockaddr = SocketAddress.init(address_bytes, port) catch return .undefined;
-        return SocketAddress.new(sockaddr).toJS(globalThis);
+        var sockaddr = SocketAddress.init(address_bytes, port) catch return .undefined;
+        return sockaddr.intoDTO(globalThis);
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {

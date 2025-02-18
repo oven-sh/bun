@@ -7030,22 +7030,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                         var buf: [64]u8 = [_]u8{0} ** 64;
                         const address_bytes = listener.socket().localAddress(&buf) orelse return JSValue.jsNull();
-                        const addr = SocketAddress.init(address_bytes, port) catch {
+                        var addr = SocketAddress.init(address_bytes, port) catch {
                             @branchHint(.unlikely);
                             return JSValue.jsNull();
                         };
-                        return SocketAddress.new(addr).toJS(this.globalThis);
-                        // var is_ipv6: bool = false;
-
-//                         if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
-//                             return JSC.JSSocketAddress.create(
-//                                 this.globalThis,
-//                                 slice,
-//                                 port,
-//                                 is_ipv6,
-//                             );
-//                         }
-// >>>>>>> 1de31292fb2625636a6720360d56adfc95ff0240
+                        return addr.intoDTO(this.globalThis);
                     }
                     return JSValue.jsNull();
                 },

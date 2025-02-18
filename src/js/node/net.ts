@@ -23,6 +23,7 @@
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
 const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
+const { SocketAddress } = require("../internal/net/socket_address");
 const { ExceptionWithHostPort } = require("internal/shared");
 
 // IPv4 Segment
@@ -1558,6 +1559,7 @@ export default {
   setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
 
   BlockList,
+  SocketAddress,
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
 };

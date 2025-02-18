@@ -8,7 +8,7 @@ namespace Bun {
 class JSSocketAddressConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
-    static JSSocketAddressConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
+    static JSSocketAddressConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype);
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
@@ -43,7 +43,8 @@ public:
 
 protected:
     JSSocketAddressConstructor(JSC::VM& vm, JSC::Structure* structure);
-    DECLARE_DEFAULT_FINISH_CREATION;
+    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* prototype);
+    // DECLARE_DEFAULT_FINISH_CREATION;
 };
 
 } // namespace Bun

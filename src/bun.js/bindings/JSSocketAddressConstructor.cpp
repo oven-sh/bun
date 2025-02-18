@@ -24,14 +24,14 @@ const ClassInfo JSSocketAddressConstructor::s_info = {
 // {
 // }
 
-JSSocketAddressConstructor* JSSocketAddressConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+JSSocketAddressConstructor* JSSocketAddressConstructor::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSC::JSObject* prototype)
 {
     JSSocketAddressConstructor* ptr = new (NotNull, JSC::allocateCell<JSSocketAddressConstructor>(vm)) JSSocketAddressConstructor(vm, structure);
-    ptr->finishCreation(vm);
+    ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
 }
 
-// new SocketAddress(AF, address, port?, flowLabel?)
+// new SocketAddress(AF, address, port = 0, flowLabel = 0)
 JSC::EncodedJSValue JSSocketAddressConstructor::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
@@ -59,13 +59,13 @@ JSC::EncodedJSValue JSSocketAddressConstructor::construct(JSC::JSGlobalObject* g
     JSC::JSString* address = jsCast<JSC::JSString*>(address_arg);
 
     // port
-    in_port_t port = 0;
+    uint32_t port = 0;
     if (LIKELY(!port_arg.isUndefined())) {
         V::validatePort(scope, global, port_arg, jsString(vm, port_name), true);
         RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
-        uint32_t port32 = port_arg.toUInt32(global);
-        ASSERT(port32 <= std::numeric_limits<in_port_t>().max());
-        port = static_cast<in_port_t>(port32);
+        port = port_arg.toUInt32(global);
+        ASSERT(port <= std::numeric_limits<in_port_t>().max());
+        // port = static_cast<in_port_t>(port32);
     }
 
     // flowLabel
@@ -77,9 +77,8 @@ JSC::EncodedJSValue JSSocketAddressConstructor::construct(JSC::JSGlobalObject* g
     }
 
     auto* structure = global->JSSocketAddressStructure();
-    auto* sockaddr = JSSocketAddress::create(vm, global, structure, address, port, af, flowLabel);
-    // throws if inet_pton fails
-    RETURN_IF_EXCEPTION(scope, encodedJSUndefined());
+    JSSocketAddress* sockaddr = JSSocketAddress::create(vm, global, structure, address, port, af, flowLabel);
+    RETURN_IF_EXCEPTION(scope, encodedJSUndefined()); // throws if inet_pton fails
     return JSValue::encode(sockaddr);
 }
 
@@ -96,10 +95,11 @@ JSSocketAddressConstructor::JSSocketAddressConstructor(JSC::VM& vm, JSC::Structu
 }
 
 // TODO: reifyStaticProperties
-// void JSSocketAddressConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global, JSSocketAddressPrototype* prototype)
-// {
-//     Base::finishCreation(vm);
-//     reifyStaticProperties(vm, JSSocketAddress::info(), JSSocketAddressConstructorTableValues, *this);
-// }
+void JSSocketAddressConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* prototype)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+    putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+}
 
 } // namespace Bun

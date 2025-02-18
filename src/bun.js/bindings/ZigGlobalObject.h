@@ -217,7 +217,7 @@ public:
     JSC::JSValue JSReadableNetworkSinkControllerPrototype() const { return m_JSFetchTaskletChunkedRequestControllerPrototype.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSSocketAddressStructure() const { return m_JSSocketAddressClassStructure.getInitializedOnMainThread(this); }
-    JSC::JSObject* JSSocketAdddress() { return m_JSSocketAddressClassStructure.constructorInitializedOnMainThread(this); }
+    JSC::JSObject* JSSocketAddress() { return m_JSSocketAddressClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSSocketAddressPrototype() const { return m_JSSocketAddressClassStructure.prototypeInitializedOnMainThread(this); }
 
     JSC::Structure* JSBufferListStructure() const { return m_JSBufferListClassStructure.getInitializedOnMainThread(this); }

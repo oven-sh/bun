@@ -52,7 +52,7 @@ JSSocketAddress* JSSocketAddress::create(JSC::VM& vm,
     JSC::JSGlobalObject* globalObject,
     JSC::Structure* structure,
     JSC::JSString* address,
-    in_port_t port,
+    uint32_t port,
     bool isIPv6)
 {
     return create(vm, globalObject, structure, address, port, isIPv6 ? AF_INET6 : AF_INET, 0);
@@ -62,7 +62,7 @@ JSSocketAddress* JSSocketAddress::create(JSC::VM& vm,
     JSC::JSGlobalObject* globalObject,
     JSC::Structure* structure,
     JSC::JSString* address,
-    in_port_t port,
+    uint32_t port,
     uint8_t addressFamily, // AF_INET | AF_INET6
     uint32_t flowLabel)
 {
@@ -95,10 +95,10 @@ JSSocketAddress* JSSocketAddress::create(JSC::VM& vm,
     ptr->m_address = addr;
     ptr->finishCreation(vm);
 
-    ptr->putDirectOffset(vm, flowLabelOffset, jsNumber(flowLabel));
     ptr->putDirectOffset(vm, addressOffset, address);
     ptr->putDirectOffset(vm, addressFamilyOffset, af_str);
-    ptr->putDirectOffset(vm, portOffset, jsNumber(port));
+    ptr->putDirectOffset(vm, portOffset, jsNumber(static_cast<uint32_t>(port)));
+    ptr->putDirectOffset(vm, flowLabelOffset, jsNumber(static_cast<uint32_t>(flowLabel)));
     return ptr;
 }
 
@@ -166,8 +166,8 @@ JSC::Structure* JSSocketAddress::createStructure(JSC::VM& vm, JSC::JSGlobalObjec
     structure->addPropertyTransition(
         vm,
         structure,
-        JSC::Identifier::fromString(vm, "flowLabel"_s),
-        static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete),
+        JSC::Identifier::fromString(vm, "flowlabel"_s),
+        static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete | PropertyAttribute::DontEnum),
         offset);
     ASSERT(offset == flowLabelOffset);
 
@@ -251,5 +251,17 @@ extern "C" JSObject* JSSocketAddress__create(JSGlobalObject* globalObject, JSStr
         return nullptr;
     }
 
-    return Bun::JSSocketAddress::create(globalObject->vm(), globalObject, global->JSSocketAddressStructure(), value, port, isIPv6 ? AF_INET6 : AF_INET, 0);
+    return Bun::JSSocketAddress::create(globalObject->vm(),
+        globalObject,
+        global->JSSocketAddressStructure(),
+        value,
+        port,
+        isIPv6 ? AF_INET6 : AF_INET,
+        0);
+}
+
+extern "C" JSC__JSValue JSSocketAddress__getConstructor(JSGlobalObject* globalObject)
+{
+    auto* global = jsCast<Zig::GlobalObject*>(globalObject);
+    return JSC::JSValue::encode(global->JSSocketAddress());
 }

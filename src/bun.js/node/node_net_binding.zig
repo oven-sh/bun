@@ -5,6 +5,7 @@ const JSC = bun.JSC;
 const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
+const JSSocketAddress = @import("../api/bun/socket.zig").JSSocketAddress;
 
 //
 //
@@ -70,4 +71,12 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
             return JSC.jsNumber(value);
         }
     }).setter, 1, .{});
+}
+
+pub fn createNodeNetBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    return JSC.JSObject.createNullProto(global, .{
+        .SocketAddress = JSSocketAddress.getConstructor(global),
+        .AF_INET = std.posix.AF.INET,
+        .AF_INET6 = std.posix.AF.INET6,
+    }).toJS();
 }

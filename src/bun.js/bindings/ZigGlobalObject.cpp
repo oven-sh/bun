@@ -3288,7 +3288,10 @@ void GlobalObject::finishCreation(VM& vm)
             auto* prototype = JSSocketAddressPrototype::create(init.vm, init.global, JSSocketAddressPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
             auto* structure = JSSocketAddress::createStructure(init.vm, init.global, prototype);
             auto* constructor = JSSocketAddressConstructor::create(
-                init.vm, init.global, JSSocketAddressConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()));
+                init.vm,
+                init.global,
+                JSSocketAddressConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()),
+                jsCast<JSObject*>(prototype));
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);

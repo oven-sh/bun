@@ -48,7 +48,7 @@ pub const JSObject = extern struct {
     ///
     /// This is roughly equivalent to creating an object with
     /// `Object.create(null)` and adding properties to it.
-    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) *JSObject {
+    pub fn createNullProto(global: *JSGlobalObject, pojo: anytype) *JSObject {
         return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, true);
     }
 

@@ -21,6 +21,9 @@ const Async = bun.Async;
 const uv = bun.windows.libuv;
 const H2FrameParser = @import("./h2_frame_parser.zig").H2FrameParser;
 const NodePath = @import("../../node/path.zig");
+
+pub const JSSocketAddress = @import("socket/socket_address.zig").JSSocketAddress;
+
 noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
     var zig_str: ZigString = ZigString.init("");
     var output_buf: [4096]u8 = undefined;

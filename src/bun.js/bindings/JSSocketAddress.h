@@ -1,5 +1,6 @@
 // The object returned by Bun.serve's .requestIP()
 #pragma once
+#include "helpers.h"
 #include "root.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 
@@ -61,7 +62,7 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
         JSC::JSString* address,
-        in_port_t port,
+        uint32_t port,
         bool isIPv6);
 
     /// Returns `nullptr` if the address is invalid. A js exception will be thrown.
@@ -69,7 +70,7 @@ public:
         JSC::JSGlobalObject* globalObject,
         JSC::Structure* structure,
         JSC::JSString* address,
-        in_port_t port,
+        uint32_t port,
         uint8_t addressFamily, // AF_INET | AF_INET6
         uint32_t flowLabel);
 
@@ -127,3 +128,4 @@ public:
 } // namespace Bun
 
 extern "C" JSObject* JSSocketAddress__create(JSGlobalObject* globalObject, JSString* value, int port, bool isIPv6);
+extern "C" JSC__JSValue JSSocketAddress__getConstructor(JSGlobalObject* globalObject);

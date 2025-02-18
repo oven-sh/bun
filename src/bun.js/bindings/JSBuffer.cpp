@@ -1406,6 +1406,7 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding);
     auto* arrayValue = JSC::jsCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
     auto lengthValue = static_cast<int64_t>(arrayValue->byteLength());
+    if (lengthValue == 0) return byteOffset;
     const uint8_t* typedVectorValue = arrayValue->typedVector();
     if (last) {
         return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);

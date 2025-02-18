@@ -1,5 +1,5 @@
 {% callout %}
-**⚠️ Warning** — `bun:ffi` is **experimental** and has known bugs. You can use it, but you may run into issues that cannot be worked around. The most stable way to interact with native code from Bun is to write a [Node-API module](/docs/api/node-api).
+**⚠️ Warning** — `bun:ffi` is **experimental**, with known bugs and limitations, and should not be relied on in production. The most stable way to interact with native code from Bun is to write a [Node-API module](/docs/api/node-api).
 {% /callout %}
 
 Use the built-in `bun:ffi` module to efficiently call native libraries from JavaScript. It works with languages that support the C ABI (Zig, Rust, C/C++, C#, Nim, Kotlin, etc).

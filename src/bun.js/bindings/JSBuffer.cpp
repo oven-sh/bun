@@ -1410,10 +1410,11 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     const uint8_t* typedVectorValue = arrayValue->typedVector();
     if (last) {
         return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-    } else {
-        if (encoding == BufferEncodingType::ucs2) return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-        return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
     }
+    if (encoding == BufferEncodingType::ucs2) {
+        return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+    }
+    return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
 }
 
 static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, JSC::JSGenericTypedArrayView<JSC::Uint8Adaptor>* array, BufferEncodingType encoding)
@@ -1425,10 +1426,11 @@ static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     const uint8_t* typedVectorValue = array->typedVector();
     if (last) {
         return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-    } else {
-        if (encoding == BufferEncodingType::ucs2) return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
-        return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
     }
+    if (encoding == BufferEncodingType::ucs2) {
+        return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
+    }
+    return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
 }
 
 static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter buffer, bool last)

@@ -3782,6 +3782,30 @@ pub const File = struct {
         return File.openat(bun.FD.cwd(), path, flags, mode);
     }
 
+    pub fn makeOpen(path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
+        return File.makeOpenat(bun.FD.cwd(), path, flags, mode);
+    }
+
+    pub fn makeOpenat(other: anytype, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
+        const dir = bun.toFD(other);
+        const fd = switch (This.openat(dir, path, flags, mode)) {
+            .result => |fd| fd,
+            .err => |err| fd: {
+                if (std.fs.path.dirname(path)) |dir_path| {
+                    bun.makePath(dir.asDir(), dir_path) catch {};
+                    break :fd switch (This.openat(dir, path, flags, mode)) {
+                        .result => |fd| fd,
+                        .err => |err2| return .{ .err = err2 },
+                    };
+                }
+
+                return .{ .err = err };
+            },
+        };
+
+        return .{ .result = .{ .handle = fd } };
+    }
+
     pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: i32, mode: bun.Mode) Maybe(File) {
         return switch (This.openatOSPath(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },

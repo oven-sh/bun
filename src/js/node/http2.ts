@@ -2806,6 +2806,7 @@ class ClientHttp2Session extends Http2Session {
         if (header_status >= 100 && header_status < 200) {
           self.emit("headers", stream, headers, flags, rawheaders);
         } else {
+          stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
           if (header_status === 421) {
             // 421 Misdirected Request
             removeOriginFromSet(self, stream);

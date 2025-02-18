@@ -258,7 +258,7 @@ pub fn createDTO(this: *SocketAddress, addr_: []const u8, port_: i32, is_ipv6: b
         bun.assertWithLocation(port_ >= 0 and port_ <= std.math.maxInt(i32), @src());
         bun.assertWithLocation(addr_.len > 0, @src());
     }
-    
+
     return JSSocketAddressDTO__create(this.globalThis, bun.String.createUTF8ForJS(addr_).toJS(this.globalThis), port_, is_ipv6);
 }
 

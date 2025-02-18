@@ -1321,7 +1321,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
 
 static ssize_t indexOfOffset(size_t length, ssize_t offset_i64, ssize_t needle_length, bool is_forward)
 {
-    ssize_t length_i64 = static_cast<ssize_t>(length);
+    auto length_i64 = static_cast<ssize_t>(length);
     if (offset_i64 < 0) {
         if (offset_i64 + length_i64 >= 0) {
             // Negative offsets count backwards from the end of the buffer.
@@ -1405,7 +1405,7 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     if (str->length() == 0) return byteOffset;
     JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding);
     auto* arrayValue = JSC::jsCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
-    int64_t lengthValue = static_cast<int64_t>(arrayValue->byteLength());
+    auto lengthValue = static_cast<int64_t>(arrayValue->byteLength());
     const uint8_t* typedVectorValue = arrayValue->typedVector();
     if (last) {
         return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
@@ -1460,7 +1460,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     if (std::isnan(byteOffsetD)) byteOffsetD = dir ? 0 : byteLength;
 
     if (valueValue.isNumber()) {
-        uint8_t byteValue = static_cast<uint8_t>((valueValue.toInt32(lexicalGlobalObject)) % 256);
+        auto byteValue = static_cast<uint8_t>((valueValue.toInt32(lexicalGlobalObject)) % 256);
         RETURN_IF_EXCEPTION(scope, -1);
         return indexOfNumber(lexicalGlobalObject, last, typedVector, byteLength, byteOffsetD, byteValue);
     }

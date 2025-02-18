@@ -70,6 +70,7 @@ const kSetHeader = Symbol("setHeader");
 const kAppendHeader = Symbol("appendHeader");
 const kAborted = Symbol("aborted");
 const kRequest = Symbol("request");
+const kHeadRequest = Symbol("headRequest");
 const {
   validateInteger,
   validateString,
@@ -85,7 +86,9 @@ function utcDate() {
   if (!utcCache) cache();
   return utcCache;
 }
-
+function emitErrorNT(self: any, error: any) {
+  self.emit("error", error);
+}
 function cache() {
   const d = new Date();
   utcCache = d.toUTCString();
@@ -166,7 +169,6 @@ function onStreamTrailersReady() {
 
 function onStreamCloseResponse() {
   const res = this[kResponse];
-
   if (res === undefined) return;
 
   const state = res[kState];
@@ -1554,6 +1556,7 @@ class Http2Stream extends Duplex {
   [kInfoHeaders]: any;
   #sentTrailers: any;
   [kAborted]: boolean = false;
+  [kHeadRequest]: boolean = false;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
@@ -1594,6 +1597,9 @@ class Http2Stream extends Duplex {
 
   get sentTrailers() {
     return this.#sentTrailers;
+  }
+  get headRequest() {
+    return !!this[kHeadRequest];
   }
 
   static #rstStream() {
@@ -2088,6 +2094,9 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.destroyed || this.closed) {
       throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
     }
+
+    const session = this[bunHTTP2Session];
+    assertSession(session);
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
@@ -2115,8 +2124,6 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[":status"] === undefined) {
       headers[":status"] = 200;
     }
-    const session = this[bunHTTP2Session];
-    assertSession(session);
     this.headersSent = true;
     this[bunHTTP2Headers] = headers;
     if (typeof options === "undefined") {
@@ -2355,6 +2362,9 @@ class ServerHttp2Session extends Http2Session {
     ) {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
+      if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
+        stream[kHeadRequest] = true;
+      }
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.StreamResponded) !== 0) {
         stream.emit("trailers", headers, flags, rawheaders);
@@ -3271,6 +3281,7 @@ class ClientHttp2Session extends Http2Session {
         this.emit("error", error);
         return null;
       }
+      req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
       if (typeof options === "undefined") {
         this.#parser.request(stream_id, req, headers, sensitiveNames);
       } else {
@@ -3279,7 +3290,7 @@ class ClientHttp2Session extends Http2Session {
       req.emit("ready");
       return req;
     } catch (e) {
-      this.emit("error", e);
+      process.nextTick(emitErrorNT, this, e);
       throw e;
     }
   }

@@ -2449,10 +2449,10 @@ pub const BundleV2 = struct {
                         } else {
                             js_files.appendAssumeCapacity(Index.init(index));
 
-                            // DONT MARK EVERY PART LIVE.
-                            // for (part_list.slice()) |*p| {
-                            //     p.is_live = true;
-                            // }
+                            // Mark every part live.
+                            for (part_list.slice()) |*p| {
+                                p.is_live = true;
+                            }
                         }
 
                         // Discover all CSS roots.
@@ -2514,10 +2514,6 @@ pub const BundleV2 = struct {
             this.graph.server_component_boundaries,
             js_reachable_files,
         );
-
-        this.graph.heap.helpCatchMemoryIssues();
-
-        try this.linker.treeShakingAndCodeSplitting();
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -12787,7 +12783,6 @@ pub const LinkerContext = struct {
             }
 
             for (parts) |part| {
-                if (!part.is_live) continue;
                 c.convertStmtsForChunkForBake(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|
                     return .{ .err = err };
             }

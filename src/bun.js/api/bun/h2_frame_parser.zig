@@ -1791,7 +1791,8 @@ pub const H2FrameParser = struct {
             }
 
             if (getHTTP2CommonString(globalObject, header.well_know)) |js_header_name| {
-                const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
+                var header_value = bun.String.fromUTF8(header.value);
+                const js_header_value = header_value.transferToJS(globalObject);
                 js_header_value.ensureStillAlive();
                 headers.push(globalObject, js_header_name);
                 headers.push(globalObject, js_header_value);
@@ -1803,10 +1804,12 @@ pub const H2FrameParser = struct {
                     sensitiveHeaders.push(globalObject, js_header_name);
                 }
             } else {
-                const js_header_name = bun.String.createUTF8ForJS(globalObject, header.name);
+                var header_name = bun.String.fromUTF8(header.name);
+                const js_header_name = header_name.transferToJS(globalObject);
                 js_header_name.ensureStillAlive();
 
-                const js_header_value = bun.String.createUTF8ForJS(globalObject, header.value);
+                var header_value = bun.String.fromUTF8(header.value);
+                const js_header_value = header_value.transferToJS(globalObject);
                 js_header_value.ensureStillAlive();
 
                 headers.push(globalObject, js_header_name);

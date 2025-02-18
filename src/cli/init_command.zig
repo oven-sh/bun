@@ -77,9 +77,9 @@ pub const InitCommand = struct {
     ) !usize {
         // Print the question prompt
         if (colors) {
-            Output.prettyln("<r><cyan>?<r> {s} <d> - Press return to submit.<r>", .{label});
+            Output.prettyln("<r><cyan>?<r> {s}<d> - Press return to submit.<r>", .{label});
         } else {
-            Output.prettyln("<r><cyan>?<r> {s} <d> - Press return to submit.<r>", .{label});
+            Output.prettyln("<r><cyan>?<r> {s}<d> - Press return to submit.<r>", .{label});
         }
 
         var selected = default_value;

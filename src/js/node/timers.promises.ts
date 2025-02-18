@@ -1,7 +1,7 @@
 // Hardcoded module "node:timers/promises"
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
 
-const { validateBoolean, validateAbortSignal, validateObject } = require("internal/validators");
+const { validateBoolean, validateAbortSignal, validateObject, validateNumber } = require("internal/validators");
 
 const symbolAsyncIterator = Symbol.asyncIterator;
 
@@ -22,6 +22,11 @@ function asyncIterator({ next: nextFunction, return: returnFunction }) {
 
 function setTimeoutPromise(after = 1, value, options = {}) {
   const arguments_ = [].concat(value ?? []);
+  try {
+    validateNumber(after, "delay", -Infinity, Infinity);
+  } catch (error) {
+    return Promise.reject(error);
+  }
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -101,6 +106,15 @@ function setImmediatePromise(value, options = {}) {
 
 function setIntervalPromise(after = 1, value, options = {}) {
   /* eslint-disable no-undefined, no-unreachable-loop, no-loop-func */
+  try {
+    validateNumber(after, "delay", -Infinity, Infinity);
+  } catch (error) {
+    return asyncIterator({
+      next: function () {
+        return Promise.reject(error);
+      },
+    });
+  }
   try {
     validateObject(options, "options");
   } catch (error) {

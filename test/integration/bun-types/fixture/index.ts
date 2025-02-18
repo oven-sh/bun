@@ -25,3 +25,18 @@ new WeakSet();
 new Map();
 new Set();
 new WeakMap();
+
+const statuses = [200, 400, 401, 403, 404, 500, 501, 502, 503, 504];
+
+Bun.serve({
+  fetch(req) {
+    const headers = req.headers.toJSON();
+
+    const body = req.method === "GET" || req.method === "HEAD" ? undefined : req.body;
+
+    return new Response(body, {
+      headers,
+      status: statuses[Math.floor(Math.random() * statuses.length)],
+    });
+  },
+});

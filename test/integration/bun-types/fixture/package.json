@@ -1,8 +1,8 @@
 {
   "name": "fixture",
   "module": "index.ts",
-  "devDependencies": {
-    "@types/bun": "latest"
+  "dependencies": {
+    "bun-types": "bun-types-no-release.tgz"
   },
   "peerDependencies": {
     "typescript": "^5.0.0"

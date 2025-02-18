@@ -32,8 +32,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await $`
     cd ${FIXTURE_DIR}
-    bun uninstall bun-types
-    rm tsconfig.json
+    # bun uninstall bun-types
+    # rm tsconfig.json
   `;
 });
 

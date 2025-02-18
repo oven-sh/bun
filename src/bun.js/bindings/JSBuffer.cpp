@@ -1363,9 +1363,9 @@ static int64_t indexOf16(const uint8_t* thisPtr, int64_t thisLength, const uint8
 {
     if (thisLength == 1) return -1;
     if (valueLength == 1) return -1;
-    thisLength = thisLength / 2;
-    valueLength = valueLength / 2;
-    byteOffset = byteOffset / 2;
+    thisLength /= 2;
+    valueLength /= 2;
+    byteOffset /= 2;
     auto haystack = std::span<const uint16_t>((const uint16_t*)(thisPtr), thisLength).subspan(byteOffset);
     auto needle = std::span<const uint16_t>((const uint16_t*)(valuePtr), valueLength);
     auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end());

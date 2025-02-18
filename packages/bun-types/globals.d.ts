@@ -422,7 +422,6 @@ declare global {
       type?: undefined;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     interface DirectUnderlyingSource<R = any> {
       cancel?: UnderlyingSourceCancelCallback;
       pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
@@ -612,19 +611,11 @@ declare global {
   }
 
   interface ReadableStream<R = any> extends _ReadableStream<R> {}
-  var ReadableStream: typeof globalThis extends {
-    onerror: any;
-    ReadableStream: infer T;
-  }
-    ? T
-    : {
-        prototype: ReadableStream;
-        new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-        new <R = any>(
-          underlyingSource?: Bun.DirectUnderlyingSource<R>,
-          strategy?: QueuingStrategy<R>,
-        ): ReadableStream<R>;
-      };
+  var ReadableStream: {
+    prototype: ReadableStream;
+    new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+  };
 
   interface WritableStream<W = any> extends _WritableStream<W> {}
   var WritableStream: {
@@ -633,47 +624,27 @@ declare global {
   };
 
   interface Worker extends _Worker {}
-  var Worker: typeof globalThis extends {
-    onerror: any;
-    Worker: infer T;
-  }
-    ? T
-    : {
-        prototype: Worker;
-        new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
-        /**
-         * This is the cloned value of the `data` property passed to `new Worker()`
-         *
-         * This is Bun's equivalent of `workerData` in Node.js.
-         */
-        data: any;
-      };
+  var Worker: {
+    prototype: Worker;
+    new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
+    /**
+     * This is the cloned value of the `data` property passed to `new Worker()`
+     *
+     * This is Bun's equivalent of `workerData` in Node.js.
+     */
+    data: any;
+  };
 
   interface WebSocket extends _WebSocket {}
-  var WebSocket: typeof globalThis extends {
-    onerror: any;
-    WebSocket: infer T;
-  }
-    ? T
-    : typeof _WebSocket;
+  var WebSocket: typeof _WebSocket;
 
   interface Crypto extends _Crypto {}
-  var Crypto: typeof globalThis extends {
-    onerror: any;
-    Crypto: infer T;
-  }
-    ? T
-    : {
-        prototype: Crypto;
-        new (): Crypto;
-      };
+  var Crypto: {
+    prototype: Crypto;
+    new (): Crypto;
+  };
 
-  var crypto: typeof globalThis extends {
-    onerror: any;
-    crypto: infer T;
-  }
-    ? T
-    : Crypto;
+  var crypto: Crypto;
 
   /**
    * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextEncoder` API. All
@@ -685,46 +656,25 @@ declare global {
    * ```
    */
   interface TextEncoder extends _TextEncoder {}
-  var TextEncoder: typeof globalThis extends {
-    onerror: any;
-    TextEncoder: infer T;
-  }
-    ? T
-    : typeof TextEncoder;
+  var TextEncoder: typeof TextEncoder;
 
   interface TextDecoder extends _TextDecoder {}
-  var TextDecoder: typeof globalThis extends {
-    onerror: any;
-    TextDecoder: infer T;
-  }
-    ? T
-    : typeof TextDecoder;
+  var TextDecoder: typeof TextDecoder;
 
   interface Performance extends _Performance {}
-  var performance: typeof globalThis extends {
-    onerror: any;
-    performance: infer T;
-  }
-    ? T
-    : Performance;
+  var performance: Performance;
 
   interface Event extends _Event {}
-  var Event: typeof globalThis extends { onerror: any; Event: infer T }
-    ? T
-    : {
-        prototype: Event;
-        new (type: string, eventInitDict?: Bun.EventInit): Event;
-      };
+  var Event: {
+    prototype: Event;
+    new (type: string, eventInitDict?: Bun.EventInit): Event;
+  };
+
   interface EventTarget extends _EventTarget {}
-  var EventTarget: typeof globalThis extends {
-    onerror: any;
-    EventTarget: infer T;
-  }
-    ? T
-    : {
-        prototype: EventTarget;
-        new (): EventTarget;
-      };
+  var EventTarget: {
+    prototype: EventTarget;
+    new (): EventTarget;
+  };
 
   interface Body extends _Body {}
 
@@ -740,7 +690,7 @@ declare global {
     readonly lastModified: number;
     readonly name: string;
   }
-  var File: typeof globalThis extends { onerror: any; File: infer T } ? T : typeof File;
+  var File: typeof File;
 
   interface FetchRequestInit extends RequestInit {
     /**
@@ -993,15 +943,10 @@ declare global {
   };
 
   interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
-  var MessageEvent: typeof globalThis extends {
-    onerror: any;
-    MessageEvent: infer T;
-  }
-    ? T
-    : {
-        prototype: MessageEvent;
-        new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
-      };
+  var MessageEvent: {
+    prototype: MessageEvent;
+    new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
+  };
 
   interface CustomEvent<T = any> extends Event {
     /** Returns any custom data event was created with. Typically used for synthetic events. */
@@ -1395,29 +1340,19 @@ declare global {
     readonly DATA_CLONE_ERR: 25;
   }
 
-  var DOMException: typeof globalThis extends {
-    onerror: any;
-    DOMException: infer T;
-  }
-    ? T
-    : {
-        prototype: DOMException;
-        new (message?: string, name?: string): DOMException;
-      };
+  var DOMException: {
+    prototype: DOMException;
+    new (message?: string, name?: string): DOMException;
+  };
 
   function alert(message?: string): void;
   function confirm(message?: string): boolean;
   function prompt(message?: string, _default?: string): string | null;
 
-  var SubtleCrypto: typeof globalThis extends {
-    onerror: any;
-    SubtleCrypto: infer T;
-  }
-    ? T
-    : {
-        prototype: _SubtleCrypto;
-        new (): _SubtleCrypto;
-      };
+  var SubtleCrypto: {
+    prototype: _SubtleCrypto;
+    new (): _SubtleCrypto;
+  };
 
   interface CryptoKey extends _CryptoKey {}
   var CryptoKey: {

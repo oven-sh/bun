@@ -997,6 +997,41 @@ pub fn prettyErrorln(comptime fmt: string, args: anytype) void {
     prettyWithPrinter(fmt, args, printErrorln, .stderr);
 }
 
+/// Pretty-print a command that will be run.
+/// $ bun run foo
+fn printCommand(argv: anytype, comptime destination: Destination) void {
+    const prettyFn = if (destination == .stdout) pretty else prettyError;
+    const printFn = if (destination == .stdout) print else printError;
+    switch (@TypeOf(argv)) {
+        [][:0]const u8, []const []const u8, []const []u8, [][]const u8 => {
+            prettyFn("<r><d><magenta>$<r> <d><b>", .{});
+            printFn("{s}", .{argv[0]});
+            if (argv.len > 1) {
+                for (argv[1..]) |arg| {
+                    printFn(" {s}", .{arg});
+                }
+            }
+            prettyFn("<r>\n", .{});
+        },
+        []const u8, []u8, [:0]const u8, [:0]u8 => {
+            prettyFn("<r><d><magenta>$<r> <d><b>{s}<r>\n", .{argv});
+        },
+        else => {
+            @compileLog(argv);
+            @compileError("command() was given unsupported type: " ++ @typeName(@TypeOf(argv)));
+        },
+    }
+    flush();
+}
+
+pub fn commandOut(argv: anytype) void {
+    printCommand(argv, .stdout);
+}
+
+pub fn command(argv: anytype) void {
+    printCommand(argv, .stderr);
+}
+
 pub const Destination = enum(u8) {
     stderr,
     stdout,

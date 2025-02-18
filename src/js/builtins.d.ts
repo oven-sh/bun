@@ -645,3 +645,5 @@ declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
 
 declare function $min(a: number, b: number): number;
+
+declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;

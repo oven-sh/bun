@@ -95,10 +95,10 @@ pre {
   font-weight: bold;
   padding: 0.5rem 1rem;
   text-align: left;
-  cursor: pointer;
+  /* cursor: pointer; */
 }
 
-.file-name:hover,
+/* .file-name:hover,
 .file-name:focus-visible {
   background-color: var(--item-bg-hover);
 }
@@ -111,7 +111,7 @@ pre {
 .file-name:hover::after,
 .file-name:focus-visible {
   content: " (click to open in editor)";
-}
+} */
 
 .message {
   margin: 1rem;
@@ -124,6 +124,10 @@ button + .message {
 
 .message-text > span {
   color: var(--color);
+}
+
+.message-text:last-child {
+  margin-bottom: 1rem;
 }
 
 .log-error {

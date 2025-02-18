@@ -702,6 +702,11 @@ pub const DynamicBitSetUnmanaged = struct {
     var empty_masks_data = [_]MaskInt{ 0, undefined };
     const empty_masks_ptr = empty_masks_data[1..2];
 
+    pub const empty: Self = .{
+        .bit_length = 0,
+        .masks = empty_masks_ptr,
+    };
+
     /// Do not resize the bitsets!
     ///
     /// Single buffer for multiple bitsets of equal length. Does not

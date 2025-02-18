@@ -11,15 +11,17 @@ const Output = bun.Output;
 const S3Client = @import("./S3Client.zig");
 const S3 = bun.S3;
 const S3Stat = @import("./S3Stat.zig").S3Stat;
-pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool, content_type: []const u8, offset: usize) !void {
     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
     const credentials = s3.getCredentials();
+    // detect virtual host style bucket name
+    const bucket_name = if (credentials.virtual_hosted_style and credentials.endpoint.len > 0) S3.S3Credentials.guessBucket(credentials.endpoint) orelse credentials.bucket else credentials.bucket;
 
-    if (credentials.bucket.len > 0) {
+    if (bucket_name.len > 0) {
         try writer.print(
             comptime Output.prettyFmt(" (<green>\"{s}/{s}\"<r>)<r> {{", enable_ansi_colors),
             .{
-                credentials.bucket,
+                bucket_name,
                 s3.path(),
             },
         );
@@ -32,6 +34,40 @@ pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Form
         );
     }
 
+    if (content_type.len > 0) {
+        try writer.writeAll("\n");
+        formatter.indent += 1;
+        defer formatter.indent -|= 1;
+
+        try formatter.writeIndent(@TypeOf(writer), writer);
+        try writer.print(
+            comptime Output.prettyFmt("type<d>:<r> <green>\"{s}\"<r>", enable_ansi_colors),
+            .{
+                content_type,
+            },
+        );
+
+        try formatter.printComma(@TypeOf(writer), writer, enable_ansi_colors);
+        if (offset > 0) {
+            try writer.writeAll("\n");
+        }
+    }
+
+    if (offset > 0) {
+        formatter.indent += 1;
+        defer formatter.indent -|= 1;
+
+        try formatter.writeIndent(@TypeOf(writer), writer);
+
+        try writer.print(
+            comptime Output.prettyFmt("offset<d>:<r> <yellow>{d}<r>", enable_ansi_colors),
+            .{
+                offset,
+            },
+        );
+
+        try formatter.printComma(@TypeOf(writer), writer, enable_ansi_colors);
+    }
     try S3Client.writeFormatCredentials(credentials, s3.options, s3.acl, Formatter, formatter, writer, enable_ansi_colors);
     try formatter.writeIndent(@TypeOf(writer), writer);
     try writer.writeAll("}");

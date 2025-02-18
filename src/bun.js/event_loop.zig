@@ -1500,7 +1500,7 @@ pub const EventLoop = struct {
             loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
             if (comptime Environment.isDebug) {
-                log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
+                log("tick {}, timeout: {}", .{ std.fmt.fmtDuration(event_loop_sleep_timer.read()), std.fmt.fmtDuration(timespec.ns()) });
             }
         } else {
             loop.tickWithoutIdle();
@@ -1515,6 +1515,7 @@ pub const EventLoop = struct {
 
         this.flushImmediateQueue();
         ctx.onAfterEventLoop();
+        this.global.handleRejectedPromises();
     }
 
     pub fn flushImmediateQueue(this: *EventLoop) void {

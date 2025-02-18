@@ -1,10 +1,10 @@
 import { td } from "../shared";
 
 export class DataViewReader {
-  view: DataView;
+  view: DataView<ArrayBuffer>;
   cursor: number;
 
-  constructor(view: DataView, cursor: number = 0) {
+  constructor(view: DataView<ArrayBuffer>, cursor: number = 0) {
     this.view = view;
     this.cursor = cursor;
   }

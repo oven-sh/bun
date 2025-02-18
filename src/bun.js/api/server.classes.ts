@@ -83,6 +83,7 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
+    values: ["routeList"],
   });
 }
 export default [

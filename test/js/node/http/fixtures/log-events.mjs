@@ -27,4 +27,26 @@ function patchEmitter(emitter, prefix) {
 
     oldEmit.apply(emitter, arguments);
   };
+
+  const req = http.request(options, res => {
+    patchEmitter(res, "res");
+    console.log(`STATUS: ${res.statusCode}`);
+    res.setEncoding("utf8");
+  });
+  patchEmitter(req, "req");
+
+  req.end().once("close", () => {
+    setTimeout(() => {
+      server.close();
+    }, 1);
+  });
+
+  function patchEmitter(emitter, prefix) {
+    var oldEmit = emitter.emit;
+
+    emitter.emit = function () {
+      console.log([prefix, arguments[0]]);
+      oldEmit.apply(emitter, arguments);
+    };
+  }
 }

@@ -8719,9 +8719,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         .pending => {
                             globalThis.handleRejectedPromises();
                             if (node_http_response) |node_response| {
+                                if (node_response.finished or node_response.aborted or node_response.upgraded) {
+                                    strong_promise.deinit();
+                                    break :brk .{ .success = {} };
+                                }
+
                                 const strong_self = node_response.getThisValue();
 
-                                if (node_response.finished or node_response.aborted or strong_self.isEmptyOrUndefinedOrNull()) {
+                                if (strong_self.isEmptyOrUndefinedOrNull()) {
                                     strong_promise.deinit();
                                     break :brk .{ .success = {} };
                                 }

@@ -1961,10 +1961,11 @@ pub const H2FrameParser = struct {
             var payload = content.data;
             var originValue = JSC.JSValue.jsUndefined();
             var count: usize = 0;
+            this.readBuffer.reset();
+
             while (payload.len > 0) {
                 var stream = std.io.fixedBufferStream(payload);
                 const origin_length = stream.reader().readInt(u16, .big) catch |err| {
-                    this.readBuffer.reset();
                     log("error reading ORIGIN frame size: {s}", .{@errorName(err)});
                     // origin length is the first 2 bytes of the payload
                     this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
@@ -1972,7 +1973,6 @@ pub const H2FrameParser = struct {
                 };
                 var origin_str = payload[2..];
                 if (origin_str.len < origin_length) {
-                    this.readBuffer.reset();
                     this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
                     return content.end;
                 }
@@ -1994,7 +1994,6 @@ pub const H2FrameParser = struct {
                 count += 1;
                 payload = payload[origin_length + 2 ..];
             }
-            this.readBuffer.reset();
 
             this.dispatch(.onOrigin, originValue);
             return content.end;
@@ -2012,6 +2011,8 @@ pub const H2FrameParser = struct {
             const payload = content.data;
 
             var stream = std.io.fixedBufferStream(payload);
+            this.readBuffer.reset();
+
             const origin_length = stream.reader().readInt(u16, .big) catch {
                 // origin length is the first 2 bytes of the payload
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ALTSVC frame size", this.lastStreamID, true);
@@ -2027,7 +2028,6 @@ pub const H2FrameParser = struct {
                 // dont error but stream dont exist so we can ignore it
                 return content.end;
             }
-            this.readBuffer.reset();
 
             this.dispatchWith2Extra(.onAltSvc, this.stringOrEmptyToJS(origin_and_value[0..origin_length]), this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
             return content.end;
@@ -2083,6 +2083,8 @@ pub const H2FrameParser = struct {
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             const isNotACK = frame.flags & @intFromEnum(PingFrameFlags.ACK) == 0;
+            this.readBuffer.reset();
+
             // if is not ACK send response
             if (isNotACK) {
                 this.sendPing(true, payload);
@@ -2090,7 +2092,6 @@ pub const H2FrameParser = struct {
                 this.outStandingPings -|= 1;
             }
             const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
-            this.readBuffer.reset();
             this.dispatchWithExtra(.onPing, buffer, JSC.JSValue.jsBoolean(!isNotACK));
             return content.end;
         }
@@ -2112,10 +2113,10 @@ pub const H2FrameParser = struct {
 
             var priority: StreamPriority = undefined;
             priority.from(payload);
+            this.readBuffer.reset();
 
             const stream_identifier = UInt31WithReserved.from(priority.streamIdentifier);
             if (stream_identifier.uint31 == stream.id) {
-                this.readBuffer.reset();
                 this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Priority frame with self dependency", this.lastStreamID, true);
                 return content.end;
             }
@@ -2123,7 +2124,6 @@ pub const H2FrameParser = struct {
             stream.exclusive = stream_identifier.reserved;
             stream.weight = priority.weight;
 
-            this.readBuffer.reset();
             return content.end;
         }
         return data.len;
@@ -2141,11 +2141,11 @@ pub const H2FrameParser = struct {
         }
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
+            this.readBuffer.reset();
+
             stream = this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags) orelse {
-                this.readBuffer.reset();
                 return content.end;
             };
-            this.readBuffer.reset();
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
                 stream.isWaitingMoreHeaders = false;
                 if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
@@ -2192,6 +2192,8 @@ pub const H2FrameParser = struct {
             const payload = content.data;
             var offset: usize = 0;
             var padding: usize = 0;
+            this.readBuffer.reset();
+
             if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0) {
                 // padding length
                 padding = payload[0];
@@ -2203,15 +2205,12 @@ pub const H2FrameParser = struct {
             }
             const end = payload.len - padding;
             if (offset > end) {
-                this.readBuffer.reset();
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
                 return content.end;
             }
             stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags) orelse {
-                this.readBuffer.reset();
                 return content.end;
             };
-            this.readBuffer.reset();
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
             if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
                 const identifier = stream.getIdentifier();

@@ -1837,6 +1837,7 @@ pub const H2FrameParser = struct {
 
     pub fn handleDataFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         log("handleDataFrame {s}", .{if (this.isServer) "server" else "client"});
+        this.readBuffer.reset();
 
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
@@ -1854,7 +1855,6 @@ pub const H2FrameParser = struct {
         if (stream.endAfterHeaders) {
             return data.len;
         }
-        this.readBuffer.reset();
 
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
         var payload = data[0..end];
@@ -1964,6 +1964,7 @@ pub const H2FrameParser = struct {
             while (payload.len > 0) {
                 var stream = std.io.fixedBufferStream(payload);
                 const origin_length = stream.reader().readInt(u16, .big) catch |err| {
+                    this.readBuffer.reset();
                     log("error reading ORIGIN frame size: {s}", .{@errorName(err)});
                     // origin length is the first 2 bytes of the payload
                     this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
@@ -1971,6 +1972,7 @@ pub const H2FrameParser = struct {
                 };
                 var origin_str = payload[2..];
                 if (origin_str.len < origin_length) {
+                    this.readBuffer.reset();
                     this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
                     return content.end;
                 }
@@ -1992,8 +1994,9 @@ pub const H2FrameParser = struct {
                 count += 1;
                 payload = payload[origin_length + 2 ..];
             }
-            this.dispatch(.onOrigin, originValue);
             this.readBuffer.reset();
+
+            this.dispatch(.onOrigin, originValue);
             return content.end;
         }
         return data.len;
@@ -2024,8 +2027,9 @@ pub const H2FrameParser = struct {
                 // dont error but stream dont exist so we can ignore it
                 return content.end;
             }
-            this.dispatchWith2Extra(.onAltSvc, this.stringOrEmptyToJS(origin_and_value[0..origin_length]), this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
             this.readBuffer.reset();
+
+            this.dispatchWith2Extra(.onAltSvc, this.stringOrEmptyToJS(origin_and_value[0..origin_length]), this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
             return content.end;
         }
         return data.len;
@@ -2111,6 +2115,7 @@ pub const H2FrameParser = struct {
 
             const stream_identifier = UInt31WithReserved.from(priority.streamIdentifier);
             if (stream_identifier.uint31 == stream.id) {
+                this.readBuffer.reset();
                 this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Priority frame with self dependency", this.lastStreamID, true);
                 return content.end;
             }

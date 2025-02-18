@@ -254,7 +254,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
     if (allowZero.isUndefined()) allowZero = jsBoolean(true);
 
     auto allowZero_b = allowZero.toBoolean(globalObject);
-    if (!port.isNumber() && !port.isString()) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
+
+    return V::validatePort(scope, globalObject, port, name, allowZero_b);
+}
+
+JSC::EncodedJSValue V::validatePort(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue port, JSValue name, bool allowZero)
+{
+    if (!port.isNumber() && !port.isString()) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero);
 
     if (port.isString()) {
         auto port_str = port.getString(globalObject);
@@ -290,19 +296,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
             return false;
         });
         if (trimmed.length() == 0) {
-            return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
+            return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero);
         }
     }
 
     auto port_num = port.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (std::isnan(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
-    if (std::isinf(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
-    if (std::fmod(port_num, 1.0) != 0) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
-    if (port_num < 0) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
-    if (port_num > 0xffff) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
-    if (port_num == 0 && !allowZero_b) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
+    if (std::isnan(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero);
+    if (std::isinf(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero);
+    if (std::fmod(port_num, 1.0) != 0) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero);
+    if (port_num < 0) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero);
+    if (port_num > 0xffff) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero);
+    if (port_num == 0 && !allowZero) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero);
 
     return JSValue::encode(port);
 }

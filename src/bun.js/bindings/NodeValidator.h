@@ -38,6 +38,7 @@ JSC::EncodedJSValue validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* g
 JSC::EncodedJSValue validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue minLength);
 JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue positive);
 JSC::EncodedJSValue validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue positive);
+JSC::EncodedJSValue validatePort(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue port, JSC::JSValue name, bool allowZero);
 
 }
 

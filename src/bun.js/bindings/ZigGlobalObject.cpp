@@ -115,6 +115,8 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSSink.h"
 #include "JSSocketAddress.h"
+#include "JSSocketAddressConstructor.h"
+#include "JSSocketAddressPrototype.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -2914,11 +2916,6 @@ void GlobalObject::finishCreation(VM& vm)
                     init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
-    m_JSSocketAddressStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(JSSocketAddress::createStructure(init.vm, init.owner));
-        });
-
     m_errorConstructorPrepareStackTraceInternalValue.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
@@ -3281,6 +3278,17 @@ void GlobalObject::finishCreation(VM& vm)
             auto* prototype = createJSSinkPrototype(init.vm, init.global, WebCore::SinkID::NetworkSink);
             auto* structure = JSNetworkSink::createStructure(init.vm, init.global, prototype);
             auto* constructor = JSNetworkSinkConstructor::create(init.vm, init.global, JSNetworkSinkConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), jsCast<JSObject*>(prototype));
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSSocketAddressClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = JSSocketAddressPrototype::create(init.vm, init.global, JSSocketAddressPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = JSSocketAddress::createStructure(init.vm, init.global, prototype);
+            auto* constructor = JSSocketAddressConstructor::create(
+                init.vm, init.global, JSSocketAddressConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()));
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);
@@ -3890,8 +3898,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPSResponseControllerPrototype.visit(visitor);
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSNetworkSinkClassStructure.visit(visitor);
+    thisObject->m_JSSocketAddressClassStructure.visit(visitor);
     thisObject->m_JSFetchTaskletChunkedRequestControllerPrototype.visit(visitor);
-    thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_V8GlobalInternals.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);

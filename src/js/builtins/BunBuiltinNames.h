@@ -27,6 +27,7 @@ using namespace JSC;
     macro(abortSteps) \
     macro(addAbortAlgorithmToSignal) \
     macro(addEventListener) \
+    macro(address) \
     macro(appendFromJS) \
     macro(argv) \
     macro(assignToStream) \

@@ -28,6 +28,7 @@ server.listen(0, "127.0.0.1", common.mustCall(async () => {
   const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
   await once(client, 'connect');
   for (const i of singles) {
+ 
     assert.throws(
       () => client.request({ [i]: 'abc', [i.toUpperCase()]: 'xyz' }),
       {

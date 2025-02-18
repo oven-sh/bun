@@ -3615,19 +3615,23 @@ pub const H2FrameParser = struct {
                     this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(stream.rstCode));
                     return JSC.JSValue.jsNumber(stream_id);
                 }
+                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                    const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
 
                 if (header_name.charAt(0) == ':') {
                     if (ignore_pseudo_headers == 1) continue;
 
                     if (this.isServer) {
-                        if (!ValidPseudoHeaders.has(name)) {
+                        if (!ValidPseudoHeaders.has(validated_name)) {
                             if (!globalObject.hasException()) {
                                 return globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
                             }
                             return .zero;
                         }
                     } else {
-                        if (!ValidRequestPseudoHeaders.has(name)) {
+                        if (!ValidRequestPseudoHeaders.has(validated_name)) {
                             if (!globalObject.hasException()) {
                                 return globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
                             }
@@ -3644,10 +3648,7 @@ pub const H2FrameParser = struct {
                     }
                     return .zero;
                 };
-                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
-                    const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
-                    return globalObject.throwValue(exception);
-                };
+
                 if (js_value.jsType().isArray()) {
                     log("array header {s}", .{name});
                     // https://github.com/oven-sh/bun/issues/8940

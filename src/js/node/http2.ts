@@ -87,7 +87,9 @@ function utcDate() {
   return utcCache;
 }
 function emitErrorNT(self: any, error: any) {
-  self.emit("error", error);
+  if (self.listenerCount("error") > 0) {
+    self.emit("error", error);
+  }
 }
 function cache() {
   const d = new Date();

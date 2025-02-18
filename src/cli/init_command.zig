@@ -244,12 +244,18 @@ pub const InitCommand = struct {
         const @".gitignore" = @embedFile("init/gitignore.default");
         const @"tsconfig.json" = @embedFile("init/tsconfig.default.json");
         const @"README.md" = @embedFile("init/README.default.md");
+        const @"README2.md" = @embedFile("init/README2.default.md");
 
         /// Create a new asset file, overriding anything that already exists. Known
         /// assets will have their contents pre-populated; otherwise the file will be empty.
         fn create(comptime asset_name: []const u8, args: anytype) !void {
             const is_template = comptime (@TypeOf(args) != @TypeOf(null)) and @typeInfo(@TypeOf(args)).@"struct".fields.len > 0;
             return createFull(asset_name, asset_name, "", is_template, args);
+        }
+
+        pub fn createWithContents(comptime asset_name: []const u8, comptime contents: []const u8, args: anytype) !void {
+            const is_template = comptime (@TypeOf(args) != @TypeOf(null)) and @typeInfo(@TypeOf(args)).@"struct".fields.len > 0;
+            return createFullWithContents(asset_name, contents, "", is_template, args);
         }
 
         fn createNew(filename: [:0]const u8, contents: []const u8) !void {
@@ -285,6 +291,31 @@ pub const InitCommand = struct {
                 } else {
                     try file.writeAll(asset);
                 }
+                Output.prettyln(" + <r><d>{s}{s}<r>", .{ filename, message_suffix });
+                Output.flush();
+            } else {
+                @compileError("missing asset: " ++ asset_name);
+            }
+        }
+
+        fn createFullWithContents(
+            /// name of asset file to create
+            filename: []const u8,
+            comptime contents: []const u8,
+            /// optionally add a suffix to the end of the `+ filename` message. Must have a leading space.
+            comptime message_suffix: []const u8,
+            /// Treat the asset as a format string, using `args` to populate it. Only applies to known assets.
+            comptime is_template: bool,
+            /// Format arguments
+            args: anytype,
+        ) !void {
+            var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
+            defer file.close();
+
+            if (comptime is_template) {
+                try file.writer().print(contents, args);
+            } else {
+                try file.writeAll(contents);
             }
 
             Output.prettyln(" + <r><d>{s}{s}<r>", .{ filename, message_suffix });
@@ -728,7 +759,8 @@ pub const InitCommand = struct {
         switch (template) {
             .blank, .typescript_library => {
                 if (package_json_file != null) {
-                    Output.prettyln("<r><green>Done!<r> A package.json file was saved in the current directory.", .{});
+                    Output.prettyln(" + <r><d>package.json<r>", .{});
+                    Output.flush();
                 }
 
                 if (fields.entry_point.len > 0 and !exists(fields.entry_point)) {
@@ -767,14 +799,14 @@ pub const InitCommand = struct {
                 }
 
                 if (fields.entry_point.len > 0) {
-                    Output.prettyln("\nTo get started, run:", .{});
+                    Output.pretty("\nTo get started, run:\n\n\t", .{});
                     if (strings.containsAny(
                         " \"'",
                         fields.entry_point,
                     )) {
-                        Output.prettyln("  <r><cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                        Output.prettyln("<cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
                     } else {
-                        Output.prettyln("  <r><cyan>bun run {s}<r>", .{fields.entry_point});
+                        Output.prettyln("<cyan>bun run {s}<r>", .{fields.entry_point});
                     }
                 }
 
@@ -921,6 +953,8 @@ const Template = enum {
             .{ "bunfig.toml", @embedFile("../create/projects/react-app/bunfig.toml") },
             .{ "package.json", @embedFile("../create/projects/react-app/package.json") },
             .{ "tsconfig.json", @embedFile("../create/projects/react-app/tsconfig.json") },
+            .{ "README.md", InitCommand.Assets.@"README2.md" },
+            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
             .{ "src/index.tsx", @embedFile("../create/projects/react-app/src/index.tsx") },
             .{ "src/App.tsx", @embedFile("../create/projects/react-app/src/App.tsx") },
             .{ "src/index.html", @embedFile("../create/projects/react-app/src/index.html") },
@@ -937,6 +971,8 @@ const Template = enum {
             .{ "bunfig.toml", @embedFile("../create/projects/react-tailwind/bunfig.toml") },
             .{ "package.json", @embedFile("../create/projects/react-tailwind/package.json") },
             .{ "tsconfig.json", @embedFile("../create/projects/react-tailwind/tsconfig.json") },
+            .{ "README.md", InitCommand.Assets.@"README2.md" },
+            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
             .{ "src/index.tsx", @embedFile("../create/projects/react-tailwind/src/index.tsx") },
             .{ "src/App.tsx", @embedFile("../create/projects/react-tailwind/src/App.tsx") },
             .{ "src/index.html", @embedFile("../create/projects/react-tailwind/src/index.html") },
@@ -955,6 +991,8 @@ const Template = enum {
             .{ "package.json", @embedFile("../create/projects/react-shadcn/package.json") },
             .{ "components.json", @embedFile("../create/projects/react-shadcn/components.json") },
             .{ "tsconfig.json", @embedFile("../create/projects/react-shadcn/tsconfig.json") },
+            .{ "README.md", InitCommand.Assets.@"README2.md" },
+            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
             .{ "src/index.tsx", @embedFile("../create/projects/react-shadcn/src/index.tsx") },
             .{ "src/App.tsx", @embedFile("../create/projects/react-shadcn/src/App.tsx") },
             .{ "src/index.html", @embedFile("../create/projects/react-shadcn/src/index.html") },
@@ -984,17 +1022,31 @@ const Template = enum {
     }
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
-        for (this.files()) |file| {
+        inline for (comptime this.files()) |file| {
             const path, const contents = file;
 
-            InitCommand.Assets.createNew(path, contents) catch |err| {
-                if (err == error.EEXISTS) {
-                    Output.errGeneric("'{s}' already exists", .{path});
-                } else {
-                    Output.err(err, "failed to create file: '{s}'", .{path});
-                }
-                Global.crash();
-            };
+            if (comptime strings.eqlComptime(path, "README.md")) {
+                InitCommand.Assets.createWithContents("README.md", contents, .{
+                    .name = this.name(),
+                    .bunVersion = Environment.version_string,
+                }) catch |err| {
+                    if (err == error.EEXISTS) {
+                        Output.errGeneric("'{s}' already exists", .{path});
+                    } else {
+                        Output.err(err, "failed to create file: '{s}'", .{path});
+                    }
+                    Global.crash();
+                };
+            } else {
+                InitCommand.Assets.createNew(path, contents) catch |err| {
+                    if (err == error.EEXISTS) {
+                        Output.errGeneric("'{s}' already exists", .{path});
+                    } else {
+                        Output.err(err, "failed to create file: '{s}'", .{path});
+                    }
+                    Global.crash();
+                };
+            }
         }
 
         Output.pretty("\n", .{});
@@ -1013,8 +1065,8 @@ const Template = enum {
 
         _ = try install.spawnAndWait();
 
-        Output.prettyln("\nTo get started, run:\n\n\t<cyan>bun run dev<r>\n\n", .{});
-        Output.prettyln("To build for production, run:\n\n\t<cyan>bun run build<r>\n\n", .{});
+        Output.prettyln("\nTo get started, run:\n\n\t<cyan>bun dev<r>", .{});
+        Output.prettyln("\nTo run for production:\n\n\t<cyan>bun start<r>\n\n", .{});
 
         Output.flush();
 

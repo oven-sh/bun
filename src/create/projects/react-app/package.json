@@ -7,8 +7,7 @@
   "module": "src/index.tsx",
   "scripts": {
     "dev": "bun --hot src/index.tsx",
-    "build": "bun build src/",
-    "start": "bun run src/index.tsx"
+    "start": "NODE_ENV=production bun src/index.tsx"
   },
   "dependencies": {
     "react": "^19",

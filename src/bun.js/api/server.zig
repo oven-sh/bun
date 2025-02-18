@@ -6242,6 +6242,7 @@ pub const NodeHTTPResponse = struct {
         defer if (new_socket) |socket| {
             this.upgraded = true;
             Bun__setNodeHTTPServerSocketUsSocketValue(socketValue, socket);
+            defer this.js_ref.unref(JSC.VirtualMachine.get());
             switch (this.response) {
                 .SSL => this.response = uws.AnyResponse.init(uws.NewApp(true).Response.castRes(@alignCast(@ptrCast(socket)))),
                 .TCP => this.response = uws.AnyResponse.init(uws.NewApp(false).Response.castRes(@alignCast(@ptrCast(socket)))),

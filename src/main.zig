@@ -56,7 +56,6 @@ pub fn main() void {
     if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
         bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
     }
-    bun.assert(bun.JSC.JSObject.maxInlineCapacity == bun.JSC.JSC__JSObject__maxInlineCapacity);
 
     bun.StackCheck.configureThread();
 

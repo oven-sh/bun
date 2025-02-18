@@ -25,8 +25,6 @@ pub extern const JSC__JSObject__maxInlineCapacity: c_uint;
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
     const cppFn = shim.cppFn;
-    // lets make zig know that in comptime and assert at runtime on main.zig
-    pub const maxInlineCapacity = if (bun.Environment.isDebug) 62 else 64;
 
     pub fn toJS(obj: *JSObject) JSValue {
         return JSValue.fromCell(obj);

@@ -3487,8 +3487,8 @@ pub const PostgresSQLConnection = struct {
                     .globalObject = this.globalObject,
                 };
 
-                var stack_buf: [JSC.JSObject.maxInlineCapacity]DataCell = undefined;
-                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, stack_buf.len)];
+                var stack_buf: [70]DataCell = undefined;
+                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSC__JSObject__maxInlineCapacity)];
                 var free_cells = false;
                 defer {
                     for (cells[0..putter.count]) |*cell| {
@@ -3497,7 +3497,7 @@ pub const PostgresSQLConnection = struct {
                     if (free_cells) bun.default_allocator.free(cells);
                 }
 
-                if (statement.fields.len >= JSC.JSObject.maxInlineCapacity) {
+                if (statement.fields.len >= JSC.JSC__JSObject__maxInlineCapacity) {
                     cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
                     free_cells = true;
                 }
@@ -3929,7 +3929,7 @@ pub const PostgresSQLConnection = struct {
 
 pub const PostgresCachedStructure = struct {
     structure: JSC.Strong = .{},
-    // only populated if more than JSC.JSObject.maxInlineCapacity fields otherwise the structure will contain all fields inlined
+    // only populated if more than JSC.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     fields: ?[]JSC.JSObject.ExternColumnIdentifier = null,
 
     pub fn has(this: *@This()) bool {
@@ -4083,7 +4083,7 @@ pub const PostgresSQLStatement = struct {
         this.checkForDuplicateFields();
 
         // lets avoid most allocations
-        var stack_ids: [JSC.JSObject.maxInlineCapacity]JSC.JSObject.ExternColumnIdentifier = undefined;
+        var stack_ids: [70]JSC.JSObject.ExternColumnIdentifier = undefined;
         // lets de duplicate the fields early
         var nonDuplicatedCount = this.fields.len;
         for (this.fields) |*field| {
@@ -4091,7 +4091,7 @@ pub const PostgresSQLStatement = struct {
                 nonDuplicatedCount -= 1;
             }
         }
-        const ids = if (nonDuplicatedCount <= JSC.JSObject.maxInlineCapacity) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+        const ids = if (nonDuplicatedCount <= JSC.JSC__JSObject__maxInlineCapacity) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
 
         var i: usize = 0;
         for (this.fields) |*field| {
@@ -4115,7 +4115,7 @@ pub const PostgresSQLStatement = struct {
             i += 1;
         }
 
-        if (nonDuplicatedCount > JSC.JSObject.maxInlineCapacity) {
+        if (nonDuplicatedCount > JSC.JSC__JSObject__maxInlineCapacity) {
             this.cached_structure.set(globalObject, null, ids);
         } else {
             this.cached_structure.set(globalObject, JSC.JSObject.createStructure(

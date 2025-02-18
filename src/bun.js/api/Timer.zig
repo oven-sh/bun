@@ -868,6 +868,7 @@ const TimerObjectInternals = struct {
         const globalThis = this.strong_this.globalThis.?;
         this.strong_this.deinit();
         this.eventLoopTimer().state = .FIRED;
+        this.setEnableKeepingEventLoopAlive(vm, false);
 
         vm.eventLoop().enter();
         {
@@ -959,17 +960,7 @@ const TimerObjectInternals = struct {
             }
 
             if (is_timer_done) {
-                if (this.is_keeping_event_loop_alive) {
-                    this.is_keeping_event_loop_alive = false;
-
-                    switch (this.kind) {
-                        .setTimeout, .setInterval => {
-                            vm.timer.incrementTimerRef(-1);
-                        },
-                        else => {},
-                    }
-                }
-
+                this.setEnableKeepingEventLoopAlive(vm, false);
                 // The timer will not be re-entered into the event loop at this point.
                 this.deref();
             }
@@ -1018,6 +1009,7 @@ const TimerObjectInternals = struct {
             ImmediateObject.callbackSetCached(timer_js, globalThis, callback);
             const parent: *ImmediateObject = @fieldParentPtr("internals", this);
             globalThis.bunVM().enqueueImmediateTask(JSC.Task.init(parent));
+            this.setEnableKeepingEventLoopAlive(globalThis.bunVM(), true);
             // ref'd by event loop
             parent.ref();
         } else {
@@ -1118,13 +1110,7 @@ const TimerObjectInternals = struct {
             return;
         }
         this.is_keeping_event_loop_alive = enable;
-
-        switch (this.kind) {
-            .setTimeout, .setInterval => {
-                vm.timer.incrementTimerRef(if (enable) 1 else -1);
-            },
-            else => {},
-        }
+        vm.timer.incrementTimerRef(if (enable) 1 else -1);
     }
 
     pub fn hasRef(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {

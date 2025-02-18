@@ -1023,8 +1023,6 @@ pub const VirtualMachine = struct {
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
             vm.active_tasks +
             vm.event_loop.tasks.count +
-            vm.event_loop.immediate_tasks.count +
-            vm.event_loop.next_immediate_tasks.count +
             @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
     }
 

@@ -249,8 +249,16 @@ pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSSocketAddressDTO__create(global, addr_str.transferToJS(global), this.port(), this.family() == AF.INET6);
 }
 
+/// Directly create a socket address DTO. This is a POJO with address, port, and family properties.
+/// Used for hot paths that provide existing, pre-formatted/validated address
+/// data to JS. The address string is assumed to be ASCII and a valid IP address
+/// (either v4 or v6).
 pub fn createDTO(this: *SocketAddress, addr_: []const u8, port_: i32, is_ipv6: bool) JSC.JSValue {
-    bun.debugAssert(port_ >= 0 and port_ <= std.math.maxInt(i32));
+    if (comptime bun.Environment.isDebug) {
+        bun.assertWithLocation(port_ >= 0 and port_ <= std.math.maxInt(i32), @src());
+        bun.assertWithLocation(addr_.len > 0, @src());
+    }
+    
     return JSSocketAddressDTO__create(this.globalThis, bun.String.createUTF8ForJS(addr_).toJS(this.globalThis), port_, is_ipv6);
 }
 

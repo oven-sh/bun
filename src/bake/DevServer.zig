@@ -923,9 +923,8 @@ fn notFound(resp: anytype) void {
 }
 
 fn onNotFoundCorked(resp: anytype) void {
-    resp.writeHeaderInt("Content-Length", 0);
     resp.writeStatus("404 Not Found");
-    resp.endWithoutBody(false);
+    resp.end("", false);
 }
 
 fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
@@ -1023,7 +1022,8 @@ fn onIncrementalVisualizerCorked(resp: anytype) void {
         @embedFile("incremental_visualizer.html")
     else
         bun.runtimeEmbedFile(.src_eager, "bake/incremental_visualizer.html");
-    resp.writeHeaderInt("Content-Length", code.len);
+    resp.writeStatus("200 OK");
+    resp.writeHeader("Content-Type", bun.http.MimeType.html.value);
     resp.end(code, false);
 }
 
@@ -6100,8 +6100,9 @@ pub fn onWatchError(_: *DevServer, err: bun.sys.Error) void {
     // TODO: attempt to automatically restart the watcher thread, perhaps wait for next request.
 }
 
-pub fn publish(dev: *DevServer, topic: HmrTopic, message: []const u8, opcode: uws.Opcode) void {
-    if (dev.server) |s| _ = s.publish(&.{@intFromEnum(topic)}, message, opcode, false);
+pub fn publish(dev: *DevServer, topic: HmrTopic, message: []const u8, opcode: uws.Opcode) bool {
+    if (dev.server) |s| return s.publish(&.{@intFromEnum(topic)}, message, opcode, false);
+    return false;
 }
 
 pub fn numSubscribers(dev: *DevServer, topic: HmrTopic) u32 {

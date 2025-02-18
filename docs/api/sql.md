@@ -520,6 +520,7 @@ The client provides typed errors for different failure scenarios:
 | `ERR_POSTGRES_SERVER_ERROR`          | General error from PostgreSQL server       |
 | `ERR_POSTGRES_INVALID_QUERY_BINDING` | Invalid parameter binding                  |
 | `ERR_POSTGRES_QUERY_CANCELLED`       | Query was cancelled                        |
+| `ERR_POSTGRES_NOT_TAGGED_CALL`       | Query was called without a tagged call     |
 
 ### Data Type Errors
 

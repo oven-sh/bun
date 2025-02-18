@@ -1,4 +1,4 @@
-type _Response = typeof globalThis extends { onmessage: any } ? {} : import("undici-types").Response;
+type _Response = import("undici-types").Response;
 
 export interface Response extends _Response {}
 export declare class Response {

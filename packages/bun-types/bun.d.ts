@@ -16,9 +16,9 @@
 declare module "bun" {
   import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
-  import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
-  import type { Stats } from "node:fs";
   import type { X509Certificate } from "node:crypto";
+  import type { Stats } from "node:fs";
+  import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
   interface Env {
     NODE_ENV?: string;
     /**

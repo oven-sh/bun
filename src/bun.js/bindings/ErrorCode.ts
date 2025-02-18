@@ -120,7 +120,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_INVALID_HEADER_VALUE", TypeError],
   ["ERR_HTTP2_PING_CANCEL", Error],
   ["ERR_HTTP2_STREAM_ERROR", Error],
-  ["ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", TypeError],
+  ["ERR_HTTP2_HEADER_SINGLE_VALUE", TypeError],
   ["ERR_HTTP2_SESSION_ERROR", Error],
   ["ERR_HTTP2_INVALID_SESSION", Error],
   ["ERR_HTTP2_INVALID_HEADERS", Error],
@@ -137,7 +137,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_INVALID_ORIGIN", TypeError],
   ["ERR_HTTP2_ALTSVC_LENGTH", TypeError],
   ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
-
+  ["ERR_HTTP2_STATUS_101", Error],
+  ["ERR_HTTP2_INVALID_INFO_STATUS", RangeError],
+  ["ERR_HTTP2_HEADERS_AFTER_RESPOND", Error],
   // AsyncHooks
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],

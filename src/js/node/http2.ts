@@ -1641,7 +1641,6 @@ class Http2Stream extends Duplex {
         sensitiveNames[sensitives[i]] = true;
       }
     }
-
     session[bunHTTP2Native]?.sendTrailers(this.#id, headers, sensitiveNames);
     this.#sentTrailers = headers;
   }
@@ -2024,7 +2023,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
     }
-    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
+    if (this.headersSent)
+      throw $ERR_HTTP2_HEADERS_AFTER_RESPOND("Cannot specify additional headers after response initiated");
 
     if (headers == undefined) {
       headers = {};
@@ -2032,6 +2032,12 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
     } else {
       headers = { ...headers };
+    }
+
+    for (const name in headers) {
+      if (name.startsWith(":") && name !== ":status") {
+        throw $ERR_HTTP2_INVALID_PSEUDOHEADER(`"${name}" is an invalid pseudoheader or is used incorrectly`);
+      }
     }
 
     const sensitives = headers[sensitiveHeaders];
@@ -2045,19 +2051,28 @@ class ServerHttp2Stream extends Http2Stream {
         sensitiveNames[sensitives[i]] = true;
       }
     }
+    let hasStatus = true;
     if (headers[":status"] === undefined) {
       headers[":status"] = 200;
+      hasStatus = false;
     }
     const statusCode = (headers[":status"] |= 0);
+    if (hasStatus) {
+      if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS)
+        throw $ERR_HTTP2_STATUS_101("HTTP status code 101 (Switching Protocols) is forbidden in HTTP/2");
+      if (statusCode < 100 || statusCode >= 200) {
+        throw $ERR_HTTP2_INVALID_INFO_STATUS(`Invalid informational status code: ${statusCode}`);
+      }
 
-    // Payload/DATA frames are not permitted in these cases
-    if (
-      statusCode === HTTP_STATUS_NO_CONTENT ||
-      statusCode === HTTP_STATUS_RESET_CONTENT ||
-      statusCode === HTTP_STATUS_NOT_MODIFIED ||
-      this.headRequest
-    ) {
-      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
+      // Payload/DATA frames are not permitted in these cases
+      if (
+        statusCode === HTTP_STATUS_NO_CONTENT ||
+        statusCode === HTTP_STATUS_RESET_CONTENT ||
+        statusCode === HTTP_STATUS_NOT_MODIFIED ||
+        this.headRequest
+      ) {
+        throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
+      }
     }
     const session = this[bunHTTP2Session];
     assertSession(session);
@@ -2804,7 +2819,7 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("trailers", headers, flags, rawheaders);
       } else {
         if (header_status >= 100 && header_status < 200) {
-          self.emit("headers", stream, headers, flags, rawheaders);
+          stream.emit("headers", headers, flags, rawheaders);
         } else {
           stream[bunHTTP2StreamStatus] = status | StreamState.StreamResponded;
           if (header_status === 421) {
@@ -3181,87 +3196,92 @@ class ClientHttp2Session extends Http2Session {
   }
 
   request(headers: any, options?: any) {
-    if (this.destroyed || this.closed) {
-      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
-    }
-
-    if (this.sentTrailers) {
-      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
-    }
-
-    if (headers == undefined) {
-      headers = {};
-    } else if (!$isObject(headers)) {
-      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
-    } else {
-      headers = { ...headers };
-    }
-
-    const sensitives = headers[sensitiveHeaders];
-    delete headers[sensitiveHeaders];
-    const sensitiveNames = {};
-    if (sensitives) {
-      if (!$isArray(sensitives)) {
-        throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
+    try {
+      if (this.destroyed || this.closed) {
+        throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
       }
-      for (let i = 0; i < sensitives.length; i++) {
-        sensitiveNames[sensitives[i]] = true;
+
+      if (this.sentTrailers) {
+        throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
       }
-    }
-    const url = this.#url;
 
-    let authority = headers[":authority"];
-    if (!authority) {
-      authority = url.host;
-      headers[":authority"] = authority;
-    }
-    let method = headers[":method"];
-    if (!method) {
-      method = "GET";
-      headers[":method"] = method;
-    }
-
-    let scheme = headers[":scheme"];
-    if (!scheme) {
-      let protocol: string = url.protocol || options?.protocol || "https:";
-      switch (protocol) {
-        case "https:":
-          scheme = "https";
-          break;
-        case "http:":
-          scheme = "http";
-          break;
-        default:
-          scheme = protocol;
-      }
-      headers[":scheme"] = scheme;
-    }
-    if (headers[":path"] == undefined) {
-      headers[":path"] = "/";
-    }
-
-    if (NoPayloadMethods.has(method.toUpperCase())) {
-      if (!options || !$isObject(options)) {
-        options = { endStream: true };
+      if (headers == undefined) {
+        headers = {};
+      } else if (!$isObject(headers)) {
+        throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
       } else {
-        options = { ...options, endStream: true };
+        headers = { ...headers };
       }
+
+      const sensitives = headers[sensitiveHeaders];
+      delete headers[sensitiveHeaders];
+      const sensitiveNames = {};
+      if (sensitives) {
+        if (!$isArray(sensitives)) {
+          throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
+        }
+        for (let i = 0; i < sensitives.length; i++) {
+          sensitiveNames[sensitives[i]] = true;
+        }
+      }
+      const url = this.#url;
+
+      let authority = headers[":authority"];
+      if (!authority) {
+        authority = url.host;
+        headers[":authority"] = authority;
+      }
+      let method = headers[":method"];
+      if (!method) {
+        method = "GET";
+        headers[":method"] = method;
+      }
+
+      let scheme = headers[":scheme"];
+      if (!scheme) {
+        let protocol: string = url.protocol || options?.protocol || "https:";
+        switch (protocol) {
+          case "https:":
+            scheme = "https";
+            break;
+          case "http:":
+            scheme = "http";
+            break;
+          default:
+            scheme = protocol;
+        }
+        headers[":scheme"] = scheme;
+      }
+      if (headers[":path"] == undefined) {
+        headers[":path"] = "/";
+      }
+
+      if (NoPayloadMethods.has(method.toUpperCase())) {
+        if (!options || !$isObject(options)) {
+          options = { endStream: true };
+        } else {
+          options = { ...options, endStream: true };
+        }
+      }
+      let stream_id: number = this.#parser.getNextStream();
+      const req = new ClientHttp2Stream(stream_id, this, headers);
+      req.authority = authority;
+      if (stream_id < 0) {
+        const error = $ERR_HTTP2_OUT_OF_STREAMS("No stream ID is available because maximum stream ID has been reached");
+        this.emit("error", error);
+        return null;
+      }
+      if (typeof options === "undefined") {
+        this.#parser.request(stream_id, req, headers, sensitiveNames);
+      } else {
+        this.#parser.request(stream_id, req, headers, sensitiveNames, options);
+      }
+      req.emit("ready");
+      return req;
+    } catch (e) {
+      this.emit("error", e);
+      throw e;
     }
-    let stream_id: number = this.#parser.getNextStream();
-    const req = new ClientHttp2Stream(stream_id, this, headers);
-    req.authority = authority;
-    if (stream_id < 0) {
-      const error = $ERR_HTTP2_OUT_OF_STREAMS("No stream ID is available because maximum stream ID has been reached");
-      this.emit("error", error);
-      return null;
-    }
-    if (typeof options === "undefined") {
-      this.#parser.request(stream_id, req, headers, sensitiveNames);
-    } else {
-      this.#parser.request(stream_id, req, headers, sensitiveNames, options);
-    }
-    req.emit("ready");
-    return req;
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     return new ClientHttp2Session(url, options, listener);

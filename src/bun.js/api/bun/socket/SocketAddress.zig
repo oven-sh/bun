@@ -237,7 +237,7 @@ pub fn finalize(this: *SocketAddress) void {
 /// - result object is not an instance of `SocketAddress`, so
 ///   `SocketAddress.isSocketAddress(dto) === false`
 /// - address, port, etc. are put directly onto the object instead of being
-///    accessed via getters on the prototype.
+///   accessed via getters on the prototype.
 ///
 /// This method is slightly faster if you are creating a lot of socket addresses
 /// that will not be around for very long. `createDTO` is even faster, but
@@ -251,15 +251,22 @@ pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
 
 /// Directly create a socket address DTO. This is a POJO with address, port, and family properties.
 /// Used for hot paths that provide existing, pre-formatted/validated address
-/// data to JS. The address string is assumed to be ASCII and a valid IP address
-/// (either v4 or v6).
-pub fn createDTO(this: *SocketAddress, addr_: []const u8, port_: i32, is_ipv6: bool) JSC.JSValue {
+/// data to JS.
+///
+/// - The address string is assumed to be ASCII and a valid IP address (either v4 or v6).
+/// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
+pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: i32, is_ipv6: bool) JSC.JSValue {
     if (comptime bun.Environment.isDebug) {
         bun.assertWithLocation(port_ >= 0 and port_ <= std.math.maxInt(i32), @src());
         bun.assertWithLocation(addr_.len > 0, @src());
     }
 
-    return JSSocketAddressDTO__create(this.globalThis, bun.String.createUTF8ForJS(addr_).toJS(this.globalThis), port_, is_ipv6);
+    return JSSocketAddressDTO__create(
+        globalObject,
+        bun.String.createUTF8ForJS(globalObject, addr_),
+        port_,
+        is_ipv6,
+    );
 }
 
 extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, address_: JSC.JSValue, port_: c_int, is_ipv6: bool) JSC.JSValue;
@@ -305,10 +312,16 @@ pub fn address(this: *SocketAddress) bun.String {
 /// NOTE: node's `net.SocketAddress` wants `"ipv4"` and `"ipv6"` while Bun's APIs
 /// use `"IPv4"` and `"IPv6"`. This is annoying.
 pub fn getFamily(this: *SocketAddress, global: *JSC.JSGlobalObject) JSValue {
-    return switch (this.family()) {
-        AF.INET => IPv4.toJS(global),
-        AF.INET6 => IPv6.toJS(global),
+    const fam: bun.String = .{
+        .tag = .WTFStringImpl,
+        .value = .{
+            .WTFStringImpl = switch (this.family()) {
+                AF.INET => IPv4,
+                AF.INET6 => IPv6,
+            },
+        },
     };
+    return fam.toJS(global);
 }
 
 /// `sockaddr.addrfamily`
@@ -399,8 +412,14 @@ inline fn asV6(this: *const SocketAddress) *const inet.sockaddr_in6 {
 
 // =============================================================================
 
-const IPv6 = bun.String.static("IPv6");
-const IPv4 = bun.String.static("IPv4");
+// WTF::StringImpl and  WTF::StaticStringImpl have the same shape
+// (StringImplShape) so this is fine. We should probably add StaticStringImpl
+// bindings though.
+const StaticStringImpl = bun.WTF.StringImpl;
+extern "c" const IPv4: StaticStringImpl;
+extern "c" const IPv6: StaticStringImpl;
+const ipv4: bun.String = .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = IPv4 } };
+const ipv6: bun.String = .{ .tag = .WTFStringImpl, .value = .{ .WTFStringImpl = IPv6 } };
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 pub const AF = enum(inet.sa_family_t) {

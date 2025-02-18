@@ -54,8 +54,6 @@ Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 
 extern "C" JSC__JSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, JSString* address, int32_t port, bool isIPv6)
 {
-    static const NeverDestroyed<String> IPv4 = MAKE_STATIC_STRING_IMPL("IPv4");
-    static const NeverDestroyed<String> IPv6 = MAKE_STATIC_STRING_IMPL("IPv6");
 
     VM& vm = globalObject->vm();
     auto* global = jsCast<Zig::GlobalObject*>(globalObject);
@@ -64,8 +62,11 @@ extern "C" JSC__JSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject,
 
     JSObject* thisObject = constructEmptyObject(vm, global->JSSocketAddressDTOStructure());
     thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::addressOffset, address);
-    thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::familyOffset, isIPv6 ? jsString(vm, IPv6) : jsString(vm, IPv4));
+    thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::familyOffset, isIPv6 ? jsString(vm, String(IPv6)) : jsString(vm, String(IPv4)));
     thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::portOffset, jsNumber(port));
 
     return JSValue::encode(thisObject);
 }
+
+WTF::StaticStringImpl* const IPv4 = MAKE_STATIC_STRING_IMPL("IPv4");
+WTF::StaticStringImpl* const IPv6 = MAKE_STATIC_STRING_IMPL("IPv6");

@@ -15,3 +15,6 @@ Structure* createStructure(VM& vm, JSGlobalObject* globalObject);
 } // namespace Bun
 
 extern "C" JSC__JSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, JSString* address, int32_t port, bool isIPv6);
+
+extern WTF::StaticStringImpl* const IPv4;
+extern WTF::StaticStringImpl* const IPv6;

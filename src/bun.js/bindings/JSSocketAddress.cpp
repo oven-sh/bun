@@ -110,14 +110,12 @@ void JSSocketAddress::destroy(JSC::JSCell* cell)
 
 JSC::GCClient::IsoSubspace* JSSocketAddress::subspaceForImpl(JSC::VM& vm)
 {
-    //     return WebCore::subspaceForImpl<JSSocketAddress, WebCore::UseCustomHeapCellType::No>(
-    //         vm,
-    //         [](auto& spaces) { return spaces.m_clientSubspaceForJSSocketAddress.get(); },
-    //         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSocketAddress = std::forward<decltype(space)>(space); },
-    //         [](auto& spaces) { return spaces.m_subspaceForJSSocketAddress.get(); },
-    //         [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSocketAddress
-    //         = std::forward<decltype(space)>(space); });
-    return &vm.plainObjectSpace();
+    return WebCore::subspaceForImpl<JSSocketAddress, WebCore::UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForJSSocketAddress.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSocketAddress = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForJSSocketAddress.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSocketAddress = std::forward<decltype(space)>(space); });
 }
 
 JSC::JSObject* JSSocketAddress::createPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -163,7 +161,7 @@ JSC::Structure* JSSocketAddress::createStructure(JSC::VM& vm, JSC::JSGlobalObjec
         offset);
     ASSERT(offset == portOffset);
 
-    structure->addPropertyTransition(
+    structure = structure->addPropertyTransition(
         vm,
         structure,
         JSC::Identifier::fromString(vm, "flowlabel"_s),

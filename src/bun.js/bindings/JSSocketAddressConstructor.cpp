@@ -97,7 +97,7 @@ JSSocketAddressConstructor::JSSocketAddressConstructor(JSC::VM& vm, JSC::Structu
 // TODO: reifyStaticProperties
 void JSSocketAddressConstructor::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* prototype)
 {
-    Base::finishCreation(vm);
+    Base::finishCreation(vm, 1, String("SocketAddress"_s), PropertyAdditionMode::WithoutStructureTransition);
     ASSERT(inherits(info()));
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
 }

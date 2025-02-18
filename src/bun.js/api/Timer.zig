@@ -341,36 +341,50 @@ pub const All = struct {
         }
     }
 
+    const SetRequest = union(Kind) {
+        setTimeout: u31,
+        setInterval: u31,
+        setImmediate,
+    };
+
     fn set(
         id: i32,
         globalThis: *JSGlobalObject,
         callback: JSValue,
-        interval: u31,
+        request: SetRequest,
         arguments_array_or_zero: JSValue,
-        repeat: bool,
-    ) !JSC.JSValue {
+    ) JSC.JSValue {
         JSC.markBinding(@src());
         var vm = globalThis.bunVM();
 
-        const kind: Kind = if (repeat) .setInterval else .setTimeout;
-
-        // setImmediate(foo)
-        if (kind == .setTimeout and interval == 0) {
-            const immediate_object, const js = ImmediateObject.init(globalThis, id, callback, arguments_array_or_zero);
-            immediate_object.ref();
-            vm.enqueueImmediateTask(JSC.Task.init(immediate_object));
-            if (vm.isInspectorEnabled()) {
-                Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
-            }
-            return js;
-        } else {
-            _, const js = TimeoutObject.init(globalThis, id, kind, interval, callback, arguments_array_or_zero);
-
-            if (vm.isInspectorEnabled()) {
-                Debugger.didScheduleAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }), !repeat);
-            }
-
-            return js;
+        switch (request) {
+            .setImmediate => {
+                const immediate_object, const js = ImmediateObject.init(globalThis, id, callback, arguments_array_or_zero);
+                // TODO(@190n) why is this necessary but not on the TimeoutObject below?
+                immediate_object.ref();
+                vm.enqueueImmediateTask(JSC.Task.init(immediate_object));
+                if (vm.isInspectorEnabled()) {
+                    Debugger.didScheduleAsyncCall(
+                        globalThis,
+                        .DOMTimer,
+                        ID.asyncID(.{ .id = id, .kind = .setImmediate }),
+                        true, // single_shot
+                    );
+                }
+                return js;
+            },
+            inline else => |countdown, kind| {
+                _, const js = TimeoutObject.init(globalThis, id, kind, countdown, callback, arguments_array_or_zero);
+                if (vm.isInspectorEnabled()) {
+                    Debugger.didScheduleAsyncCall(
+                        globalThis,
+                        .DOMTimer,
+                        ID.asyncID(.{ .id = id, .kind = kind }),
+                        kind != .setInterval, // single_shot
+                    );
+                }
+                return js;
+            },
         }
     }
 
@@ -383,12 +397,9 @@ pub const All = struct {
         const id = globalThis.bunVM().timer.last_id;
         globalThis.bunVM().timer.last_id +%= 1;
 
-        const interval: i32 = 0;
-
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
-        return set(id, globalThis, wrappedCallback, interval, arguments, false) catch
-            return JSValue.jsUndefined();
+        return set(id, globalThis, wrappedCallback, .setImmediate, arguments);
     }
 
     const TimeoutWarning = enum {
@@ -401,14 +412,21 @@ pub const All = struct {
         const suffix = ".\nTimeout duration was set to 1.";
 
         var warning_string = switch (warning_type) {
-            .TimeoutOverflowWarning => bun.String.createFormat(
-                "{d} does not fit into a 32-bit signed integer" ++ suffix,
-                .{countdown},
-            ) catch bun.outOfMemory(),
-            .TimeoutNegativeWarning => bun.String.createFormat(
-                "{d} is a negative number" ++ suffix,
-                .{countdown},
-            ) catch bun.outOfMemory(),
+            .TimeoutOverflowWarning => if (std.math.isFinite(countdown))
+                bun.String.createFormat(
+                    "{d} does not fit into a 32-bit signed integer" ++ suffix,
+                    .{countdown},
+                ) catch bun.outOfMemory()
+            else
+                // -Infinity is handled by TimeoutNegativeWarning
+                bun.String.ascii("Infinity does not fit into a 32-bit signed integer" ++ suffix),
+            .TimeoutNegativeWarning => if (std.math.isFinite(countdown))
+                bun.String.createFormat(
+                    "{d} is a negative number" ++ suffix,
+                    .{countdown},
+                ) catch bun.outOfMemory()
+            else
+                bun.String.ascii("-Infinity is a negative number" ++ suffix),
             // std.fmt gives us "nan" but Node.js wants "NaN".
             .TimeoutNaNWarning => nan_warning: {
                 assert(std.math.isNan(countdown));
@@ -478,8 +496,7 @@ pub const All = struct {
 
         const wrappedCallback = callback.withAsyncContextIfNeeded(globalThis);
 
-        return set(id, globalThis, wrappedCallback, countdown_int, arguments, false) catch
-            return JSValue.jsUndefined();
+        return set(id, globalThis, wrappedCallback, .{ .setTimeout = countdown_int }, arguments);
     }
     pub fn setInterval(
         globalThis: *JSGlobalObject,
@@ -495,8 +512,7 @@ pub const All = struct {
 
         const countdown_int = globalThis.bunVM().timer.jsValueToCountdown(globalThis, countdown, .one_ms);
 
-        return set(id, globalThis, wrappedCallback, countdown_int, arguments, true) catch
-            return JSValue.jsUndefined();
+        return set(id, globalThis, wrappedCallback, .{ .setInterval = countdown_int }, arguments);
     }
 
     fn removeTimerById(this: *All, id: i32) ?*TimeoutObject {
@@ -793,7 +809,7 @@ pub const ImmediateObject = struct {
 const TimerObjectInternals = struct {
     id: i32 = -1,
     kind: Kind = .setTimeout,
-    interval: i32 = 0,
+    interval: u31 = 0,
     // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
     has_cleared_timer: bool = false,
     is_keeping_event_loop_alive: bool = false,
@@ -993,7 +1009,7 @@ const TimerObjectInternals = struct {
         globalThis: *JSGlobalObject,
         id: i32,
         kind: Kind,
-        interval: i32,
+        interval: u31,
         callback: JSValue,
         arguments: JSValue,
     ) void {

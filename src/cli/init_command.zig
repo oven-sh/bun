@@ -30,7 +30,7 @@ pub const InitCommand = struct {
         alloc: std.mem.Allocator,
         comptime label: string,
         default: []const u8,
-    ) ![]const u8 {
+    ) ![:0]const u8 {
         Output.pretty(label, .{});
         if (default.len > 0) {
             Output.pretty("<d>({s}):<r> ", .{default});
@@ -49,14 +49,20 @@ pub const InitCommand = struct {
             }
         };
 
-        var input = try bun.Output.buffered_stdin.reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
-        if (strings.endsWithChar(input, '\r')) {
-            input = input[0 .. input.len - 1];
+        var input: std.ArrayList(u8) = .init(alloc);
+        try bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024);
+
+        if (strings.endsWithChar(input.items, '\r')) {
+            _ = input.pop();
         }
-        if (input.len > 0) {
-            return input;
+        if (input.items.len > 0) {
+            try input.append(0);
+            return input.items[0 .. input.items.len - 1 :0];
         } else {
-            return default;
+            input.clearRetainingCapacity();
+            try input.appendSlice(default);
+            try input.append(0);
+            return input.items[0 .. input.items.len - 1 :0];
         }
     }
 
@@ -67,9 +73,14 @@ pub const InitCommand = struct {
         comptime choices: []const []const u8,
         comptime choices_uncolored: []const []const u8,
         default_value: usize,
+        comptime colors: bool,
     ) !usize {
         // Print the question prompt
-        Output.prettyln("<r><cyan>?<r> {s} <d>› - Use arrow-keys. Return to submit.<r>", .{label});
+        if (colors) {
+            Output.prettyln("<r><cyan>?<r> {s} <d> - Press return to submit.<r>", .{label});
+        } else {
+            Output.prettyln("<r><cyan>?<r> {s} <d> - Press return to submit.<r>", .{label});
+        }
 
         var selected = default_value;
         var initial_draw = true;
@@ -78,94 +89,108 @@ pub const InitCommand = struct {
         defer {
             if (!initial_draw) {
                 // Move cursor up to prompt line
-                Output.print("\x1B[{}A", .{choices.len + 1});
+                Output.up(choices.len + 1);
             }
 
             // Clear from cursor to end of screen
-            Output.print("\x1B[J", .{});
+            Output.clearToEnd();
 
             if (reprint_menu) {
                 // Print final selection
-                if (Output.enable_ansi_colors_stdout) {
+                if (colors) {
                     Output.prettyln("<r><cyan>?<r> {s} <d>› {s}<r>", .{ label, choices[selected] });
                 } else {
-                    Output.prettyln("<r><cyan>?<r> {s} <d>› {s}<r>", .{ label, choices_uncolored[selected] });
+                    Output.prettyln("<r><cyan>?<r> {s} <d>> {s}<r>", .{ label, choices_uncolored[selected] });
                 }
             }
         }
 
-        switch (Output.enable_ansi_colors_stdout) {
-            inline else => |colors| {
-                while (true) {
-                    if (!initial_draw) {
-                        // Move cursor up by number of choices + 1 (for prompt)
-                        Output.print("\x1B[{}A", .{choices.len + 1});
+        while (true) {
+            if (!initial_draw) {
+                // Move cursor up by number of choices
+                Output.up(choices.len);
+            }
+            initial_draw = false;
+
+            // Clear from cursor to end of screen
+            Output.clearToEnd();
+
+            // Print options vertically
+            inline for (choices, choices_uncolored, 0..) |option_colored, option_uncolored, i| {
+                const option = if (colors) option_colored else option_uncolored;
+                if (i == selected) {
+                    if (colors) {
+                        Output.pretty("<r><cyan>❯<r>   ", .{});
+                    } else {
+                        Output.pretty("<r><cyan>><r>   ", .{});
                     }
-                    initial_draw = false;
+                    if (colors) {
+                        Output.print("\x1B[4m" ++ option ++ "\x1B[24m\n", .{});
+                    } else {
+                        Output.print("    " ++ option ++ "\n", .{});
+                    }
+                } else {
+                    Output.print("    " ++ option ++ "\n", .{});
+                }
+            }
 
-                    // Clear from cursor to end of screen
-                    Output.print("\x1B[J", .{});
+            Output.flush();
 
-                    // Print options vertically
-                    inline for (choices, choices_uncolored, 0..) |option_colored, option_uncolored, i| {
-                        const option = if (colors) option_colored else option_uncolored;
-                        if (i == selected) {
-                            Output.pretty("<r><cyan>❯<r>   ", .{});
-                            if (colors) {
-                                Output.print("\x1B[4m" ++ option ++ "\x1B[24m\n", .{});
+            // Read a single character
+            const byte = std.io.getStdIn().reader().readByte() catch return selected;
+
+            switch (byte) {
+                '\n', '\r' => {
+                    return selected;
+                },
+                3, 4 => return error.EndOfStream, // ctrl+c, ctrl+d
+                '1'...'9' => {
+                    const choice = byte - '1';
+                    if (choice < choices.len) {
+                        return choice;
+                    }
+                },
+                'j' => {
+                    if (selected == choices.len - 1) {
+                        selected = 0;
+                    } else {
+                        selected += 1;
+                    }
+                },
+                'k' => {
+                    if (selected == 0) {
+                        selected = choices.len - 1;
+                    } else {
+                        selected -= 1;
+                    }
+                },
+                27 => { // ESC sequence
+                    // Return immediately on plain ESC
+                    const next = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                    if (next != '[') return error.EndOfStream;
+
+                    // Read arrow key
+                    const arrow = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
+                    switch (arrow) {
+                        'A' => { // Up arrow
+                            if (selected == 0) {
+                                selected = choices.len - 1;
                             } else {
-                                Output.print("    " ++ option ++ "\n", .{});
-                            }
-                        } else {
-                            Output.print("    " ++ option ++ "\n", .{});
-                        }
-                    }
-
-                    Output.flush();
-
-                    // Read a single character
-                    const byte = std.io.getStdIn().reader().readByte() catch return selected;
-
-                    switch (byte) {
-                        '\n', '\r' => {
-                            return selected;
-                        },
-                        3, 4 => return error.EndOfStream, // ctrl+c, ctrl+d
-                        '1'...'9' => {
-                            const choice = byte - '1';
-                            if (choice < choices.len) {
-                                return choice;
+                                selected -= 1;
                             }
                         },
-                        27 => { // ESC sequence
-                            // Return immediately on plain ESC
-                            const next = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
-                            if (next != '[') return error.EndOfStream;
-
-                            // Read arrow key
-                            const arrow = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
-                            switch (arrow) {
-                                'A' => { // Up arrow
-                                    if (selected == 0) {
-                                        selected = choices.len - 1;
-                                    } else {
-                                        selected -= 1;
-                                    }
-                                },
-                                'B' => { // Down arrow
-                                    if (selected == choices.len - 1) {
-                                        selected = 0;
-                                    } else {
-                                        selected += 1;
-                                    }
-                                },
-                                else => {},
+                        'B' => { // Down arrow
+                            if (selected == choices.len - 1) {
+                                selected = 0;
+                            } else {
+                                selected += 1;
                             }
                         },
                         else => {},
                     }
-                }
-            },
+                },
+                else => {},
+            }
         }
     }
 
@@ -174,6 +199,7 @@ pub const InitCommand = struct {
         comptime choices: []const []const u8,
         comptime choices_uncolored: []const []const u8,
         default_value: usize,
+        comptime colors: bool,
     ) !usize {
 
         // Set raw mode to read single characters without echo
@@ -191,16 +217,17 @@ pub const InitCommand = struct {
                         mode,
                     );
                 }
-            } else {
+            }
+            if (Environment.isPosix) {
                 _ = Bun__ttySetMode(0, 0);
             }
         }
 
-        const selection = processRadioButton(label, choices, choices_uncolored, default_value) catch |err| {
+        const selection = processRadioButton(label, choices, choices_uncolored, default_value, colors) catch |err| {
             if (err == error.EndOfStream) {
                 Output.flush();
                 // Add an "x" cancelled
-                Output.prettyln("<r><red>x<r> Cancelled", .{});
+                Output.prettyln("\n<r><red>x<r> Cancelled", .{});
                 Global.exit(0);
             }
 
@@ -225,10 +252,11 @@ pub const InitCommand = struct {
             return createFull(asset_name, asset_name, "", is_template, args);
         }
 
-        fn createNew(filename: []const u8, contents: []const u8) !void {
-            var file = try std.fs.cwd().createFile(filename, .{ .truncate = true });
+        fn createNew(filename: [:0]const u8, contents: []const u8) !void {
+            const file = try bun.sys.File.makeOpen(filename, bun.O.CREAT | bun.O.EXCL | bun.O.WRONLY, 0o666).unwrap();
             defer file.close();
-            try file.writeAll(contents);
+
+            try file.writeAll(contents).unwrap();
 
             Output.prettyln(" + <r><d>{s}<r>", .{filename});
             Output.flush();
@@ -296,7 +324,7 @@ pub const InitCommand = struct {
         name: string = "project",
         type: string = "module",
         object: *js_ast.E.Object = undefined,
-        entry_point: string = "",
+        entry_point: stringZ = "",
         private: bool = true,
     };
 
@@ -389,7 +417,7 @@ pub const InitCommand = struct {
                 }
 
                 if (package_json_expr.get("module") orelse package_json_expr.get("main")) |name| {
-                    if (name.asString(alloc)) |str| {
+                    if (try name.asStringZ(alloc)) |str| {
                         fields.entry_point = str;
                     }
                 }
@@ -411,7 +439,7 @@ pub const InitCommand = struct {
 
                 for (paths_to_try) |path| {
                     if (existsZ(path)) {
-                        fields.entry_point = bun.asByteSlice(path);
+                        fields.entry_point = path;
                         break :infer;
                     }
                 }
@@ -442,8 +470,7 @@ pub const InitCommand = struct {
 
         if (!auto_yes) {
             if (!did_load_package_json) {
-                Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press CTRL + C anytime to quit<r>\n\n", .{});
-                Output.flush();
+                Output.pretty("\n", .{});
 
                 const choices = &[_][]const u8{
                     "TypeScript",
@@ -451,20 +478,20 @@ pub const InitCommand = struct {
                     "TypeScript Library",
                 };
                 const choices_colored = &[_][]const u8{
-                    // <blue>TypeScript (blank)
-                    "\x1B[34mTypeScript\x1B[39m\x1B[0m (blank)",
-                    // <cyan>React
-                    "\x1B[36mReact\x1B[39m",
-                    // <blue>TypeScript library
-                    "\x1B[34mTypeScript\x1B[39m\x1B[0m (library)",
+                    comptime Output.prettyFmt("<blue>TypeScript<r> <d>(blank)<r>", true),
+                    comptime Output.prettyFmt("<cyan>React<r>", true),
+                    comptime Output.prettyFmt("<blue>TypeScript<r> <d>(library)<r>", true),
                 };
 
-                const selected = try radio(
-                    "Select a project",
-                    choices_colored,
-                    choices,
-                    0,
-                );
+                const selected = switch (Output.enable_ansi_colors_stdout) {
+                    inline else => |colors| try radio(
+                        "Select a project",
+                        choices_colored,
+                        choices,
+                        0,
+                        colors,
+                    ),
+                };
 
                 switch (selected) {
                     2 => {
@@ -502,12 +529,15 @@ pub const InitCommand = struct {
                             "\x1B[32mshadcn + Tailwind CSS\x1B[39m\x1B[0m",
                         };
 
-                        const react_selected = try radio(
-                            "Select a React template",
-                            react_choices_colored,
-                            react_choices,
-                            0,
-                        );
+                        const react_selected = switch (Output.enable_ansi_colors_stdout) {
+                            inline else => |colors| try radio(
+                                "Select a React template",
+                                react_choices_colored,
+                                react_choices,
+                                0,
+                                colors,
+                            ),
+                        };
 
                         switch (react_selected) {
                             0 => {
@@ -531,8 +561,17 @@ pub const InitCommand = struct {
                 try Output.writer().writeAll("\n");
                 Output.flush();
             } else {
-                Output.prettyln("A package.json was found here. Would you like to configure", .{});
+                Output.errGeneric("A package.json already exists here", .{});
+                Global.crash();
             }
+        }
+
+        switch (template) {
+            inline .react_blank, .react_tailwind, .react_tailwind_shadcn => |t| {
+                try t.@"write files and run `bun dev`"(alloc);
+                return;
+            },
+            else => {},
         }
 
         const Steps = struct {
@@ -755,7 +794,7 @@ pub const InitCommand = struct {
                     _ = try process.spawnAndWait();
                 }
             },
-            .react_blank, .react_tailwind, .react_tailwind_shadcn => {},
+            else => {},
         }
     }
 };
@@ -875,5 +914,121 @@ const Template = enum {
         };
 
         return s;
+    }
+
+    const ReactBlank = struct {
+        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
+            .{ "bunfig.toml", @embedFile("../create/projects/react-app/bunfig.toml") },
+            .{ "package.json", @embedFile("../create/projects/react-app/package.json") },
+            .{ "tsconfig.json", @embedFile("../create/projects/react-app/tsconfig.json") },
+            .{ "src/index.tsx", @embedFile("../create/projects/react-app/src/index.tsx") },
+            .{ "src/App.tsx", @embedFile("../create/projects/react-app/src/App.tsx") },
+            .{ "src/index.html", @embedFile("../create/projects/react-app/src/index.html") },
+            .{ "src/index.css", @embedFile("../create/projects/react-app/src/index.css") },
+            .{ "src/APITester.tsx", @embedFile("../create/projects/react-app/src/APITester.tsx") },
+            .{ "src/react.svg", @embedFile("../create/projects/react-app/src/react.svg") },
+            .{ "src/frontend.tsx", @embedFile("../create/projects/react-app/src/frontend.tsx") },
+            .{ "src/logo.svg", @embedFile("../create/projects/react-app/src/logo.svg") },
+        };
+    };
+
+    const ReactTailwind = struct {
+        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
+            .{ "bunfig.toml", @embedFile("../create/projects/react-tailwind/bunfig.toml") },
+            .{ "package.json", @embedFile("../create/projects/react-tailwind/package.json") },
+            .{ "tsconfig.json", @embedFile("../create/projects/react-tailwind/tsconfig.json") },
+            .{ "src/index.tsx", @embedFile("../create/projects/react-tailwind/src/index.tsx") },
+            .{ "src/App.tsx", @embedFile("../create/projects/react-tailwind/src/App.tsx") },
+            .{ "src/index.html", @embedFile("../create/projects/react-tailwind/src/index.html") },
+            .{ "src/index.css", @embedFile("../create/projects/react-tailwind/src/index.css") },
+            .{ "src/APITester.tsx", @embedFile("../create/projects/react-tailwind/src/APITester.tsx") },
+            .{ "src/react.svg", @embedFile("../create/projects/react-tailwind/src/react.svg") },
+            .{ "src/frontend.tsx", @embedFile("../create/projects/react-tailwind/src/frontend.tsx") },
+            .{ "src/logo.svg", @embedFile("../create/projects/react-tailwind/src/logo.svg") },
+        };
+    };
+
+    const ReactShadcn = struct {
+        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
+            .{ "bunfig.toml", @embedFile("../create/projects/react-shadcn/bunfig.toml") },
+            .{ "styles/globals.css", @embedFile("../create/projects/react-shadcn/styles/globals.css") },
+            .{ "package.json", @embedFile("../create/projects/react-shadcn/package.json") },
+            .{ "components.json", @embedFile("../create/projects/react-shadcn/components.json") },
+            .{ "tsconfig.json", @embedFile("../create/projects/react-shadcn/tsconfig.json") },
+            .{ "src/index.tsx", @embedFile("../create/projects/react-shadcn/src/index.tsx") },
+            .{ "src/App.tsx", @embedFile("../create/projects/react-shadcn/src/App.tsx") },
+            .{ "src/index.html", @embedFile("../create/projects/react-shadcn/src/index.html") },
+            .{ "src/types.d.ts", @embedFile("../create/projects/react-shadcn/src/types.d.ts") },
+            .{ "src/index.css", @embedFile("../create/projects/react-shadcn/src/index.css") },
+            .{ "src/components/ui/card.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/card.tsx") },
+            .{ "src/components/ui/label.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/label.tsx") },
+            .{ "src/components/ui/button.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/button.tsx") },
+            .{ "src/components/ui/select.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/select.tsx") },
+            .{ "src/components/ui/input.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/input.tsx") },
+            .{ "src/components/ui/form.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/form.tsx") },
+            .{ "src/APITester.tsx", @embedFile("../create/projects/react-shadcn/src/APITester.tsx") },
+            .{ "src/lib/utils.ts", @embedFile("../create/projects/react-shadcn/src/lib/utils.ts") },
+            .{ "src/react.svg", @embedFile("../create/projects/react-shadcn/src/react.svg") },
+            .{ "src/frontend.tsx", @embedFile("../create/projects/react-shadcn/src/frontend.tsx") },
+            .{ "src/logo.svg", @embedFile("../create/projects/react-shadcn/src/logo.svg") },
+        };
+    };
+
+    pub fn files(this: Template) []const struct { [:0]const u8, []const u8 } {
+        return switch (this) {
+            .react_blank => ReactBlank.files,
+            .react_tailwind => ReactTailwind.files,
+            .react_tailwind_shadcn => ReactTailwind.files,
+            else => &.{.{ &.{}, &.{} }},
+        };
+    }
+
+    pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
+        for (this.files()) |file| {
+            const path, const contents = file;
+
+            InitCommand.Assets.createNew(path, contents) catch |err| {
+                if (err == error.EEXISTS) {
+                    Output.errGeneric("'{s}' already exists", .{path});
+                } else {
+                    Output.err(err, "failed to create file: '{s}'", .{path});
+                }
+                Global.crash();
+            };
+        }
+
+        Output.pretty("\n", .{});
+        Output.flush();
+
+        var install = std.process.Child.init(
+            &.{
+                try bun.selfExePath(),
+                "install",
+            },
+            allocator,
+        );
+        install.stderr_behavior = .Inherit;
+        install.stdin_behavior = .Ignore;
+        install.stdout_behavior = .Inherit;
+
+        _ = try install.spawnAndWait();
+
+        Output.prettyln("\nTo get started, run:\n\n\t<cyan>bun run dev<r>\n\n", .{});
+        Output.prettyln("To build for production, run:\n\n\t<cyan>bun run build<r>\n\n", .{});
+
+        Output.flush();
+
+        var process = std.process.Child.init(
+            &.{
+                try bun.selfExePath(),
+                "dev",
+            },
+            allocator,
+        );
+        process.stderr_behavior = .Inherit;
+        process.stdin_behavior = .Inherit;
+        process.stdout_behavior = .Inherit;
+
+        _ = try process.spawnAndWait();
     }
 };

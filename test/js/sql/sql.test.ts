@@ -174,6 +174,27 @@ if (isDockerEnabled()) {
     expect(result).toBe(1);
   });
 
+  describe("should work with more than the max inline capacity", () => {
+    for (let size of [50, 60, 62, 64, 70, 100]) {
+      for (let duplicated of [true, false]) {
+        test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
+          const longQuery = `select ${Array.from({ length: size }, (_, i) => {
+            if (duplicated) {
+              return i % 2 === 0 ? `${i + 1} as f${i}, ${i} as f${i}` : `${i} as f${i}`;
+            }
+            return `${i} as f${i}`;
+          }).join(",\n")}`;
+          const result = await sql.unsafe(longQuery);
+          let value = 0;
+          for (const column of Object.values(result[0])) {
+            expect(column).toBe(value);
+            value++;
+          }
+        });
+      }
+    }
+  });
+
   test("Connection timeout works", async () => {
     const onclose = mock();
     const onconnect = mock();

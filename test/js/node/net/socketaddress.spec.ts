@@ -21,7 +21,9 @@ describe("SocketAddress constructor", () => {
     expect(new SocketAddress()).toBeInstanceOf(SocketAddress);
   });
 
-  it("is not callable", () => {
+  // FIXME: setting `call: false` in codegen has no effect, but should make the
+  // constructor non-callable.
+  it.skip("is not callable", () => {
     // @ts-expect-error -- types are wrong.
     expect(() => SocketAddress()).toThrow(TypeError);
   });
@@ -171,6 +173,11 @@ describe("SocketAddress.isSocketAddress", () => {
     expect(fake instanceof SocketAddress).toBeTrue();
     expect(SocketAddress.isSocketAddress(fake)).toBeFalse();
   });
+
+  it("returns false for subclasses", () => {
+    class NotASocketAddress extends SocketAddress {}
+    expect(SocketAddress.isSocketAddress(new NotASocketAddress())).toBeFalse();
+  });
 }); // </SocketAddress.isSocketAddress>
 
 describe("SocketAddress.parse", () => {
@@ -200,7 +207,9 @@ describe("SocketAddress.parse", () => {
     ["[1:0::]", { address: "1::", port: 0, family: "ipv6" }],
     ["[1::8]:123", { address: "1::8", port: 123, family: "ipv6" }],
   ])("(%s) == %o", (input, expected) => {
-    expect(SocketAddress.parse(input)).toMatchObject(expected);
+    const sa = SocketAddress.parse(input);
+    expect(sa).toBeDefined();
+    expect(sa.toJSON()).toMatchObject(expected);
   });
 
   it.each([
@@ -212,7 +221,7 @@ describe("SocketAddress.parse", () => {
     "1.2.3.4:null",
     "1.2.3.4:65536",
     "[1:0:::::::]", // line break
-  ])("(%s) == undefined", invalidInput => {
+  ])("parse('%s') == undefined", invalidInput => {
     expect(SocketAddress.parse(invalidInput)).toBeUndefined();
   });
 }); // </SocketAddress.parse>

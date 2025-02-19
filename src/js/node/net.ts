@@ -22,9 +22,10 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
-const { SocketAddress } = require("internal/net/socket_address");
+const { SocketAddress, addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
+// const { SocketAddress } = require("internal/net/socket_address");
 const { ExceptionWithHostPort } = require("internal/shared");
+import type { SocketListener } from "bun";
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1080,6 +1081,8 @@ function createConnection(port, host, connectListener) {
 
 const connect = createConnection;
 
+type MaybeListener = SocketListener<unknown> | null;
+
 function Server(options, connectionListener): void {
   if (!(this instanceof Server)) {
     return new Server(options, connectionListener);
@@ -1090,7 +1093,7 @@ function Server(options, connectionListener): void {
   this[bunSocketServerConnections] = 0;
   this[bunSocketServerOptions] = undefined;
   this.maxConnections = 0;
-  this._handle = null;
+  this._handle = null as MaybeListener;
 
   if (typeof options === "function") {
     connectionListener = options;

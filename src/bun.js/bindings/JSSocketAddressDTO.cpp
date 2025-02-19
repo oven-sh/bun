@@ -54,21 +54,17 @@ Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 
 extern "C" JSC__JSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, JSString* address, int32_t port, bool isIPv6)
 {
+    ASSERT(port < std::numeric_limits<uint16_t>::max());
 
     VM& vm = globalObject->vm();
     auto* global = jsCast<Zig::GlobalObject*>(globalObject);
 
-    ASSERT(port < std::numeric_limits<uint16_t>::max());
+    auto* af = isIPv6 ? global->commonStrings().IPv6String(global) : global->commonStrings().IPv4String(global);
 
     JSObject* thisObject = constructEmptyObject(vm, global->JSSocketAddressDTOStructure());
     thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::addressOffset, address);
-    thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::familyOffset, isIPv6 ? jsString(vm, String(IPv6)) : jsString(vm, String(IPv4)));
+    thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::familyOffset, af);
     thisObject->putDirectOffset(vm, Bun::JSSocketAddressDTO::portOffset, jsNumber(port));
 
     return JSValue::encode(thisObject);
 }
-
-WTF::StaticStringImpl* const IPv4 = MAKE_STATIC_STRING_IMPL("IPv4");
-WTF::StaticStringImpl* const IPv6 = MAKE_STATIC_STRING_IMPL("IPv6");
-WTF::StaticStringImpl* const INET_LOOPBACK = MAKE_STATIC_STRING_IMPL("127.0.0.1");
-WTF::StaticStringImpl* const INET6_ANY = MAKE_STATIC_STRING_IMPL("::");

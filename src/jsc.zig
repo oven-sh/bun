@@ -84,6 +84,13 @@ const __jsc_log = Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
 }
+pub inline fn markMemberBinding(comptime class: anytype, src: std.builtin.SourceLocation) void {
+    const classname = switch (@typeInfo(@TypeOf(class))) {
+        .pointer => class, // assumed to be a static string
+        else => @typeName(class),
+    };
+    __jsc_log("{s}.{s} ({s}:{d})", .{ classname, src.fn_name, src.file, src.line });
+}
 pub const Subprocess = API.Bun.Subprocess;
 pub const ResourceUsage = API.Bun.ResourceUsage;
 

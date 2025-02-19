@@ -1,6 +1,9 @@
 //! An IP socket address meant to be used by both native and JS code.
 //!
 //! JS getters are named `getFoo`, while native getters are named `foo`.
+//! 
+//! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
+//! Requires updating bindgen.
 const SocketAddress = @This();
 
 // NOTE: not std.net.Address b/c .un is huge and we don't use it.
@@ -11,7 +14,8 @@ _addr: sockaddr,
 /// Cached address in presentation format. Prevents repeated conversion between
 /// strings and bytes.
 ///
-/// .Dead is used as an alternative to null
+/// - `.Dead` is used as an alternative to `null`
+/// - `.Empty` is used for default ipv4 and ipv6 addresses (`127.0.0.1` and `::`, respectively).
 ///
 /// @internal
 _presentation: bun.String = .dead,
@@ -28,7 +32,7 @@ pub const Options = struct {
 
     /// NOTE: assumes options object has been normalized and validated by JS code.
     pub fn fromJS(global: *JSC.JSGlobalObject, obj: JSValue) bun.JSError!Options {
-        if (comptime isDebug) bun.assert(obj.isObject());
+        if (!obj.isObject()) return global.throwInvalidArgumentTypeValue("options", "object", obj);
 
         const address_str: ?bun.String = if (try obj.get(global, "address")) |a|
             try bun.String.fromJS2(a, global)
@@ -36,16 +40,30 @@ pub const Options = struct {
             null;
 
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
+            // "ipv4" or "ipv6", ignoring case
             if (fam.isString()) {
                 const fam_str = try bun.String.fromJS2(fam, global);
                 defer fam_str.deref();
+                if (fam_str.length() != 4)
+                    return throwBadFamilyIP(global, fam);
 
-                if (fam_str.eqlComptime("ipv4")) {
-                    break :blk AF.INET;
-                } else if (fam_str.eqlComptime("ipv6")) {
-                    break :blk AF.INET6;
+                if (fam_str.is8Bit()) {
+                    const slice = fam_str.latin1();
+                    if (std.ascii.eqlIgnoreCase(slice[0..4], "ipv4")) {
+                        break :blk AF.INET;
+                    } else if (std.ascii.eqlIgnoreCase(slice[0..4], "ipv6")) {
+                        break :blk AF.INET6;
+                    } else return throwBadFamilyIP(global, fam);
                 } else {
-                    return global.throwInvalidArgumentPropertyValue("options.family", "'ipv4' or 'ipv6'", fam);
+                    // not full ignore-case since that would require converting
+                    // utf16 -> latin1 and the allocation isn't worth it.
+                    if (fam_str.eqlComptime("ipv4") or fam_str.eqlComptime("IPv4")) {
+                        break :blk AF.INET;
+                    } else if (fam_str.eqlComptime("ipv6") or fam_str.eqlComptime("IPv6")) {
+                        break :blk AF.INET6;
+                    } else {
+                        return throwBadFamilyIP(global, fam);
+                    }
                 }
             } else if (fam.isUInt32AsAnyInt()) {
                 break :blk switch (fam.toU32()) {
@@ -54,14 +72,18 @@ pub const Options = struct {
                     else => return global.throwInvalidArgumentPropertyValue("options.family", "AF_INET or AF_INET6", fam),
                 };
             } else {
-                return global.throwInvalidArgumentTypeValue("options.family", "a string or number", fam);
+                return global.throwInvalidArgumentPropertyValue("options.family", "a string or number", fam);
             }
         } else AF.INET;
 
         // required. Validated by `validatePort`.
         const _port: u16 = if (try obj.get(global, "port")) |p| blk: {
-            if (!p.isUInt32AsAnyInt()) return global.throwInvalidArgumentTypeValue("options.port", "number", p);
-            break :blk @truncate(p.toU32());
+            if (!p.isFinite()) return global.throwInvalidArgumentTypeValue("options.port", "number", p);
+            const port32 = p.toInt32();
+            if (port32 < 0 or port32 > std.math.maxInt(u16)) {
+                return global.throwInvalidArgumentPropertyValue("options.port", "number between 0 and 65535", p);
+            }
+            break :blk @intCast(port32);
         } else 0;
 
         const _flowlabel = if (try obj.get(global, "flowlabel")) |fl| blk: {
@@ -76,10 +98,69 @@ pub const Options = struct {
             .flowlabel = _flowlabel,
         };
     }
+
+    inline fn throwBadFamilyIP(global: *JSC.JSGlobalObject, family_: JSC.JSValue) bun.JSError {
+        return global.throwInvalidArgumentPropertyValue("options.family", "'ipv4' or 'ipv6'", family_);
+    }
 };
 
 pub usingnamespace JSC.Codegen.JSSocketAddress;
 pub usingnamespace bun.New(SocketAddress);
+
+// =============================================================================
+// ============================== STATIC METHODS ===============================
+// =============================================================================
+
+/// ### `SocketAddress.parse(input: string): SocketAddress | undefined`
+/// Parse an address string (with an optional `:port`) into a `SocketAddress`.
+/// Returns `undefined` if the input is invalid.
+pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const input = blk: {
+        const input_arg = callframe.argument(0);
+        if (!input_arg.isString()) return global.throwInvalidArgumentTypeValue("input", "string", input_arg);
+        break :blk try bun.String.fromJS2(input_arg, global);
+    };
+    var stackfb = std.heap.stackFallback(256, bun.default_allocator);
+    const alloc = stackfb.get();
+
+    const url_str = bun.String.createFromConcat(
+        alloc,
+        &[_]bun.String{ bun.String.static("http://"), input },
+    ) catch return global.throwOutOfMemory();
+    defer url_str.deref();
+
+    const url = JSC.URL.fromString(url_str) orelse return JSValue.jsUndefined();
+    defer url.deinit();
+    const host = url.host();
+    const port_: u16 = blk: {
+        const port32 = url.port();
+        break :blk if (port32 > std.math.maxInt(u16)) 0 else @intCast(port32);
+    };
+    bun.assert(host.tag != .Dead);
+    bun.debugAssert(host.length() >= 2);
+
+    // NOTE: parsed host cannot be used as presentation string. e.g.
+    // - "[::1]" -> "::1"
+    // - "0x.0x.0" -> "0.0.0.0"
+    const paddr = host.latin1(); // presentation address
+    const addr = if (paddr[0] == '[' and paddr[paddr.len - 1] == ']') v6: {
+        const v6 = net.Ip6Address.parse(paddr[1 .. paddr.len - 1], port_) catch return JSValue.jsUndefined();
+        break :v6 SocketAddress{ ._addr = .{ .sin6 = v6.sa } };
+    } else v4: {
+        const v4 = net.Ip4Address.parse(paddr, port_) catch return JSValue.jsUndefined();
+        break :v4 SocketAddress{ ._addr = .{ .sin = v4.sa } };
+    };
+
+    return SocketAddress.new(addr).toJS(global);
+}
+
+/// ### `SocketAddress.isSocketAddress(value: unknown): value is SocketAddress`
+/// Returns `true` if `value` is a `SocketAddress`. Subclasses and similarly-shaped
+/// objects are not considered `SocketAddress`s.
+pub fn isSocketAddress(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+    const value = callframe.argument(0);
+    return JSValue.jsBoolean(value.isCell() and SocketAddress.fromJSDirect(value) != null);
+}
 
 // =============================================================================
 // =============================== CONSTRUCTORS ================================
@@ -97,18 +178,20 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
     const options_obj = frame.argument(0);
     if (options_obj.isUndefined()) return SocketAddress.new(.{
         ._addr = sockaddr.@"127.0.0.1",
-        ._presentation = WellKnownAddress.@"127.0.0.1"(),
+        ._presentation = .empty,
+        // ._presentation = WellKnownAddress.@"127.0.0.1"(),
+        // ._presentation = bun.String.fromJS2(global.commonStrings().@"127.0.0.1"()) catch unreachable,
     });
     options_obj.ensureStillAlive();
 
-    if (!options_obj.isObject()) return global.throwInvalidArgumentTypeValue("options", "object", options_obj);
     const options = try Options.fromJS(global, options_obj);
 
     // fast path for { family: 'ipv6' }
     if (options.family == AF.INET6 and options.address == null and options.flowlabel == null and options.port == 0) {
         return SocketAddress.new(.{
             ._addr = sockaddr.@"::",
-            ._presentation = WellKnownAddress.@"::"(),
+            ._presentation = .empty,
+            // ._presentation = WellKnownAddress.@"::"(),
         });
     }
 
@@ -122,10 +205,8 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
 /// - `options.address` gets moved, much like `adoptRef`. Do not `deref` it
 ///   after passing it in.
 pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*SocketAddress {
-    const presentation: bun.String = options.address orelse switch (options.family) {
-        AF.INET => WellKnownAddress.@"127.0.0.1"(),
-        AF.INET6 => WellKnownAddress.@"::"(),
-    };
+    var presentation: bun.String = .empty;
+
     // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
     // copy the string.
     var stackfb = std.heap.stackFallback(64, bun.default_allocator);
@@ -142,6 +223,7 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 .addr = undefined,
             };
             if (options.address) |address_str| {
+                presentation = address_str;
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
                 try pton(global, inet.AF_INET, slice, &sin.addr);
@@ -159,6 +241,7 @@ pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*Socket
                 .scope_id = 0,
             };
             if (options.address) |address_str| {
+                presentation = address_str;
                 const slice = address_str.toOwnedSliceZ(alloc) catch bun.outOfMemory();
                 defer alloc.free(slice);
                 try pton(global, inet.AF_INET6, slice, &sin6.addr);
@@ -275,10 +358,21 @@ extern "c" fn JSSocketAddressDTO__create(globalObject: *JSC.JSGlobalObject, addr
 
 pub fn getAddress(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
     // toJS increments ref count
-    return this.address().toJS(global);
+    const addr_ = this.address();
+    return switch (addr_.tag) {
+        .Dead => unreachable,
+        .Empty => switch (this.family()) {
+            AF.INET => global.commonStrings().@"127.0.0.1"(),
+            AF.INET6 => global.commonStrings().@"::"(),
+        },
+        else => addr_.toJS(global),
+    };
 }
 
 /// Get the address in presentation format. Does not include the port.
+///
+/// Returns an `.Empty` string for default ipv4 and ipv6 addresses (`127.0.0.1`
+/// and `::`, respectively).
 ///
 /// ### TODO
 /// - replace `addressToString` in `dns.zig` w this
@@ -312,16 +406,12 @@ pub fn address(this: *SocketAddress) bun.String {
 /// NOTE: node's `net.SocketAddress` wants `"ipv4"` and `"ipv6"` while Bun's APIs
 /// use `"IPv4"` and `"IPv6"`. This is annoying.
 pub fn getFamily(this: *SocketAddress, global: *JSC.JSGlobalObject) JSValue {
-    const fam: bun.String = .{
-        .tag = .WTFStringImpl,
-        .value = .{
-            .WTFStringImpl = switch (this.family()) {
-                AF.INET => IPv4,
-                AF.INET6 => IPv6,
-            },
-        },
+    // NOTE: cannot use global.commonStrings().IPv[4,6]() b/c this needs to be
+    // lower case.
+    return switch (this.family()) {
+        AF.INET => bun.String.static("ipv4").toJS(global),
+        AF.INET6 => bun.String.static("ipv6").toJS(global),
     };
-    return fam.toJS(global);
 }
 
 /// `sockaddr.addrfamily`
@@ -378,7 +468,7 @@ pub fn estimatedSize(this: *SocketAddress) usize {
 
 pub fn toJSON(this: *SocketAddress, global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     return JSC.JSObject.create(.{
-        .address = this.address(),
+        .address = this.getAddress(global),
         .family = this.getFamily(global),
         .port = this.port(),
         .flowlabel = this.flowLabel() orelse 0,
@@ -508,6 +598,7 @@ comptime {
 const std = @import("std");
 const bun = @import("root").bun;
 const ares = bun.c_ares;
+const net = std.net;
 const Environment = bun.Environment;
 const string = bun.string;
 const Output = bun.Output;

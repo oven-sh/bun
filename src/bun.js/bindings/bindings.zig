@@ -3449,6 +3449,12 @@ pub const JSGlobalObject = opaque {
         return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false, null);
     }
 
+    /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.
+    pub inline fn commonStrings(this: *JSC.JSGlobalObject) CommonStrings {
+        JSC.markBinding(@src());
+        return .{ .globalObject = this };
+    }
+
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
 
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
@@ -3460,6 +3466,46 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
+};
+
+/// Common strings from `BunCommonStrings.h`.
+///
+/// All getters return a `JSC::JSString`;
+pub const CommonStrings = struct {
+    globalObject: *JSC.JSGlobalObject,
+
+    pub inline fn IPv4(this: CommonStrings) JSValue {
+        return this.getString("IPv4");
+    }
+    pub inline fn IPv6(this: CommonStrings) JSValue {
+        return this.getString("IPv6");
+    }
+    pub inline fn @"127.0.0.1"(this: CommonStrings) JSValue {
+        return this.getString("IN4Loopback");
+    }
+    pub inline fn @"::"(this: CommonStrings) JSValue {
+        return this.getString("IN6Any");
+    }
+
+    inline fn getString(this: CommonStrings, comptime name: anytype) JSValue {
+        JSC.markMemberBinding("CommonStrings", @src());
+        const str: JSC.JSValue = @call(
+            .auto,
+            @field(CommonStrings, "JSC__JSGlobalObject__commonStrings__get" ++ name),
+            .{this.globalObject},
+        );
+        bun.assert(str != .zero);
+        if (comptime bun.Environment.isDebug) {
+            bun.assertWithLocation(str != .zero, @src());
+            bun.assertWithLocation(str.isStringLiteral(), @src());
+        }
+        return str;
+    }
+
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIPv4(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIPv6(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIN4Loopback(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIN6Any(global: *JSC.JSGlobalObject) JSC.JSValue;
 };
 
 pub const JSNativeFn = JSHostZigFunction;
@@ -4755,6 +4801,14 @@ pub const JSValue = enum(i64) {
 
     pub fn isDouble(this: JSValue) bool {
         return this.isNumber() and !this.isInt32();
+    }
+
+    /// [21.1.2.2 Number.isFinite](https://tc39.es/ecma262/#sec-number.isfinite)
+    ///
+    /// Returns `false` for non-numbers, `NaN`, `Infinity`, and `-Infinity`
+    pub fn isFinite(this: JSValue) bool {
+        if (!this.isNumber()) return false;
+        return std.math.isFinite(this.asNumber());
     }
 
     pub fn isError(this: JSValue) bool {
@@ -6845,7 +6899,7 @@ pub const URL = opaque {
     extern fn URL__search(*URL) String;
     extern fn URL__host(*URL) String;
     extern fn URL__hostname(*URL) String;
-    extern fn URL__port(*URL) String;
+    extern fn URL__port(*URL) u32;
     extern fn URL__deinit(*URL) void;
     extern fn URL__pathname(*URL) String;
     extern fn URL__getHrefFromJS(JSValue, *JSC.JSGlobalObject) String;
@@ -6931,7 +6985,9 @@ pub const URL = opaque {
         JSC.markBinding(@src());
         return URL__hostname(url);
     }
-    pub fn port(url: *URL) String {
+    /// Returns `std.math.maxInt(u32)` if the port is not set. Otherwise, `port`
+    /// is guaranteed to be within the `u16` range.
+    pub fn port(url: *URL) u32 {
         JSC.markBinding(@src());
         return URL__port(url);
     }

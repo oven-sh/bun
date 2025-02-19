@@ -1,5 +1,5 @@
 import { fileURLToPath, $ as Shell, ShellError } from "bun";
-import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
@@ -7,8 +7,8 @@ const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
 const FIXTURE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
 const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.json");
 const BUN_TYPES_PACKAGE_JSON_PATH = join(BUN_TYPES_PACKAGE_ROOT, "package.json");
-
 const BUN_VERSION = (process.env.BUN_VERSION || Bun.version || process.versions.bun).replace(/^.*v/, "");
+const BUN_TYPES_TARBALL_NAME = `types-bun-${BUN_VERSION}.tgz`;
 const $ = Shell.cwd(BUN_REPO_ROOT);
 
 beforeAll(async () => {
@@ -37,9 +37,9 @@ beforeAll(async () => {
 
       cd ${FIXTURE_DIR}
       cp ${TSCONFIG_SOURCE_PATH} tsconfig.json
-      bun install
-      bun add @types/bun@types-bun-*.tgz
-      rm types-bun-*.tgz
+      bun uninstall @types/bun
+      bun add @types/bun@${BUN_TYPES_TARBALL_NAME}
+      rm ${BUN_TYPES_TARBALL_NAME}
     `;
   } catch (e) {
     if (e instanceof ShellError) {
@@ -48,14 +48,6 @@ beforeAll(async () => {
 
     throw e;
   }
-});
-
-afterAll(async () => {
-  await $`
-    cd ${FIXTURE_DIR}
-    # bun uninstall @types/bun
-    # rm tsconfig.json
-  `;
 });
 
 beforeAll(() => {

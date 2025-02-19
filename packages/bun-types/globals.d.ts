@@ -1,13 +1,7 @@
-type _ReadableStream<T> = import("stream/web").ReadableStream<T>;
-type _WritableStream<T> = import("stream/web").WritableStream<T>;
-
 type _TextEncoder = Bun.TextEncoder;
-
 type _TextDecoder = Bun.TextDecoder;
 
 type _Performance = import("perf_hooks").Performance;
-
-type _Worker = Bun.Worker;
 
 type _Event = {
   /** This is not used in Node.js and is provided purely for completeness. */
@@ -77,20 +71,6 @@ type _SubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
 
 type _CryptoKey = import("crypto").webcrypto.CryptoKey;
 
-type _Body = {
-  readonly body: ReadableStream | null;
-  readonly bodyUsed: boolean;
-  readonly arrayBuffer: () => Promise<ArrayBuffer>;
-  readonly blob: () => Promise<Blob>;
-  readonly formData: () => Promise<FormData>;
-  readonly json: () => Promise<unknown>;
-  readonly text: () => Promise<string>;
-};
-
-import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
-import type { MessagePort } from "worker_threads";
-import type { WebSocket as _WebSocket } from "ws";
-
 declare global {
   var onmessage: never;
   var Bun: typeof import("bun");
@@ -120,7 +100,7 @@ declare global {
       | ReadableStreamDefaultReadValueResult<T>
       | ReadableStreamDefaultReadDoneResult;
     type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
-    type Transferable = ArrayBuffer | MessagePort;
+    type Transferable = ArrayBuffer | import("worker_threads").MessagePort;
     type MessageEventSource = undefined;
     type Encoding = "utf-8" | "windows-1252" | "utf-16";
     type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
@@ -168,7 +148,7 @@ declare global {
 
     type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
 
-    interface TextEncoder extends NodeTextEncoder {
+    interface TextEncoder extends import("util").TextEncoder {
       new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
       /**
        * UTF-8 encodes the `src` string to the `dest` Uint8Array and returns an object
@@ -186,7 +166,7 @@ declare global {
       encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
     }
 
-    interface TextDecoder extends NodeTextDecoder {
+    interface TextDecoder extends import("util").TextDecoder {
       new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
     }
 
@@ -610,20 +590,20 @@ declare global {
     }
   }
 
-  interface ReadableStream<R = any> extends _ReadableStream<R> {}
+  interface ReadableStream<R = any> extends import("stream/web").ReadableStream<R> {}
   var ReadableStream: {
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
   };
 
-  interface WritableStream<W = any> extends _WritableStream<W> {}
+  interface WritableStream<W = any> extends import("stream/web").WritableStream<W> {}
   var WritableStream: {
     prototype: WritableStream;
     new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
   };
 
-  interface Worker extends _Worker {}
+  interface Worker extends import("worker_threads").Worker {}
   var Worker: {
     prototype: Worker;
     new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
@@ -635,8 +615,8 @@ declare global {
     data: any;
   };
 
-  interface WebSocket extends _WebSocket {}
-  var WebSocket: typeof _WebSocket;
+  interface WebSocket extends import("ws").WebSocket {}
+  var WebSocket: typeof import("ws").WebSocket;
 
   interface Crypto extends _Crypto {}
   var Crypto: {
@@ -675,8 +655,6 @@ declare global {
     prototype: EventTarget;
     new (): EventTarget;
   };
-
-  interface Body extends _Body {}
 
   interface File extends Blob {
     /**
@@ -827,7 +805,7 @@ declare global {
      *
      * @returns A promise that resolves to {@link Response} object.
      */
-    (url: string | URL | Request, init?: FetchRequestInit): Promise<Response>;
+    (url: string | URL | Request, init?: RequestInit): Promise<Response>;
 
     (input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response>;
 
@@ -1834,8 +1812,8 @@ declare global {
 
   var Blob: typeof Blob;
 
-  export interface Response extends import("undici-types").Response {}
-  export declare class Response {
+  interface Response extends import("undici-types").Response {}
+  declare class Response {
     constructor(body?: Bun.BodyInit | null | undefined, init?: Bun.ResponseInit | undefined);
 
     /**

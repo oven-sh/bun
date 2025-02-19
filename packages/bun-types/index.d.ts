@@ -9,10 +9,9 @@
 // contributors: uncomment this to detect conflicts with lib.dom.d.ts
 //// <reference lib="dom" />
 
-/// <reference path="./globals.d.ts" />
 /// <reference path="./bun.d.ts" />
+/// <reference path="./globals.d.ts" />
 /// <reference path="./overrides.d.ts" />
-/// <reference path="./fetch.d.ts" />
 /// <reference path="./ffi.d.ts" />
 /// <reference path="./test.d.ts" />
 /// <reference path="./html-rewriter.d.ts" />

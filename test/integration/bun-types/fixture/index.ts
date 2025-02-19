@@ -32,6 +32,14 @@ const r = new Request("", {
   body: "",
 });
 
+const body = await fetch(
+  new Request("", {
+    body: "",
+  }),
+);
+
+await body.text();
+
 r.method;
 r.body;
 r.headers.get("content-type");
@@ -40,6 +48,8 @@ fetch("", {
   proxy: "",
   s3: {},
 });
+
+type C = Bun.WebAssembly.Global;
 
 Bun.serve({
   fetch(req) {
@@ -53,3 +63,22 @@ Bun.serve({
     });
   },
 });
+
+import { serve } from "bun";
+
+serve({
+  fetch(req) {
+    const headers = req.headers.toJSON();
+
+    const body = req.method === "GET" || req.method === "HEAD" ? undefined : req.body;
+
+    return new Response(body, {
+      headers,
+      status: statuses[Math.floor(Math.random() * statuses.length)],
+    });
+  },
+});
+
+import { s3 } from "bun";
+
+s3.file("");

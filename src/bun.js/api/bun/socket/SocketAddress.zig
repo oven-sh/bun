@@ -1,7 +1,7 @@
 //! An IP socket address meant to be used by both native and JS code.
 //!
 //! JS getters are named `getFoo`, while native getters are named `foo`.
-//! 
+//!
 //! TODO: add a inspect method (under `Symbol.for("nodejs.util.inspect.custom")`).
 //! Requires updating bindgen.
 const SocketAddress = @This();

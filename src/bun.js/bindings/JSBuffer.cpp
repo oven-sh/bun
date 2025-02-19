@@ -2385,6 +2385,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     int64_t value = static_cast<int64_t>(limb);
 
+    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
     if (UNLIKELY(!offsetVal.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
     auto offsetD = offsetVal.asNumber();
     if (UNLIKELY(std::fmod(offsetD, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
@@ -2416,6 +2417,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     int64_t value = static_cast<int64_t>(limb);
 
+    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
     if (UNLIKELY(!offsetVal.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
     auto offsetD = offsetVal.asNumber();
     if (UNLIKELY(std::fmod(offsetD, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
@@ -2445,6 +2447,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     if (UNLIKELY(bigint->length() > 1)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
     uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
 
+    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
     if (UNLIKELY(!offsetVal.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
     auto offsetD = offsetVal.asNumber();
     if (UNLIKELY(std::fmod(offsetD, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
@@ -2474,6 +2477,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     if (UNLIKELY(bigint->length() > 1)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
     uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
 
+    if (offsetVal.isUndefined()) offsetVal = jsNumber(0);
     if (UNLIKELY(!offsetVal.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
     auto offsetD = offsetVal.asNumber();
     if (UNLIKELY(std::fmod(offsetD, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);

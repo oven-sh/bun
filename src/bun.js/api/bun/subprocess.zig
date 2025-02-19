@@ -199,6 +199,16 @@ pub const Subprocess = struct {
     ref_count: u32 = 1,
     abort_signal: ?*JSC.AbortSignal = null,
 
+    event_loop_timer_refd: bool = false,
+    event_loop_timer: JSC.BunTimer.EventLoopTimer = .{
+        .tag = .SubprocessTimeout,
+        .next = .{
+            .sec = 0,
+            .nsec = 0,
+        },
+    },
+    killSignal: SignalCode,
+
     usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub const Flags = packed struct {
@@ -224,7 +234,7 @@ pub const Subprocess = struct {
     pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: JSC.JSValue) callconv(.C) void {
         var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
         this.clearAbortSignal();
-        _ = this.tryKill(SignalCode.default);
+        _ = this.tryKill(this.killSignal);
     }
 
     pub fn resourceUsage(
@@ -603,7 +613,7 @@ pub const Subprocess = struct {
         this.stdout.unref();
         this.stderr.unref();
 
-        switch (this.tryKill(SignalCode.default)) {
+        switch (this.tryKill(this.killSignal)) {
             .result => {},
             .err => |err| {
                 // Signal 9 should always be fine, but just in case that somehow fails.
@@ -612,6 +622,62 @@ pub const Subprocess = struct {
         }
 
         return this.getExited(global);
+    }
+    fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
+        if (this.event_loop_timer_refd == refd) return;
+        this.event_loop_timer_refd = refd;
+        if (refd) {
+            this.globalThis.bunVM().timer.incrementTimerRef(1);
+        } else {
+            this.globalThis.bunVM().timer.incrementTimerRef(-1);
+        }
+    }
+
+    pub fn timeoutCallback(this: *Subprocess) JSC.BunTimer.EventLoopTimer.Arm {
+        this.setEventLoopTimerRefd(false);
+        if (this.event_loop_timer.state == .CANCELLED) return .disarm;
+        if (this.hasExited()) {
+            this.event_loop_timer.state = .CANCELLED;
+            return .disarm;
+        }
+        this.event_loop_timer.state = .FIRED;
+        _ = this.tryKill(this.killSignal);
+        return .disarm;
+    }
+
+    fn parseSignal(arg: JSC.JSValue, globalThis: *JSC.JSGlobalObject) !SignalCode {
+        if (arg.getNumber()) |sig64| {
+            // Node does this:
+            if (std.math.isNan(sig64)) {
+                return SignalCode.default;
+            }
+
+            // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
+            if (std.math.isInf(sig64) or @trunc(sig64) != sig64) {
+                return globalThis.throwInvalidArguments("Unknown signal", .{});
+            }
+
+            if (sig64 < 0) {
+                return globalThis.throwInvalidArguments("Invalid signal: must be >= 0", .{});
+            }
+
+            if (sig64 > 31) {
+                return globalThis.throwInvalidArguments("Invalid signal: must be < 32", .{});
+            }
+
+            const code: SignalCode = @enumFromInt(@as(u8, @intFromFloat(sig64)));
+            return code;
+        } else if (arg.isString()) {
+            if (arg.asString().length() == 0) {
+                return SignalCode.default;
+            }
+            const signal_code = try arg.toEnum(globalThis, "signal", SignalCode);
+            return signal_code;
+        } else if (!arg.isEmptyOrUndefinedOrNull()) {
+            return globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
+        }
+
+        return SignalCode.default;
     }
 
     pub fn kill(
@@ -622,42 +688,10 @@ pub const Subprocess = struct {
         this.this_jsvalue = callframe.this();
 
         var arguments = callframe.arguments_old(1);
+        _ = &arguments;
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        const sig: i32 = brk: {
-            if (arguments.ptr[0].getNumber()) |sig64| {
-                // Node does this:
-                if (std.math.isNan(sig64)) {
-                    break :brk SignalCode.default;
-                }
-
-                // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
-                if (std.math.isInf(sig64) or @trunc(sig64) != sig64) {
-                    return globalThis.throwInvalidArguments("Unknown signal", .{});
-                }
-
-                if (sig64 < 0) {
-                    return globalThis.throwInvalidArguments("Invalid signal: must be >= 0", .{});
-                }
-
-                if (sig64 > 31) {
-                    return globalThis.throwInvalidArguments("Invalid signal: must be < 32", .{});
-                }
-
-                break :brk @intFromFloat(sig64);
-            } else if (arguments.ptr[0].isString()) {
-                if (arguments.ptr[0].asString().length() == 0) {
-                    break :brk SignalCode.default;
-                }
-                const signal_code = try arguments.ptr[0].toEnum(globalThis, "signal", SignalCode);
-                break :brk @intFromEnum(signal_code);
-            } else if (!arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
-                return globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
-            }
-
-            break :brk SignalCode.default;
-        };
-
+        const sig: SignalCode = try parseSignal(arguments.ptr[0], globalThis);
         if (globalThis.hasException()) return .zero;
 
         switch (this.tryKill(sig)) {
@@ -675,11 +709,11 @@ pub const Subprocess = struct {
         return this.process.hasKilled();
     }
 
-    pub fn tryKill(this: *Subprocess, sig: i32) JSC.Maybe(void) {
+    pub fn tryKill(this: *Subprocess, sig: SignalCode) JSC.Maybe(void) {
         if (this.hasExited()) {
             return .{ .result = {} };
         }
-        return this.process.kill(@intCast(sig));
+        return this.process.kill(@intFromEnum(sig));
     }
 
     fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {
@@ -1478,6 +1512,11 @@ pub const Subprocess = struct {
         defer this.deref();
         defer this.disconnectIPC(true);
 
+        if (this.event_loop_timer.state == .ACTIVE) {
+            jsc_vm.timer.remove(&this.event_loop_timer);
+        }
+        this.setEventLoopTimerRefd(false);
+
         jsc_vm.onSubprocessExit(process);
 
         var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
@@ -1650,6 +1689,11 @@ pub const Subprocess = struct {
 
         this.process.detach();
         this.process.deref();
+
+        if (this.event_loop_timer.state == .ACTIVE) {
+            this.globalThis.bunVM().timer.remove(&this.event_loop_timer);
+        }
+        this.setEventLoopTimerRefd(false);
 
         this.flags.finalized = true;
         this.deref();
@@ -1839,6 +1883,8 @@ pub const Subprocess = struct {
         var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
         var argv0: ?[*:0]const u8 = null;
         var ipc_channel: i32 = -1;
+        var timeout: ?i32 = null;
+        var killSignal: SignalCode = SignalCode.default;
 
         var windows_hide: bool = false;
         var windows_verbatim_arguments: bool = false;
@@ -2031,6 +2077,16 @@ pub const Subprocess = struct {
                         }
                     }
                 }
+
+                if (try args.get(globalThis, "timeout")) |val| {
+                    if (val.isNumber()) {
+                        timeout = @max(val.coerce(i32, globalThis), 1);
+                    }
+                }
+
+                if (try args.get(globalThis, "killSignal")) |val| {
+                    killSignal = try parseSignal(val, globalThis);
+                }
             } else {
                 try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
             }
@@ -2188,6 +2244,7 @@ pub const Subprocess = struct {
             .flags = .{
                 .is_sync = is_sync,
             },
+            .killSignal = undefined,
         });
 
         const posix_ipc_fd = if (Environment.isPosix and !is_sync and maybe_ipc_mode != null)
@@ -2243,6 +2300,7 @@ pub const Subprocess = struct {
             .flags = .{
                 .is_sync = is_sync,
             },
+            .killSignal = killSignal,
         };
 
         subprocess.process.setExitHandler(subprocess);
@@ -2342,6 +2400,12 @@ pub const Subprocess = struct {
 
         should_close_memfd = false;
 
+        if (timeout) |timeout_val| {
+            subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
+            globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+            subprocess.setEventLoopTimerRefd(true);
+        }
+
         if (comptime !is_sync) {
             // Once everything is set up, we can add the abort listener
             // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
@@ -2357,22 +2421,20 @@ pub const Subprocess = struct {
             return out;
         }
 
-        if (comptime is_sync) {
-            switch (subprocess.process.watchOrReap()) {
-                .result => {
-                    // Once everything is set up, we can add the abort listener
-                    // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
-                    // Therefore, we must do this at the very end.
-                    if (abort_signal) |signal| {
-                        signal.pendingActivityRef();
-                        subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
-                        abort_signal = null;
-                    }
-                },
-                .err => {
-                    subprocess.process.wait(true);
-                },
-            }
+        switch (subprocess.process.watchOrReap()) {
+            .result => {
+                // Once everything is set up, we can add the abort listener
+                // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
+                // Therefore, we must do this at the very end.
+                if (abort_signal) |signal| {
+                    signal.pendingActivityRef();
+                    subprocess.abort_signal = signal.addListener(subprocess, onAbortSignal);
+                    abort_signal = null;
+                }
+            },
+            .err => {
+                subprocess.process.wait(true);
+            },
         }
 
         if (!subprocess.process.hasExited()) {
@@ -2411,6 +2473,8 @@ pub const Subprocess = struct {
         const stdout = try subprocess.stdout.toBufferedValue(globalThis);
         const stderr = try subprocess.stderr.toBufferedValue(globalThis);
         const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
+        const exitedDueToTimeout = subprocess.event_loop_timer.state == .FIRED;
+        const resultPid = JSC.JSValue.jsNumberFromInt32(subprocess.pid());
         subprocess.finalize();
 
         if (globalThis.hasException()) {
@@ -2427,6 +2491,8 @@ pub const Subprocess = struct {
         sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
         sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
         sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
+        if (exitedDueToTimeout) sync_value.put(globalThis, JSC.ZigString.static("exitedDueToTimeout"), JSC.JSValue.true);
+        sync_value.put(globalThis, JSC.ZigString.static("pid"), resultPid);
 
         return sync_value;
     }

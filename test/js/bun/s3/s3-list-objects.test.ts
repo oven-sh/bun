@@ -1000,4 +1000,56 @@ describe("S3 - List Objects", () => {
       expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
     }
   });
+
+  it("Should work with an actual S3 output", async () => {
+    // do not change any byte in this string
+    const actualOutput = `<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>awsome-very-dummy-bucket</Name><Prefix></Prefix><KeyCount>3</KeyCount><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated><Contents><Key>01951feb-1db5-7000-aee3-213b4df4015f/file_1.txt</Key><LastModified>2025-02-19T20:34:18.000Z</LastModified><ETag>&quot;9297ab3fbd56b42f6566284119238125&quot;</ETag><Size>9</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>01951feb-1db5-7000-aee3-213b4df4015f/file_2.txt</Key><LastModified>2025-02-19T20:34:18.000Z</LastModified><ETag>&quot;6685cd62b95f2c58818cb20e7292168b&quot;</ETag><Size>9</Size><StorageClass>STANDARD</StorageClass></Contents><Contents><Key>01951feb-1db5-7000-aee3-213b4df4015f/file_3.txt</Key><LastModified>2025-02-19T20:34:18.000Z</LastModified><ETag>&quot;bffd51760cd2c6b531756efac72110c3&quot;</ETag><Size>9</Size><StorageClass>STANDARD</StorageClass></Contents></ListBucketResult>`;
+
+    using server = createBunServer(async => {
+      return new Response(actualOutput, {
+        headers: {
+          "Content-Type": "application/xml",
+        },
+        status: 200,
+      });
+    });
+
+    const client = new S3Client({
+      ...options,
+      endpoint: server.url.href,
+    });
+
+    const res = await client.listObjects();
+
+    expect(res).toEqual({
+      name: "awsome-very-dummy-bucket",
+      isTruncated: false,
+      keyCount: 3,
+      maxKeys: 1000,
+      contents: [
+        {
+          key: "01951feb-1db5-7000-aee3-213b4df4015f/file_1.txt",
+          eTag: '"9297ab3fbd56b42f6566284119238125"',
+          lastModified: "2025-02-19T20:34:18.000Z",
+          size: 9,
+          storageClass: "STANDARD",
+        },
+        {
+          key: "01951feb-1db5-7000-aee3-213b4df4015f/file_2.txt",
+          eTag: '"6685cd62b95f2c58818cb20e7292168b"',
+          lastModified: "2025-02-19T20:34:18.000Z",
+          size: 9,
+          storageClass: "STANDARD",
+        },
+        {
+          key: "01951feb-1db5-7000-aee3-213b4df4015f/file_3.txt",
+          eTag: '"bffd51760cd2c6b531756efac72110c3"',
+          lastModified: "2025-02-19T20:34:18.000Z",
+          size: 9,
+          storageClass: "STANDARD",
+        },
+      ],
+    });
+  });
 });

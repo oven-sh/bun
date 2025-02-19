@@ -461,8 +461,6 @@ pub fn parseS3ListObjectsResult(xml: []const u8) !S3ListObjectsV2Result {
                             }
                         }
                     }
-                } else {
-                    i += 1;
                 }
             } else {
                 i += 1;

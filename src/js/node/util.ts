@@ -3,9 +3,11 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf } = require("internal/validators");
+const { validateString, validateOneOf, validateBoolean } = require("internal/validators");
+const { isReadableStream, isWritableStream, isNodeStream } = require("internal/streams/utils");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
+const parseEnv = $newZigFunction("node_util_binding.zig", "parseEnv", 1);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
@@ -233,8 +235,15 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
-function styleText(format, text) {
+function styleText(format, text, { validateStream = true, stream = process.stdout } = {}) {
   validateString(text, "text");
+  validateBoolean(validateStream, "options.validateStream");
+
+  if (validateStream) {
+    if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
+      throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
+    }
+  }
 
   if ($isJSArray(format)) {
     let left = "";
@@ -251,11 +260,15 @@ function styleText(format, text) {
     return `${left}${text}${right}`;
   }
 
-  let formatCodes = inspect.colors[format];
-
+  const formatCodes = inspect.colors[format];
   if (formatCodes == null) {
     validateOneOf(format, "format", ObjectKeys(inspect.colors));
   }
+
+  if (validateStream && (!stream || !require("internal/util").shouldColorize(stream))) {
+    return text;
+  }
+
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 
@@ -347,7 +360,7 @@ cjs_exports = {
   // transferableAbortController,
   aborted,
   types,
-  // parseEnv,
+  parseEnv,
   parseArgs,
   TextDecoder,
   TextEncoder,

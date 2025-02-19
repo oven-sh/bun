@@ -2346,6 +2346,7 @@ class ServerHttp2Session extends Http2Session {
       if (state === 7) {
         markStreamClosed(stream);
         self.#connections--;
+
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
@@ -2763,7 +2764,6 @@ class ClientHttp2Session extends Http2Session {
     streamStart(self: ClientHttp2Session, stream_id: number) {
       if (!self) return;
       self.#connections++;
-
       if (stream_id % 2 === 0) {
         // pushStream
         const stream = new ClientHttp2Session(stream_id, self, null);
@@ -2779,6 +2779,7 @@ class ClientHttp2Session extends Http2Session {
         stream.emit("aborted");
       }
       self.#connections--;
+
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     },
     streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
@@ -2805,6 +2806,7 @@ class ClientHttp2Session extends Http2Session {
       if (state === 7) {
         markStreamClosed(stream);
         self.#connections--;
+
         stream.destroy();
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
@@ -2982,6 +2984,10 @@ class ClientHttp2Session extends Http2Session {
   }
   #onError(error: Error) {
     this[bunHTTP2Socket] = null;
+    if (this.#closed) {
+      this.destroy();
+      return;
+    }
     this.destroy(error);
   }
   #onTimeout() {
@@ -3298,6 +3304,10 @@ class ClientHttp2Session extends Http2Session {
       req.emit("ready");
       return req;
     } catch (e: any) {
+      this.#connections--;
+      if (this.#connections === 0 && this.#closed) {
+        this.destroy();
+      }
       process.nextTick(emitErrorNT, this, e);
       throw e;
     }

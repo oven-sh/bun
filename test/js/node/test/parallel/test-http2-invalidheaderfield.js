@@ -46,6 +46,7 @@ const { once } = require('events');
     session.on('error', common.mustCall((e) => {
       
       strictEqual(e.code, 'ERR_INVALID_HTTP_TOKEN');
+      session.close()
       server.close();
     }));
     throws(() => {
@@ -64,6 +65,7 @@ const { once } = require('events');
     await once(session, 'connect');
     session.on('error', common.mustCall((e) => {
       strictEqual(e.code, 'ERR_INVALID_HTTP_TOKEN');
+      session.close();
       server.close();
     }));
     throws(() => {

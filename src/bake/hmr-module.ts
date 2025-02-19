@@ -255,7 +255,6 @@ export function loadModule<T = any>(
           return mod;
         },
         err => {
-          console.error(err);
           mod._cached_failure = err;
           mod._state = State.Error;
           throw err;
@@ -267,7 +266,6 @@ export function loadModule<T = any>(
       entry?._callback(mod.exports);
     });
   } catch (err) {
-    console.error(err);
     mod._cached_failure = err;
     mod._state = State.Error;
     throw err;
@@ -378,6 +376,7 @@ if (side === "client") {
   registry.set(server_module.id, server_module);
 }
 
-runtimeHelpers.__name(HotModule.prototype.importStmt, "<HMR runtime> importStmt");
-runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");
-runtimeHelpers.__name(loadModule, "<HMR runtime> loadModule");
+runtimeHelpers.__name(HotModule.prototype.importStmt, "<Bun HMR Runtime> importStmt");
+runtimeHelpers.__name(HotModule.prototype.dynamicImport, "<Bun HMR Runtime> import");
+runtimeHelpers.__name(HotModule.prototype.require, "<Bun HMR Runtime> require");
+runtimeHelpers.__name(loadModule, "<Bun HMR Runtime> loadModule");

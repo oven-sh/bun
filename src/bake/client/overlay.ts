@@ -9,23 +9,30 @@
 // - The client runtime, for when reloading errors happen.
 // Both use a WebSocket to coordinate followup updates, when new errors are
 // added or previous ones are solved.
-import { BundlerMessageLevel } from "../enums";
-import { css } from "../macros" with { type: "macro" };
-import {
-  BundlerMessage,
-  BundlerMessageLocation,
-  BundlerNote,
-  decodeSerializedError,
-  type DeserializedFailure,
-} from "./error-serialization";
-import { DataViewReader } from "./reader";
-
 if (side !== "client") throw new Error("Not client side!");
 
+/** When set, the next successful build will reload the page. */
 export let hasFatalError = false;
 
+/**
+ * 32-bit integer corresponding to `SerializedFailure.Owner.Packed`
+ * It is never decoded client-side, but the client is able to encode
+ * values from 0 to 2^30-1, as that corresponds to
+ * .{ .kind = .none, .data = ... }, which is unused in DevServer.
+ */
+type ErrorId = number;
+
+const errors = new Map<ErrorId, DeserializedFailure>();
+const runtimeErrors: RuntimeMessage[] = [];
+const errorDoms = new Map<ErrorId, ErrorDomNodes>();
+const updatedErrorOwners = new Set<ErrorId>();
+
+let domShadowRoot: HTMLElement;
+let domModalTitle: Text;
+let domErrorList: HTMLElement;
+
 // I would have used JSX, but TypeScript types interfere in odd ways.
-function elem(tagName: string, props?: null | Record<string, string>, children?: (HTMLElement | Text)[]) {
+function elem(tagName: string, props?: null | Record<string, string>, children?: Node[]) {
   const node = document.createElement(tagName);
   if (props)
     for (let key in props) {
@@ -50,20 +57,6 @@ function elemText(tagName: string, props: null | Record<string, string>, innerHT
 
 const textNode = (str = "") => document.createTextNode(str);
 
-/**
- * 32-bit integer corresponding to `SerializedFailure.Owner.Packed`
- * It is never decoded client-side; treat this as an opaque identifier.
- */
-type ErrorId = number;
-
-const errors = new Map<ErrorId, DeserializedFailure>();
-const errorDoms = new Map<ErrorId, ErrorDomNodes>();
-const updatedErrorOwners = new Set<ErrorId>();
-
-let domShadowRoot: HTMLElement;
-let domModalTitle: Text;
-let domErrorList: HTMLElement;
-
 interface ErrorDomNodes {
   root: HTMLElement;
   title: Text;
@@ -78,13 +71,14 @@ function mountModal() {
   if (domModalTitle) return;
   domShadowRoot = elem("bun-hmr", {
     style:
-      "position:absolute!important;" +
+      "position:fixed!important;" +
       "display:none!important;" +
       "top:0!important;" +
       "left:0!important;" +
       "width:100%!important;" +
       "height:100%!important;" +
-      "background:#8883!important",
+      "background:#8883!important" +
+      "z-index:2147483647!important",
   });
   const shadow = domShadowRoot.attachShadow({ mode: "open" });
   const sheet = new CSSStyleSheet();
@@ -136,12 +130,113 @@ export const enum RuntimeErrorType {
   fatal,
 }
 
-export function onRuntimeError(err: any, type: RuntimeErrorType) {
+let nextRuntimeErrorId = 0;
+function newRuntimeErrorId() {
+  if (nextRuntimeErrorId >= 0xfffffff) nextRuntimeErrorId = 0;
+  return nextRuntimeErrorId++;
+}
+
+export async function onRuntimeError(err: any, type: RuntimeErrorType) {
   if (type === RuntimeErrorType.fatal) {
     hasFatalError = true;
   }
 
-  console.error(err);
+  console.error(err); // Chrome DevTools and Safari inspector will source-map this error
+
+  // Parse the stack trace and normalize the error message.
+  let name = err?.name ?? "error";
+  if (name === "Error") name = "error";
+  let message = err?.message;
+  if (!message)
+    try {
+      message = JSON.stringify(err);
+    } catch (e) {
+      message = "[error while serializing error: " + e + "]";
+    }
+  else if (typeof message !== "string") {
+    try {
+      message = JSON.stringify(message);
+    } catch (e) {
+      message = "[error while serializing error message: " + e + "]";
+    }
+  }
+  const parsed = parseStackTrace(err) ?? [];
+
+  const browserUrl = location.href;
+
+  // Serialize the request into a binary buffer. Pre-allocate a little above what it needs.
+  let bufferLength = 3 * 4 + (name.length + message.length + browserUrl.length) * 3;
+  for (const frame of parsed) {
+    bufferLength += 4 * 4 + ((frame.fn?.length ?? 0) + (frame.file?.length ?? 0)) * 3;
+  }
+  const base = location.origin + "/_bun";
+  const writer = DataViewWriter.initCapacity(bufferLength);
+  writer.stringWithLength(name);
+  writer.stringWithLength(message);
+  writer.stringWithLength(browserUrl);
+  writer.u32(parsed.length);
+  for (const frame of parsed) {
+    writer.u32(frame.line ?? 0);
+    writer.u32(frame.col ?? 0);
+    writer.stringWithLength(frame.fn ?? "");
+    const fileName = frame.file;
+    if (fileName) {
+      writer.stringWithLength(fileName.startsWith(base) ? fileName.slice(base.length - "/_bun".length) : fileName);
+    } else {
+      writer.u32(0);
+    }
+  }
+
+  // Request the error to be reported and remapped.
+  const response = await fetch("/_bun/report_error", {
+    method: "POST",
+    body: writer.view.buffer,
+  });
+  let remapped: RuntimeMessage;
+  try {
+    if (!response.ok) {
+      throw new Error("Failed to report error");
+    }
+    const reader = new DataViewReader(new DataView(await response.arrayBuffer()), 0);
+    const trace: Frame[] = [];
+    const traceLen = reader.u32();
+    for (let i = 0; i < traceLen; i++) {
+      const line = reader.i32();
+      const col = reader.i32();
+      const fn = reader.string32();
+      const file = reader.string32();
+      trace.push({
+        fn,
+        file,
+        line,
+        col,
+      });
+    }
+    remapped = {
+      kind: "rt",
+      name,
+      message,
+      trace,
+      remapped: true,
+    };
+  } catch (e) {
+    console.error("Failed to remap error", e);
+    remapped = {
+      kind: "rt",
+      name,
+      message,
+      trace: parsed,
+      remapped: false,
+    };
+  }
+
+  const uid = newRuntimeErrorId();
+  errors.set(uid, {
+    file: remapped.trace.find(f => f.file)?.file ?? "[unknown file]",
+    messages: [remapped],
+  });
+  updatedErrorOwners.add(uid);
+  updateErrorOverlay();
 }
 
 /**
@@ -220,7 +315,7 @@ export function updateErrorOverlay() {
     dom.title.textContent = data.file;
 
     for (const msg of data.messages) {
-      const domMessage = renderBundlerMessage(msg);
+      const domMessage = msg.kind === "bundler" ? renderBundlerMessage(msg) : renderRuntimeMessage(msg);
       dom.root.appendChild(domMessage);
       dom.messages.push(domMessage);
     }
@@ -245,6 +340,43 @@ function renderBundlerMessage(msg: BundlerMessage) {
       ...msg.notes.map(renderNote),
     ].flat(1),
   );
+}
+
+function renderRuntimeMessage(msg: RuntimeMessage) {
+  let name = msg.name;
+  if (name === "Error") msg.name = "error";
+  return elem(
+    "div",
+    { class: "message" },
+    [
+      elem("div", { class: "message-text" }, [
+        elemText("span", { class: "log-label log-error" }, msg.name),
+        elemText("span", { class: "log-colon" }, ": "),
+        elemText("span", { class: "log-text" }, msg.message),
+      ]),
+      ...msg.trace.map(renderTraceFrame),
+    ].flat(1),
+  );
+}
+
+function renderTraceFrame(frame: Frame) {
+  const elems: Node[] = [elemText("span", { class: "trace-at" }, "at ")];
+  let hasFn = !!frame.fn;
+  if (hasFn) {
+    elems.push(elemText("span", { class: "trace-fn" }, frame.fn), elemText("span", { class: "trace-sep" }, " "));
+  }
+  if (frame.file) {
+    if (hasFn) elems.push(elemText("span", { class: "trace-sep" }, "("));
+    elems.push(elemText("span", { class: "trace-file" }, frame.file));
+    if (frame.line) {
+      elems.push(textNode(":"), elemText("span", { class: "trace-loc" }, frame.line.toString()));
+      if (frame.col) {
+        elems.push(textNode(":"), elemText("span", { class: "trace-loc" }, frame.col.toString()));
+      }
+    }
+    if (hasFn) elems.push(textNode(")"));
+  }
+  return elem("div", { class: "trace-frame" }, elems);
 }
 
 function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
@@ -278,3 +410,17 @@ function renderNote(note: BundlerNote) {
     ...(note.location ? renderCodeLine(note.location, BundlerMessageLevel.note) : []),
   ];
 }
+
+import { BundlerMessageLevel } from "../enums";
+import { css } from "../macros" with { type: "macro" };
+import {
+  BundlerMessage,
+  BundlerMessageLocation,
+  BundlerNote,
+  decodeSerializedError,
+  type DeserializedFailure,
+  Frame,
+  RuntimeMessage,
+} from "./error-serialization";
+import { DataViewReader, DataViewWriter } from "./reader";
+import { parseStackTrace } from "./stack-trace";

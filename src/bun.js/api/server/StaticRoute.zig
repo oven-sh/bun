@@ -17,7 +17,7 @@ ref_count: u32 = 1,
 pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 pub const InitFromBytesOptions = struct {
-    server: AnyServer,
+    server: ?AnyServer,
     mime_type: ?*const bun.http.MimeType = null,
 };
 

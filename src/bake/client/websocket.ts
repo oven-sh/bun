@@ -36,12 +36,18 @@ let wait =
         })
     : () => new Promise<void>(done => setTimeout(done, 2_500));
 
+let mainWebSocket: WebSocketWrapper | null = null;
+
 interface WebSocketWrapper {
   /** When re-connected, this is re-assigned */
   wrapped: WebSocket | null;
   send(data: string | ArrayBuffer): void;
   close(): void;
   [Symbol.dispose](): void;
+}
+
+export function getMainWebSocket(): WebSocketWrapper | null {
+  return mainWebSocket;
 }
 
 export function initWebSocket(
@@ -62,11 +68,18 @@ export function initWebSocket(
     close() {
       closed = true;
       this.wrapped?.close();
+      if (mainWebSocket === this) {
+        mainWebSocket = null;
+      }
     },
     [Symbol.dispose]() {
       this.close();
     },
   };
+
+  if (mainWebSocket === null) {
+    mainWebSocket = wsProxy;
+  }
 
   function onOpen() {
     if (firstConnection) {
@@ -87,7 +100,10 @@ export function initWebSocket(
   }
 
   function onError(ev: Event) {
-    console.error(ev);
+    if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      // Auto-reconnection already logged a warning.
+      ev.preventDefault();
+    }
   }
 
   async function onClose() {

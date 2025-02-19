@@ -4343,6 +4343,18 @@ pub fn CowSlice(T: type) type {
                 allocator.free(str.slice());
             }
         }
+
+        /// Does not include debug safety checks.
+        pub fn initUnchecked(data: []const T, is_owned: bool) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = is_owned,
+                    .len = @intCast(data.len),
+                },
+                .debug = null,
+            };
+        }
     };
 }
 

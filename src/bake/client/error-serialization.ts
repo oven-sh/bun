@@ -5,8 +5,10 @@ import { DataViewReader } from "./reader";
 export interface DeserializedFailure {
   // If not specified, it is a client-side error.
   file: string | null;
-  messages: BundlerMessage[];
+  messages: AnyMessage[];
 }
+
+export type AnyMessage = BundlerMessage | RuntimeMessage;
 
 export interface BundlerMessage {
   kind: "bundler";
@@ -14,6 +16,14 @@ export interface BundlerMessage {
   message: string;
   location: BundlerMessageLocation | null;
   notes: BundlerNote[];
+}
+
+export interface RuntimeMessage {
+  kind: "rt";
+  name: string;
+  message: string;
+  trace: Frame[];
+  remapped: boolean;
 }
 
 export interface BundlerMessageLocation {
@@ -24,6 +34,13 @@ export interface BundlerMessageLocation {
   /** Byte length */
   length: number;
   lineText: string;
+}
+
+export interface Frame {
+  fn: string;
+  file: string | null;
+  line: number | null;
+  col: number | null;
 }
 
 export interface BundlerNote {

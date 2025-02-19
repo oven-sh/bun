@@ -1,4 +1,4 @@
-import { td } from "../shared";
+import { td, te } from "../shared";
 
 export class DataViewReader {
   view: DataView<ArrayBuffer>;
@@ -49,5 +49,55 @@ export class DataViewReader {
 
   rest() {
     return this.view.buffer.slice(this.cursor);
+  }
+}
+
+export class DataViewWriter {
+  view: DataView<ArrayBuffer>;
+  uint8ArrayView: Uint8Array;
+  cursor: number;
+  capacity: number;
+
+  static initCapacity(capacity: number) {
+    const view = new DataView(new ArrayBuffer(capacity));
+    return new DataViewWriter(view, 0, capacity);
+  }
+
+  constructor(view: DataView<ArrayBuffer>, cursor: number, capacity: number) {
+    this.view = view;
+    this.cursor = cursor;
+    this.capacity = capacity;
+    this.uint8ArrayView = new Uint8Array(view.buffer);
+  }
+
+  u8(value: number) {
+    this.view.setUint8(this.cursor, value);
+    this.cursor += 1;
+  }
+
+  u32(value: number) {
+    this.view.setUint32(this.cursor, value, true);
+    this.cursor += 4;
+  }
+
+  i32(value: number) {
+    this.view.setInt32(this.cursor, value, true);
+    this.cursor += 4;
+  }
+
+  string(value: string) {
+    if (value.length === 0) return;
+    const encodeResult = te.encodeInto(value, this.uint8ArrayView.subarray(this.cursor));
+    if (encodeResult.read !== value.length) {
+      throw new Error("Failed to encode string");
+    }
+    this.cursor += encodeResult.written;
+  }
+
+  stringWithLength(value: string) {
+    const cursor = this.cursor;
+    this.u32(0);
+    this.string(value);
+    this.view.setUint32(cursor, this.cursor - cursor - 4, true);
   }
 }

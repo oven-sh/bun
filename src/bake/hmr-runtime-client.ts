@@ -132,6 +132,10 @@ const ws = initWebSocket(
       if (reader.hasMoreData()) {
         const code = td.decode(reader.rest());
         try {
+          // TODO: This functions in all browsers, but WebKit browsers do not
+          // provide stack traces to errors thrown in eval, meaning client-side
+          // errors from hot-reloaded modules cannot be mapped back to their
+          // source.
           const modules = (0, eval)(code);
           if (IS_BUN_DEVELOPMENT) {
             console.info("Updated modules:\n" + Object.keys(modules).join("\n"));

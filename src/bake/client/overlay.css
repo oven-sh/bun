@@ -112,10 +112,35 @@ pre {
 .file-name:focus-visible {
   content: " (click to open in editor)";
 } */
-
 .message {
-  margin: 1rem;
-  margin-bottom: 0;
+  margin: 0 1rem;
+}
+
+.trace-frame {
+  margin-left: 2rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+.trace-at {
+  color: var(--modal-text-faded);
+}
+
+.trace-fn {
+  color: var(--modal-text);
+}
+
+.trace-file {
+  color: var(--log-note);
+}
+
+.trace-loc {
+  color: var(--log-warn);
+}
+
+.trace-sep {
+  color: var(--log-colon);
 }
 
 button + .message {

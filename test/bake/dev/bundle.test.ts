@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest, emptyHtmlFile, minimalFramework } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../dev-server-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -96,5 +96,76 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+devTest("react refresh - default export function", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import { render } from 'bun-devserver-react-mock';
+      render(<App />);
+    `,
+    "App.tsx": `
+      export default function App() {
+        return <div>Hello, world!</div>;
+      }
+    `,
+  },
+  async test(dev) {
+    
+  },
+});
+devTest("client-side runtime error shows correctly", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      {
+        let x = 1;
+
+        throw new Error("test " + x);
+      }
+    `,
+  },
+  async test(dev) {
+    const c = await dev.client("/", {
+      errors: [`index.ts:3:10: error: test 1`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+        {
+          let x = 2;
+          throw new Error("test " + x);
+        }
+      `,
+        {
+          errors: [`index.ts:3:10: error: test 2`],
+        },
+      );
+    });
+
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+        {
+          let x = 2;
+          console.log('value: ' + x);
+        }
+      `,
+      );
+    });
+
+    await c.expectMessage("value: 3");
   },
 });

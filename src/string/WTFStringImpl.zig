@@ -96,7 +96,7 @@ pub const WTFStringImplStruct = extern struct {
     pub inline fn deref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
-        bun.assert(hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
+        bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
         Bun__WTFStringImpl__deref(self);
         if (comptime bun.Environment.allow_assert) {
             if (current_count > 1) {

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, afterAll } from "bun:test";
 import { randomUUIDv7, S3Client, S3ListObjectsResponse, S3Options } from "bun";
 import { getSecret } from "harness";
 
@@ -1074,6 +1074,15 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
   const file_4 = `${keyPrefix}file_a>b.txt`;
   const file_5 = `${keyPrefix}file_a>bb.txt`;
   const file_6 = `${keyPrefix}file_a>bbb.txt`;
+
+  afterAll(async () => {
+    try {
+      // TODO replace with deleteObjects once merged
+      await Promise.all([file_1, file_2, file_3, file_4, file_5, file_6].map(async key => await bucket.delete(key)));
+    } catch (error) {
+      console.error(error);
+    }
+  });
 
   it("should list objects with prefix, maxKeys and nextContinuationToken", async () => {
     await bucket.write(file_1, "content 1");

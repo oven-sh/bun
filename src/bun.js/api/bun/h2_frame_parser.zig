@@ -241,6 +241,11 @@ const ValidPseudoHeaders = bun.ComptimeStringMap(void, .{
     .{":path"},
     .{":protocol"},
 });
+
+const ValidResponsePseudoHeaders = bun.ComptimeStringMap(void, .{
+    .{":status"},
+});
+
 const ValidRequestPseudoHeaders = bun.ComptimeStringMap(void, .{
     .{":method"},
     .{":authority"},
@@ -3625,7 +3630,7 @@ pub const H2FrameParser = struct {
                     if (ignore_pseudo_headers == 1) continue;
 
                     if (this.isServer) {
-                        if (!ValidPseudoHeaders.has(validated_name)) {
+                        if (!ValidResponsePseudoHeaders.has(validated_name)) {
                             if (!globalObject.hasException()) {
                                 return globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
                             }

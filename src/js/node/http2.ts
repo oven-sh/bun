@@ -2126,8 +2126,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[":status"] === undefined) {
       headers[":status"] = 200;
     }
-    this.headersSent = true;
-    this[bunHTTP2Headers] = headers;
+
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
     } else {
@@ -2139,6 +2138,9 @@ class ServerHttp2Stream extends Http2Stream {
       }
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames, options);
     }
+    this.headersSent = true;
+    this[bunHTTP2Headers] = headers;
+
     return;
   }
 }

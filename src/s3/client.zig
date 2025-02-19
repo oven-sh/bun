@@ -174,11 +174,15 @@ pub fn listObjects(
         .method = .GET,
         .search_params = search_params.slice(),
     }, null) catch |sign_err| {
+        search_params.deinitWithAllocator(bun.default_allocator);
+
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
         callback(.{ .failure = .{ .code = error_code_and_message.code, .message = error_code_and_message.message } }, callback_context);
 
         return;
     };
+
+    search_params.deinitWithAllocator(bun.default_allocator);
 
     const headers = JSC.WebCore.Headers.fromPicoHttpHeaders(result.headers(), bun.default_allocator) catch bun.outOfMemory();
 

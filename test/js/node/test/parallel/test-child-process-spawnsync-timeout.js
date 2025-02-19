@@ -20,24 +20,39 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-require('../common');
+const common = require('../common');
 const assert = require('assert');
-const fixtures = require('../common/fixtures');
 
-const spawn = require('child_process').spawn;
-const childPath = fixtures.path('parent-process-nonpersistent.js');
-let persistentPid = -1;
+const spawnSync = require('child_process').spawnSync;
+const { debuglog, getSystemErrorName } = require('util');
+const debug = debuglog('test');
 
-const child = spawn(process.execPath, [ childPath ]);
+const TIMER = 200;
+let SLEEP = common.platformTimeout(5000);
 
-child.stdout.on('data', function(data) {
-  persistentPid = parseInt(data, 10);
-});
+if (common.isWindows) {
+  // Some of the windows machines in the CI need more time to launch
+  // and receive output from child processes.
+  // https://github.com/nodejs/build/issues/3014
+  SLEEP = common.platformTimeout(15000);
+}
 
-process.on('exit', function() {
-  assert.notStrictEqual(persistentPid, -1);
-  assert.throws(function() {
-    process.kill(child.pid);
-  }, /^Error: kill ESRCH$|ESRCH/);
-  process.kill(persistentPid);
-});
+switch (process.argv[2]) {
+  case 'child':
+    setTimeout(() => {
+      debug('child fired');
+      process.exit(1);
+    }, SLEEP);
+    break;
+  default: {
+    const start = Date.now();
+    const ret = spawnSync(process.execPath, [__filename, 'child'],
+                          { timeout: TIMER });
+    assert.strictEqual(ret.error.code, 'ETIMEDOUT');
+    assert.strictEqual(getSystemErrorName(ret.error.errno), 'ETIMEDOUT');
+    const end = Date.now() - start;
+    assert(end < SLEEP);
+    assert(ret.status > 128 || ret.signal);
+    break;
+  }
+}

@@ -380,7 +380,6 @@ export default [
     proto: {
       address: {
         getter: "getAddress",
-        // setter: "setAddress",
         enumerable: true,
         configurable: true,
         cache: true,
@@ -394,6 +393,7 @@ export default [
         getter: "getFamily",
         enumerable: true,
         configurable: true,
+        cache: true,
       },
       addrfamily: {
         getter: "getAddrFamily",
@@ -408,6 +408,7 @@ export default [
       toJSON: {
         fn: "toJSON",
         length: 0,
+        this: true,
       },
     },
   }),

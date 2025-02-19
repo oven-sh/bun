@@ -6,8 +6,8 @@ const kHandle = Symbol("kHandle");
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
 
 var _lazyInspect = null;
-function lazyInspect() {
-  return (_lazyInspect ??= require("node:util").inspect);
+function lazyInspect(...args) {
+  return (_lazyInspect ??= require("node:util").inspect)(...args);
 }
 
 class SocketAddress {
@@ -98,11 +98,9 @@ class SocketAddress {
   [kInspect](depth: number, options: NodeJS.InspectOptions) {
     if (depth < 0) return this;
     const opts = options.depth == null ? options : { ...options, depth: options.depth - 1 };
-    // return `SocketAddress { address: '${this.address}', port: ${this.port}, family: '${this.family}' }`;
     return `SocketAddress ${lazyInspect(this.toJSON(), opts)}`;
   }
 
-  // TODO: kInspect
   toJSON() {
     return {
       address: this.address,

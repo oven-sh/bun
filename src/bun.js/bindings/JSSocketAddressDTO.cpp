@@ -70,3 +70,5 @@ extern "C" JSC__JSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject,
 
 WTF::StaticStringImpl* const IPv4 = MAKE_STATIC_STRING_IMPL("IPv4");
 WTF::StaticStringImpl* const IPv6 = MAKE_STATIC_STRING_IMPL("IPv6");
+WTF::StaticStringImpl* const INET_LOOPBACK = MAKE_STATIC_STRING_IMPL("127.0.0.1");
+WTF::StaticStringImpl* const INET6_ANY = MAKE_STATIC_STRING_IMPL("::");

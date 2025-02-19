@@ -97,7 +97,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
     const options_obj = frame.argument(0);
     if (options_obj.isUndefined()) return SocketAddress.new(.{
         ._addr = sockaddr.@"127.0.0.1",
-        ._presentation = WellKnownAddress.@"127.0.0.1",
+        ._presentation = WellKnownAddress.@"127.0.0.1"(),
     });
     options_obj.ensureStillAlive();
 
@@ -108,7 +108,7 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
     if (options.family == AF.INET6 and options.address == null and options.flowlabel == null and options.port == 0) {
         return SocketAddress.new(.{
             ._addr = sockaddr.@"::",
-            ._presentation = WellKnownAddress.@"::",
+            ._presentation = WellKnownAddress.@"::"(),
         });
     }
 
@@ -123,8 +123,8 @@ pub fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSErr
 ///   after passing it in.
 pub fn create(global: *JSC.JSGlobalObject, options: Options) bun.JSError!*SocketAddress {
     const presentation: bun.String = options.address orelse switch (options.family) {
-        AF.INET => WellKnownAddress.@"127.0.0.1",
-        AF.INET6 => WellKnownAddress.@"::",
+        AF.INET => WellKnownAddress.@"127.0.0.1"(),
+        AF.INET6 => WellKnownAddress.@"::"(),
     };
     // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
     // copy the string.
@@ -472,9 +472,20 @@ const sockaddr = extern union {
 };
 
 const WellKnownAddress = struct {
-    const @"127.0.0.1": bun.String = bun.String.static("127.0.0.1");
-    const @"::": bun.String = bun.String.static("::");
-    const @"::1": bun.String = bun.String.static("::1");
+    extern "c" const INET_LOOPBACK: StaticStringImpl;
+    extern "c" const INET6_ANY: StaticStringImpl;
+    inline fn @"127.0.0.1"() bun.String {
+        return .{
+            .tag = .WTFStringImpl,
+            .value = .{ .WTFStringImpl = INET_LOOPBACK },
+        };
+    }
+    inline fn @"::"() bun.String {
+        return .{
+            .tag = .WTFStringImpl,
+            .value = .{ .WTFStringImpl = INET6_ANY },
+        };
+    }
 };
 
 // =============================================================================

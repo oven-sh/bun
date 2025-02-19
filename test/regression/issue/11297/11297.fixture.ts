@@ -19,7 +19,7 @@ const writer = (async function () {
     //   1. Remove "await" from proc.stdin.write(string) (keep the .end() await)
     //   2. Run `hyperfine "bun test/regression/issue/011297.fixture.ts"` (or run this many times on macOS.)
     //
-    await proc.stdin.write(string);
+    proc.stdin.write(string);
   }
   await proc.stdin.end();
   console.timeEnd("Sent " + string.length + " bytes x 10");

@@ -148,7 +148,7 @@ const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
-const GlobalStringBuilder = @import("../string_builder.zig");
+const GlobalStringBuilder = bun.StringBuilder;
 const SlicedString = Semver.SlicedString;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Bin = @import("./bin.zig").Bin;
@@ -5204,8 +5204,9 @@ pub const PackageManager = struct {
                 }
             }
 
-            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
-            if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
+            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
+            // if it's a workspaceOnly dependency
+            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides())) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
                     name, name_hash = switch (new.tag) {

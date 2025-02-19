@@ -837,6 +837,13 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
     ).log;
 }
 
+pub fn up(n: usize) void {
+    print("\x1B[{d}A", .{n});
+}
+pub fn clearToEnd() void {
+    print("\x1B[0J", .{});
+}
+
 // Valid "colors":
 // <black>
 // <blue>

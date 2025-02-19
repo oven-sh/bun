@@ -135,7 +135,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
     }
 
     return globalThis.throwInvalidArguments(
-        \\'static' expects a Record<string, Response | HTMLBundle>
+        \\'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
         \\
         \\To bundle frontend apps on-demand with Bun.serve(), import HTML files.
         \\
@@ -146,9 +146,21 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         \\import app from "./app.html";
         \\
         \\serve({
-        \\  static: {
+        \\  routes: {
         \\    "/index.json": Response.json({ message: "Hello World" }),
         \\    "/app": app,
+        \\    "/path/:param": (req) => {
+        \\      const param = req.params.param;
+        \\      return Response.json({ message: `Hello ${param}` });
+        \\    },
+        \\    "/path": {
+        \\      GET(req) {
+        \\        return Response.json({ message: "Hello World" });
+        \\      },
+        \\      POST(req) {
+        \\        return Response.json({ message: "Hello World" });
+        \\      },
+        \\    },
         \\  },
         \\
         \\  fetch(request) {

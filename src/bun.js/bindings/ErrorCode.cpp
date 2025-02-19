@@ -928,8 +928,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
                 RETURN_IF_EXCEPTION(scope, {});
                 result.append(str);
                 result.append("\""_s);
-                if (i != argumentCount - 1) result.append(","_s);
-                result.append(" "_s);
+                if (i != argumentCount - 1) result.append(',');
+                result.append(' ');
             }
             result.append("arguments must be specified"_s);
             return JSC::JSValue::encode(createError(globalObject, error, result.toString()));

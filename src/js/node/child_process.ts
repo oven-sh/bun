@@ -565,6 +565,8 @@ function spawnSync(file, args, options) {
       success,
       exitCode,
       signalCode,
+      exitedDueToTimeout,
+      pid,
     } = Bun.spawnSync({
       cmd: options.args,
       env: options.env || undefined,
@@ -573,6 +575,8 @@ function spawnSync(file, args, options) {
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
       argv0: options.argv0,
+      timeout: options.timeout,
+      killSignal: options.killSignal,
     });
   } catch (err) {
     error = err;
@@ -585,6 +589,7 @@ function spawnSync(file, args, options) {
     status: exitCode,
     // TODO: Need to expose extra pipes from Bun.spawnSync to child_process
     output: [null, stdout, stderr],
+    pid,
   };
 
   if (error) {
@@ -602,8 +607,14 @@ function spawnSync(file, args, options) {
   result.stdout = result.output[1];
   result.stderr = result.output[2];
 
-  if (!success && error == null) {
-    result.error = new SystemError(result.output[2], options.file, "spawnSync", -1, result.status);
+  if (exitedDueToTimeout && error == null) {
+    result.error = new SystemError(
+      "spawnSync " + options.file + " ETIMEDOUT",
+      options.file,
+      "spawnSync " + options.file,
+      etimedoutErrorCode(),
+      "ETIMEDOUT",
+    );
   }
 
   if (result.error) {
@@ -612,6 +623,7 @@ function spawnSync(file, args, options) {
 
   return result;
 }
+const etimedoutErrorCode = $newZigFunction("node_util_binding.zig", "etimedoutErrorCode", 0);
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1704,11 +1716,10 @@ var Error = globalThis.Error;
 var TypeError = globalThis.TypeError;
 var RangeError = globalThis.RangeError;
 
-function genericNodeError(message, options) {
+function genericNodeError(message, errorProperties) {
+  // eslint-disable-next-line no-restricted-syntax
   const err = new Error(message);
-  err.code = options.code;
-  err.killed = options.killed;
-  err.signal = options.signal;
+  ObjectAssign(err, errorProperties);
   return err;
 }
 

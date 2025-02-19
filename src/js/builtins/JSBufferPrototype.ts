@@ -279,18 +279,30 @@ export function readDoubleBE(this: BufferExt, offset) {
 }
 
 export function readBigInt64LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined)
+    $checkBufferRead(this, offset, 8);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, true);
 }
 
 export function readBigInt64BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined)
+    $checkBufferRead(this, offset, 8);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigInt64(offset, false);
 }
 
 export function readBigUInt64LE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined)
+    $checkBufferRead(this, offset, 8);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, true);
 }
 
 export function readBigUInt64BE(this: BufferExt, offset) {
+  if (offset === undefined) offset = 0;
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined)
+    $checkBufferRead(this, offset, 8);
   return (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).getBigUint64(offset, false);
 }
 
@@ -646,39 +658,43 @@ export function writeDoubleBE(this: BufferExt, value, offset) {
   return offset + 8;
 }
 
+// prettier-ignore
 export function writeBigInt64LE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(
-    offset === undefined ? (offset = 0) : offset,
-    value,
-    true,
-  );
+  if (offset === undefined) offset = 0;
+  if (typeof value !== "bigint") throw $ERR_INVALID_ARG_TYPE("value", "bigint", value);
+  if (value < -0x8000000000000000n || value > 0x7fffffffffffffffn) throw $ERR_OUT_OF_RANGE("value", ">= -(2n ** 63n) and < 2n ** 63n", value);
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined) require("internal/buffer").checkBounds(this, offset, 8);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, true);
   return offset + 8;
 }
 
+// prettier-ignore
 export function writeBigInt64BE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(
-    offset === undefined ? (offset = 0) : offset,
-    value,
-    false,
-  );
+  if (offset === undefined) offset = 0;
+  if (typeof value !== "bigint") throw $ERR_INVALID_ARG_TYPE("value", "bigint", value);
+  if (value < -0x8000000000000000n || value > 0x7fffffffffffffffn) throw $ERR_OUT_OF_RANGE("value", ">= -(2n ** 63n) and < 2n ** 63n", value);
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined) require("internal/buffer").checkBounds(this, offset, 8);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigInt64(offset, value, false);
   return offset + 8;
 }
 
+// prettier-ignore
 export function writeBigUInt64LE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(
-    offset === undefined ? (offset = 0) : offset,
-    value,
-    true,
-  );
+  if (offset === undefined) offset = 0;
+  if (typeof value !== "bigint") throw $ERR_INVALID_ARG_TYPE("value", "bigint", value);
+  if (value < 0n || value > 0xffffffffffffffffn) throw $ERR_OUT_OF_RANGE("value", `>= 0n and < 2n ** 64n`, value);
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined) require("internal/buffer").checkBounds(this, offset, 8);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, true);
   return offset + 8;
 }
 
+// prettier-ignore
 export function writeBigUInt64BE(this: BufferExt, value, offset) {
-  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(
-    offset === undefined ? (offset = 0) : offset,
-    value,
-    false,
-  );
+  if (offset === undefined) offset = 0;
+  if (typeof value !== "bigint") throw $ERR_INVALID_ARG_TYPE("value", "bigint", value);
+  if (value < 0n || value > 0xffffffffffffffffn) throw $ERR_OUT_OF_RANGE("value", `>= 0n and < 2n ** 64n`, value);
+  if (typeof offset !== "number" || this[offset] === undefined || this[offset + 7] === undefined) require("internal/buffer").checkBounds(this, offset, 8);
+  (this.$dataView ||= new DataView(this.buffer, this.byteOffset, this.byteLength)).setBigUint64(offset, value, false);
   return offset + 8;
 }
 

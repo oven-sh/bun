@@ -61,6 +61,7 @@ async function fetchAndInjectHTML(url: string) {
       "--eval",
       `
         const url = ${JSON.stringify(url)};
+        const initial = await fetch(url).then(r => r.text());
         import { GlobalRegistrator } from "@happy-dom/global-registrator";
         GlobalRegistrator.register({
           url,
@@ -69,8 +70,7 @@ async function fetchAndInjectHTML(url: string) {
           constructor(url) {
           }
         };
-
-        const initial = await fetch(url).then(r => r.text());
+      
         location.href = url;
         document.write(initial);
         window.happyDOM.waitUntilComplete().then(() => {
@@ -117,6 +117,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
     });
 
     test("dev server", async () => {
+      console.log({ dir });
       await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
         cwd: dir,
         env: env,
@@ -181,7 +182,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       });
     });
 
-    test.todoIf(isCI)("dev server", async () => {
+    test("dev server", async () => {
       const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
         cwd: dir,
         env: env,
@@ -189,6 +190,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
         stdin: "ignore",
       });
       const all = { text: "" };
+      console.log({ dir });
       const serverUrl = await getServerUrl(process, all);
       console.log(serverUrl);
 
@@ -199,8 +201,8 @@ describe.each(["true", "false"])("development: %s", developmentString => {
 
         expect(
           all.text
-            .replaceAll(Bun.version_with_sha, "v*.*.*")
-            .replaceAll(Bun.version, "v*.*.*")
+            .replaceAll(Bun.version_with_sha, "*.*.*")
+            .replaceAll(Bun.version, "*.*.*")
             .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
             .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
             .replace(/\d+\.\d+\s*ms/g, "*.** ms")

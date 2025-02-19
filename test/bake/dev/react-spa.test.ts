@@ -6,7 +6,7 @@ import { devTest } from "../dev-server-harness";
 devTest("react in html", {
   fixture: "react-spa-simple",
   async test(dev) {
-    const c = await dev.client();
+    await using c = await dev.client();
 
     expect(await c.elemText("h1")).toBe("Hello World");
 

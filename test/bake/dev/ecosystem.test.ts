@@ -21,7 +21,7 @@ devTest("svelte component islands example", {
     expect(html).toContain(`<p>This is my svelte server component (non-interactive)</p> <p>Bun v${Bun.version}</p>`);
     expect(html).toContain(`>This is a client component (interactive island)</p>`);
 
-    const c = await dev.client("/");
+    await using c = await dev.client("/");
     expect(await c.elemText("button")).toBe("Clicked 5 times");
     await c.click("button");
     await Bun.sleep(500); // TODO: de-flake event ordering.

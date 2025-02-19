@@ -135,7 +135,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
                 .targets = .{
                     .browsers = minify_options.targets.browsers,
                 },
-            }, &import_records)) {
+            }, .initOutsideOfBundler(&import_records))) {
                 .result => |result| result,
                 .err => |err| {
                     return err.toJSString(alloc, globalThis);
@@ -314,10 +314,14 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
             minify_options.targets = targets;
             stylesheet.minify(alloc, minify_options);
 
-            const result = stylesheet.toCss(alloc, bun.css.PrinterOptions{
-                .minify = minify,
-                .targets = targets,
-            }, &import_records) catch |e| {
+            const result = stylesheet.toCss(
+                alloc,
+                bun.css.PrinterOptions{
+                    .minify = minify,
+                    .targets = targets,
+                },
+                .initOutsideOfBundler(&import_records),
+            ) catch |e| {
                 bun.handleErrorReturnTrace(e, @errorReturnTrace());
                 return .undefined;
             };

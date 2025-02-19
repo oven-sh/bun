@@ -88,7 +88,7 @@ devTest("importing a file before it is created", {
   },
   async test(dev) {
     const c = await dev.client("/", {
-      errors: [`index.ts:1:21 error: Could not resolve: "./second"`],
+      errors: [`index.ts:1:21: error: Could not resolve: "./second"`],
     });
 
     await c.expectReload(async () => {

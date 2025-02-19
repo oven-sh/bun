@@ -21,11 +21,12 @@ test("bun init works", () => {
     "name": path.basename(temp).toLowerCase(),
     "module": "index.ts",
     "type": "module",
+    "private": true,
     "devDependencies": {
       "@types/bun": "latest",
     },
     "peerDependencies": {
-      "typescript": "^5.0.0",
+      "typescript": "^5",
     },
   });
   const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
@@ -56,12 +57,13 @@ test("bun init with piped cli", () => {
   expect(pkg).toEqual({
     "name": path.basename(temp).toLowerCase(),
     "module": "index.ts",
+    "private": true,
     "type": "module",
     "devDependencies": {
       "@types/bun": "latest",
     },
     "peerDependencies": {
-      "typescript": "^5.0.0",
+      "typescript": "^5",
     },
   });
   const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");

@@ -196,6 +196,8 @@ pub const ImportRecord = struct {
         with_type_toml,
         with_type_file,
 
+        barrel,
+
         pub fn loader(this: Tag) ?bun.options.Loader {
             return switch (this) {
                 .with_type_sqlite => .sqlite,

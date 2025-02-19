@@ -6490,11 +6490,11 @@ pub const S = struct {
 
     // This object represents all of these types of import statements:
     //
-    //    import 'path'
-    //    import {item1, item2} from 'path'
-    //    import * as ns from 'path'
-    //    import defaultItem, {item1, item2} from 'path'
-    //    import defaultItem, * as ns from 'path'
+    //    import 'path' (namespace_ref = <empty>, default_name = null, items.len == 0)
+    //    import {item1, item2} from 'path' (namespace_ref = <empty>, default_name = null, items.len == 2)
+    //    import * as ns from 'path' (namespace_ref = ns, default_name = null, items.len == 0)
+    //    import defaultItem, {item1, item2} from 'path' (namespace_ref = <empty>, default_name = defaultItem, items.len == 2)
+    //    import defaultItem, * as ns from 'path' (namespace_ref = ns, default_name = defaultItem, items.len == 0)
     //
     // Many parts are optional and can be combined in different ways. The only
     // restriction is that you cannot have both a clause and a star namespace.
@@ -7655,6 +7655,7 @@ pub const NamedImport = struct {
 };
 
 pub const NamedExport = struct {
+    /// The symbol that is being exported
     ref: Ref,
     alias_loc: logger.Loc,
 };

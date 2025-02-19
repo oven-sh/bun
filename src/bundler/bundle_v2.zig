@@ -412,6 +412,16 @@ pub const BundleV2 = struct {
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
 
+    /// Used by the dev server to apply the barrel file optimization.
+    ///
+    /// Files which import a barrel file will have import records where
+    /// `record.tag == .barrel`.
+    ///
+    /// They get added here so we can process them later and mutate them to point
+    /// to their final destination.
+    barrel_importers: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+    barrel_files: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+
     const BakeOptions = struct {
         framework: bake.Framework,
         client_transpiler: *Transpiler,
@@ -477,6 +487,7 @@ pub const BundleV2 = struct {
     }
 
     const ReachableFileVisitor = struct {
+        barrel_files: *const std.AutoArrayHashMapUnmanaged(Index.Int, void),
         reachable: std.ArrayList(Index),
         visited: bun.bit_set.DynamicBitSet,
         all_import_records: []ImportRecord.List,
@@ -511,7 +522,11 @@ pub const BundleV2 = struct {
                 }
                 return;
             }
-            v.visited.set(source_index.get());
+
+            // dummy thing we puttin' in here to make it work
+            if (!v.barrel_files.contains(source_index.get())) {
+                v.visited.set(source_index.get());
+            }
 
             if (v.scb_bitset) |scb_bitset| {
                 if (scb_bitset.isSet(source_index.get())) {
@@ -607,6 +622,7 @@ pub const BundleV2 = struct {
         const all_urls_for_css = this.graph.ast.items(.url_for_css);
 
         var visitor = ReachableFileVisitor{
+            .barrel_files = &this.barrel_files,
             .reachable = try std.ArrayList(Index).initCapacity(this.graph.allocator, this.graph.entry_points.items.len + 1),
             .visited = try bun.bit_set.DynamicBitSet.initEmpty(this.graph.allocator, this.graph.input_files.len),
             .redirects = this.graph.ast.items(.redirect_import_record_index),
@@ -2285,6 +2301,8 @@ pub const BundleV2 = struct {
             }
             on_parse_finalizers.deinit(bun.default_allocator);
         }
+        defer this.barrel_importers.deinit(bun.default_allocator);
+        defer this.barrel_files.deinit(bun.default_allocator);
 
         defer this.graph.ast.deinit(bun.default_allocator);
         defer this.graph.input_files.deinit(bun.default_allocator);
@@ -2396,6 +2414,7 @@ pub const BundleV2 = struct {
 
             const asts = this.graph.ast.slice();
             const css_asts = asts.items(.css);
+            const symbols = asts.items(.symbols);
 
             const input_files = this.graph.input_files.slice();
             const loaders = input_files.items(.loader);
@@ -2407,6 +2426,13 @@ pub const BundleV2 = struct {
                 asts.items(.target)[1..],
                 1..,
             ) |part_list, import_records, maybe_css, target, index| {
+                if (comptime bun.Environment.isDebug) {
+                    debug("index: {d}, name: {s}", .{ index, sources[index].path.text });
+                    debug("  import records:", .{});
+                    for (import_records.slice()) |*ir| {
+                        debug("    {s}: {d}, {s}", .{ ir.path.text, ir.source_index.get(), @tagName(ir.tag) });
+                    }
+                }
                 // Dev Server proceeds even with failed files.
                 // These files are filtered out via the lack of any parts.
                 //
@@ -2455,6 +2481,8 @@ pub const BundleV2 = struct {
                             }
                         }
 
+                        this.redirectBarrelImports(@intCast(index), import_records.slice(), &asts.items(.named_imports)[index], symbols);
+
                         // Discover all CSS roots.
                         for (import_records.slice()) |*record| {
                             if (!record.source_index.isValid()) continue;
@@ -2476,6 +2504,88 @@ pub const BundleV2 = struct {
                     _ = start.css_entry_points.swapRemove(Index.init(index));
                 }
             }
+
+            // const reachable_files = try this.findReachableFiles();
+            // for (reachable_files) |index2| {
+            //     if (index2.isRuntime()) continue;
+
+            //     const index = index2.get();
+            //     const part_list = asts.items(.parts)[index];
+            //     const import_records = asts.items(.import_records)[index];
+            //     const maybe_css = css_asts[index];
+            //     const target = asts.items(.target)[index];
+
+            //     // Dev Server proceeds even with failed files.
+            //     // These files are filtered out via the lack of any parts.
+            //     //
+            //     // Actual empty files will contain a part exporting an empty object.
+            //     if (part_list.len != 0) {
+            //         if (maybe_css != null) {
+            //             // CSS has restrictions on what files can be imported.
+            //             // This means the file can become an error after
+            //             // resolution, which is not usually the case.
+            //             css_total_files.appendAssumeCapacity(Index.init(index));
+            //             var log = Logger.Log.init(this.graph.allocator);
+            //             defer log.deinit();
+            //             if (this.linker.scanCSSImports(
+            //                 @intCast(index),
+            //                 import_records.slice(),
+            //                 css_asts,
+            //                 sources,
+            //                 loaders,
+            //                 &log,
+            //             ) == .errors) {
+            //                 // TODO: it could be possible for a plugin to change
+            //                 // the type of loader from whatever it was into a
+            //                 // css-compatible loader.
+            //                 try dev_server.handleParseTaskFailure(
+            //                     error.InvalidCssImport,
+            //                     .client,
+            //                     sources[index].path.text,
+            //                     &log,
+            //                 );
+            //                 // Since there is an error, do not treat it as a
+            //                 // valid CSS chunk.
+            //                 _ = start.css_entry_points.swapRemove(Index.init(index));
+            //             }
+            //         } else {
+            //             // HTML files are special cased because they correspond
+            //             // to routes in DevServer. They have a JS chunk too,
+            //             // derived off of the import record list.
+            //             if (loaders[index] == .html) {
+            //                 try html_files.put(this.graph.allocator, Index.init(index), {});
+            //             } else {
+            //                 js_files.appendAssumeCapacity(Index.init(index));
+
+            //                 // Mark every part live.
+            //                 for (part_list.slice()) |*p| {
+            //                     p.is_live = true;
+            //                 }
+            //             }
+
+            //             this.redirectBarrelImports(@intCast(index), import_records.slice(), &asts.items(.named_imports)[index], symbols);
+
+            //             // Discover all CSS roots.
+            //             for (import_records.slice()) |*record| {
+            //                 if (!record.source_index.isValid()) continue;
+            //                 if (loaders[record.source_index.get()] != .css) continue;
+            //                 if (asts.items(.parts)[record.source_index.get()].len == 0) {
+            //                     record.source_index = Index.invalid;
+            //                     continue;
+            //                 }
+
+            //                 const gop = start.css_entry_points.getOrPutAssumeCapacity(record.source_index);
+            //                 if (target != .browser)
+            //                     gop.value_ptr.* = .{ .imported_on_server = true }
+            //                 else if (!gop.found_existing)
+            //                     gop.value_ptr.* = .{ .imported_on_server = false };
+            //             }
+            //         }
+            //     } else {
+            //         // Treat empty CSS files for removal.
+            //         _ = start.css_entry_points.swapRemove(Index.init(index));
+            //     }
+            // }
 
             // Find CSS entry points. Originally, this was computed up front, but
             // failed files do not remember their loader, and plugins can
@@ -2598,6 +2708,64 @@ pub const BundleV2 = struct {
             .css_file_list = start.css_entry_points,
             .html_files = html_files,
         });
+    }
+
+    pub fn redirectBarrelImports(
+        this: *BundleV2,
+        source_index: Index.Int,
+        import_records: []ImportRecord,
+        named_imports: *JSAst.NamedImports,
+        all_symbols: []Symbol.List,
+    ) void {
+        if (this.barrel_importers.count() == 0 or !this.barrel_importers.contains(source_index)) return;
+
+        const map = this.pathToSourceIndexMap(.browser);
+        const all_barrel_named_exports: []const JSAst.NamedExports = this.graph.ast.items(.named_exports);
+        const all_named_imports: []const JSAst.NamedImports = this.graph.ast.items(.named_imports);
+        const all_import_records: []const BabyList(ImportRecord) = this.graph.ast.items(.import_records);
+
+        for (named_imports.keys(), named_imports.values()) |name_ref, *named_import| {
+            const import_record = &import_records[named_import.import_record_index];
+            if (comptime bun.Environment.isDebug) {
+                debug("OOGA index: {d}", .{source_index});
+                const ir = import_record;
+                debug("    {s}: {d}, {s}, {s}, {s}", .{ ir.path.text, ir.source_index.get(), @tagName(ir.tag), if (ir.is_unused) "unused" else "used", if (ir.is_internal) "internal" else "external" });
+            }
+            if (import_record.tag != .barrel) continue;
+            if (import_record.is_unused or import_record.is_internal or import_record.source_index.isValid()) continue;
+
+            const barrel_file_index = map.get(import_record.path.hashKey()).?;
+
+            const barrel_named_exports: *const JSAst.NamedExports = &all_barrel_named_exports[barrel_file_index];
+
+            // Pair assertion: we asserted this was not null in `fn s_import()` in `js_parser.zig`
+            // when we split up the import statements
+            bun.assert(named_import.alias != null);
+
+            // 1. find the export in the barrel file which corresponds to the named import
+            // 2. update the symbol which the `name_ref` points to: add a link which points to the symbol of the final destination
+            // 3. update `import_record.source_index` and _maybe_ `import_record.path` to point to the final destination file
+            if (barrel_named_exports.getPtr(named_import.alias.?)) |barrel_export| {
+                // TODO: question I do not know the answer to: when is this NOT a symbol?
+                bun.assert(name_ref.tag == .symbol);
+                const symbols = &all_symbols[name_ref.source_index];
+                symbols.mut(name_ref.inner_index).link = barrel_export.ref;
+                const barrel_source_idx = barrel_export.ref.source_index;
+                const barrel_named_imports = &all_named_imports[barrel_source_idx];
+                const named_import2 = barrel_named_imports.getPtr(barrel_export.ref) orelse @panic("FUCK");
+
+                const barrel_import_records = &all_import_records[barrel_source_idx];
+                const final_destination_path = barrel_import_records.at(named_import2.import_record_index).path;
+                const final_destination_idx = map.get(final_destination_path.hashKey()).?;
+                import_record.source_index = Index.init(final_destination_idx);
+                const path = this.graph.input_files.items(.source)[final_destination_idx].path;
+                std.debug.print("THE FOCKIN FINAL: {s}\n", .{path.text});
+                import_record.path = path;
+            }
+
+            // If we're here then the user imported something from the barrel file which never existed in the first place.
+            // Do nothing and let the bundler handle this missing symbol error itself.
+        }
     }
 
     pub fn enqueueOnResolvePluginIfNeeded(
@@ -2758,6 +2926,11 @@ pub const BundleV2 = struct {
                 import_record.source_index.isValid())
             {
                 continue;
+            }
+
+            if (import_record.tag == .barrel) {
+                this.barrel_importers.put(bun.default_allocator, source.index.get(), {}) catch bun.outOfMemory();
+                this.barrel_files.put(bun.default_allocator, import_record.source_index.get(), {}) catch bun.outOfMemory();
             }
 
             if (this.framework) |fw| if (fw.server_components != null) {
@@ -2988,7 +3161,8 @@ pub const BundleV2 = struct {
                     break :brk;
                 }
 
-                import_record.source_index = Index.invalid;
+                // bring this back:
+                // import_record.source_index = Index.invalid;
 
                 if (dev_server.isFileCached(path.text, bake_graph)) |entry| {
                     const rel = bun.path.relativePlatform(this.transpiler.fs.top_level_dir, path.text, .loose, false);
@@ -3285,7 +3459,10 @@ pub const BundleV2 = struct {
                 var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
 
                 const input_file_loaders = this.graph.input_files.items(.loader);
-                const save_import_record_source_index = this.transpiler.options.dev_server == null or
+                // const save_import_record_source_index = this.transpiler.options.dev_server == null or
+                //     result.loader == .html or
+                //     result.loader == .css;
+                const save_import_record_source_index =
                     result.loader == .html or
                     result.loader == .css;
 
@@ -4768,6 +4945,7 @@ pub const ParseTask = struct {
         opts.features.inlining = transpiler.options.minify_syntax;
         opts.output_format = output_format;
         opts.features.minify_syntax = transpiler.options.minify_syntax;
+        opts.features.barrel_files = if (transpiler.options.dev_server != null) runtime.Runtime.Features.defaultBarrelFiles() catch bun.outOfMemory() else .{};
         opts.features.minify_identifiers = transpiler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
@@ -16618,6 +16796,7 @@ pub const AstBuilder = struct {
     comptime options: js_parser.Parser.Options = .{
         .jsx = .{},
         .bundle = true,
+        .features = .default(),
     },
     comptime import_items_for_namespace: struct {
         pub fn get(_: @This(), _: Ref) ?js_parser.ImportItemForNamespaceMap {

@@ -64,7 +64,7 @@ const TranspilerOptions = struct {
     tsconfig_buf: []const u8 = "",
     macros_buf: []const u8 = "",
     log: logger.Log,
-    runtime: Runtime.Features = Runtime.Features{ .top_level_await = true },
+    runtime: Runtime.Features,
     tree_shaking: bool = false,
     trim_unused_imports: ?bool = null,
     inlining: bool = false,
@@ -310,8 +310,11 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
 
 fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std.mem.Allocator, args: *JSC.Node.ArgumentsSlice) (bun.JSError || bun.OOM)!TranspilerOptions {
     const globalThis = globalObject;
-    const object = args.next() orelse return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
-    if (object.isUndefinedOrNull()) return TranspilerOptions{ .log = logger.Log.init(temp_allocator) };
+    const object = args.next() orelse return TranspilerOptions{
+        .log = logger.Log.init(temp_allocator),
+        .runtime = Runtime.Features.default(),
+    };
+    if (object.isUndefinedOrNull()) return TranspilerOptions{ .log = logger.Log.init(temp_allocator), .runtime = Runtime.Features.default() };
 
     args.eat();
     var allocator = args.arena.allocator();
@@ -320,6 +323,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         .default_loader = .jsx,
         .transform = default_transform_options,
         .log = logger.Log.init(allocator),
+        .runtime = Runtime.Features.default(),
     };
 
     if (!object.isObject()) {
@@ -711,7 +715,7 @@ pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     const transpiler_options: TranspilerOptions = if (arguments.len > 0)
         try transformOptionsFromJSC(globalThis, temp.allocator(), &args)
     else
-        TranspilerOptions{ .log = logger.Log.init(getAllocator(globalThis)) };
+        TranspilerOptions{ .log = logger.Log.init(getAllocator(globalThis)), .runtime = Runtime.Features.default() };
 
     if (globalThis.hasException()) {
         return error.JSError;

@@ -6902,6 +6902,8 @@ declare module "bun" {
     resourceUsage: ResourceUsage;
 
     signalCode?: string;
+    exitedDueToTimeout?: true;
+    pid: number;
   }
 
   /**

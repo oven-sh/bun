@@ -35,6 +35,16 @@ weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
 ref_count: u32 = 1,
 abort_signal: ?*JSC.AbortSignal = null,
 
+event_loop_timer_refd: bool = false,
+event_loop_timer: JSC.BunTimer.EventLoopTimer.Node = .{ .data = .{
+    .tag = .SubprocessTimeout,
+    .next = .{
+        .sec = 0,
+        .nsec = 0,
+    },
+} },
+killSignal: SignalCode,
+
 pub const Flags = packed struct {
     is_sync: bool = false,
     killed: bool = false,
@@ -198,7 +208,7 @@ pub const StdioKind = enum {
 pub fn onAbortSignal(subprocess_ctx: ?*anyopaque, _: JSC.JSValue) callconv(.C) void {
     var this: *Subprocess = @ptrCast(@alignCast(subprocess_ctx.?));
     this.clearAbortSignal();
-    _ = this.tryKill(SignalCode.default);
+    _ = this.tryKill(this.killSignal);
 }
 
 pub fn resourceUsage(
@@ -577,7 +587,7 @@ pub fn asyncDispose(
     this.stdout.unref();
     this.stderr.unref();
 
-    switch (this.tryKill(SignalCode.default)) {
+    switch (this.tryKill(this.killSignal)) {
         .result => {},
         .err => |err| {
             // Signal 9 should always be fine, but just in case that somehow fails.
@@ -586,6 +596,63 @@ pub fn asyncDispose(
     }
 
     return this.getExited(global);
+}
+
+fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
+    if (this.event_loop_timer_refd == refd) return;
+    this.event_loop_timer_refd = refd;
+    if (refd) {
+        this.globalThis.bunVM().timer.incrementTimerRef(1);
+    } else {
+        this.globalThis.bunVM().timer.incrementTimerRef(-1);
+    }
+}
+
+pub fn timeoutCallback(this: *Subprocess) JSC.BunTimer.EventLoopTimer.Arm {
+    this.setEventLoopTimerRefd(false);
+    if (this.event_loop_timer.data.state == .CANCELLED) return .disarm;
+    if (this.hasExited()) {
+        this.event_loop_timer.data.state = .CANCELLED;
+        return .disarm;
+    }
+    this.event_loop_timer.data.state = .FIRED;
+    _ = this.tryKill(this.killSignal);
+    return .disarm;
+}
+
+fn parseSignal(arg: JSC.JSValue, globalThis: *JSC.JSGlobalObject) !SignalCode {
+    if (arg.getNumber()) |sig64| {
+        // Node does this:
+        if (std.math.isNan(sig64)) {
+            return SignalCode.default;
+        }
+
+        // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
+        if (std.math.isInf(sig64) or @trunc(sig64) != sig64) {
+            return globalThis.throwInvalidArguments("Unknown signal", .{});
+        }
+
+        if (sig64 < 0) {
+            return globalThis.throwInvalidArguments("Invalid signal: must be >= 0", .{});
+        }
+
+        if (sig64 > 31) {
+            return globalThis.throwInvalidArguments("Invalid signal: must be < 32", .{});
+        }
+
+        const code: SignalCode = @enumFromInt(@as(u8, @intFromFloat(sig64)));
+        return code;
+    } else if (arg.isString()) {
+        if (arg.asString().length() == 0) {
+            return SignalCode.default;
+        }
+        const signal_code = try arg.toEnum(globalThis, "signal", SignalCode);
+        return signal_code;
+    } else if (!arg.isEmptyOrUndefinedOrNull()) {
+        return globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
+    }
+
+    return SignalCode.default;
 }
 
 pub fn kill(
@@ -598,39 +665,7 @@ pub fn kill(
     var arguments = callframe.arguments_old(1);
     // If signal is 0, then no actual signal is sent, but error checking
     // is still performed.
-    const sig: i32 = brk: {
-        if (arguments.ptr[0].getNumber()) |sig64| {
-            // Node does this:
-            if (std.math.isNan(sig64)) {
-                break :brk SignalCode.default;
-            }
-
-            // This matches node behavior, minus some details with the error messages: https://gist.github.com/Jarred-Sumner/23ba38682bf9d84dff2f67eb35c42ab6
-            if (std.math.isInf(sig64) or @trunc(sig64) != sig64) {
-                return globalThis.throwInvalidArguments("Unknown signal", .{});
-            }
-
-            if (sig64 < 0) {
-                return globalThis.throwInvalidArguments("Invalid signal: must be >= 0", .{});
-            }
-
-            if (sig64 > 31) {
-                return globalThis.throwInvalidArguments("Invalid signal: must be < 32", .{});
-            }
-
-            break :brk @intFromFloat(sig64);
-        } else if (arguments.ptr[0].isString()) {
-            if (arguments.ptr[0].asString().length() == 0) {
-                break :brk SignalCode.default;
-            }
-            const signal_code = try arguments.ptr[0].toEnum(globalThis, "signal", SignalCode);
-            break :brk @intFromEnum(signal_code);
-        } else if (!arguments.ptr[0].isEmptyOrUndefinedOrNull()) {
-            return globalThis.throwInvalidArguments("Invalid signal: must be a string or an integer", .{});
-        }
-
-        break :brk SignalCode.default;
-    };
+    const sig: SignalCode = try parseSignal(arguments.ptr[0], globalThis);
 
     if (globalThis.hasException()) return .zero;
 
@@ -649,11 +684,11 @@ pub fn hasKilled(this: *const Subprocess) bool {
     return this.process.hasKilled();
 }
 
-pub fn tryKill(this: *Subprocess, sig: i32) JSC.Maybe(void) {
+pub fn tryKill(this: *Subprocess, sig: SignalCode) JSC.Maybe(void) {
     if (this.hasExited()) {
         return .{ .result = {} };
     }
-    return this.process.kill(@intCast(sig));
+    return this.process.kill(@intFromEnum(sig));
 }
 
 fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {
@@ -697,7 +732,7 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
         if (this.hasExited()) {
             return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw();
         } else {
-            return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() can only be used if an IPC channel is open.", .{});
+            return global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
         }
     });
 
@@ -1452,6 +1487,11 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     defer this.deref();
     defer this.disconnectIPC(true);
 
+    if (this.event_loop_timer.data.state == .ACTIVE) {
+        jsc_vm.timer.remove(&this.event_loop_timer);
+    }
+    this.setEventLoopTimerRefd(false);
+
     jsc_vm.onSubprocessExit(process);
 
     var stdin: ?*JSC.WebCore.FileSink = this.weak_file_sink_stdin_ptr;
@@ -1625,6 +1665,11 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
 
     this.process.detach();
     this.process.deref();
+
+    if (this.event_loop_timer.data.state == .ACTIVE) {
+        this.globalThis.bunVM().timer.remove(&this.event_loop_timer);
+    }
+    this.setEventLoopTimerRefd(false);
 
     this.flags.finalized = true;
     this.deref();
@@ -1814,6 +1859,8 @@ pub fn spawnMaybeSync(
     var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
     var argv0: ?[*:0]const u8 = null;
     var ipc_channel: i32 = -1;
+    var timeout: ?i32 = null;
+    var killSignal: SignalCode = SignalCode.default;
 
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
@@ -2006,6 +2053,16 @@ pub fn spawnMaybeSync(
                     }
                 }
             }
+
+            if (try args.get(globalThis, "timeout")) |val| {
+                if (val.isNumber()) {
+                    timeout = @max(val.coerce(i32, globalThis), 1);
+                }
+            }
+
+            if (try args.get(globalThis, "killSignal")) |val| {
+                killSignal = try parseSignal(val, globalThis);
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
@@ -2163,6 +2220,7 @@ pub fn spawnMaybeSync(
         .flags = .{
             .is_sync = is_sync,
         },
+        .killSignal = undefined,
     });
 
     const posix_ipc_fd = if (Environment.isPosix and !is_sync and maybe_ipc_mode != null)
@@ -2218,6 +2276,7 @@ pub fn spawnMaybeSync(
         .flags = .{
             .is_sync = is_sync,
         },
+        .killSignal = killSignal,
     };
 
     subprocess.process.setExitHandler(subprocess);
@@ -2317,6 +2376,12 @@ pub fn spawnMaybeSync(
 
     should_close_memfd = false;
 
+    if (timeout) |timeout_val| {
+        subprocess.event_loop_timer.data.next = bun.timespec.msFromNow(timeout_val);
+        globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
+        subprocess.setEventLoopTimerRefd(true);
+    }
+
     if (comptime !is_sync) {
         // Once everything is set up, we can add the abort listener
         // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
@@ -2386,6 +2451,8 @@ pub fn spawnMaybeSync(
     const stdout = try subprocess.stdout.toBufferedValue(globalThis);
     const stderr = try subprocess.stderr.toBufferedValue(globalThis);
     const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
+    const exitedDueToTimeout = subprocess.event_loop_timer.data.state == .FIRED;
+    const resultPid = JSC.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
 
     if (globalThis.hasException()) {
@@ -2402,6 +2469,8 @@ pub fn spawnMaybeSync(
     sync_value.put(globalThis, JSC.ZigString.static("stderr"), stderr);
     sync_value.put(globalThis, JSC.ZigString.static("success"), JSValue.jsBoolean(exitCode.isInt32() and exitCode.asInt32() == 0));
     sync_value.put(globalThis, JSC.ZigString.static("resourceUsage"), resource_usage);
+    if (exitedDueToTimeout) sync_value.put(globalThis, JSC.ZigString.static("exitedDueToTimeout"), JSC.JSValue.true);
+    sync_value.put(globalThis, JSC.ZigString.static("pid"), resultPid);
 
     return sync_value;
 }

@@ -4335,11 +4335,25 @@ pub const JSValue = enum(i64) {
         return this.jsType() == .JSDate;
     }
 
+    /// Protects a JSValue from garbage collection.
+    ///
+    /// This is useful when you want to store a JSValue in a global or on the
+    /// heap, where the garbage collector will not be able to discover your
+    /// reference to it.
+    ///
+    /// A value may be protected multiple times and must be unprotected an
+    /// equal number of times before becoming eligible for garbage collection.
     pub fn protect(this: JSValue) void {
         if (!this.isCell()) return;
         JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 
+    /// Unprotects a JSValue from garbage collection.
+    ///
+    /// A value may be protected multiple times and must be unprotected an
+    /// equal number of times before becoming eligible for garbage collection.
+    ///
+    /// This is the inverse of `protect`.
     pub fn unprotect(this: JSValue) void {
         if (!this.isCell()) return;
         JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());

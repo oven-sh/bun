@@ -1071,6 +1071,10 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
   const file_2 = `${keyPrefix}file_2.txt`;
   const file_3 = `${keyPrefix}file_3.txt`;
 
+  const file_4 = `${keyPrefix}file_a>b.txt`;
+  const file_5 = `${keyPrefix}file_a>bb.txt`;
+  const file_6 = `${keyPrefix}file_a>bbb.txt`;
+
   it("should list objects with prefix, maxKeys and nextContinuationToken", async () => {
     await bucket.write(file_1, "content 1");
     await bucket.write(file_2, "content 2");
@@ -1107,5 +1111,25 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     expect(storedFile.eTag).toBeString();
     expect(storedFile.lastModified).toBeString();
     expect(storedFile.size).toBe(9);
+  });
+
+  it("should list objects with startAfter, encodingType and fetchOwner", async () => {
+    await bucket.write(file_4, "content 4");
+    await bucket.write(file_5, "content 5");
+    await bucket.write(file_6, "content 6");
+
+    const res = await bucket.listObjects({ startAfter: file_4, fetchOwner: true, encodingType: "url" });
+
+    expect(res.encodingType).toBe("url");
+    expect(res.keyCount).toBe(2);
+    expect(res.startAfter).toBe(`${keyPrefix}${encodeURIComponent("file_a>b.txt")}`);
+    expect(res.contents).toBeArray();
+    expect(res.contents).toHaveLength(2);
+    expect(res.contents![0].key).toBe(`${keyPrefix}${encodeURIComponent("file_a>bb.txt")}`);
+    expect(res.contents![1].key).toBe(`${keyPrefix}${encodeURIComponent("file_a>bbb.txt")}`);
+
+    const storedFile = res.contents![1];
+    expect(storedFile.owner).toBeObject();
+    expect(storedFile.owner!.id).toBeString();
   });
 });

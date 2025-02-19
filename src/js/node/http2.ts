@@ -2132,6 +2132,14 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[":status"] === undefined) {
       headers[":status"] = 200;
     }
+    const endStream = this.headRequest || this.endAfterHeaders;
+    if (endStream) {
+      if (!options || !$isObject(options)) {
+        options = { endStream: true };
+      } else {
+        options = { ...options, endStream: true };
+      }
+    }
 
     if (typeof options === "undefined") {
       session[bunHTTP2Native]?.request(this.id, undefined, headers, sensitiveNames);
@@ -2146,6 +2154,11 @@ class ServerHttp2Stream extends Http2Stream {
     }
     this.headersSent = true;
     this[bunHTTP2Headers] = headers;
+
+    if (endStream) {
+      // end the stream
+      this.end();
+    }
 
     return;
   }

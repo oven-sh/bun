@@ -2013,7 +2013,7 @@ declare module "bun" {
      *
      * You can  use the request parameters as selection criteria to return a subset of the objects in a bucket.
      */
-    listObjects(
+    list(
       input?: S3ListObjectsOptions | null,
       options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
     ): Promise<S3ListObjectsResponse>;

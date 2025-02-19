@@ -20,7 +20,7 @@ export default [
         fn: "staticUnlink",
         length: 2,
       },
-      listObjects: {
+      list: {
         fn: "staticListObjects",
         length: 2,
       },
@@ -60,7 +60,7 @@ export default [
         fn: "unlink",
         length: 2,
       },
-      listObjects: {
+      list: {
         fn: "listObjects",
         length: 2,
       },

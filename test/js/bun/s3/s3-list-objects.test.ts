@@ -38,7 +38,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       continuationToken: "continue=ation-_m^token",
     });
 
@@ -62,7 +62,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       delimiter: "files/",
     });
 
@@ -86,7 +86,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       encodingType: "url",
     });
 
@@ -110,7 +110,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       fetchOwner: true,
     });
 
@@ -134,7 +134,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       fetchOwner: false,
     });
 
@@ -158,7 +158,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       maxKeys: 2034,
     });
 
@@ -182,7 +182,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       prefix: "some/sub/&folder",
     });
 
@@ -206,7 +206,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       startAfter: "àwsôme/fìles",
     });
 
@@ -230,7 +230,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects({
+    await client.list({
       prefix: "some/sub/&folder",
       startAfter: "àwsôme/fìles",
       maxKeys: 2034,
@@ -265,7 +265,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       name: "my_bucket",
@@ -295,7 +295,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    await client.listObjects(undefined, {
+    await client.list(undefined, {
       ...options,
       bucket: "another-bucket",
       sessionToken: "good token",
@@ -324,7 +324,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       name: "my_bucket",
@@ -351,7 +351,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       name: "my_bucket",
@@ -377,7 +377,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       prefix: "some/prefix",
@@ -404,7 +404,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       keyCount: 18,
@@ -431,7 +431,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       maxKeys: 2323,
@@ -458,7 +458,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       delimiter: "good@&/de$</limiter",
@@ -485,7 +485,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       continuationToken: "current pagination token",
@@ -512,7 +512,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       encodingType: "url",
@@ -539,7 +539,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       nextContinuationToken: "some next token",
@@ -566,7 +566,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       isTruncated: false,
@@ -593,7 +593,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       isTruncated: true,
@@ -624,7 +624,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       startAfter: "some/file/name.pdf",
@@ -654,7 +654,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       commonPrefixes: [
@@ -731,7 +731,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       contents: [
@@ -812,7 +812,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects(
+    const res = await client.list(
       {
         continuationToken: "token",
         prefix: "files/",
@@ -872,7 +872,7 @@ describe("S3 - List Objects", () => {
       );
     });
 
-    const res = await S3Client.listObjects({ prefix: "some/prefix" }, { ...options, endpoint: server.url.href });
+    const res = await S3Client.list({ prefix: "some/prefix" }, { ...options, endpoint: server.url.href });
     expect(reqUrl!).toEndWith("/my_bucket/?list-type=2&prefix=some%2Fprefix");
     expect(res).toEqual({
       nextContinuationToken: "some next token",
@@ -920,7 +920,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       // @ts-ignore
@@ -947,7 +947,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
     expect(res).toEqual({});
   });
 
@@ -971,7 +971,7 @@ describe("S3 - List Objects", () => {
     });
 
     try {
-      await client.listObjects();
+      await client.list();
       expect.unreachable();
     } catch (error: any) {
       expect(error.code).toBe("WhoKnows");
@@ -995,7 +995,7 @@ describe("S3 - List Objects", () => {
 
     try {
       // @ts-expect-error
-      await client.listObjects(11143n);
+      await client.list(11143n);
       expect.unreachable();
     } catch (error: any) {
       expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
@@ -1021,7 +1021,7 @@ describe("S3 - List Objects", () => {
       endpoint: server.url.href,
     });
 
-    const res = await client.listObjects();
+    const res = await client.list();
 
     expect(res).toEqual({
       name: "awsome-very-dummy-bucket",
@@ -1089,7 +1089,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     await bucket.write(file_2, "content 2");
     await bucket.write(file_3, "content 3");
 
-    const first_response = await bucket.listObjects({ prefix: keyPrefix, maxKeys: 1 });
+    const first_response = await bucket.list({ prefix: keyPrefix, maxKeys: 1 });
 
     expect(first_response.name).toBeString();
     expect(first_response.prefix).toBe(keyPrefix);
@@ -1100,7 +1100,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     expect(first_response.contents).toBeArray();
     expect(first_response.contents![0].key).toBe(file_1);
 
-    const final_response = await bucket.listObjects({
+    const final_response = await bucket.list({
       prefix: keyPrefix,
       maxKeys: 30,
       continuationToken: first_response.nextContinuationToken,
@@ -1127,7 +1127,7 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     await bucket.write(file_5, "content 5");
     await bucket.write(file_6, "content 6");
 
-    const res = await bucket.listObjects({ startAfter: file_4, fetchOwner: true, encodingType: "url" });
+    const res = await bucket.list({ startAfter: file_4, fetchOwner: true, encodingType: "url" });
 
     expect(res.encodingType).toBe("url");
     expect(res.keyCount).toBe(2);

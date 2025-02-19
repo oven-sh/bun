@@ -36,6 +36,11 @@ r.method;
 r.body;
 r.headers.get("content-type");
 
+fetch("", {
+  proxy: "",
+  s3: {},
+});
+
 Bun.serve({
   fetch(req) {
     const headers = req.headers.toJSON();

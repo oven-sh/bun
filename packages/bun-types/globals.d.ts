@@ -87,7 +87,6 @@ type _Body = {
   readonly text: () => Promise<string>;
 };
 
-import { S3Options } from "bun";
 import type { TextDecoder as NodeTextDecoder, TextEncoder as NodeTextEncoder } from "util";
 import type { MessagePort } from "worker_threads";
 import type { WebSocket as _WebSocket } from "ws";
@@ -691,9 +690,11 @@ declare global {
     readonly lastModified: number;
     readonly name: string;
   }
+
   var File: typeof File;
 
-  interface FetchRequestInit extends RequestInit {
+  type _RequestInit = import("undici-types").RequestInit;
+  interface RequestInit extends _RequestInit {
     /**
      * Log the raw HTTP request & response to stdout. This API may be
      * removed in a future version of Bun without notice.
@@ -718,7 +719,7 @@ declare global {
     /**
      * Override the default S3 options
      */
-    s3?: S3Options;
+    s3?: Bun.S3Options;
   }
 
   /**
@@ -1833,20 +1834,90 @@ declare global {
 
   var Blob: typeof Blob;
 
-  type _RequestInit = typeof import("undici-types").RequestInit;
-  interface RequestInit extends _RequestInit {}
+  export interface Response extends import("undici-types").Response {}
+  export declare class Response {
+    constructor(body?: Bun.BodyInit | null | undefined, init?: Bun.ResponseInit | undefined);
 
-  interface Response extends import("./fetch").Response {}
-  var Response: typeof import("./fetch").Response;
+    /**
+     * Create a new {@link Response} with a JSON body
+     *
+     * @param body - The body of the response
+     * @param options - options to pass to the response
+     *
+     * @example
+     *
+     * ```ts
+     * const response = Response.json({hi: "there"});
+     * console.assert(
+     *   await response.text(),
+     *   `{"hi":"there"}`
+     * );
+     * ```
+     * -------
+     *
+     * This is syntactic sugar for:
+     * ```js
+     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
+     * ```
+     * @link https://github.com/whatwg/fetch/issues/1389
+     */
+    static json(body?: any, options?: Bun.ResponseInit | number): Response;
+    /**
+     * Create a new {@link Response} that redirects to url
+     *
+     * @param url - the URL to redirect to
+     * @param status - the HTTP status code to use for the redirect
+     */
+    // tslint:disable-next-line:unified-signatures
+    static redirect(url: string, status?: number): Response;
+
+    /**
+     * Create a new {@link Response} that redirects to url
+     *
+     * @param url - the URL to redirect to
+     * @param options - options to pass to the response
+     */
+    // tslint:disable-next-line:unified-signatures
+    static redirect(url: string, options?: Bun.ResponseInit): Response;
+
+    /**
+     * Create a new {@link Response} that has a network error
+     */
+    static error(): Response;
+  }
 
   interface Request {
-    headers: Headers;
+    readonly cache: RequestCache;
+    readonly credentials: RequestCredentials;
+    readonly destination: RequestDestination;
+    readonly headers: Headers;
+    readonly integrity: string;
+    readonly method: string;
+    readonly mode: RequestMode;
+    readonly redirect: RequestRedirect;
+    readonly referrerPolicy: string;
+    readonly url: string;
+
+    readonly keepalive: boolean;
+    readonly signal: AbortSignal;
+    readonly duplex: RequestDuplex;
+
+    readonly body: ReadableStream | null;
+    readonly bodyUsed: boolean;
+
+    readonly arrayBuffer: () => Promise<ArrayBuffer>;
+    readonly blob: () => Promise<Blob>;
+    readonly formData: () => Promise<FormData>;
+    readonly json: () => Promise<unknown>;
+    readonly text: () => Promise<string>;
+
+    readonly clone: () => Request;
   }
   var Request: {
     prototype: Request;
-    new (requestInfo: string, requestInit?: FetchRequestInit): Request;
-    new (requestInfo: FetchRequestInit & { url: string }): Request;
-    new (requestInfo: Request, requestInit?: FetchRequestInit): Request;
+    new (requestInfo: string, requestInit?: RequestInit): Request;
+    new (requestInfo: RequestInit & { url: string }): Request;
+    new (requestInfo: Request, requestInit?: RequestInit): Request;
   };
 
   type _UndiciHeaders = import("undici-types").Headers;

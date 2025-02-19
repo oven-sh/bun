@@ -53,6 +53,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await $`
     cd ${FIXTURE_DIR}
+    # bun uninstall @types/bun
+    # rm tsconfig.json
   `;
 });
 

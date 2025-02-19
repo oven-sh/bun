@@ -1,6 +1,7 @@
 {
   "name": "fixture",
   "module": "index.ts",
+  "type": "module",
   "dependencies": {
     "@types/node": "^22.13.4"
   },
@@ -9,6 +10,5 @@
   },
   "scripts": {
     "check": "tsc --noEmit"
-  },
-  "type": "module"
+  }
 }

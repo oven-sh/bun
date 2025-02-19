@@ -1,9 +1,8 @@
 {
   "compilerOptions": {
-    "types": ["bun-types"],
-
-    // Enable latest features
-    "lib": ["ESNext", "DOM"],
+    // Environment setup & latest features
+    "lib": ["esnext"],
+    "types": ["bun"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",

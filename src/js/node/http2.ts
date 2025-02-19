@@ -86,8 +86,14 @@ function utcDate() {
   if (!utcCache) cache();
   return utcCache;
 }
-function emitErrorNT(self: any, error: any) {
-  if (self.listenerCount("error") > 0) {
+function emitErrorNT(self: any, error: any, destroy: boolean) {
+  if (destroy) {
+    if (self.listenerCount("error") > 0) {
+      self.destroy(error);
+    } else {
+      self.destroy();
+    }
+  } else if (self.listenerCount("error") > 0) {
     self.emit("error", error);
   }
 }
@@ -3305,10 +3311,7 @@ class ClientHttp2Session extends Http2Session {
       return req;
     } catch (e: any) {
       this.#connections--;
-      if (this.#connections === 0 && this.#closed) {
-        this.destroy();
-      }
-      process.nextTick(emitErrorNT, this, e);
+      process.nextTick(emitErrorNT, this, e, this.#connections === 0 && this.#closed);
       throw e;
     }
   }

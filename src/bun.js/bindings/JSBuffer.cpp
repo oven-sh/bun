@@ -115,6 +115,10 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE);
+static JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE);
 #pragma clang diagnostic pop
 
 extern "C" EncodedJSValue WebCore_BufferEncodingType_toJS(JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding)
@@ -2333,6 +2337,154 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_hexSlice, (JSGlobalObject * l
     return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::hex>(lexicalGlobalObject, callFrame);
 }
 
+template<typename I> void write_int64_le(uint8_t* buffer, I value)
+{
+    static_assert(std::endian::native == std::endian::little);
+    auto val = reinterpret_cast<uint8_t*>(&value);
+    buffer[0] = val[0];
+    buffer[1] = val[1];
+    buffer[2] = val[2];
+    buffer[3] = val[3];
+    buffer[4] = val[4];
+    buffer[5] = val[5];
+    buffer[6] = val[6];
+    buffer[7] = val[7];
+}
+
+template<typename I> void write_int64_be(uint8_t* buffer, I value)
+{
+    static_assert(std::endian::native == std::endian::little);
+    auto val = reinterpret_cast<uint8_t*>(&value);
+    buffer[0] = val[7];
+    buffer[1] = val[6];
+    buffer[2] = val[5];
+    buffer[3] = val[4];
+    buffer[4] = val[3];
+    buffer[5] = val[2];
+    buffer[6] = val[1];
+    buffer[7] = val[0];
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    if (UNLIKELY(!castedThis)) return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+    auto byteLength = castedThis->byteLength();
+
+    auto valueVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+
+    if (UNLIKELY(!valueVal.isBigInt())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
+    auto* bigint = valueVal.asHeapBigInt();
+    if (UNLIKELY(bigint->sign() > 1)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    auto limb = valueVal.toBigUInt64(lexicalGlobalObject);
+    if (!bigint->sign() && limb > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    int64_t value = static_cast<int64_t>(limb);
+
+    if (UNLIKELY(!offsetVal.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+    auto offsetD = offsetVal.asNumber();
+    if (UNLIKELY(std::fmod(offsetD, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+    size_t offset = offsetD;
+    if (UNLIKELY(offset < 0)) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+
+    write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    return JSValue::encode(jsNumber(offset));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    if (UNLIKELY(!castedThis)) return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+    auto byteLength = castedThis->byteLength();
+
+    auto valueVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+
+    if (UNLIKELY(!valueVal.isBigInt())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
+    auto* bigint = valueVal.asHeapBigInt();
+    if (UNLIKELY(bigint->sign() > 1)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    auto limb = valueVal.toBigUInt64(lexicalGlobalObject);
+    if (!bigint->sign() && limb > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
+    int64_t value = static_cast<int64_t>(limb);
+
+    if (UNLIKELY(!offsetVal.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+    auto offsetD = offsetVal.asNumber();
+    if (UNLIKELY(std::fmod(offsetD, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+    size_t offset = offsetD;
+    if (UNLIKELY(offset < 0)) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+
+    write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    return JSValue::encode(jsNumber(offset));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    if (UNLIKELY(!castedThis)) return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+    auto byteLength = castedThis->byteLength();
+
+    auto valueVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+
+    if (UNLIKELY(!valueVal.isBigInt())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
+    auto* bigint = valueVal.asHeapBigInt();
+    if (UNLIKELY(bigint->sign())) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
+    if (UNLIKELY(bigint->length() > 1)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
+    uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
+
+    if (UNLIKELY(!offsetVal.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+    auto offsetD = offsetVal.asNumber();
+    if (UNLIKELY(std::fmod(offsetD, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+    size_t offset = offsetD;
+    if (UNLIKELY(offset < 0)) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+
+    write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    return JSValue::encode(jsNumber(offset));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    if (UNLIKELY(!castedThis)) return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
+    auto byteLength = castedThis->byteLength();
+
+    auto valueVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+
+    if (UNLIKELY(!valueVal.isBigInt())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "value"_s, "bigint"_s, valueVal);
+    auto* bigint = valueVal.asHeapBigInt();
+    if (UNLIKELY(bigint->sign())) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
+    if (UNLIKELY(bigint->length() > 1)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= 0n and < 2n ** 64n"_s, valueVal);
+    uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
+
+    if (UNLIKELY(!offsetVal.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetVal);
+    auto offsetD = offsetVal.asNumber();
+    if (UNLIKELY(std::fmod(offsetD, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetVal);
+    size_t offset = offsetD;
+    if (UNLIKELY(offset < 0)) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, "offset"_s);
+    if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
+
+    write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
+    return JSValue::encode(jsNumber(offset));
+}
+
 /* */
 
 /* Hash table for prototype */
@@ -2403,10 +2555,10 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "utf8Slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_utf8Slice, 2 } },
           { "utf8Write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_utf8Write, 3 } },
           { "write"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_write, 4 } },
-          { "writeBigInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigInt64BECodeGenerator, 1 } },
-          { "writeBigInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigInt64LECodeGenerator, 1 } },
-          { "writeBigUInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigUInt64BECodeGenerator, 1 } },
-          { "writeBigUInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteBigUInt64LECodeGenerator, 1 } },
+          { "writeBigInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_writeBigInt64BE, 3 } },
+          { "writeBigInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_writeBigInt64LE, 3 } },
+          { "writeBigUInt64BE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_writeBigUInt64BE, 3 } },
+          { "writeBigUInt64LE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_writeBigUInt64LE, 3 } },
           { "writeDouble"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteDoubleLECodeGenerator, 1 } },
           { "writeDoubleBE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteDoubleBECodeGenerator, 1 } },
           { "writeDoubleLE"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeWriteDoubleLECodeGenerator, 1 } },

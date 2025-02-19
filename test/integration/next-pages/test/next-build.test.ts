@@ -47,7 +47,7 @@ async function tempDirToBuildIn() {
 
 async function hashFile(file: string, path: string, hashes: Record<string, string>) {
   try {
-    const contents = (await fs.readFile(path)).toString().replace(/e.ids=\[\d+\,\d+\,\d+\]/, "e.ids=[1,2,3]");
+    const contents = (await fs.readFile(path)).toString().replace(/,e.ids=\[\d+\,\d+\,\d+\],/, "e.ids=[1,2,3]");
 
     hashes[file] = Bun.CryptoHasher.hash("sha256", contents, "hex");
   } catch (error) {

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { randomUUIDv7, S3Client, S3ListObjectsResponse, S3Options } from "bun";
+import { getSecret } from "harness";
 
 const options: S3Options = {
   accessKeyId: "test",
@@ -1051,5 +1052,60 @@ describe("S3 - List Objects", () => {
         },
       ],
     });
+  });
+});
+
+const optionsFromEnv: S3Options = {
+  accessKeyId: getSecret("S3_R2_ACCESS_KEY"),
+  secretAccessKey: getSecret("S3_R2_SECRET_KEY"),
+  endpoint: getSecret("S3_R2_ENDPOINT"),
+  bucket: getSecret("S3_R2_BUCKET"),
+};
+
+describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
+  const bucket = new S3Client(optionsFromEnv);
+
+  const keyPrefix = `${randomUUIDv7()}/`;
+
+  const file_1 = `${keyPrefix}file_1.txt`;
+  const file_2 = `${keyPrefix}file_2.txt`;
+  const file_3 = `${keyPrefix}file_3.txt`;
+
+  it("should list objects with prefix, maxKeys and nextContinuationToken", async () => {
+    await bucket.write(file_1, "content 1");
+    await bucket.write(file_2, "content 2");
+    await bucket.write(file_3, "content 3");
+
+    const first_response = await bucket.listObjects({ prefix: keyPrefix, maxKeys: 1 });
+
+    expect(first_response.name).toBeString();
+    expect(first_response.prefix).toBe(keyPrefix);
+    expect(first_response.nextContinuationToken).toBeString();
+    expect(first_response.isTruncated).toBeTrue();
+    expect(first_response.keyCount).toBe(1);
+    expect(first_response.maxKeys).toBe(1);
+    expect(first_response.contents).toBeArray();
+    expect(first_response.contents![0].key).toBe(file_1);
+
+    const final_response = await bucket.listObjects({
+      prefix: keyPrefix,
+      maxKeys: 30,
+      continuationToken: first_response.nextContinuationToken,
+    });
+
+    expect(final_response.nextContinuationToken).toBeUndefined();
+    expect(final_response.continuationToken).toBeString();
+    expect(final_response.isTruncated).toBeFalse();
+    expect(final_response.keyCount).toBe(2);
+    expect(final_response.maxKeys).toBe(30);
+    expect(final_response.contents).toHaveLength(2);
+    expect(final_response.contents![0].key).toBe(file_2);
+    expect(final_response.contents![1].key).toBe(file_3);
+
+    const storedFile = final_response.contents![1];
+
+    expect(storedFile.eTag).toBeString();
+    expect(storedFile.lastModified).toBeString();
+    expect(storedFile.size).toBe(9);
   });
 });

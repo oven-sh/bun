@@ -2328,7 +2328,9 @@ class ServerHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       if (state == 6 || state == 7) {
         if (stream.readable) {
-          stream.rstCode = 0;
+          if (!stream.rstCode) {
+            stream.rstCode = 0;
+          }
           // If the user hasn't tried to consume the stream (and this is a server
           // session) then just dump the incoming data so that the stream can
           // be destroyed.
@@ -2787,7 +2789,9 @@ class ClientHttp2Session extends Http2Session {
 
       if (state == 6 || state == 7) {
         if (stream.readable) {
-          stream.rstCode = 0;
+          if (!stream.rstCode) {
+            stream.rstCode = 0;
+          }
           // Push a null so the stream can end whenever the client consumes
           // it completely.
           pushToStream(stream, null);
@@ -3291,7 +3295,7 @@ class ClientHttp2Session extends Http2Session {
       }
       req.emit("ready");
       return req;
-    } catch (e) {
+    } catch (e: any) {
       process.nextTick(emitErrorNT, this, e);
       throw e;
     }

@@ -385,7 +385,7 @@ pub fn executeSimpleS3Request(
         .content_disposition = options.content_disposition,
         .acl = options.acl,
         .storage_class = options.storage_class,
-    }, null) catch |sign_err| {
+    }, false, null) catch |sign_err| {
         if (options.range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = getSignErrorCodeAndMessage(sign_err);
         callback.fail(error_code_and_message.code, error_code_and_message.message, callback_context);

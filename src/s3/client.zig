@@ -173,7 +173,7 @@ pub fn listObjects(
         .path = "",
         .method = .GET,
         .search_params = search_params.slice(),
-    }, null) catch |sign_err| {
+    }, true, null) catch |sign_err| {
         search_params.deinitWithAllocator(bun.default_allocator);
 
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
@@ -620,7 +620,7 @@ pub fn downloadStream(
     var result = this.signRequest(.{
         .path = path,
         .method = .GET,
-    }, null) catch |sign_err| {
+    }, false, null) catch |sign_err| {
         if (range) |range_| bun.default_allocator.free(range_);
         const error_code_and_message = Error.getSignErrorCodeAndMessage(sign_err);
         callback(.{ .allocator = bun.default_allocator, .list = .{} }, false, .{

@@ -483,7 +483,7 @@ pub const S3Credentials = struct {
         return buffer[0..written];
     }
 
-    pub fn signRequest(this: *const @This(), signOptions: SignOptions, signQueryOption: ?SignQueryOptions) !SignResult {
+    pub fn signRequest(this: *const @This(), signOptions: SignOptions, comptime allow_empty_path: bool, signQueryOption: ?SignQueryOptions) !SignResult {
         const method = signOptions.method;
         const request_path = signOptions.path;
         const content_hash = signOptions.content_hash;
@@ -552,11 +552,6 @@ pub const S3Credentials = struct {
             }
         }
 
-        var isComplexeRequest = false;
-        if (search_params) |sp| {
-            isComplexeRequest = sp.len != 0;
-        }
-
         if (strings.endsWith(path, "/")) {
             path = path[0..path.len];
         } else if (strings.endsWith(path, "\\")) {
@@ -569,7 +564,7 @@ pub const S3Credentials = struct {
         }
 
         // if we allow path.len == 0 it will list the bucket for now we disallow
-        if (!isComplexeRequest and path.len == 0) return error.InvalidPath;
+        if (!allow_empty_path and path.len == 0) return error.InvalidPath;
 
         var normalized_path_buffer: [1024 + 63 + 2]u8 = undefined; // 1024 max key size and 63 max bucket name
         var path_buffer: [1024]u8 = undefined;

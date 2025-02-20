@@ -374,13 +374,14 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (needsEllipsis) {
             view = str->substring(0, 25);
         }
-        builder.append("type string ('"_s);
+        builder.append("type string ("_s);
         if (UNLIKELY(needsEscape)) {
+            builder.append('"');
             if (view.is8Bit()) {
                 const auto span = view.span<LChar>();
                 for (const auto c : span) {
-                    if (c == '\'') {
-                        builder.append("\\'"_s);
+                    if (c == '"') {
+                        builder.append("\\\""_s);
                     } else {
                         builder.append(c);
                     }
@@ -388,20 +389,26 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
             } else {
                 const auto span = view.span<UChar>();
                 for (const auto c : span) {
-                    if (c == '\'') {
-                        builder.append("\\'"_s);
+                    if (c == '"') {
+                        builder.append("\\\""_s);
                     } else {
                         builder.append(c);
                     }
                 }
             }
-        }
-        builder.append(view);
-        if (needsEllipsis) {
-            builder.append("...)"_s);
         } else {
-            builder.append(")"_s);
+            builder.append('\'');
+            builder.append(view);
         }
+        if (needsEllipsis) {
+            builder.append("..."_s);
+        }
+        if (UNLIKELY(needsEscape)) {
+            builder.append('"');
+        } else {
+            builder.append('\'');
+        }
+        builder.append(')');
         return;
     }
     if (cell->isObject()) {

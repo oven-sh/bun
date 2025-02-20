@@ -4298,7 +4298,7 @@ pub fn CowSlice(T: type) type {
                     .is_owned = false,
                     .len = @intCast(data.len),
                 },
-                .debug = null,
+                .debug = if (cow_str_assertions) null,
             };
         }
 
@@ -4351,7 +4351,7 @@ pub fn CowSlice(T: type) type {
                     .is_owned = is_owned,
                     .len = @intCast(data.len),
                 },
-                .debug = null,
+                .debug = if (cow_str_assertions) null,
             };
         }
     };

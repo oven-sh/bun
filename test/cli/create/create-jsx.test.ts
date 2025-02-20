@@ -54,6 +54,16 @@ async function checkBuildOutput(dir: string) {
   expect(files.some(f => f.endsWith(".css"))).toBe(true);
 }
 
+let dir_with_happy_dom = tempDirWithFiles("happy-dom", {
+  ["package.json"]: JSON.stringify({
+    name: "happy-dom-tester",
+    version: "0.0.0",
+    dependencies: {
+      "@happy-dom/global-registrator": "17.1.1",
+    },
+  }),
+});
+
 async function fetchAndInjectHTML(url: string) {
   var subprocess = Bun.spawn({
     cmd: [
@@ -81,6 +91,7 @@ async function fetchAndInjectHTML(url: string) {
         });
       `,
     ],
+    cwd: dir_with_happy_dom,
     env: bunEnv,
     stdout: "pipe",
     stdin: "ignore",
@@ -201,7 +212,7 @@ for (const development of [true, false]) {
           expect(
             all.text
               .replaceAll(Bun.version_with_sha, "*.*.*")
-              .replaceAll(Bun.version, "*.*.*")
+              .replace(/Bun (v\d+\.\d+\.\d+)/, "Bun *.*.*")
               .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
               .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
               .replace(/\d+\.\d+\s*ms/g, "*.** ms")

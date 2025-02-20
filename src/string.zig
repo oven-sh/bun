@@ -631,9 +631,11 @@ pub const String = extern struct {
         this: *String,
     ) JSC.JSValue;
 
-    pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn toJSByParseJSON(self: *String, globalObject: *JSC.JSGlobalObject) bun.JSError!JSC.JSValue {
         JSC.markBinding(@src());
-        return BunString__toJSON(globalObject, self);
+        const result = BunString__toJSON(globalObject, self);
+        if (result == .zero) return error.JSError;
+        return result;
     }
 
     pub fn encodeInto(self: String, out: []u8, comptime enc: JSC.Node.Encoding) !usize {

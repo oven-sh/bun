@@ -2841,6 +2841,7 @@ fn sendSerializedFailures(
     StaticRoute.sendBlobThenDeinit(resp, &.fromArrayList(buf), .{
         .mime_type = &.html,
         .server = dev.server.?,
+        .status_code = 500,
     });
 }
 

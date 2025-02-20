@@ -13,6 +13,20 @@ pub const S3ListObjectsOptions = struct {
     max_keys: ?i64,
     prefix: ?[]const u8,
     start_after: ?[]const u8,
+
+    _continuation_token: ?JSC.ZigString.Slice,
+    _delimiter: ?JSC.ZigString.Slice,
+    _encoding_type: ?JSC.ZigString.Slice,
+    _prefix: ?JSC.ZigString.Slice,
+    _start_after: ?JSC.ZigString.Slice,
+
+    pub fn deinit(this: *@This()) void {
+        if (this._continuation_token) |slice| slice.deinit();
+        if (this._delimiter) |slice| slice.deinit();
+        if (this._encoding_type) |slice| slice.deinit();
+        if (this._prefix) |slice| slice.deinit();
+        if (this._start_after) |slice| slice.deinit();
+    }
 };
 
 const ObjectOwner = struct {
@@ -492,6 +506,12 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
         .max_keys = null,
         .prefix = null,
         .start_after = null,
+
+        ._continuation_token = null,
+        ._delimiter = null,
+        ._encoding_type = null,
+        ._prefix = null,
+        ._start_after = null,
     };
 
     if (!listOptions.isObject()) {
@@ -500,28 +520,34 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     if (try listOptions.getTruthyComptime(globalThis, "continuationToken")) |val| {
         if (val.isString()) {
-            var zig_val: JSC.ZigString = JSC.ZigString.Empty;
-            val.toZigString(&zig_val, globalThis);
+            const str = bun.String.fromJS(val, globalThis);
 
-            listObjectsOptions.continuation_token = zig_val.slice();
+            if (str.tag != .Empty and str.tag != .Dead) {
+                listObjectsOptions._continuation_token = str.toUTF8(bun.default_allocator);
+                listObjectsOptions.continuation_token = listObjectsOptions._continuation_token.?.slice();
+            }
         }
     }
 
     if (try listOptions.getTruthyComptime(globalThis, "delimiter")) |val| {
         if (val.isString()) {
-            var zig_val: JSC.ZigString = JSC.ZigString.Empty;
-            val.toZigString(&zig_val, globalThis);
+            const str = bun.String.fromJS(val, globalThis);
 
-            listObjectsOptions.delimiter = zig_val.slice();
+            if (str.tag != .Empty and str.tag != .Dead) {
+                listObjectsOptions._delimiter = str.toUTF8(bun.default_allocator);
+                listObjectsOptions.delimiter = listObjectsOptions._delimiter.?.slice();
+            }
         }
     }
 
     if (try listOptions.getTruthyComptime(globalThis, "encodingType")) |val| {
         if (val.isString()) {
-            var zig_val: JSC.ZigString = JSC.ZigString.Empty;
-            val.toZigString(&zig_val, globalThis);
+            const str = bun.String.fromJS(val, globalThis);
 
-            listObjectsOptions.encoding_type = zig_val.slice();
+            if (str.tag != .Empty and str.tag != .Dead) {
+                listObjectsOptions._encoding_type = str.toUTF8(bun.default_allocator);
+                listObjectsOptions.encoding_type = listObjectsOptions._encoding_type.?.slice();
+            }
         }
     }
 
@@ -537,19 +563,23 @@ pub fn getListObjectsOptionsFromJS(globalThis: *JSC.JSGlobalObject, listOptions:
 
     if (try listOptions.getTruthyComptime(globalThis, "prefix")) |val| {
         if (val.isString()) {
-            var zig_val: JSC.ZigString = JSC.ZigString.Empty;
-            val.toZigString(&zig_val, globalThis);
+            const str = bun.String.fromJS(val, globalThis);
 
-            listObjectsOptions.prefix = zig_val.slice();
+            if (str.tag != .Empty and str.tag != .Dead) {
+                listObjectsOptions._prefix = str.toUTF8(bun.default_allocator);
+                listObjectsOptions.prefix = listObjectsOptions._prefix.?.slice();
+            }
         }
     }
 
     if (try listOptions.getTruthyComptime(globalThis, "startAfter")) |val| {
         if (val.isString()) {
-            var zig_val: JSC.ZigString = JSC.ZigString.Empty;
-            val.toZigString(&zig_val, globalThis);
+            const str = bun.String.fromJS(val, globalThis);
 
-            listObjectsOptions.start_after = zig_val.slice();
+            if (str.tag != .Empty and str.tag != .Dead) {
+                listObjectsOptions._start_after = str.toUTF8(bun.default_allocator);
+                listObjectsOptions.start_after = listObjectsOptions._start_after.?.slice();
+            }
         }
     }
 

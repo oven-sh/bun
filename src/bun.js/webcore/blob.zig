@@ -3605,6 +3605,7 @@ pub const Blob = struct {
             const Wrapper = struct {
                 promise: JSC.JSPromise.Strong,
                 store: *Store,
+                resolvedlistOptions: S3.S3ListObjectsOptions,
 
                 pub usingnamespace bun.New(@This());
 
@@ -3626,6 +3627,7 @@ pub const Blob = struct {
                 fn deinit(self: *@This()) void {
                     self.store.deref();
                     self.promise.deinit();
+                    self.resolvedlistOptions.deinit();
                     self.destroy();
                 }
             };
@@ -3642,6 +3644,7 @@ pub const Blob = struct {
             S3.listObjects(&aws_options.credentials, options, @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                 .promise = promise,
                 .store = store, // store is needed in case of not found error
+                .resolvedlistOptions = options,
             }), proxy);
             store.ref();
 

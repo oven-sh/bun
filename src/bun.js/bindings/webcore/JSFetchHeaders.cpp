@@ -603,7 +603,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexic
         outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, header.name()));
     }
 
-    return JSValue::encode(outArray);
+    RELEASE_AND_RETURN(scope, JSValue::encode(outArray));
 }
 
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)

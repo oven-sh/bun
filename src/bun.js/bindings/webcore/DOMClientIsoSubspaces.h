@@ -921,5 +921,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventTarget;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventEmitter;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSign;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
 };
 } // namespace WebCore

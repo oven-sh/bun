@@ -169,3 +169,5 @@ This will add the following line to your `package.json`:
   }
 }
 ```
+
+{% bunCLIUsage command="add" /%}

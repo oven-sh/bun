@@ -18,7 +18,7 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
@@ -212,7 +212,7 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    // Thsi is run at the top of the event loop on the JS thread.
+    // This is run at the top of the event loop on the JS thread.
     pub fn drain(this: *RuntimeTranspilerStore) void {
         var batch = this.queue.popBatch();
         var iter = batch.iterator();
@@ -2091,7 +2091,7 @@ pub const ModuleLoader = struct {
                     return error.NotSupported;
                 }
 
-                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text, jsc_vm.transpiler.options.bunfig_path, jsc_vm.transpiler.options.serve_plugins);
+                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .jsvalue_for_export = html_bundle.toJS(globalObject.?),

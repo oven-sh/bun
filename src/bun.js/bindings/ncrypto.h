@@ -470,7 +470,7 @@ private:
 };
 
 class BIOPointer final {
-    WTF_MAKE_ISO_ALLOCATED(BIOPointer);
+    WTF_MAKE_TZONE_ALLOCATED(BIOPointer);
 
 public:
     static BIOPointer NewMem();
@@ -606,7 +606,7 @@ private:
 };
 
 class CipherCtxPointer final {
-    WTF_MAKE_ISO_ALLOCATED(CipherCtxPointer);
+    WTF_MAKE_TZONE_ALLOCATED(CipherCtxPointer);
 
 public:
     static CipherCtxPointer New();
@@ -725,7 +725,7 @@ private:
 };
 
 class EVPKeyPointer final {
-    WTF_MAKE_ISO_ALLOCATED(EVPKeyPointer);
+    WTF_MAKE_TZONE_ALLOCATED(EVPKeyPointer);
 
 public:
     static EVPKeyPointer New();
@@ -854,7 +854,7 @@ private:
 };
 
 class DHPointer final {
-    WTF_MAKE_ISO_ALLOCATED(DHPointer);
+    WTF_MAKE_TZONE_ALLOCATED(DHPointer);
 
 public:
     enum class FindGroupOption {
@@ -945,7 +945,7 @@ struct StackOfX509Deleter {
 using StackOfX509 = std::unique_ptr<STACK_OF(X509), StackOfX509Deleter>;
 
 class SSLCtxPointer final {
-    WTF_MAKE_ISO_ALLOCATED(SSLCtxPointer);
+    WTF_MAKE_TZONE_ALLOCATED(SSLCtxPointer);
 
 public:
     SSLCtxPointer() = default;
@@ -982,7 +982,7 @@ private:
 };
 
 class SSLPointer final {
-    WTF_MAKE_ISO_ALLOCATED(SSLPointer);
+    WTF_MAKE_TZONE_ALLOCATED(SSLPointer);
 
 public:
     SSLPointer() = default;
@@ -1137,7 +1137,7 @@ private:
 };
 
 class X509Pointer final {
-    WTF_MAKE_ISO_ALLOCATED(X509Pointer);
+    WTF_MAKE_TZONE_ALLOCATED(X509Pointer);
 
 public:
     static Result<X509Pointer, int> Parse(Buffer<const unsigned char> buffer);
@@ -1171,7 +1171,7 @@ private:
 };
 
 class ECDSASigPointer final {
-    WTF_MAKE_ISO_ALLOCATED(ECDSASigPointer);
+    WTF_MAKE_TZONE_ALLOCATED(ECDSASigPointer);
 
 public:
     explicit ECDSASigPointer();
@@ -1205,7 +1205,7 @@ private:
 };
 
 class ECGroupPointer final {
-    WTF_MAKE_ISO_ALLOCATED(ECGroupPointer);
+    WTF_MAKE_TZONE_ALLOCATED(ECGroupPointer);
 
 public:
     explicit ECGroupPointer();
@@ -1229,7 +1229,7 @@ private:
 };
 
 class ECPointPointer final {
-    WTF_MAKE_ISO_ALLOCATED(ECPointPointer);
+    WTF_MAKE_TZONE_ALLOCATED(ECPointPointer);
 
 public:
     ECPointPointer();
@@ -1257,7 +1257,7 @@ private:
 };
 
 class ECKeyPointer final {
-    WTF_MAKE_ISO_ALLOCATED(ECKeyPointer);
+    WTF_MAKE_TZONE_ALLOCATED(ECKeyPointer);
 
 public:
     ECKeyPointer();

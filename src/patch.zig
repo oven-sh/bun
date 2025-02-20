@@ -35,25 +35,6 @@ pub const PatchFilePart = union(enum) {
 pub const PatchFile = struct {
     parts: List(PatchFilePart) = .{},
 
-    const ScratchBuffer = struct {
-        buf: std.ArrayList(u8),
-
-        fn deinit(scratch: *@This()) void {
-            scratch.buf.deinit();
-        }
-
-        fn clear(scratch: *@This()) void {
-            scratch.buf.clearRetainingCapacity();
-        }
-
-        fn dupeZ(scratch: *@This(), path: []const u8) [:0]const u8 {
-            const start = scratch.buf.items.len;
-            scratch.buf.appendSlice(path) catch unreachable;
-            scratch.buf.append(0) catch unreachable;
-            return scratch.buf.items[start .. start + path.len :0];
-        }
-    };
-
     pub fn deinit(this: *PatchFile, allocator: Allocator) void {
         for (this.parts.items) |*part| part.deinit(allocator);
         this.parts.deinit(allocator);
@@ -79,6 +60,7 @@ pub const PatchFile = struct {
         var state: ApplyState = .{};
         var sfb = std.heap.stackFallback(1024, allocator);
         var arena = bun.ArenaAllocator.init(sfb.get());
+        defer arena.deinit();
 
         for (this.parts.items) |*part| {
             defer _ = arena.reset(.retain_capacity);
@@ -87,7 +69,7 @@ pub const PatchFile = struct {
                     const pathz = arena.allocator().dupeZ(u8, part.file_deletion.path) catch bun.outOfMemory();
 
                     if (bun.sys.unlinkat(patch_dir, pathz).asErr()) |e| {
-                        return e.withPath(pathz);
+                        return e.withoutPath();
                     }
                 },
                 .file_rename => {
@@ -97,7 +79,7 @@ pub const PatchFile = struct {
                     if (std.fs.path.dirname(to_path)) |todir| {
                         const abs_patch_dir = switch (state.patchDirAbsPath(patch_dir)) {
                             .result => |p| p,
-                            .err => |e| return e,
+                            .err => |e| return e.withoutPath(),
                         };
                         const path_to_make = bun.path.joinZ(&[_][]const u8{
                             abs_patch_dir,
@@ -108,11 +90,11 @@ pub const PatchFile = struct {
                             .path = .{ .string = bun.PathString.init(path_to_make) },
                             .recursive = true,
                             .mode = 0o755,
-                        }).asErr()) |e| return e;
+                        }).asErr()) |e| return e.withoutPath();
                     }
 
                     if (bun.sys.renameat(patch_dir, from_path, patch_dir, to_path).asErr()) |e| {
-                        return e;
+                        return e.withoutPath();
                     }
                 },
                 .file_creation => {
@@ -126,7 +108,7 @@ pub const PatchFile = struct {
                             .path = .{ .string = bun.PathString.init(filedir) },
                             .recursive = true,
                             .mode = @intCast(@intFromEnum(mode)),
-                        }).asErr()) |e| return e;
+                        }).asErr()) |e| return e.withoutPath();
                     }
 
                     const newfile_fd = switch (bun.sys.openat(
@@ -136,7 +118,7 @@ pub const PatchFile = struct {
                         mode.toBunMode(),
                     )) {
                         .result => |fd| fd,
-                        .err => |e| return e.withPath(filepath.slice()),
+                        .err => |e| return e.withoutPath(),
                     };
                     defer _ = bun.sys.close(newfile_fd);
 
@@ -180,14 +162,14 @@ pub const PatchFile = struct {
                     while (written < file_contents.len) {
                         switch (bun.sys.write(newfile_fd, file_contents[written..])) {
                             .result => |bytes| written += bytes,
-                            .err => |e| return e.withPath(filepath.slice()),
+                            .err => |e| return e.withoutPath(),
                         }
                     }
                 },
                 .file_patch => {
                     // TODO: should we compute the hash of the original file and check it against the on in the patch?
                     if (applyPatch(part.file_patch, &arena, patch_dir, &state).asErr()) |e| {
-                        return e;
+                        return e.withoutPath();
                     }
                 },
                 .file_mode_change => {
@@ -195,22 +177,24 @@ pub const PatchFile = struct {
                     const filepath = arena.allocator().dupeZ(u8, part.file_mode_change.path) catch bun.outOfMemory();
                     if (comptime bun.Environment.isPosix) {
                         if (bun.sys.fchmodat(patch_dir, filepath, newmode.toBunMode(), 0).asErr()) |e| {
-                            return e;
+                            return e.withoutPath();
                         }
                     }
 
                     if (comptime bun.Environment.isWindows) {
                         const absfilepath = switch (state.patchDirAbsPath(patch_dir)) {
                             .result => |p| p,
-                            .err => |e| return e,
+                            .err => |e| return e.withoutPath(),
                         };
-                        const fd = switch (bun.sys.open(bun.path.joinZ(&[_][]const u8{ absfilepath, filepath }, .auto), bun.O.RDWR, 0)) {
-                            .err => |e| return e,
+                        var buf: bun.PathBuffer = undefined;
+                        const joined_absfilepath = bun.path.joinZBuf(&buf, &[_][]const u8{ absfilepath, filepath }, .auto);
+                        const fd = switch (bun.sys.open(joined_absfilepath, bun.O.RDWR, 0)) {
+                            .err => |e| return e.withoutPath(),
                             .result => |f| f,
                         };
                         defer _ = bun.sys.close(fd);
                         if (bun.sys.fchmod(fd, newmode.toBunMode()).asErr()) |e| {
-                            return e;
+                            return e.withoutPath();
                         }
                     }
                 },

@@ -5,3 +5,5 @@ $ cd /path/to/cool-pkg
 $ bun unlink
 bun unlink v1.x (7416672e)
 ```
+
+{% bunCLIUsage command="unlink" /%}

@@ -231,7 +231,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         if (PackageManager.verbose_install) {
             const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
             const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), bun.fmt.fmtDuration(elapsed) });
+            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), std.fmt.fmtDuration(elapsed) });
         }
 
         switch (this.resolution.tag) {
@@ -293,7 +293,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
         if (PackageManager.verbose_install) {
             const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, bun.fmt.fmtDuration(elapsed) });
+            Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, std.fmt.fmtDuration(elapsed) });
             Output.flush();
         }
     }

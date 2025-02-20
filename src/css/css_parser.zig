@@ -87,6 +87,7 @@ pub const Printer = css_printer.Printer;
 pub const PrinterOptions = css_printer.PrinterOptions;
 pub const targets = @import("./targets.zig");
 pub const Targets = css_printer.Targets;
+pub const ImportInfo = css_printer.ImportInfo;
 // pub const Features = css_printer.Features;
 
 const context = @import("./context.zig");
@@ -122,7 +123,7 @@ pub const Feature = compat.Feature;
 pub const fmtPrinterError = errors_.fmtPrinterError;
 
 pub const PrintErr = error{
-    lol,
+    CSSPrintError,
 };
 
 pub fn OOM(e: anyerror) noreturn {
@@ -1939,8 +1940,9 @@ pub fn NestedRuleParser(comptime T: type) type {
                         @"font-palette-values",
                         @"counter-style",
                         viewport,
-                        keyframes,
                         @"-ms-viewport",
+                        keyframes,
+                        @"-webkit-keyframes",
                         @"-moz-keyframes",
                         @"-o-keyframes",
                         @"-ms-keyframes",
@@ -1987,14 +1989,14 @@ pub fn NestedRuleParser(comptime T: type) type {
                             const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms")) VendorPrefix{ .ms = true } else VendorPrefix{ .none = true };
                             break :brk .{ .viewport = prefix };
                         },
-                        .keyframes, .@"-moz-keyframes", .@"-o-keyframes", .@"-ms-keyframes" => {
-                            const prefix: VendorPrefix = if (bun.strings.startsWithCaseInsensitiveAscii(name, "-webkit"))
-                                VendorPrefix{ .webkit = true }
-                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-moz-"))
-                                VendorPrefix{ .moz = true }
-                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-o-"))
-                                VendorPrefix{ .o = true }
-                            else if (bun.strings.startsWithCaseInsensitiveAscii(name, "-ms-")) VendorPrefix{ .ms = true } else VendorPrefix{ .none = true };
+                        inline .keyframes, .@"-webkit-keyframes", .@"-moz-keyframes", .@"-o-keyframes", .@"-ms-keyframes" => |n| {
+                            const prefix: VendorPrefix = switch (n) {
+                                .@"-webkit-keyframes" => VendorPrefix{ .webkit = true },
+                                .@"-moz-keyframes" => VendorPrefix{ .moz = true },
+                                .@"-o-keyframes" => VendorPrefix{ .o = true },
+                                .@"-ms-keyframes" => VendorPrefix{ .ms = true },
+                                else => VendorPrefix{ .none = true },
+                            };
 
                             const keyframes_name = switch (input.tryParse(css_rules.keyframes.KeyframesName.parse, .{})) {
                                 .err => |e| return .{ .err = e },
@@ -2850,11 +2852,11 @@ pub fn StyleSheet(comptime AtRule: type) type {
             return .{ .result = {} };
         }
 
-        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintResult(ToCssResultInternal) {
+        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_info: ?bun.css.ImportInfo) PrintResult(ToCssResultInternal) {
             const W = @TypeOf(writer);
 
-            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
-            const result = this.toCssWithWriterImpl(allocator, W, &printer, options, import_records) catch {
+            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info);
+            const result = this.toCssWithWriterImpl(allocator, W, &printer, options) catch {
                 bun.assert(printer.error_kind != null);
                 return .{
                     .err = printer.error_kind.?,
@@ -2864,8 +2866,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             return .{ .result = result };
         }
 
-        pub fn toCssWithWriterImpl(this: *const @This(), allocator: Allocator, comptime W: type, printer: *Printer(W), options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintErr!ToCssResultInternal {
-            _ = import_records; // autofix
+        pub fn toCssWithWriterImpl(this: *const @This(), allocator: Allocator, comptime W: type, printer: *Printer(W), options: css_printer.PrinterOptions) PrintErr!ToCssResultInternal {
             const project_root = options.project_root;
 
             // #[cfg(feature = "sourcemap")]
@@ -2914,12 +2915,12 @@ pub fn StyleSheet(comptime AtRule: type) type {
             }
         }
 
-        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_records: ?*const bun.BabyList(ImportRecord)) PrintResult(ToCssResult) {
+        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_info: ?bun.css.ImportInfo) PrintResult(ToCssResult) {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
             const writer = dest.writer(allocator);
-            const result = switch (toCssWithWriter(this, allocator, writer, options, import_records)) {
+            const result = switch (toCssWithWriter(this, allocator, writer, options, import_info)) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
@@ -3145,7 +3146,7 @@ pub const StyleAttribute = struct {
         } };
     }
 
-    pub fn toCss(this: *const StyleAttribute, allocator: Allocator, options: PrinterOptions, import_records: *bun.BabyList(ImportRecord)) PrintErr!ToCssResult {
+    pub fn toCss(this: *const StyleAttribute, allocator: Allocator, options: PrinterOptions, import_info: ?ImportInfo) PrintErr!ToCssResult {
         // #[cfg(feature = "sourcemap")]
         // assert!(
         //   options.source_map.is_none(),
@@ -3154,7 +3155,7 @@ pub const StyleAttribute = struct {
 
         var dest = ArrayList(u8){};
         const writer = dest.writer(allocator);
-        var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
+        var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info);
         printer.sources = &this.sources;
 
         try this.declarations.toCss(@TypeOf(writer), &printer);
@@ -6513,14 +6514,14 @@ pub const to_css = struct {
         comptime T: type,
         this: *const T,
         options: PrinterOptions,
-        import_records: ?*const bun.BabyList(ImportRecord),
+        import_info: ?ImportInfo,
     ) PrintErr![]const u8 {
         var s = ArrayList(u8){};
         errdefer s.deinit(allocator);
         const writer = s.writer(allocator);
         const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
-        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_records);
+        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info);
         defer printer.deinit();
         switch (T) {
             CSSString => try CSSStringFns.toCss(this, W, &printer),

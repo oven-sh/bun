@@ -515,7 +515,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       },
       "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven())`,
     });
-
+    console.log(filedir);
     await $`${bunExe()} i`.env(bunEnv).cwd(filedir);
 
     const pkgjsonWithPatch = {

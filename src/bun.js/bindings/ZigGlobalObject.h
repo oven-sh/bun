@@ -193,6 +193,7 @@ public:
     JSC::JSObject* JSBufferConstructor() const { return m_JSBufferClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue JSBufferPrototype() const { return m_JSBufferClassStructure.prototypeInitializedOnMainThread(this); }
     JSC::Structure* JSBufferSubclassStructure() const { return m_JSBufferSubclassStructure.getInitializedOnMainThread(this); }
+    JSC::Structure* JSResizableOrGrowableSharedBufferSubclassStructure() const { return m_JSResizableOrGrowableSharedBufferSubclassStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* JSCryptoKeyStructure() const { return m_JSCryptoKey.getInitializedOnMainThread(this); }
 
@@ -568,6 +569,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_subtleCryptoObject;
     LazyProperty<JSGlobalObject, Structure> m_JSHTTPResponseController;
     LazyProperty<JSGlobalObject, Structure> m_JSBufferSubclassStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSResizableOrGrowableSharedBufferSubclassStructure;
     LazyProperty<JSGlobalObject, JSWeakMap> m_vmModuleContextMap;
     LazyProperty<JSGlobalObject, JSObject> m_lazyRequireCacheObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
@@ -603,6 +605,9 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_performanceObject;
     LazyProperty<JSGlobalObject, JSObject> m_processObject;
     LazyProperty<JSGlobalObject, CustomGetterSetter> m_lazyStackCustomGetterSetter;
+    LazyProperty<JSGlobalObject, Structure> m_ServerRouteListStructure;
+    LazyProperty<JSGlobalObject, Structure> m_JSBunRequestStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_JSBunRequestParamsPrototype;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 

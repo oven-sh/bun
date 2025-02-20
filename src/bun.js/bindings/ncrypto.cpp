@@ -33,6 +33,7 @@
 #endif
 
 namespace ncrypto {
+
 namespace {
 using BignumCtxPointer = DeleteFnPtr<BN_CTX, BN_CTX_free>;
 using BignumGenCallbackPointer = DeleteFnPtr<BN_GENCB, BN_GENCB_free>;

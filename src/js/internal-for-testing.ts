@@ -1,3 +1,5 @@
+// Hardcoded module "bun:internal-for-testing"
+
 // If you want to test an internal API, add a binding into this file.
 //
 // Then at test time: import ... from "bun:internal-for-testing"
@@ -164,3 +166,15 @@ export const fsStreamInternals = {
     return str[require("internal/fs/streams").kWriteStreamFastPath];
   },
 };
+
+export const arrayBufferViewHasBuffer = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_arrayBufferViewHasBuffer",
+  1,
+);
+
+export const decodeURIComponentSIMD = $newCppFunction(
+  "decodeURIComponentSIMD.cpp",
+  "jsFunctionDecodeURIComponentSIMD",
+  1,
+);

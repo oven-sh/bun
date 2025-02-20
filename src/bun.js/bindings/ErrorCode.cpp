@@ -316,7 +316,9 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         if (d != d) return builder.append("NaN"_s);
         if (d == infinity) return builder.append("Infinity"_s);
         if (d == -infinity) return builder.append("-Infinity"_s);
+        builder.append("type number ("_s);
         builder.append(d);
+        builder.append(')');
         return;
     }
     if (value.isBoolean()) {

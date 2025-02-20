@@ -34,6 +34,8 @@ interface DepEntry {
   _expectedImports: string[] | undefined;
 }
 
+let dynamicImportWithOpts: any;
+
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
  * non-standard properties that are used for implementing hot-module reloading.
@@ -85,7 +87,12 @@ export class HotModule<E = any> {
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
     if (!registry.has(specifier) && !input_graph[specifier]) {
       try {
-        return await import(specifier, opts);
+        if (opts != null)
+          return await (dynamicImportWithOpts ??= new Function("specifier, opts", "import(specifier, opts)"))(
+            specifier,
+            opts,
+          );
+        return await import(specifier);
       } catch (err) {
         // fall through to loadModule, which will throw a more specific error.
         // but still show this one.

@@ -2101,6 +2101,14 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
         }
     }
 
+    if (comptime Environment.isWindows) {
+        if (bun.FDImpl.decode(fd).kind == .uv) {
+            return sys_uv.pread(fd, buf, offset);
+        }
+
+        return bun.C.readFile(fd, buf, @as(u64, @intCast(offset)));
+    }
+
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd.cast(), buf.ptr, adjusted_len, ioffset);

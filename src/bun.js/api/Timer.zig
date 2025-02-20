@@ -26,6 +26,7 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
 /// Array of linked lists of EventLoopTimers. Each list holds all the timers that will fire in the
 /// same millisecond, in the order they will fire.
 const TimerList = struct {
+    const log = bun.Output.scoped(.TimerList, false);
     // TODO: could we use a priority queue here? would avoid O(n) removal
     lists: std.ArrayListUnmanaged(List),
 
@@ -33,15 +34,18 @@ const TimerList = struct {
 
     /// Add a new timer into the list
     pub fn insert(self: *TimerList, timer: *EventLoopTimer.Node) void {
+        log("insert {*}", .{timer});
         const target_list_index = std.sort.lowerBound(List, self.lists.items, &timer.data.next, List.compare);
         if (target_list_index == self.lists.items.len) {
             // suitable insertion point not found so insert at the end
+            log("new list at end", .{});
             self.lists.append(bun.default_allocator, .init(timer.data.next)) catch bun.outOfMemory();
             // now target_list_index is a valid index and points to the right list
         } else if (List.compare(&timer.data.next, self.lists.items[target_list_index]) != .eq) {
             // lowerBound did not find an exact match, so target_list_index is really the index of
             // the first list *after* the one we want to use.
             // so we need to add a new list in the middle, before target_list_index
+            log("new list in middle", .{});
             self.lists.insert(bun.default_allocator, target_list_index, .init(timer.data.next)) catch bun.outOfMemory();
             // now target_list_index points to the list we just inserted
         }
@@ -51,6 +55,7 @@ const TimerList = struct {
 
     /// Remove the given timer
     pub fn remove(self: *TimerList, timer: *EventLoopTimer.Node) void {
+        log("remove {*}", .{timer});
         const maybe_list_containing_index = std.sort.binarySearch(List, self.lists.items, &timer.data.next, List.compare);
         // in safe builds, assert we found the list. in unsafe builds, do not remove anything
         assert(maybe_list_containing_index != null);
@@ -58,6 +63,7 @@ const TimerList = struct {
         const list_containing = &self.lists.items[list_containing_index].timers;
         list_containing.remove(timer);
         if (list_containing.len == 0) {
+            log("delete list", .{});
             _ = self.lists.orderedRemove(list_containing_index);
         }
     }

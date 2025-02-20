@@ -316,13 +316,10 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
     if (value.isNumber()) {
         double d = value.asNumber();
         double infinity = std::numeric_limits<double>::infinity();
-        if (value == 0) return (1 / d == -infinity) ? builder.append("type number (-0)"_s) : builder.append("type number (0)"_s);
-        if (d != d) return builder.append("type number (NaN)"_s);
-        if (d == infinity) return builder.append("type number (Infinity)"_s);
-        if (d == -infinity) return builder.append("type number (-Infinity)"_s);
-        builder.append("type number ("_s);
+        if (d != d) return builder.append("NaN"_s);
+        if (d == infinity) return builder.append("Infinity"_s);
+        if (d == -infinity) return builder.append("-Infinity"_s);
         builder.append(d);
-        builder.append(")"_s);
         return;
     }
     if (value.isBoolean()) {

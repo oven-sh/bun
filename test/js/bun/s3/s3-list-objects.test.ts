@@ -1127,7 +1127,12 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
     await bucket.write(file_5, "content 5");
     await bucket.write(file_6, "content 6");
 
-    const res = await bucket.list({ startAfter: file_4, fetchOwner: true, encodingType: "url" });
+    const res = await bucket.list({
+      prefix: keyPrefix, // isolates the test when Bucket is not empty
+      startAfter: file_4,
+      fetchOwner: true,
+      encodingType: "url",
+    });
 
     expect(res.encodingType).toBe("url");
     expect(res.keyCount).toBe(2);

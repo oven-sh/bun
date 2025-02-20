@@ -255,9 +255,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useConcurrentJIT() = true;
         // JSC::Options::useSigillCrashAnalyzer() = true;
         JSC::Options::useWasm() = true;
-        // remove when we have landed https://github.com/WebKit/WebKit/pull/39029 or WebKit no
-        // longer disables IPInt by default
-        JSC::Options::useWasmIPInt() = false;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
         JSC::Options::exposeInternalModuleLoader() = true;

@@ -257,12 +257,13 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     auto cell = arg.asCell();
     switch (cell->type()) {
     case JSC::JSType::StringType: {
-        WTF::String str = arg.toWTFString(globalObject);
+        JSString* jsString = jsDynamicCast<JSString*>(cell);
+        auto str = jsString->view(globalObject);
         if (quotesLikeInspect) {
-            if (str.contains('\'')) {
+            if (str->contains('\'')) {
                 builder.append('"');
-                if (str.is8Bit()) {
-                    const auto span = str.span<LChar>();
+                if (str->is8Bit()) {
+                    const auto span = str->span<LChar>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);
@@ -271,7 +272,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
                         }
                     }
                 } else {
-                    const auto span = str.span<UChar>();
+                    const auto span = str->span<UChar>();
                     for (const auto c : span) {
                         if (c == '"') {
                             builder.append("\\\""_s);

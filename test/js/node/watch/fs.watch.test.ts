@@ -388,7 +388,7 @@ describe("fs.watch", () => {
     const ac = new AbortController();
     const promise = new Promise((resolve, reject) => {
       const watcher = fs.watch(filepath, { signal: ac.signal });
-      watcher.once("error", err => (err.message === "The operation was aborted." ? resolve(undefined) : reject(err)));
+      watcher.once("error", err => (err.message === "The operation was aborted" ? resolve(undefined) : reject(err)));
       watcher.once("close", () => reject());
     });
     await Bun.sleep(10);
@@ -402,7 +402,7 @@ describe("fs.watch", () => {
     const signal = AbortSignal.abort();
     await new Promise((resolve, reject) => {
       const watcher = fs.watch(filepath, { signal });
-      watcher.once("error", err => (err.message === "The operation was aborted." ? resolve(undefined) : reject(err)));
+      watcher.once("error", err => (err.message === "The operation was aborted" ? resolve(undefined) : reject(err)));
       watcher.once("close", () => reject());
     });
   });
@@ -572,7 +572,7 @@ describe("fs.promises.watch", () => {
       try {
         for await (const _ of watcher);
       } catch (e: any) {
-        expect(e.message).toBe("The operation was aborted.");
+        expect(e.message).toBe("The operation was aborted");
       }
     })();
     await Bun.sleep(10);
@@ -589,7 +589,7 @@ describe("fs.promises.watch", () => {
       try {
         for await (const _ of watcher);
       } catch (e: any) {
-        expect(e.message).toBe("The operation was aborted.");
+        expect(e.message).toBe("The operation was aborted");
       }
     })();
   });

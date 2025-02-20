@@ -182,11 +182,11 @@ describe("AbortController", () => {
         },
         {
           label: "string",
-          reason: "The operation was aborted.",
+          reason: "The operation was aborted",
         },
         {
           label: "Error",
-          reason: new DOMException("The operation was aborted."),
+          reason: new DOMException("The operation was aborted"),
         },
       ];
       for (const { label, reason } of reasons) {

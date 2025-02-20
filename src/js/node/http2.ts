@@ -2299,7 +2299,7 @@ function initOriginSet(session: Http2Session) {
       }
     }
     let originString = `https://${hostName}`;
-    if (socket.remotePort != null) originString += `:${socket.remotePort}`;
+    if (socket.remotePort != null && socket.remotePort != 443) originString += `:${socket.remotePort}`;
     originSet.add(originString);
   }
   return originSet;

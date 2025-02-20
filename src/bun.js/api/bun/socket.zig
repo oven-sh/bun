@@ -3268,7 +3268,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (servername == null) {
                 return JSValue.jsUndefined();
             }
-            return ZigString.fromUTF8(servername[0..bun.len(servername)]).toJS(globalObject);
+            return bun.String.createUTF8ForJS(globalObject, servername[0..bun.len(servername)]);
         }
         pub fn setServername(
             this: *This,

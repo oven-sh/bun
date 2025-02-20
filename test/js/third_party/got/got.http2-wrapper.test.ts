@@ -4,6 +4,13 @@ import { tls } from "harness";
 import http2 from "http2";
 import { once } from "events";
 
+test("can make http2 request using servername", async () => {
+  // actually using a servername
+  const response = await got("https://example.com", {
+    http2: true,
+  });
+  expect(response.statusCode).toBe(200);
+});
 test("can make http2 request to local http2 server", async () => {
   const server = http2.createSecureServer(tls);
 

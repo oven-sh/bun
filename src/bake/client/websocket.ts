@@ -109,9 +109,10 @@ export function initWebSocket(
   async function onClose() {
     console.warn("[Bun] Hot-module-reloading socket disconnected, reconnecting...");
 
+    await new Promise(done => setTimeout(done, 1000));
+
     while (true) {
       if (closed) return;
-      await wait();
 
       // Note: Cannot use Promise.withResolvers due to lacking support on iOS
       let done;
@@ -127,13 +128,14 @@ export function initWebSocket(
       };
       ws.onmessage = onMessage;
       ws.onerror = ev => {
-        onError(ev);
+        ev.preventDefault();
         done(false);
       };
 
       if (await promise) {
         break;
       }
+      await wait();
     }
   }
 

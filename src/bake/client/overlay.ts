@@ -2,7 +2,7 @@
 // React could collide with the user's code (consider React DevTools), this
 // entire modal is written from scratch using the standard DOM APIs. All CSS is
 // scoped in `overlay.css`, and all elements exist under a shadow root. These
-// constraints make the overlay simple to understand and work on.
+// constraints make the overlay very simple to understand and work on.
 //
 // This file has two consumers:
 // - The bundler error page which embeds a list of bundler errors to render.
@@ -10,29 +10,62 @@
 // Both use a WebSocket to coordinate followup updates, when new errors are
 // added or previous ones are solved.
 if (side !== "client") throw new Error("Not client side!");
+// NOTE: imports are at the bottom for readability
 
 /** When set, the next successful build will reload the page. */
 export let hasFatalError = false;
 
 /**
  * 32-bit integer corresponding to `SerializedFailure.Owner.Packed`
- * It is never decoded client-side, but the client is able to encode
- * values from 0 to 2^30-1, as that corresponds to
- * .{ .kind = .none, .data = ... }, which is unused in DevServer.
+ * It is never decoded client-side.
  */
-type ErrorId = number;
+type FailureOwner = number;
 
-const errors = new Map<ErrorId, DeserializedFailure>();
-const runtimeErrors: RuntimeMessage[] = [];
-const errorDoms = new Map<ErrorId, ErrorDomNodes>();
-const updatedErrorOwners = new Set<ErrorId>();
+/**
+ * Build errors come from SerializedFailure objects on the server, with the key
+ * being the the SerializedFailure.Owner bitcast to an i32.
+ */
+const buildErrors = new Map<FailureOwner, DeserializedFailure>();
+/** Runtime errors are stored in a list and are cleared before any hot update. */
+const runtimeErrors: RuntimeError[] = [];
+const errorDoms = new Map<FailureOwner, ErrorDomNodes>();
+const updatedErrorOwners = new Set<FailureOwner>();
+
+/**
+ * -1  => All build errors
+ * 0.. => Runtime error by index
+ */
+let activeErrorIndex = -1;
+let lastActiveErrorIndex = -1;
+let needUpdateNavbar = false;
 
 let domShadowRoot: HTMLElement;
-let domModalTitle: Text;
-let domErrorList: HTMLElement;
+let domModalTitle: HTMLElement;
+let domErrorContent: HTMLElement;
+/** For build errors */
+let domFooterText: HTMLElement;
+/** For runtime errors */
+let domNavBar: {
+  root: HTMLElement;
+  active: HTMLElement;
+  total: HTMLElement;
+  label: Text;
+  prevBtn: HTMLButtonElement;
+  nextBtn: HTMLButtonElement;
+  dismissAllBtn: HTMLButtonElement;
+} = {} as any;
 
-// I would have used JSX, but TypeScript types interfere in odd ways.
-function elem(tagName: string, props?: null | Record<string, string>, children?: Node[]) {
+// I would have used JSX, but TypeScript types interfere in odd ways. However,
+// this pattern allows concise construction of DOM nodes, but also extremely
+// simple capturing of referenced nodes. Consider:
+//      let title;
+//      const btn = elem("button", { class: "file-name" }, [(title = textNode())]);
+// Now you can edit `title.textContent` freely.
+function elem<T extends keyof HTMLElementTagNameMap>(
+  tagName: T,
+  props?: null | Record<string, string>,
+  children?: Node[],
+) {
   const node = document.createElement(tagName);
   if (props)
     for (let key in props) {
@@ -45,7 +78,11 @@ function elem(tagName: string, props?: null | Record<string, string>, children?:
   return node;
 }
 
-function elemText(tagName: string, props: null | Record<string, string>, innerHTML: string) {
+function elemText<T extends keyof HTMLElementTagNameMap>(
+  tagName: T,
+  props: null | Record<string, string>,
+  innerHTML: string,
+) {
   const node = document.createElement(tagName);
   if (props)
     for (let key in props) {
@@ -59,9 +96,34 @@ const textNode = (str = "") => document.createTextNode(str);
 
 interface ErrorDomNodes {
   root: HTMLElement;
-  title: Text;
+  fileName: Text;
   messages: HTMLElement[];
 }
+
+interface RuntimeError {
+  /** error.name */
+  name: string;
+  /** error.message */
+  message: string;
+  /** error.stack after remapping */
+  trace: RemappedFrame[];
+  /** When the `fetch` request fails or takes too long */
+  remapped: boolean;
+  /** Promise rejection */
+  async: boolean;
+
+  code?: CodePreview;
+}
+
+interface CodePreview {
+  lines: string[];
+  col: number;
+  loi: number;
+  len: number;
+  firstLine: number;
+}
+
+interface RemappedFrame extends Frame {}
 
 /**
  * Initial mount is done lazily. The modal starts invisible, controlled
@@ -87,14 +149,40 @@ function mountModal() {
 
   const root = elem("div", { class: "root" }, [
     elem("div", { class: "modal" }, [
-      elem("header", null, [(domModalTitle = textNode())]),
-      (domErrorList = elem("div", { class: "error-list" })),
+      // Runtime errors get a switcher to toggle between each runtime error and
+      // the build errors. This is done because runtime errors are very big.
+      // Only visible when a runtime error is present.
+      (domNavBar.root = elem("nav", null, [
+        // TODO: use SVG for this
+        (domNavBar.prevBtn = elemText(
+          "button",
+          { class: "tab-button left", disabled: "true", "aria-label": "Previous error" },
+          "",
+        )),
+        (domNavBar.nextBtn = elemText("button", { class: "tab-button right", "aria-label": "Next error" }, "")),
+        elem("span", null, [
+          (domNavBar.active = elem("code")),
+          textNode(" of "),
+          (domNavBar.total = elem("code")),
+          (domNavBar.label = textNode(" Errors")),
+        ]),
+        elem("div", { class: "flex" }),
+        (domNavBar.dismissAllBtn = elem("button", { class: "dismiss-all", "aria-label": "Dismiss all errors" })),
+      ])),
+      // The active page's header
+      elem("header", null, [(domModalTitle = elem("div", { class: "title" }))]),
+      // The active page's content
+      (domErrorContent = elem("div", { class: "error-content" })),
       elem("footer", null, [
-        // TODO: for HMR turn this into a clickable thing + say it can be dismissed
-        textNode("Errors during a build can only be dismissed fixing them."),
+        (domFooterText = elemText("div", null, "")),
+        elem("div", { class: "flex" }),
+        elemText("div", null, "Bun v" + config.bun),
       ]),
     ]),
   ]);
+  domNavBar.dismissAllBtn.addEventListener("click", onDismissAllErrors);
+  domNavBar.prevBtn.addEventListener("click", onPrevError);
+  domNavBar.nextBtn.addEventListener("click", onNextError);
   shadow.appendChild(root);
   document.body.appendChild(domShadowRoot);
 }
@@ -107,41 +195,27 @@ function setModalVisible(visible: boolean) {
 }
 
 /** Handler for `MessageId.errors` websocket packet */
-export function onErrorMessage(view: DataView<ArrayBuffer>) {
+export function onServerErrorPayload(view: DataView<ArrayBuffer>) {
   const reader = new DataViewReader(view, 1);
   const removedCount = reader.u32();
 
   for (let i = 0; i < removedCount; i++) {
     const removed = reader.u32();
     updatedErrorOwners.add(removed);
-    errors.delete(removed);
+    buildErrors.delete(removed);
   }
 
   while (reader.hasMoreData()) {
-    decodeAndAppendError(reader);
+    decodeAndAppendServerError(reader);
   }
 
   updateErrorOverlay();
 }
 
-export const enum RuntimeErrorType {
-  recoverable,
-  /** Requires that clearances perform a full page reload */
-  fatal,
-}
-
-let nextRuntimeErrorId = 0;
-function newRuntimeErrorId() {
-  if (nextRuntimeErrorId >= 0xfffffff) nextRuntimeErrorId = 0;
-  return nextRuntimeErrorId++;
-}
-
-export async function onRuntimeError(err: any, type: RuntimeErrorType) {
-  if (type === RuntimeErrorType.fatal) {
+export async function onRuntimeError(err: any, fatal = false, async = false) {
+  if (fatal) {
     hasFatalError = true;
   }
-
-  console.error(err); // Chrome DevTools and Safari inspector will source-map this error
 
   // Parse the stack trace and normalize the error message.
   let name = err?.name ?? "error";
@@ -192,7 +266,6 @@ export async function onRuntimeError(err: any, type: RuntimeErrorType) {
     method: "POST",
     body: writer.view.buffer,
   });
-  let remapped: RuntimeMessage;
   try {
     if (!response.ok) {
       throw new Error("Failed to report error");
@@ -212,38 +285,83 @@ export async function onRuntimeError(err: any, type: RuntimeErrorType) {
         col,
       });
     }
-    remapped = {
-      kind: "rt",
+    let code: CodePreview | undefined;
+    const codePreviewLineCount = reader.u8();
+    if (codePreviewLineCount > 0) {
+      const lineOfInterestOffset = reader.u32();
+      const firstLineNumber = reader.u32();
+      const highlightedColumn = reader.u32();
+      let lines = new Array(codePreviewLineCount);
+      for (let i = 0; i < codePreviewLineCount; i++) {
+        const line = reader.string32();
+        lines[i] = line;
+      }
+      const { col, len } = expandHighlight(lines[lineOfInterestOffset], highlightedColumn);
+      lines = lines.map(line => syntaxHighlight(line));
+      code = {
+        lines,
+        col,
+        loi: lineOfInterestOffset,
+        len,
+        firstLine: firstLineNumber,
+      };
+    }
+    runtimeErrors.push({
       name,
       message,
       trace,
       remapped: true,
-    };
+      async,
+      code,
+    });
+    console.log(code);
   } catch (e) {
     console.error("Failed to remap error", e);
-    remapped = {
-      kind: "rt",
+    runtimeErrors.push({
       name,
       message,
       trace: parsed,
       remapped: false,
-    };
+      async,
+    });
   }
 
-  const uid = newRuntimeErrorId();
-  errors.set(uid, {
-    file: remapped.trace.find(f => f.file)?.file ?? "[unknown file]",
-    messages: [remapped],
-  });
-  updatedErrorOwners.add(uid);
+  needUpdateNavbar = true;
   updateErrorOverlay();
+}
+
+function expandHighlight(line: string, col: number) {
+  let rest = line.slice(Math.max(0, col - 1));
+  let len = 1;
+  len = 0;
+  let prev = line.slice(0, col - 1);
+  // expand forward from new
+  if (rest.match(/^new\s/)) {
+    len += 4;
+    rest = rest.slice(4);
+  }
+  // expand backward from new
+  const newText = prev.match(/new\s+$/)?.[0];
+  if (newText) {
+    len += newText.length;
+    col -= newText.length;
+    prev = prev.slice(0, prev.length - newText.length);
+  }
+  // expand backward from throw
+  const throwText = prev.match(/throw\s+$/)?.[0];
+  if (throwText) {
+    len += throwText.length;
+    col -= throwText.length;
+  }
+  len += (rest.match(/.\b/)?.index ?? -1) + 1;
+  return { col, len };
 }
 
 /**
  * Call this for each error, then call `updateErrorOverlay` to commit the
  * changes to the UI in one smooth motion.
  */
-export function decodeAndAppendError(r: DataViewReader) {
+export function decodeAndAppendServerError(r: DataViewReader) {
   const owner = r.u32();
   const file = r.string32() || null;
   const messageCount = r.u32();
@@ -251,12 +369,20 @@ export function decodeAndAppendError(r: DataViewReader) {
   for (let i = 0; i < messageCount; i++) {
     messages[i] = decodeSerializedError(r);
   }
-  errors.set(owner, { file, messages });
+  buildErrors.set(owner, { file, messages });
   updatedErrorOwners.add(owner);
+
+  activeErrorIndex = -1;
+  needUpdateNavbar = true;
 }
 
+/**
+ * Called when the list of errors changes, bundling errors change, or the active error page changes.
+ */
 export function updateErrorOverlay() {
-  if (errors.size === 0) {
+  // if there are no errors, hide the modal
+  const totalErrors = runtimeErrors.length + buildErrors.size;
+  if (totalErrors === 0) {
     if (IS_ERROR_RUNTIME) {
       location.reload();
     } else {
@@ -264,13 +390,138 @@ export function updateErrorOverlay() {
     }
     return;
   }
-
+  // ensure the target page is valid
+  if (activeErrorIndex === -1 && buildErrors.size === 0) {
+    activeErrorIndex = 0; // there is a runtime error, else this modal will be hidden
+    needUpdateNavbar = true;
+  } else if (activeErrorIndex >= runtimeErrors.length) {
+    needUpdateNavbar = true;
+    if (activeErrorIndex === 0) {
+      activeErrorIndex = -1; // there must be a build error, else this modal will be hidden
+    } else {
+      activeErrorIndex = runtimeErrors.length - 1;
+    }
+  }
   mountModal();
 
+  if (needUpdateNavbar) {
+    needUpdateNavbar = false;
+    if (activeErrorIndex >= 0) {
+      // Runtime errors
+      const err = runtimeErrors[activeErrorIndex];
+      domModalTitle.innerHTML = err.async ? "Unhandled Promise Rejection" : "Runtime Error";
+      updateRuntimeErrorOverlay(err);
+    } else {
+      // Build errors
+      domModalTitle.innerHTML = `<span class="count">${buildErrors.size}</span> Build Error${buildErrors.size === 1 ? "" : "s"}`;
+    }
+
+    domNavBar.active.textContent = (activeErrorIndex + 1 + (buildErrors.size > 0 ? 1 : 0)).toString();
+    domNavBar.total.textContent = totalErrors.toString();
+    domNavBar.label.textContent = totalErrors === 1 ? " Error" : " Errors";
+
+    domNavBar.nextBtn.disabled = activeErrorIndex >= runtimeErrors.length - 1;
+    domNavBar.prevBtn.disabled = buildErrors.size > 0 ? activeErrorIndex < 0 : activeErrorIndex == 0;
+  }
+
+  if (activeErrorIndex === -1) {
+    if (lastActiveErrorIndex !== -1) {
+      // clear the error content from the runtime error
+      domErrorContent.innerHTML = "";
+      updateBuildErrorOverlay({ remountAll: true });
+    } else {
+      updateBuildErrorOverlay({});
+    }
+  }
+
+  lastActiveErrorIndex = activeErrorIndex;
+
+  // The footer is only visible if there are build errors.
+  if (buildErrors.size > 0) {
+    domFooterText.style.display = "block";
+    domFooterText.innerText =
+      activeErrorIndex === -1
+        ? "Errors during a build can only be dismissed by fixing them."
+        : "This dialog cannot be dismissed as there are additional build errors.";
+  } else {
+    domFooterText.style.display = "none";
+  }
+  domNavBar.dismissAllBtn.style.display = buildErrors.size > 0 ? "none" : "block";
+  // The navbar is only visible if there are runtime errors. It contains the dismiss button.
+  domNavBar.root.style.display = runtimeErrors.length > 0 ? "flex" : "none";
+
+  setModalVisible(true);
+}
+
+/**
+ * Called when switching between runtime errors.
+ */
+function updateRuntimeErrorOverlay(err: RuntimeError) {
+  domErrorContent.innerHTML = ""; // clear contents
+  const dom = elem("div", { class: "r-error" });
+  let name = err.name;
+  if (!name || name === "Error") name = "error";
+  dom.appendChild(
+    elem("div", { class: "message-desc error" }, [
+      elemText("code", { class: "name" }, name),
+      elemText("code", { class: "muted" }, ": "),
+      elemText("code", {}, err.message),
+    ]),
+  );
+  const { code } = err;
+  let trace = err.trace;
+  if (code) {
+    const {
+      lines,
+      col: columnToHighlight,
+      loi: lineOfInterestOffset,
+      len: highlightLength,
+      firstLine: firstLineNumber,
+    } = code;
+    const codeFrame = trace[0];
+    trace = trace.slice(1);
+
+    const domCode = elem("div", { class: "r-code-wrap" });
+
+    const aboveRoi = lines.slice(0, lineOfInterestOffset + 1);
+    const belowRoi = lines.slice(lineOfInterestOffset + 1);
+
+    const gutter = elem("div", { class: "gutter" }, [
+      elemText("div", null, aboveRoi.map((_, i) => `${i + firstLineNumber}`).join("\n")),
+      elem("div", { class: "highlight-gap" }),
+      elemText("div", null, belowRoi.map((_, i) => `${i + firstLineNumber + aboveRoi.length}`).join("\n")),
+    ]);
+    domCode.appendChild(
+      elem("div", { class: "code" }, [
+        gutter,
+        elem("div", { class: "view" }, [
+          ...aboveRoi.map(line => mapCodePreviewLine(line)),
+          elem("div", { class: "highlight-wrap log-error" }, [
+            elemText("span", { class: "space" }, "_".repeat(columnToHighlight - 1)),
+            elemText("span", { class: "line" }, "_".repeat(highlightLength)),
+          ]),
+          ...belowRoi.map(line => mapCodePreviewLine(line)),
+        ]),
+      ]),
+    );
+    domCode.appendChild(renderTraceFrame(codeFrame, "trace-frame"));
+
+    dom.appendChild(domCode);
+  }
+
+  dom.appendChild(
+    elem("div", { class: "r-error-trace" }, [...trace.map(frame => renderTraceFrame(frame, "trace-frame"))]),
+  );
+  domErrorContent.appendChild(dom);
+}
+
+function updateBuildErrorOverlay({ remountAll = false }) {
   let totalCount = 0;
 
-  for (const owner of updatedErrorOwners) {
-    const data = errors.get(owner);
+  const owners = remountAll ? buildErrors.keys() : updatedErrorOwners;
+
+  for (const owner of owners) {
+    const data = buildErrors.get(owner);
     let dom = errorDoms.get(owner);
 
     // If this failure was removed, delete it.
@@ -283,28 +534,13 @@ export function updateErrorOverlay() {
     totalCount += data.messages.length;
 
     // Create the element for the root if it does not yet exist.
-    if (!dom) {
-      let title;
-      let btn;
-      const root = elem("div", { class: "message-group" }, [
-        // (btn = elem("button", { class: "file-name" }, [(title = textNode())])),
-        elem("div", { class: "file-name" }, [(title = textNode())]),
+    if (!dom || remountAll) {
+      let fileName;
+      const root = elem("div", { class: "b-group" }, [
+        elem("div", { class: "trace-frame" }, [elem("div", { class: "file-name" }, [(fileName = textNode())])]),
       ]);
-      // btn.addEventListener("click", () => {
-      //   const firstLocation = errors.get(owner)?.messages[0]?.location;
-      //   if (!firstLocation) return;
-      //   let fileName = title.textContent.replace(/^\//, "");
-      //   fetch("/_bun/src/" + fileName, {
-      //     headers: {
-      //       "Open-In-Editor": "1",
-      //       "Editor-Line": firstLocation.line.toString(),
-      //       "Editor-Column": firstLocation.column.toString(),
-      //     },
-      //   });
-      // });
-      dom = { root, title, messages: [] };
-      // TODO: sorted insert?
-      domErrorList.appendChild(root);
+      dom = { root, fileName, messages: [] };
+      domErrorContent.appendChild(root);
       errorDoms.set(owner, dom);
     } else {
       // For simplicity, messages are not reused, even if left unchanged.
@@ -312,20 +548,21 @@ export function updateErrorOverlay() {
     }
 
     // Update the DOM with the new data.
-    dom.title.textContent = data.file;
+    dom.fileName.textContent = data.file;
 
     for (const msg of data.messages) {
-      const domMessage = msg.kind === "bundler" ? renderBundlerMessage(msg) : renderRuntimeMessage(msg);
+      const domMessage = renderBundlerMessage(msg);
       dom.root.appendChild(domMessage);
       dom.messages.push(domMessage);
     }
   }
-
-  domModalTitle.textContent = `${errors.size} Build Error${errors.size !== 1 ? "s" : ""}`;
-
   updatedErrorOwners.clear();
+}
 
-  setModalVisible(true);
+function mapCodePreviewLine(line: string) {
+  const pre = elem("pre");
+  pre.innerHTML = line;
+  return pre;
 }
 
 const bundleLogLevelToName = ["error", "warn", "note", "debug", "verbose"];
@@ -333,7 +570,7 @@ const bundleLogLevelToName = ["error", "warn", "note", "debug", "verbose"];
 function renderBundlerMessage(msg: BundlerMessage) {
   return elem(
     "div",
-    { class: "message" },
+    { class: "b-msg" },
     [
       renderErrorMessageLine(msg.level, msg.message),
       ...(msg.location ? renderCodeLine(msg.location, msg.level) : []),
@@ -342,41 +579,22 @@ function renderBundlerMessage(msg: BundlerMessage) {
   );
 }
 
-function renderRuntimeMessage(msg: RuntimeMessage) {
-  let name = msg.name;
-  if (name === "Error") msg.name = "error";
-  return elem(
-    "div",
-    { class: "message" },
-    [
-      elem("div", { class: "message-text" }, [
-        elemText("span", { class: "log-label log-error" }, msg.name),
-        elemText("span", { class: "log-colon" }, ": "),
-        elemText("span", { class: "log-text" }, msg.message),
-      ]),
-      ...msg.trace.map(renderTraceFrame),
-    ].flat(1),
-  );
-}
-
-function renderTraceFrame(frame: Frame) {
-  const elems: Node[] = [elemText("span", { class: "trace-at" }, "at ")];
-  let hasFn = !!frame.fn;
-  if (hasFn) {
-    elems.push(elemText("span", { class: "trace-fn" }, frame.fn), elemText("span", { class: "trace-sep" }, " "));
-  }
-  if (frame.file) {
-    if (hasFn) elems.push(elemText("span", { class: "trace-sep" }, "("));
-    elems.push(elemText("span", { class: "trace-file" }, frame.file));
-    if (frame.line) {
-      elems.push(textNode(":"), elemText("span", { class: "trace-loc" }, frame.line.toString()));
-      if (frame.col) {
-        elems.push(textNode(":"), elemText("span", { class: "trace-loc" }, frame.col.toString()));
-      }
-    }
-    if (hasFn) elems.push(textNode(")"));
-  }
-  return elem("div", { class: "trace-frame" }, elems);
+function renderTraceFrame(frame: Frame, className: string) {
+  const hasFn = !!frame.fn;
+  return elem("div", { class: className }, [
+    elemText("span", { class: "muted" }, "at "),
+    ...(hasFn
+      ? [
+          //
+          elemText("span", { class: "function-name" }, frame.fn),
+          elemText("span", { class: "muted" }, " in "),
+        ]
+      : []),
+    elemText("span", { class: "file-name" }, frame.file!),
+    ...(frame.line
+      ? [elemText("code", { class: "muted" }, `:${frame.line}` + (frame.col ? `:${frame.col}` : ""))]
+      : []),
+  ]);
 }
 
 function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
@@ -384,7 +602,7 @@ function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
   if (IS_BUN_DEVELOPMENT && !levelName) {
     throw new Error("Unknown log level: " + level);
   }
-  return elem("div", { class: "message-text" }, [
+  return elem("div", { class: "message-desc " + levelName }, [
     elemText("span", { class: "log-label log-" + levelName }, levelName),
     elemText("span", { class: "log-colon" }, ": "),
     elemText("span", { class: "log-text" }, text),
@@ -393,13 +611,17 @@ function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
 
 function renderCodeLine(location: BundlerMessageLocation, level: BundlerMessageLevel) {
   return [
-    elem("div", { class: "code-line" }, [
-      elemText("code", { class: "line-num" }, `${location.line}`),
-      elemText("pre", { class: "code-view" }, location.lineText),
-    ]),
-    elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
-      elemText("span", { class: "space" }, "_".repeat(`${location.line}`.length + location.column - 1)),
-      elemText("span", { class: "line" }, "_".repeat(location.length)),
+    elem("div", { class: "code" }, [
+      elem("div", { class: "gutter" }, [
+        elemText("div", null, `${location.line}`),
+      ]),
+      elem("div", { class: "view" }, [
+        mapCodePreviewLine(syntaxHighlight(location.lineText)),
+        elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [
+          elemText("span", { class: "space" }, "_".repeat(location.column - 1)),
+          elemText("span", { class: "line" }, "_".repeat(location.length)),
+        ]),
+      ]),
     ]),
   ];
 }
@@ -411,6 +633,37 @@ function renderNote(note: BundlerNote) {
   ];
 }
 
+function onDismissAllErrors() {
+  if (buildErrors.size === 0) {
+    setModalVisible(false);
+  } else {
+    // Cannot dismiss build errors?
+    activeErrorIndex = -1;
+    updateErrorOverlay();
+  }
+}
+
+function onPrevError() {
+  if (activeErrorIndex === -1) return;
+  if (activeErrorIndex === 0 && buildErrors.size === 0) return;
+  activeErrorIndex--;
+  needUpdateNavbar = true;
+  updateErrorOverlay();
+}
+
+function onNextError() {
+  if (activeErrorIndex >= runtimeErrors.length - 1) return;
+  activeErrorIndex++;
+  needUpdateNavbar = true;
+  updateErrorOverlay();
+}
+
+declare global {
+  interface HTMLElementTagNameMap {
+    "bun-hmr": HTMLElement;
+  }
+}
+
 import { BundlerMessageLevel } from "../enums";
 import { css } from "../macros" with { type: "macro" };
 import {
@@ -419,8 +672,7 @@ import {
   BundlerNote,
   decodeSerializedError,
   type DeserializedFailure,
-  Frame,
-  RuntimeMessage,
 } from "./error-serialization";
-import { DataViewReader, DataViewWriter } from "./reader";
-import { parseStackTrace } from "./stack-trace";
+import { DataViewReader, DataViewWriter } from "./data-view";
+import { parseStackTrace, type Frame } from "./stack-trace";
+import { syntaxHighlight } from "./JavaScriptSyntaxHighlighter";

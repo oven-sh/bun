@@ -6,8 +6,8 @@
 // This is embedded in `DevServer.sendSerializedFailures`. SSR is
 // left unused for simplicity; a flash of unstyled content is
 // stopped by the fact this script runs synchronously.
-import { decodeAndAppendError, onErrorMessage, updateErrorOverlay } from "./client/overlay";
-import { DataViewReader } from "./client/reader";
+import { decodeAndAppendServerError, onServerErrorPayload, updateErrorOverlay } from "./client/overlay";
+import { DataViewReader } from "./client/data-view";
 import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 
@@ -17,7 +17,7 @@ declare const error: Uint8Array<ArrayBuffer>;
 {
   const reader = new DataViewReader(new DataView(error.buffer), 0);
   while (reader.hasMoreData()) {
-    decodeAndAppendError(reader);
+    decodeAndAppendServerError(reader);
   }
   updateErrorOverlay();
 }
@@ -38,7 +38,7 @@ const ws = initWebSocket(
       ws.send("se"); // IncomingMessageId.subscribe with route_update
     },
 
-    [MessageId.errors]: onErrorMessage,
+    [MessageId.errors]: onServerErrorPayload,
   },
   { displayMessage: "Live-reloading socket" },
 );

@@ -2841,7 +2841,7 @@ fn sendSerializedFailuresInner(
         _ = arena_state.reset(.retain_capacity);
     }
 
-    const pre = "\"),c=>c.charCodeAt(0));";
+    const pre = "\"),c=>c.charCodeAt(0));let config={bun:\"" ++ bun.Global.package_json_version_with_canary ++ "\"};";
     const post = "</script></body></html>";
 
     if (Environment.codegen_embed) {
@@ -4421,6 +4421,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         } else {
                             try w.writeAll("null");
                         }
+                        try w.writeAll(",\n  bun: \"" ++ bun.Global.package_json_version_with_canary ++ "\"");
                         try w.writeAll(",\n  version: \"");
                         try w.writeAll(&g.owner().configuration_hash_key);
                         try w.writeAll("\"");
@@ -4619,46 +4620,61 @@ pub fn IncrementalGraph(side: bake.Side) type {
             for (g.current_chunk_parts.items, 1..) |entry, source_index| {
                 const source_map = &source_maps[entry.get()];
                 if (source_map.vlq_len == 0) {
-                    if (lines_between > 0) {
-                        j.pushStatic(try bun.strings.repeatingAlloc(arena, lines_between, ';'));
-                        lines_between = 0;
-                    }
-                    if (source_map.extra.empty.line_count.unwrap()) |lc| {
-                        lines_between = lc.get();
+                    if (source_map.extra.empty.line_count.unwrap()) |line_count| {
+                        lines_between += line_count.get();
                     } else {
                         const count: u32 = @intCast(bun.strings.countChar(files[entry.get()].jsCode(), '\n'));
                         source_map.extra.empty.line_count = .init(count);
-                        lines_between = count;
+                        lines_between += count;
                     }
-                    // For empty chunks, put a blank entry for HTML. This will
-                    // consist of a single mapping per line to cover the file
-                    assert(lines_between > 1); // there is one line to open the function, and one line `},` to close it
-                    const repeating_mapping = ";AAAA"; // VLQ [0, 0, 0, 0] to repeat a column zero same source index mapping
-                    const original_line = SourceMap.encodeVLQWithLookupTable(-prev_end_state.original_line);
-                    const original_column = SourceMap.encodeVLQWithLookupTable(-prev_end_state.original_column);
-                    var list = std.ArrayList(u8).init(arena);
-                    const first = "AC"; // VLQ [0, 1], generated column and generated source index
-                    try list.ensureTotalCapacityPrecise(
-                        @as(usize, (lines_between + 1) * repeating_mapping.len) +
-                            first.len +
-                            @as(usize, original_line.len) +
-                            @as(usize, original_column.len),
-                    );
-                    list.appendSliceAssumeCapacity(first);
-                    list.appendSliceAssumeCapacity(original_line.slice());
-                    list.appendSliceAssumeCapacity(original_column.slice());
-                    for (0..lines_between + 1) |_| {
-                        list.appendSliceAssumeCapacity(repeating_mapping);
-                    }
-                    j.pushStatic(list.items);
-                    prev_end_state = .{
-                        .source_index = @intCast(source_index),
-                        .generated_line = 0,
-                        .generated_column = 0,
-                        .original_line = 0,
-                        .original_column = 0,
-                    };
-                    lines_between = 1;
+                    // TODO: consider reviving this code. it generates a valid
+                    // map according to Source Map Visualization, but it does
+                    // not map correctly in Chrome or Bun. This code tries to
+                    // add a mapping for each source line of unmapped code, so
+                    // at the very minimum the file name can be retrieved.
+                    // In practice, Bun may not need this as the only chunks
+                    // with this behavior are HTML and empty JS files.
+
+                    // if (lines_between > 0) {
+                    //     j.pushStatic(try bun.strings.repeatingAlloc(arena, lines_between, ';'));
+                    //     lines_between = 0;
+                    // }
+                    // if (source_map.extra.empty.line_count.unwrap()) |lc| {
+                    //     lines_between = lc.get();
+                    // } else {
+                    //     const count: u32 = @intCast(bun.strings.countChar(files[entry.get()].jsCode(), '\n'));
+                    //     source_map.extra.empty.line_count = .init(count);
+                    //     lines_between = count;
+                    // }
+                    // // For empty chunks, put a blank entry for HTML. This will
+                    // // consist of a single mapping per line to cover the file
+                    // assert(lines_between > 1); // there is one line to open the function, and one line `},` to close it
+                    // const repeating_mapping = ";AAAA"; // VLQ [0, 0, 0, 0] to repeat a column zero same source index mapping
+                    // const original_line = SourceMap.encodeVLQWithLookupTable(-prev_end_state.original_line);
+                    // const original_column = SourceMap.encodeVLQWithLookupTable(-prev_end_state.original_column);
+                    // var list = std.ArrayList(u8).init(arena);
+                    // const first = "AC"; // VLQ [0, 1], generated column and generated source index
+                    // try list.ensureTotalCapacityPrecise(
+                    //     @as(usize, (lines_between + 1) * repeating_mapping.len) +
+                    //         first.len +
+                    //         @as(usize, original_line.len) +
+                    //         @as(usize, original_column.len),
+                    // );
+                    // list.appendSliceAssumeCapacity(first);
+                    // list.appendSliceAssumeCapacity(original_line.slice());
+                    // list.appendSliceAssumeCapacity(original_column.slice());
+                    // for (0..lines_between + 1) |_| {
+                    //     list.appendSliceAssumeCapacity(repeating_mapping);
+                    // }
+                    // j.pushStatic(list.items);
+                    // prev_end_state = .{
+                    //     .source_index = @intCast(source_index),
+                    //     .generated_line = 0,
+                    //     .generated_column = 0,
+                    //     .original_line = 0,
+                    //     .original_column = 0,
+                    // };
+                    // lines_between = 1;
                     continue;
                 }
 
@@ -6694,6 +6710,7 @@ pub const SourceMapStore = struct {
         mappings: SourceMap.Mapping.List,
         file_paths: []const []const u8,
         source_contents: []const bun.StringPointer,
+        bytes: []const u8,
 
         pub fn deinit(self: *@This()) void {
             self.mappings.deinit(bun.default_allocator);
@@ -6728,6 +6745,7 @@ pub const SourceMapStore = struct {
                     .mappings = psm.mappings,
                     .file_paths = entry.file_paths,
                     .source_contents = entry.source_contents[0..entry.file_paths.len],
+                    .bytes = entry.response.blob.slice(),
                 };
             },
         }
@@ -6838,8 +6856,9 @@ const ErrorReportRequest = struct {
         var s = std.io.fixedBufferStream(body);
         const reader = s.reader();
 
-        var sfa = std.heap.stackFallback(65536, ctx.dev.allocator);
+        var sfa = std.heap.stackFallback(131072, ctx.dev.allocator);
         const temp_alloc = sfa.get();
+        var arena = std.heap.ArenaAllocator.init(temp_alloc);
 
         // Read payload, assemble ZigException
         const name = try readString32(reader, temp_alloc);
@@ -6886,26 +6905,15 @@ const ErrorReportRequest = struct {
         defer for (parsed_source_maps.values()) |*value| {
             if (value.*) |*v| v.deinit();
         };
+        var runtime_lines: ?[5][]const u8 = null;
+        var first_line_of_interest: usize = 0;
+        var top_frame_position: JSC.ZigStackFramePosition = undefined;
+        var region_of_interest_line: u32 = 0;
         for (frames.items) |*frame| {
             const source_url = frame.source_url.value.ZigString.slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
-            if (!bun.strings.hasPrefixComptime(source_url, client_prefix))
-                continue;
-
-            // Extract the ID
-            if (!bun.strings.hasSuffixComptime(source_url, ".js"))
-                continue;
-            const min_len = "00000000FFFFFFFF.js".len;
-            if (source_url.len < min_len)
-                continue;
-            const hex = source_url[source_url.len - min_len ..][0 .. @sizeOf(u64) * 2];
-            if (hex.len != @sizeOf(u64) * 2)
-                continue;
-            const id = parseHexToInt(u64, hex) orelse
-                continue;
-
-            bun.assert(!frame.remapped);
+            const id = parseId(source_url) orelse continue;
 
             // Get and cache the parsed source map
             const gop = try parsed_source_maps.getOrPut(temp_alloc, id);
@@ -6941,18 +6949,33 @@ const ErrorReportRequest = struct {
                 };
                 const index = remapped_position.source_index;
                 if (index >= 1 and (index - 1) < result.file_paths.len) {
-                    const abs = result.file_paths[@intCast(index - 1)];
-                    frame.source_url = .init(abs);
-                    const rel = ctx.dev.relativePath(abs);
-                    if (bun.strings.eql(frame.function_name.value.ZigString.slice(), rel)) {
+                    const abs_path = result.file_paths[@intCast(index - 1)];
+                    frame.source_url = .init(abs_path);
+                    const rel_path = ctx.dev.relativePath(abs_path);
+                    if (bun.strings.eql(frame.function_name.value.ZigString.slice(), rel_path)) {
                         frame.function_name = .empty;
+                    }
+                    frame.remapped = true;
+
+                    if (runtime_lines == null) {
+                        const json_encoded_source_code = result.source_contents[@intCast(index - 1)].slice(result.bytes);
+                        // First line of interest is two above the target line.
+                        const target_line = @as(usize, @intCast(frame.position.line.zeroBased()));
+                        first_line_of_interest = target_line -| 2;
+                        region_of_interest_line = @intCast(target_line - first_line_of_interest);
+                        runtime_lines = try extractJsonEncodedSourceCode(
+                            json_encoded_source_code,
+                            @intCast(first_line_of_interest),
+                            5,
+                            arena.allocator(),
+                        );
+                        top_frame_position = frame.position;
                     }
                 } else if (index == 0) {
                     // Should be picked up by above but just in case.
                     frame.source_url = .init(runtime_name);
                     frame.position = .invalid;
                 }
-                frame.remapped = true;
             }
         }
 
@@ -6963,9 +6986,10 @@ const ErrorReportRequest = struct {
                     break i;
                 }
             } else break :trim_runtime_frames;
+
             // Move all frames up
-            var i = first_non_runtime_frame;
-            for (frames.items[i + 1 ..]) |frame| {
+            var i = first_non_runtime_frame + 1;
+            for (frames.items[i..]) |frame| {
                 if (frame.position.isInvalid() and frame.source_url.value.ZigString.slice().ptr == runtime_name) {
                     continue; // skip runtime frames
                 }
@@ -7019,8 +7043,117 @@ const ErrorReportRequest = struct {
             try w.writeAll(file);
         }
 
+        if (runtime_lines) |*lines| {
+            // trim empty lines
+            var adjusted_lines: [][]const u8 = lines;
+            while (adjusted_lines.len > 0 and adjusted_lines[0].len == 0) {
+                adjusted_lines = adjusted_lines[1..];
+                region_of_interest_line -|= 1;
+                first_line_of_interest += 1;
+            }
+            while (adjusted_lines.len > 0 and adjusted_lines[adjusted_lines.len - 1].len == 0) {
+                adjusted_lines.len -= 1;
+            }
+
+            try w.writeInt(u8, @intCast(adjusted_lines.len), .little);
+            try w.writeInt(u32, @intCast(region_of_interest_line), .little);
+            try w.writeInt(u32, @intCast(first_line_of_interest + 1), .little);
+            try w.writeInt(u32, @intCast(top_frame_position.column.oneBased()), .little);
+
+            for (adjusted_lines) |line| {
+                try w.writeInt(u32, @intCast(line.len), .little);
+                try w.writeAll(line);
+            }
+        } else {
+            try w.writeInt(u8, 0, .little);
+        }
+
         r.corked(respondCorked, .{ r, out.items });
         ctx.finalize();
+    }
+
+    fn parseId(source_url: []const u8) ?u64 {
+        // The browser code strips "http://localhost:3000" when the string
+        // has /_bun/client. It's done because JS can refer to `location`
+        if (!bun.strings.hasPrefixComptime(source_url, client_prefix))
+            return null;
+
+        // Extract the ID
+        if (!bun.strings.hasSuffixComptime(source_url, ".js"))
+            return null;
+        const min_len = "00000000FFFFFFFF.js".len;
+        if (source_url.len < min_len)
+            return null;
+        const hex = source_url[source_url.len - min_len ..][0 .. @sizeOf(u64) * 2];
+        if (hex.len != @sizeOf(u64) * 2)
+            return null;
+        return parseHexToInt(u64, hex) orelse
+            return null;
+    }
+
+    /// Instead of decoding the entire file, just decode the desired section.
+    fn extractJsonEncodedSourceCode(contents: []const u8, target_line: u32, comptime n: usize, arena: Allocator) !?[n][]const u8 {
+        var line: usize = 0;
+        var prev: usize = 0;
+        const index_of_first_line = if (target_line == 0)
+            0 // no iteration needed
+        else while (bun.strings.indexOfCharPos(contents, '\\', prev)) |i| : (prev = i + 2) {
+            if (i >= contents.len - 2) return null;
+            // Bun's JSON printer will not use a sillier encoding for newline.
+            if (contents[i + 1] == 'n') {
+                line += 1;
+                if (line == target_line)
+                    break i + 2;
+            }
+        } else return null;
+
+        var rest = contents[index_of_first_line..];
+
+        // For decoding JSON escapes, the JS Lexer decoding function has
+        // `decodeEscapeSequences`, which only supports decoding to UTF-16.
+        // Alternatively, it appears the TOML lexer has copied this exact
+        // function but for UTF-8. So the decoder can just use that.
+        //
+        // This function expects but does not assume the escape sequences
+        // given are valid, and does not bubble errors up.
+        var log = Log.init(arena);
+        var l: @import("../toml/toml_lexer.zig").Lexer = .{
+            .log = &log,
+            .source = .initEmptyFile(""),
+            .allocator = arena,
+            .should_redact_logs = false,
+            .prev_error_loc = .Empty,
+        };
+        defer log.deinit();
+
+        var result: [n][]const u8 = .{""} ** n;
+        for (&result) |*decoded_line| {
+            var has_extra_escapes = false;
+            prev = 0;
+            // Locate the line slice
+            const end_of_line = while (bun.strings.indexOfCharPos(rest, '\\', prev)) |i| : (prev = i + 2) {
+                if (i >= rest.len - 1) return null;
+                if (rest[i + 1] == 'n') {
+                    break i;
+                }
+                has_extra_escapes = true;
+            } else rest.len;
+            const encoded_line = rest[0..end_of_line];
+
+            // Decode it
+            if (has_extra_escapes) {
+                var bytes: std.ArrayList(u8) = try .initCapacity(arena, encoded_line.len);
+                try l.decodeEscapeSequences(0, encoded_line, false, std.ArrayList(u8), &bytes);
+                decoded_line.* = bytes.items;
+            } else {
+                decoded_line.* = encoded_line;
+            }
+
+            if (end_of_line + 2 >= rest.len) break;
+            rest = rest[end_of_line + 2 ..];
+        }
+
+        return result;
     }
 
     fn respondCorked(resp: AnyResponse, data: []const u8) void {

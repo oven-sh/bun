@@ -171,6 +171,7 @@ async function run() {
       console.error(`Errors while bundling Bake ${kind.map(x => map[x]).join(" and ")}:`);
       console.error(err);
     }
+    process.exit(1);
   } else {
     console.log("-> bake.client.js, bake.server.js, bake.error.js");
 

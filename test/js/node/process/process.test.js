@@ -237,7 +237,7 @@ it("process.uptime()", () => {
 
 it("process.umask()", () => {
   expect(() => process.umask(265n)).toThrow('The "mask" argument must be of type number. Received type bigint (265n)');
-  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received "string"`); // prettier-ignore
+  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received 'string'`); // prettier-ignore
   expect(() => process.umask(true)).toThrow('The "mask" argument must be of type number. Received type boolean (true)');
   expect(() => process.umask(false)).toThrow('The "mask" argument must be of type number. Received type boolean (false)'); // prettier-ignore
   expect(() => process.umask(null)).toThrow('The "mask" argument must be of type number. Received null');

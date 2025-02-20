@@ -246,7 +246,7 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
 
 extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
 
-void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg)
+void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg, bool quotesLikeInspect = false)
 {
     ASSERT(!arg.isEmpty());
     if (!arg.isCell()) {
@@ -258,6 +258,37 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     switch (cell->type()) {
     case JSC::JSType::StringType: {
         WTF::String str = arg.toWTFString(globalObject);
+        if (quotesLikeInspect) {
+            if (str.contains('\'')) {
+                builder.append('"');
+                if (str.is8Bit()) {
+                    const auto span = str.span<LChar>();
+                    for (const auto c : span) {
+                        if (c == '"') {
+                            builder.append("\\\""_s);
+                        } else {
+                            builder.append(c);
+                        }
+                    }
+                } else {
+                    const auto span = str.span<UChar>();
+                    for (const auto c : span) {
+                        if (c == '"') {
+                            builder.append("\\\""_s);
+                        } else {
+                            builder.append(c);
+                        }
+                    }
+                }
+                builder.append('"');
+                return;
+            }
+
+            builder.append('\'');
+            builder.append(str);
+            builder.append('\'');
+            return;
+        }
         builder.append(str);
         return;
     }
@@ -710,7 +741,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     builder.append("' "_s);
     builder.append(reason);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value);
+    JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
@@ -729,7 +760,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_RangeError(JSC::ThrowScope& throwScope, JS
     builder.append("' "_s);
     builder.append(reason);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value);
+    JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto* structure = createErrorStructure(vm, globalObject, ErrorType::RangeError, "RangeError"_s, "ERR_INVALID_ARG_VALUE"_s, false);
@@ -748,7 +779,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     builder.append("' "_s);
     builder.append(reason);
     builder.append(". Received "_s);
-    determineSpecificType(vm, globalObject, builder, value);
+    JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
@@ -923,7 +954,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
     if (reason.isUndefined()) {
         builder.append(" is invalid. Received "_s);
-        JSValueToStringSafe(globalObject, builder, value);
+        JSValueToStringSafe(globalObject, builder, value, true);
         RETURN_IF_EXCEPTION(throwScope, {});
         return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
     }
@@ -937,7 +968,7 @@ static JSValue ERR_INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     builder.append(' ');
     builder.append(reasonView);
     builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value);
+    JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
     return createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString());
 }

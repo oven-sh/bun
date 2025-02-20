@@ -1988,14 +1988,6 @@ class ServerHttp2Stream extends Http2Stream {
     if (headers[":status"] === undefined) {
       headers[":status"] = 200;
     }
-    const endStream = this.headRequest || this.endAfterHeaders;
-    if (endStream) {
-      if (!options || !$isObject(options)) {
-        options = { endStream: true };
-      } else {
-        options = { ...options, endStream: true };
-      }
-    }
     const statusCode = (headers[":status"] |= 0);
 
     // Payload/DATA frames are not permitted in these cases
@@ -2023,14 +2015,6 @@ class ServerHttp2Stream extends Http2Stream {
 
     if (headers[":status"] === undefined) {
       headers[":status"] = 200;
-    }
-    const endStream = this.headRequest || this.endAfterHeaders;
-    if (endStream) {
-      if (!options || !$isObject(options)) {
-        options = { endStream: true };
-      } else {
-        options = { ...options, endStream: true };
-      }
     }
     const statusCode = (headers[":status"] |= 0);
 
@@ -2147,14 +2131,6 @@ class ServerHttp2Stream extends Http2Stream {
     }
     if (headers[":status"] === undefined) {
       headers[":status"] = 200;
-    }
-    const endStream = this.headRequest || this.endAfterHeaders;
-    if (endStream) {
-      if (!options || !$isObject(options)) {
-        options = { endStream: true };
-      } else {
-        options = { ...options, endStream: true };
-      }
     }
 
     if (typeof options === "undefined") {

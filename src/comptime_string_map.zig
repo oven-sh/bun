@@ -165,6 +165,37 @@ pub fn ComptimeStringMapWithKeyType(comptime KeyType: type, comptime V: type, co
             return null;
         }
 
+        /// Returns the index of the key in the sorted list of keys.
+        pub fn indexOf(str: []const KeyType) ?usize {
+            if (str.len < precomputed.min_len or str.len > precomputed.max_len)
+                return null;
+
+            comptime var len: usize = precomputed.min_len;
+            inline while (len <= precomputed.max_len) : (len += 1) {
+                if (str.len == len) {
+                    const end = comptime brk: {
+                        var i = len_indexes[len];
+                        @setEvalBranchQuota(99999);
+
+                        while (i < kvs.len and kvs[i].key.len == len) : (i += 1) {}
+
+                        break :brk i;
+                    };
+
+                    // This benchmarked faster for both small and large lists of strings than using a big switch statement
+                    // But only so long as the keys are a sorted list.
+                    inline for (len_indexes[len]..end) |i| {
+                        if (strings.eqlComptimeCheckLenWithType(KeyType, str, kvs[i].key, false)) {
+                            return i;
+                        }
+                    }
+
+                    return null;
+                }
+            }
+            return null;
+        }
+
         /// Caller must ensure that the input is a string.
         pub fn fromJS(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) ?V {
             if (comptime bun.Environment.allow_assert) {

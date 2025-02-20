@@ -1066,7 +1066,8 @@ const Template = enum {
         _ = try install.spawnAndWait();
 
         Output.prettyln("\nTo get started, run:\n\n\t<cyan>bun dev<r>", .{});
-        Output.prettyln("\nTo run for production:\n\n\t<cyan>bun start<r>\n\n", .{});
+        Output.prettyln("\nTo build statically site:\n\n\t<cyan>bun run bu<r>\n\n", .{});
+        Output.prettyln("\nTo run in production:\n\n\t<cyan>bun start<r>\n\n", .{});
 
         Output.flush();
 

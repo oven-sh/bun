@@ -132,7 +132,6 @@ function writeAfterFIN(chunk, encoding, cb) {
 }
 
 function onConnectEnd() {
-  // NOTE: This logic is shared with _http_client.js
   if (!this._hadError) {
     const options = this[kConnectOptions];
     this._hadError = true;

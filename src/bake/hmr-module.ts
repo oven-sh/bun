@@ -34,6 +34,8 @@ interface DepEntry {
   _expectedImports: string[] | undefined;
 }
 
+let dynamicImportWithOpts: any;
+
 /**
  * The expression `import(a,b)` is not supported in all browsers, most notably
  * in Mozilla Firefox. It is lazily evaluated, and will throw a SyntaxError
@@ -92,9 +94,11 @@ export class HotModule<E = any> {
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
     if (!registry.has(specifier) && !input_graph[specifier]) {
       try {
-        if (opts) {
-          return await (lazyDynamicImportWithOptions ??= (0, eval)(`(a,b)=>import(a,b)`))(specifier, opts);
-        }
+        if (opts != null)
+          return await (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(
+            specifier,
+            opts,
+          );
         return await import(specifier);
       } catch (err) {
         // fall through to loadModule, which will throw a more specific error.

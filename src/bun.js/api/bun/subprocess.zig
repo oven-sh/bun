@@ -1784,10 +1784,6 @@ pub const Subprocess = struct {
             const arg = try value.toBunString2(globalThis);
             defer arg.deref();
 
-            // if the string is empty, ignore it, don't add it to the argv
-            if (arg.isEmpty()) {
-                continue;
-            }
             argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
         }
 

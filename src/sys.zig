@@ -4032,6 +4032,19 @@ pub const File = struct {
         return bun.sys.lseek(this.handle, offset, std.posix.SEEK.SET);
     }
 
+    pub fn getPos(this: File) Maybe(usize) {
+        if (comptime Environment.isWindows) {
+            const rc = std.os.windows.kernel32.SetFilePointerEx(this.handle.cast(), 0, null, std.os.windows.FILE_CURRENT);
+            if (Maybe(void).errnoSys(rc, .lseek)) |err| {
+                return err;
+            }
+
+            // Windows casts as unsigned
+            return .{ .result = @as(u32, @bitCast(rc)) };
+        }
+        return bun.sys.lseek(this.handle, 0, std.posix.SEEK.CUR);
+    }
+
     pub fn preadAll(this: File, buf: []u8, offset: usize) Maybe(usize) {
         var total: usize = 0;
         while (true) {

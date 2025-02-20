@@ -333,9 +333,10 @@ void us_internal_trigger_handshake_callback_econnreset(struct us_internal_ssl_so
 
   // always set the handshake state to completed
   s->handshake_state = HANDSHAKE_COMPLETED;
-  struct us_bun_verify_error_t verify_error =  (struct us_bun_verify_error_t){
-        .error = -46, .code = "ECONNRESET", .reason = "Client network socket disconnected before secure TLS connection was established"};
-  context->on_handshake(s, 0, verify_error, context->handshake_data);
+  if (context->on_handshake != NULL) {
+    struct us_bun_verify_error_t verify_error = (struct us_bun_verify_error_t){ .error = -46, .code = "ECONNRESET", .reason = "Client network socket disconnected before secure TLS connection was established"};
+    context->on_handshake(s, 0, verify_error, context->handshake_data);
+  }
 }
 void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
                                             int success) {
@@ -360,8 +361,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
   if (s->handshake_state != HANDSHAKE_COMPLETED) {
     // if we have some pending handshake we cancel it and try to check the
     // latest handshake error this way we will always call on_handshake with the
-    // latest error before closing this should always call
-    // secureConnection/secure before close if we remove this here, we will need
+    // ECONNRESET error  if we remove this here, we will need
     // to do this check on every on_close event on sockets, fetch etc and will
     // increase complexity on a lot of places
     us_internal_trigger_handshake_callback_econnreset(s);

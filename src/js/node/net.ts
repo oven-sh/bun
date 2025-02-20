@@ -213,6 +213,8 @@ const Socket = (function (InternalSocket) {
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
         if (!self) return;
+        // to match nodejs behavior we ignore ECONNRESET errors on handshake
+        if (!success && verifyError?.code === "ECONNRESET") return;
 
         self._securePending = false;
         self.secureConnecting = false;

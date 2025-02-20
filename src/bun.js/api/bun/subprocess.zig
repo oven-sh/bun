@@ -753,6 +753,29 @@ pub const Subprocess = struct {
 
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSValue {
         IPClog("Subprocess#doSend", .{});
+        var message, var handle, var options_, var callback = callFrame.argumentsAsArray(4);
+
+        if (handle.isFunction()) {
+            callback = handle;
+            handle = .undefined;
+            options_ = .undefined;
+        } else if (options_.isFunction()) {
+            callback = options_;
+            options_ = .undefined;
+        } else if (!options_.isUndefined()) {
+            try global.validateObject("options", options_, .{});
+        }
+
+        const S = struct {
+            fn impl(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+                const arguments_ = callframe.arguments_old(1).slice();
+                const ex = arguments_[0];
+                JSC.VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+                return .undefined;
+            }
+        };
+
+        const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(global);
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
                 return global.ERR_IPC_CHANNEL_CLOSED("Subprocess.send() cannot be used after the process has exited.", .{}).throw();
@@ -761,14 +784,29 @@ pub const Subprocess = struct {
             }
         });
 
-        if (callFrame.argumentsCount() == 0) {
-            return global.throwInvalidArguments("Subprocess.send() requires one argument", .{});
+        if (message.isUndefined()) {
+            return global.throwMissingArgumentsValue(&.{"message"});
+        }
+        if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+            return global.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
         }
 
-        const value = callFrame.argument(0);
+        const good = ipc_data.serializeAndSend(global, message);
 
-        const success = ipc_data.serializeAndSend(global, value);
-        if (!success) return .zero;
+        if (good) {
+            if (callback.isFunction()) {
+                JSC.Bun__Process__queueNextTick1(zigGlobal, callback, .null);
+            }
+        } else {
+            const ex = global.createTypeErrorInstance("process.send() failed", .{});
+            ex.put(global, JSC.ZigString.static("syscall"), bun.String.static("write").toJS(global));
+            if (callback.isFunction()) {
+                JSC.Bun__Process__queueNextTick1(zigGlobal, callback, ex);
+            } else {
+                const fnvalue = JSC.JSFunction.create(global, "", S.impl, 1, .{});
+                JSC.Bun__Process__queueNextTick1(zigGlobal, fnvalue, ex);
+            }
+        }
 
         return .undefined;
     }

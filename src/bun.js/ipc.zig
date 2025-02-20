@@ -210,25 +210,30 @@ const json = struct {
                 },
             }
 
-            const is_ascii = bun.strings.isAllASCII(json_data);
+            const can_be_external = bun.strings.isAllASCII(json_data) and json_data.len > 0;
             var was_ascii_string_freed = false;
 
             // Use ExternalString to avoid copying data if possible.
             // This is only possible for ascii data, as that fits into latin1
             // otherwise we have to convert it utf-8 into utf16-le.
-            var str = if (is_ascii)
+            var str = if (can_be_external)
                 bun.String.createExternal(json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB)
             else
                 bun.String.fromUTF8(json_data);
             defer {
                 str.deref();
-                if (is_ascii and !was_ascii_string_freed) {
+                if (can_be_external and !was_ascii_string_freed) {
                     @panic("Expected ascii string to be freed by ExternalString, but it wasn't. This is a bug in Bun.");
                 }
             }
 
-            const deserialized = str.toJSByParseJSON(globalThis);
-            if (deserialized == .zero) return error.InvalidFormat;
+            const deserialized = str.toJSByParseJSON(globalThis) catch |e| switch (e) {
+                error.JSError => {
+                    globalThis.clearException();
+                    return IPCDecodeError.InvalidFormat;
+                },
+                error.OutOfMemory => return bun.outOfMemory(),
+            };
 
             return switch (kind) {
                 1 => .{
@@ -718,8 +723,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             return;
                         },
                         error.InvalidFormat => {
-                            Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                            this.handleIPCClose();
                             socket.close(.failure);
                             return;
                         },
@@ -748,8 +751,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                        this.handleIPCClose();
                         socket.close(.failure);
                         return;
                     },
@@ -862,7 +863,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                         ipc.close(false);
                         return;
                     },

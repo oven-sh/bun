@@ -2170,12 +2170,6 @@ class ServerHttp2Stream extends Http2Stream {
     }
     this.headersSent = true;
     this[bunHTTP2Headers] = headers;
-
-    if (endStream) {
-      // end the stream
-      this.end();
-    }
-
     return;
   }
 }

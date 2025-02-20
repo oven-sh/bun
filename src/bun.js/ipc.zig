@@ -230,8 +230,13 @@ const json = struct {
                 }
             }
 
-            const deserialized = str.toJSByParseJSON(globalThis);
-            if (deserialized == .zero) return error.InvalidFormat;
+            const deserialized = str.toJSByParseJSON(globalThis) catch |e| switch (e) {
+                error.JSError => {
+                    globalThis.clearException();
+                    return IPCDecodeError.InvalidFormat;
+                },
+                error.OutOfMemory => return bun.outOfMemory(),
+            };
 
             return switch (kind) {
                 1 => .{
@@ -721,8 +726,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             return;
                         },
                         error.InvalidFormat => {
-                            Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                            this.handleIPCClose();
                             socket.close(.failure);
                             return;
                         },
@@ -751,8 +754,6 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
-                        this.handleIPCClose();
                         socket.close(.failure);
                         return;
                     },
@@ -865,7 +866,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                         return;
                     },
                     error.InvalidFormat => {
-                        Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                         ipc.close(false);
                         return;
                     },

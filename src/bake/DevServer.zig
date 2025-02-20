@@ -4809,9 +4809,6 @@ const DirectoryWatchStore = struct {
         specifier: []const u8,
         renderer: bake.Graph,
     ) bun.OOM!void {
-        store.lock.lock();
-        defer store.lock.unlock();
-
         // When it does not resolve to a file path, there is
         // nothing to track. Bake does not watch node_modules.
         if (!(bun.strings.startsWith(specifier, "./") or

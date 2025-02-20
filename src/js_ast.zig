@@ -6953,13 +6953,6 @@ pub const Ast = struct {
         };
     }
 
-    pub fn initTest(parts: []Part) Ast {
-        return Ast{
-            .parts = Part.List.init(parts),
-            .runtime_imports = .{},
-        };
-    }
-
     pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {

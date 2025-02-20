@@ -57,6 +57,7 @@ const C = bun.C;
 const std = @import("std");
 const lex = @import("../js_lexer.zig");
 const Logger = @import("../logger.zig");
+const Source = Logger.Source;
 const options = @import("../options.zig");
 const js_parser = bun.js_parser;
 const Part = js_ast.Part;
@@ -411,17 +412,6 @@ pub const BundleV2 = struct {
     /// true, a callback is executed after all work is complete.
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
-
-    /// Used by the dev server to apply the barrel file optimization.
-    ///
-    /// Files which import a barrel file will have import records where
-    /// `record.tag == .barrel`.
-    ///
-    /// They get added here so we can process them later and mutate them to point
-    /// to their final destination.
-    barrel_importers: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
-    barrel_files: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
-    paused_parse_tasks_for_barrel_files: std.AutoHashMapUnmanaged(Index.Int, ResolveQueue) = .{},
 
     const BakeOptions = struct {
         framework: bake.Framework,
@@ -984,6 +974,7 @@ pub const BundleV2 = struct {
                 .allocator = undefined,
                 .kit_referenced_server_data = false,
                 .kit_referenced_client_data = false,
+                .barrel_files = .empty,
             },
             .linker = .{
                 .loop = event_loop,
@@ -2299,6 +2290,14 @@ pub const BundleV2 = struct {
             on_parse_finalizers.deinit(bun.default_allocator);
         }
 
+        for (this.graph.barrel_files.values()) |*barrel| switch (barrel.*) {
+            .pending, .deoptimized => {},
+            .done => |rq| for (rq.values()) |pt| {
+                bun.debugAssert(!pt.source_index.isValid());
+                bun.default_allocator.destroy(pt);
+            },
+        };
+
         defer this.graph.ast.deinit(bun.default_allocator);
         defer this.graph.input_files.deinit(bun.default_allocator);
         if (this.graph.pool.workers_assignments.count() > 0) {
@@ -2372,63 +2371,63 @@ pub const BundleV2 = struct {
         return try this.linker.generateChunksInParallel(chunks, false);
     }
 
-    pub fn redirectBarrelImports(
-        this: *BundleV2,
-        source_index: Index.Int,
-        import_records: []ImportRecord,
-        named_imports: *JSAst.NamedImports,
-        all_symbols: []Symbol.List,
-    ) void {
-        if (this.barrel_importers.count() == 0 or !this.barrel_importers.contains(source_index)) return;
+    // pub fn redirectBarrelImports(
+    //     this: *BundleV2,
+    //     source_index: Index.Int,
+    //     import_records: []ImportRecord,
+    //     named_imports: *JSAst.NamedImports,
+    //     all_symbols: []Symbol.List,
+    // ) void {
+    //     if (this.barrel_importers.count() == 0 or !this.barrel_importers.contains(source_index)) return;
 
-        const map = this.pathToSourceIndexMap(.browser);
-        const all_barrel_named_exports: []const JSAst.NamedExports = this.graph.ast.items(.named_exports);
-        const all_named_imports: []const JSAst.NamedImports = this.graph.ast.items(.named_imports);
-        const all_import_records: []const BabyList(ImportRecord) = this.graph.ast.items(.import_records);
+    //     const map = this.pathToSourceIndexMap(.browser);
+    //     const all_barrel_named_exports: []const JSAst.NamedExports = this.graph.ast.items(.named_exports);
+    //     const all_named_imports: []const JSAst.NamedImports = this.graph.ast.items(.named_imports);
+    //     const all_import_records: []const BabyList(ImportRecord) = this.graph.ast.items(.import_records);
 
-        for (named_imports.keys(), named_imports.values()) |name_ref, *named_import| {
-            const import_record = &import_records[named_import.import_record_index];
-            if (comptime bun.Environment.isDebug) {
-                debug("OOGA index: {d}", .{source_index});
-                const ir = import_record;
-                debug("    {s}: {d}, {s}, {s}, {s}", .{ ir.path.text, ir.source_index.get(), @tagName(ir.tag), if (ir.is_unused) "unused" else "used", if (ir.is_internal) "internal" else "external" });
-            }
-            if (import_record.tag != .barrel) continue;
-            if (import_record.is_unused or import_record.is_internal or import_record.source_index.isValid()) continue;
+    //     for (named_imports.keys(), named_imports.values()) |name_ref, *named_import| {
+    //         const import_record = &import_records[named_import.import_record_index];
+    //         if (comptime bun.Environment.isDebug) {
+    //             debug("OOGA index: {d}", .{source_index});
+    //             const ir = import_record;
+    //             debug("    {s}: {d}, {s}, {s}, {s}", .{ ir.path.text, ir.source_index.get(), @tagName(ir.tag), if (ir.is_unused) "unused" else "used", if (ir.is_internal) "internal" else "external" });
+    //         }
+    //         if (import_record.tag != .barrel) continue;
+    //         if (import_record.is_unused or import_record.is_internal or import_record.source_index.isValid()) continue;
 
-            const barrel_file_index = map.get(import_record.path.hashKey()).?;
+    //         const barrel_file_index = map.get(import_record.path.hashKey()).?;
 
-            const barrel_named_exports: *const JSAst.NamedExports = &all_barrel_named_exports[barrel_file_index];
+    //         const barrel_named_exports: *const JSAst.NamedExports = &all_barrel_named_exports[barrel_file_index];
 
-            // Pair assertion: we asserted this was not null in `fn s_import()` in `js_parser.zig`
-            // when we split up the import statements
-            bun.assert(named_import.alias != null);
+    //         // Pair assertion: we asserted this was not null in `fn s_import()` in `js_parser.zig`
+    //         // when we split up the import statements
+    //         bun.assert(named_import.alias != null);
 
-            // 1. find the export in the barrel file which corresponds to the named import
-            // 2. update the symbol which the `name_ref` points to: add a link which points to the symbol of the final destination
-            // 3. update `import_record.source_index` and _maybe_ `import_record.path` to point to the final destination file
-            if (barrel_named_exports.getPtr(named_import.alias.?)) |barrel_export| {
-                // TODO: question I do not know the answer to: when is this NOT a symbol?
-                bun.assert(name_ref.tag == .symbol);
-                const symbols = &all_symbols[name_ref.source_index];
-                symbols.mut(name_ref.inner_index).link = barrel_export.ref;
-                const barrel_source_idx = barrel_export.ref.source_index;
-                const barrel_named_imports = &all_named_imports[barrel_source_idx];
-                const named_import2 = barrel_named_imports.getPtr(barrel_export.ref) orelse @panic("FUCK");
+    //         // 1. find the export in the barrel file which corresponds to the named import
+    //         // 2. update the symbol which the `name_ref` points to: add a link which points to the symbol of the final destination
+    //         // 3. update `import_record.source_index` and _maybe_ `import_record.path` to point to the final destination file
+    //         if (barrel_named_exports.getPtr(named_import.alias.?)) |barrel_export| {
+    //             // TODO: question I do not know the answer to: when is this NOT a symbol?
+    //             bun.assert(name_ref.tag == .symbol);
+    //             const symbols = &all_symbols[name_ref.source_index];
+    //             symbols.mut(name_ref.inner_index).link = barrel_export.ref;
+    //             const barrel_source_idx = barrel_export.ref.source_index;
+    //             const barrel_named_imports = &all_named_imports[barrel_source_idx];
+    //             const named_import2 = barrel_named_imports.getPtr(barrel_export.ref) orelse @panic("FUCK");
 
-                const barrel_import_records = &all_import_records[barrel_source_idx];
-                const final_destination_path = barrel_import_records.at(named_import2.import_record_index).path;
-                const final_destination_idx = map.get(final_destination_path.hashKey()).?;
-                import_record.source_index = Index.init(final_destination_idx);
-                const path = this.graph.input_files.items(.source)[final_destination_idx].path;
-                std.debug.print("THE FOCKIN FINAL: {s}\n", .{path.text});
-                import_record.path = path;
-            }
+    //             const barrel_import_records = &all_import_records[barrel_source_idx];
+    //             const final_destination_path = barrel_import_records.at(named_import2.import_record_index).path;
+    //             const final_destination_idx = map.get(final_destination_path.hashKey()).?;
+    //             import_record.source_index = Index.init(final_destination_idx);
+    //             const path = this.graph.input_files.items(.source)[final_destination_idx].path;
+    //             std.debug.print("THE FOCKIN FINAL: {s}\n", .{path.text});
+    //             import_record.path = path;
+    //         }
 
-            // If we're here then the user imported something from the barrel file which never existed in the first place.
-            // Do nothing and let the bundler handle this missing symbol error itself.
-        }
-    }
+    //         // If we're here then the user imported something from the barrel file which never existed in the first place.
+    //         // Do nothing and let the bundler handle this missing symbol error itself.
+    //     }
+    // }
 
     /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
     pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !DevServerInput {
@@ -2448,6 +2447,11 @@ pub const BundleV2 = struct {
     }
 
     pub fn finishFromBakeDevServer(this: *BundleV2, dev_server: *bake.DevServer) bun.OOM!void {
+        // TODO: Suggestion for barrel file implementation:
+        // - Revert this entire file.
+        // - The loop to generate `js_reachable_files` should skip all files marked is barrel file
+        // - When a barrel file is de-optimized, unmark `is_barrel_file` on the result
+
         const start = &dev_server.current_bundle.?.start_data;
 
         this.graph.heap.helpCatchMemoryIssues();
@@ -2946,8 +2950,8 @@ pub const BundleV2 = struct {
 
             estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
         }
-        var resolve_queue = ResolveQueue.init(this.graph.allocator);
-        resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch bun.outOfMemory();
+        var resolve_queue: ResolveQueue = .empty;
+        resolve_queue.ensureTotalCapacity(this.graph.allocator, estimated_resolve_queue_count) catch bun.outOfMemory();
 
         var last_error: ?anyerror = null;
 
@@ -3187,13 +3191,24 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            defer {
-                if (this.transpiler.options.dev_server != null) {
-                    if (import_record.tag == .barrel) {
-                        this.barrel_importers.put(bun.default_allocator, source.index.get(), {}) catch bun.outOfMemory();
-                    }
+            defer if (import_record.tag == .barrel) {
+                const key = path.hashKey() ^ bun.hash(std.mem.asBytes(&target));
+                const gop = this.graph.barrel_files.getOrPut(this.graph.allocator, key) catch bun.outOfMemory();
+                if (!gop.found_existing) {
+                    gop.value_ptr.* = .{ .pending = .empty };
                 }
-            }
+                switch (gop.value_ptr.*) {
+                    .pending => |*items| items.append(this.graph.allocator, .{
+                        .importer_source_index = source.index,
+                        .import_record_index = .init(@intCast(i)),
+                    }) catch bun.outOfMemory(),
+                    .done => |rq| {
+                        _ = rq;
+                        @panic("TODO");
+                    },
+                    .deoptimized => @panic("TODO"),
+                }
+            };
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
                 if (loader == .css) {
@@ -3238,7 +3253,7 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            const resolve_entry = resolve_queue.getOrPut(hash_key) catch bun.outOfMemory();
+            const resolve_entry = resolve_queue.getOrPut(this.graph.allocator, hash_key) catch bun.outOfMemory();
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
                 import_record.source_index = resolve_entry.value_ptr.*.source_index;
@@ -3273,20 +3288,18 @@ pub const BundleV2 = struct {
             };
 
             // Figure out the loader.
-            {
-                if (import_record.tag.loader()) |l| {
-                    resolve_task.loader = l;
-                }
+            if (import_record.tag.loader()) |l| {
+                resolve_task.loader = l;
+            }
 
-                if (resolve_task.loader == null) {
-                    resolve_task.loader = path.loader(&this.transpiler.options.loaders);
-                    resolve_task.tree_shaking = this.transpiler.options.tree_shaking;
-                }
+            if (resolve_task.loader == null) {
+                resolve_task.loader = path.loader(&this.transpiler.options.loaders);
+                resolve_task.tree_shaking = this.transpiler.options.tree_shaking;
+            }
 
-                // HTML must be an entry point.
-                if (resolve_task.loader) |*l| {
-                    l.* = l.disableHTML();
-                }
+            // HTML must be an entry point.
+            if (resolve_task.loader) |*l| {
+                l.* = l.disableHTML();
             }
 
             resolve_entry.value_ptr.* = resolve_task;
@@ -3294,7 +3307,7 @@ pub const BundleV2 = struct {
 
         if (last_error) |err| {
             debug("failed with error: {s}", .{@errorName(err)});
-            resolve_queue.clearAndFree();
+            resolve_queue.clearAndFree(this.graph.allocator);
             parse_result.value = .{
                 .err = .{
                     .err = err,
@@ -3326,7 +3339,7 @@ pub const BundleV2 = struct {
         // Automatically rewrite it to the secondary one
         if (value.secondary_path_for_commonjs_interop) |secondary_path| {
             const secondary_hash = secondary_path.hashKey();
-            if (this.path_to_source_index_map.get(secondary_hash)) |secondary| {
+            if (path_to_source_index_map.get(secondary_hash)) |secondary| {
                 existing.found_existing = true;
                 existing.value_ptr.* = secondary;
             }
@@ -3386,7 +3399,7 @@ pub const BundleV2 = struct {
             }
 
             for (import_records_to_update_source_index) |record| {
-                record.source_index = existing.value_ptr.*;
+                record.source_index = .init(existing.value_ptr.*);
                 record.path = value.path;
             }
 
@@ -3424,8 +3437,8 @@ pub const BundleV2 = struct {
                 this.onAfterDecrementScanCounter();
         }
 
-        var resolve_queue = ResolveQueue.init(this.graph.allocator);
-        defer resolve_queue.deinit();
+        var resolve_queue: ResolveQueue = .empty;
+        defer resolve_queue.deinit(this.graph.allocator);
         var process_log = true;
 
         if (parse_result.value == .success) {
@@ -3505,13 +3518,80 @@ pub const BundleV2 = struct {
                 const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
 
                 if (result.is_barrel_file) {
-                    this.barrel_files.put(bun.default_allocator, result.source.index.get(), {}) catch bun.outOfMemory();
-                    this.filterPendingBarrelFiles(&resolve_queue, &result.ast.named_imports, import_records.slice(), result.source.index, &result.ast.named_exports, path_to_source_index_map);
+                    // Process all import requests to this barrel file, with each one
+                    // - Rewriting the importer's `import_record.source_index` to match
+                    // - Ensuring the parse task is queued if it was found in `resolve_queue`
+                    //
+                    // Then, the state is changed into `.done`, and followup
+                    // requests have the resolve queue to work off of. BundleV2.deinit
+                    // cleans up unqueued *ParseTask objects.
+                    const key = result.source.path.hashKey() ^ bun.hash(std.mem.asBytes(&result.ast.target));
+                    const barrel_ptr = this.graph.barrel_files.getPtr(key) orelse
+                        @panic("Internal assertion failure: missing barrel file entry");
+                    bun.assert(barrel_ptr.* == .pending);
+                    const pending = &barrel_ptr.pending;
+
+                    const all_import_record_lists = this.graph.ast.items(.import_records);
+                    const all_named_imports: []JSAst.NamedImports = this.graph.ast.items(.named_imports);
+
+                    const barrel_ast = &result.ast;
+
+                    var had_barrel_deoptimization = false;
+                    for (pending.items) |request| {
+                        const request_import_records = all_import_record_lists[request.importer_source_index.get()].slice();
+                        const request_record = &request_import_records[request.import_record_index.get()];
+                        const importer_named_imports = &all_named_imports[request.importer_source_index.get()];
+
+                        // TODO: avoid this loop
+                        // Locate the named import entry for this record.
+                        const named_import = for (importer_named_imports.values()) |named_import| {
+                            if (named_import.import_record_index == request.import_record_index.get())
+                                break &named_import;
+                        } else {
+                            // Assertion failure?
+                            continue;
+                        };
+
+                        // Locate the corresponding export in THIS file
+                        const barrel_named_export = barrel_ast.named_exports.get(named_import.alias orelse {
+                            // ok???
+                            continue;
+                        }) orelse {
+                            had_barrel_deoptimization = true;
+                            break;
+                        };
+
+                        // Locate the import it maps to.
+                        const barrel_named_import = barrel_ast.named_imports.get(barrel_named_export.ref) orelse {
+                            // Was not a plain re-export.
+                            had_barrel_deoptimization = true;
+                            break;
+                        };
+
+                        const import_record = import_records.mut(barrel_named_import.import_record_index);
+                        if (import_record.source_index.isValid()) {
+                            request_record.source_index = import_record.source_index;
+                            request_record.path = import_record.path;
+                        } else {
+                            const hash = import_record.path.hashKey();
+                            const entry = resolve_queue.fetchSwapRemove(hash) orelse continue; // assertion failure?
+                            diff += @intFromBool(this.processEnqueuedResolveTask(
+                                entry.key,
+                                entry.value,
+                                path_to_source_index_map,
+                                &.{ request_record, import_record },
+                            ));
+                        }
+                    }
+
+                    pending.deinit(this.graph.allocator);
+                    barrel_ptr.* = .{ .done = resolve_queue };
+                    resolve_queue = .empty;
                 } else {
                     var iter = resolve_queue.iterator();
 
                     while (iter.next()) |entry| {
-                        this.processEnqueuedResolveTask(entry.key, entry.value, path_to_source_index_map, &.{});
+                        diff += @intFromBool(this.processEnqueuedResolveTask(entry.key_ptr.*, entry.value_ptr.*, path_to_source_index_map, &.{}));
                     }
                 }
 
@@ -3655,55 +3735,11 @@ pub const BundleV2 = struct {
     pub fn bustDirCache(vm: *BundleV2, path: []const u8) bool {
         return vm.transpiler.resolver.bustDirCache(path);
     }
-
-    pub fn filterPendingBarrelFiles(this: *BundleV2, our_named_imports: *const JSAst.NamedImports, our_import_records: []ImportRecord, source_index: Index, named_exports: *const js_ast.BundledAst.NamedExports, path_to_source_index_map: *PathToSourceIndexMap) usize {
-        const all_import_records: []BabyList(ImportRecord) = this.graph.ast.items(.import_records);
-        const all_named_imports: []JSAst.NamedImports = this.graph.ast.items(.named_imports);
-
-        var count: usize = 0;
-        for (this.barrel_importers.keys()) |importer_source_index| {
-            const import_records = all_import_records[importer_source_index].slice();
-
-            outer: for (import_records, 0..) |*record, i| {
-                if (record.tag == .barrel) {
-                    if (record.source_index.get() == source_index.get()) {
-                        const named_imports = &all_named_imports[importer_source_index];
-
-                        // We found an import to this barrel file.
-                        // Now we need to make the source index point to this exporter.
-                        for (named_imports.values()) |*named_import| {
-                            if (@as(usize, named_import.import_record_index) == i) {
-                                if (named_import.alias) |export_name| {
-                                    if (named_exports.get(export_name)) |named_export| {
-                                        for (our_named_imports.keys(), our_named_imports.values()) |named_import_ref, *our_named_import| {
-                                            if (named_import_ref == named_export.ref) {
-                                                const exported_import_record = &our_import_records[our_named_import.import_record_index];
-                                                const hash = exported_import_record.path.hashKey();
-                                                if (resolve_queue.fetchSwapRemove(hash)) |entry| {
-                                                    exported_import_record.path = entry.value.path;
-                                                    count += @intFromBool(this.processEnqueuedResolveTask(entry.key, entry.value, path_to_source_index_map, &.{
-                                                        record,
-                                                        exported_import_record,
-                                                    }));
-                                                }
-
-                                                continue :outer;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return count;
-    }
 };
 
-const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
+/// Deduplicated path hashes -> *ParseTask. When *ParseTask has a source index
+/// set, it has been queued. otherwise, it is not enqueued.
+const ResolveQueue = std.AutoArrayHashMapUnmanaged(u64, *ParseTask);
 
 /// Used to keep the bundle thread from spinning on Windows
 pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
@@ -5655,6 +5691,11 @@ pub const Graph = struct {
 
     additional_output_files: std.ArrayListUnmanaged(options.OutputFile) = .{},
 
+    /// Map from a key describing a barrel file to it's state.
+    /// Keys are `path.hashKey() ^ bun.hash(std.mem.asBytes(&target))`
+    /// Values contains pointers to globally allocated memory that is freed in BundleV2.deinit
+    barrel_files: std.AutoArrayHashMapUnmanaged(u64, BarrelState),
+
     kit_referenced_server_data: bool,
     kit_referenced_client_data: bool,
 
@@ -5687,6 +5728,20 @@ pub const Graph = struct {
 
         return false;
     }
+};
+
+pub const BarrelState = union(enum) {
+    /// List of barrel import records to resolve
+    pending: std.ArrayListUnmanaged(PendingEntry),
+    /// Refer to this map and the barrel's source index to lookup an entry.
+    done: ResolveQueue,
+    /// Do not perform barrel file optimization
+    deoptimized,
+
+    pub const PendingEntry = struct {
+        importer_source_index: Source.Index,
+        import_record_index: ImportRecord.Index,
+    };
 };
 
 pub const AdditionalFile = union(enum) {

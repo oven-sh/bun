@@ -3,7 +3,7 @@ const bun = @import("root").bun;
 const logger = bun.logger;
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;
-const Index = @import("ast/base.zig").Index;
+const Source = logger.Source;
 const Api = @import("./api/schema.zig").Api;
 
 pub const ImportKind = enum(u8) {
@@ -98,12 +98,14 @@ pub const ImportKind = enum(u8) {
 };
 
 pub const ImportRecord = struct {
+    pub const Index = bun.GenericIndex(u32, ImportRecord);
+
     range: logger.Range,
     path: fs.Path,
     kind: ImportKind,
     tag: Tag = .none,
 
-    source_index: Index = Index.invalid,
+    source_index: Source.Index = .invalid,
 
     print_mode: PrintMode = .normal,
 

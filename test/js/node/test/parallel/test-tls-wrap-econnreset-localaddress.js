@@ -21,6 +21,10 @@ const server = net.createServer((c) => {
   }, common.localhostIPv4)
     .once('error', common.mustCall((e) => {
       assert.strictEqual(e.code, 'ECONNRESET');
+      assert.strictEqual(e.path, undefined);
+      assert.strictEqual(e.host, undefined);
+      assert.strictEqual(e.port, port);
+      assert.strictEqual(e.localAddress, common.localhostIPv4);
       server.close();
       errored = true;
     }))

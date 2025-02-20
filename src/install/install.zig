@@ -15439,6 +15439,9 @@ pub const PackageManager = struct {
         packages_len_before_install: usize,
         log_level: Options.LogLevel,
     ) OOM!void {
+        if (!this.options.do.save_lockfile) {
+          return;
+        }
         if (this.lockfile.isEmpty()) {
             if (!this.options.dry_run) delete: {
                 const delete_format = switch (load_result.*) {

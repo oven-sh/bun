@@ -4250,7 +4250,8 @@ pub const CowString = CowSlice(u8);
 ///
 /// CowSlice does not support slices longer than 2^(@bitSizeOf(usize)-1).
 pub fn CowSlice(T: type) type {
-    const DebugData = if (Environment.allow_assert) struct {
+    const cow_str_assertions = Environment.isDebug;
+    const DebugData = if (cow_str_assertions) struct {
         mutex: std.Thread.Mutex,
         allocator: Allocator,
         borrows: usize,
@@ -4264,9 +4265,7 @@ pub fn CowSlice(T: type) type {
             } }),
             is_owned: bool,
         },
-        debug: if (Environment.allow_assert) ?*DebugData else void,
-
-        const cow_str_assertions = Environment.isDebug;
+        debug: if (cow_str_assertions) ?*DebugData else void,
 
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.

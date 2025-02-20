@@ -1136,11 +1136,11 @@ describe.skipIf(!optionsFromEnv.accessKeyId)("S3 - CI - List Objects", () => {
 
     expect(res.encodingType).toBe("url");
     expect(res.keyCount).toBe(2);
-    expect(res.startAfter).toEndWith("b.txt");
+    expect(res.startAfter).toEndWith(encodeURIComponent("file_a>b.txt"));
     expect(res.contents).toBeArray();
     expect(res.contents).toHaveLength(2);
-    expect(res.contents![0].key).toEndWith("c.txt");
-    expect(res.contents![1].key).toEndWith("d.txt");
+    expect(res.contents![0].key).toEndWith(encodeURIComponent("file_a>c.txt"));
+    expect(res.contents![1].key).toEndWith(encodeURIComponent("file_a>d.txt"));
 
     const storedFile = res.contents![1];
     expect(storedFile.owner).toBeObject();

@@ -163,6 +163,9 @@ const nop = () => {};
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeIncludes = String.prototype.includes;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 
@@ -1603,6 +1606,12 @@ const OutgoingMessagePrototype = {
     return Array.from(headers.keys());
   },
 
+  getRawHeaderNames() {
+    var headers = this[headersSymbol];
+    if (!headers) return [];
+    return headers.rawKeys();
+  },
+
   getHeaders() {
     const headers = this[headersSymbol];
     if (!headers) return kEmptyObject;
@@ -2762,14 +2771,14 @@ function ClientRequest(input, options, cb) {
   }
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
-  this[kPort] = options.port || defaultPort || 80;
+  const port = (this[kPort] = options.port || defaultPort || 80);
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =
     options.host =
       validateHost(options.hostname, "hostname") || validateHost(options.host, "host") || "localhost");
 
-  // const setHost = options.setHost === undefined || Boolean(options.setHost);
+  const setHost = options.setHost === undefined || Boolean(options.setHost);
 
   this[kSocketPath] = options.socketPath;
 
@@ -2917,26 +2926,26 @@ function ClientRequest(input, options, cb) {
       }
     }
 
-    // if (host && !this.getHeader("host") && setHost) {
-    //   let hostHeader = host;
+    if (host && !this.getHeader("host") && setHost) {
+      let hostHeader = host;
 
-    //   // For the Host header, ensure that IPv6 addresses are enclosed
-    //   // in square brackets, as defined by URI formatting
-    //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
-    //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
-    //   if (
-    //     posColon !== -1 &&
-    //     StringPrototypeIncludes(hostHeader, ":", posColon + 1) &&
-    //     StringPrototypeCharCodeAt(hostHeader, 0) !== 91 /* '[' */
-    //   ) {
-    //     hostHeader = `[${hostHeader}]`;
-    //   }
+      // For the Host header, ensure that IPv6 addresses are enclosed
+      // in square brackets, as defined by URI formatting
+      // https://tools.ietf.org/html/rfc3986#section-3.2.2
+      const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
+      if (
+        posColon !== -1 &&
+        StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
+        StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
+      ) {
+        hostHeader = `[${hostHeader}]`;
+      }
 
-    //   if (port && +port !== defaultPort) {
-    //     hostHeader += ":" + port;
-    //   }
-    //   this.setHeader("Host", hostHeader);
-    // }
+      if (port && +port !== defaultPort) {
+        hostHeader += ":" + port;
+      }
+      this.setHeader("Host", hostHeader);
+    }
 
     var auth = options.auth;
     if (auth && !this.getHeader("Authorization")) {

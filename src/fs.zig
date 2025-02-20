@@ -1246,7 +1246,7 @@ pub const FileSystem = struct {
 
                 const read_buf = try file.preadAll(buf, 0).unwrap();
                 const prev_file_pos = if (comptime Environment.isWindows) try file.getPos().unwrap() else 0;
-                if (comptime Environment.isWindows) try file.seekTo(@intCast(prev_file_pos));
+                if (comptime Environment.isWindows) try file.seekTo(@intCast(prev_file_pos)).unwrap();
                 file_contents = buf[0..read_buf];
 
                 if (strings.BOM.detect(file_contents)) |bom| {

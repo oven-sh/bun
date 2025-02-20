@@ -10883,12 +10883,12 @@ describe("bun run sql", () => {
     const output = stdout.toString();
     const error = stderr.toString();
 
+    expect(error).toBe("");
+    expect(exitCode).toBe(0);
+
     expect(output).toContain("│ num │");
     expect(output).toContain("│ 1   │");
     expect(output).toContain("Executed SQL in");
-
-    expect(exitCode).toBe(0);
-    expect(error).toBe("");
   });
 
   test("executes multiple SQL files", async () => {
@@ -10904,14 +10904,14 @@ describe("bun run sql", () => {
     const output = stdout.toString();
     const error = stderr.toString();
 
+    expect(error).toBe("");
+    expect(exitCode).toBe(0);
+
     expect(output).toContain("query1.sql:");
     expect(output).toContain("│ 2   │");
     expect(output).toContain("query2.sql:");
     expect(output).toContain("│ 3   │");
     expect(output).toContain("Executed 2 SQL files in");
-
-    expect(exitCode).toBe(0);
-    expect(error).toBe("");
   });
 
   test("executes SQL files using glob pattern", async () => {
@@ -10927,14 +10927,14 @@ describe("bun run sql", () => {
     const output = stdout.toString();
     const error = stderr.toString();
 
+    expect(error).toBe("");
+    expect(exitCode).toBe(0);
+
     expect(output).toContain("query1.sql:");
     expect(output).toContain("│ 2   │");
     expect(output).toContain("query2.sql:");
     expect(output).toContain("│ 3   │");
     expect(output).toContain("Executed 2 SQL files in");
-
-    expect(exitCode).toBe(0);
-    expect(error).toBe("");
   });
 
   test("shows help message with --help flag", async () => {
@@ -10972,6 +10972,7 @@ describe("bun run sql", () => {
     const output = stdout.toString();
     const error = stderr.toString();
 
+    // expect(error).toBe("");
     // expect(error).toContain("No SQL files found");
     expect(exitCode).not.toBe(0);
   });
@@ -10982,16 +10983,15 @@ describe("bun run sql", () => {
     await write(
       join(dir, "sql.sql"),
       `
-      DROP TABLE IF EXISTS userss;
-      CREATE TABLE IF NOT EXISTS userss (
+      CREATE TEMPORARY TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         email TEXT UNIQUE NOT NULL
       );
-      INSERT INTO userss (id, name, email) VALUES (1, 'John Doe', 'john@example.com');
-      INSERT INTO userss (id, name, email) VALUES (2, 'Jane Smith', 'jane@example.com');
+      INSERT INTO users (id, name, email) VALUES (1, 'John Doe', 'john@example.com');
+      INSERT INTO users (id, name, email) VALUES (2, 'Jane Smith', 'jane@example.com');
 
-      SELECT * FROM userss;
+      SELECT * FROM users;
       `,
     );
 
@@ -11007,19 +11007,18 @@ describe("bun run sql", () => {
     const output = stdout.toString();
     const error = stderr.toString();
 
+    expect(error).toBe("");
     expect(output.slice(0, output.lastIndexOf("\n\n"))).toMatchInlineSnapshot(`
       "┌───┬──────────────┬───────┬────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────┐
       │   │ command      │ count │ 0                                                      │ 1                                                        │
       ├───┼──────────────┼───────┼────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-      │ 0 │ DROP TABLE   │ 0     │                                                        │                                                          │
-      │ 1 │ CREATE TABLE │ 0     │                                                        │                                                          │
+      │ 0 │ CREATE TABLE │ 0     │                                                        │                                                          │
+      │ 1 │ INSERT       │ 1     │                                                        │                                                          │
       │ 2 │ INSERT       │ 1     │                                                        │                                                          │
-      │ 3 │ INSERT       │ 1     │                                                        │                                                          │
-      │ 4 │ SELECT       │ 2     │ { id: 1, name: "John Doe", email: "john@example.com" } │ { id: 2, name: "Jane Smith", email: "jane@example.com" } │
+      │ 3 │ SELECT       │ 2     │ { id: 1, name: "John Doe", email: "john@example.com" } │ { id: 2, name: "Jane Smith", email: "jane@example.com" } │
       └───┴──────────────┴───────┴────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘"
     `);
 
     expect(exitCode).toBe(0);
-    expect(error).toBe("");
   });
 });

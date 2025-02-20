@@ -213,8 +213,11 @@ const Socket = (function (InternalSocket) {
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
         if (!self) return;
-        // to match nodejs behavior we ignore ECONNRESET errors on handshake
-        if (!success && verifyError?.code === "ECONNRESET") return;
+        if (!success && verifyError?.code === "ECONNRESET") {
+          // we destroy the socket if the handshake failed and the error is ECONNRESET
+          self.destroy(verifyError);
+          return;
+        }
 
         self._securePending = false;
         self.secureConnecting = false;
@@ -316,14 +319,7 @@ const Socket = (function (InternalSocket) {
             data.data = null;
           }
         }
-        if (!data._hadError && data.secureConnecting) {
-          data.secureConnecting = false;
-          data._hadError = true;
-          err =
-            err ||
-            new ConnResetException("Client network socket disconnected before secure TLS connection was established");
-          data.server.emit("tlsClientError", err, data);
-        }
+
         data.server._emitCloseIfDrained();
       },
       end(socket) {
@@ -377,8 +373,13 @@ const Socket = (function (InternalSocket) {
 
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
-        // to match nodejs behavior we ignore ECONNRESET errors on handshake and use the same logic on close/destroy/error
-        if (!success && verifyError?.code === "ECONNRESET") return;
+        if (!success && verifyError?.code === "ECONNRESET") {
+          const err = new ConnResetException("socket hang up");
+          self.server.emit("tlsClientError", err, self);
+          // error before handshake on the server side will only be emitted using tlsClientError
+          self.destroy();
+          return;
+        }
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
@@ -867,7 +868,11 @@ const Socket = (function (InternalSocket) {
     _destroy(err, callback) {
       this.connecting = false;
       const { ending } = this._writableState;
-      if (!err && !this._hadError && this.secureConnecting && !this.isServer) {
+      if (err) {
+        this._hadError = true;
+      } else if (!this._hadError && this.secureConnecting && !this.isServer) {
+        // we manually set the error to ECONNRESET to match nodejs behavior when destroy is called manually without an error in the middle of the handshake
+        // only for the client side case
         this.secureConnecting = false;
         this._hadError = true;
         err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");

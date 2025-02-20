@@ -392,6 +392,7 @@ const Socket = (function (InternalSocket) {
           const err = new ConnResetException("socket hang up");
           self.emit("_tlsError", err);
           self.server.emit("tlsClientError", err, self);
+          self._hadError = true;
           // error before handshake on the server side will only be emitted using tlsClientError
           self.destroy();
           return;

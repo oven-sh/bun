@@ -938,7 +938,6 @@ fn notFound(resp: anytype) void {
 }
 
 fn onNotFoundCorked(resp: anytype) void {
-    resp.writeHeaderInt("Content-Length", 0);
     resp.writeStatus("404 Not Found");
     resp.end("Not Found", false);
 }
@@ -1046,7 +1045,6 @@ fn onIncrementalVisualizerCorked(resp: anytype) void {
         @embedFile("incremental_visualizer.html")
     else
         bun.runtimeEmbedFile(.src_eager, "bake/incremental_visualizer.html");
-    resp.writeHeaderInt("Content-Length", code.len);
     resp.end(code, false);
 }
 

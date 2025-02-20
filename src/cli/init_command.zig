@@ -820,9 +820,9 @@ pub const InitCommand = struct {
                         },
                         alloc,
                     );
-                    process.stderr_behavior = .Ignore;
-                    process.stdin_behavior = .Ignore;
-                    process.stdout_behavior = .Ignore;
+                    process.stderr_behavior = .Inherit;
+                    process.stdin_behavior = .Inherit;
+                    process.stdout_behavior = .Inherit;
                     _ = try process.spawnAndWait();
                 }
             },
@@ -950,65 +950,65 @@ const Template = enum {
 
     const ReactBlank = struct {
         const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../create/projects/react-app/bunfig.toml") },
-            .{ "package.json", @embedFile("../create/projects/react-app/package.json") },
-            .{ "tsconfig.json", @embedFile("../create/projects/react-app/tsconfig.json") },
+            .{ "bunfig.toml", @embedFile("../init/react-app/bunfig.toml") },
+            .{ "package.json", @embedFile("../init/react-app/package.json") },
+            .{ "tsconfig.json", @embedFile("../init/react-app/tsconfig.json") },
             .{ "README.md", InitCommand.Assets.@"README2.md" },
             .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../create/projects/react-app/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../create/projects/react-app/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../create/projects/react-app/src/index.html") },
-            .{ "src/index.css", @embedFile("../create/projects/react-app/src/index.css") },
-            .{ "src/APITester.tsx", @embedFile("../create/projects/react-app/src/APITester.tsx") },
-            .{ "src/react.svg", @embedFile("../create/projects/react-app/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../create/projects/react-app/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../create/projects/react-app/src/logo.svg") },
+            .{ "src/index.tsx", @embedFile("../init/react-app/src/index.tsx") },
+            .{ "src/App.tsx", @embedFile("../init/react-app/src/App.tsx") },
+            .{ "src/index.html", @embedFile("../init/react-app/src/index.html") },
+            .{ "src/index.css", @embedFile("../init/react-app/src/index.css") },
+            .{ "src/APITester.tsx", @embedFile("../init/react-app/src/APITester.tsx") },
+            .{ "src/react.svg", @embedFile("../init/react-app/src/react.svg") },
+            .{ "src/frontend.tsx", @embedFile("../init/react-app/src/frontend.tsx") },
+            .{ "src/logo.svg", @embedFile("../init/react-app/src/logo.svg") },
         };
     };
 
     const ReactTailwind = struct {
         const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../create/projects/react-tailwind/bunfig.toml") },
-            .{ "package.json", @embedFile("../create/projects/react-tailwind/package.json") },
-            .{ "tsconfig.json", @embedFile("../create/projects/react-tailwind/tsconfig.json") },
+            .{ "bunfig.toml", @embedFile("../init/react-tailwind/bunfig.toml") },
+            .{ "package.json", @embedFile("../init/react-tailwind/package.json") },
+            .{ "tsconfig.json", @embedFile("../init/react-tailwind/tsconfig.json") },
             .{ "README.md", InitCommand.Assets.@"README2.md" },
             .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../create/projects/react-tailwind/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../create/projects/react-tailwind/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../create/projects/react-tailwind/src/index.html") },
-            .{ "src/index.css", @embedFile("../create/projects/react-tailwind/src/index.css") },
-            .{ "src/APITester.tsx", @embedFile("../create/projects/react-tailwind/src/APITester.tsx") },
-            .{ "src/react.svg", @embedFile("../create/projects/react-tailwind/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../create/projects/react-tailwind/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../create/projects/react-tailwind/src/logo.svg") },
+            .{ "src/index.tsx", @embedFile("../init/react-tailwind/src/index.tsx") },
+            .{ "src/App.tsx", @embedFile("../init/react-tailwind/src/App.tsx") },
+            .{ "src/index.html", @embedFile("../init/react-tailwind/src/index.html") },
+            .{ "src/index.css", @embedFile("../init/react-tailwind/src/index.css") },
+            .{ "src/APITester.tsx", @embedFile("../init/react-tailwind/src/APITester.tsx") },
+            .{ "src/react.svg", @embedFile("../init/react-tailwind/src/react.svg") },
+            .{ "src/frontend.tsx", @embedFile("../init/react-tailwind/src/frontend.tsx") },
+            .{ "src/logo.svg", @embedFile("../init/react-tailwind/src/logo.svg") },
         };
     };
 
     const ReactShadcn = struct {
         const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../create/projects/react-shadcn/bunfig.toml") },
-            .{ "styles/globals.css", @embedFile("../create/projects/react-shadcn/styles/globals.css") },
-            .{ "package.json", @embedFile("../create/projects/react-shadcn/package.json") },
-            .{ "components.json", @embedFile("../create/projects/react-shadcn/components.json") },
-            .{ "tsconfig.json", @embedFile("../create/projects/react-shadcn/tsconfig.json") },
+            .{ "bunfig.toml", @embedFile("../init/react-shadcn/bunfig.toml") },
+            .{ "styles/globals.css", @embedFile("../init/react-shadcn/styles/globals.css") },
+            .{ "package.json", @embedFile("../init/react-shadcn/package.json") },
+            .{ "components.json", @embedFile("../init/react-shadcn/components.json") },
+            .{ "tsconfig.json", @embedFile("../init/react-shadcn/tsconfig.json") },
             .{ "README.md", InitCommand.Assets.@"README2.md" },
             .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../create/projects/react-shadcn/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../create/projects/react-shadcn/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../create/projects/react-shadcn/src/index.html") },
-            .{ "src/types.d.ts", @embedFile("../create/projects/react-shadcn/src/types.d.ts") },
-            .{ "src/index.css", @embedFile("../create/projects/react-shadcn/src/index.css") },
-            .{ "src/components/ui/card.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/card.tsx") },
-            .{ "src/components/ui/label.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/label.tsx") },
-            .{ "src/components/ui/button.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/button.tsx") },
-            .{ "src/components/ui/select.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/select.tsx") },
-            .{ "src/components/ui/input.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/input.tsx") },
-            .{ "src/components/ui/form.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/form.tsx") },
-            .{ "src/APITester.tsx", @embedFile("../create/projects/react-shadcn/src/APITester.tsx") },
-            .{ "src/lib/utils.ts", @embedFile("../create/projects/react-shadcn/src/lib/utils.ts") },
-            .{ "src/react.svg", @embedFile("../create/projects/react-shadcn/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../create/projects/react-shadcn/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../create/projects/react-shadcn/src/logo.svg") },
+            .{ "src/index.tsx", @embedFile("../init/react-shadcn/src/index.tsx") },
+            .{ "src/App.tsx", @embedFile("../init/react-shadcn/src/App.tsx") },
+            .{ "src/index.html", @embedFile("../init/react-shadcn/src/index.html") },
+            .{ "src/types.d.ts", @embedFile("../init/react-shadcn/src/types.d.ts") },
+            .{ "src/index.css", @embedFile("../init/react-shadcn/src/index.css") },
+            .{ "src/components/ui/card.tsx", @embedFile("../init/react-shadcn/src/components/ui/card.tsx") },
+            .{ "src/components/ui/label.tsx", @embedFile("../init/react-shadcn/src/components/ui/label.tsx") },
+            .{ "src/components/ui/button.tsx", @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
+            .{ "src/components/ui/select.tsx", @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
+            .{ "src/components/ui/input.tsx", @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
+            .{ "src/components/ui/form.tsx", @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
+            .{ "src/APITester.tsx", @embedFile("../init/react-shadcn/src/APITester.tsx") },
+            .{ "src/lib/utils.ts", @embedFile("../init/react-shadcn/src/lib/utils.ts") },
+            .{ "src/react.svg", @embedFile("../init/react-shadcn/src/react.svg") },
+            .{ "src/frontend.tsx", @embedFile("../init/react-shadcn/src/frontend.tsx") },
+            .{ "src/logo.svg", @embedFile("../init/react-shadcn/src/logo.svg") },
         };
     };
 

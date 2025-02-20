@@ -773,7 +773,7 @@ pub const Transpiler = struct {
                 output_file.value = .{ .buffer = .{ .allocator = alloc, .bytes = result.code } };
             },
 
-            .html, .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi => {
+            .html, .bunsh, .sqlite_embedded, .sqlite, .wasm, .file, .napi, .sql => {
                 const hashed_name = try transpiler.linker.getHashedFilename(file_path, null);
                 var pathname = try transpiler.allocator.alloc(u8, hashed_name.len + file_path.name.ext.len);
                 bun.copy(u8, pathname, hashed_name);

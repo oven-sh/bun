@@ -280,6 +280,7 @@ pub const Run = struct {
         doPreconnect(ctx.runtime_options.preconnect);
 
         vm.main_is_html_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .html;
+        vm.main_is_sql_entrypoint = (loader orelse vm.transpiler.options.loader(std.fs.path.extension(entry_path))) == .sql;
 
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);

@@ -769,6 +769,7 @@ pub const VirtualMachine = struct {
     log: *logger.Log,
     main: string = "",
     main_is_html_entrypoint: bool = false,
+    main_is_sql_entrypoint: bool = false,
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
     process: bun.JSC.C.JSObjectRef = null,
@@ -3100,6 +3101,7 @@ pub const VirtualMachine = struct {
     }
 
     extern fn Bun__loadHTMLEntryPoint(global: *JSGlobalObject) *JSInternalPromise;
+    extern fn Bun__loadSQLEntryPoint(global: *JSGlobalObject) *JSInternalPromise;
 
     pub fn reloadEntryPoint(this: *VirtualMachine, entry_path: []const u8) !*JSInternalPromise {
         this.has_loaded = false;
@@ -3108,7 +3110,7 @@ pub const VirtualMachine = struct {
 
         try this.ensureDebugger(true);
 
-        if (!this.main_is_html_entrypoint) {
+        if (!this.main_is_html_entrypoint and !this.main_is_sql_entrypoint) {
             try this.entry_point.generate(
                 this.allocator,
                 this.bun_watcher != .none,
@@ -3125,10 +3127,12 @@ pub const VirtualMachine = struct {
                 return promise;
             }
 
-            const promise = if (!this.main_is_html_entrypoint)
+            const promise = if (!this.main_is_html_entrypoint and !this.main_is_sql_entrypoint)
                 JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(main_file_name)) orelse return error.JSError
+            else if (this.main_is_html_entrypoint)
+                Bun__loadHTMLEntryPoint(this.global)
             else
-                Bun__loadHTMLEntryPoint(this.global);
+                Bun__loadSQLEntryPoint(this.global);
 
             this.pending_internal_promise = promise;
             JSValue.fromCell(promise).ensureStillAlive();

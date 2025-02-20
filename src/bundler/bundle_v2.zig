@@ -4174,7 +4174,7 @@ pub const ParseTask = struct {
                 return ast;
             },
             // TODO:
-            .dataurl, .base64, .bunsh => {
+            .dataurl, .base64, .bunsh, .sql => {
                 return try getEmptyAST(log, transpiler, opts, allocator, source, E.String);
             },
             .file, .wasm => {
@@ -8572,7 +8572,7 @@ pub const LinkerContext = struct {
                                 .{@tagName(loader)},
                             ) catch bun.outOfMemory();
                         },
-                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
+                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh, .sql => {},
                     }
                 }
             }

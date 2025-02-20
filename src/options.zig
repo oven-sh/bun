@@ -645,6 +645,7 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+    sql,
 
     pub fn disableHTML(this: Loader) Loader {
         return switch (this) {
@@ -765,6 +766,7 @@ pub const Loader = enum(u8) {
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
         .{ "html", .html },
+        .{ "sql", .sql },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -816,7 +818,7 @@ pub const Loader = enum(u8) {
             .tsx => .tsx,
             .css => .css,
             .html => .html,
-            .file, .bunsh => .file,
+            .file, .bunsh, .sql => .file,
             .json => .json,
             .toml => .toml,
             .wasm => .wasm,
@@ -904,7 +906,9 @@ const default_loaders_posix = .{
     .{ ".node", .napi },
     .{ ".txt", .text },
     .{ ".text", .text },
+
     .{ ".html", .html },
+    .{ ".sql", .sql },
     .{ ".jsonc", .json },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
@@ -1303,7 +1307,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-const default_loader_ext_bun = [_]string{ ".node", ".html" };
+const default_loader_ext_bun = [_]string{ ".node", ".html", ".sql" };
 const default_loader_ext = [_]string{
     ".jsx",   ".json",
     ".js",    ".mjs",

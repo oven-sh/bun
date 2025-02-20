@@ -2,7 +2,7 @@
 // It imports the entry points and initializes a server.
 import type { HTMLBundle, Server } from "bun";
 const initial = performance.now();
-const argv = process.argv;
+const argv = [...process.execArgv, ...process.argv.slice(1)];
 
 // `import` cannot be used in this file and only Bun builtin modules can be used.
 const path = require("node:path");
@@ -17,7 +17,7 @@ async function start() {
   let port: number | undefined = undefined;
 
   // Step 1. Resolve all HTML entry points
-  for (let i = 1, argvLength = argv.length; i < argvLength; i++) {
+  for (let i = 0, argvLength = argv.length; i < argvLength; i++) {
     const arg = argv[i];
 
     if (!arg.endsWith(".html")) {

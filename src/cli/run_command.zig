@@ -1528,7 +1528,7 @@ pub const RunCommand = struct {
             var resolved_mutable = resolved;
             const path = resolved_mutable.path().?;
             const loader: bun.options.Loader = this_transpiler.options.loaders.get(path.name.ext) orelse .tsx;
-            if (loader.canBeRunByBun() or loader == .html) {
+            if (loader.canBeRunByBun() or loader == .html or loader == .sql) {
                 log("Resolved to: `{s}`", .{path.text});
                 return _bootAndHandleError(ctx, path.text, loader);
             } else {
@@ -1539,6 +1539,10 @@ pub const RunCommand = struct {
             if (strings.hasSuffixComptime(target_name, ".html")) {
                 if (strings.containsChar(target_name, '*')) {
                     return _bootAndHandleError(ctx, target_name, .html);
+                }
+            } else if (strings.hasSuffixComptime(target_name, ".sql")) {
+                if (strings.containsChar(target_name, '*')) {
+                    return _bootAndHandleError(ctx, target_name, .sql);
                 }
             }
         }

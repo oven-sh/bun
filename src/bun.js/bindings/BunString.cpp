@@ -41,9 +41,6 @@
 
 extern "C" void mi_free(void* ptr);
 
-// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String
-extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
-
 using namespace JSC;
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length);
 
@@ -155,43 +152,6 @@ extern "C" int64_t BunString__toInt32(BunString* bunString)
 
 namespace Bun {
 
-WTF::String toWTFStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
-{
-    ASSERT(!arg.isEmpty());
-    if (!arg.isCell())
-        return arg.toWTFString(globalObject);
-
-    auto cell = arg.asCell();
-    switch (cell->type()) {
-    case JSC::JSType::SymbolType: {
-        auto symbol = jsCast<Symbol*>(cell);
-        auto result = symbol->tryGetDescriptiveString();
-        if (result.has_value())
-            return result.value();
-        return "Symbol"_s;
-    }
-    case JSC::JSType::InternalFunctionType:
-    case JSC::JSType::JSFunctionType: {
-        auto& vm = JSC::getVM(globalObject);
-        auto catchScope = DECLARE_CATCH_SCOPE(vm);
-        auto name = JSC::getCalculatedDisplayName(vm, cell->getObject());
-        if (catchScope.exception()) {
-            catchScope.clearException();
-            name = ""_s;
-        }
-        if (!name.isNull() && name.length() > 0) {
-            return makeString("[Function: "_s, name, ']');
-        }
-        return "[Function (anonymous)]"_s;
-        break;
-    }
-    default: {
-        break;
-    }
-    }
-    return arg.toWTFString(globalObject);
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
     if (bunString.tag == BunStringTag::Empty || bunString.tag == BunStringTag::Dead) {
@@ -220,7 +180,7 @@ BunString toString(const char* bytes, size_t length)
 
 BunString fromJS(JSC::JSGlobalObject* globalObject, JSValue value)
 {
-    WTF::String str = toWTFStringSafe(globalObject, value);
+    WTF::String str = value.toWTFString(globalObject);
     if (UNLIKELY(str.isNull())) {
         return { BunStringTag::Dead };
     }

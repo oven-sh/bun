@@ -71,7 +71,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_has);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_set);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_entries);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_keys);
-static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_rawKeys);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_values);
 static JSC_DECLARE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_forEach);
 
@@ -219,6 +218,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     auto& impl = castedThis->wrapped();
     if (name->length() != "set-cookie"_s.length() || name->convertToASCIILowercase() != "set-cookie"_s) {
         throwTypeError(lexicalGlobalObject, scope, "Only \"set-cookie\" is supported."_s);
+        return {};
     }
 
     auto values = impl.getSetCookieHeaders();
@@ -311,7 +311,6 @@ static const HashTableValue JSFetchHeadersPrototypeTableValues[] = {
     { "set"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_set, 2 } },
     { "entries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_entries, 0 } },
     { "keys"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_keys, 0 } },
-    { "rawKeys"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_rawKeys, 0 } },
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_values, 0 } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_forEach, 1 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsFetchHeadersPrototypeFunction_toJSON, 0 } },
@@ -585,10 +584,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_keys, (JSC::JSGlobalObj
     return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_keysCaller>(*lexicalGlobalObject, *callFrame, "keys");
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_rawKeys, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     auto* thisObject = castThisValue<JSFetchHeaders>(*lexicalGlobalObject, callFrame->thisValue());
+
+    if (!thisObject) {
+        throwTypeError(lexicalGlobalObject, scope, "\"this\" must be an instance of Headers"_s);
+        return {};
+    }
 
     FetchHeaders& headers = thisObject->wrapped();
     JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.size());

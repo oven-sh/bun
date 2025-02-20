@@ -109,6 +109,7 @@ const {
 let cluster;
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
+const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
 
 // TODO: make this more robust.
 function isAbortError(err) {
@@ -1609,7 +1610,7 @@ const OutgoingMessagePrototype = {
   getRawHeaderNames() {
     var headers = this[headersSymbol];
     if (!headers) return [];
-    return headers.rawKeys();
+    return getRawKeys.$call(headers);
   },
 
   getHeaders() {

@@ -34,10 +34,10 @@ pub const Options = struct {
     pub fn fromJS(global: *JSC.JSGlobalObject, obj: JSValue) bun.JSError!Options {
         if (!obj.isObject()) return global.throwInvalidArgumentTypeValue("options", "object", obj);
 
-        const address_str: ?bun.String = if (try obj.get(global, "address")) |a|
-            try bun.String.fromJS2(a, global)
-        else
-            null;
+        const address_str: ?bun.String = if (try obj.get(global, "address")) |a| addr: {
+            if (!a.isString()) return global.throwInvalidArgumentTypeValue("options.address", "string", a);
+            break :addr try bun.String.fromJS2(a, global);
+        } else null;
 
         const _family: AF = if (try obj.get(global, "family")) |fam| blk: {
             // "ipv4" or "ipv6", ignoring case
@@ -78,16 +78,21 @@ pub const Options = struct {
 
         // required. Validated by `validatePort`.
         const _port: u16 = if (try obj.get(global, "port")) |p| blk: {
-            if (!p.isFinite()) return global.throwInvalidArgumentTypeValue("options.port", "number", p);
+            if (!p.isFinite()) return throwBadPort(global, p);
             const port32 = p.toInt32();
             if (port32 < 0 or port32 > std.math.maxInt(u16)) {
-                return global.throwInvalidArgumentPropertyValue("options.port", "number between 0 and 65535", p);
+                return throwBadPort(global, p);
             }
             break :blk @intCast(port32);
         } else 0;
 
         const _flowlabel = if (try obj.get(global, "flowlabel")) |fl| blk: {
-            if (!fl.isUInt32AsAnyInt()) return global.throwInvalidArgumentTypeValue("options.flowlabel", "number", fl);
+            if (!fl.isNumber()) return global.throwInvalidArgumentTypeValue("options.flowlabel", "number", fl);
+            if (!fl.isUInt32AsAnyInt()) return global.throwRangeError(fl.asNumber(), .{
+                .field_name = "options.flowlabel",
+                .min = 0,
+                .max = std.math.maxInt(u32),
+            });
             break :blk fl.toU32();
         } else null;
 
@@ -101,6 +106,12 @@ pub const Options = struct {
 
     inline fn throwBadFamilyIP(global: *JSC.JSGlobalObject, family_: JSC.JSValue) bun.JSError {
         return global.throwInvalidArgumentPropertyValue("options.family", "'ipv4' or 'ipv6'", family_);
+    }
+    inline fn throwBadPort(global: *JSC.JSGlobalObject, port_: JSC.JSValue) bun.JSError {
+        const ty = global.determineSpecificType(port_) catch {
+            return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number.", .{}).throw();
+        };
+        return global.ERR_SOCKET_BAD_PORT("The \"options.port\" argument must be a valid IP port number. Got {s}.", .{ty}).throw();
     }
 };
 

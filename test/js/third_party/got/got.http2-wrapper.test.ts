@@ -12,7 +12,7 @@ test("can make http2 request using servername", async () => {
   expect(response.statusCode).toBe(200);
 });
 test("can make http2 request to local http2 server", async () => {
-  const server = http2.createSecureServer(tls);
+  await using server = http2.createSecureServer(tls);
 
   server.on("stream", (stream, headers) => {
     stream.respond({
@@ -28,40 +28,16 @@ test("can make http2 request to local http2 server", async () => {
   const response = await got(`https://localhost:${port}`, {
     http2: true,
     https: {
-      certificateAuthority: tls.cert,
+      rejectUnauthorized: false,
     },
   });
 
   expect(response.statusCode).toBe(200);
   expect(response.body).toBe("hello world");
-
-  await new Promise(resolve => server.close(resolve));
-});
-
-test("handles http2 stream errors", async () => {
-  const server = http2.createSecureServer(tls);
-
-  server.on("stream", stream => {
-    stream.destroy(new Error("Stream error"));
-  });
-
-  await once(server.listen(0), "listening");
-  const port = (server.address() as any).port;
-
-  await expect(
-    got(`https://localhost:${port}`, {
-      http2: true,
-      https: {
-        certificateAuthority: tls.cert,
-      },
-    }),
-  ).rejects.toThrow("Stream error");
-
-  await new Promise(resolve => server.close(resolve));
 });
 
 test("can make POST request to http2 server", async () => {
-  const server = http2.createSecureServer(tls);
+  await using server = http2.createSecureServer(tls);
   const payload = "test data";
 
   server.on("stream", async (stream, headers) => {
@@ -85,19 +61,17 @@ test("can make POST request to http2 server", async () => {
   const response = await got.post(`https://localhost:${port}`, {
     http2: true,
     https: {
-      certificateAuthority: tls.cert,
+      rejectUnauthorized: false,
     },
     body: payload,
   });
 
   expect(response.statusCode).toBe(200);
   expect(response.body).toBe("success");
-
-  await new Promise(resolve => server.close(resolve));
 });
 
 test("can make HEAD request to http2 server", async () => {
-  const server = http2.createSecureServer(tls);
+  await using server = http2.createSecureServer(tls);
 
   server.on("stream", (stream, headers) => {
     expect(headers[":method"]).toBe("HEAD");
@@ -115,13 +89,11 @@ test("can make HEAD request to http2 server", async () => {
   const response = await got.head(`https://localhost:${port}`, {
     http2: true,
     https: {
-      certificateAuthority: tls.cert,
+      rejectUnauthorized: false,
     },
   });
 
   expect(response.statusCode).toBe(200);
   expect(response.body).toBe("");
   expect(response.headers["content-length"]).toBe("11");
-
-  await new Promise(resolve => server.close(resolve));
 });

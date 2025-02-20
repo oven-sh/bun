@@ -174,10 +174,10 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     var client_transpiler: bun.transpiler.Transpiler = undefined;
     var server_transpiler: bun.transpiler.Transpiler = undefined;
     var ssr_transpiler: bun.transpiler.Transpiler = undefined;
-    try framework.initBundler(allocator, vm.log, .production_static, .server, &server_transpiler);
-    try framework.initBundler(allocator, vm.log, .production_static, .client, &client_transpiler);
+    try framework.initTranspiler(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server);
+    try framework.initTranspiler(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client);
     if (separate_ssr_graph) {
-        try framework.initBundler(allocator, vm.log, .production_static, .ssr, &ssr_transpiler);
+        try framework.initTranspiler(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr);
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {

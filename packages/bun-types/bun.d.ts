@@ -455,55 +455,6 @@ declare module "bun" {
   }
   const TOML: TOML;
 
-  type Serve<WebSocketDataType = undefined> =
-    | ServeOptions
-    | TLSServeOptions
-    | UnixServeOptions
-    | UnixTLSServeOptions
-    | WebSocketServeOptions<WebSocketDataType>
-    | TLSWebSocketServeOptions<WebSocketDataType>
-    | UnixWebSocketServeOptions<WebSocketDataType>
-    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
-
-  /**
-   * Start a fast HTTP server.
-   *
-   * @param options Server options (port defaults to $PORT || 3000)
-   *
-   * -----
-   *
-   * @example
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response("Hello World!");
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   * -----
-   *
-   * @example
-   *
-   * Send a file
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response(Bun.file("./package.json"));
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   */
-  // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
-  function serve<T>(options: Serve<T>): Server;
-
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
    *
@@ -1383,6 +1334,18 @@ declare module "bun" {
     endpoint?: string;
 
     /**
+     * Use virtual hosted style endpoint. default to false, when true if `endpoint` is informed it will ignore the `bucket`
+     *
+     * @example
+     *     // Using virtual hosted style
+     *     const file = s3("my-file.txt", {
+     *       virtualHostedStyle: true,
+     *       endpoint: "https://my-bucket.s3.us-east-1.amazonaws.com"
+     *     });
+     */
+    virtualHostedStyle?: boolean;
+
+    /**
      * The size of each part in multipart uploads (in bytes).
      * - Minimum: 5 MiB
      * - Maximum: 5120 MiB
@@ -2054,6 +2017,8 @@ declare module "bun" {
     max?: number;
     /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
     bigint?: boolean;
+    /** Automatic creation of prepared statements, defaults to true */
+    prepare?: boolean;
   };
 
   /**
@@ -2067,6 +2032,8 @@ declare module "bun" {
     cancelled: boolean;
     /** Cancels the executing query */
     cancel(): SQLQuery;
+    /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
+    simple(): SQLQuery;
     /** Executes the query */
     execute(): SQLQuery;
     /** Returns the raw query result */
@@ -3669,6 +3636,30 @@ declare module "bun" {
         };
   }
 
+  namespace RouterTypes {
+    type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
+      ? { [K in Param]: string } & ExtractRouteParams<Rest>
+      : T extends `${string}:${infer Param}`
+        ? { [K in Param]: string }
+        : T extends `${string}*`
+          ? {}
+          : {};
+
+    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
+
+    type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+
+    type RouteHandlerObject<T extends string> = {
+      [K in HTTPMethod]?: RouteHandler<T>;
+    };
+
+    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+  }
+
+  interface BunRequest<T extends string = string> extends Request {
+    params: RouterTypes.ExtractRouteParams<T>;
+  }
+
   interface GenericServeOptions {
     /**
      * What URI should be used to make {@link Request.url} absolute?
@@ -3702,7 +3693,17 @@ declare module "bun" {
      * Render contextual errors? This enables bun's error page
      * @default process.env.NODE_ENV !== 'production'
      */
-    development?: boolean;
+    development?:
+      | boolean
+      | {
+          /**
+           * Enable Hot Module Replacement for routes (including React Fast Refresh, if React is in use)
+           *
+           * @default true if process.env.NODE_ENV !== 'production'
+           *
+           */
+          hmr?: boolean;
+        };
 
     error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
 
@@ -3720,26 +3721,6 @@ declare module "bun" {
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */
     id?: string | null;
-
-    /**
-     * Server static Response objects by route.
-     *
-     * @example
-     * ```ts
-     * Bun.serve({
-     *   static: {
-     *     "/": new Response("Hello World"),
-     *     "/about": new Response("About"),
-     *   },
-     *   fetch(req) {
-     *     return new Response("Fallback response");
-     *   },
-     * });
-     * ```
-     *
-     * @experimental
-     */
-    static?: Record<`/${string}`, Response>;
   }
 
   interface ServeOptions extends GenericServeOptions {
@@ -4116,7 +4097,24 @@ declare module "bun" {
      *
      * Passing other options such as `port` or `hostname` won't do anything.
      */
-    reload(options: Serve): void;
+    reload<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+      options: (
+        | (Omit<ServeOptions, "fetch"> & {
+            routes: R;
+            fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+          })
+        | (Omit<ServeOptions, "routes"> & {
+            routes?: never;
+            fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+          })
+        | WebSocketServeOptions<T>
+      ) & {
+        /**
+         * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
+         */
+        static?: R;
+      },
+    ): Server;
 
     /**
      * Mock the fetch handler for a running server.
@@ -4313,6 +4311,198 @@ declare module "bun" {
      */
     readonly id: string;
   }
+
+  type Serve<WebSocketDataType = undefined> =
+    | ServeOptions
+    | TLSServeOptions
+    | UnixServeOptions
+    | UnixTLSServeOptions
+    | WebSocketServeOptions<WebSocketDataType>
+    | TLSWebSocketServeOptions<WebSocketDataType>
+    | UnixWebSocketServeOptions<WebSocketDataType>
+    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
+
+  /** 
+    Bun.serve provides a high-performance HTTP server with built-in routing support.
+    It enables both function-based and object-based route handlers with type-safe 
+    parameters and method-specific handling.
+
+    @example Basic Usage
+    ```ts
+    Bun.serve({
+      port: 3000,
+      fetch(req) {
+        return new Response("Hello World");
+      }
+    });
+    ```
+
+    @example Route-based Handlers
+    ```ts
+    Bun.serve({
+      routes: {
+        // Static responses
+        "/": new Response("Home page"),
+        
+        // Function handlers with type-safe parameters
+        "/users/:id": (req) => {
+          // req.params.id is typed as string
+          return new Response(`User ${req.params.id}`);
+        },
+        
+        // Method-specific handlers
+        "/api/posts": {
+          GET: () => new Response("Get posts"),
+          POST: async (req) => {
+            const body = await req.json();
+            return new Response("Created post");
+          },
+          DELETE: (req) => new Response("Deleted post")
+        },
+        
+        // Wildcard routes
+        "/static/*": (req) => {
+          // Handle any path under /static/
+          return new Response("Static file");
+        },
+        
+        // Disable route (fall through to fetch handler)
+        "/api/legacy": false
+      },
+      
+      // Fallback handler for unmatched routes
+      fetch(req) {
+        return new Response("Not Found", { status: 404 });
+      }
+    });
+    ```
+
+    @example Path Parameters
+    ```ts
+    Bun.serve({
+      routes: {
+        // Single parameter
+        "/users/:id": (req: BunRequest<"/users/:id">) => {
+          return new Response(`User ID: ${req.params.id}`);
+        },
+        
+        // Multiple parameters
+        "/posts/:postId/comments/:commentId": (
+          req: BunRequest<"/posts/:postId/comments/:commentId">
+        ) => {
+          return new Response(JSON.stringify(req.params));
+          // Output: {"postId": "123", "commentId": "456"}
+        }
+      }
+    });
+    ```
+
+    @example Route Precedence
+    ```ts
+    // Routes are matched in the following order:
+    // 1. Exact static routes ("/about")
+    // 2. Parameter routes ("/users/:id") 
+    // 3. Wildcard routes ("/api/*")
+
+    Bun.serve({
+      routes: {
+        "/api/users": () => new Response("Users list"),
+        "/api/users/:id": (req) => new Response(`User ${req.params.id}`),
+        "/api/*": () => new Response("API catchall"),
+        "/*": () => new Response("Root catchall")
+      }
+    });
+    ```
+
+    @example Error Handling
+    ```ts
+    Bun.serve({
+      routes: {
+        "/error": () => {
+          throw new Error("Something went wrong");
+        }
+      },
+      error(error) {
+        // Custom error handler
+        console.error(error);
+        return new Response(`Error: ${error.message}`, { 
+          status: 500 
+        });
+      }
+    });
+    ```
+
+    @example Server Lifecycle
+    ```ts
+    const server = Bun.serve({
+      // Server config...
+    });
+
+    // Update routes at runtime
+    server.reload({
+      routes: {
+        "/": () => new Response("Updated route")
+      }
+    });
+
+    // Stop the server
+    server.stop();
+    ```
+
+    @example Development Mode
+    ```ts
+    Bun.serve({
+      development: true, // Enable hot reloading
+      routes: {
+        // Routes will auto-reload on changes
+      }
+    });
+    ```
+
+    @example Type-Safe Request Handling
+    ```ts
+    type Post = {
+      id: string;
+      title: string;
+    };
+
+    Bun.serve({
+      routes: {
+        "/api/posts/:id": async (
+          req: BunRequest<"/api/posts/:id">
+        ) => {
+          if (req.method === "POST") {
+            const body: Post = await req.json();
+            return Response.json(body);
+          }
+          return new Response("Method not allowed", { 
+            status: 405 
+          });
+        }
+      }
+    });
+    ```
+    @param options - Server configuration options
+    @param options.routes - Route definitions mapping paths to handlers
+    */
+  function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+    options: (
+      | (Omit<ServeOptions, "fetch"> & {
+          routes: R;
+          fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+        })
+      | (Omit<ServeOptions, "routes"> & {
+          routes?: never;
+          fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+        })
+      | WebSocketServeOptions<T>
+    ) & {
+      /**
+       * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
+       */
+      static?: R;
+    },
+  ): Server;
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.

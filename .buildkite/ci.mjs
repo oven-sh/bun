@@ -391,6 +391,8 @@ function getBuildEnv(target, options) {
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
     ABI: abi === "musl" ? "musl" : undefined,
+
+    CMAKE_TLS_VERIFY: "0",
   };
 }
 
@@ -616,6 +618,21 @@ function getReleaseStep(buildPlatforms, options) {
       CANARY: revision,
     },
     command: ".buildkite/scripts/upload-release.sh",
+  };
+}
+
+/**
+ * @returns {Step}
+ */
+function getBenchmarkStep() {
+  return {
+    key: "benchmark",
+    label: "📊",
+    agents: {
+      queue: "build-zig",
+    },
+    command: "bun .buildkite/scripts/upload-benchmark.ts",
+    depends_on: [`linux-x64-build-bun`],
   };
 }
 
@@ -1096,6 +1113,8 @@ async function getPipeline(options = {}) {
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
   }
+
+  steps.push(getBenchmarkStep());
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();

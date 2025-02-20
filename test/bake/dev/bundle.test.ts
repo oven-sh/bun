@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest, minimalFramework } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../dev-server-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -17,14 +17,14 @@ devTest("import identifier doesnt get renamed", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect("Hello, 123!");
+    await dev.fetch("/").equals("Hello, 123!");
     await dev.write("db.ts", `export const abc = "456";`);
-    await dev.fetch("/").expect("Hello, 456!");
+    await dev.fetch("/").equals("Hello, 456!");
     await dev.patch("routes/index.ts", {
       find: "Hello",
       replace: "Bun",
     });
-    await dev.fetch("/").expect("Bun, 456!");
+    await dev.fetch("/").equals("Bun, 456!");
   },
 });
 devTest("symbol collision with import identifier", {
@@ -44,12 +44,12 @@ devTest("symbol collision with import identifier", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect("Hello, 123, 987!");
+    await dev.fetch("/").equals("Hello, 123, 987!");
     await dev.write("db.ts", `export const abc = "456";`);
-    await dev.fetch("/").expect("Hello, 456, 987!");
+    await dev.fetch("/").equals("Hello, 456, 987!");
   },
 });
-devTest("uses \"development\" condition", {
+devTest('uses "development" condition', {
   framework: minimalFramework,
   files: {
     "node_modules/example/package.json": JSON.stringify({
@@ -72,6 +72,29 @@ devTest("uses \"development\" condition", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect("Environment: development");
+    await dev.fetch("/").equals("Environment: development");
+  },
+});
+devTest("importing a file before it is created", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { abc } from './second';
+      console.log('value: ' + abc);
+    `,
+  },
+  async test(dev) {
+    const c = await dev.client("/", {
+      errors: [`index.ts:1:21: error: Could not resolve: "./second"`],
+    });
+
+    await c.expectReload(async () => {
+      await dev.write("second.ts", `export const abc = "456";`);
+    });
+
+    await c.expectMessage("value: 456");
   },
 });

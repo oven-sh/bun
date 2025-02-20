@@ -784,7 +784,6 @@ pub const FormatOptions = struct {
             if (try arg1.getBooleanLoose(globalThis, "sorted")) |opt| {
                 formatOptions.ordered_properties = opt;
             }
-
             if (try arg1.getBooleanLoose(globalThis, "compact")) |opt| {
                 formatOptions.single_line = opt;
             }
@@ -1296,10 +1295,16 @@ pub const Formatter = struct {
             // Is this a react element?
             if (js_type.isObject() and js_type != .ProxyObject) {
                 if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
-                    var reactElement = ZigString.init("react.element");
+                    // React 18 and below
+                    var react_element_legacy = ZigString.init("react.element");
+                    // For React 19 - https://github.com/oven-sh/bun/issues/17223
+                    var react_element_transitional = ZigString.init("react.transitional.element");
                     var react_fragment = ZigString.init("react.fragment");
 
-                    if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
+                    if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_element_legacy), globalThis) or
+                        JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_element_transitional), globalThis) or
+                        JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis))
+                    {
                         return .{ .tag = .{ .JSX = {} }, .cell = js_type };
                     }
                 }
@@ -1541,7 +1546,7 @@ pub const Formatter = struct {
                                     1;
                                 this.addForNewLine(digits);
                             } else {
-                                this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                                this.addForNewLine(std.fmt.count("{d}", .{int}));
                             }
                             writer.print("{d}", .{int});
                         },
@@ -1576,7 +1581,7 @@ pub const Formatter = struct {
 
                             const abs = @abs(converted);
                             if (abs < max_before_e_notation and abs >= min_before_e_notation) {
-                                this.addForNewLine(bun.fmt.count("{d}", .{converted}));
+                                this.addForNewLine(std.fmt.count("{d}", .{converted}));
                                 writer.print("{d}", .{converted});
                             } else if (std.math.isNan(converted)) {
                                 this.addForNewLine("NaN".len);
@@ -2165,7 +2170,7 @@ pub const Formatter = struct {
                         1;
                     this.addForNewLine(digits);
                 } else {
-                    this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                    this.addForNewLine(std.fmt.count("{d}", .{int}));
                 }
                 writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
             },
@@ -2535,7 +2540,7 @@ pub const Formatter = struct {
                     response.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.WebCore.Request)) |request| {
-                    request.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    request.writeFormat(value, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.API.BuildArtifact)) |build| {
                     build.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};

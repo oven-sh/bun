@@ -244,7 +244,6 @@ JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JS
     return createError(vm, globalObject, code, message, isDOMExceptionPrototype);
 }
 
-// export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) ZigString
 extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
 
 void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& builder, JSValue arg)

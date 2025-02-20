@@ -1,8 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
 
-pub usingnamespace std.meta;
-
 pub fn OptionalChild(comptime T: type) type {
     const tyinfo = @typeInfo(T);
     if (tyinfo != .pointer) @compileError("OptionalChild(T) requires that T be a pointer to an optional type.");

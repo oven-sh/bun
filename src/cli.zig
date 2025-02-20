@@ -243,7 +243,6 @@ pub const Arguments = struct {
         clap.parseParam("--throw-deprecation               Determine whether or not deprecation warnings result in errors.") catch unreachable,
         clap.parseParam("--title <STR>                     Set the process title") catch unreachable,
         clap.parseParam("--zero-fill-buffers               Boolean to force Buffer.allocUnsafe(size) to be zero-filled.") catch unreachable,
-        clap.parseParam("--no-hmr                          Disable Hot-module-replacement when using HTML imports with Bun.serve") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -818,10 +817,6 @@ pub const Arguments = struct {
             }
             if (args.flag("--zero-fill-buffers")) {
                 Bun__Node__ZeroFillBuffers = true;
-            }
-
-            if (args.flag("--no-hmr")) {
-                bun.bake.DevServer.enabled = false;
             }
         }
 
@@ -1807,7 +1802,7 @@ pub const Command = struct {
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BuildCommand);
-                try BuildCommand.exec(ctx);
+                try BuildCommand.exec(ctx, null);
             },
             .InstallCompletionsCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCompletionsCommand) unreachable;
@@ -2462,21 +2457,32 @@ pub const Command = struct {
                 },
                 Command.Tag.CreateCommand => {
                     const intro_text =
-                        \\<b>Usage<r>:
-                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r>
-                        \\  <b><green>bun create<r> <magenta>\<username/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
+                        \\<b>Usage<r><d>:<r>
+                        \\  <b><green>bun create<r> <magenta>\<MyReactComponent.(jsx|tsx)\><r> 
+                        \\  <b><green>bun create<r> <magenta>\<template\><r> <cyan>[...flags]<r> <blue>dest<r> 
+                        \\  <b><green>bun create<r> <magenta>\<github-org/repo\><r> <cyan>[...flags]<r> <blue>dest<r>
                         \\
-                        \\<b>Environment variables:<r>
-                        \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
-                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
-                        \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
+                        \\<b>Environment variables<r><d>:<r>
+                        \\  <cyan>GITHUB_TOKEN<r>         <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                        \\  <cyan>GITHUB_API_DOMAIN<r>    <d>Configure custom/enterprise GitHub domain. Default "api.github.com"<r>
+                        \\  <cyan>NPM_CLIENT<r>           <d>Absolute path to the npm client executable<r>
+                        \\  <cyan>BUN_CREATE_DIR<r>       <d>Custom path for global templates (default: $HOME/.bun-create)<r>
                     ;
 
                     const outro_text =
-                        \\If given a GitHub repository name, Bun will download it and use it as a template,
-                        \\otherwise it will run <b><magenta>bunx create-\<template\><r> with the given arguments.
+                        \\<b>React Component Projects<r><d>:<r>
+                        \\  • Turn an existing React component into a complete frontend dev environment
+                        \\  • Automatically starts a hot-reloading dev server
+                        \\  • Auto-detects & configures TailwindCSS and shadcn/ui
                         \\
-                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/cli/bun-create<r>
+                        \\  <b><magenta>bun create \<MyReactComponent.(jsx|tsx)\><r>
+                        \\
+                        \\<b>Templates<r><d>:<r>
+                        \\  • NPM: Runs <b><magenta>bunx create-\<template\><r> with given arguments
+                        \\  • GitHub: Downloads repository contents as template
+                        \\  • Local: Uses templates from $HOME/.bun-create/\<name\> or ./.bun-create/\<name\>
+                        \\
+                        \\Learn more: <magenta>https://bun.sh/docs/cli/bun-create<r>
                         \\
                     ;
 

@@ -21,7 +21,7 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = @import("./string_mutable.zig").MutableString;
+const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
@@ -4459,13 +4459,6 @@ pub const Prefill = struct {
         pub var REACT_ELEMENT_TYPE = Expr.Data{ .e_string = &Prefill.String.REACT_ELEMENT_TYPE };
         pub const This = Expr.Data{ .e_this = E.This{} };
         pub const Zero = Expr.Data{ .e_number = Value.Zero };
-    };
-    pub const Runtime = struct {
-        // pub var JSXFilename = "__jsxFilename";
-        // pub var MarkAsModule = "__markAsModule";
-        // pub var CommonJS = "__commonJS";
-        // pub var ToModule = "__toModule";
-        // const JSXShortname = "jsx";
     };
 };
 

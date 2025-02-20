@@ -161,8 +161,6 @@ export function decodeAndAppendError(r: DataViewReader) {
 }
 
 export function updateErrorOverlay() {
-  console.log(errors, updatedErrorOwners);
-
   if (errors.size === 0) {
     if (IS_ERROR_RUNTIME) {
       location.reload();
@@ -255,7 +253,7 @@ function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
     throw new Error("Unknown log level: " + level);
   }
   return elem("div", { class: "message-text" }, [
-    elemText("span", { class: "log-" + levelName }, levelName),
+    elemText("span", { class: "log-label log-" + levelName }, levelName),
     elemText("span", { class: "log-colon" }, ": "),
     elemText("span", { class: "log-text" }, text),
   ]);

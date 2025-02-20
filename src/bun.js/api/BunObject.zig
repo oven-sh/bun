@@ -500,7 +500,6 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     if (arguments.len > 1) {
         try formatOptions.fromJS(globalThis, arguments[1..]);
     }
-    const value = arguments[0];
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
@@ -509,13 +508,13 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     var buffered_writer = &buffered_writer_;
 
     const writer = buffered_writer.writer();
-    const Writer = @TypeOf(writer);
+    const Writer = MutableString.BufferedWriter.Writer;
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     try ConsoleObject.format2(
         .Debug,
         globalThis,
-        @as([*]const JSValue, @ptrCast(&value)),
+        arguments.ptr,
         1,
         Writer,
         Writer,
@@ -541,9 +540,29 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     const writer = buffered_writer.writer();
 
     var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
+    defer formatter.deinit();
     writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
     buffered_writer.flush() catch return .empty;
+    return bun.String.createUTF8(array.slice());
+}
 
+export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+    const Writer = MutableString.BufferedWriter.Writer;
+    ConsoleObject.format2(.Debug, globalThis, (&value)[0..1].ptr, 1, Writer, Writer, writer, .{
+        .enable_colors = false,
+        .add_newline = false,
+        .flush = false,
+        .max_depth = std.math.maxInt(u16),
+        .quote_strings = true,
+        .ordered_properties = false,
+        .single_line = true,
+    }) catch return .empty;
+    if (globalThis.hasException()) return .empty;
+    buffered_writer.flush() catch return .empty;
     return bun.String.createUTF8(array.slice());
 }
 
@@ -3057,8 +3076,11 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
             globalObject,
             &config,
             &args,
-            callframe.isFromBunMain(globalObject.vm()),
-            true,
+            .{
+                .allow_bake_config = bun.FeatureFlags.bake() and callframe.isFromBunMain(globalObject.vm()),
+                .is_fetch_required = true,
+                .has_user_routes = false,
+            },
         );
 
         if (globalObject.hasException()) {
@@ -3105,7 +3127,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
 
     switch (config.ssl_config != null) {
         inline else => |has_ssl_config| {
-            switch (config.development) {
+            switch (config.isDevelopment()) {
                 inline else => |development| {
                     const ServerType = comptime switch (development) {
                         true => switch (has_ssl_config) {
@@ -3122,11 +3144,14 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     if (globalObject.hasException()) {
                         return .zero;
                     }
-                    server.listen();
+                    const route_list_object = server.listen();
                     if (globalObject.hasException()) {
                         return .zero;
                     }
                     const obj = server.toJS(globalObject);
+                    if (route_list_object != .zero) {
+                        ServerType.routeListSetCached(obj, globalObject, route_list_object);
+                    }
                     obj.protect();
 
                     server.thisObject = obj;

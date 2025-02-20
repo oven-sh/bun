@@ -267,19 +267,18 @@ pub const CreateCommand = struct {
             break :brk positionals[1];
         };
 
-        const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .auto, dirname));
+        const destination = try filesystem.dirname_store.append([]const u8, resolve_path.joinAbs(filesystem.top_level_dir, .loose, dirname));
 
         var progress = Progress{};
         progress.supports_ansi_escape_codes = Output.enable_ansi_colors_stderr;
-        var node = progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0);
+        var node = switch (example_tag) {
+            .jslike_file => progress.start(try ProgressBuf.print("Analyzing {s}", .{template}), 0),
+            else => progress.start(try ProgressBuf.print("Loading {s}", .{template}), 0),
+        };
 
         // alacritty is fast
         if (env_loader.map.get("ALACRITTY_LOG") != null) {
             progress.refresh_rate_ns = std.time.ns_per_ms * 8;
-
-            if (create_options.verbose) {
-                Output.prettyErrorln("alacritty gets faster progress bars ", .{});
-            }
         }
 
         defer {
@@ -289,11 +288,16 @@ pub const CreateCommand = struct {
         var package_json_contents: MutableString = undefined;
         var package_json_file: ?std.fs.File = null;
 
-        if (create_options.verbose) {
-            Output.prettyErrorln("Downloading as {s}\n", .{@tagName(example_tag)});
+        if (example_tag != .local_folder) {
+            if (create_options.verbose) {
+                Output.prettyErrorln("Downloading as {s}\n", .{@tagName(example_tag)});
+            }
         }
 
         switch (example_tag) {
+            .jslike_file => {
+                return try runOnEntryPoint(ctx, example_tag, template, &progress, node);
+            },
             Example.Tag.github_repository, Example.Tag.official => {
                 const tarball_bytes: MutableString = switch (example_tag) {
                     .official => Example.fetch(ctx, &env_loader, template, &progress, node) catch |err| {
@@ -1664,6 +1668,36 @@ pub const CreateCommand = struct {
             }
         }
     }
+
+    fn runOnEntryPoint(ctx: Command.Context, example_tag: Example.Tag, entry_point: []const u8, progress: *Progress, node: *Progress.Node) !void {
+        const Analyzer = struct {
+            ctx: Command.Context,
+            example_tag: Example.Tag,
+            entry_point: []const u8,
+            node: *Progress.Node,
+            progress: *Progress,
+            pub fn onAnalyze(this: *@This(), result: *bun.bundle_v2.BundleV2.DependenciesScanner.Result) anyerror!void {
+                this.node.end();
+
+                try SourceFileProjectGenerator.generate(this.ctx, this.example_tag, this.entry_point, result);
+            }
+        };
+
+        var analyzer = Analyzer{
+            .ctx = ctx,
+            .example_tag = example_tag,
+            .entry_point = entry_point,
+            .progress = progress,
+            .node = node,
+        };
+
+        var fetcher = bun.bundle_v2.BundleV2.DependenciesScanner{
+            .ctx = &analyzer,
+            .entry_points = &[_]string{analyzer.entry_point},
+            .onFetch = @ptrCast(&Analyzer.onAnalyze),
+        };
+        try bun.CLI.BuildCommand.exec(bun.CLI.Command.get(), &fetcher);
+    }
     pub fn extractInfo(ctx: Command.Context) !struct { example_tag: Example.Tag, template: []const u8 } {
         var example_tag = Example.Tag.unknown;
         var filesystem = try fs.FileSystem.init(null);
@@ -1688,6 +1722,29 @@ pub const CreateCommand = struct {
         const template = brk: {
             var positional = positionals[0];
 
+            outer: {
+                var parts = [_]string{ filesystem.top_level_dir, positional };
+                const outdir_path = filesystem.absBuf(&parts, &home_dir_buf);
+                home_dir_buf[outdir_path.len] = 0;
+                const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
+                if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
+
+                if (bun.sys.existsAtType(bun.toFD(std.fs.cwd()), outdir_path_).asValue()) |exists_at_type| {
+                    if (exists_at_type == .file) {
+                        const extension = std.fs.path.extension(positional);
+                        if (Example.Tag.fromFileExtension(extension)) |tag| {
+                            example_tag = tag;
+                            break :brk bun.default_allocator.dupe(u8, outdir_path) catch bun.outOfMemory();
+                        }
+                        // Show a warning when the local file exists and it's not a .js file
+                        // A lot of create-* npm packages have .js in the name, so you could end up with that warning.
+                        else if (extension.len > 0 and !strings.eqlComptime(extension, ".js")) {
+                            Output.warn("bun create [local file] only supports .jsx and .tsx files currently", .{});
+                        }
+                    }
+                }
+            }
+
             if (!std.fs.path.isAbsolute(positional)) {
                 outer: {
                     if (env_loader.map.get("BUN_CREATE_DIR")) |home_dir| {
@@ -1696,9 +1753,10 @@ pub const CreateCommand = struct {
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
-                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                        example_tag = Example.Tag.local_folder;
-                        break :brk outdir_path;
+                        if (bun.sys.directoryExistsAt(bun.toFD(std.fs.cwd()), outdir_path_).isTrue()) {
+                            example_tag = Example.Tag.local_folder;
+                            break :brk outdir_path;
+                        }
                     }
                 }
 
@@ -1708,9 +1766,10 @@ pub const CreateCommand = struct {
                     home_dir_buf[outdir_path.len] = 0;
                     const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                     if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
-                    std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                    example_tag = Example.Tag.local_folder;
-                    break :brk outdir_path;
+                    if (bun.sys.directoryExistsAt(bun.toFD(std.fs.cwd()), outdir_path_).isTrue()) {
+                        example_tag = Example.Tag.local_folder;
+                        break :brk outdir_path;
+                    }
                 }
 
                 outer: {
@@ -1720,9 +1779,10 @@ pub const CreateCommand = struct {
                         home_dir_buf[outdir_path.len] = 0;
                         const outdir_path_ = home_dir_buf[0..outdir_path.len :0];
                         if (bun.path.hasAnyIllegalChars(outdir_path_)) break :outer;
-                        std.fs.accessAbsoluteZ(outdir_path_, .{}) catch break :outer;
-                        example_tag = Example.Tag.local_folder;
-                        break :brk outdir_path;
+                        if (bun.sys.directoryExistsAt(bun.toFD(std.fs.cwd()), outdir_path_).isTrue()) {
+                            example_tag = Example.Tag.local_folder;
+                            break :brk outdir_path;
+                        }
                     }
                 }
 
@@ -1798,6 +1858,15 @@ pub const Example = struct {
         github_repository,
         official,
         local_folder,
+        jslike_file,
+
+        const ExtensionTagMap = bun.ComptimeStringMap(Tag, .{
+            .{ ".tsx", .jslike_file },
+            .{ ".jsx", .jslike_file },
+        });
+        pub fn fromFileExtension(extension: string) ?Tag {
+            return ExtensionTagMap.get(extension);
+        }
     };
 
     const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
@@ -2386,3 +2455,5 @@ const GitHandler = struct {
         return false;
     }
 };
+
+const SourceFileProjectGenerator = @import("../create/SourceFileProjectGenerator.zig");

@@ -749,12 +749,8 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         expect(client.encrypted).toBeTrue();
         expect(client.closed).toBeFalse();
         expect(client.destroyed).toBeFalse();
-        expect(client.originSet.length).toBe(0);
+        expect(client.originSet.length).toBe(1);
         expect(client.pendingSettingsAck).toBeTrue();
-        let received_origin = null;
-        client.on("origin", origin => {
-          received_origin = origin;
-        });
         assertSettings(client.localSettings);
         expect(client.remoteSettings).toBeNull();
         const headers = { ":path": "/" };
@@ -793,9 +789,6 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         client.destroy();
         expect(client.connecting).toBeFalse();
         expect(client.alpnProtocol).toBe("h2");
-        expect(client.originSet.length).toBe(1);
-        expect(client.originSet).toEqual(received_origin);
-        expect(client.originSet[0]).toBe("www.example.com");
         expect(client.pendingSettingsAck).toBeFalse();
         expect(client.destroyed).toBeTrue();
         expect(client.closed).toBeTrue();

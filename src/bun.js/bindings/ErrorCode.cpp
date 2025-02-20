@@ -970,10 +970,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexica
     if (!options.isUndefined() && options.isCell() && !options.asCell()->isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
 
     if (message.isUndefined() && options.isUndefined()) {
-        return JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationFailedString(globalObject), false));
+        return JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationWasAbortedString(globalObject), false));
     }
 
-    if (message.isUndefined()) message = globalObject->commonStrings().OperationFailedString(globalObject);
+    if (message.isUndefined()) message = globalObject->commonStrings().OperationWasAbortedString(globalObject);
     auto error = Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, message, options, false);
     return JSC::JSValue::encode(error);
 }
@@ -983,12 +983,12 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     switch (abortReason) {
     case CommonAbortReason::Timeout: {
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().OperationFailedString(globalObject), true);
+        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().OperationWasAbortedString(globalObject), true);
     }
     case CommonAbortReason::UserAbort: {
         // This message is a standardized error message. We cannot change it.
         // https://webidl.spec.whatwg.org/#idl-DOMException:~:text=The%20operation%20was%20aborted.
-        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().OperationFailedString(globalObject), true);
+        return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().OperationWasAbortedString(globalObject), true);
     }
     case CommonAbortReason::ConnectionClosed: {
         return createError(globalObject, Bun::ErrorCode::ABORT_ERR, zigGlobalObject->commonStrings().ConnectionWasClosedString(globalObject), true);

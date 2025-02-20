@@ -969,7 +969,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionMakeAbortError, (JSC::JSGlobalObject * lexica
     if (!options.isUndefined() && options.isCell() && !options.asCell()->isObject()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, options);
 
     if (message.isUndefined() && options.isUndefined()) {
-        return JSValue::encode(Bun::createError(globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationFailedString(globalObject), false));
+        return JSValue::encode(Bun::createError(vm, globalObject, Bun::ErrorCode::ABORT_ERR, globalObject->commonStrings().OperationFailedString(globalObject), false));
     }
 
     if (message.isUndefined()) message = globalObject->commonStrings().OperationFailedString(globalObject);

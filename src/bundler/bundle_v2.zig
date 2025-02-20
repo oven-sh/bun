@@ -13410,7 +13410,6 @@ pub const LinkerContext = struct {
                     const ExportHoist = struct {
                         decls: std.ArrayListUnmanaged(G.Decl),
                         allocator: std.mem.Allocator,
-                        next_value: ?Expr = null,
 
                         pub fn wrapIdentifier(w: *@This(), loc: Logger.Loc, ref: Ref) Expr {
                             w.decls.append(
@@ -13423,7 +13422,7 @@ pub const LinkerContext = struct {
                                         },
                                         loc,
                                     ),
-                                    .value = w.next_value,
+                                    .value = null,
                                 },
                             ) catch bun.outOfMemory();
 
@@ -13449,16 +13448,20 @@ pub const LinkerContext = struct {
                                     for (local.decls.slice()) |*decl| {
                                         if (decl.value) |initializer| {
                                             const can_be_moved = initializer.canBeMoved();
-                                            hoist.next_value = if (can_be_moved) initializer else null;
-                                            const binding = decl.binding.toExpr(&hoist);
-                                            if (!can_be_moved) {
+                                            if (can_be_moved) {
+                                                // if the value can be moved, move the decl directly to preserve destructuring
+                                                // ie `const { main } = class { static main() {} }` => `var {main} = class { static main() {} }`
+                                                hoist.decls.append(hoist.allocator, decl.*) catch bun.outOfMemory();
+                                            } else {
+                                                // if the value cannot be moved, add every destructuring key seperately
+                                                // ie `var { append } = { append() {} }` => `var append; __esm(() => ({ append } = { append() {} }))`
+                                                const binding = decl.binding.toExpr(&hoist);
                                                 value = value.joinWithComma(
                                                     binding.assign(initializer),
                                                     temp_allocator,
                                                 );
                                             }
                                         } else {
-                                            hoist.next_value = null;
                                             _ = decl.binding.toExpr(&hoist);
                                         }
                                     }
@@ -13478,8 +13481,6 @@ pub const LinkerContext = struct {
                                         stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();
                                         continue;
                                     }
-
-                                    hoist.next_value = null;
 
                                     break :stmt Stmt.allocateExpr(
                                         temp_allocator,

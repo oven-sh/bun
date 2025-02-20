@@ -733,7 +733,7 @@ pub const Loader = enum(u8) {
         }
 
         var zig_str = JSC.ZigString.init("");
-        loader.toZigString(&zig_str, global);
+        try loader.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {

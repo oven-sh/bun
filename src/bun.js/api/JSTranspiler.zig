@@ -359,7 +359,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
                 names[define_iter.i] = prop.toOwnedSlice(allocator) catch unreachable;
                 var val = JSC.ZigString.init("");
-                property_value.toZigString(&val, globalThis);
+                try property_value.toZigString(&val, globalThis);
                 if (val.len == 0) {
                     val = JSC.ZigString.init("\"\"");
                 }
@@ -380,7 +380,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             const toplevel_type = external.jsType();
             if (toplevel_type.isStringLike()) {
                 var zig_str = JSC.ZigString.init("");
-                external.toZigString(&zig_str, globalThis);
+                try external.toZigString(&zig_str, globalThis);
                 if (zig_str.len == 0) break :external;
                 var single_external = allocator.alloc(string, 1) catch unreachable;
                 single_external[0] = std.fmt.allocPrint(allocator, "{}", .{external}) catch unreachable;
@@ -398,7 +398,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                     }
 
                     var zig_str = JSC.ZigString.init("");
-                    entry.toZigString(&zig_str, globalThis);
+                    try entry.toZigString(&zig_str, globalThis);
                     if (zig_str.len == 0) continue;
                     externals[i] = std.fmt.allocPrint(allocator, "{}", .{external}) catch unreachable;
                     i += 1;

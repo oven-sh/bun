@@ -445,7 +445,7 @@ pub const JSBundler = struct {
                     }
 
                     var val = JSC.ZigString.init("");
-                    property_value.toZigString(&val, globalThis);
+                    try property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
                         val = JSC.ZigString.fromUTF8("\"\"");
                     }

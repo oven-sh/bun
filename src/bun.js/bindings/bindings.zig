@@ -1830,7 +1830,7 @@ pub const SystemError = extern struct {
     };
 };
 
-pub const Sizes = @import("../bindings/sizes.zig");
+pub const Sizes = @import("./sizes.zig");
 
 pub const JSUint8Array = opaque {
     pub const name = "Uint8Array_alias";
@@ -4873,8 +4873,10 @@ pub const JSValue = enum(i64) {
         return cppFn("toZigException", .{ this, global, exception });
     }
 
-    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void {
-        return cppFn("toZigString", .{ this, out, global });
+    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) bun.JSError!void {
+        const str = cppFn("toZigString", .{ this, out, global });
+        if (global.hasException()) return error.JSError;
+        return str;
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
@@ -4943,7 +4945,7 @@ pub const JSValue = enum(i64) {
     /// Deprecated: replace with 'toBunString2'
     pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
         var str = ZigString.init("");
-        this.toZigString(&str, global);
+        this.toZigString(&str, global) catch {};
         return str;
     }
 

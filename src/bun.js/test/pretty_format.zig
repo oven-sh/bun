@@ -939,7 +939,7 @@ pub const JestPrettyFormat = struct {
                 },
                 .String => {
                     var str = ZigString.init("");
-                    value.toZigString(&str, this.globalThis);
+                    try value.toZigString(&str, this.globalThis);
                     this.addForNewLine(str.len);
 
                     if (value.jsType() == .StringObject or value.jsType() == .DerivedStringObject) {
@@ -1520,7 +1520,7 @@ pub const JestPrettyFormat = struct {
                         const _tag = Tag.get(type_value, this.globalThis);
 
                         if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                            type_value.toZigString(&tag_name_str, this.globalThis);
+                            try type_value.toZigString(&tag_name_str, this.globalThis);
                             is_tag_kind_primitive = true;
                         } else if (_tag.cell.isObject() or type_value.isCallable(this.globalThis.vm())) {
                             type_value.getNameProperty(this.globalThis, &tag_name_str);
@@ -1528,7 +1528,7 @@ pub const JestPrettyFormat = struct {
                                 tag_name_str = ZigString.init("NoName");
                             }
                         } else {
-                            type_value.toZigString(&tag_name_str, this.globalThis);
+                            try type_value.toZigString(&tag_name_str, this.globalThis);
                         }
 
                         tag_name_slice = tag_name_str.toSlice(default_allocator);

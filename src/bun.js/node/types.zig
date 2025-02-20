@@ -1358,7 +1358,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode
         // digit (5 in the example), specifies the permissions for others.
 
         var zig_str = JSC.ZigString.Empty;
-        value.toZigString(&zig_str, ctx);
+        try value.toZigString(&zig_str, ctx);
         var slice = zig_str.slice();
         if (strings.hasPrefix(slice, "0o")) {
             slice = slice[2..];

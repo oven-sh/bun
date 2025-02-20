@@ -39,6 +39,14 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
     });
 }
 
+/// Create a static route to be used on a single response, freeing the bytes once sent.
+pub fn sendBlobThenDeinit(resp: AnyResponse, blob: *const AnyBlob, options: InitFromBytesOptions) void {
+    const temp_route = StaticRoute.initFromAnyBlob(blob, options);
+    defer temp_route.deref();
+    temp_route.status_code = 500;
+    temp_route.on(resp);
+}
+
 fn deinit(this: *StaticRoute) void {
     this.blob.detach();
     this.headers.deinit();

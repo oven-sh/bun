@@ -112,7 +112,6 @@ bundler_options: bake.SplitBundlerOptions,
 server_transpiler: Transpiler,
 client_transpiler: Transpiler,
 ssr_transpiler: Transpiler,
-watcher_thread_resolver: bun.resolver.Resolver,
 /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
 /// Note that it is rarely correct to write messages into it. Instead, associate
 /// messages with the IncrementalGraph file or Route using `SerializedFailure`
@@ -398,7 +397,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .server_transpiler = undefined,
         .client_transpiler = undefined,
         .ssr_transpiler = undefined,
-        .watcher_thread_resolver = undefined,
         .bun_watcher = undefined,
         .configuration_hash_key = undefined,
         .router = undefined,
@@ -450,9 +448,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         dev.ssr_transpiler.options.dev_server = dev;
         dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     }
-
-    dev.watcher_thread_resolver = dev.server_transpiler.resolver;
-    dev.watcher_thread_resolver.watcher = null;
 
     assert(dev.server_transpiler.resolver.opts.target != .browser);
     assert(dev.client_transpiler.resolver.opts.target == .browser);
@@ -741,7 +736,6 @@ pub fn memoryCost(dev: *DevServer) usize {
         .server_register_update_callback = {},
         .deferred_request_pool = {},
         .assume_perfect_incremental_bundling = {},
-        .watcher_thread_resolver = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -942,6 +936,18 @@ fn onNotFoundCorked(resp: anytype) void {
     resp.end("Not Found", false);
 }
 
+fn onOutdatedJSCorked(resp: anytype) void {
+    // Send a payload to instantly reload the page. This only happens when the
+    // client bundle is invalidated while the page is loading, aka when you
+    // perform many file updates that cannot be hot-updated.
+    resp.writeStatus("200 OK");
+    resp.writeHeader("Content-Type", MimeType.javascript.value);
+    resp.end(
+        \\try{location.reload()}catch(_){}
+        \\addEventListener("DOMContentLoaded",function(event){location.reload()})
+    , false);
+}
+
 fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     const route_id = req.parameter(0);
     const is_map = bun.strings.hasSuffixComptime(route_id, ".js.map");
@@ -973,8 +979,7 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     if (route_bundle.client_script_generation != generation or
         route_bundle.server_state != .loaded)
     {
-        bun.Output.debugWarn("TODO: Outdated JS Payload", .{});
-        return notFound(resp);
+        return resp.corked(onOutdatedJSCorked, .{resp});
     }
 
     dev.onJsRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST);
@@ -2833,13 +2838,10 @@ fn sendSerializedFailures(
         try buf.appendSlice(post);
     }
 
-    const blob = StaticRoute.initFromAnyBlob(&.fromArrayList(buf), .{
+    StaticRoute.sendBlobThenDeinit(resp, &.fromArrayList(buf), .{
         .mime_type = &.html,
         .server = dev.server.?,
     });
-    defer blob.deref();
-    blob.status_code = 500;
-    blob.on(resp);
 }
 
 fn sendBuiltInNotFound(resp: anytype) void {
@@ -4551,42 +4553,38 @@ pub fn IncrementalGraph(side: bake.Side) type {
             j.pushStatic(
                 \\],"sourcesContent":["// (Bun's internal HMR runtime is minified)"
             );
-            {
-                var i: usize = 0;
-                for (g.current_chunk_parts.items) |file_index| {
-                    const map = &source_maps[file_index.get()];
-                    // For empty chunks, put a blank entry. This allows HTML
-                    // files to get their stack remapped, despite having no
-                    // actual mappings.
-                    if (map.vlq_len == 0) {
-                        const ptr: bun.StringPointer = .{
-                            .offset = @intCast(j.len + ",\"".len),
-                            .length = 0,
-                        };
-                        j.pushStatic(",\"\"");
-                        file_paths.appendAssumeCapacity(paths[file_index.get()]);
-                        source_contents.appendAssumeCapacity(ptr);
-                        continue;
-                    }
-                    j.pushStatic(",");
-                    const quoted_slice = map.quotedContents();
-                    // Store the location of the source file. Since it is going
-                    // to be stored regardless for use by the served source map.
-                    // These 8 bytes per file allow remapping sources without
-                    // reading from disk, as well as ensuring that remaps to
-                    // this exact sourcemap can print the previous state of
-                    // the code when it was modified.
-                    bun.assert(quoted_slice[0] == '"');
-                    bun.assert(quoted_slice[quoted_slice.len - 1] == '"');
+            for (g.current_chunk_parts.items) |file_index| {
+                const map = &source_maps[file_index.get()];
+                // For empty chunks, put a blank entry. This allows HTML
+                // files to get their stack remapped, despite having no
+                // actual mappings.
+                if (map.vlq_len == 0) {
                     const ptr: bun.StringPointer = .{
-                        .offset = @intCast(j.len + "\"".len),
-                        .length = @intCast(quoted_slice.len - "\"\"".len),
+                        .offset = @intCast(j.len + ",\"".len),
+                        .length = 0,
                     };
-                    j.pushStatic(quoted_slice);
+                    j.pushStatic(",\"\"");
                     file_paths.appendAssumeCapacity(paths[file_index.get()]);
                     source_contents.appendAssumeCapacity(ptr);
-                    i += 1;
+                    continue;
                 }
+                j.pushStatic(",");
+                const quoted_slice = map.quotedContents();
+                // Store the location of the source file. Since it is going
+                // to be stored regardless for use by the served source map.
+                // These 8 bytes per file allow remapping sources without
+                // reading from disk, as well as ensuring that remaps to
+                // this exact sourcemap can print the previous state of
+                // the code when it was modified.
+                bun.assert(quoted_slice[0] == '"');
+                bun.assert(quoted_slice[quoted_slice.len - 1] == '"');
+                const ptr: bun.StringPointer = .{
+                    .offset = @intCast(j.len + "\"".len),
+                    .length = @intCast(quoted_slice.len - "\"\"".len),
+                };
+                j.pushStatic(quoted_slice);
+                file_paths.appendAssumeCapacity(paths[file_index.get()]);
+                source_contents.appendAssumeCapacity(ptr);
             }
             // This first mapping makes the bytes from line 0 column 0 to the next mapping
             j.pushStatic(
@@ -4915,14 +4913,11 @@ fn initGraphTraceState(dev: *const DevServer, sfa: Allocator, extra_client_bits:
 /// When a file fails to import a relative path, directory watchers are added so
 /// that when a matching file is created, the dependencies can be rebuilt. This
 /// handles HMR cases where a user writes an import before creating the file,
-/// or moves files around.
+/// or moves files around. This structure is not thread-safe.
 ///
 /// This structure manages those watchers, including releasing them once
 /// import resolution failures are solved.
 const DirectoryWatchStore = struct {
-    /// This guards all store state
-    lock: Mutex,
-
     /// List of active watchers. Can be re-ordered on removal
     watches: bun.StringArrayHashMapUnmanaged(Entry),
     dependencies: ArrayListUnmanaged(Dep),
@@ -4930,7 +4925,6 @@ const DirectoryWatchStore = struct {
     dependencies_free_list: ArrayListUnmanaged(Dep.Index),
 
     const empty: DirectoryWatchStore = .{
-        .lock = .{},
         .watches = .{},
         .dependencies = .{},
         .dependencies_free_list = .{},
@@ -4946,9 +4940,6 @@ const DirectoryWatchStore = struct {
         specifier: []const u8,
         renderer: bake.Graph,
     ) bun.OOM!void {
-        store.lock.lock();
-        defer store.lock.unlock();
-
         // When it does not resolve to a file path, there is
         // nothing to track. Bake does not watch node_modules.
         if (!(bun.strings.startsWith(specifier, "./") or
@@ -5869,10 +5860,11 @@ pub const HotReloadEvent = struct {
     owner: *DevServer,
     /// Initialized in WatcherAtomics.watcherReleaseAndSubmitEvent
     concurrent_task: JSC.ConcurrentTask,
-    /// The watcher is not able to peek into the incremental graph to know what
-    /// files to invalidate, so the watch events are de-duplicated and passed
-    /// along.
-    files: bun.StringArrayHashMapUnmanaged(Watcher.Event.Op),
+    /// The watcher is not able to peek into IncrementalGraph to know what files
+    /// to invalidate, so the watch events are de-duplicated and passed along.
+    files: bun.StringArrayHashMapUnmanaged(void),
+    /// Directories are watched so that resolution failures can be solved.
+    dirs: bun.StringArrayHashMapUnmanaged(void),
     /// Initialized by the WatcherAtomics.watcherAcquireEvent
     timer: std.time.Timer,
     /// This event may be referenced by either DevServer or Watcher thread.
@@ -5884,23 +5876,22 @@ pub const HotReloadEvent = struct {
             .owner = owner,
             .concurrent_task = undefined,
             .files = .empty,
+            .dirs = .empty,
             .timer = undefined,
             .contention_indicator = .init(0),
         };
     }
 
-    pub fn append(
-        event: *HotReloadEvent,
-        allocator: Allocator,
-        file_path: []const u8,
-        op: Watcher.Event.Op,
-    ) void {
-        const gop = event.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
-        if (gop.found_existing) {
-            gop.value_ptr.* = gop.value_ptr.merge(op);
-        } else {
-            gop.value_ptr.* = op;
-        }
+    pub fn isEmpty(ev: *const HotReloadEvent) bool {
+        return (ev.files.count() + ev.dirs.count()) == 0;
+    }
+
+    pub fn appendFile(event: *HotReloadEvent, allocator: Allocator, file_path: []const u8) void {
+        _ = event.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
+    }
+
+    pub fn appendDir(event: *HotReloadEvent, allocator: Allocator, file_path: []const u8) void {
+        _ = event.dirs.getOrPut(allocator, file_path) catch bun.outOfMemory();
     }
 
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`
@@ -5908,15 +5899,59 @@ pub const HotReloadEvent = struct {
         event: *HotReloadEvent,
         dev: *DevServer,
         entry_points: *EntryPointList,
-        alloc: Allocator,
+        temp_alloc: Allocator,
     ) void {
-        const changed_file_paths = event.files.keys();
-
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
 
+        // First handle directories, because this may mutate `event.files`
+        for (event.dirs.keys()) |changed_dir_with_slash| {
+            const changed_dir = bun.strings.withoutTrailingSlashWindowsPath(changed_dir_with_slash);
+
+            // Bust resolution cache, but since Bun does not watch all
+            // directories in a codebase, this only targets the following resolutions
+            _ = dev.server_transpiler.resolver.bustDirCache(changed_dir);
+
+            // if a directory watch exists for resolution
+            // failures, check those now.
+            if (dev.directory_watchers.watches.getIndex(bun.strings.withoutTrailingSlashWindowsPath(changed_dir))) |watcher_index| {
+                const entry = &dev.directory_watchers.watches.values()[watcher_index];
+                var new_chain: DirectoryWatchStore.Dep.Index.Optional = .none;
+                var it: ?DirectoryWatchStore.Dep.Index = entry.first_dep;
+
+                while (it) |index| {
+                    const dep = &dev.directory_watchers.dependencies.items[index.get()];
+                    it = dep.next.unwrap();
+
+                    if ((dev.server_transpiler.resolver.resolve(
+                        bun.path.dirname(dep.source_file_path, .auto),
+                        dep.specifier,
+                        .stmt,
+                    ) catch null) != null) {
+                        // the resolution result is not preserved as safely
+                        // transferring it into BundleV2 is too complicated. the
+                        // resolution is cached, anyways.
+                        event.appendFile(dev.allocator, dep.source_file_path);
+                        dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch bun.outOfMemory();
+                    } else {
+                        // rebuild a new linked list for unaffected files
+                        dep.next = new_chain;
+                        new_chain = index.toOptional();
+                    }
+                }
+
+                if (new_chain.unwrap()) |new_first_dep| {
+                    entry.first_dep = new_first_dep;
+                } else {
+                    // without any files to depend on this watcher is freed
+                    dev.directory_watchers.freeEntry(watcher_index);
+                }
+            }
+        }
+
+        const changed_file_paths = event.files.keys();
         inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
-            g.invalidate(changed_file_paths, entry_points, alloc) catch bun.outOfMemory();
+            g.invalidate(changed_file_paths, entry_points, temp_alloc) catch bun.outOfMemory();
         }
 
         if (dev.has_tailwind_plugin_hack) |*map| {
@@ -5924,7 +5959,7 @@ pub const HotReloadEvent = struct {
                 const file = dev.client_graph.bundled_files.get(abs_path) orelse
                     continue;
                 if (file.flags.kind == .css)
-                    entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
+                    entry_points.appendCss(temp_alloc, abs_path) catch bun.outOfMemory();
             }
         }
 
@@ -6024,7 +6059,7 @@ const WatcherAtomics = struct {
         switch (ev.contention_indicator.swap(1, .seq_cst)) {
             0 => {
                 // New event, initialize the timer if it is empty.
-                if (ev.files.count() == 0)
+                if (ev.isEmpty())
                     ev.timer = std.time.Timer.start() catch unreachable;
             },
             1 => {
@@ -6051,7 +6086,7 @@ const WatcherAtomics = struct {
         state.watcher_has_event.unlock();
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
-        if (ev.files.count() > 0) {
+        if (!ev.isEmpty()) {
             @branchHint(.likely);
             // There are files to be processed, increment this count first.
             const prev_count = state.watcher_events_emitted.fetchAdd(1, .seq_cst);
@@ -6156,8 +6191,6 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
 
     defer dev.bun_watcher.flushEvictions();
 
-    // TODO: alot of code is missing
-    // TODO: story for busting resolution cache smartly?
     for (events) |event| {
         // TODO: why does this out of bounds when you delete every file in the directory?
         if (event.index >= file_paths.len) continue;
@@ -6172,52 +6205,14 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
         switch (kind) {
             .file => {
                 if (event.op.delete or event.op.rename) {
+                    // TODO: audit this line heavily
                     dev.bun_watcher.removeAtIndex(event.index, 0, &.{}, .file);
                 }
 
-                ev.append(dev.allocator, file_path, event.op);
+                ev.appendFile(dev.allocator, file_path);
             },
             .directory => {
-                // bust the directory cache since this directory has changed
-                _ = dev.server_transpiler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(file_path));
-
-                // if a directory watch exists for resolution
-                // failures, check those now.
-                dev.directory_watchers.lock.lock();
-                defer dev.directory_watchers.lock.unlock();
-                if (dev.directory_watchers.watches.getIndex(bun.strings.withoutTrailingSlashWindowsPath(file_path))) |watcher_index| {
-                    const entry = &dev.directory_watchers.watches.values()[watcher_index];
-                    var new_chain: DirectoryWatchStore.Dep.Index.Optional = .none;
-                    var it: ?DirectoryWatchStore.Dep.Index = entry.first_dep;
-
-                    while (it) |index| {
-                        const dep = &dev.directory_watchers.dependencies.items[index.get()];
-                        it = dep.next.unwrap();
-
-                        if ((dev.watcher_thread_resolver.resolve(
-                            bun.path.dirname(dep.source_file_path, .auto),
-                            dep.specifier,
-                            .stmt,
-                        ) catch null) != null) {
-                            // the resolution result is not preserved as safely
-                            // transferring it into BundleV2 is too complicated. the
-                            // resolution is cached, anyways.
-                            ev.append(dev.allocator, dep.source_file_path, .{ .write = true });
-                            dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch bun.outOfMemory();
-                        } else {
-                            // rebuild a new linked list for unaffected files
-                            dep.next = new_chain;
-                            new_chain = index.toOptional();
-                        }
-                    }
-
-                    if (new_chain.unwrap()) |new_first_dep| {
-                        entry.first_dep = new_first_dep;
-                    } else {
-                        // without any files to depend on this watcher is freed
-                        dev.directory_watchers.freeEntry(watcher_index);
-                    }
-                }
+                ev.appendDir(dev.allocator, file_path);
             },
         }
     }
@@ -6380,8 +6375,6 @@ pub const EntryPointList = struct {
         ssr: bool = false,
         /// When this is set, also set .client = true
         css: bool = false,
-        // /// Indicates the file might have been deleted.
-        // potentially_deleted: bool = false,
 
         unused: enum(u4) { unused = 0 } = .unused,
     };
@@ -6825,9 +6818,7 @@ const ErrorReportRequest = struct {
     dev: *DevServer,
     body: uws.BodyReaderMixin(@This(), "body", runWithBody, finalize),
 
-    fn run(dev: *DevServer, req: *Request, resp: anytype) void {
-        _ = req;
-
+    fn run(dev: *DevServer, _: *Request, resp: anytype) void {
         const ctx = bun.new(ErrorReportRequest, .{
             .dev = dev,
             .body = .init(dev.allocator),
@@ -6848,6 +6839,7 @@ const ErrorReportRequest = struct {
         var sfa = std.heap.stackFallback(131072, ctx.dev.allocator);
         const temp_alloc = sfa.get();
         var arena = std.heap.ArenaAllocator.init(temp_alloc);
+        defer arena.deinit();
 
         // Read payload, assemble ZigException
         const name = try readString32(reader, temp_alloc);
@@ -7013,10 +7005,9 @@ const ErrorReportRequest = struct {
             ) catch {},
         }
 
-        var out: ArrayListUnmanaged(u8) = .empty;
-        defer out.deinit(temp_alloc);
-
-        const w = out.writer(temp_alloc);
+        var out: std.ArrayList(u8) = .init(bun.default_allocator);
+        errdefer out.deinit();
+        const w = out.writer();
 
         try w.writeInt(u32, exception.stack.frames_len, .little);
         for (exception.stack.frames()) |frame| {
@@ -7063,7 +7054,10 @@ const ErrorReportRequest = struct {
             try w.writeInt(u8, 0, .little);
         }
 
-        r.corked(respondCorked, .{ r, out.items });
+        StaticRoute.sendBlobThenDeinit(r, &.fromArrayList(out), .{
+            .mime_type = &.other,
+            .server = ctx.dev.server.?,
+        });
         ctx.finalize();
     }
 
@@ -7150,15 +7144,6 @@ const ErrorReportRequest = struct {
         }
 
         return result;
-    }
-
-    fn respondCorked(resp: AnyResponse, data: []const u8) void {
-        switch (resp) {
-            inline else => |r| {
-                r.writeStatus("200 OK");
-                _ = r.end(data, false);
-            },
-        }
     }
 };
 

@@ -10,6 +10,12 @@ async function start() {
   const cwd = process.cwd();
   const args = process.argv.slice(1);
 
+  if (!process.env.DATABASE_URL) {
+    console.error("DATABASE_URL environment variable is not set!");
+    console.error("Please set it in your .env file or as an environment variable");
+    process.exit(1);
+  }
+
   // Find SQL files to execute
   let sqlFiles: string[] = [];
   for (const arg of args) {
@@ -25,7 +31,7 @@ Examples:
   bun query.sql
   bun ./queries/*.sql
   
-This is a small wrapper around Bun.sql() that automatically executes SQL files.
+This is a small wrapper around Bun.sql\`\` that automatically executes SQL files.
 `);
         process.exit(0);
       }
@@ -73,33 +79,40 @@ This is a small wrapper around Bun.sql() that automatically executes SQL files.
   }
 
   if (sqlFiles.length === 0) {
-    throw new Error("No SQL files found matching " + JSON.stringify(Bun.main));
+    console.error("No SQL files found matching " + JSON.stringify(Bun.main));
+    process.exit(1);
   }
 
   // Execute each SQL file
-  for (const file of sqlFiles) {
-    const { default: sql } = await import(file, { with: { type: "text" } });
+  await Bun.sql.transaction(async tx => {
+    for (const file of sqlFiles) {
+      const { default: sqlContent } = await import(file, { with: { type: "text" } });
 
+      if (sqlFiles.length > 1) {
+        if (file.startsWith(cwd)) {
+          console.log(`${file.slice(cwd.length + 1)}:`);
+        } else {
+          console.log(`${file}:`);
+        }
+      }
+
+      const results = await tx.unsafe(sqlContent);
+
+      if (results.length === 0) {
+        if (sqlFiles.length > 1) console.log(results);
+      } else {
+        console.table(results);
+        console.log();
+      }
+    }
+
+    const elapsed = (performance.now() - initial).toFixed(2);
     if (sqlFiles.length > 1) {
-      console.log(`${file.replace(cwd + "/", "")}:`);
-    }
-
-    const results = await Bun.sql.unsafe(sql);
-
-    if (results.length === 0) {
-      if (sqlFiles.length > 1) console.log("Empty output\n");
+      console.log(`Executed ${sqlFiles.length} SQL ${sqlFiles.length === 1 ? "file" : "files"} in ${elapsed}ms`);
     } else {
-      console.table(results);
-      console.log();
+      console.log(`Executed SQL in ${elapsed}ms`);
     }
-  }
-
-  const elapsed = (performance.now() - initial).toFixed(2);
-  if (sqlFiles.length > 1) {
-    console.log(`Executed ${sqlFiles.length} SQL ${sqlFiles.length === 1 ? "file" : "files"} in ${elapsed}ms`);
-  } else {
-    console.log(`Executed SQL in ${elapsed}ms`);
-  }
+  });
 }
 
 export default start;

@@ -10854,171 +10854,171 @@ if (isDockerEnabled()) {
       expect(results[1].price).toBe("0.0123");
     });
   });
-}
 
-describe("bun run sql", () => {
-  // Helper to create temp test files
-  async function createTempSQLFiles() {
-    const dir = tmpdirSync();
+  describe("bun run ./file.sql", () => {
+    // Helper to create temp test files
+    async function createTempSQLFiles() {
+      const dir = tmpdirSync();
 
-    await Promise.all([
-      write(join(dir, "single.sql"), "SELECT 1 as num;"),
-      write(join(dir, "query1.sql"), "SELECT 2 as num;"),
-      write(join(dir, "query2.sql"), "SELECT 3 as num;"),
-    ]);
+      await Promise.all([
+        write(join(dir, "single.sql"), "SELECT 1 as num;"),
+        write(join(dir, "query1.sql"), "SELECT 2 as num;"),
+        write(join(dir, "query2.sql"), "SELECT 3 as num;"),
+      ]);
 
-    return dir;
-  }
+      return dir;
+    }
 
-  test("executes single SQL file", async () => {
-    const dir = await createTempSQLFiles();
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "single.sql")],
-      env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
-      stderr: "pipe",
-      stdout: "pipe",
-      stdin: "ignore",
+    test("executes single SQL file", async () => {
+      const dir = await createTempSQLFiles();
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), join(dir, "single.sql")],
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stderr: "pipe",
+        stdout: "pipe",
+        stdin: "ignore",
+      });
+
+      const output = stdout.toString();
+      const error = stderr.toString();
+
+      expect(error).toBe("");
+      expect(exitCode).toBe(0);
+
+      expect(output).toContain("│ num │");
+      expect(output).toContain("│ 1   │");
+      expect(output).toContain("Executed SQL in");
     });
 
-    const output = stdout.toString();
-    const error = stderr.toString();
+    test("executes multiple SQL files", async () => {
+      const dir = await createTempSQLFiles();
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), join(dir, "query1.sql"), join(dir, "query2.sql")],
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stderr: "pipe",
+        stdout: "pipe",
+        stdin: "ignore",
+      });
 
-    expect(error).toBe("");
-    expect(exitCode).toBe(0);
+      const output = stdout.toString();
+      const error = stderr.toString();
 
-    expect(output).toContain("│ num │");
-    expect(output).toContain("│ 1   │");
-    expect(output).toContain("Executed SQL in");
-  });
+      expect(error).toBe("");
+      expect(exitCode).toBe(0);
 
-  test("executes multiple SQL files", async () => {
-    const dir = await createTempSQLFiles();
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "query1.sql"), join(dir, "query2.sql")],
-      env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
-      stderr: "pipe",
-      stdout: "pipe",
-      stdin: "ignore",
+      expect(output).toContain("query1.sql:");
+      expect(output).toContain("│ 2   │");
+      expect(output).toContain("query2.sql:");
+      expect(output).toContain("│ 3   │");
+      expect(output).toContain("Executed 2 SQL files in");
     });
 
-    const output = stdout.toString();
-    const error = stderr.toString();
+    test("executes SQL files using glob pattern", async () => {
+      const dir = await createTempSQLFiles();
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), join(dir, "query*.sql")],
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stderr: "pipe",
+        stdout: "pipe",
+        stdin: "ignore",
+      });
 
-    expect(error).toBe("");
-    expect(exitCode).toBe(0);
+      const output = stdout.toString();
+      const error = stderr.toString();
 
-    expect(output).toContain("query1.sql:");
-    expect(output).toContain("│ 2   │");
-    expect(output).toContain("query2.sql:");
-    expect(output).toContain("│ 3   │");
-    expect(output).toContain("Executed 2 SQL files in");
-  });
+      expect(error).toBe("");
+      expect(exitCode).toBe(0);
 
-  test("executes SQL files using glob pattern", async () => {
-    const dir = await createTempSQLFiles();
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "query*.sql")],
-      env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
-      stderr: "pipe",
-      stdout: "pipe",
-      stdin: "ignore",
+      expect(output).toContain("query1.sql:");
+      expect(output).toContain("│ 2   │");
+      expect(output).toContain("query2.sql:");
+      expect(output).toContain("│ 3   │");
+      expect(output).toContain("Executed 2 SQL files in");
     });
 
-    const output = stdout.toString();
-    const error = stderr.toString();
+    test("shows help message with --help flag", async () => {
+      const dir = await createTempSQLFiles();
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "single.sql", "--help"],
+        cwd: dir,
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stderr: "pipe",
+        stdout: "pipe",
+        stdin: "ignore",
+      });
 
-    expect(error).toBe("");
-    expect(exitCode).toBe(0);
+      const output = stdout.toString();
+      const error = stderr.toString();
 
-    expect(output).toContain("query1.sql:");
-    expect(output).toContain("│ 2   │");
-    expect(output).toContain("query2.sql:");
-    expect(output).toContain("│ 3   │");
-    expect(output).toContain("Executed 2 SQL files in");
-  });
+      expect(output).toContain("Bun v");
+      expect(output).toContain("Usage:");
+      expect(output).toContain("bun [...sql-files]");
 
-  test("shows help message with --help flag", async () => {
-    const dir = await createTempSQLFiles();
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "single.sql", "--help"],
-      cwd: dir,
-      env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
-      stderr: "pipe",
-      stdout: "pipe",
-      stdin: "ignore",
+      expect(exitCode).toBe(0);
+      expect(error).toBe("");
     });
 
-    const output = stdout.toString();
-    const error = stderr.toString();
+    test("throws error when no SQL files found", async () => {
+      const dir = await createTempSQLFiles();
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), join(dir, "nonexistent.sql")],
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stderr: "pipe",
+        stdout: "pipe",
+        stdin: "ignore",
+      });
 
-    expect(output).toContain("Bun v");
-    expect(output).toContain("Usage:");
-    expect(output).toContain("bun [...sql-files]");
+      const output = stdout.toString();
+      const error = stderr.toString();
 
-    expect(exitCode).toBe(0);
-    expect(error).toBe("");
-  });
-
-  test("throws error when no SQL files found", async () => {
-    const dir = await createTempSQLFiles();
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), join(dir, "nonexistent.sql")],
-      env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
-      stderr: "pipe",
-      stdout: "pipe",
-      stdin: "ignore",
+      // expect(error).toBe("");
+      // expect(error).toContain("No SQL files found");
+      expect(exitCode).not.toBe(0);
     });
 
-    const output = stdout.toString();
-    const error = stderr.toString();
+    test("executes many statements", async () => {
+      const dir = await createTempSQLFiles();
 
-    // expect(error).toBe("");
-    // expect(error).toContain("No SQL files found");
-    expect(exitCode).not.toBe(0);
-  });
+      await write(
+        join(dir, "sql.sql"),
+        `
+          CREATE TEMPORARY TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT UNIQUE NOT NULL
+          );
+          INSERT INTO users (id, name, email) VALUES (1, 'John Doe', 'john@example.com');
+          INSERT INTO users (id, name, email) VALUES (2, 'Jane Smith', 'jane@example.com');
 
-  test("executes many statements", async () => {
-    const dir = await createTempSQLFiles();
-
-    await write(
-      join(dir, "sql.sql"),
-      `
-      CREATE TEMPORARY TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL
-      );
-      INSERT INTO users (id, name, email) VALUES (1, 'John Doe', 'john@example.com');
-      INSERT INTO users (id, name, email) VALUES (2, 'Jane Smith', 'jane@example.com');
-
-      SELECT * FROM users;
+          SELECT * FROM users;
       `,
-    );
+      );
 
-    const { stdout, stderr, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "sql.sql"],
-      cwd: dir,
-      env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
-      stderr: "pipe",
-      stdout: "pipe",
-      stdin: "ignore",
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), "sql.sql"],
+        cwd: dir,
+        env: { ...bunEnv, DATABASE_URL: process.env.DATABASE_URL },
+        stderr: "pipe",
+        stdout: "pipe",
+        stdin: "ignore",
+      });
+
+      const output = stdout.toString();
+      const error = stderr.toString();
+
+      expect(error).toBe("");
+      expect(output.slice(0, output.lastIndexOf("\n\n"))).toMatchInlineSnapshot(`
+        "┌───┬──────────────┬───────┬────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────┐
+        │   │ command      │ count │ 0                                                      │ 1                                                        │
+        ├───┼──────────────┼───────┼────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
+        │ 0 │ CREATE TABLE │ 0     │                                                        │                                                          │
+        │ 1 │ INSERT       │ 1     │                                                        │                                                          │
+        │ 2 │ INSERT       │ 1     │                                                        │                                                          │
+        │ 3 │ SELECT       │ 2     │ { id: 1, name: "John Doe", email: "john@example.com" } │ { id: 2, name: "Jane Smith", email: "jane@example.com" } │
+        └───┴──────────────┴───────┴────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘"
+      `);
+
+      expect(exitCode).toBe(0);
     });
-
-    const output = stdout.toString();
-    const error = stderr.toString();
-
-    expect(error).toBe("");
-    expect(output.slice(0, output.lastIndexOf("\n\n"))).toMatchInlineSnapshot(`
-      "┌───┬──────────────┬───────┬────────────────────────────────────────────────────────┬──────────────────────────────────────────────────────────┐
-      │   │ command      │ count │ 0                                                      │ 1                                                        │
-      ├───┼──────────────┼───────┼────────────────────────────────────────────────────────┼──────────────────────────────────────────────────────────┤
-      │ 0 │ CREATE TABLE │ 0     │                                                        │                                                          │
-      │ 1 │ INSERT       │ 1     │                                                        │                                                          │
-      │ 2 │ INSERT       │ 1     │                                                        │                                                          │
-      │ 3 │ SELECT       │ 2     │ { id: 1, name: "John Doe", email: "john@example.com" } │ { id: 2, name: "Jane Smith", email: "jane@example.com" } │
-      └───┴──────────────┴───────┴────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────┘"
-    `);
-
-    expect(exitCode).toBe(0);
   });
-});
+}

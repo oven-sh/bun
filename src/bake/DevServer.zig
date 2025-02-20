@@ -1160,12 +1160,11 @@ fn ensureRouteIsBundled(
             continue :sw .loaded;
         },
         .evaluation_failure => {
-            resp.corked(sendSerializedFailures, .{
-                dev,
+            try dev.sendSerializedFailures(
                 resp,
                 (&(dev.routeBundlePtr(route_bundle_index).data.framework.evaluate_failure.?))[0..1],
                 .evaluation,
-            });
+            );
         },
         .loaded => switch (kind) {
             .server_handler => dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
@@ -1225,12 +1224,11 @@ fn checkRouteFailures(
             return .rebuild;
         }
 
-        resp.corked(sendSerializedFailures, .{
-            dev,
+        try dev.sendSerializedFailures(
             resp,
             dev.incremental_result.failures_added.items,
             .bundler,
-        });
+        );
         return .stop;
     } else {
         // Failures are unreachable by this route, so it is OK to load.
@@ -2441,12 +2439,11 @@ pub fn finalizeBundle(
                 .bundled_html_page => |ram| ram.response,
             };
 
-            resp.corked(sendSerializedFailures, .{
-                dev,
+            try dev.sendSerializedFailures(
                 resp,
                 dev.bundling_failures.keys(),
                 .bundler,
-            });
+            );
         }
         return;
     }
@@ -2460,7 +2457,7 @@ pub fn finalizeBundle(
                 Output.enableBuffering();
             }
 
-            if (Environment.isDebug) {
+            if (debug.isVisible()) {
                 Output.prettyErrorln("<d>DevServer: {}, RSS: {}<r>", .{
                     bun.fmt.size(dev.memoryCost(), .{}),
                     bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
@@ -2473,7 +2470,7 @@ pub fn finalizeBundle(
             }
         } else {
             dev.bundles_since_last_error = 0;
-            if (Environment.isDebug) {
+            if (debug.isVisible()) {
                 Output.prettyErrorln("<d>DevServer: {}, RSS: {}<r>", .{
                     bun.fmt.size(dev.memoryCost(), .{}),
                     bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
@@ -2786,24 +2783,11 @@ fn sendSerializedFailures(
     resp: AnyResponse,
     failures: []const SerializedFailure,
     kind: ErrorPageKind,
-) void {
-    switch (resp) {
-        inline else => |r| sendSerializedFailuresInner(dev, r, failures, kind),
-    }
-}
+) !void {
+    var buf: std.ArrayList(u8) = try .initCapacity(bun.default_allocator, 2048);
+    errdefer buf.deinit();
 
-fn sendSerializedFailuresInner(
-    dev: *DevServer,
-    resp: anytype,
-    failures: []const SerializedFailure,
-    kind: ErrorPageKind,
-) void {
-    // TODO: write to Blob and serve that
-    resp.writeStatus("500 Internal Server Error");
-    resp.writeHeader("Content-Type", MimeType.html.value);
-
-    // TODO: what to do about return values here?
-    _ = resp.write(switch (kind) {
+    try buf.appendSlice(switch (kind) {
         inline else => |k| std.fmt.comptimePrint(
             \\<!doctype html>
             \\<html lang="en">
@@ -2824,32 +2808,40 @@ fn sendSerializedFailuresInner(
         ),
     });
 
-    var sfb = std.heap.stackFallback(65536, dev.allocator);
-    var arena_state = std.heap.ArenaAllocator.init(sfb.get());
-    defer arena_state.deinit();
-
     for (failures) |fail| {
         const len = bun.base64.encodeLen(fail.data);
-        const buf = arena_state.allocator().alloc(u8, len) catch bun.outOfMemory();
-        var encoded = buf[0..bun.base64.encode(buf, fail.data)];
-        while (encoded.len > 0 and encoded[encoded.len - 1] == '=') {
-            encoded = encoded[0 .. encoded.len - 1];
-        }
-        _ = resp.write(encoded);
 
-        _ = arena_state.reset(.retain_capacity);
+        try buf.ensureUnusedCapacity(len);
+        const start = buf.items.len;
+        buf.items.len += len;
+        const to_write_into = buf.items[start..];
+
+        var encoded = to_write_into[0..bun.base64.encode(to_write_into, fail.data)];
+        while (encoded.len > 0 and encoded[encoded.len - 1] == '=') {
+            encoded.len -= 1;
+        }
+
+        buf.items.len = start + encoded.len;
     }
 
     const pre = "\"),c=>c.charCodeAt(0));let config={bun:\"" ++ bun.Global.package_json_version_with_canary ++ "\"};";
     const post = "</script></body></html>";
 
     if (Environment.codegen_embed) {
-        _ = resp.end(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post, false);
+        try buf.appendSlice(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post);
     } else {
-        _ = resp.write(pre);
-        _ = resp.write(bun.runtimeEmbedFile(.codegen_eager, "bake.error.js"));
-        _ = resp.end(post, false);
+        try buf.appendSlice(pre);
+        try buf.appendSlice(bun.runtimeEmbedFile(.codegen_eager, "bake.error.js"));
+        try buf.appendSlice(post);
     }
+
+    const blob = StaticRoute.initFromAnyBlob(&.fromArrayList(buf), .{
+        .mime_type = &.html,
+        .server = dev.server.?,
+    });
+    defer blob.deref();
+    blob.status_code = 500;
+    blob.on(resp);
 }
 
 fn sendBuiltInNotFound(resp: anytype) void {

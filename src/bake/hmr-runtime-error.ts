@@ -17,7 +17,12 @@ declare const error: Uint8Array<ArrayBuffer>;
 {
   const reader = new DataViewReader(new DataView(error.buffer), 0);
   while (reader.hasMoreData()) {
-    decodeAndAppendServerError(reader);
+    try {
+      decodeAndAppendServerError(reader);
+    } catch (e) {
+      console.error(e);
+      break;
+    }
   }
   updateErrorOverlay();
 }
@@ -35,7 +40,7 @@ const ws = initWebSocket(
         // ensure this bundle is enqueued.
         location.reload();
       }
-      ws.send("se"); // IncomingMessageId.subscribe with route_update
+      ws.send("se"); // IncomingMessageId.subscribe with errors
     },
 
     [MessageId.errors]: onServerErrorPayload,

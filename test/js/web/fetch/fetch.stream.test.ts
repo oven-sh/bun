@@ -68,10 +68,10 @@ describe("fetch() with streaming", () => {
       } catch (err: any) {
         if (timeout < 0) {
           if (err.name !== "AbortError") throw err;
-          expect(err.message).toBe("The operation was aborted");
+          expect(err.message).toBe("The operation was aborted.");
         } else {
           if (err.name !== "TimeoutError") throw err;
-          expect(err.message).toBe("The operation timed out");
+          expect(err.message).toBe("The operation timed out.");
         }
       }
     });

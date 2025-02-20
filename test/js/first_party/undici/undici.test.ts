@@ -127,7 +127,7 @@ describe("undici", () => {
         await req.body.json();
         throw new Error("Should have errored");
       } catch (e) {
-        expect((e as Error).message).toBe("The operation was aborted");
+        expect((e as Error).message).toBe("The operation was aborted.");
       }
     });
 

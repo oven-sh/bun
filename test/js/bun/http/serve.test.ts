@@ -379,7 +379,7 @@ it("request.signal works in trivial case", async () => {
         });
         await signaler.promise;
         await response.blob();
-      }).toThrow("The operation was aborted");
+      }).toThrow("The operation was aborted.");
     },
   );
 });
@@ -405,7 +405,7 @@ it("request.signal works in leaky case", async () => {
         await signaler.promise;
         await Bun.sleep(10);
         resp.body?.getReader();
-      }).toThrow("The operation was aborted");
+      }).toThrow("The operation was aborted.");
     },
   );
 });

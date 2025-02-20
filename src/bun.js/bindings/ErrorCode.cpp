@@ -258,7 +258,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     switch (cell->type()) {
     case JSC::JSType::StringType: {
         WTF::String str = arg.toWTFString(globalObject);
-        builder.appendQuotedJSONString(str);
+        builder.append(str);
         return;
     }
     case JSC::JSType::SymbolType: {
@@ -313,9 +313,9 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
     if (value.isNumber()) {
         double d = value.asNumber();
         double infinity = std::numeric_limits<double>::infinity();
-        if (d != d) return builder.append("NaN"_s);
-        if (d == infinity) return builder.append("Infinity"_s);
-        if (d == -infinity) return builder.append("-Infinity"_s);
+        if (d != d) return builder.append("type number (NaN)"_s);
+        if (d == infinity) return builder.append("type number (Infinity)"_s);
+        if (d == -infinity) return builder.append("type number (-Infinity)"_s);
         builder.append("type number ("_s);
         builder.append(d);
         builder.append(')');
@@ -542,7 +542,7 @@ WTF::String ERR_OUT_OF_RANGE(JSC::ThrowScope& scope, JSC::JSGlobalObject* global
     builder.append("\" is out of range. It must be "_s);
     builder.append(range);
     builder.append(". Received "_s);
-    determineSpecificType(JSC::getVM(globalObject), globalObject, builder, val_input);
+    JSValueToStringSafe(globalObject, builder, val_input);
     RETURN_IF_EXCEPTION(scope, {});
 
     return builder.toString();

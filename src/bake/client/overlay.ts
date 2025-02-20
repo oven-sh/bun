@@ -213,121 +213,124 @@ export function onServerErrorPayload(view: DataView<ArrayBuffer>) {
 }
 
 export async function onRuntimeError(err: any, fatal = false, async = false) {
-  if (fatal) {
-    hasFatalError = true;
-  }
-
-  // Parse the stack trace and normalize the error message.
-  let name = err?.name ?? "error";
-  if (name === "Error") name = "error";
-  let message = err?.message;
-  if (!message)
-    try {
-      message = JSON.stringify(err);
-    } catch (e) {
-      message = "[error while serializing error: " + e + "]";
-    }
-  else if (typeof message !== "string") {
-    try {
-      message = JSON.stringify(message);
-    } catch (e) {
-      message = "[error while serializing error message: " + e + "]";
-    }
-  }
-  const parsed = parseStackTrace(err) ?? [];
-
-  const browserUrl = location.href;
-
-  // Serialize the request into a binary buffer. Pre-allocate a little above what it needs.
-  let bufferLength = 3 * 4 + (name.length + message.length + browserUrl.length) * 3;
-  for (const frame of parsed) {
-    bufferLength += 4 * 4 + ((frame.fn?.length ?? 0) + (frame.file?.length ?? 0)) * 3;
-  }
-  const base = location.origin + "/_bun";
-  const writer = DataViewWriter.initCapacity(bufferLength);
-  writer.stringWithLength(name);
-  writer.stringWithLength(message);
-  writer.stringWithLength(browserUrl);
-  writer.u32(parsed.length);
-  for (const frame of parsed) {
-    writer.u32(frame.line ?? 0);
-    writer.u32(frame.col ?? 0);
-    writer.stringWithLength(frame.fn ?? "");
-    const fileName = frame.file;
-    if (fileName) {
-      writer.stringWithLength(fileName.startsWith(base) ? fileName.slice(base.length - "/_bun".length) : fileName);
-    } else {
-      writer.u32(0);
-    }
-  }
-
-  // Request the error to be reported and remapped.
-  const response = await fetch("/_bun/report_error", {
-    method: "POST",
-    body: writer.view.buffer,
-  });
   try {
-    if (!response.ok) {
-      throw new Error("Failed to report error");
+    if (fatal) {
+      hasFatalError = true;
     }
-    const reader = new DataViewReader(new DataView(await response.arrayBuffer()), 0);
-    const trace: Frame[] = [];
-    const traceLen = reader.u32();
-    for (let i = 0; i < traceLen; i++) {
-      const line = reader.i32();
-      const col = reader.i32();
-      const fn = reader.string32();
-      const file = reader.string32();
-      trace.push({
-        fn,
-        file,
-        line,
-        col,
+
+    // Parse the stack trace and normalize the error message.
+    let name = err?.name ?? "error";
+    if (name === "Error") name = "error";
+    let message = err?.message;
+    if (!message)
+      try {
+        message = JSON.stringify(err);
+      } catch (e) {
+        message = "[error while serializing error: " + e + "]";
+      }
+    else if (typeof message !== "string") {
+      try {
+        message = JSON.stringify(message);
+      } catch (e) {
+        message = "[error while serializing error message: " + e + "]";
+      }
+    }
+    const parsed = parseStackTrace(err) ?? [];
+
+    const browserUrl = location.href;
+
+    // Serialize the request into a binary buffer. Pre-allocate a little above what it needs.
+    let bufferLength = 3 * 4 + (name.length + message.length + browserUrl.length) * 3;
+    for (const frame of parsed) {
+      bufferLength += 4 * 4 + ((frame.fn?.length ?? 0) + (frame.file?.length ?? 0)) * 3;
+    }
+    const writer = DataViewWriter.initCapacity(bufferLength);
+    writer.stringWithLength(name);
+    writer.stringWithLength(message);
+    writer.stringWithLength(browserUrl);
+    writer.u32(parsed.length);
+    for (const frame of parsed) {
+      writer.u32(frame.line ?? 0);
+      writer.u32(frame.col ?? 0);
+      writer.stringWithLength(frame.fn ?? "");
+      const fileName = frame.file;
+      if (fileName) {
+        writer.stringWithLength(fileName);
+      } else {
+        writer.u32(0);
+      }
+    }
+
+    // Request the error to be reported and remapped.
+    const response = await fetch("/_bun/report_error", {
+      method: "POST",
+      body: writer.view.buffer,
+    });
+    try {
+      if (!response.ok) {
+        throw new Error("Failed to report error");
+      }
+      const reader = new DataViewReader(new DataView(await response.arrayBuffer()), 0);
+      const trace: Frame[] = [];
+      const traceLen = reader.u32();
+      for (let i = 0; i < traceLen; i++) {
+        const line = reader.i32();
+        const col = reader.i32();
+        const fn = reader.string32();
+        const file = reader.string32();
+        trace.push({
+          fn,
+          file,
+          line,
+          col,
+        });
+      }
+      let code: CodePreview | undefined;
+      const codePreviewLineCount = reader.u8();
+      if (codePreviewLineCount > 0) {
+        const lineOfInterestOffset = reader.u32();
+        const firstLineNumber = reader.u32();
+        const highlightedColumn = reader.u32();
+        let lines = new Array(codePreviewLineCount);
+        for (let i = 0; i < codePreviewLineCount; i++) {
+          const line = reader.string32();
+          lines[i] = line;
+        }
+        const { col, len } = expandHighlight(lines[lineOfInterestOffset], highlightedColumn);
+        lines = lines.map(line => syntaxHighlight(line));
+        code = {
+          lines,
+          col,
+          loi: lineOfInterestOffset,
+          len,
+          firstLine: firstLineNumber,
+        };
+      }
+      runtimeErrors.push({
+        name,
+        message,
+        trace,
+        remapped: true,
+        async,
+        code,
+      });
+      console.log(code);
+    } catch (e) {
+      console.error("Failed to remap error", e);
+      runtimeErrors.push({
+        name,
+        message,
+        trace: parsed,
+        remapped: false,
+        async,
       });
     }
-    let code: CodePreview | undefined;
-    const codePreviewLineCount = reader.u8();
-    if (codePreviewLineCount > 0) {
-      const lineOfInterestOffset = reader.u32();
-      const firstLineNumber = reader.u32();
-      const highlightedColumn = reader.u32();
-      let lines = new Array(codePreviewLineCount);
-      for (let i = 0; i < codePreviewLineCount; i++) {
-        const line = reader.string32();
-        lines[i] = line;
-      }
-      const { col, len } = expandHighlight(lines[lineOfInterestOffset], highlightedColumn);
-      lines = lines.map(line => syntaxHighlight(line));
-      code = {
-        lines,
-        col,
-        loi: lineOfInterestOffset,
-        len,
-        firstLine: firstLineNumber,
-      };
-    }
-    runtimeErrors.push({
-      name,
-      message,
-      trace,
-      remapped: true,
-      async,
-      code,
-    });
-    console.log(code);
-  } catch (e) {
-    console.error("Failed to remap error", e);
-    runtimeErrors.push({
-      name,
-      message,
-      trace: parsed,
-      remapped: false,
-      async,
-    });
-  }
 
-  needUpdateNavbar = true;
-  updateErrorOverlay();
+    needUpdateNavbar = true;
+    updateErrorOverlay();
+  } catch (e) {
+    console.error("Failed to report error", e);
+  }
 }
 
 function expandHighlight(line: string, col: number) {

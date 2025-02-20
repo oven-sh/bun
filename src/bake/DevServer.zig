@@ -1449,8 +1449,7 @@ fn getJavaScriptCodeForHTMLFile(
     try w.writeAll("  ");
     try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
     try w.writeAll("(m) {\n  ");
-
-    try w.writeAll("    return Promise.all([\n");
+    try w.writeAll("  return Promise.all([\n");
     for (import_records[index.get()].slice()) |import| {
         if (import.source_index.isValid()) {
             if (!loaders[import.source_index.get()].isJavaScriptLike())
@@ -1460,11 +1459,11 @@ fn getJavaScriptCodeForHTMLFile(
                 continue;
         }
 
-        try w.writeAll("    m.dynamicImport(");
+        try w.writeAll("      m.dynamicImport(");
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
         try w.writeAll("),\n  ");
     }
-    try w.writeAll("    ]);\n  ");
+    try w.writeAll("  ]);\n  ");
     try w.writeAll("},\n");
 
     // Avoid-recloning if it is was moved to the hap
@@ -6880,7 +6879,7 @@ const ErrorReportRequest = struct {
                 .function_name = .init(function_name),
                 .source_url = .init(file_name),
                 .position = if (line > 0) .{
-                    .line = .fromOneBased(line),
+                    .line = .fromOneBased(line + 1),
                     .column = .fromOneBased(@max(1, column)),
                     .line_start_byte = 0,
                 } else .{
@@ -6913,7 +6912,7 @@ const ErrorReportRequest = struct {
             const source_url = frame.source_url.value.ZigString.slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`
-            const id = parseId(source_url) orelse continue;
+            const id = parseId(source_url, browser_url) orelse continue;
 
             // Get and cache the parsed source map
             const gop = try parsed_source_maps.getOrPut(temp_alloc, id);
@@ -6929,7 +6928,7 @@ const ErrorReportRequest = struct {
 
             // When before the first generated line, remap to the HMR runtime
             const generated_mappings = result.mappings.items(.generated);
-            if (frame.position.line.oneBased() < generated_mappings[0].lines) {
+            if (frame.position.line.oneBased() < generated_mappings[1].lines) {
                 frame.source_url = .init(runtime_name); // matches value in source map
                 frame.position = .invalid;
                 continue;
@@ -6938,13 +6937,13 @@ const ErrorReportRequest = struct {
             // Remap the frame
             const remapped = SourceMap.Mapping.find(
                 result.mappings,
-                frame.position.line.zeroBased(),
+                frame.position.line.oneBased(),
                 frame.position.column.zeroBased(),
             );
             if (remapped) |remapped_position| {
                 frame.position = .{
-                    .column = .fromZeroBased(remapped_position.originalColumn()),
                     .line = .fromZeroBased(remapped_position.originalLine()),
+                    .column = .fromZeroBased(remapped_position.originalColumn()),
                     .line_start_byte = 0,
                 };
                 const index = remapped_position.source_index;
@@ -7039,14 +7038,13 @@ const ErrorReportRequest = struct {
             try w.writeAll(function_name);
 
             const src_to_write = frame.source_url.value.ZigString.slice();
-            if (bun.strings.hasPrefixComptime(src_to_write, client_prefix)) {
-                try w.writeInt(u32, @intCast(browser_url.len + src_to_write.len), .little);
-                try w.writeAll(bun.strings.withoutTrailingSlash(browser_url));
-                try w.writeAll(src_to_write);
-            } else {
+            if (bun.strings.hasPrefixComptime(src_to_write, "/")) {
                 const file = ctx.dev.relativePath(src_to_write);
                 try w.writeInt(u32, @intCast(file.len), .little);
                 try w.writeAll(file);
+            } else {
+                try w.writeInt(u32, @intCast(src_to_write.len), .little);
+                try w.writeAll(src_to_write);
             }
         }
 
@@ -7079,19 +7077,20 @@ const ErrorReportRequest = struct {
         ctx.finalize();
     }
 
-    fn parseId(source_url: []const u8) ?u64 {
-        // The browser code strips "http://localhost:3000" when the string
-        // has /_bun/client. It's done because JS can refer to `location`
-        if (!bun.strings.hasPrefixComptime(source_url, client_prefix))
+    fn parseId(source_url: []const u8, browser_url: []const u8) ?u64 {
+        if (!bun.strings.startsWith(source_url, browser_url))
             return null;
-
+        const after_host = source_url[bun.strings.withoutTrailingSlash(browser_url).len..];
+        if (!bun.strings.hasPrefixComptime(after_host, client_prefix ++ "/"))
+            return null;
+        const after_prefix = after_host[client_prefix.len + 1 ..];
         // Extract the ID
-        if (!bun.strings.hasSuffixComptime(source_url, ".js"))
+        if (!bun.strings.hasSuffixComptime(after_prefix, ".js"))
             return null;
         const min_len = "00000000FFFFFFFF.js".len;
-        if (source_url.len < min_len)
+        if (after_prefix.len < min_len)
             return null;
-        const hex = source_url[source_url.len - min_len ..][0 .. @sizeOf(u64) * 2];
+        const hex = after_prefix[after_prefix.len - min_len ..][0 .. @sizeOf(u64) * 2];
         if (hex.len != @sizeOf(u64) * 2)
             return null;
         return parseHexToInt(u64, hex) orelse

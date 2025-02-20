@@ -297,7 +297,6 @@ process.on("message", async message => {
 
       const errors = [];
       const messages = overlay.shadowRoot.querySelectorAll(".b-msg");
-
       for (const message of messages) {
         const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
         const label = message.querySelector(".log-label").textContent;

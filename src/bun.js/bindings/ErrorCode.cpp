@@ -257,11 +257,8 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     auto cell = arg.asCell();
     switch (cell->type()) {
     case JSC::JSType::StringType: {
-        auto* jsString = jsCast<JSString*>(cell);
-        auto view = jsString->view(globalObject);
-        if (!view->isEmpty()) {
-            builder.append(view);
-        }
+        WTF::String str = arg.toWTFString(globalObject);
+        builder.appendQuotedJSONString(str);
         return;
     }
     case JSC::JSType::SymbolType: {

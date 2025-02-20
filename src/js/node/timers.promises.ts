@@ -23,7 +23,12 @@ function asyncIterator({ next: nextFunction, return: returnFunction }) {
 function setTimeoutPromise(after = 1, value, options = {}) {
   const arguments_ = [].concat(value ?? []);
   try {
-    validateNumber(after, "delay", -Infinity, Infinity);
+    // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
+    // warning, not throw an error. So we can't call validateNumber as that will throw if the number
+    // is outside of a given range.
+    if (typeof after != "number") {
+      validateNumber(after, "delay");
+    }
   } catch (error) {
     return Promise.reject(error);
   }
@@ -107,7 +112,12 @@ function setImmediatePromise(value, options = {}) {
 function setIntervalPromise(after = 1, value, options = {}) {
   /* eslint-disable no-undefined, no-unreachable-loop, no-loop-func */
   try {
-    validateNumber(after, "delay", -Infinity, Infinity);
+    // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
+    // warning, not throw an error. So we can't call validateNumber as that will throw if the number
+    // is outside of a given range.
+    if (typeof after != "number") {
+      validateNumber(after, "delay");
+    }
   } catch (error) {
     return asyncIterator({
       next: function () {

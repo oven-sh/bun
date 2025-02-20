@@ -162,9 +162,11 @@ const Socket = (function (InternalSocket) {
       },
       drain: Socket.#Drain,
       end: Socket.#End,
-      error(socket, error) {
+      error(socket, error, ignoreHadError) {
         const self = socket.data;
         if (!self) return;
+        if (self._hadError && !ignoreHadError) return;
+        self._hadError = true;
 
         const callback = self.#writeCallback;
         if (callback) {
@@ -394,12 +396,35 @@ const Socket = (function (InternalSocket) {
       error(socket, error) {
         const data = this.data;
         if (!data) return;
-        Socket.#Handlers.error(socket, error);
-        data.emit("error", error);
+
+        if (data._hadError) return;
+        data._hadError = true;
+        const bunTLS = this[bunTlsSymbol];
+
+        if (typeof bunTLS === "function") {
+          // Destroy socket if error happened before handshake's finish
+          if (!data._secureEstablished) {
+            data.destroy(error);
+          } else if (
+            data.isServer &&
+            data._rejectUnauthorized &&
+            /peer did not return a certificate/.test(error?.message)
+          ) {
+            // Ignore server's authorization errors
+            data.destroy();
+          } else {
+            // Emit error
+            data._emitTLSError(error);
+            this.emit("_tlsError", error);
+            this.server.emit("tlsClientError", error, data);
+            Socket.#Handlers.error(socket, error, true);
+            return;
+          }
+        }
+        Socket.#Handlers.error(socket, error, true);
         data.server.emit("clientError", error, data);
       },
       timeout: Socket.#Handlers.timeout,
-      connectError: Socket.#Handlers.connectError,
       drain: Socket.#Handlers.drain,
       binaryType: "buffer",
     };
@@ -417,7 +442,7 @@ const Socket = (function (InternalSocket) {
     _pendingData;
     _pendingEncoding; // for compatibility
     #pendingRead;
-
+    _hadError = false;
     isServer = false;
     _handle = null;
     _parent;
@@ -427,6 +452,7 @@ const Socket = (function (InternalSocket) {
     pauseOnConnect = false;
     #upgraded;
     #unrefOnConnected = false;
+
     #handlers = Socket.#Handlers;
     [kSetNoDelay];
     [kSetKeepAlive];
@@ -820,7 +846,7 @@ const Socket = (function (InternalSocket) {
     _destroy(err, callback) {
       this.connecting = false;
       const { ending } = this._writableState;
-      if (!err && this.secureConnecting && !this.isServer) {
+      if (!err && !this._hadError && this.secureConnecting && !this.isServer) {
         this.secureConnecting = false;
         err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
       }

@@ -1135,7 +1135,7 @@ pub const FileSystem = struct {
             fs: *RealFS,
             path: string,
             _size: ?usize,
-            file: std.fs.File,
+            file: bun.sys.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
@@ -1157,19 +1157,18 @@ pub const FileSystem = struct {
             allocator: std.mem.Allocator,
             path: string,
             _size: ?usize,
-            file: std.fs.File,
+            file: bun.sys.File,
             comptime use_shared_buffer: bool,
             shared_buffer: *MutableString,
             comptime stream: bool,
         ) !PathContentsPair {
-            FileSystem.setMaxFd(file.handle);
+            if (comptime Environment.isPosix) {
+                FileSystem.setMaxFd(file.handle.int());
+            }
 
             // Skip the extra file.stat() call when possible
-            var size = _size orelse (file.getEndPos() catch |err| {
-                fs.readFileError(path, err);
-                return err;
-            });
-            debug("stat({d}) = {d}", .{ file.handle, size });
+            var size = _size orelse try file.getEndPos().unwrap();
+            debug("stat({}) = {d}", .{ file.handle, size });
 
             // Skip the pread call for empty files
             // Otherwise will get out of bounds errors
@@ -1203,14 +1202,10 @@ pub const FileSystem = struct {
 
                     // We use pread to ensure if the file handle was open, it doesn't seek from the last position
                     const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                    const read_count = file.preadAll(shared_buffer.list.items[offset..], offset) catch |err| {
-                        fs.readFileError(path, err);
-                        return err;
-                    };
-                    if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_count + offset];
+                    const read_amount = try file.preadAll(shared_buffer.list.items[offset..], offset).unwrap();
+                    if (comptime Environment.isWindows) try file.seekTo(@intCast(prev_file_pos));
+                    shared_buffer.list.items = shared_buffer.list.items[0 .. read_amount + offset];
                     file_contents = shared_buffer.list.items;
-                    debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
                     if (comptime stream) {
                         // check again that stat() didn't change the file size
@@ -1220,11 +1215,10 @@ pub const FileSystem = struct {
                             return err;
                         };
 
-                        offset += read_count;
+                        offset += read_amount;
 
                         // don't infinite loop is we're still not reading more
-                        if (read_count == 0) break;
-
+                        if (read_amount == 0) break;
                         if (offset < new_size) {
                             try shared_buffer.growBy(new_size - size);
                             shared_buffer.list.expandToCapacity();
@@ -1251,13 +1245,9 @@ pub const FileSystem = struct {
                 buf[size] = 0;
 
                 const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                const read_count = file.preadAll(buf, 0) catch |err| {
-                    fs.readFileError(path, err);
-                    return err;
-                };
+                const read_buf = try file.preadAll(buf, 0).unwrap();
                 if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                file_contents = buf[0..read_count];
-                debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
+                file_contents = buf[0..read_buf];
 
                 if (strings.BOM.detect(file_contents)) |bom| {
                     debug("Convert {s} BOM", .{@tagName(bom)});
@@ -1266,60 +1256,6 @@ pub const FileSystem = struct {
             }
 
             return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
-        }
-
-        pub fn kindFromAbsolute(
-            fs: *RealFS,
-            absolute_path: [:0]const u8,
-            existing_fd: StoredFileDescriptorType,
-            store_fd: bool,
-        ) !Entry.Cache {
-            var outpath: bun.PathBuffer = undefined;
-
-            const stat = try C.lstat_absolute(absolute_path);
-            const is_symlink = stat.kind == std.fs.File.Kind.SymLink;
-            var _kind = stat.kind;
-            var cache = Entry.Cache{
-                .kind = Entry.Kind.file,
-                .symlink = PathString.empty,
-            };
-            var symlink: []const u8 = "";
-
-            if (is_symlink) {
-                var file = try if (existing_fd != 0)
-                    std.fs.File{ .handle = existing_fd }
-                else if (store_fd)
-                    std.fs.openFileAbsoluteZ(absolute_path, .{ .mode = .read_only })
-                else
-                    bun.openFileForPath(absolute_path);
-                setMaxFd(file.handle);
-
-                defer {
-                    if ((!store_fd or fs.needToCloseFiles()) and existing_fd == 0) {
-                        file.close();
-                    } else if (comptime FeatureFlags.store_file_descriptors) {
-                        cache.fd = file.handle;
-                    }
-                }
-                const _stat = try file.stat();
-
-                symlink = try bun.getFdPath(file.handle, &outpath);
-
-                _kind = _stat.kind;
-            }
-
-            bun.assert(_kind != .SymLink);
-
-            if (_kind == .Directory) {
-                cache.kind = .dir;
-            } else {
-                cache.kind = .file;
-            }
-            if (symlink.len > 0) {
-                cache.symlink = PathString.init(try FilenameStore.instance.append([]const u8, symlink));
-            }
-
-            return cache;
         }
 
         pub fn kind(

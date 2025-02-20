@@ -4015,6 +4015,41 @@ pub const File = struct {
         }
     };
 
+    pub fn pread(this: File, buf: []u8, offset: usize) Maybe(usize) {
+        return bun.sys.pread(this.handle, buf, @intCast(offset));
+    }
+
+    pub fn seekTo(this: File, offset: i64) Maybe(void) {
+        if (comptime Environment.isWindows) {
+            const rc = std.os.windows.kernel32.SetFilePointerEx(this.handle.cast(), offset, null, std.os.windows.FILE_BEGIN);
+            if (Maybe(void).errnoSys(rc, .lseek)) |err| {
+                return err;
+            }
+
+            return .{ .result = {} };
+        }
+
+        return bun.sys.lseek(this.handle, offset, std.posix.SEEK.SET);
+    }
+
+    pub fn preadAll(this: File, buf: []u8, offset: usize) Maybe(usize) {
+        var total: usize = 0;
+        while (true) {
+            const read_amount = switch (this.pread(buf[total..], offset + total)) {
+                .err => |err| return .{ .err = err },
+                .result => |amt| amt,
+            };
+
+            if (read_amount == 0) {
+                break;
+            }
+
+            total += read_amount;
+        }
+
+        return .{ .result = total };
+    }
+
     pub fn readFillBuf(this: File, buf: []u8) Maybe([]u8) {
         var read_amount: usize = 0;
         while (read_amount < buf.len) {

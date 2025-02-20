@@ -4501,12 +4501,12 @@ it("should report error on invalid format for optionalDependencies", async () =>
   err = err.substring(0, err.indexOf("\n", err.lastIndexOf("[dir]/package.json:"))).trim();
   expect(err.split("\n")).toEqual([
     `1 | {"name":"foo","version":"0.0.1","optionalDependencies":"bar"}`,
-    `                                    ^`,
+    `                                                          ^`,
     `error: optionalDependencies expects a map of specifiers, e.g.`,
     `  "optionalDependencies": {`,
     `    <green>"bun"<r>: <green>"latest"<r>`,
     `  }`,
-    `    at [dir]/package.json:1:33`,
+    `    at [dir]/package.json:1:55`,
   ]);
   const out = await new Response(stdout).text();
   expect(out).toEqual(expect.stringContaining("bun install v1."));

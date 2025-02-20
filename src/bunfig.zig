@@ -70,7 +70,7 @@ pub const Bunfig = struct {
         }
 
         fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
-            const url = URL.parse(str.data);
+            const url = URL.parse(str.asWtf8AssertNotRope());
             var registry = std.mem.zeroes(Api.NpmRegistry);
 
             // Token
@@ -160,14 +160,14 @@ pub const Bunfig = struct {
                 errdefer preloads.deinit();
                 while (array.next()) |item| {
                     try this.expectString(item);
-                    if (item.data.e_string.len() > 0)
-                        preloads.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                    if (!item.data.e_string.isEmpty())
+                        preloads.appendAssumeCapacity(try item.data.e_string.asWtf8CollapseRope(allocator));
                 }
                 this.ctx.preloads = preloads.items;
             } else if (expr.data == .e_string) {
-                if (expr.data.e_string.len() > 0) {
+                if (!expr.data.e_string.isEmpty()) {
                     var preloads = try allocator.alloc(string, 1);
-                    preloads[0] = try expr.data.e_string.string(allocator);
+                    preloads[0] = try expr.data.e_string.asWtf8CollapseRope(allocator);
                     this.ctx.preloads = preloads;
                 }
             } else if (expr.data != .e_null) {
@@ -197,14 +197,14 @@ pub const Bunfig = struct {
                     if (prop.value.?.data != .e_string) continue;
                     valid_count += 1;
                 }
-                var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
+                var buffer = allocator.alloc([]const u8, valid_count * 2) catch bun.outOfMemory();
                 var keys = buffer[0..valid_count];
                 var values = buffer[valid_count..];
                 var i: usize = 0;
                 for (properties) |prop| {
                     if (prop.value.?.data != .e_string) continue;
-                    keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
-                    values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+                    keys[i] = prop.key.?.data.e_string.asWtf8CollapseRope(allocator) catch bun.outOfMemory();
+                    values[i] = prop.value.?.data.e_string.asWtf8CollapseRope(allocator) catch bun.outOfMemory();
                     i += 1;
                 }
                 this.bunfig.define = Api.StringMap{
@@ -215,7 +215,7 @@ pub const Bunfig = struct {
 
             if (json.get("origin")) |expr| {
                 try this.expectString(expr);
-                this.bunfig.origin = try expr.data.e_string.string(allocator);
+                this.bunfig.origin = try expr.data.e_string.asWtf8CollapseRope(allocator);
             }
 
             if (comptime cmd == .RunCommand or cmd == .AutoCommand) {
@@ -270,9 +270,9 @@ pub const Bunfig = struct {
                         try this.expect(expr, .e_object);
                         if (expr.get("junit")) |junit_expr| {
                             try this.expectString(junit_expr);
-                            if (junit_expr.data.e_string.len() > 0) {
+                            if (!junit_expr.data.e_string.isEmpty()) {
                                 this.ctx.test_options.file_reporter = .junit;
-                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.string(allocator);
+                                this.ctx.test_options.reporter_outfile = try junit_expr.data.e_string.asWtf8CollapseRope(allocator);
                             }
                         }
                     }
@@ -309,7 +309,7 @@ pub const Bunfig = struct {
 
                     if (test_.get("coverageDir")) |expr| {
                         try this.expectString(expr);
-                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
+                        this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.asWtf8CollapseRope(allocator);
                     }
 
                     if (test_.get("coverageThreshold")) |expr| outer: {
@@ -403,7 +403,7 @@ pub const Bunfig = struct {
                             },
                             .e_string => |str| {
                                 install.ca = .{
-                                    .str = try str.stringCloned(allocator),
+                                    .str = try str.dupe(allocator),
                                 };
                             },
                             else => {
@@ -645,11 +645,11 @@ pub const Bunfig = struct {
                                 const plugins = try this.allocator.alloc(string, raw_plugins.len);
                                 for (raw_plugins, 0..) |p, i| {
                                     try this.expectString(p);
-                                    plugins[i] = try p.data.e_string.string(allocator);
+                                    plugins[i] = try p.data.e_string.asWtf8CollapseRope(allocator);
                                 }
                                 break :plugins plugins;
                             } else {
-                                const p = try config_plugins.data.e_string.string(allocator);
+                                const p = try config_plugins.data.e_string.asWtf8CollapseRope(allocator);
                                 const plugins = try this.allocator.alloc(string, 1);
                                 plugins[0] = p;
                                 break :plugins plugins;
@@ -702,8 +702,8 @@ pub const Bunfig = struct {
                         var i: usize = 0;
                         for (properties) |prop| {
                             if (prop.value.?.data != .e_string) continue;
-                            keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
-                            values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+                            keys[i] = prop.key.?.data.e_string.asWtf8CollapseRope(allocator) catch unreachable;
+                            values[i] = prop.value.?.data.e_string.asWtf8CollapseRope(allocator) catch unreachable;
                             i += 1;
                         }
                         this.bunfig.serve_define = Api.StringMap{
@@ -733,7 +733,7 @@ pub const Bunfig = struct {
                                 } else if (str.eqlComptime("disable")) {
                                     this.bunfig.serve_env_behavior = .disable;
                                 } else {
-                                    const slice = try str.string(allocator);
+                                    const slice = try str.asWtf8CollapseRope(allocator);
                                     if (strings.indexOfChar(slice, '*')) |asterisk| {
                                         if (asterisk > 0) {
                                             this.bunfig.serve_env_prefix = slice[0..asterisk];
@@ -758,7 +758,7 @@ pub const Bunfig = struct {
                 if (comptime cmd == .BuildCommand or cmd == .RunCommand or cmd == .AutoCommand or cmd == .BuildCommand) {
                     if (_bun.get("outdir")) |dir| {
                         try this.expectString(dir);
-                        this.bunfig.output_dir = try dir.data.e_string.string(allocator);
+                        this.bunfig.output_dir = try dir.data.e_string.asWtf8CollapseRope(allocator);
                     }
                 }
 
@@ -773,7 +773,7 @@ pub const Bunfig = struct {
                         var names = try this.allocator.alloc(string, items.len);
                         for (items, 0..) |item, i| {
                             try this.expectString(item);
-                            names[i] = try item.data.e_string.string(allocator);
+                            names[i] = try item.data.e_string.asWtf8CollapseRope(allocator);
                         }
                         this.bunfig.entry_points = names;
                     }
@@ -794,7 +794,7 @@ pub const Bunfig = struct {
                         for (properties) |prop| {
                             if (prop.value.?.data != .e_boolean) continue;
 
-                            const path = try prop.key.?.data.e_string.string(allocator);
+                            const path = try prop.key.?.data.e_string.asWtf8CollapseRope(allocator);
 
                             if (!resolver.isPackagePath(path)) {
                                 try this.addError(prop.key.?.loc, "Expected package name");
@@ -897,7 +897,7 @@ pub const Bunfig = struct {
                 switch (expr.data) {
                     .e_string => |str| {
                         var externals = try allocator.alloc(string, 1);
-                        externals[0] = try str.string(allocator);
+                        externals[0] = try str.asWtf8CollapseRope(allocator);
                         this.bunfig.external = externals;
                     },
                     .e_array => |array| {
@@ -905,7 +905,7 @@ pub const Bunfig = struct {
 
                         for (array.items.slice(), 0..) |item, i| {
                             try this.expectString(item);
-                            externals[i] = try item.data.e_string.string(allocator);
+                            externals[i] = try item.data.e_string.asWtf8CollapseRope(allocator);
                         }
 
                         this.bunfig.external = externals;
@@ -996,7 +996,7 @@ pub const Bunfig = struct {
                 });
             }
             return err;
-        } else JSONParser.parseTSConfig(&source, ctx.log, allocator, true) catch |err| {
+        } else JSONParser.parseTSConfig(&source, ctx.log, allocator) catch |err| {
             if (ctx.log.errors + ctx.log.warnings == log_count) {
                 try ctx.log.addErrorOpts("Failed to parse", .{
                     .source = &source,

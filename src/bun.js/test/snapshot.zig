@@ -166,13 +166,11 @@ pub const Snapshots = struct {
                                 const target: js_ast.E.Identifier = left.data.e_index.target.data.e_identifier;
                                 var index: *js_ast.E.String = left.data.e_index.index.data.e_string;
                                 if (target.ref.eql(exports_ref) and expr.value.data.e_binary.right.data == .e_string) {
-                                    const key = index.slice(this.allocator);
+                                    const key = try index.asWtf8CollapseRope(this.allocator);
+                                    defer if (index.is_rope) this.allocator.free(key);
                                     var value_string = expr.value.data.e_binary.right.data.e_string;
-                                    const value = value_string.slice(this.allocator);
-                                    defer {
-                                        if (!index.isUTF8()) this.allocator.free(key);
-                                        if (!value_string.isUTF8()) this.allocator.free(value);
-                                    }
+                                    const value = try value_string.asWtf8CollapseRope(this.allocator);
+                                    defer if (value_string.is_rope) this.allocator.free(value);
                                     const value_clone = try this.allocator.alloc(u8, value.len);
                                     bun.copy(u8, value_clone, value);
                                     const name_hash = bun.hash(key);
@@ -439,7 +437,7 @@ pub const Snapshots = struct {
                 if (needs_pre_comma) try result_text.appendSlice(", ");
                 const result_text_writer = result_text.writer();
                 try result_text.appendSlice("`");
-                try bun.js_printer.writePreQuotedString(re_indented, @TypeOf(result_text_writer), result_text_writer, '`', false, false, .utf8);
+                try bun.js_printer.writePreQuotedString(.wtf8_replace_invalid, re_indented, @TypeOf(result_text_writer), result_text_writer, '`', false, false);
                 try result_text.appendSlice("`");
 
                 if (ils.is_added) Jest.runner.?.snapshots.added += 1;

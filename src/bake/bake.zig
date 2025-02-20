@@ -792,8 +792,8 @@ pub fn addImportMetaDefines(
         allocator,
         "import.meta.env.MODE",
         Define.Data.initStaticString(switch (mode) {
-            .development => &.{ .data = "development" },
-            .production_dynamic, .production_static => &.{ .data = "production" },
+            .development => &comptime bun.JSAst.E.String.init("development"),
+            .production_dynamic, .production_static => &comptime bun.JSAst.E.String.init("production"),
         }),
     );
     try define.insert(

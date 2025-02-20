@@ -160,7 +160,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, glob_start: u32, path: 
                         }
 
                         state.wildcard.glob_index = state.glob_index;
-                        state.wildcard.path_index = state.path_index + if (state.path_index < path.len) bun.strings.wtf8ByteSequenceLength(path[state.path_index]) else 1;
+                        state.wildcard.path_index = state.path_index + if (state.path_index < path.len) bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, path[state.path_index..]).?.advance else 1;
                         state.wildcard.brace_depth = state.brace_depth;
 
                         var in_globstar = false;
@@ -199,7 +199,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, glob_start: u32, path: 
                     '?' => if (state.path_index < path.len) {
                         if (!isSeparator(path[state.path_index])) {
                             state.glob_index += 1;
-                            state.path_index += bun.strings.wtf8ByteSequenceLength(path[state.path_index]);
+                            state.path_index += bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, path[state.path_index..]).?.advance;
                             continue;
                         }
                         break :fallthrough;
@@ -216,10 +216,11 @@ inline fn globMatchImpl(state: *State, glob: []const u8, glob_start: u32, path: 
                         var first = true;
                         var is_match = false;
 
+                        const decode_res = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, path[state.path_index..]).?;
                         // length of the unicode char in the path
-                        const len = bun.strings.wtf8ByteSequenceLength(path[state.path_index]);
+                        const len = decode_res.advance;
                         // source unicode char to match against the target
-                        const c = bun.strings.decodeWTF8RuneT(path[state.path_index..].ptr[0..4], len, u32, 0xFFFD);
+                        const c = decode_res.codepoint;
 
                         while (state.glob_index < glob.len and (first or glob[state.glob_index] != ']')) {
                             // Get low ( ͡° ͜ʖ ͡°), and unescape it
@@ -289,7 +290,7 @@ inline fn globMatchImpl(state: *State, glob: []const u8, glob_start: u32, path: 
                 if (!unescape(&cc, glob, &state.glob_index)) {
                     return false; // Invalid pattern!
                 }
-                const cc_len = bun.strings.wtf8ByteSequenceLength(cc);
+                const cc_len = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, glob[state.glob_index..]).?.advance;
 
                 const is_match = if (cc == '/')
                     isSeparator(path[state.path_index])
@@ -456,23 +457,18 @@ inline fn getUnicode(c: *u32, clen: *u8, glob: []const u8, glob_index: *u32) boo
                 'n' => '\n',
                 'r' => '\r',
                 't' => '\t',
-                else => |cc| brk: {
-                    const len = bun.strings.wtf8ByteSequenceLength(cc);
-                    clen.* = len;
-                    if (len == 1) {
-                        break :brk cc;
-                    }
-
-                    break :brk bun.strings.decodeWTF8RuneT(glob[glob_index.*..].ptr[0..4], len, u32, 0xFFFD);
+                else => |_| brk: {
+                    const dec = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, glob[glob_index.*..]).?;
+                    clen.* = @intCast(dec.advance);
+                    break :brk @intCast(dec.codepoint);
                 },
             };
         },
         // multi-byte sequences
         else => {
-            const len = bun.strings.wtf8ByteSequenceLength(@truncate(c.*));
-            clen.* = len;
-
-            c.* = bun.strings.decodeWTF8RuneT(glob[glob_index.*..].ptr[0..4], len, u32, 0xFFFD);
+            const dec = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, glob[glob_index.*..]).?;
+            clen.* = @intCast(dec.advance);
+            c.* = @intCast(dec.codepoint);
         },
     }
 

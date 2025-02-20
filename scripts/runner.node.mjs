@@ -649,7 +649,9 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
   const perTestTimeout = Math.ceil(timeout / 2);
   const absPath = join(options["cwd"], testPath);
   const isReallyTest = isTestStrict(testPath) || absPath.includes("vendor");
-  const args = options["args"] ?? [];
+  const wantsTodoFlag = testPath.includes(".with_todo.");
+  let args = options["args"] ?? [];
+  if (wantsTodoFlag) args = [...args, "--todo"];
   const { ok, error, stdout } = await spawnBun(execPath, {
     args: isReallyTest ? ["test", ...args, `--timeout=${perTestTimeout}`, absPath] : [...args, absPath],
     cwd: options["cwd"],

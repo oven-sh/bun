@@ -933,7 +933,7 @@ const Template = enum {
         fields.name = this.name();
         const key = try alloc.create(Rope);
         key.* = Rope{
-            .head = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{ .data = "scripts" }, logger.Loc.Empty),
+            .head = js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init("scripts"), logger.Loc.Empty),
             .next = null,
         };
         var scripts_json = try fields.object.getOrPutObject(key, alloc);

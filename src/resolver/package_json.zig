@@ -174,8 +174,8 @@ pub const PackageJSON = struct {
         for (json.properties.slice()) |prop| {
             if (prop.value.?.data != .e_string) continue;
             env.defaults.appendAssumeCapacity(.{
-                .key = prop.key.?.data.e_string.string(allocator) catch unreachable,
-                .value = prop.value.?.data.e_string.string(allocator) catch unreachable,
+                .key = prop.key.?.data.e_string.asWtf8CollapseRope(allocator) catch bun.outOfMemory(),
+                .value = prop.value.?.data.e_string.asWtf8CollapseRope(allocator) catch bun.outOfMemory(),
             });
         }
     }
@@ -197,8 +197,8 @@ pub const PackageJSON = struct {
         var i: usize = 0;
         for (json.properties.slice()) |prop| {
             if (prop.value.?.data != .e_string) continue;
-            keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
-            values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+            keys[i] = prop.key.?.data.e_string.asWtf8CollapseRope(allocator) catch unreachable;
+            values[i] = prop.value.?.data.e_string.asWtf8CollapseRope(allocator) catch unreachable;
             i += 1;
         }
         framework.override_modules = Api.StringMap{ .keys = keys, .values = values };
@@ -212,7 +212,7 @@ pub const PackageJSON = struct {
         for (json.properties.slice()) |prop| {
             switch (prop.key.?.data) {
                 .e_string => |e_str| {
-                    const str = e_str.string(allocator) catch "";
+                    const str = e_str.asWtf8CollapseRope(allocator) catch bun.outOfMemory();
 
                     if (strings.eqlComptime(str, "defaults")) {
                         switch (prop.value.?.data) {
@@ -226,7 +226,7 @@ pub const PackageJSON = struct {
                     } else if (strings.eqlComptime(str, ".env")) {
                         switch (prop.value.?.data) {
                             .e_string => |value_str| {
-                                env.setBehaviorFromPrefix(value_str.string(allocator) catch "");
+                                env.setBehaviorFromPrefix(value_str.asWtf8CollapseRope(allocator) catch bun.outOfMemory());
                             },
                             else => {
                                 env.behavior = .disable;
@@ -383,7 +383,7 @@ pub const PackageJSON = struct {
                 if (router.expr.asProperty("dir")) |route_dir| {
                     switch (route_dir.expr.data) {
                         .e_string => |estr| {
-                            const str = estr.string(allocator) catch unreachable;
+                            const str = estr.asWtf8CollapseRope(allocator) catch bun.outOfMemory();
                             if (str.len > 0) {
                                 pair.router.dir = str;
                                 pair.router.possible_dirs = &[_]string{};
@@ -395,12 +395,12 @@ pub const PackageJSON = struct {
                             var count: usize = 0;
                             const items = array.items.slice();
                             for (items) |item| {
-                                count += @intFromBool(item.data == .e_string and item.data.e_string.data.len > 0);
+                                count += @intFromBool(item.data == .e_string and !item.data.e_string.isEmpty());
                             }
                             switch (count) {
                                 0 => {},
                                 1 => {
-                                    const str = items[0].data.e_string.string(allocator) catch unreachable;
+                                    const str = items[0].data.e_string.asWtf8CollapseRope(allocator) catch bun.outOfMemory();
                                     if (str.len > 0) {
                                         pair.router.dir = str;
                                         pair.router.possible_dirs = &[_]string{};
@@ -413,8 +413,8 @@ pub const PackageJSON = struct {
 
                                     var list_i: usize = 0;
                                     for (items) |item| {
-                                        if (item.data == .e_string and item.data.e_string.data.len > 0) {
-                                            list[list_i] = item.data.e_string.string(allocator) catch unreachable;
+                                        if (item.data == .e_string and !item.data.e_string.isEmpty()) {
+                                            list[list_i] = item.data.e_string.asWtf8CollapseRope(allocator) catch bun.outOfMemory();
                                             list_i += 1;
                                         }
                                     }
@@ -552,7 +552,7 @@ pub const PackageJSON = struct {
             for (remap_properties) |remap| {
                 const import_name = remap.key.?.asString(allocator) orelse continue;
                 const remap_value = remap.value.?;
-                if (remap_value.data != .e_string or remap_value.data.e_string.data.len == 0) {
+                if (remap_value.data != .e_string or remap_value.data.e_string.isEmpty()) {
                     log.addWarningFmt(
                         json_source,
                         remap_value.loc,
@@ -563,7 +563,7 @@ pub const PackageJSON = struct {
                     continue;
                 }
 
-                const remap_value_str = remap_value.data.e_string.data;
+                const remap_value_str = remap_value.data.e_string.asWtf8AssertNotRope();
 
                 map.putAssumeCapacityNoClobber(import_name, remap_value_str);
             }
@@ -620,7 +620,7 @@ pub const PackageJSON = struct {
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);
 
-        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator, true) catch |err| {
+        const json: js_ast.Expr = (r.caches.json.parsePackageJSON(r.log, json_source, allocator) catch |err| {
             if (Environment.isDebug) {
                 Output.printError("{s}: JSON parse error: {s}", .{ package_json_path, @errorName(err) });
             }
@@ -738,7 +738,7 @@ pub const PackageJSON = struct {
                             switch (value.data) {
                                 .e_string => |str| {
                                     // If this is a string, it's a replacement package
-                                    package_json.browser_map.put(key, str.string(allocator) catch unreachable) catch unreachable;
+                                    package_json.browser_map.put(key, str.asWtf8CollapseRope(allocator) catch bun.outOfMemory()) catch unreachable;
                                 },
                                 .e_boolean => |boolean| {
                                     if (!boolean.value) {
@@ -1036,7 +1036,7 @@ pub const ExportsMap = struct {
                 .e_string => |str| {
                     return Entry{
                         .data = .{
-                            .string = str.slice(this.allocator),
+                            .string = str.asWtf8CollapseRope(this.allocator) catch bun.outOfMemory(),
                         },
                         .first_token = this.source.rangeOfString(expr.loc),
                     };
@@ -1067,7 +1067,7 @@ pub const ExportsMap = struct {
                     first_token.loc = expr.loc;
                     first_token.len = 1;
                     for (e_obj.properties.slice(), 0..) |prop, i| {
-                        const key: string = prop.key.?.data.e_string.slice(this.allocator);
+                        const key: string = prop.key.?.data.e_string.asWtf8CollapseRope(this.allocator) catch bun.outOfMemory();
                         const key_range: logger.Range = this.source.rangeOfString(prop.key.?.loc);
 
                         // If exports is an Object with both a key starting with "." and a key

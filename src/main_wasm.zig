@@ -221,12 +221,12 @@ const TestAnalyzer = struct {
                         const label_expr: JSAst.Expr = call.args.slice()[0];
                         switch (label_expr.data) {
                             .e_string => |str| {
-                                try str.toUTF8(this.string_buffer.allocator);
+                                const str_data = str.asWtf8CollapseRope(this.string_buffer.allocator) catch bun.outOfMemory();
                                 const ptr = Api.StringPointer{
                                     .offset = this.string_buffer.items.len,
-                                    .length = str.data.len,
+                                    .length = str_data.len,
                                 };
-                                try this.string_buffer.appendSlice(str.data);
+                                try this.string_buffer.appendSlice(str_data);
                                 try this.items.append(Api.TestResponseItem{
                                     .byte_offset = expr.loc.start,
                                     .kind = if (call.target.isRef(parser.jest.describe)) Api.TestKind.describe_fn else .test_fn,
@@ -246,12 +246,13 @@ const TestAnalyzer = struct {
                             const label_expr: JSAst.Expr = call.args.slice()[0];
                             switch (label_expr.data) {
                                 .e_string => |str| {
+                                    const str_data = str.asWtf8CollapseRope(this.string_buffer.allocator) catch bun.outOfMemory();
                                     try str.toUTF8(this.string_buffer.allocator);
                                     const ptr = Api.StringPointer{
                                         .offset = this.string_buffer.items.len,
-                                        .length = str.data.len,
+                                        .length = str_data.len,
                                     };
-                                    try this.string_buffer.appendSlice(str.data);
+                                    try this.string_buffer.appendSlice(str_data);
                                     try this.items.append(Api.TestResponseItem{
                                         .byte_offset = expr.loc.start,
                                         .kind = if (target.isRef(parser.jest.describe)) Api.TestKind.describe_fn else .test_fn,

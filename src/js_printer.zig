@@ -163,157 +163,68 @@ fn ws(comptime str: []const u8) Whitespacer {
     return .{ .normal = Static.with, .minify = Static.without };
 }
 
-pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, comptime quote_char: u8) usize {
-    var remaining = input;
-    var len: usize = 2; // for quotes
-
-    while (strings.indexOfNeedsEscape(remaining, quote_char)) |i| {
-        len += i;
-        remaining = remaining[i..];
-        const char_len = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-        const c = strings.decodeWTF8RuneT(
-            &switch (char_len) {
-                // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
-                1 => .{ remaining[0], 0, 0, 0 },
-                2 => remaining[0..2].* ++ .{ 0, 0 },
-                3 => remaining[0..3].* ++ .{0},
-                4 => remaining[0..4].*,
-                else => unreachable,
-            },
-            char_len,
-            i32,
-            0,
-        );
-        if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            len += @as(usize, char_len);
-        } else if (c <= 0xFFFF) {
-            len += 6;
-        } else {
-            len += 12;
-        }
-        remaining = remaining[char_len..];
-    } else {
-        return remaining.len + 2;
-    }
-
-    return len;
-}
-
 pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
     var bytes = output_;
     try quoteForJSONBuffer(text, &bytes, ascii_only);
     return bytes;
 }
 
-pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
-    const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
+pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text: []const encoding.Unit(), comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool) !void {
     if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
-    var i: usize = 0;
-    const n: usize = text.len;
-    while (i < n) {
-        const width = switch (comptime encoding) {
-            .latin1, .ascii => 1,
-            .utf8 => strings.wtf8ByteSequenceLengthWithInvalid(text[i]),
-            .utf16 => 1,
-        };
-        const clamped_width = @min(@as(usize, width), n -| i);
-        const c = switch (encoding) {
-            .utf8 => strings.decodeWTF8RuneT(
-                &switch (clamped_width) {
-                    // 0 is not returned by `wtf8ByteSequenceLengthWithInvalid`
-                    1 => .{ text[i], 0, 0, 0 },
-                    2 => text[i..][0..2].* ++ .{ 0, 0 },
-                    3 => text[i..][0..3].* ++ .{0},
-                    4 => text[i..][0..4].*,
-                    else => unreachable,
-                },
-                width,
-                i32,
-                0,
-            ),
-            .ascii => brk: {
-                std.debug.assert(text[i] <= 0x7F);
-                break :brk text[i];
-            },
-            .latin1 => brk: {
-                if (text[i] <= 0x7F) break :brk text[i];
-                break :brk strings.latin1ToCodepointAssumeNotASCII(text[i], i32);
-            },
-            .utf16 => brk: {
-                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
-                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
-                // eg: "\u{10334}" will convert to "\uD800\uDF34" without this.
-                break :brk @as(i32, text[i]);
-            },
-        };
-        if (canPrintWithoutEscape(i32, c, ascii_only)) {
-            const remain = text[i + clamped_width ..];
+    if (Environment.allow_assert) bun.assert(strings.unicode.isValid(encoding, text));
 
-            switch (encoding) {
-                .ascii, .utf8 => {
-                    if (strings.indexOfNeedsEscape(remain, quote_char)) |j| {
-                        const text_chunk = text[i .. i + clamped_width];
-                        try writer.writeAll(text_chunk);
-                        i += clamped_width;
-                        try writer.writeAll(remain[0..j]);
-                        i += j;
-                    } else {
-                        try writer.writeAll(text[i..]);
-                        i = n;
-                        break;
-                    }
-                },
-                .latin1, .utf16 => {
-                    var codepoint_bytes: [4]u8 = undefined;
-                    const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], c);
-                    try writer.writeAll(codepoint_bytes[0..codepoint_len]);
-                    i += clamped_width;
-                },
+    var i: usize = 0;
+    while (i < text.len) {
+        // fast advance
+        if (encoding.isWtf8Like() or encoding == .latin1) {
+            const next_interesting = js_lexer.indexOfInterestingCharacterInString(text[i..], quote_char, true) orelse text[i..].len;
+            if (next_interesting != 0) {
+                const segment = text[i..][0..next_interesting];
+                try writer.writeAll(segment);
+                i += next_interesting;
+                if (i == text.len) break;
+                bun.assert(i < text.len);
             }
+        }
+
+        const dec_res = strings.unicode.decodeFirst(encoding, text[i..]).?;
+        i += dec_res.advance;
+
+        if (canPrintWithoutEscape(i32, dec_res.codepoint, ascii_only)) {
+            // print the character
+            if (dec_res.codepoint < 0x80) {
+                try writer.writeByte(@intCast(dec_res.codepoint));
+            } else {
+                var codepoint_bytes: [4]u8 = undefined;
+                const codepoint_len = strings.encodeWTF8Rune(codepoint_bytes[0..4], dec_res.codepoint);
+                try writer.writeAll(codepoint_bytes[0..codepoint_len]);
+            }
+
             continue;
         }
-        switch (c) {
-            0x07 => {
-                try writer.writeAll("\\x07");
-                i += 1;
-            },
-            0x08 => {
-                try writer.writeAll("\\b");
-                i += 1;
-            },
-            0x0C => {
-                try writer.writeAll("\\f");
-                i += 1;
-            },
+
+        switch (dec_res.codepoint) {
+            0x07 => try writer.writeAll("\\x07"),
+            0x08 => try writer.writeAll("\\b"),
+            0x0C => try writer.writeAll("\\f"),
             '\n' => {
                 if (quote_char == '`') {
                     try writer.writeAll("\n");
                 } else {
                     try writer.writeAll("\\n");
                 }
-                i += 1;
             },
-            std.ascii.control_code.cr => {
-                try writer.writeAll("\\r");
-                i += 1;
-            },
+            std.ascii.control_code.cr => try writer.writeAll("\\r"),
             // \v
-            std.ascii.control_code.vt => {
-                try writer.writeAll("\\v");
-                i += 1;
-            },
+            std.ascii.control_code.vt => try writer.writeAll("\\v"),
             // "\\"
-            '\\' => {
-                try writer.writeAll("\\\\");
-                i += 1;
-            },
+            '\\' => try writer.writeAll("\\\\"),
             '"' => {
                 if (quote_char == '"') {
                     try writer.writeAll("\\\"");
                 } else {
                     try writer.writeAll("\"");
                 }
-                i += 1;
             },
             '\'' => {
                 if (quote_char == '\'') {
@@ -321,7 +232,6 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 } else {
                     try writer.writeAll("'");
                 }
-                i += 1;
             },
             '`' => {
                 if (quote_char == '`') {
@@ -329,12 +239,10 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 } else {
                     try writer.writeAll("`");
                 }
-                i += 1;
             },
             '$' => {
                 if (quote_char == '`') {
-                    const remain = text[i + clamped_width ..];
-                    if (remain.len > 0 and remain[0] == '{') {
+                    if (text[i..].len > 0 and text[i] == '{') {
                         try writer.writeAll("\\$");
                     } else {
                         try writer.writeAll("$");
@@ -342,7 +250,6 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 } else {
                     try writer.writeAll("$");
                 }
-                i += 1;
             },
 
             '\t' => {
@@ -351,14 +258,12 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                 } else {
                     try writer.writeAll("\\t");
                 }
-                i += 1;
             },
 
             else => {
-                i += @as(usize, width);
-
-                if (c <= 0xFF and !json) {
-                    const k = @as(usize, @intCast(c));
+                if (!json and dec_res.codepoint <= 0xFF) {
+                    // json does not support \xNN escapes, \uNNNN must be used instead
+                    const k: usize = @intCast(dec_res.codepoint);
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -366,8 +271,8 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
                     });
-                } else if (c <= 0xFFFF) {
-                    const k = @as(usize, @intCast(c));
+                } else if (dec_res.codepoint <= 0xFFFF) {
+                    const k: usize = @intCast(dec_res.codepoint);
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -377,10 +282,11 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                         hex_chars[(k >> 4) & 0xF],
                         hex_chars[k & 0xF],
                     });
-                } else {
-                    const k = c - 0x10000;
-                    const lo = @as(usize, @intCast(first_high_surrogate + ((k >> 10) & 0x3FF)));
-                    const hi = @as(usize, @intCast(first_low_surrogate + (k & 0x3FF)));
+                } else if (json and true) {
+                    // json does not support \u{} escapes, \uHIGH\uLOW must be used instead
+                    const k: usize = @intCast(dec_res.codepoint - 0x10000);
+                    const lo: usize = first_high_surrogate + ((k >> 10) & 0x3FF);
+                    const hi: usize = first_low_surrogate + (k & 0x3FF);
 
                     try writer.writeAll(&[_]u8{
                         '\\',
@@ -396,6 +302,9 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
                         hex_chars[(hi >> 4) & 15],
                         hex_chars[hi & 15],
                     });
+                } else {
+                    // TODO re-enable
+                    try writer.print("\\u{{{X}}}", .{dec_res.codepoint});
                 }
             },
         }
@@ -404,15 +313,15 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
 pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     const writer = bytes.writer();
 
-    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
+    try bytes.growIfNeeded(text.len + 2);
     try bytes.appendChar('"');
-    try writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, true, .utf8);
+    try writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '"', ascii_only, true);
     bytes.appendChar('"') catch unreachable;
 }
 
-pub fn writeJSONString(input: []const u8, comptime Writer: type, writer: Writer, comptime encoding: strings.Encoding) !void {
+pub fn writeJSONString(comptime encoding: strings.unicode.Encoding, input: []const encoding.Unit(), comptime Writer: type, writer: Writer) !void {
     try writer.writeAll("\"");
-    try writePreQuotedString(input, Writer, writer, '"', false, true, encoding);
+    try writePreQuotedString(encoding, input, Writer, writer, '"', false, true);
     try writer.writeAll("\"");
 }
 
@@ -1483,17 +1392,6 @@ fn NewPrinter(
             p.print("}");
         }
 
-        pub fn bestQuoteCharForEString(str: *const E.String, allow_backtick: bool) u8 {
-            if (comptime is_json)
-                return '"';
-
-            if (str.isUTF8()) {
-                return bestQuoteCharForString(u8, str.data, allow_backtick);
-            } else {
-                return bestQuoteCharForString(u16, str.slice16(), allow_backtick);
-            }
-        }
-
         pub fn printWhitespacer(this: *Printer, spacer: Whitespacer) void {
             if (this.options.minify_whitespace) {
                 this.print(spacer.minify);
@@ -1608,9 +1506,9 @@ fn NewPrinter(
         pub fn printStringCharactersUTF8(e: *Printer, text: []const u8, quote: u8) void {
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(text, @TypeOf(writer), writer, '\'', ascii_only, false, .utf8),
-                '"' => writePreQuotedString(text, @TypeOf(writer), writer, '"', ascii_only, false, .utf8),
-                '`' => writePreQuotedString(text, @TypeOf(writer), writer, '`', ascii_only, false, .utf8),
+                '\'' => writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1619,9 +1517,9 @@ fn NewPrinter(
 
             const writer = e.writer.stdWriter();
             (switch (quote) {
-                '\'' => writePreQuotedString(slice, @TypeOf(writer), writer, '\'', ascii_only, false, .utf16),
-                '"' => writePreQuotedString(slice, @TypeOf(writer), writer, '"', ascii_only, false, .utf16),
-                '`' => writePreQuotedString(slice, @TypeOf(writer), writer, '`', ascii_only, false, .utf16),
+                '\'' => writePreQuotedString(.wtf16, slice, @TypeOf(writer), writer, '\'', ascii_only, false),
+                '"' => writePreQuotedString(.wtf16, slice, @TypeOf(writer), writer, '"', ascii_only, false),
+                '`' => writePreQuotedString(.wtf16, slice, @TypeOf(writer), writer, '`', ascii_only, false),
                 else => unreachable,
             }) catch |err| switch (err) {};
         }
@@ -1910,12 +1808,6 @@ fn NewPrinter(
             p.printWhitespacer(ws("/* @__PURE__ */ "));
         }
 
-        pub fn printStringLiteralEString(p: *Printer, str: *E.String, allow_backtick: bool) void {
-            const quote = bestQuoteCharForEString(str, allow_backtick);
-            p.print(quote);
-            p.printStringCharactersEString(str, quote);
-            p.print(quote);
-        }
         pub fn printStringLiteralUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             if (Environment.allow_assert) std.debug.assert(std.unicode.wtf8ValidateSlice(str));
 
@@ -2513,12 +2405,11 @@ fn NewPrinter(
                         flags.insert(.has_non_optional_chain_parent);
 
                         if (e.index.data.as(.e_string)) |str| {
-                            str.resolveRopeIfNeeded(p.options.allocator);
-
-                            if (str.isUTF8()) if (p.tryToGetImportedEnumValue(e.target, str.data)) |value| {
-                                p.printInlinedEnum(value, str.data, level);
+                            const str_val = str.asWtf8CollapseRope(p.options.allocator) catch bun.outOfMemory();
+                            if (p.tryToGetImportedEnumValue(e.target, str_val)) |value| {
+                                p.printInlinedEnum(value, str_val, level);
                                 return;
-                            };
+                            }
                         }
                     } else {
                         if (flags.contains(.has_non_optional_chain_parent)) {
@@ -2776,18 +2667,16 @@ fn NewPrinter(
                     }
                 },
                 .e_string => |e| {
-                    e.resolveRopeIfNeeded(p.options.allocator);
+                    const value = e.asWtf8CollapseRope(p.options.allocator) catch bun.outOfMemory();
                     p.addSourceMapping(expr.loc);
 
-                    // If this was originally a template literal, print it as one as long as we're not minifying
-                    if (e.prefer_template and !p.options.minify_syntax) {
+                    if (e.is_from_template_string and !p.options.minify_syntax) {
                         p.print("`");
-                        p.printStringCharactersEString(e, '`');
+                        p.printStringCharactersUTF8(value, '`');
                         p.print("`");
                         return;
                     }
-
-                    p.printStringLiteralEString(e, true);
+                    p.printStringLiteralUTF8(value, true);
                 },
                 .e_template => |e| {
                     if (e.tag == null and (p.options.minify_syntax or p.was_lazy_export)) {
@@ -2825,7 +2714,7 @@ fn NewPrinter(
                             switch (e2.data) {
                                 .e_string => {
                                     p.print('"');
-                                    p.printStringCharactersUTF8(e2.data.e_string.data, '"');
+                                    p.printStringCharactersUTF8(e2.data.e_string.asWtf8CollapseRope(p.options.allocator) catch bun.outOfMemory(), '"');
                                     p.print('"');
                                     return;
                                 },
@@ -2839,7 +2728,7 @@ fn NewPrinter(
                         // Convert no-substitution template literals into strings if it's smaller
                         if (e.parts.len == 0) {
                             p.addSourceMapping(expr.loc);
-                            p.printStringCharactersEString(&e.head.cooked, '`');
+                            p.printStringCharactersUTF8(e.head.cooked.asWtf8CollapseRope(p.options.allocator) catch bun.outOfMemory(), '`');
                             return;
                         }
                     }
@@ -2862,9 +2751,8 @@ fn NewPrinter(
                     switch (e.head) {
                         .raw => |raw| p.printRawTemplateLiteral(raw),
                         .cooked => |*cooked| {
-                            if (cooked.isPresent()) {
-                                cooked.resolveRopeIfNeeded(p.options.allocator);
-                                p.printStringCharactersEString(cooked, '`');
+                            if (!cooked.isEmpty()) {
+                                p.printStringCharactersUTF8(cooked.asWtf8CollapseRope(p.options.allocator) catch bun.outOfMemory(), '`');
                             }
                         },
                     }
@@ -2876,9 +2764,8 @@ fn NewPrinter(
                         switch (part.tail) {
                             .raw => |raw| p.printRawTemplateLiteral(raw),
                             .cooked => |*cooked| {
-                                if (cooked.isPresent()) {
-                                    cooked.resolveRopeIfNeeded(p.options.allocator);
-                                    p.printStringCharactersEString(cooked, '`');
+                                if (!cooked.isEmpty()) {
+                                    p.printStringCharactersUTF8(cooked.asWtf8CollapseRope(p.options.allocator) catch bun.outOfMemory(), '`');
                                 }
                             },
                         }
@@ -3187,15 +3074,6 @@ fn NewPrinter(
             p.print(")");
         }
 
-        // This assumes the string has already been quoted.
-        pub fn printStringCharactersEString(p: *Printer, str: *const E.String, c: u8) void {
-            if (!str.isUTF8()) {
-                p.printStringCharactersUTF16(str.slice16(), c);
-            } else {
-                p.printStringCharactersUTF8(str.data, c);
-            }
-        }
-
         pub fn printNamespaceAlias(p: *Printer, _: ImportRecord, namespace: G.NamespaceAlias) void {
             p.printSymbol(namespace.namespace_ref);
 
@@ -3425,30 +3303,46 @@ fn NewPrinter(
                 },
                 .e_string => |key| {
                     p.addSourceMapping(_key.loc);
-                    if (key.isUTF8()) {
-                        key.resolveRopeIfNeeded(p.options.allocator);
-                        p.printSpaceBeforeIdentifier();
-                        var allow_shorthand: bool = true;
-                        // In react/cjs/react.development.js, there's part of a function like this:
-                        // var escaperLookup = {
-                        //     "=": "=0",
-                        //     ":": "=2"
-                        //   };
-                        // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
-                        // "=" and ":" are not valid
-                        // So we need to check
-                        if (!is_json and js_lexer.isIdentifier(key.data)) {
-                            p.printIdentifier(key.data);
-                        } else {
-                            allow_shorthand = false;
-                            p.printStringLiteralEString(key, false);
-                        }
+                    p.printSpaceBeforeIdentifier();
+                    var allow_shorthand: bool = true;
+                    // In react/cjs/react.development.js, there's part of a function like this:
+                    // var escaperLookup = {
+                    //     "=": "=0",
+                    //     ":": "=2"
+                    //   };
+                    // While each of those property keys are ASCII, a subset of ASCII is valid as the start of an identifier
+                    // "=" and ":" are not valid
+                    // So we need to check
+                    const key_str = key.asWtf8CollapseRope(p.options.allocator) catch bun.outOfMemory();
+                    if (!is_json and js_lexer.isIdentifier(key_str)) {
+                        p.printIdentifier(key_str);
+                    } else {
+                        allow_shorthand = false;
+                        p.printStringLiteralUTF8(key_str, false);
+                    }
 
-                        // Use a shorthand property if the names are the same
-                        if (item.value) |val| {
-                            switch (val.data) {
-                                .e_identifier => |e| {
-                                    if (key.eql(string, p.renamer.nameForSymbol(e.ref))) {
+                    // Use a shorthand property if the names are the same
+                    if (item.value) |val| {
+                        switch (val.data) {
+                            .e_identifier => |e| {
+                                if (key.eqlSlice(p.renamer.nameForSymbol(e.ref))) {
+                                    if (item.initializer) |initial| {
+                                        p.printInitializer(initial);
+                                    }
+                                    if (allow_shorthand) {
+                                        return;
+                                    }
+                                }
+                            },
+                            .e_import_identifier => |e| inner: {
+                                const ref = p.symbols().follow(e.ref);
+                                if (p.options.input_files_for_dev_server != null)
+                                    break :inner;
+                                // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
+                                //     break :inner;
+
+                                if (p.symbols().get(ref)) |symbol| {
+                                    if (symbol.namespace_alias == null and strings.eql(key_str, p.renamer.nameForSymbol(e.ref))) {
                                         if (item.initializer) |initial| {
                                             p.printInitializer(initial);
                                         }
@@ -3456,73 +3350,10 @@ fn NewPrinter(
                                             return;
                                         }
                                     }
-                                },
-                                .e_import_identifier => |e| inner: {
-                                    const ref = p.symbols().follow(e.ref);
-                                    if (p.options.input_files_for_dev_server != null)
-                                        break :inner;
-                                    // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
-                                    //     break :inner;
-
-                                    if (p.symbols().get(ref)) |symbol| {
-                                        if (symbol.namespace_alias == null and strings.eql(key.data, p.renamer.nameForSymbol(e.ref))) {
-                                            if (item.initializer) |initial| {
-                                                p.printInitializer(initial);
-                                            }
-                                            if (allow_shorthand) {
-                                                return;
-                                            }
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
+                                }
+                            },
+                            else => {},
                         }
-                    } else if (!is_json and p.canPrintIdentifierUTF16(key.slice16())) {
-                        p.printSpaceBeforeIdentifier();
-                        p.printIdentifierUTF16(key.slice16()) catch unreachable;
-
-                        // Use a shorthand property if the names are the same
-                        if (item.value) |val| {
-                            switch (val.data) {
-                                .e_identifier => |e| {
-
-                                    // TODO: is needing to check item.flags.contains(.was_shorthand) a bug?
-                                    // esbuild doesn't have to do that...
-                                    // maybe it's a symptom of some other underlying issue
-                                    // or maybe, it's because i'm not lowering the same way that esbuild does.
-                                    if (item.flags.contains(.was_shorthand) or strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
-                                        if (item.initializer) |initial| {
-                                            p.printInitializer(initial);
-                                        }
-                                        return;
-                                    }
-                                    // if (strings) {}
-                                },
-                                // .e_import_identifier => |e| inner: {
-                                .e_import_identifier => |e| {
-                                    const ref = p.symbols().follow(e.ref);
-
-                                    // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
-                                    //     break :inner;
-
-                                    if (p.symbols().get(ref)) |symbol| {
-                                        if (symbol.namespace_alias == null and strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {
-                                            if (item.initializer) |initial| {
-                                                p.printInitializer(initial);
-                                            }
-                                            return;
-                                        }
-                                    }
-                                },
-                                else => {},
-                            }
-                        }
-                    } else {
-                        const c = bestQuoteCharForString(u16, key.slice16(), false);
-                        p.print(c);
-                        p.printStringCharactersUTF16(key.slice16(), c);
-                        p.print(c);
                     }
                 },
                 else => {
@@ -3668,41 +3499,23 @@ fn NewPrinter(
 
                                 switch (property.key.data) {
                                     .e_string => |str| {
-                                        str.resolveRopeIfNeeded(p.options.allocator);
                                         p.addSourceMapping(property.key.loc);
 
-                                        if (str.isUTF8()) {
-                                            p.printSpaceBeforeIdentifier();
-                                            // Example case:
-                                            //      const Menu = React.memo(function Menu({
-                                            //          aria-label: ariaLabel,
-                                            //              ^
-                                            // That needs to be:
-                                            //          "aria-label": ariaLabel,
-                                            if (js_lexer.isIdentifier(str.data)) {
-                                                p.printIdentifier(str.data);
-
-                                                // Use a shorthand property if the names are the same
-                                                switch (property.value.data) {
-                                                    .b_identifier => |id| {
-                                                        if (str.eql(string, p.renamer.nameForSymbol(id.ref))) {
-                                                            p.maybePrintDefaultBindingValue(property);
-                                                            continue;
-                                                        }
-                                                    },
-                                                    else => {},
-                                                }
-                                            } else {
-                                                p.printStringLiteralUTF8(str.data, false);
-                                            }
-                                        } else if (p.canPrintIdentifierUTF16(str.slice16())) {
-                                            p.printSpaceBeforeIdentifier();
-                                            p.printIdentifierUTF16(str.slice16()) catch unreachable;
+                                        p.printSpaceBeforeIdentifier();
+                                        // Example case:
+                                        //      const Menu = React.memo(function Menu({
+                                        //          aria-label: ariaLabel,
+                                        //              ^
+                                        // That needs to be:
+                                        //          "aria-label": ariaLabel,
+                                        const str_value = str.asWtf8CollapseRope(p.options.allocator) catch bun.outOfMemory();
+                                        if (js_lexer.isIdentifier(str_value)) {
+                                            p.printIdentifier(str_value);
 
                                             // Use a shorthand property if the names are the same
                                             switch (property.value.data) {
                                                 .b_identifier => |id| {
-                                                    if (strings.utf16EqlString(str.slice16(), p.renamer.nameForSymbol(id.ref))) {
+                                                    if (str.eqlSlice(p.renamer.nameForSymbol(id.ref))) {
                                                         p.maybePrintDefaultBindingValue(property);
                                                         continue;
                                                     }
@@ -3710,7 +3523,7 @@ fn NewPrinter(
                                                 else => {},
                                             }
                                         } else {
-                                            p.printExpr(property.key, .lowest, ExprFlag.None());
+                                            p.printStringLiteralUTF8(str_value, false);
                                         }
                                     },
                                     else => {

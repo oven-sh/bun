@@ -1536,11 +1536,12 @@ pub const E = struct {
             return array;
         }
 
-        /// Assumes each item in the array is a string
+        /// Assumes each item in the array is a non-rope string
         pub fn alphabetizeStrings(this: *Array) void {
             if (comptime Environment.allow_assert) {
                 for (this.items.slice()) |item| {
                     bun.assert(item.data == .e_string);
+                    bun.assert(!item.data.e_string.is_rope);
                 }
             }
             std.sort.pdq(Expr, this.items.slice(), {}, Sorter.isLessThan);
@@ -1548,7 +1549,7 @@ pub const E = struct {
 
         const Sorter = struct {
             pub fn isLessThan(ctx: void, lhs: Expr, rhs: Expr) bool {
-                return strings.cmpStringsAsc(ctx, lhs.data.e_string.data, rhs.data.e_string.data);
+                return strings.cmpStringsAsc(ctx, lhs.data.e_string.asWtf8AssertNotRope(), rhs.data.e_string.asWtf8AssertNotRope());
             }
         };
     };
@@ -1976,7 +1977,7 @@ pub const E = struct {
                 if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.key.?.data != .e_string or prop.value == null) {
                     return error.@"Cannot convert argument type to JS";
                 }
-                var key = prop.key.?.data.e_string.toZigString(allocator);
+                var key = try prop.key.?.data.e_string.toZigString(allocator);
                 obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
             }
 
@@ -2001,7 +2002,7 @@ pub const E = struct {
         pub const SetError = error{ OutOfMemory, Clobber };
 
         pub fn set(self: *const Object, key: Expr, allocator: std.mem.Allocator, value: Expr) SetError!void {
-            if (self.hasProperty(key.data.e_string.data)) return error.Clobber;
+            if (self.hasProperty(try key.data.e_string.asWtf8CollapseRope(allocator))) return error.Clobber;
             try self.properties.push(allocator, .{
                 .key = key,
                 .value = value,
@@ -2015,7 +2016,7 @@ pub const E = struct {
 
         // this is terribly, shamefully slow
         pub fn setRope(self: *Object, rope: *const Rope, allocator: std.mem.Allocator, value: Expr) SetError!void {
-            if (self.get(rope.head.data.e_string.data)) |existing| {
+            if (self.get(try rope.head.data.e_string.asWtf8CollapseRope(allocator))) |existing| {
                 switch (existing.data) {
                     .e_array => |array| {
                         if (rope.next == null) {
@@ -2063,7 +2064,7 @@ pub const E = struct {
         }
 
         pub fn getOrPutObject(self: *Object, rope: *const Rope, allocator: std.mem.Allocator) SetError!Expr {
-            if (self.get(rope.head.data.e_string.data)) |existing| {
+            if (self.get(try rope.head.data.e_string.asWtf8CollapseRope(allocator))) |existing| {
                 switch (existing.data) {
                     .e_array => |array| {
                         if (rope.next == null) {
@@ -2113,7 +2114,7 @@ pub const E = struct {
         }
 
         pub fn getOrPutArray(self: *Object, rope: *const Rope, allocator: std.mem.Allocator) SetError!Expr {
-            if (self.get(rope.head.data.e_string.data)) |existing| {
+            if (self.get(try rope.head.data.e_string.asWtf8CollapseRope(allocator))) |existing| {
                 switch (existing.data) {
                     .e_array => |array| {
                         if (rope.next == null) {
@@ -2165,7 +2166,7 @@ pub const E = struct {
             for (obj.properties.slice()) |prop| {
                 const key = prop.key orelse continue;
                 if (std.meta.activeTag(key.data) != .e_string) continue;
-                if (key.data.e_string.eql(string, name)) return true;
+                if (key.data.e_string.eqlSlice(name)) return true;
             }
             return false;
         }
@@ -2176,7 +2177,7 @@ pub const E = struct {
                 const key = prop.key orelse continue;
                 if (std.meta.activeTag(key.data) != .e_string) continue;
                 const key_str = key.data.e_string;
-                if (key_str.eql(string, name)) {
+                if (key_str.eqlSlice(name)) {
                     return Expr.Query{
                         .expr = value,
                         .loc = key.loc,
@@ -2193,6 +2194,7 @@ pub const E = struct {
             if (comptime Environment.isDebug) {
                 for (this.properties.slice()) |prop| {
                     bun.assert(prop.key.?.data == .e_string);
+                    bun.assert(!prop.key.?.data.e_string.is_rope);
                 }
             }
             std.sort.pdq(G.Property, this.properties.slice(), {}, Sorter.isLessThan);
@@ -2238,17 +2240,17 @@ pub const E = struct {
                     var rhs_key_size: u8 = @intFromEnum(Fields.__fake);
 
                     if (lhs.key != null and lhs.key.?.data == .e_string) {
-                        lhs_key_size = @intFromEnum(Map.get(lhs.key.?.data.e_string.data) orelse Fields.__fake);
+                        lhs_key_size = @intFromEnum(Map.get(lhs.key.?.data.e_string.asWtf8AssertNotRope()) orelse Fields.__fake);
                     }
 
                     if (rhs.key != null and rhs.key.?.data == .e_string) {
-                        rhs_key_size = @intFromEnum(Map.get(rhs.key.?.data.e_string.data) orelse Fields.__fake);
+                        rhs_key_size = @intFromEnum(Map.get(rhs.key.?.data.e_string.asWtf8AssertNotRope()) orelse Fields.__fake);
                     }
 
                     return switch (std.math.order(lhs_key_size, rhs_key_size)) {
                         .lt => true,
                         .gt => false,
-                        .eq => strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.data, rhs.key.?.data.e_string.data),
+                        .eq => strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.asWtf8AssertNotRope(), rhs.key.?.data.e_string.asWtf8AssertNotRope()),
                     };
                 }
             };
@@ -2256,370 +2258,341 @@ pub const E = struct {
 
         const Sorter = struct {
             pub fn isLessThan(ctx: void, lhs: G.Property, rhs: G.Property) bool {
-                return strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.data, rhs.key.?.data.e_string.data);
+                return strings.cmpStringsAsc(ctx, lhs.key.?.data.e_string.asWtf8AssertNotRope(), rhs.key.?.data.e_string.asWtf8AssertNotRope());
             }
         };
     };
 
     pub const Spread = struct { value: ExprNodeIndex };
 
-    /// JavaScript string literal type
     pub const String = struct {
-        // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
-        // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
-        // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
-        data: []const u8 = "",
-        prefer_template: bool = false,
+        is_rope: bool,
 
-        // A very simple rope implementation
-        // We only use this for string folding, so this is kind of overkill
-        // We don't need to deal with substrings
-        next: ?*String = null,
-        end: ?*String = null,
-        rope_len: u32 = 0,
-        is_utf16: bool = false,
+        /// this is used in two places:
+        /// - to determine if an E.String is a directive, ie "use strict";
+        /// - to prefer to preserve the string being a template literal in output when not minifying
+        /// it maybe isn't necessary
+        is_from_template_string: bool = false,
 
-        pub fn isIdentifier(this: *String, allocator: std.mem.Allocator) bool {
-            if (!this.isUTF8()) {
-                return bun.js_lexer.isIdentifierUTF16(this.slice16());
+        /// for all strings. either contains the whole string, or the first segment if it is part of a rope.
+        /// prefer .asWtf8AssertNotRope() or .asWtf8CollapseRope() over accessing this directly.
+        _value_or_segment_value: []const u8,
+        /// prefer .isAllAscii(). always defined for ropes.
+        _is_ascii_only: ?bool = null,
+        /// only used for rope strings
+        _rope_segment_next: ?*String = null,
+        /// only defined for the first segment of a rope string.
+        _rope_segment_last: ?*String = null,
+        /// only used for rope strings.
+        _rope_byte_len: u32 = 0,
+
+        comptime {
+            if (@sizeOf(String) != 40) @compileError("E.String size changed");
+        }
+
+        /// contents_wtf8 must be valid wtf-8 (unpaired surrogates are allowed, but other invalid utf-8 is not). it is not
+        /// duplicated by the string, so its lifetime must be as long as is needed for the E.String and it must not be modified
+        /// while it is used by the E.String.
+        pub fn init(contents_wtf8: []const u8) String {
+            if (Environment.allow_assert) {
+                bun.assert(std.unicode.wtf8ValidateSlice(contents_wtf8)); // does not error for paired surrogate halves
             }
-
-            return bun.js_lexer.isIdentifier(this.slice(allocator));
-        }
-
-        pub const class = E.String{ .data = "class" };
-
-        pub fn push(this: *String, other: *String) void {
-            bun.assert(this.isUTF8());
-            bun.assert(other.isUTF8());
-
-            if (other.rope_len == 0) {
-                other.rope_len = @truncate(other.data.len);
-            }
-
-            if (this.rope_len == 0) {
-                this.rope_len = @truncate(this.data.len);
-            }
-
-            this.rope_len += other.rope_len;
-            if (this.next == null) {
-                this.next = other;
-                this.end = other;
-            } else {
-                var end = this.end.?;
-                while (end.next != null) end = end.end.?;
-                end.next = other;
-                this.end = other;
-            }
-        }
-
-        /// Cloning the rope string is rarely needed, see `foldStringAddition`'s
-        /// comments and the 'edgecase/EnumInliningRopeStringPoison' test
-        pub fn cloneRopeNodes(s: String) String {
-            var root = s;
-
-            if (root.next != null) {
-                var current: ?*String = &root;
-                while (true) {
-                    const node = current.?;
-                    if (node.next) |next| {
-                        node.next = Expr.Data.Store.append(String, next.*);
-                        current = node.next;
-                    } else {
-                        root.end = node;
-                        break;
-                    }
-                }
-            }
-
-            return root;
-        }
-
-        pub fn toUTF8(this: *String, allocator: std.mem.Allocator) !void {
-            if (!this.is_utf16) return;
-            this.data = try strings.toUTF8Alloc(allocator, this.slice16());
-            this.is_utf16 = false;
-        }
-
-        pub fn init(value: anytype) String {
-            const Value = @TypeOf(value);
-            if (Value == []u16 or Value == []const u16) {
-                return .{
-                    .data = @as([*]const u8, @ptrCast(value.ptr))[0..value.len],
-                    .is_utf16 = true,
-                };
-            }
-
-            return .{ .data = value };
-        }
-
-        /// E.String containing non-ascii characters may not fully work.
-        /// https://github.com/oven-sh/bun/issues/11963
-        /// More investigation is needed.
-        pub fn initReEncodeUTF8(utf8: []const u8, allocator: std.mem.Allocator) String {
-            return if (bun.strings.isAllASCII(utf8))
-                init(utf8)
-            else
-                init(bun.strings.toUTF16AllocForReal(allocator, utf8, false, false) catch bun.outOfMemory());
-        }
-
-        pub fn slice8(this: *const String) []const u8 {
-            bun.assert(!this.is_utf16);
-            return this.data;
-        }
-
-        pub fn slice16(this: *const String) []const u16 {
-            bun.assert(this.is_utf16);
-            return @as([*]const u16, @ptrCast(@alignCast(this.data.ptr)))[0..this.data.len];
-        }
-
-        pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
-            if (this.next == null or !this.isUTF8()) return;
-            var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch bun.outOfMemory();
-
-            bytes.appendSliceAssumeCapacity(this.data);
-            var str = this.next;
-            while (str) |part| {
-                bytes.appendSlice(part.data) catch bun.outOfMemory();
-                str = part.next;
-            }
-            this.data = bytes.items;
-            this.next = null;
-        }
-
-        pub fn slice(this: *String, allocator: std.mem.Allocator) []const u8 {
-            this.resolveRopeIfNeeded(allocator);
-            return this.string(allocator) catch bun.outOfMemory();
-        }
-
-        pub var empty = String{};
-        pub var @"true" = String{ .data = "true" };
-        pub var @"false" = String{ .data = "false" };
-        pub var @"null" = String{ .data = "null" };
-        pub var @"undefined" = String{ .data = "undefined" };
-
-        pub fn clone(str: *const String, allocator: std.mem.Allocator) !String {
-            return String{
-                .data = try allocator.dupe(u8, str.data),
-                .prefer_template = str.prefer_template,
-                .is_utf16 = !str.isUTF8(),
+            return .{
+                .is_rope = false,
+                ._value_or_segment_value = contents_wtf8,
             };
         }
 
-        pub fn cloneSliceIfNecessary(str: *const String, allocator: std.mem.Allocator) !bun.string {
-            if (Expr.Data.Store.memory_allocator) |mem| {
-                if (mem == GlobalStoreHandle.global_store_ast) {
-                    return str.string(allocator);
+        /// Is allowed to mutate both left and right if allow_mutate is true. Set allow_mutate to false if either
+        /// left or right is from an inlined enum, because these expressions are duplicated and it will mess
+        /// up other code to mutate the string in one.
+        pub fn concat(left: *String, right: *String, allow_mutate: bool, arena: std.mem.Allocator) String {
+            if (!allow_mutate) return left.concatCopy(right, arena) catch bun.outOfMemory();
+            var left_copy = left.*;
+            const right_copy = bun.create(arena, String, right.*);
+            left_copy.pushMutateBoth(right_copy, arena);
+            return left_copy;
+        }
+
+        pub fn concatCopy(left: *String, right: *String, arena: std.mem.Allocator) !String {
+            if (left.endsWithHighSurrogate()) |high| if (right.startsWithLowSurrogate()) |low| {
+                return concatCopyAndPairSurrogate(left, right, high, low, arena);
+            };
+            const left_len = left.byteLength();
+            const result_slice = try arena.alloc(u8, left_len + right.byteLength());
+            left.copyToSliceWtf8(result_slice[0..left_len]);
+            right.copyToSliceWtf8(result_slice[left_len..]);
+            return .{
+                .is_rope = false,
+                .is_from_template_string = left.is_from_template_string or right.is_from_template_string,
+                ._value_or_segment_value = result_slice,
+            };
+        }
+
+        fn concatCopyAndPairSurrogate(left: *String, right: *String, high: i32, low: i32, arena: std.mem.Allocator) !String {
+            @branchHint(.cold);
+            // https://simonsapin.github.io/wtf-8/#concatenating
+            // this should be very rare
+            const codepoint: i32 = strings.unicode.combineLowAndHighSurrogateToCodepoint(low, high);
+            const left_len = left.byteLength();
+            const right_len = right.byteLength();
+            const result_slice = try arena.alloc(u8, left_len + right_len - 2);
+            left.copyToSliceWtf8(result_slice[0..left_len]);
+            right.copyToSliceWtf8(result_slice[left_len - 2 ..]);
+            const codepoint_len = strings.unicode.encodeWtf8WithInvalid(result_slice[left_len - 3 ..][0..4], codepoint);
+            bun.assert(codepoint_len == 4);
+            return .{
+                .is_rope = false,
+                .is_from_template_string = left.is_from_template_string or right.is_from_template_string,
+                ._value_or_segment_value = result_slice,
+            };
+        }
+
+        pub fn endsWithHighSurrogate(self: *const String) ?i32 {
+            const last = self._rope_segment_last orelse self;
+            const slice = last._value_or_segment_value;
+            if (slice.len < 3) return null;
+            const segment = slice[slice.len - 3 ..][0..3];
+            if (strings.unicode.isWtf8HighSurrogate(segment)) {
+                const result = strings.unicode.decodeFirst(.wtf8_assert_no_invalid, segment).?;
+                bun.assert(result.advance == 3);
+                bun.assert(result.codepoint >= strings.unicode.first_high_surrogate and result.codepoint <= strings.unicode.last_high_surrogate);
+                return result.codepoint;
+            }
+            return null;
+        }
+        pub fn startsWithLowSurrogate(self: *const String) ?i32 {
+            const slice = self._value_or_segment_value;
+            if (slice.len < 3) return null;
+            const segment = slice[0..3];
+            if (strings.unicode.isWtf8LowSurrogate(segment)) {
+                const result = strings.unicode.decodeFirst(.wtf8_assert_no_invalid, segment).?;
+                bun.assert(result.advance == 3);
+                bun.assert(result.codepoint >= strings.unicode.first_low_surrogate and result.codepoint <= strings.unicode.last_low_surrogate);
+                return result.codepoint;
+            }
+            return null;
+        }
+
+        /// Mutates both left and right. Do not use if either left or right are from an inlined enum, because
+        /// these expressions are duplicated and it will mess up other code to mutate the string in one.
+        pub fn pushMutateBoth(left: *String, right: *String, arena: std.mem.Allocator) void {
+            if (left.endsWithHighSurrogate()) |high| if (right.startsWithLowSurrogate()) |low| {
+                left.* = concatCopyAndPairSurrogate(left, right, high, low, arena) catch bun.outOfMemory();
+                return;
+            };
+            left.mutateToRope();
+            right.mutateToRope();
+            left._rope_byte_len += right._rope_byte_len;
+
+            const end = left._rope_segment_last orelse left;
+            bun.assert(end._rope_segment_next == null);
+            end._rope_segment_next = right;
+            left._rope_segment_last = right._rope_segment_last orelse right;
+            left.is_from_template_string = left.is_from_template_string or right.is_from_template_string;
+            left._is_ascii_only = left._is_ascii_only.? and right._is_ascii_only.?;
+            right._ropeSetInvalid();
+        }
+
+        fn mutateToRope(self: *String) void {
+            if (self.is_rope) return;
+
+            const value = self._value_or_segment_value;
+            const is_ascii_only = self.isAsciiOnly();
+            self.* = .{
+                .is_rope = true,
+                .is_from_template_string = self.is_from_template_string,
+                ._value_or_segment_value = value,
+                ._is_ascii_only = is_ascii_only,
+                ._rope_segment_next = null,
+                ._rope_segment_last = null,
+                ._rope_byte_len = @truncate(value.len),
+            };
+        }
+
+        pub fn isAsciiOnly(self: *String) bool {
+            if (self._is_ascii_only) |res| return res;
+            bun.assert(!self.is_rope);
+            self._is_ascii_only = strings.isAllASCII(self._value_or_segment_value);
+            self._is_ascii_only = strings.isAllASCII(self._value_or_segment_value);
+            return self._is_ascii_only.?;
+        }
+
+        pub fn byteLength(self: *const String) usize {
+            if (self.is_rope) return self._rope_byte_len;
+            return self._value_or_segment_value.len;
+        }
+        pub fn isEmpty(self: *const String) bool {
+            return self.byteLength() == 0;
+        }
+
+        fn jsLengthSlice(slice: []const u8) usize {
+            var len: usize = 0;
+            for (slice) |char| {
+                switch (char) {
+                    // requires two utf-16 code units to represent
+                    0xF0...0xFF => len += 2,
+                    // start of a single or multi byte codepoint, requires one code unit
+                    0x00...0x7F, 0xC0...0xEF => len += 1,
+                    // follows a start byte; ignore
+                    0x80...0xBF => {},
                 }
             }
-
-            if (str.isUTF8()) {
-                return allocator.dupe(u8, str.string(allocator) catch unreachable);
-            }
-
-            return str.string(allocator);
+            return len;
         }
-
-        pub fn javascriptLength(s: *const String) ?u32 {
-            if (s.rope_len > 0) {
-                // We only support ascii ropes for now
-                return s.rope_len;
+        pub fn jsLength(self: *String) usize {
+            if (self.isAsciiOnly()) {
+                if (self.is_rope) return self._rope_byte_len;
+                return self._value_or_segment_value.len;
             }
-
-            if (s.isUTF8()) {
-                if (!strings.isAllASCII(s.data)) {
-                    return null;
+            if (self.is_rope) {
+                var len: usize = 0;
+                var next: ?*const String = self;
+                while (next) |current| : (next = current._rope_segment_next) {
+                    len += jsLengthSlice(current._value_or_segment_value);
                 }
-                return @truncate(s.data.len);
+                return len;
             }
-
-            return @truncate(s.slice16().len);
+            return jsLengthSlice(self._value_or_segment_value);
         }
 
-        pub inline fn len(s: *const String) usize {
-            return if (s.rope_len > 0) s.rope_len else s.data.len;
+        /// For E.String s which are from the JSON parser. Asserts the string is not a rope string.
+        pub fn asWtf8AssertNotRope(self: *const String) []const u8 {
+            bun.assert(!self.is_rope);
+            return self._value_or_segment_value;
         }
-
-        pub inline fn isUTF8(s: *const String) bool {
-            return !s.is_utf16;
+        pub fn copyToSliceWtf8(self: *const String, slice: []u8) void {
+            bun.assert(self.byteLength() == slice.len);
+            if (self.is_rope) return self._ropeCopyToSliceWtf8(slice);
+            return @memcpy(slice, self._value_or_segment_value);
         }
-
-        pub inline fn isBlank(s: *const String) bool {
-            return s.len() == 0;
+        pub fn flattenRope(self: *String, arena: std.mem.Allocator) !void {
+            if (!self.is_rope) return;
+            const result = try arena.alloc(u8, self._rope_byte_len);
+            self._ropeCopyToSliceWtf8(result);
+            const prev_ascii_only = self._is_ascii_only;
+            const prev_from_template_string = self.is_from_template_string;
+            self.* = String.init(result);
+            self._is_ascii_only = prev_ascii_only;
+            self.is_from_template_string = prev_from_template_string;
         }
-
-        pub inline fn isPresent(s: *const String) bool {
-            return s.len() > 0;
+        /// Allocates only if the string is a rope
+        pub fn asWtf8CollapseRope(self: *String, arena: std.mem.Allocator) ![]const u8 {
+            try self.flattenRope(arena);
+            bun.assert(!self.is_rope);
+            return self._value_or_segment_value;
         }
-
-        pub fn eql(s: *const String, comptime _t: type, other: anytype) bool {
-            if (s.isUTF8()) {
-                switch (_t) {
-                    @This() => {
-                        if (other.isUTF8()) {
-                            return strings.eqlLong(s.data, other.data, true);
-                        } else {
-                            return strings.utf16EqlString(other.slice16(), s.data);
-                        }
-                    },
-                    bun.string => {
-                        return strings.eqlLong(s.data, other, true);
-                    },
-                    []u16, []const u16 => {
-                        return strings.utf16EqlString(other, s.data);
-                    },
-                    else => {
-                        @compileError("Invalid type");
-                    },
-                }
-            } else {
-                switch (_t) {
-                    @This() => {
-                        if (other.isUTF8()) {
-                            return strings.utf16EqlString(s.slice16(), other.data);
-                        } else {
-                            return std.mem.eql(u16, other.slice16(), s.slice16());
-                        }
-                    },
-                    bun.string => {
-                        return strings.utf16EqlString(s.slice16(), other);
-                    },
-                    []u16, []const u16 => {
-                        return std.mem.eql(u16, other.slice16(), s.slice16());
-                    },
-                    else => {
-                        @compileError("Invalid type");
-                    },
-                }
-            }
+        pub fn dupe(self: *const String, alloc: std.mem.Allocator) ![]const u8 {
+            const result = try alloc.alloc(u8, self.byteLength());
+            self.copyToSliceWtf8(result);
+            return result;
         }
-
-        pub fn eqlComptime(s: *const String, comptime value: []const u8) bool {
-            return if (s.isUTF8())
-                strings.eqlComptime(s.data, value)
-            else
-                strings.eqlComptimeUTF16(s.slice16(), value);
-        }
-
-        pub fn hasPrefixComptime(s: *const String, comptime value: anytype) bool {
-            if (s.data.len < value.len)
-                return false;
-
-            return if (s.isUTF8())
-                strings.eqlComptime(s.data[0..value.len], value)
-            else
-                strings.eqlComptimeUTF16(s.slice16()[0..value.len], value);
-        }
-
-        pub fn string(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
-            if (s.isUTF8()) {
-                return s.data;
-            } else {
-                return strings.toUTF8Alloc(allocator, s.slice16());
-            }
-        }
-
-        pub fn stringZ(s: *const String, allocator: std.mem.Allocator) OOM!bun.stringZ {
-            if (s.isUTF8()) {
-                return allocator.dupeZ(u8, s.data);
-            } else {
-                return strings.toUTF8AllocZ(allocator, s.slice16());
-            }
-        }
-
-        pub fn stringCloned(s: *const String, allocator: std.mem.Allocator) OOM!bun.string {
-            if (s.isUTF8()) {
-                return allocator.dupe(u8, s.data);
-            } else {
-                return strings.toUTF8Alloc(allocator, s.slice16());
-            }
+        pub fn dupeZ(self: *const String, alloc: std.mem.Allocator) ![:0]const u8 {
+            const len = self.byteLength();
+            const result = try alloc.alloc(u8, len + 1);
+            self.copyToSliceWtf8(result[0..len]);
+            result[result.len - 1] = 0;
+            return result[0 .. result.len - 1 :0];
         }
 
         pub fn hash(s: *const String) u64 {
-            if (s.isBlank()) return 0;
+            var hasher = std.hash.Wyhash.init(0);
+            switch (s.is_rope) {
+                false => hasher.update(s._value_or_segment_value),
+                true => {
+                    var next: ?*const String = s;
+                    while (next) |current| : (next = current._rope_segment_next) {
+                        hasher.update(current._value_or_segment_value);
+                    }
+                },
+            }
+            return hasher.final();
+        }
 
-            if (s.isUTF8()) {
-                // hash utf-8
-                return bun.hash(s.data);
+        pub fn eqlEString(self: *String, other: *String, arena: std.mem.Allocator) !bool {
+            // TODO: there is no need to use asWtf8CollapseRope here, the code for rope strings is just more complicated because it requires
+            // iterating potentially two ropes at once
+            // alternatively, we can make self be *String and collapse rope strings if there are any
+            return strings.eqlLong(
+                try self.asWtf8CollapseRope(arena),
+                try other.asWtf8CollapseRope(arena),
+                true,
+            );
+        }
+        pub fn eqlSlice(self: *const String, other: []const u8) bool {
+            if (!self.is_rope) return strings.eqlLong(self._value_or_segment_value, other, true);
+            // alternatively, we can make self be *String and collapse the rope
+            if (self._rope_byte_len != other.len) return false;
+            var i: usize = 0;
+            var next: ?*const String = self;
+            while (next) |current| : (next = current._rope_segment_next) {
+                if (!strings.eqlLong(current._value_or_segment_value, other[i..][0..current._value_or_segment_value.len], false)) return false;
+                i += current._value_or_segment_value.len;
+            }
+            bun.assert(i == other.len);
+            return true;
+        }
+        pub fn eqlComptime(self: *const String, comptime other: []const u8) bool {
+            if (!self.is_rope) return strings.eqlComptime(self._value_or_segment_value, other);
+            // alternatively, we can make self be *String and collapse the rope
+            if (self._rope_byte_len != other.len) return false;
+            var i: usize = 0;
+            var next: ?*const String = self;
+            while (next) |current| : (next = current._rope_segment_next) {
+                if (!strings.eqlLong(current._value_or_segment_value, other[i..][0..current._value_or_segment_value.len], false)) return false;
+                i += current._value_or_segment_value.len;
+            }
+            bun.assert(i == other.len);
+            return true;
+        }
+
+        pub fn toZigString(s: *String, arena: std.mem.Allocator) !JSC.ZigString {
+            if (s.isAsciiOnly()) {
+                return JSC.ZigString.init(try s.asWtf8CollapseRope(arena));
             } else {
-                // hash utf-16
-                return bun.hash(@as([*]const u8, @ptrCast(s.slice16().ptr))[0 .. s.slice16().len * 2]);
+                return JSC.ZigString.initUTF8(try s.asWtf8CollapseRope(arena));
             }
         }
 
-        pub fn toJS(s: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
-            s.resolveRopeIfNeeded(allocator);
-            if (!s.isPresent()) {
+        pub fn toJS(str: *String, allocator: std.mem.Allocator, globalObject: *JSC.JSGlobalObject) !JSC.JSValue {
+            if (str.isEmpty()) {
                 var emp = bun.String.empty;
                 return emp.toJS(globalObject);
             }
 
-            if (s.isUTF8()) {
-                if (try strings.toUTF16Alloc(allocator, s.slice8(), false, false)) |utf16| {
-                    var out, const chars = bun.String.createUninitialized(.utf16, utf16.len);
-                    @memcpy(chars, utf16);
-                    return out.transferToJS(globalObject);
-                } else {
-                    var out, const chars = bun.String.createUninitialized(.latin1, s.slice8().len);
-                    @memcpy(chars, s.slice8());
-                    return out.transferToJS(globalObject);
-                }
+            const value_wtf8 = try str.asWtf8CollapseRope(allocator);
+
+            if (try strings.toUTF16Alloc(allocator, value_wtf8, false, false)) |utf16| {
+                var out, const chars = bun.String.createUninitialized(.utf16, utf16.len);
+                @memcpy(chars, utf16);
+                return out.transferToJS(globalObject);
             } else {
-                var out, const chars = bun.String.createUninitialized(.utf16, s.slice16().len);
-                @memcpy(chars, s.slice16());
+                var out, const chars = bun.String.createUninitialized(.latin1, value_wtf8.len);
+                @memcpy(chars, value_wtf8);
                 return out.transferToJS(globalObject);
             }
         }
 
-        pub fn toZigString(s: *String, allocator: std.mem.Allocator) JSC.ZigString {
-            if (s.isUTF8()) {
-                return JSC.ZigString.fromUTF8(s.slice(allocator));
-            } else {
-                return JSC.ZigString.initUTF16(s.slice16());
-            }
+        fn _ropeSetInvalid(self: *String) void {
+            self._rope_byte_len = 0;
+            self._rope_segment_last = null;
         }
+        fn _ropeCopyToSliceWtf8(self: *const String, slice: []u8) void {
+            bun.assert(self.is_rope);
+            bun.assert(self._rope_byte_len == slice.len);
 
-        pub fn format(s: String, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            comptime bun.assert(fmt.len == 0);
-
-            try writer.writeAll("E.String");
-            if (s.next == null) {
-                try writer.writeAll("(");
-                if (s.isUTF8()) {
-                    try writer.print("\"{s}\"", .{s.data});
-                } else {
-                    try writer.print("\"{}\"", .{bun.fmt.utf16(s.slice16())});
-                }
-                try writer.writeAll(")");
-            } else {
-                try writer.writeAll("(rope: [");
-                var it: ?*const String = &s;
-                while (it) |part| {
-                    if (part.isUTF8()) {
-                        try writer.print("\"{s}\"", .{part.data});
-                    } else {
-                        try writer.print("\"{}\"", .{bun.fmt.utf16(part.slice16())});
-                    }
-                    it = part.next;
-                    if (it != null) try writer.writeAll(" ");
-                }
-                try writer.writeAll("])");
-            }
-        }
-
-        pub fn jsonStringify(s: *const String, writer: anytype) !void {
-            var buf = [_]u8{0} ** 4096;
             var i: usize = 0;
-            for (s.slice16()) |char| {
-                buf[i] = @as(u8, @intCast(char));
-                i += 1;
-                if (i >= 4096) {
-                    break;
-                }
+            var next: ?*const String = self;
+            while (next) |current| : (next = current._rope_segment_next) {
+                @memcpy(slice[i..][0..current._value_or_segment_value.len], current._value_or_segment_value);
+                i += current._value_or_segment_value.len;
             }
-
-            return try writer.write(buf[0..i]);
+            bun.assert(i == slice.len);
         }
+    };
+    pub const StringAsciiRopeSegment = struct {
+        value: []const u8,
+        next: ?*StringAsciiRopeSegment,
     };
 
     // value is in the Node
@@ -2642,10 +2615,6 @@ pub const E = struct {
                 cooked,
                 raw,
             };
-
-            pub fn isUTF8(contents: Contents) bool {
-                return contents == .cooked and contents.cooked.isUTF8();
-            }
         };
 
         /// "`a${'b'}c`" => "`abc`"
@@ -2654,8 +2623,8 @@ pub const E = struct {
             allocator: std.mem.Allocator,
             loc: logger.Loc,
         ) Expr {
-            if (this.tag != null or (this.head == .cooked and !this.head.cooked.isUTF8())) {
-                // we only fold utf-8/ascii for now
+            if (this.tag != null) {
+                // can't fold raw strings
                 return Expr{
                     .data = .{ .e_template = this },
                     .loc = loc,
@@ -2669,63 +2638,29 @@ pub const E = struct {
             }
 
             var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
-            var head = Expr.init(E.String, this.head.cooked, loc);
+            const head = Expr.init(E.String, this.head.cooked, loc);
             for (this.parts) |part_src| {
                 var part = part_src;
                 bun.assert(part.tail == .cooked);
 
                 part.value = part.value.unwrapInlined();
 
-                switch (part.value.data) {
-                    .e_number => {
-                        if (part.value.data.e_number.toString(allocator)) |s| {
-                            part.value = Expr.init(E.String, E.String.init(s), part.value.loc);
-                        }
-                    },
-                    .e_null => {
-                        part.value = Expr.init(E.String, E.String.init("null"), part.value.loc);
-                    },
-                    .e_boolean => {
-                        part.value = Expr.init(E.String, E.String.init(if (part.value.data.e_boolean.value)
-                            "true"
-                        else
-                            "false"), part.value.loc);
-                    },
-                    .e_undefined => {
-                        part.value = Expr.init(E.String, E.String.init("undefined"), part.value.loc);
-                    },
-                    .e_big_int => |value| {
-                        part.value = Expr.init(E.String, E.String.init(value.value), part.value.loc);
-                    },
-                    else => {},
+                if (part.value.toStringExprWithoutSideEffects(allocator)) |part_str| {
+                    part.value = part_str;
                 }
 
-                if (part.value.data == .e_string and part.tail.cooked.isUTF8() and part.value.data.e_string.isUTF8()) {
-                    if (parts.items.len == 0) {
-                        if (part.value.data.e_string.len() > 0) {
-                            head.data.e_string.push(Expr.init(E.String, part.value.data.e_string.*, logger.Loc.Empty).data.e_string);
-                        }
+                const push_target: *E.String = if (parts.items.len == 0) head.data.e_string else blk: {
+                    const prev_part = &parts.items[parts.items.len - 1];
+                    bun.assert(prev_part.tail == .cooked);
+                    break :blk &prev_part.tail.cooked;
+                };
 
-                        if (part.tail.cooked.len() > 0) {
-                            head.data.e_string.push(Expr.init(E.String, part.tail.cooked, part.tail_loc).data.e_string);
-                        }
-
-                        continue;
-                    } else {
-                        var prev_part = &parts.items[parts.items.len - 1];
-                        bun.assert(prev_part.tail == .cooked);
-
-                        if (prev_part.tail.cooked.isUTF8()) {
-                            if (part.value.data.e_string.len() > 0) {
-                                prev_part.tail.cooked.push(Expr.init(E.String, part.value.data.e_string.*, logger.Loc.Empty).data.e_string);
-                            }
-
-                            if (part.tail.cooked.len() > 0) {
-                                prev_part.tail.cooked.push(Expr.init(E.String, part.tail.cooked, part.tail_loc).data.e_string);
-                            }
-                        } else {
-                            parts.appendAssumeCapacity(part);
-                        }
+                if (part.value.data != .e_inlined_enum and part.value.data == .e_string) {
+                    if (!part.value.data.e_string.isEmpty()) {
+                        push_target.pushMutateBoth(Expr.Data.Store.append(E.String, part.value.data.e_string.*), allocator);
+                    }
+                    if (!part.tail.cooked.isEmpty()) {
+                        push_target.pushMutateBoth(Expr.Data.Store.append(E.String, part.tail.cooked), allocator);
                     }
                 } else {
                     parts.appendAssumeCapacity(part);
@@ -2734,7 +2669,6 @@ pub const E = struct {
 
             if (parts.items.len == 0) {
                 parts.deinit();
-                head.data.e_string.resolveRopeIfNeeded(allocator);
                 return head;
             }
 
@@ -2847,7 +2781,7 @@ pub const E = struct {
             return this.import_record_index == std.math.maxInt(u32);
         }
 
-        pub fn importRecordLoader(import: *const Import) ?bun.options.Loader {
+        pub fn importRecordLoader(import: *const Import, arena: std.mem.Allocator) ?bun.options.Loader {
             // This logic is duplicated in js_printer.zig fn parsePath()
             const obj = import.options.data.as(.e_object) orelse
                 return null;
@@ -2859,7 +2793,7 @@ pub const E = struct {
                 return null).data.as(.e_string) orelse
                 return null;
 
-            if (!str.is_utf16) if (bun.options.Loader.fromString(str.data)) |loader| {
+            if (bun.options.Loader.fromString(str.asWtf8CollapseRope(arena) catch bun.outOfMemory())) |loader| {
                 if (loader == .sqlite) {
                     const embed = with_obj.get("embed") orelse return loader;
                     const embed_str = embed.data.as(.e_string) orelse return loader;
@@ -2868,7 +2802,7 @@ pub const E = struct {
                     }
                 }
                 return loader;
-            };
+            }
 
             return null;
         }
@@ -3383,9 +3317,7 @@ pub const Expr = struct {
 
         return Expr.init(
             E.String,
-            E.String{
-                .data = try JSC.ZigString.init(bytes).toBase64DataURL(allocator),
-            },
+            E.String.init(try JSC.ZigString.init(bytes).toBase64DataURL(allocator)),
             loc,
         );
     }
@@ -3416,8 +3348,8 @@ pub const Expr = struct {
             if (prop.value == null) continue;
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
-            const key_str = key.data.e_string;
-            if (strings.eqlAnyComptime(key_str.data, names)) return true;
+            const key_str = key.data.e_string.asWtf8AssertNotRope();
+            if (strings.eqlAnyComptime(key_str, names)) return true;
         }
 
         return false;
@@ -3449,7 +3381,7 @@ pub const Expr = struct {
             const prop = &expr.data.e_object.properties.ptr[i];
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
-            if (key.data.e_string.eql(string, name)) {
+            if (key.data.e_string.eqlSlice(name)) {
                 prop.value = value;
                 return;
             }
@@ -3457,7 +3389,7 @@ pub const Expr = struct {
 
         var new_props = expr.data.e_object.properties.listManaged(allocator);
         try new_props.append(.{
-            .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
+            .key = Expr.init(E.String, E.String.init(name), logger.Loc.Empty),
             .value = value,
         });
 
@@ -3474,16 +3406,16 @@ pub const Expr = struct {
             const prop = &expr.data.e_object.properties.ptr[i];
             const key = prop.key orelse continue;
             if (std.meta.activeTag(key.data) != .e_string) continue;
-            if (key.data.e_string.eql(string, name)) {
-                prop.value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty);
+            if (key.data.e_string.eqlSlice(name)) {
+                prop.value = Expr.init(E.String, E.String.init(value), logger.Loc.Empty);
                 return;
             }
         }
 
         var new_props = expr.data.e_object.properties.listManaged(allocator);
         try new_props.append(.{
-            .key = Expr.init(E.String, .{ .data = name }, logger.Loc.Empty),
-            .value = Expr.init(E.String, .{ .data = value }, logger.Loc.Empty),
+            .key = Expr.init(E.String, E.String.init(name), logger.Loc.Empty),
+            .value = Expr.init(E.String, E.String.init(name), logger.Loc.Empty),
         });
 
         expr.data.e_object.properties = BabyList(G.Property).fromList(new_props);
@@ -3532,43 +3464,6 @@ pub const Expr = struct {
 
     pub fn getArray(expr: *const Expr, name: string) ?ArrayIterator {
         return if (asProperty(expr, name)) |q| q.expr.asArray() else null;
-    }
-
-    pub fn getRope(self: *const Expr, rope: *const E.Object.Rope) ?E.Object.RopeQuery {
-        if (self.get(rope.head.data.e_string.data)) |existing| {
-            switch (existing.data) {
-                .e_array => |array| {
-                    if (rope.next) |next| {
-                        if (array.items.last()) |end| {
-                            return end.getRope(next);
-                        }
-                    }
-
-                    return E.Object.RopeQuery{
-                        .expr = existing,
-                        .rope = rope,
-                    };
-                },
-                .e_object => {
-                    if (rope.next) |next| {
-                        if (existing.getRope(next)) |end| {
-                            return end;
-                        }
-                    }
-
-                    return E.Object.RopeQuery{
-                        .expr = existing,
-                        .rope = rope,
-                    };
-                },
-                else => return E.Object.RopeQuery{
-                    .expr = existing,
-                    .rope = rope,
-                },
-            }
-        }
-
-        return null;
     }
 
     // Making this comptime bloats the binary and doesn't seem to impact runtime performance.
@@ -3635,16 +3530,13 @@ pub const Expr = struct {
     }
 
     pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {
-        if (expr.data == .e_string) {
-            bun.debugAssert(expr.data.e_string.next == null);
-            return expr.data.e_string.data;
-        }
+        if (expr.data == .e_string) return expr.data.e_string.asWtf8AssertNotRope();
         return null;
     }
 
     pub inline fn asStringLiteral(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         if (std.meta.activeTag(expr.data) != .e_string) return null;
-        return expr.data.e_string.string(allocator) catch null;
+        return expr.data.e_string.asWtf8CollapseRope(allocator) catch bun.outOfMemory();
     }
 
     pub inline fn isString(expr: *const Expr) bool {
@@ -3656,16 +3548,15 @@ pub const Expr = struct {
 
     pub inline fn asString(expr: *const Expr, allocator: std.mem.Allocator) ?string {
         switch (expr.data) {
-            .e_string => |str| return str.string(allocator) catch bun.outOfMemory(),
+            .e_string => |str| return str.asWtf8CollapseRope(allocator) catch bun.outOfMemory(),
             else => return null,
         }
     }
     pub inline fn asStringHash(expr: *const Expr, allocator: std.mem.Allocator, comptime hash_fn: *const fn (buf: []const u8) callconv(.Inline) u64) OOM!?u64 {
         switch (expr.data) {
             .e_string => |str| {
-                if (str.isUTF8()) return hash_fn(str.data);
-                const utf8_str = try str.string(allocator);
-                defer allocator.free(utf8_str);
+                const utf8_str = try str.asWtf8CollapseRope(allocator);
+                defer if (str.is_rope) allocator.free(utf8_str);
                 return hash_fn(utf8_str);
             },
             else => return null,
@@ -3674,14 +3565,14 @@ pub const Expr = struct {
 
     pub inline fn asStringCloned(expr: *const Expr, allocator: std.mem.Allocator) OOM!?string {
         switch (expr.data) {
-            .e_string => |str| return try str.stringCloned(allocator),
+            .e_string => |str| return try str.dupe(allocator),
             else => return null,
         }
     }
 
     pub inline fn asStringZ(expr: *const Expr, allocator: std.mem.Allocator) OOM!?stringZ {
         switch (expr.data) {
-            .e_string => |str| return try str.stringZ(allocator),
+            .e_string => |str| return try str.dupeZ(allocator),
             else => return null,
         }
     }
@@ -4130,12 +4021,6 @@ pub const Expr = struct {
                 };
             },
             E.String => {
-                if (comptime Environment.isDebug) {
-                    // Sanity check: assert string is not a null ptr
-                    if (st.data.len > 0 and st.isUTF8()) {
-                        bun.assert(@intFromPtr(st.data.ptr) > 0);
-                    }
-                }
                 return Expr{
                     .loc = loc,
                     .data = Data{
@@ -4147,7 +4032,6 @@ pub const Expr = struct {
                     },
                 };
             },
-
             E.Template => {
                 return Expr{
                     .loc = loc,
@@ -4233,18 +4117,6 @@ pub const Expr = struct {
                     .loc = loc,
                     .data = Data{
                         .e_require_string = st,
-                    },
-                };
-            },
-            *E.String => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_string = brk: {
-                            const item = allocator.create(Type) catch unreachable;
-                            item.* = st.*;
-                            break :brk item;
-                        },
                     },
                 };
             },
@@ -4493,12 +4365,6 @@ pub const Expr = struct {
                 };
             },
             E.String => {
-                if (comptime Environment.isDebug) {
-                    // Sanity check: assert string is not a null ptr
-                    if (st.data.len > 0 and st.isUTF8()) {
-                        bun.assert(@intFromPtr(st.data.ptr) > 0);
-                    }
-                }
                 return Expr{
                     .loc = loc,
                     .data = Data{
@@ -5445,7 +5311,7 @@ pub const Expr = struct {
                     return .{ .e_big_int = item };
                 },
                 .e_string => |el| {
-                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_string)));
+                    const item = try allocator.create(E.String);
                     item.* = el.*;
                     return .{ .e_string = item };
                 },
@@ -5646,15 +5512,7 @@ pub const Expr = struct {
                     return .{ .e_big_int = item };
                 },
                 .e_string => |el| {
-                    const item = bun.create(allocator, E.String, .{
-                        .data = el.data,
-                        .prefer_template = el.prefer_template,
-                        .next = el.next,
-                        .end = el.end,
-                        .rope_len = el.rope_len,
-                        .is_utf16 = el.is_utf16,
-                    });
-                    return .{ .e_string = item };
+                    return .{ .e_string = bun.create(allocator, E.String, E.String.init(try el.asWtf8CollapseRope(allocator))) };
                 },
                 .e_inlined_enum => |el| {
                     const item = bun.create(allocator, E.InlinedEnum, .{
@@ -5758,15 +5616,17 @@ pub const Expr = struct {
                 },
 
                 .e_string => |e| {
-                    var next: ?*E.String = e;
-                    if (next) |current| {
-                        if (current.isUTF8()) {
-                            hasher.update(current.data);
-                        } else {
-                            hasher.update(bun.reinterpretSlice(u8, current.slice16()));
-                        }
-                        next = current.next;
-                        hasher.update("\x00");
+                    switch (e.is_rope) {
+                        false => {
+                            hasher.update(e._value_or_segment_value);
+                        },
+                        true => {
+                            var next: ?*E.String = e;
+                            while (next) |current| : (next = current._rope_segment_next) {
+                                hasher.update(current._value_or_segment_value);
+                                hasher.update("\x00");
+                            }
+                        },
                     }
                 },
                 inline .e_require_string, .e_require_resolve_string => |e| {
@@ -5808,7 +5668,7 @@ pub const Expr = struct {
                 .e_undefined,
                 .e_inlined_enum,
                 => true,
-                .e_string => |str| str.next == null,
+                .e_string => |str| !str.is_rope,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
                 else => false,
@@ -5980,27 +5840,19 @@ pub const Expr = struct {
             return @as(Expr.Tag, data).typeof();
         }
 
-        pub fn toNumber(data: Expr.Data) ?f64 {
+        pub fn toNumber(data: Expr.Data, arena: std.mem.Allocator) ?f64 {
             return switch (data) {
                 .e_null => 0,
                 .e_undefined => std.math.nan(f64),
                 .e_string => |str| {
-                    if (str.next != null) return null;
-                    if (!str.isUTF8()) return null;
-
-                    // +'1' => 1
-                    return stringToEquivalentNumberValue(str.slice8());
+                    return stringToEquivalentNumberValue(str.asWtf8CollapseRope(arena) catch bun.outOfMemory());
                 },
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
                 .e_inlined_enum => |inlined| switch (inlined.value.data) {
                     .e_number => |num| num.value,
                     .e_string => |str| {
-                        if (str.next != null) return null;
-                        if (!str.isUTF8()) return null;
-
-                        // +'1' => 1
-                        return stringToEquivalentNumberValue(str.slice8());
+                        return stringToEquivalentNumberValue(str.asWtf8CollapseRope(arena) catch bun.outOfMemory());
                     },
                     else => null,
                 },
@@ -6178,23 +6030,18 @@ pub const Expr = struct {
                 .e_string => |l| {
                     switch (right) {
                         .e_string => |r| {
-                            r.resolveRopeIfNeeded(p.allocator);
-                            l.resolveRopeIfNeeded(p.allocator);
                             return .{
                                 .ok = true,
-                                .equal = r.eql(E.String, l),
+                                .equal = r.eqlEString(l, p.allocator) catch bun.outOfMemory(),
                             };
                         },
                         .e_inlined_enum => |inlined| {
                             if (inlined.value.data == .e_string) {
                                 const r = inlined.value.data.e_string;
 
-                                r.resolveRopeIfNeeded(p.allocator);
-                                l.resolveRopeIfNeeded(p.allocator);
-
                                 return .{
                                     .ok = true,
-                                    .equal = r.eql(E.String, l),
+                                    .equal = r.eqlEString(l, p.allocator) catch bun.outOfMemory(),
                                 };
                             }
                         },
@@ -6203,7 +6050,7 @@ pub const Expr = struct {
                         },
                         .e_number => |r| {
                             if (comptime kind == .loose) {
-                                if (r.value == 0 and (l.isBlank() or l.eqlComptime("0"))) {
+                                if (r.value == 0 and (l.isEmpty() or l.eqlComptime("0"))) {
                                     return Equality.true;
                                 }
 
@@ -6364,8 +6211,8 @@ pub const EnumValue = struct {
     name: []const u8,
     value: ?ExprNodeIndex,
 
-    pub fn nameAsEString(enum_value: EnumValue, allocator: std.mem.Allocator) E.String {
-        return E.String.initReEncodeUTF8(enum_value.name, allocator);
+    pub fn nameAsEString(enum_value: EnumValue, _: std.mem.Allocator) E.String {
+        return E.String.init(enum_value.name);
     }
 };
 
@@ -8282,7 +8129,7 @@ pub const Macro = struct {
                             return out_expr;
                         }
 
-                        return Expr.init(E.String, E.String.empty, this.caller.loc);
+                        return Expr.init(E.String, E.String.init(""), this.caller.loc);
                     },
 
                     .Boolean => {
@@ -8408,10 +8255,11 @@ pub const Macro = struct {
                         var bun_str = try value.toBunString(this.global);
                         defer bun_str.deref();
 
-                        // encode into utf16 so the printer escapes the string correctly
                         var utf16_bytes = this.allocator.alloc(u16, bun_str.length()) catch unreachable;
-                        const out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch 0) / 2];
-                        return Expr.init(E.String, E.String.init(out_slice), this.caller.loc);
+                        const out_slice = utf16_bytes[0 .. (bun_str.encodeInto(std.mem.sliceAsBytes(utf16_bytes), .utf16le) catch bun.outOfMemory()) / 2];
+                        // TODO: no need to convert to wtf-16 and then to wtf-8. instead, just convert to wtf-8 the first time
+                        const utf8_bytes = bun.strings.toUTF8Alloc(this.allocator, out_slice) catch bun.outOfMemory();
+                        return Expr.init(E.String, E.String.init(utf8_bytes), this.caller.loc);
                     },
                     .Promise => {
                         const _entry = this.visited.getOrPut(this.allocator, value) catch unreachable;

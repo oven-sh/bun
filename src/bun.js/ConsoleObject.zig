@@ -2129,7 +2129,7 @@ pub const Formatter = struct {
                         return;
                     }
 
-                    JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                    JSPrinter.writeJSONString(.latin1, str.latin1(), Writer, writer_) catch unreachable;
 
                     return;
                 }
@@ -2146,7 +2146,7 @@ pub const Formatter = struct {
                     if (str.isUTF16()) {
                         try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
                     } else {
-                        JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                        JSPrinter.writeJSONString(.latin1, str.latin1(), Writer, writer_) catch unreachable;
                     }
 
                     writer.print("]", .{});

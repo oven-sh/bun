@@ -1201,13 +1201,13 @@ const Pattern = struct {
     /// `null` means invalid. Error messages are logged.
     /// That way, we can provide a list of all invalid routes rather than failing the first time.
     pub fn validate(input: string, allocator: std.mem.Allocator, log: *Logger.Log) ?ValidationResult {
-        if (CodepointIterator.needsUTF8Decoding(input)) {
+        if (!strings.isAllASCII(input)) {
             const source = Logger.Source.initEmptyFile(input);
             log.addErrorFmt(
                 &source,
                 Logger.Loc.Empty,
                 allocator,
-                "Route name must be plaintext",
+                "Route name must be ascii only",
                 .{},
             ) catch unreachable;
             return null;

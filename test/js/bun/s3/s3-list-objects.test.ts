@@ -210,7 +210,7 @@ describe("S3 - List Objects", () => {
       startAfter: "àwsôme/fìles",
     });
 
-    expect(reqUrl!).toEndWith("/?list-type=2&start-after=%E0ws%F4me%2Ff%ECles");
+    expect(reqUrl!).toEndWith("/?list-type=2&start-after=%C3%A0ws%C3%B4me%2Ff%C3%ACles");
   });
 
   it("Should work with multiple options all encoded in correct order", async () => {
@@ -241,7 +241,7 @@ describe("S3 - List Objects", () => {
     });
 
     expect(reqUrl!).toEndWith(
-      "/?continuation-token=continue%3Dation-_m%5Etoken&delimiter=files%2F&encoding-type=url&fetch-owner=true&list-type=2&max-keys=2034&prefix=some%2Fsub%2F%26folder&start-after=%E0ws%F4me%2Ff%ECles",
+      "/?continuation-token=continue%3Dation-_m%5Etoken&delimiter=files%2F&encoding-type=url&fetch-owner=true&list-type=2&max-keys=2034&prefix=some%2Fsub%2F%26folder&start-after=%C3%A0ws%C3%B4me%2Ff%C3%ACles",
     );
   });
 

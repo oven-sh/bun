@@ -439,10 +439,14 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.server_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.client_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
 
+    dev.client_transpiler.options.barrel_files = try @import("../runtime.zig").Runtime.Features.getDefaultBarrelFiles(allocator);
+    dev.server_transpiler.options.barrel_files = dev.client_transpiler.options.barrel_files;
+
     if (separate_ssr_graph) {
         dev.framework.initTranspiler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler, &dev.bundler_options.ssr) catch |err|
             return global.throwError(err, generic_action);
         dev.ssr_transpiler.options.dev_server = dev;
+        dev.ssr_transpiler.options.barrel_files = dev.client_transpiler.options.barrel_files;
         dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     }
 
@@ -1608,7 +1612,6 @@ fn startAsyncBundle(
     );
     bv2.bun_watcher = dev.bun_watcher;
     bv2.asynchronous = true;
-
     {
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();

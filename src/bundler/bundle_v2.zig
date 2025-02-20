@@ -412,6 +412,17 @@ pub const BundleV2 = struct {
     asynchronous: bool = false,
     thread_lock: bun.DebugThreadLock,
 
+    /// Used by the dev server to apply the barrel file optimization.
+    ///
+    /// Files which import a barrel file will have import records where
+    /// `record.tag == .barrel`.
+    ///
+    /// They get added here so we can process them later and mutate them to point
+    /// to their final destination.
+    barrel_importers: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+    barrel_files: std.AutoArrayHashMapUnmanaged(Index.Int, void) = .{},
+    paused_parse_tasks_for_barrel_files: std.AutoHashMapUnmanaged(Index.Int, ResolveQueue) = .{},
+
     const BakeOptions = struct {
         framework: bake.Framework,
         client_transpiler: *Transpiler,
@@ -988,7 +999,9 @@ pub const BundleV2 = struct {
         };
         if (bake_options) |bo| {
             this.client_transpiler = bo.client_transpiler;
+            this.client_transpiler.options.barrel_files = this.transpiler.options.barrel_files;
             this.ssr_transpiler = bo.ssr_transpiler;
+            this.ssr_transpiler.options.barrel_files = this.transpiler.options.barrel_files;
             this.framework = bo.framework;
             this.linker.framework = &this.framework.?;
             this.plugins = bo.plugins;
@@ -2359,6 +2372,64 @@ pub const BundleV2 = struct {
         return try this.linker.generateChunksInParallel(chunks, false);
     }
 
+    pub fn redirectBarrelImports(
+        this: *BundleV2,
+        source_index: Index.Int,
+        import_records: []ImportRecord,
+        named_imports: *JSAst.NamedImports,
+        all_symbols: []Symbol.List,
+    ) void {
+        if (this.barrel_importers.count() == 0 or !this.barrel_importers.contains(source_index)) return;
+
+        const map = this.pathToSourceIndexMap(.browser);
+        const all_barrel_named_exports: []const JSAst.NamedExports = this.graph.ast.items(.named_exports);
+        const all_named_imports: []const JSAst.NamedImports = this.graph.ast.items(.named_imports);
+        const all_import_records: []const BabyList(ImportRecord) = this.graph.ast.items(.import_records);
+
+        for (named_imports.keys(), named_imports.values()) |name_ref, *named_import| {
+            const import_record = &import_records[named_import.import_record_index];
+            if (comptime bun.Environment.isDebug) {
+                debug("OOGA index: {d}", .{source_index});
+                const ir = import_record;
+                debug("    {s}: {d}, {s}, {s}, {s}", .{ ir.path.text, ir.source_index.get(), @tagName(ir.tag), if (ir.is_unused) "unused" else "used", if (ir.is_internal) "internal" else "external" });
+            }
+            if (import_record.tag != .barrel) continue;
+            if (import_record.is_unused or import_record.is_internal or import_record.source_index.isValid()) continue;
+
+            const barrel_file_index = map.get(import_record.path.hashKey()).?;
+
+            const barrel_named_exports: *const JSAst.NamedExports = &all_barrel_named_exports[barrel_file_index];
+
+            // Pair assertion: we asserted this was not null in `fn s_import()` in `js_parser.zig`
+            // when we split up the import statements
+            bun.assert(named_import.alias != null);
+
+            // 1. find the export in the barrel file which corresponds to the named import
+            // 2. update the symbol which the `name_ref` points to: add a link which points to the symbol of the final destination
+            // 3. update `import_record.source_index` and _maybe_ `import_record.path` to point to the final destination file
+            if (barrel_named_exports.getPtr(named_import.alias.?)) |barrel_export| {
+                // TODO: question I do not know the answer to: when is this NOT a symbol?
+                bun.assert(name_ref.tag == .symbol);
+                const symbols = &all_symbols[name_ref.source_index];
+                symbols.mut(name_ref.inner_index).link = barrel_export.ref;
+                const barrel_source_idx = barrel_export.ref.source_index;
+                const barrel_named_imports = &all_named_imports[barrel_source_idx];
+                const named_import2 = barrel_named_imports.getPtr(barrel_export.ref) orelse @panic("FUCK");
+
+                const barrel_import_records = &all_import_records[barrel_source_idx];
+                const final_destination_path = barrel_import_records.at(named_import2.import_record_index).path;
+                const final_destination_idx = map.get(final_destination_path.hashKey()).?;
+                import_record.source_index = Index.init(final_destination_idx);
+                const path = this.graph.input_files.items(.source)[final_destination_idx].path;
+                std.debug.print("THE FOCKIN FINAL: {s}\n", .{path.text});
+                import_record.path = path;
+            }
+
+            // If we're here then the user imported something from the barrel file which never existed in the first place.
+            // Do nothing and let the bundler handle this missing symbol error itself.
+        }
+    }
+
     /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
     pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !DevServerInput {
         this.unique_key = generateUniqueKey();
@@ -2381,15 +2452,27 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        try this.cloneAST();
-
-        this.graph.heap.helpCatchMemoryIssues();
-
         this.dynamic_import_entry_points = .init(this.graph.allocator);
         var html_files: std.AutoArrayHashMapUnmanaged(Index, void) = .{};
 
         // Separate non-failing files into two lists: JS and CSS
         const js_reachable_files = reachable_files: {
+            const reachable = try this.findReachableFiles();
+            // {
+            //     this.linker.parse_graph = &this.graph;
+
+            //     this.linker.log = this.transpiler.log;
+
+            //     this.linker.resolver = &this.transpiler.resolver;
+            //     this.linker.cycle_detector = std.ArrayList(ImportTracker).init(this.graph.allocator);
+
+            //     this.linker.graph.reachable_files = reachable;
+
+            //     const sources: []const Logger.Source = this.graph.input_files.items(.source);
+            try this.cloneAST();
+            //     try this.linker.graph.load(this.graph.entry_points.items, sources, this.graph.server_component_boundaries, this.dynamic_import_entry_points.keys());
+            // }
+
             var css_total_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.css_file_count);
             try start.css_entry_points.ensureUnusedCapacity(this.graph.allocator, this.graph.css_file_count);
             var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
@@ -2400,13 +2483,135 @@ pub const BundleV2 = struct {
             const input_files = this.graph.input_files.slice();
             const loaders = input_files.items(.loader);
             const sources = input_files.items(.source);
+            const all_parts = asts.items(.parts);
+            const all_import_records = asts.items(.import_records);
+            const all_css = asts.items(.css);
+            const all_target = asts.items(.target);
+
+            // {
+            //     const ast_fields = this.graph.ast.slice();
+            //     const exports_kind = ast_fields.items(.exports_kind);
+            //     const exports_refs = ast_fields.items(.exports_ref);
+            //     const named_imports = ast_fields.items(.named_imports);
+            //     const import_records_list = ast_fields.items(.import_records);
+            //     const export_star_import_records = ast_fields.items(.export_star_import_records);
+
+            //     // Step 3: Resolve "export * from" statements. This must be done after we
+            //     // discover all modules that can have dynamic exports because export stars
+            //     // are ignored for those modules.
+            //     {
+            //         const ExportStarContext = LinkerContext.ExportStarContext;
+
+            //         var export_star_ctx: ?ExportStarContext = null;
+            //         const trace = tracer(@src(), "ResolveExportStarStatements");
+            //         defer trace.end();
+            //         defer {
+            //             if (export_star_ctx) |*export_ctx| {
+            //                 export_ctx.source_index_stack.deinit();
+            //             }
+            //         }
+            //         var resolved_exports: []ResolvedExports = this.linker.graph.meta.items(.resolved_exports);
+            //         var resolved_export_stars: []ExportData = this.linker.graph.meta.items(.resolved_export_star);
+
+            //         for (reachable) |source_index_| {
+            //             const source_index = source_index_.get();
+            //             const id = source_index;
+
+            //             // Propagate exports for export star statements
+            //             const export_star_ids = export_star_import_records[id];
+            //             if (export_star_ids.len > 0) {
+            //                 if (export_star_ctx == null) {
+            //                     export_star_ctx = ExportStarContext{
+            //                         .allocator = this.graph.allocator,
+            //                         .resolved_exports = resolved_exports,
+            //                         .import_records_list = import_records_list,
+            //                         .export_star_records = export_star_import_records,
+
+            //                         .imports_to_bind = this.linker.graph.meta.items(.imports_to_bind),
+
+            //                         .source_index_stack = std.ArrayList(u32).initCapacity(this.graph.allocator, 32) catch unreachable,
+            //                         .exports_kind = exports_kind,
+            //                         .named_exports = this.linker.graph.ast.items(.named_exports),
+            //                     };
+            //                 }
+            //                 export_star_ctx.?.addExports(&resolved_exports[id], source_index);
+            //             }
+
+            //             // Also add a special export so import stars can bind to it. This must be
+            //             // done in this step because it must come after CommonJS module discovery
+            //             // but before matching imports with exports.
+            //             resolved_export_stars[id] = ExportData{
+            //                 .data = .{
+            //                     .source_index = Index.source(source_index),
+            //                     .import_ref = exports_refs[id],
+            //                 },
+            //             };
+            //         }
+            //     }
+
+            //     // Step 4: Match imports with exports. This must be done after we process all
+            //     // export stars because imports can bind to export star re-exports.
+            //     {
+            //         this.linker.cycle_detector.clearRetainingCapacity();
+            //         const trace = tracer(@src(), "MatchImportsWithExports");
+            //         defer trace.end();
+            //         const imports_to_bind = this.linker.graph.meta.items(.imports_to_bind);
+            //         for (reachable) |source_index_| {
+            //             const source_index = source_index_.get();
+
+            //             // not a JS ast or empty
+            //             if (source_index >= named_imports.len) {
+            //                 continue;
+            //             }
+
+            //             const named_imports_ = &named_imports[source_index];
+            //             if (named_imports_.count() > 0) {
+            //                 this.linker.matchImportsWithExportsForFile(
+            //                     named_imports_,
+            //                     &imports_to_bind[source_index],
+            //                     source_index,
+            //                 );
+            //             }
+            //         }
+            //     }
+
+            //     {
+            //         const imports_to_bind_list = this.linker.graph.meta.items(.imports_to_bind);
+            //         const parts_list = this.linker.graph.ast.items(.parts);
+            //         for (reachable) |index| {
+            //             if (index.isRuntime()) continue;
+            //             const id = index.get();
+            //             const imports_to_bind = &imports_to_bind_list[id];
+            //             const parts = parts_list[id];
+            //             const import_records = all_import_records[id].slice();
+            //             _ = parts;
+            //             for (imports_to_bind.keys(), imports_to_bind.values()) |ref_untyped, import_untyped| {
+            //                 const ref: Ref = ref_untyped; // ZLS
+            //                 const import: ImportData = import_untyped; // ZLS
+
+            //                 const import_source_index = import.data.source_index.get();
+
+            //                 if (named_imports[id].get(ref)) |*named_import| {
+            //                     import_records[named_import.import_record_index].source_index = .source(import_source_index);
+            //                     import_records[named_import.import_record_index].path = sources[import_source_index].path;
+            //                 }
+
+            //                 _ = this.linker.graph.symbols.merge(ref, import.data.import_ref);
+            //             }
+            //         }
+            //     }
+            // }
+
             for (
-                asts.items(.parts)[1..],
-                asts.items(.import_records)[1..],
-                css_asts[1..],
-                asts.items(.target)[1..],
-                1..,
-            ) |part_list, import_records, maybe_css, target, index| {
+                reachable,
+            ) |source_index| {
+                if (source_index.isRuntime()) continue;
+                const index = source_index.get();
+                const part_list = all_parts[index];
+                const import_records = all_import_records[index];
+                const maybe_css = all_css[index];
+                const target = all_target[index];
+
                 // Dev Server proceeds even with failed files.
                 // These files are filtered out via the lack of any parts.
                 //
@@ -2416,7 +2621,7 @@ pub const BundleV2 = struct {
                         // CSS has restrictions on what files can be imported.
                         // This means the file can become an error after
                         // resolution, which is not usually the case.
-                        css_total_files.appendAssumeCapacity(Index.init(index));
+                        css_total_files.appendAssumeCapacity(source_index);
                         var log = Logger.Log.init(this.graph.allocator);
                         defer log.deinit();
                         if (this.linker.scanCSSImports(
@@ -2438,16 +2643,16 @@ pub const BundleV2 = struct {
                             );
                             // Since there is an error, do not treat it as a
                             // valid CSS chunk.
-                            _ = start.css_entry_points.swapRemove(Index.init(index));
+                            _ = start.css_entry_points.swapRemove(source_index);
                         }
                     } else {
                         // HTML files are special cased because they correspond
                         // to routes in DevServer. They have a JS chunk too,
                         // derived off of the import record list.
                         if (loaders[index] == .html) {
-                            try html_files.put(this.graph.allocator, Index.init(index), {});
+                            try html_files.put(this.graph.allocator, source_index, {});
                         } else {
-                            js_files.appendAssumeCapacity(Index.init(index));
+                            js_files.appendAssumeCapacity(source_index);
 
                             // Mark every part live.
                             for (part_list.slice()) |*p| {
@@ -2459,7 +2664,7 @@ pub const BundleV2 = struct {
                         for (import_records.slice()) |*record| {
                             if (!record.source_index.isValid()) continue;
                             if (loaders[record.source_index.get()] != .css) continue;
-                            if (asts.items(.parts)[record.source_index.get()].len == 0) {
+                            if (all_parts[record.source_index.get()].len == 0) {
                                 record.source_index = Index.invalid;
                                 continue;
                             }
@@ -2473,7 +2678,7 @@ pub const BundleV2 = struct {
                     }
                 } else {
                     // Treat empty CSS files for removal.
-                    _ = start.css_entry_points.swapRemove(Index.init(index));
+                    _ = start.css_entry_points.swapRemove(source_index);
                 }
             }
 
@@ -2982,15 +3187,23 @@ pub const BundleV2 = struct {
                 continue;
             }
 
+            defer {
+                if (this.transpiler.options.dev_server != null) {
+                    if (import_record.tag == .barrel) {
+                        this.barrel_importers.put(bun.default_allocator, source.index.get(), {}) catch bun.outOfMemory();
+                    }
+                }
+            }
+
             if (this.transpiler.options.dev_server) |dev_server| brk: {
                 if (loader == .css) {
                     // Do not use cached files for CSS.
                     break :brk;
                 }
 
-                import_record.source_index = Index.invalid;
-
                 if (dev_server.isFileCached(path.text, bake_graph)) |entry| {
+                    import_record.source_index = Index.invalid;
+
                     const rel = bun.path.relativePlatform(this.transpiler.fs.top_level_dir, path.text, .loose, false);
                     if (loader == .html and entry.kind == .asset) {
                         // Overload `path.text` to point to the final URL
@@ -3018,10 +3231,9 @@ pub const BundleV2 = struct {
             const hash_key = path.hashKey();
 
             if (this.pathToSourceIndexMap(target).get(hash_key)) |id| {
+                import_record.source_index = Index.init(id);
                 if (this.transpiler.options.dev_server != null and loader != .html) {
                     import_record.path = this.graph.input_files.items(.source)[id].path;
-                } else {
-                    import_record.source_index = Index.init(id);
                 }
                 continue;
             }
@@ -3029,6 +3241,7 @@ pub const BundleV2 = struct {
             const resolve_entry = resolve_queue.getOrPut(hash_key) catch bun.outOfMemory();
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
+                import_record.source_index = resolve_entry.value_ptr.*.source_index;
                 continue;
             }
 
@@ -3052,6 +3265,7 @@ pub const BundleV2 = struct {
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;
             resolve_task.known_target = target;
             resolve_task.jsx = resolve_result.jsx;
+            resolve_task.is_barrel_file = import_record.tag == .barrel;
             resolve_task.jsx.development = switch (transpiler.options.force_node_env) {
                 .development => true,
                 .production => false,
@@ -3095,8 +3309,6 @@ pub const BundleV2 = struct {
         return resolve_queue;
     }
 
-    const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
-
     pub fn onNotifyDefer(this: *BundleV2) void {
         this.thread_lock.assertLocked();
         this.graph.deferred_pending += 1;
@@ -3105,6 +3317,83 @@ pub const BundleV2 = struct {
 
     pub fn onNotifyDeferMini(_: *bun.JSC.API.JSBundler.Load, this: *BundleV2) void {
         this.onNotifyDefer();
+    }
+
+    fn processEnqueuedResolveTask(this: *BundleV2, hash: u64, value: *ParseTask, path_to_source_index_map: *PathToSourceIndexMap, import_records_to_update_source_index: []const *ImportRecord) bool {
+        var existing = path_to_source_index_map.getOrPut(this.graph.allocator, hash) catch unreachable;
+
+        // If the same file is imported and required, and those point to different files
+        // Automatically rewrite it to the secondary one
+        if (value.secondary_path_for_commonjs_interop) |secondary_path| {
+            const secondary_hash = secondary_path.hashKey();
+            if (this.path_to_source_index_map.get(secondary_hash)) |secondary| {
+                existing.found_existing = true;
+                existing.value_ptr.* = secondary;
+            }
+        }
+
+        if (!existing.found_existing) {
+            var new_task: *ParseTask = value;
+            var new_input_file = Graph.InputFile{
+                .source = Logger.Source.initEmptyFile(new_task.path.text),
+                .side_effects = value.side_effects,
+            };
+
+            const loader = new_task.loader orelse new_input_file.source.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
+
+            new_input_file.source.index = Index.source(this.graph.input_files.len);
+            new_input_file.source.path = new_task.path;
+
+            // We need to ensure the loader is set or else importstar_ts/ReExportTypeOnlyFileES6 will fail.
+            new_input_file.loader = loader;
+
+            existing.value_ptr.* = new_input_file.source.index.get();
+            new_task.source_index = new_input_file.source.index;
+
+            new_task.ctx = this;
+            this.graph.input_files.append(bun.default_allocator, new_input_file) catch unreachable;
+            this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
+
+            for (import_records_to_update_source_index) |record| {
+                record.source_index = new_task.source_index;
+                record.path = new_task.path;
+            }
+
+            if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
+                return true;
+            }
+
+            if (loader.shouldCopyForBundling()) {
+                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[new_task.source_index.get()];
+                additional_files.push(this.graph.allocator, .{ .source_index = new_task.source_index.get() }) catch unreachable;
+                new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
+                this.graph.estimated_file_loader_count += 1;
+            }
+
+            // schedule as early as possible
+            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
+
+            return true;
+        } else {
+            const loader = value.loader orelse
+                this.graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse
+                options.Loader.file;
+
+            if (loader.shouldCopyForBundling()) {
+                var additional_files: *BabyList(AdditionalFile) = &this.graph.input_files.items(.additional_files)[existing.value_ptr.*];
+                additional_files.push(this.graph.allocator, .{ .source_index = existing.value_ptr.* }) catch unreachable;
+                this.graph.estimated_file_loader_count += 1;
+            }
+
+            for (import_records_to_update_source_index) |record| {
+                record.source_index = existing.value_ptr.*;
+                record.path = value.path;
+            }
+
+            bun.default_allocator.destroy(value);
+        }
+
+        return false;
     }
 
     pub fn onParseTaskComplete(parse_result: *ParseTask.Result, this: *BundleV2) void {
@@ -3212,82 +3501,22 @@ pub const BundleV2 = struct {
                     result.ast.named_exports.count(),
                 });
 
-                var iter = resolve_queue.iterator();
-
+                var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
                 const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
-                while (iter.next()) |entry| {
-                    const hash = entry.key_ptr.*;
-                    const value = entry.value_ptr.*;
 
-                    var existing = path_to_source_index_map.getOrPut(graph.allocator, hash) catch unreachable;
+                if (result.is_barrel_file) {
+                    this.barrel_files.put(bun.default_allocator, result.source.index.get(), {}) catch bun.outOfMemory();
+                    this.filterPendingBarrelFiles(&resolve_queue, &result.ast.named_imports, import_records.slice(), result.source.index, &result.ast.named_exports, path_to_source_index_map);
+                } else {
+                    var iter = resolve_queue.iterator();
 
-                    // If the same file is imported and required, and those point to different files
-                    // Automatically rewrite it to the secondary one
-                    if (value.secondary_path_for_commonjs_interop) |secondary_path| {
-                        const secondary_hash = secondary_path.hashKey();
-                        if (path_to_source_index_map.get(secondary_hash)) |secondary| {
-                            existing.found_existing = true;
-                            existing.value_ptr.* = secondary;
-                        }
-                    }
-
-                    if (!existing.found_existing) {
-                        var new_task: *ParseTask = value;
-                        var new_input_file = Graph.InputFile{
-                            .source = Logger.Source.initEmptyFile(new_task.path.text),
-                            .side_effects = value.side_effects,
-                        };
-
-                        const loader = new_task.loader orelse new_input_file.source.path.loader(&this.transpiler.options.loaders) orelse options.Loader.file;
-
-                        new_input_file.source.index = Index.source(graph.input_files.len);
-                        new_input_file.source.path = new_task.path;
-
-                        // We need to ensure the loader is set or else importstar_ts/ReExportTypeOnlyFileES6 will fail.
-                        new_input_file.loader = loader;
-
-                        existing.value_ptr.* = new_input_file.source.index.get();
-                        new_task.source_index = new_input_file.source.index;
-
-                        new_task.ctx = this;
-                        graph.input_files.append(bun.default_allocator, new_input_file) catch unreachable;
-                        graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
-                        diff += 1;
-
-                        if (this.enqueueOnLoadPluginIfNeeded(new_task)) {
-                            continue;
-                        }
-
-                        if (loader.shouldCopyForBundling()) {
-                            var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
-                            additional_files.push(this.graph.allocator, .{ .source_index = new_task.source_index.get() }) catch unreachable;
-                            new_input_file.side_effects = _resolver.SideEffects.no_side_effects__pure_data;
-                            graph.estimated_file_loader_count += 1;
-                        }
-
-                        // schedule as early as possible
-                        graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
-                    } else {
-                        const loader = value.loader orelse
-                            graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse
-                            options.Loader.file;
-
-                        if (loader.shouldCopyForBundling()) {
-                            var additional_files: *BabyList(AdditionalFile) = &graph.input_files.items(.additional_files)[result.source.index.get()];
-                            additional_files.push(this.graph.allocator, .{ .source_index = existing.value_ptr.* }) catch unreachable;
-                            graph.estimated_file_loader_count += 1;
-                        }
-
-                        bun.default_allocator.destroy(value);
+                    while (iter.next()) |entry| {
+                        this.processEnqueuedResolveTask(entry.key, entry.value, path_to_source_index_map, &.{});
                     }
                 }
 
-                var import_records = result.ast.import_records.clone(this.graph.allocator) catch unreachable;
-
                 const input_file_loaders = this.graph.input_files.items(.loader);
-                const save_import_record_source_index = this.transpiler.options.dev_server == null or
-                    result.loader == .html or
-                    result.loader == .css;
+                const save_import_record_source_index = true;
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
                     for (pending_entry.value.slice()) |to_assign| {
@@ -3426,7 +3655,55 @@ pub const BundleV2 = struct {
     pub fn bustDirCache(vm: *BundleV2, path: []const u8) bool {
         return vm.transpiler.resolver.bustDirCache(path);
     }
+
+    pub fn filterPendingBarrelFiles(this: *BundleV2, our_named_imports: *const JSAst.NamedImports, our_import_records: []ImportRecord, source_index: Index, named_exports: *const js_ast.BundledAst.NamedExports, path_to_source_index_map: *PathToSourceIndexMap) usize {
+        const all_import_records: []BabyList(ImportRecord) = this.graph.ast.items(.import_records);
+        const all_named_imports: []JSAst.NamedImports = this.graph.ast.items(.named_imports);
+
+        var count: usize = 0;
+        for (this.barrel_importers.keys()) |importer_source_index| {
+            const import_records = all_import_records[importer_source_index].slice();
+
+            outer: for (import_records, 0..) |*record, i| {
+                if (record.tag == .barrel) {
+                    if (record.source_index.get() == source_index.get()) {
+                        const named_imports = &all_named_imports[importer_source_index];
+
+                        // We found an import to this barrel file.
+                        // Now we need to make the source index point to this exporter.
+                        for (named_imports.values()) |*named_import| {
+                            if (@as(usize, named_import.import_record_index) == i) {
+                                if (named_import.alias) |export_name| {
+                                    if (named_exports.get(export_name)) |named_export| {
+                                        for (our_named_imports.keys(), our_named_imports.values()) |named_import_ref, *our_named_import| {
+                                            if (named_import_ref == named_export.ref) {
+                                                const exported_import_record = &our_import_records[our_named_import.import_record_index];
+                                                const hash = exported_import_record.path.hashKey();
+                                                if (resolve_queue.fetchSwapRemove(hash)) |entry| {
+                                                    exported_import_record.path = entry.value.path;
+                                                    count += @intFromBool(this.processEnqueuedResolveTask(entry.key, entry.value, path_to_source_index_map, &.{
+                                                        record,
+                                                        exported_import_record,
+                                                    }));
+                                                }
+
+                                                continue :outer;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return count;
+    }
 };
+
+const ResolveQueue = std.AutoArrayHashMap(u64, *ParseTask);
 
 /// Used to keep the bundle thread from spinning on Windows
 pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
@@ -3672,6 +3949,7 @@ pub const ParseTask = struct {
     ctx: *BundleV2,
     package_version: string = "",
     is_entry_point: bool = false,
+    is_barrel_file: bool = false,
     /// This is set when the file is an entrypoint, and it has an onLoad plugin.
     /// In this case we want to defer adding this to additional_files until after
     /// the onLoad plugin has finished.
@@ -3713,7 +3991,7 @@ pub const ParseTask = struct {
             log: Logger.Log,
             use_directive: UseDirective,
             side_effects: _resolver.SideEffects,
-
+            is_barrel_file: bool = false,
             /// Used by "file" loader files.
             unique_key_for_additional_file: []const u8 = "",
             /// Used by "file" loader files.
@@ -4768,6 +5046,7 @@ pub const ParseTask = struct {
         opts.features.inlining = transpiler.options.minify_syntax;
         opts.output_format = output_format;
         opts.features.minify_syntax = transpiler.options.minify_syntax;
+        opts.features.barrel_files = transpiler.options.barrel_files;
         opts.features.minify_identifiers = transpiler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
@@ -4847,7 +5126,7 @@ pub const ParseTask = struct {
             .unique_key_for_additional_file = unique_key_for_additional_file.key,
             .side_effects = task.side_effects,
             .loader = loader,
-
+            .is_barrel_file = task.is_barrel_file,
             // Hash the files in here so that we do it in parallel.
             .content_hash_for_additional_file = if (loader.shouldCopyForBundling())
                 unique_key_for_additional_file.content_hash
@@ -6087,7 +6366,7 @@ pub const LinkerContext = struct {
         return true;
     }
 
-    fn load(
+    pub fn load(
         this: *LinkerContext,
         bundle: *BundleV2,
         entry_points: []Index,
@@ -15467,7 +15746,7 @@ pub const LinkerContext = struct {
         }
     }
 
-    const ExportStarContext = struct {
+    pub const ExportStarContext = struct {
         import_records_list: []const ImportRecord.List,
         source_index_stack: std.ArrayList(Index.Int),
         exports_kind: []js_ast.ExportsKind,

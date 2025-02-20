@@ -189,6 +189,8 @@ pub const ImportRecord = struct {
         /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
         bake_resolve_to_ssr_graph,
 
+        barrel,
+
         with_type_sqlite,
         with_type_sqlite_embedded,
         with_type_text,

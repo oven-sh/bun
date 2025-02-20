@@ -1858,7 +1858,7 @@ declare module "bun" {
     continuationToken?: string;
     /** Causes keys that contain the same string between the prefix and the first occurrence of the delimiter to be rolled up into a single result element in the CommonPrefixes collection. These rolled-up keys are not returned elsewhere in the response. Each rolled-up result counts as only one return against the MaxKeys value. */
     delimiter?: string;
-    /** Encoding type used by Amazon S3 to encode object key names in the XML response. */
+    /** Encoding type used by S3 to encode object key names in the XML response. */
     encodingType?: "url";
     /** Set to false if all of the results were returned. Set to true if more keys are available to return. If the number of results exceeds that specified by MaxKeys, all of the results might not be returned. */
     isTruncated?: boolean;
@@ -1868,7 +1868,7 @@ declare module "bun" {
     maxKeys?: number;
     /** The bucket name. */
     name?: string;
-    /** NextContinuationToken is sent when isTruncated is true, which means there are more keys in the bucket that can be listed. The next list requests to Amazon S3 can be continued with this NextContinuationToken. NextContinuationToken is obfuscated and is not a real key. */
+    /** NextContinuationToken is sent when isTruncated is true, which means there are more keys in the bucket that can be listed. The next list requests to S3 can be continued with this NextContinuationToken. NextContinuationToken is obfuscated and is not a real key. */
     nextContinuationToken?: string;
     /** Keys that begin with the indicated prefix. */
     prefix?: string;

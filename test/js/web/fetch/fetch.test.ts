@@ -223,7 +223,7 @@ describe("AbortSignal", () => {
         controller.abort();
       }
       await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
-    }).toThrow(new DOMException("The operation was aborted"));
+    }).toThrow(new DOMException("The operation was aborted."));
   });
 
   it("AbortAfterFinish", async () => {
@@ -266,7 +266,7 @@ describe("AbortSignal", () => {
         controller.abort();
       }
       await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
-    }).toThrow(new DOMException("The operation was aborted"));
+    }).toThrow(new DOMException("The operation was aborted."));
   });
 
   it("AbortErrorWhileUploading", async () => {
@@ -284,7 +284,7 @@ describe("AbortSignal", () => {
         }),
         signal: controller.signal,
       });
-    }).toThrow(new DOMException("The operation was aborted"));
+    }).toThrow(new DOMException("The operation was aborted."));
   });
 
   it("TimeoutError", async () => {

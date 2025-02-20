@@ -303,8 +303,25 @@ const Socket = (function (InternalSocket) {
       close(socket, err) {
         const data = this.data;
         if (!data) return;
-        Socket.#Handlers.close(socket, err);
+
         data.server[bunSocketServerConnections]--;
+        {
+          if (!data.#closed) {
+            data.#closed = true;
+            //socket cannot be used after close
+            detachSocket(data);
+            Socket.#EmitEndNT(data, err);
+            data.data = null;
+          }
+        }
+        if (!data._hadError && data.secureConnecting) {
+          data.secureConnecting = false;
+          data._hadError = true;
+          err =
+            err ||
+            new ConnResetException("Client network socket disconnected before secure TLS connection was established");
+          data.server.emit("tlsClientError", err, data);
+        }
         data.server._emitCloseIfDrained();
       },
       end(socket) {
@@ -358,6 +375,8 @@ const Socket = (function (InternalSocket) {
 
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
+        // to match nodejs behavior we ignore ECONNRESET errors on handshake and use the same logic on close/destroy/error
+        if (!success && verifyError?.code === "ECONNRESET") return;
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
@@ -848,6 +867,7 @@ const Socket = (function (InternalSocket) {
       const { ending } = this._writableState;
       if (!err && !this._hadError && this.secureConnecting && !this.isServer) {
         this.secureConnecting = false;
+        this._hadError = true;
         err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
       }
       // lets make sure that the writable side is closed

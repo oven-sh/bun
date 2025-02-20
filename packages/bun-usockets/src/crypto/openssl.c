@@ -326,6 +326,30 @@ int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
   return us_socket_is_closed(0, &s->s);
 }
 
+
+void us_internal_trigger_handshake_callback_econnreset(struct us_internal_ssl_socket_t *s) {
+  struct us_internal_ssl_socket_context_t *context =
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
+  // always set the handshake state to completed
+  s->handshake_state = HANDSHAKE_COMPLETED;
+  struct us_bun_verify_error_t verify_error =  (struct us_bun_verify_error_t){
+        .error = -46, .code = "ECONNRESET", .reason = "Client network socket disconnected before secure TLS connection was established"};
+  context->on_handshake(s, 0, verify_error, context->handshake_data);
+}
+void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
+                                            int success) {
+  struct us_internal_ssl_socket_context_t *context =
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
+  // always set the handshake state to completed
+  s->handshake_state = HANDSHAKE_COMPLETED;
+
+  if (context->on_handshake != NULL) {
+    struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
+    context->on_handshake(s, success, verify_error, context->handshake_data);
+  }
+}
 struct us_internal_ssl_socket_t *
 us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
                              void *reason) {
@@ -340,7 +364,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
     // secureConnection/secure before close if we remove this here, we will need
     // to do this check on every on_close event on sockets, fetch etc and will
     // increase complexity on a lot of places
-    us_internal_trigger_handshake_callback(s, 0);
+    us_internal_trigger_handshake_callback_econnreset(s);
   }
 
   // if we are in the middle of a close_notify we need to finish it (code != 0 forces a fast shutdown)
@@ -351,20 +375,6 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
     return (struct us_internal_ssl_socket_t *)us_socket_close(0, (struct us_socket_t *)s, code, reason);
   }
   return s;
-}
-
-void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
-                                            int success) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-
-  // always set the handshake state to completed
-  s->handshake_state = HANDSHAKE_COMPLETED;
-
-  if (context->on_handshake != NULL) {
-    struct us_bun_verify_error_t verify_error = us_internal_verify_error(s);
-    context->on_handshake(s, success, verify_error, context->handshake_data);
-  }
 }
 int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
   // handle renegotation here since we are using ssl_renegotiate_explicit

@@ -613,6 +613,11 @@ pub const Listener = struct {
         handlers.is_server = true;
 
         const ssl_enabled = ssl != null;
+        if (ssl_enabled) {
+            bun.Analytics.Features.tls_server += 1;
+        } else {
+            bun.Analytics.Features.tcp_server += 1;
+        }
 
         var socket_flags: i32 = if (exclusive)
             uws.LIBUS_LISTEN_EXCLUSIVE_PORT

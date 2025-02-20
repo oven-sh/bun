@@ -362,33 +362,22 @@ pub const All = struct {
     ) JSC.JSValue {
         JSC.markBinding(@src());
         var vm = globalThis.bunVM();
+        const kind: Kind = request;
 
-        switch (request) {
-            .setImmediate => {
-                const js = ImmediateObject.init(globalThis, id, callback, arguments_array_or_zero);
-                if (vm.isInspectorEnabled()) {
-                    Debugger.didScheduleAsyncCall(
-                        globalThis,
-                        .DOMTimer,
-                        ID.asyncID(.{ .id = id, .kind = .setImmediate }),
-                        true, // single_shot
-                    );
-                }
-                return js;
-            },
-            inline else => |countdown, kind| {
-                const js = TimeoutObject.init(globalThis, id, kind, countdown, callback, arguments_array_or_zero);
-                if (vm.isInspectorEnabled()) {
-                    Debugger.didScheduleAsyncCall(
-                        globalThis,
-                        .DOMTimer,
-                        ID.asyncID(.{ .id = id, .kind = kind }),
-                        kind != .setInterval, // single_shot
-                    );
-                }
-                return js;
-            },
+        const js = switch (request) {
+            .setImmediate => ImmediateObject.init(globalThis, id, callback, arguments_array_or_zero),
+            .setTimeout, .setInterval => |countdown| TimeoutObject.init(globalThis, id, kind, countdown, callback, arguments_array_or_zero),
+        };
+
+        if (vm.isInspectorEnabled()) {
+            Debugger.didScheduleAsyncCall(
+                globalThis,
+                .DOMTimer,
+                ID.asyncID(.{ .id = id, .kind = kind }),
+                kind != .setInterval, // single_shot
+            );
         }
+        return js;
     }
 
     pub fn setImmediate(

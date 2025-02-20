@@ -6929,7 +6929,7 @@ const ErrorReportRequest = struct {
 
             // When before the first generated line, remap to the HMR runtime
             const generated_mappings = result.mappings.items(.generated);
-            if (frame.position.line.oneBased() < generated_mappings[1].lines) {
+            if (frame.position.line.oneBased() < generated_mappings[0].lines) {
                 frame.source_url = .init(runtime_name); // matches value in source map
                 frame.position = .invalid;
                 continue;
@@ -7038,9 +7038,16 @@ const ErrorReportRequest = struct {
             try w.writeInt(u32, @intCast(function_name.len), .little);
             try w.writeAll(function_name);
 
-            const file = ctx.dev.relativePath(frame.source_url.value.ZigString.slice());
-            try w.writeInt(u32, @intCast(file.len), .little);
-            try w.writeAll(file);
+            const src_to_write = frame.source_url.value.ZigString.slice();
+            if (bun.strings.hasPrefixComptime(src_to_write, client_prefix)) {
+                try w.writeInt(u32, @intCast(browser_url.len + src_to_write.len), .little);
+                try w.writeAll(bun.strings.withoutTrailingSlash(browser_url));
+                try w.writeAll(src_to_write);
+            } else {
+                const file = ctx.dev.relativePath(src_to_write);
+                try w.writeInt(u32, @intCast(file.len), .little);
+                try w.writeAll(file);
+            }
         }
 
         if (runtime_lines) |*lines| {

@@ -12,21 +12,32 @@
 }
 
 .root {
-  color-scheme: light dark;
-
+  /* TODO: revive light theme error modal */
+  /* color-scheme: light dark;
   --modal-bg: light-dark(#efefef, #202020);
   --modal-text: light-dark(#0a0a0a, #fafafa);
   --modal-text-faded: light-dark(#0a0a0a88, #fafafa88);
   --item-bg: light-dark(#d4d4d4, #0f0f0f);
   --item-bg-main: light-dark(#d4d4d4, #262626);
+  --log-error: light-dark(#dc0000, #ff5858);
+  --log-warn: light-dark(#eab308, #fbbf24);
+  --log-note: light-dark(#008ae6, #22d3ee);
+  --log-colon: light-dark(#888, #888); */
+
+  --modal-bg: #202020;
+  --modal-text: #fafafa;
+  --modal-text-faded: #fafafa88;
+  --item-bg: #0f0f0f;
+  --item-bg-main: #262626;
+  --log-error: #ff5858;
+  --log-warn: #fbbf24;
+  --log-note: #22d3ee;
+  --log-colon: #888;
+  
   --red: #ff5858;
   --red-faded: #ff58582F;
   --error-bg: #ff58582F;
   --warn-bg: #eab3082F;
-  --log-error: light-dark(#dc0000, #ff5858);
-  --log-warn: light-dark(#eab308, #fbbf24);
-  --log-note: light-dark(#008ae6, #22d3ee);
-  --log-colon: light-dark(#888, #888);
 
   --syntax-comment: #6272a4;
   --syntax-cyan: #8be9fd;

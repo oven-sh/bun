@@ -4327,7 +4327,6 @@ pub fn CowSlice(T: type) type {
         pub fn deinit(str: @This(), allocator: Allocator) void {
             if (cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
-                defer debug.mutex.unlock();
                 bun.assert(
                     debug.allocator.ptr == allocator.ptr and
                         debug.allocator.vtable == allocator.vtable,

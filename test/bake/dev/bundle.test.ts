@@ -1,4 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
+import { dedent } from "bundler/expectBundled";
 import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../dev-server-harness";
 
 devTest("import identifier doesnt get renamed", {
@@ -116,9 +117,7 @@ devTest("react refresh - default export function", {
       }
     `,
   },
-  async test(dev) {
-    
-  },
+  async test(dev) {},
 });
 devTest("client-side runtime error shows correctly", {
   files: {
@@ -127,11 +126,8 @@ devTest("client-side runtime error shows correctly", {
       scripts: ["index.ts"],
     }),
     "index.ts": `
-      {
         let x = 1;
-
         throw new Error("test " + x);
-      }
     `,
   },
   async test(dev) {
@@ -142,12 +138,10 @@ devTest("client-side runtime error shows correctly", {
     await c.expectReload(async () => {
       await dev.write(
         "index.ts",
-        `
-        {
+        dedent`
           let x = 2;
           throw new Error("test " + x);
-        }
-      `,
+        `,
         {
           errors: [`index.ts:3:10: error: test 2`],
         },

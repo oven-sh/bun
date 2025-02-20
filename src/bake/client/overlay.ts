@@ -354,6 +354,7 @@ function expandHighlight(line: string, col: number) {
     col -= throwText.length;
   }
   len += (rest.match(/.\b/)?.index ?? -1) + 1;
+  if (len <= 0) len = 1;
   return { col, len };
 }
 
@@ -612,9 +613,7 @@ function renderErrorMessageLine(level: BundlerMessageLevel, text: string) {
 function renderCodeLine(location: BundlerMessageLocation, level: BundlerMessageLevel) {
   return [
     elem("div", { class: "code" }, [
-      elem("div", { class: "gutter" }, [
-        elemText("div", null, `${location.line}`),
-      ]),
+      elem("div", { class: "gutter" }, [elemText("div", null, `${location.line}`)]),
       elem("div", { class: "view" }, [
         mapCodePreviewLine(syntaxHighlight(location.lineText)),
         elem("div", { class: "highlight-wrap log-" + bundleLogLevelToName[level] }, [

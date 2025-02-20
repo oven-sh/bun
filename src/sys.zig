@@ -4035,7 +4035,7 @@ pub const File = struct {
     pub fn getPos(this: File) Maybe(usize) {
         if (comptime Environment.isWindows) {
             const rc = std.os.windows.kernel32.SetFilePointerEx(this.handle.cast(), 0, null, std.os.windows.FILE_CURRENT);
-            if (Maybe(void).errnoSys(rc, .lseek)) |err| {
+            if (Maybe(usize).errnoSys(rc, .lseek)) |err| {
                 return err;
             }
 

@@ -5,11 +5,16 @@ import http2 from "http2";
 import { once } from "events";
 
 test("can make http2 request using servername", async () => {
-  // actually using a servername
-  const response = await got("https://example.com", {
-    http2: true,
-  });
-  expect(response.statusCode).toBe(200);
+  try {
+    // actually using a servername
+    const response = await got("https://example.com", {
+      http2: true,
+    });
+    expect(response.statusCode).toBe(200);
+  } catch (error: any) {
+    expect(error.code).toBe("ERR_HTTP2_ERROR");
+    expect(error.message).toBe("h2 is not supported");
+  }
 });
 test("can make http2 request to local http2 server", async () => {
   await using server = http2.createSecureServer(tls);

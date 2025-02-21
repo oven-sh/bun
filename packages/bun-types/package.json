@@ -1,8 +1,7 @@
 {
   "name": "bun-types",
   "license": "MIT",
-  "main": "",
-  "types": "index.d.ts",
+  "types": "./index.d.ts",
   "description": "Type definitions and documentation for Bun, an incredibly fast JavaScript runtime",
   "repository": {
     "type": "git",
@@ -16,7 +15,6 @@
   ],
   "homepage": "https://bun.sh",
   "dependencies": {
-    "@types/node": "*",
     "@types/ws": "~8.5.10"
   },
   "devDependencies": {

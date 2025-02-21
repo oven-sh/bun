@@ -1,7 +1,8 @@
 {
   "compilerOptions": {
-    // Enable latest features
-    "lib": ["ESNext", "DOM"],
+    // Environment setup & latest features
+    "lib": ["esnext"],
+    // "types": ["bun"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",
@@ -16,8 +17,9 @@
 
     // Best practices
     "strict": true,
-    "skipLibCheck": true,
+    "skipLibCheck": false,
     "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
 
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,

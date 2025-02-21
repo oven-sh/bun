@@ -13,8 +13,8 @@ import { expectType } from "./utilities.test";
 
 const e2 = new EventEmitter();
 e2.on("qwer", (_: any) => {
-  _;
+	_;
 });
-e2.on("asdf", arg => {
-  expectType<any>(arg);
+e2.on("asdf", (arg) => {
+	expectType<any>(arg);
 });

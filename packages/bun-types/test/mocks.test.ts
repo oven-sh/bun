@@ -2,7 +2,7 @@ import { jest, mock } from "bun:test";
 import { expectType } from "./utilities.test";
 
 const mock1 = mock((arg: string) => {
-  return arg.length;
+	return arg.length;
 });
 
 const arg1 = mock1("1");

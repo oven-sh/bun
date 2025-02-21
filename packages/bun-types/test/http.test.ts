@@ -29,7 +29,7 @@ export {};
 // URLSearchParams should be iterable
 const sp = new URLSearchParams("q=foo&bar=baz");
 for (const q of sp) {
-  console.log(q);
+	console.log(q);
 }
 
 fetch;

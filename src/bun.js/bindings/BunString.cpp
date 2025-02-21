@@ -151,6 +151,7 @@ extern "C" int64_t BunString__toInt32(BunString* bunString)
 }
 
 namespace Bun {
+
 JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
     if (bunString.tag == BunStringTag::Empty || bunString.tag == BunStringTag::Dead) {

@@ -916,7 +916,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 
         if (!result.isObject()) {
             JSC::throwTypeError(globalObject, throwScope, "virtual module expects an object returned"_s);
-            return JSC::jsUndefined();
+            return {};
         }
 
         return result;

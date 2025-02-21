@@ -50,7 +50,7 @@ pub const String = extern struct {
     tag: Tag,
     value: StringImpl,
 
-    pub const empty = String{ .tag = .Empty, .value = .{ .Empty = {} } };
+    pub const empty = String{ .tag = .Empty, .value = .{ .ZigString = .Empty } };
 
     pub const dead = String{ .tag = .Dead, .value = .{ .Dead = {} } };
     pub const StringImplAllocator = @import("string/WTFStringImpl.zig").StringImplAllocator;

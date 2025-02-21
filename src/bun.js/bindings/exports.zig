@@ -330,17 +330,17 @@ pub const JSRuntimeType = enum(u16) {
 
 pub const ZigStackFrameCode = enum(u8) {
     None = 0,
-    // 🏃
+    /// 🏃
     Eval = 1,
-    // 📦
+    /// 📦
     Module = 2,
-    // λ
+    /// λ
     Function = 3,
-    // 🌎
+    /// 🌎
     Global = 4,
-    // ⚙️
+    /// ⚙️
     Wasm = 5,
-    // 👷
+    /// 👷
     Constructor = 6,
     _,
 
@@ -455,6 +455,20 @@ pub const ZigStackTrace = extern struct {
     /// If so, then .deref must be called on it to release the memory.
     referenced_source_provider: ?*JSC.SourceProvider = null,
 
+    pub fn fromFrames(frames_slice: []ZigStackFrame) ZigStackTrace {
+        return .{
+            .source_lines_ptr = &[0]bun.String{},
+            .source_lines_numbers = &[0]i32{},
+            .source_lines_len = 0,
+            .source_lines_to_collect = 0,
+
+            .frames_ptr = frames_slice.ptr,
+            .frames_len = @min(frames_slice.len, std.math.maxInt(u8)),
+
+            .referenced_source_provider = null,
+        };
+    }
+
     pub fn toAPI(
         this: *const ZigStackTrace,
         allocator: std.mem.Allocator,
@@ -512,9 +526,13 @@ pub const ZigStackTrace = extern struct {
         return this.frames_ptr[0..this.frames_len];
     }
 
+    pub fn framesMutable(this: *ZigStackTrace) []ZigStackFrame {
+        return this.frames_ptr[0..this.frames_len];
+    }
+
     pub const SourceLineIterator = struct {
         trace: *const ZigStackTrace,
-        i: i16,
+        i: i32,
 
         pub const SourceLine = struct {
             line: i32,
@@ -549,13 +567,13 @@ pub const ZigStackTrace = extern struct {
     };
 
     pub fn sourceLineIterator(this: *const ZigStackTrace) SourceLineIterator {
-        var i: usize = 0;
+        var i: i32 = -1;
         for (this.source_lines_numbers[0..this.source_lines_len], 0..) |num, j| {
             if (num >= 0) {
-                i = @max(j, i);
+                i = @max(@as(i32, @intCast(j)), i);
             }
         }
-        return SourceLineIterator{ .trace = this, .i = @as(i16, @intCast(i)) };
+        return .{ .trace = this, .i = i };
     }
 };
 
@@ -732,11 +750,11 @@ pub const ZigStackFrame = extern struct {
         }
     };
 
-    pub const Zero: ZigStackFrame = ZigStackFrame{
-        .function_name = String.empty,
-        .code_type = ZigStackFrameCode.None,
-        .source_url = String.empty,
-        .position = ZigStackFramePosition.Invalid,
+    pub const Zero: ZigStackFrame = .{
+        .function_name = .empty,
+        .code_type = .None,
+        .source_url = .empty,
+        .position = .invalid,
     };
 
     pub fn nameFormatter(this: *const ZigStackFrame, comptime enable_color: bool) NameFormatter {
@@ -762,14 +780,14 @@ pub const ZigStackFramePosition = extern struct {
     /// -1 if not present
     line_start_byte: c_int,
 
-    pub const Invalid = ZigStackFramePosition{
+    pub const invalid = ZigStackFramePosition{
         .line = .invalid,
         .column = .invalid,
         .line_start_byte = -1,
     };
 
     pub fn isInvalid(this: *const ZigStackFramePosition) bool {
-        return std.mem.eql(u8, std.mem.asBytes(this), std.mem.asBytes(&Invalid));
+        return std.mem.eql(u8, std.mem.asBytes(this), std.mem.asBytes(&invalid));
     }
 
     pub fn decode(reader: anytype) !@This() {
@@ -808,6 +826,8 @@ pub const ZigException = extern struct {
 
     fd: i32 = -1,
 
+    browser_url: String = .empty,
+
     pub extern fn ZigException__collectSourceLines(jsValue: JSValue, global: *JSGlobalObject, exception: *ZigException) void;
 
     pub fn collectSourceLines(this: *ZigException, value: JSValue, global: *JSGlobalObject) void {
@@ -834,9 +854,6 @@ pub const ZigException = extern struct {
             source.deref();
         }
     }
-
-    pub const shim = Shimmer("Zig", "Exception", @This());
-    pub const namespace = shim.namespace;
 
     pub const Holder = extern struct {
         const frame_count = 32;
@@ -906,9 +923,8 @@ pub const ZigException = extern struct {
         }
     };
 
-    pub fn fromException(exception: *Exception) ZigException {
-        return shim.cppFn("fromException", .{exception});
-    }
+    extern fn ZigException__fromException(*Exception) ZigException;
+    pub const fromException = ZigException__fromException;
 
     pub fn addToErrorList(
         this: *ZigException,
@@ -916,8 +932,8 @@ pub const ZigException = extern struct {
         root_path: string,
         origin: ?*const ZigURL,
     ) !void {
-        const name_slice = @field(this, "name").toUTF8(bun.default_allocator);
-        const message_slice = @field(this, "message").toUTF8(bun.default_allocator);
+        const name_slice = this.name.toUTF8(bun.default_allocator);
+        const message_slice = this.message.toUTF8(bun.default_allocator);
 
         const _name = name_slice.slice();
         defer name_slice.deinit();
@@ -949,8 +965,6 @@ pub const ZigException = extern struct {
             try error_list.append(api_exception);
         }
     }
-
-    pub const Extern = [_][]const u8{"fromException"};
 };
 
 pub const ErrorableResolvedSource = Errorable(ResolvedSource);

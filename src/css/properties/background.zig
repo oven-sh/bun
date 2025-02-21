@@ -402,7 +402,7 @@ pub const BackgroundRepeat = struct {
             .err => |e| return .{ .err = e },
         };
 
-        const y = input.tryParse(BackgroundRepeatKeyword.parse, .{}).unwrapOrNoOptmizations(x);
+        const y = input.tryParse(BackgroundRepeatKeyword.parse, .{}).unwrapOr(x);
 
         return .{ .result = .{ .x = x, .y = y } };
     }

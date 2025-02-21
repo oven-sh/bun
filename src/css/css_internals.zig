@@ -67,7 +67,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     if (!source_arg.isString()) {
         return globalThis.throw("minifyTestWithOptions: expected source to be a string", .{});
     }
-    const source_bunstr = source_arg.toBunString(globalThis);
+    const source_bunstr = try source_arg.toBunString2(globalThis);
     defer source_bunstr.deref();
     const source = source_bunstr.toUTF8(bun.default_allocator);
     defer source.deinit();
@@ -78,7 +78,7 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
     if (!expected_arg.isString()) {
         return globalThis.throw("minifyTestWithOptions: expected `expected` arg to be a string", .{});
     }
-    const expected_bunstr = expected_arg.toBunString(globalThis);
+    const expected_bunstr = try expected_arg.toBunString2(globalThis);
     defer expected_bunstr.deref();
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();
@@ -159,7 +159,7 @@ fn parserOptionsFromJS(globalThis: *JSC.JSGlobalObject, allocator: Allocator, op
         if (val.isArray()) {
             var iter = val.arrayIterator(globalThis);
             while (iter.next()) |item| {
-                const bunstr = item.toBunString(globalThis);
+                const bunstr = try item.toBunString2(globalThis);
                 defer bunstr.deref();
                 const str = bunstr.toUTF8(bun.default_allocator);
                 defer str.deinit();
@@ -273,7 +273,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     if (!source_arg.isString()) {
         return globalThis.throw("attrTest: expected source to be a string", .{});
     }
-    const source_bunstr = source_arg.toBunString(globalThis);
+    const source_bunstr = try source_arg.toBunString2(globalThis);
     defer source_bunstr.deref();
     const source = source_bunstr.toUTF8(bun.default_allocator);
     defer source.deinit();
@@ -284,7 +284,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     if (!expected_arg.isString()) {
         return globalThis.throw("attrTest: expected `expected` arg to be a string", .{});
     }
-    const expected_bunstr = expected_arg.toBunString(globalThis);
+    const expected_bunstr = try expected_arg.toBunString2(globalThis);
     defer expected_bunstr.deref();
     const expected = expected_bunstr.toUTF8(bun.default_allocator);
     defer expected.deinit();

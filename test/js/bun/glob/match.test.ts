@@ -114,6 +114,12 @@ describe("Glob.match", () => {
     glob = new Glob("{a}/{b}/");
     expect(glob.match("a/b/")).toBeTrue();
 
+    glob = new Glob("{a,b}/c/{d,e}/**/*est.ts");
+    expect(glob.match("a/c/d/one/two/three.test.ts"));
+
+    glob = new Glob("{**/a,**/b}");
+    expect(glob.match("b")).toBeTrue();
+
     const tests = [
       { pattern: "{src,extensions}/**/test/**/{fixtures,browser,common}/**/*.{ts,js}", expected: 726 },
       { pattern: "{extensions,src}/**/{media,images,icons}/**/*.{svg,png,gif,jpg}", expected: 119 },

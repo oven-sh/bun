@@ -4,7 +4,6 @@ import { promisify } from "util";
 import { bunEnv, bunExe } from "harness";
 import jsc from "bun:jsc";
 import path from "node:path";
-import { EOL } from "node:os";
 
 for (const fn of [setTimeout, setInterval]) {
   describe(fn.name, () => {
@@ -238,6 +237,6 @@ describe("setImmediate", () => {
       env: bunEnv,
     });
 
-    expect(await new Response(process.stdout).text()).toBe(("callback" + EOL).repeat(5000));
+    expect(await new Response(process.stdout).text()).toBe("callback\n".repeat(5000));
   }, 5000);
 });

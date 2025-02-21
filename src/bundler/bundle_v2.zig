@@ -2371,64 +2371,6 @@ pub const BundleV2 = struct {
         return try this.linker.generateChunksInParallel(chunks, false);
     }
 
-    // pub fn redirectBarrelImports(
-    //     this: *BundleV2,
-    //     source_index: Index.Int,
-    //     import_records: []ImportRecord,
-    //     named_imports: *JSAst.NamedImports,
-    //     all_symbols: []Symbol.List,
-    // ) void {
-    //     if (this.barrel_importers.count() == 0 or !this.barrel_importers.contains(source_index)) return;
-
-    //     const map = this.pathToSourceIndexMap(.browser);
-    //     const all_barrel_named_exports: []const JSAst.NamedExports = this.graph.ast.items(.named_exports);
-    //     const all_named_imports: []const JSAst.NamedImports = this.graph.ast.items(.named_imports);
-    //     const all_import_records: []const BabyList(ImportRecord) = this.graph.ast.items(.import_records);
-
-    //     for (named_imports.keys(), named_imports.values()) |name_ref, *named_import| {
-    //         const import_record = &import_records[named_import.import_record_index];
-    //         if (comptime bun.Environment.isDebug) {
-    //             debug("OOGA index: {d}", .{source_index});
-    //             const ir = import_record;
-    //             debug("    {s}: {d}, {s}, {s}, {s}", .{ ir.path.text, ir.source_index.get(), @tagName(ir.tag), if (ir.is_unused) "unused" else "used", if (ir.is_internal) "internal" else "external" });
-    //         }
-    //         if (import_record.tag != .barrel) continue;
-    //         if (import_record.is_unused or import_record.is_internal or import_record.source_index.isValid()) continue;
-
-    //         const barrel_file_index = map.get(import_record.path.hashKey()).?;
-
-    //         const barrel_named_exports: *const JSAst.NamedExports = &all_barrel_named_exports[barrel_file_index];
-
-    //         // Pair assertion: we asserted this was not null in `fn s_import()` in `js_parser.zig`
-    //         // when we split up the import statements
-    //         bun.assert(named_import.alias != null);
-
-    //         // 1. find the export in the barrel file which corresponds to the named import
-    //         // 2. update the symbol which the `name_ref` points to: add a link which points to the symbol of the final destination
-    //         // 3. update `import_record.source_index` and _maybe_ `import_record.path` to point to the final destination file
-    //         if (barrel_named_exports.getPtr(named_import.alias.?)) |barrel_export| {
-    //             // TODO: question I do not know the answer to: when is this NOT a symbol?
-    //             bun.assert(name_ref.tag == .symbol);
-    //             const symbols = &all_symbols[name_ref.source_index];
-    //             symbols.mut(name_ref.inner_index).link = barrel_export.ref;
-    //             const barrel_source_idx = barrel_export.ref.source_index;
-    //             const barrel_named_imports = &all_named_imports[barrel_source_idx];
-    //             const named_import2 = barrel_named_imports.getPtr(barrel_export.ref) orelse @panic("FUCK");
-
-    //             const barrel_import_records = &all_import_records[barrel_source_idx];
-    //             const final_destination_path = barrel_import_records.at(named_import2.import_record_index).path;
-    //             const final_destination_idx = map.get(final_destination_path.hashKey()).?;
-    //             import_record.source_index = Index.init(final_destination_idx);
-    //             const path = this.graph.input_files.items(.source)[final_destination_idx].path;
-    //             std.debug.print("THE FOCKIN FINAL: {s}\n", .{path.text});
-    //             import_record.path = path;
-    //         }
-
-    //         // If we're here then the user imported something from the barrel file which never existed in the first place.
-    //         // Do nothing and let the bundler handle this missing symbol error itself.
-    //     }
-    // }
-
     /// Dev Server uses this instead to run a subset of the transpiler, and to run it asynchronously.
     pub fn startFromBakeDevServer(this: *BundleV2, bake_entry_points: bake.DevServer.EntryPointList) !DevServerInput {
         this.unique_key = generateUniqueKey();
@@ -2447,175 +2389,39 @@ pub const BundleV2 = struct {
     }
 
     pub fn finishFromBakeDevServer(this: *BundleV2, dev_server: *bake.DevServer) bun.OOM!void {
-        // TODO: Suggestion for barrel file implementation:
-        // - Revert this entire file.
-        // - The loop to generate `js_reachable_files` should skip all files marked is barrel file
-        // - When a barrel file is de-optimized, unmark `is_barrel_file` on the result
-
         const start = &dev_server.current_bundle.?.start_data;
 
         this.graph.heap.helpCatchMemoryIssues();
 
+        try this.cloneAST();
+
+        this.graph.heap.helpCatchMemoryIssues();
         this.dynamic_import_entry_points = .init(this.graph.allocator);
+
         var html_files: std.AutoArrayHashMapUnmanaged(Index, void) = .{};
 
         // Separate non-failing files into two lists: JS and CSS
         const js_reachable_files = reachable_files: {
-            const reachable = try this.findReachableFiles();
-            // {
-            //     this.linker.parse_graph = &this.graph;
-
-            //     this.linker.log = this.transpiler.log;
-
-            //     this.linker.resolver = &this.transpiler.resolver;
-            //     this.linker.cycle_detector = std.ArrayList(ImportTracker).init(this.graph.allocator);
-
-            //     this.linker.graph.reachable_files = reachable;
-
-            //     const sources: []const Logger.Source = this.graph.input_files.items(.source);
-            try this.cloneAST();
-            //     try this.linker.graph.load(this.graph.entry_points.items, sources, this.graph.server_component_boundaries, this.dynamic_import_entry_points.keys());
-            // }
-
             var css_total_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.css_file_count);
             try start.css_entry_points.ensureUnusedCapacity(this.graph.allocator, this.graph.css_file_count);
             var js_files = try std.ArrayListUnmanaged(Index).initCapacity(this.graph.allocator, this.graph.ast.len - this.graph.css_file_count - 1);
 
             const asts = this.graph.ast.slice();
             const css_asts = asts.items(.css);
+            const all_parts = asts.items(.parts);
 
             const input_files = this.graph.input_files.slice();
             const loaders = input_files.items(.loader);
             const sources = input_files.items(.source);
-            const all_parts = asts.items(.parts);
-            const all_import_records = asts.items(.import_records);
-            const all_css = asts.items(.css);
-            const all_target = asts.items(.target);
-
-            // {
-            //     const ast_fields = this.graph.ast.slice();
-            //     const exports_kind = ast_fields.items(.exports_kind);
-            //     const exports_refs = ast_fields.items(.exports_ref);
-            //     const named_imports = ast_fields.items(.named_imports);
-            //     const import_records_list = ast_fields.items(.import_records);
-            //     const export_star_import_records = ast_fields.items(.export_star_import_records);
-
-            //     // Step 3: Resolve "export * from" statements. This must be done after we
-            //     // discover all modules that can have dynamic exports because export stars
-            //     // are ignored for those modules.
-            //     {
-            //         const ExportStarContext = LinkerContext.ExportStarContext;
-
-            //         var export_star_ctx: ?ExportStarContext = null;
-            //         const trace = tracer(@src(), "ResolveExportStarStatements");
-            //         defer trace.end();
-            //         defer {
-            //             if (export_star_ctx) |*export_ctx| {
-            //                 export_ctx.source_index_stack.deinit();
-            //             }
-            //         }
-            //         var resolved_exports: []ResolvedExports = this.linker.graph.meta.items(.resolved_exports);
-            //         var resolved_export_stars: []ExportData = this.linker.graph.meta.items(.resolved_export_star);
-
-            //         for (reachable) |source_index_| {
-            //             const source_index = source_index_.get();
-            //             const id = source_index;
-
-            //             // Propagate exports for export star statements
-            //             const export_star_ids = export_star_import_records[id];
-            //             if (export_star_ids.len > 0) {
-            //                 if (export_star_ctx == null) {
-            //                     export_star_ctx = ExportStarContext{
-            //                         .allocator = this.graph.allocator,
-            //                         .resolved_exports = resolved_exports,
-            //                         .import_records_list = import_records_list,
-            //                         .export_star_records = export_star_import_records,
-
-            //                         .imports_to_bind = this.linker.graph.meta.items(.imports_to_bind),
-
-            //                         .source_index_stack = std.ArrayList(u32).initCapacity(this.graph.allocator, 32) catch unreachable,
-            //                         .exports_kind = exports_kind,
-            //                         .named_exports = this.linker.graph.ast.items(.named_exports),
-            //                     };
-            //                 }
-            //                 export_star_ctx.?.addExports(&resolved_exports[id], source_index);
-            //             }
-
-            //             // Also add a special export so import stars can bind to it. This must be
-            //             // done in this step because it must come after CommonJS module discovery
-            //             // but before matching imports with exports.
-            //             resolved_export_stars[id] = ExportData{
-            //                 .data = .{
-            //                     .source_index = Index.source(source_index),
-            //                     .import_ref = exports_refs[id],
-            //                 },
-            //             };
-            //         }
-            //     }
-
-            //     // Step 4: Match imports with exports. This must be done after we process all
-            //     // export stars because imports can bind to export star re-exports.
-            //     {
-            //         this.linker.cycle_detector.clearRetainingCapacity();
-            //         const trace = tracer(@src(), "MatchImportsWithExports");
-            //         defer trace.end();
-            //         const imports_to_bind = this.linker.graph.meta.items(.imports_to_bind);
-            //         for (reachable) |source_index_| {
-            //             const source_index = source_index_.get();
-
-            //             // not a JS ast or empty
-            //             if (source_index >= named_imports.len) {
-            //                 continue;
-            //             }
-
-            //             const named_imports_ = &named_imports[source_index];
-            //             if (named_imports_.count() > 0) {
-            //                 this.linker.matchImportsWithExportsForFile(
-            //                     named_imports_,
-            //                     &imports_to_bind[source_index],
-            //                     source_index,
-            //                 );
-            //             }
-            //         }
-            //     }
-
-            //     {
-            //         const imports_to_bind_list = this.linker.graph.meta.items(.imports_to_bind);
-            //         const parts_list = this.linker.graph.ast.items(.parts);
-            //         for (reachable) |index| {
-            //             if (index.isRuntime()) continue;
-            //             const id = index.get();
-            //             const imports_to_bind = &imports_to_bind_list[id];
-            //             const parts = parts_list[id];
-            //             const import_records = all_import_records[id].slice();
-            //             _ = parts;
-            //             for (imports_to_bind.keys(), imports_to_bind.values()) |ref_untyped, import_untyped| {
-            //                 const ref: Ref = ref_untyped; // ZLS
-            //                 const import: ImportData = import_untyped; // ZLS
-
-            //                 const import_source_index = import.data.source_index.get();
-
-            //                 if (named_imports[id].get(ref)) |*named_import| {
-            //                     import_records[named_import.import_record_index].source_index = .source(import_source_index);
-            //                     import_records[named_import.import_record_index].path = sources[import_source_index].path;
-            //                 }
-
-            //                 _ = this.linker.graph.symbols.merge(ref, import.data.import_ref);
-            //             }
-            //         }
-            //     }
-            // }
-
             for (
-                reachable,
-            ) |source_index| {
-                if (source_index.isRuntime()) continue;
-                const index = source_index.get();
-                const part_list = all_parts[index];
-                const import_records = all_import_records[index];
-                const maybe_css = all_css[index];
-                const target = all_target[index];
-
+                all_parts[1..],
+                asts.items(.import_records)[1..],
+                css_asts[1..],
+                asts.items(.target)[1..],
+                asts.items(.exports_kind)[1..],
+                1..,
+            ) |part_list, import_records, maybe_css, target, exports_kind, index_raw| {
+                const source_index = Index.init(index_raw);
                 // Dev Server proceeds even with failed files.
                 // These files are filtered out via the lack of any parts.
                 //
@@ -2629,7 +2435,7 @@ pub const BundleV2 = struct {
                         var log = Logger.Log.init(this.graph.allocator);
                         defer log.deinit();
                         if (this.linker.scanCSSImports(
-                            @intCast(index),
+                            @intCast(source_index.get()),
                             import_records.slice(),
                             css_asts,
                             sources,
@@ -2642,7 +2448,7 @@ pub const BundleV2 = struct {
                             try dev_server.handleParseTaskFailure(
                                 error.InvalidCssImport,
                                 .client,
-                                sources[index].path.text,
+                                sources[source_index.get()].path.text,
                                 &log,
                             );
                             // Since there is an error, do not treat it as a
@@ -2650,10 +2456,17 @@ pub const BundleV2 = struct {
                             _ = start.css_entry_points.swapRemove(source_index);
                         }
                     } else {
+                        if (exports_kind == .esm_barrel_file) {
+                            // Barrel files exist in the parse graph, but all
+                            // import records have been disconnected from the
+                            // barrel, so this file can be skipped.
+                            continue;
+                        }
+
                         // HTML files are special cased because they correspond
                         // to routes in DevServer. They have a JS chunk too,
                         // derived off of the import record list.
-                        if (loaders[index] == .html) {
+                        if (loaders[source_index.get()] == .html) {
                             try html_files.put(this.graph.allocator, source_index, {});
                         } else {
                             js_files.appendAssumeCapacity(source_index);
@@ -3518,6 +3331,8 @@ pub const BundleV2 = struct {
                 const path_to_source_index_map = this.pathToSourceIndexMap(result.ast.target);
 
                 if (result.is_barrel_file) {
+                    result.ast.exports_kind = .esm_barrel_file;
+
                     // Process all import requests to this barrel file, with each one
                     // - Rewriting the importer's `import_record.source_index` to match
                     // - Ensuring the parse task is queued if it was found in `resolve_queue`
@@ -3539,48 +3354,21 @@ pub const BundleV2 = struct {
                     var had_barrel_deoptimization = false;
                     for (pending.items) |request| {
                         const request_import_records = all_import_record_lists[request.importer_source_index.get()].slice();
-                        const request_record = &request_import_records[request.import_record_index.get()];
-                        const importer_named_imports = &all_named_imports[request.importer_source_index.get()];
-
-                        // TODO: avoid this loop
-                        // Locate the named import entry for this record.
-                        const named_import = for (importer_named_imports.values()) |named_import| {
-                            if (named_import.import_record_index == request.import_record_index.get())
-                                break &named_import;
-                        } else {
-                            // Assertion failure?
-                            continue;
-                        };
-
-                        // Locate the corresponding export in THIS file
-                        const barrel_named_export = barrel_ast.named_exports.get(named_import.alias orelse {
-                            // ok???
-                            continue;
-                        }) orelse {
-                            had_barrel_deoptimization = true;
-                            break;
-                        };
-
-                        // Locate the import it maps to.
-                        const barrel_named_import = barrel_ast.named_imports.get(barrel_named_export.ref) orelse {
-                            // Was not a plain re-export.
-                            had_barrel_deoptimization = true;
-                            break;
-                        };
-
-                        const import_record = import_records.mut(barrel_named_import.import_record_index);
-                        if (import_record.source_index.isValid()) {
-                            request_record.source_index = import_record.source_index;
-                            request_record.path = import_record.path;
-                        } else {
-                            const hash = import_record.path.hashKey();
-                            const entry = resolve_queue.fetchSwapRemove(hash) orelse continue; // assertion failure?
-                            diff += @intFromBool(this.processEnqueuedResolveTask(
-                                entry.key,
-                                entry.value,
-                                path_to_source_index_map,
-                                &.{ request_record, import_record },
-                            ));
+                        switch (this.processBarrelRecord(.{
+                            .resolve_queue = &resolve_queue,
+                            .importer_source_index = request.importer_source_index,
+                            .importer_named_imports = &all_named_imports[request.importer_source_index.get()],
+                            .importer_record = &request_import_records[request.import_record_index.get()],
+                            .importer_record_index = request.import_record_index,
+                            .barrel_ast = barrel_ast,
+                            .path_to_source_index_map = path_to_source_index_map,
+                        })) {
+                            .reused_parse_task, .not_found => {},
+                            .new_parse_task => diff += 1,
+                            .deoptimize => {
+                                had_barrel_deoptimization = true;
+                                break;
+                            },
                         }
                     }
 
@@ -3734,6 +3522,73 @@ pub const BundleV2 = struct {
     /// To satisfy the interface from NewHotReloader()
     pub fn bustDirCache(vm: *BundleV2, path: []const u8) bool {
         return vm.transpiler.resolver.bustDirCache(path);
+    }
+
+    const ProcessBarrelResult = enum {
+        reused_parse_task,
+        /// Ignoring this is OK because the linker will just raise a bundler error.
+        not_found,
+        /// Increment pending count by one please.
+        new_parse_task,
+        /// Should convert the barrel into a regular file.
+        deoptimize,
+    };
+    pub fn processBarrelRecord(this: *BundleV2, opts: struct {
+        resolve_queue: *ResolveQueue,
+        importer_source_index: Source.Index,
+        importer_named_imports: *JSAst.NamedImports,
+        importer_record: *ImportRecord,
+        importer_record_index: ImportRecord.Index,
+        barrel_ast: *const JSAst,
+        path_to_source_index_map: *PathToSourceIndexMap,
+    }) ProcessBarrelResult {
+        bun.assert(opts.importer_record.tag == .barrel);
+
+        // Locate the named import entry for this record.
+        // TODO: avoid this loop
+        const named_import: *js_ast.NamedImport = for (opts.importer_named_imports.values()) |*named_import| {
+            if (named_import.import_record_index == opts.importer_record_index.get())
+                break named_import;
+        } else return .deoptimize;
+
+        // Locate the corresponding export in THIS file
+        const alias = named_import.alias orelse return .deoptimize;
+        const barrel_named_export = opts.barrel_ast.named_exports.get(alias) orelse
+            return .deoptimize; // import does not exist
+
+        // Locate the import it maps to.
+        const barrel_named_import = opts.barrel_ast.named_imports.get(barrel_named_export.ref) orelse
+            return .deoptimize; // not a re-export :(
+
+        // TODO: dig through multiple layers of exports?
+
+        const barrel_import_record = opts.barrel_ast.import_records.mut(barrel_named_import.import_record_index);
+        const result: ProcessBarrelResult = if (barrel_import_record.source_index.isValid()) res: {
+            opts.importer_record.source_index = barrel_import_record.source_index;
+            opts.importer_record.path = barrel_import_record.path;
+            break :res .reused_parse_task;
+        } else res: {
+            const hash = barrel_import_record.path.hashKey();
+            const entry = opts.resolve_queue.fetchSwapRemove(hash) orelse {
+                bun.debugAssert(false);
+                return .deoptimize;
+            };
+            break :res if (this.processEnqueuedResolveTask(
+                entry.key,
+                entry.value,
+                opts.path_to_source_index_map,
+                &.{ opts.importer_record, barrel_import_record },
+            )) .new_parse_task else .reused_parse_task;
+        };
+
+        // oh no call the disaster control people im sorry,,
+        if (barrel_named_import.alias) |a| {
+            const namespace_ref = named_import.namespace_ref.?;
+            const symbol: *js_ast.Symbol = this.graph.ast.items(.symbols)[opts.importer_source_index.get()].mut(namespace_ref.inner_index);
+            symbol.namespace_alias = .{ .alias = a, .namespace_ref = .None };
+        }
+
+        return result;
     }
 };
 
@@ -5701,7 +5556,7 @@ pub const Graph = struct {
 
     pub const InputFile = struct {
         source: Logger.Source,
-        loader: options.Loader = options.Loader.file,
+        loader: options.Loader = .file,
         side_effects: _resolver.SideEffects,
         allocator: std.mem.Allocator = bun.default_allocator,
         additional_files: BabyList(AdditionalFile) = .{},
@@ -12941,15 +12796,12 @@ pub const LinkerContext = struct {
     /// The conversion logic is completely different for format .internal_bake_dev
     fn convertStmtsForChunkForBake(
         c: *LinkerContext,
-        source_index: u32,
         stmts: *StmtList,
         part_stmts: []const js_ast.Stmt,
         allocator: std.mem.Allocator,
         ast: *const JSAst,
     ) !void {
-        _ = source_index; // may be used
-
-        const receiver_args = try allocator.dupe(G.Arg, &.{
+        const default_receiver_args = try allocator.dupe(G.Arg, &.{
             .{ .binding = Binding.alloc(allocator, B.Identifier{ .ref = ast.module_ref }, Logger.Loc.Empty) },
         });
         const module_id = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty);
@@ -12973,7 +12825,7 @@ pub const LinkerContext = struct {
                     // pretty path is not yet known. the other statement types
                     // are not handled here because some of those generate
                     // new local variables (it is too late to do that here).
-                    const record = ast.import_records.at(st.import_record_index);
+                    var record = ast.import_records.at(st.import_record_index);
 
                     const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
@@ -12982,6 +12834,54 @@ pub const LinkerContext = struct {
                         c.parse_graph.input_files.items(.loader)[record.source_index.get()] != .css
                     else
                         true;
+
+                    // Barrel imports need to have proper import symbols. Before, this, it would print like:
+                    //
+                    // var import_pkg = await module.importStmt(".../icon.js", (module) => ..., "Icon1");
+                    // var import_pkg = await module.importStmt(".../icon2.js", (module) => ..., "Icon2");
+                    // [import_pkg.Icon1, import_pkg.Icon2]
+                    //
+                    // The goal is to get this printing:
+                    // var import_pkg_Icon1 = await module.importStmt(".../icon.js", ({ default: module }) => ..., "default");
+                    // var import_pkg_Icon2 = await module.importStmt(".../icon2.js", ({ default: module }) => ..., "default");
+                    // [import_pkg_Icon1, import_pkg_Icon2]
+                    var namespace_ref = st.namespace_ref;
+                    var receiver_args = default_receiver_args;
+                    var barrel_actual_alias: ?[]const u8 = null;
+                    if (record.tag == .barrel and !is_bare_import and is_enabled) brk: {
+                        const symbols = ast.symbols;
+                        bun.assert(st.items.len == 1 or st.default_name != null);
+
+                        const ref: Ref = if (st.items.len > 0)
+                            st.items[0].name.ref.?
+                        else if (st.default_name) |def|
+                            def.ref.?
+                        else {
+                            bun.debugAssert(false);
+                            break :brk;
+                        };
+                        const sym = symbols.mut(ref.inner_index);
+                        sym.namespace_alias = null;
+
+                        barrel_actual_alias = if (symbols.at(namespace_ref.inner_index).namespace_alias) |nsa|
+                            nsa.alias
+                        else
+                            sym.original_name;
+
+                        namespace_ref = ref;
+
+                        // ({ actual_alias: module }) => ...
+                        //  ------------------------ this destructuring
+                        receiver_args = try allocator.dupe(G.Arg, &.{
+                            .{ .binding = Binding.alloc(allocator, B.Object{
+                                .is_single_line = true,
+                                .properties = try allocator.dupe(B.Property, &.{.{
+                                    .key = Expr.init(E.String, .{ .data = barrel_actual_alias.? }, .Empty),
+                                    .value = Binding.alloc(allocator, B.Identifier{ .ref = ast.module_ref }, .Empty),
+                                }}),
+                            }, .Empty) },
+                        });
+                    }
 
                     // module.importSync('path', (module) => ns = module, ['dep', 'etc'])
                     const call = if (is_enabled) call: {
@@ -13021,7 +12921,7 @@ pub const LinkerContext = struct {
                                             .body = .{
                                                 .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
                                                     .value = Expr.assign(
-                                                        Expr.initIdentifier(st.namespace_ref, st.star_name_loc orelse stmt.loc),
+                                                        Expr.initIdentifier(namespace_ref, st.star_name_loc orelse stmt.loc),
                                                         module_id,
                                                     ),
                                                 }, stmt.loc)}),
@@ -13047,14 +12947,24 @@ pub const LinkerContext = struct {
                         try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc));
                     } else {
                         // 'var namespace = module.importSync(...)'
+                        const binding = Binding.alloc(
+                            allocator,
+                            B.Identifier{ .ref = namespace_ref },
+                            st.star_name_loc orelse stmt.loc,
+                        );
                         try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
                             .kind = .k_var, // remove a tdz
                             .decls = try G.Decl.List.fromSlice(allocator, &.{.{
-                                .binding = Binding.alloc(
-                                    allocator,
-                                    B.Identifier{ .ref = st.namespace_ref },
-                                    st.star_name_loc orelse stmt.loc,
-                                ),
+                                .binding = if (barrel_actual_alias) |alias|
+                                    Binding.alloc(allocator, B.Object{
+                                        .is_single_line = true,
+                                        .properties = try allocator.dupe(B.Property, &.{.{
+                                            .key = Expr.init(E.String, .{ .data = alias }, .Empty),
+                                            .value = binding,
+                                        }}),
+                                    }, .Empty)
+                                else
+                                    binding,
                                 .value = call,
                             }}),
                         }, stmt.loc));
@@ -13117,7 +13027,7 @@ pub const LinkerContext = struct {
             }
 
             for (parts) |part| {
-                c.convertStmtsForChunkForBake(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|
+                c.convertStmtsForChunkForBake(stmts, part.stmts, allocator, &ast) catch |err|
                     return .{ .err = err };
             }
 

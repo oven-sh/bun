@@ -1,6 +1,7 @@
 /// <reference path="../../src/bake/bake.d.ts" />
 import { Bake, BunFile, Subprocess } from "bun";
 import fs, { readFileSync, realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert";
@@ -273,6 +274,19 @@ export class Dev {
       this.connectedClients.delete(client);
     });
     return client;
+  }
+
+  async read(file: string): Promise<string> {
+    return await readFile(path.join(this.rootDir, file), "utf8");
+  }
+
+  /**
+   * Writes the file back without any changes
+   * This is useful for triggering file watchers without modifying content
+   */
+  async writeNoChanges(file: string): Promise<void> {
+    const content = await this.read(file);
+    await this.write(file, content, { dedent: false });
   }
 }
 

@@ -7396,6 +7396,10 @@ pub const ExportsKind = enum {
     // module.
     esm_with_dynamic_fallback_from_cjs,
 
+    /// This file is an optimized barrel file, and itself shouldn't be reachable,
+    /// as all importer's get their
+    esm_barrel_file,
+
     const dynamic = std.EnumSet(ExportsKind).init(.{
         .esm_with_dynamic_fallback = true,
         .esm_with_dynamic_fallback_from_cjs = true,

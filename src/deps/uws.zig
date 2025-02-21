@@ -2833,6 +2833,7 @@ extern fn us_socket_context(ssl: i32, s: ?*Socket) ?*SocketContext;
 extern fn us_socket_flush(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
 extern fn us_socket_raw_write(ssl: i32, s: ?*Socket, data: [*c]const u8, length: i32, msg_more: i32) i32;
+extern fn us_socket_write_empty_packet(ssl: i32, s: ?*Socket) i32;
 extern fn us_socket_shutdown(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_shutdown_read(ssl: i32, s: ?*Socket) void;
 extern fn us_socket_is_shut_down(ssl: i32, s: ?*Socket) i32;

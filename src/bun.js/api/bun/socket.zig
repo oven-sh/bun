@@ -1347,9 +1347,6 @@ fn NewSocket(comptime ssl: bool) type {
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
         native_callback: NativeCallbacks = .none,
-        // yes node send empty SSL_write() on TLS
-        empty_packet_pending: if (ssl) u32 else void = if (ssl) 0 else {},
-
         pub usingnamespace bun.NewRefCounted(@This(), deinit, "Socket");
 
         // We use this direct callbacks on HTTP2 when available
@@ -1392,6 +1389,7 @@ fn NewSocket(comptime ssl: bool) type {
             finalizing: bool = false,
             authorized: bool = false,
             handshake_complete: bool = false,
+            empty_packet_pending: bool = false,
             end_after_flush: bool = false,
             close_after_flush: bool = false,
             owned_protos: bool = true,
@@ -1850,11 +1848,11 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
+            this.flags.handshake_complete = true;
             if (this.socket.isDetached()) return;
             const authorized = if (success == 1) true else false;
 
             this.flags.authorized = authorized;
-            this.flags.handshake_complete = true;
 
             const handlers = this.handlers;
             var callback = handlers.onHandshake;
@@ -2264,11 +2262,13 @@ fn NewSocket(comptime ssl: bool) type {
             const total_to_write: usize = buffer.slice().len + @as(usize, this.buffered_data_for_node_net.len);
             if (total_to_write == 0) {
                 if (ssl) {
+                    log("total_to_write == 0", .{});
                     if (!data_value.isUndefined()) {
+                        log("data_value is not undefined", .{});
                         // special condition for SSL_write(0, "", 0)
                         // we need to send an empty packet after the buffer is flushed and after the handshake is complete
                         // and in this case we need to ignore SSL_write() return value because 0 should not be treated as an error
-                        this.empty_packet_pending += 1;
+                        this.flags.empty_packet_pending = true;
                         if (!this.tryWriteEmptyPacket()) {
                             return .{ .success = .{
                                 .wrote = -1,
@@ -2345,7 +2345,13 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         fn writeOrEnd(this: *This, globalObject: *JSC.JSGlobalObject, args: []JSC.JSValue, buffer_unwritten_data: bool, comptime is_end: bool) WriteResult {
-            if (args[0].isUndefined()) return .{ .success = .{} };
+            if (args[0].isUndefined()) {
+                if (!this.flags.end_after_flush and is_end) {
+                    this.flags.end_after_flush = true;
+                }
+                log("writeOrEnd undefined", .{});
+                return .{ .success = .{} };
+            }
 
             bun.debugAssert(this.buffered_data_for_node_net.len == 0);
             var encoding_value: JSC.JSValue = args[3];
@@ -2442,20 +2448,21 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (bytes.len == 0) {
                 if (ssl) {
+                    log("writeOrEnd 0", .{});
                     // special condition for SSL_write(0, "", 0)
                     // we need to send an empty packet after the buffer is flushed and after the handshake is complete
                     // and in this case we need to ignore SSL_write() return value because 0 should not be treated as an error
-                    this.empty_packet_pending += 1;
+                    this.flags.empty_packet_pending = true;
                     if (!this.tryWriteEmptyPacket()) {
                         return .{ .success = .{
                             .wrote = -1,
                             .total = bytes.len,
                         } };
                     }
-                    return .{ .success = .{} };
                 }
                 return .{ .success = .{} };
             }
+            log("writeOrEnd {d}", .{bytes.len});
             const wrote = this.writeMaybeCorked(bytes);
             const uwrote: usize = @intCast(@max(wrote, 0));
             if (buffer_unwritten_data) {
@@ -2475,24 +2482,17 @@ fn NewSocket(comptime ssl: bool) type {
 
         fn tryWriteEmptyPacket(this: *This) bool {
             if (ssl) {
-                while (this.empty_packet_pending > 0 and this.flags.handshake_complete and this.buffered_data_for_node_net.len == 0 and this.socket.isConnectedSocket()) {
-                    // write as much as possible
-                    // this.socket.rawWrite("", is_end);
-                    this.empty_packet_pending -= 1;
-                    return true;
-                }
+                // just mimic the side-effect dont actually write empty non-TLS data onto the socket, we just wanna to have same behavior of node.js
+                if (!this.flags.handshake_complete or this.buffered_data_for_node_net.len > 0) return false;
+
+                this.flags.empty_packet_pending = false;
+                return true;
             }
             return false;
         }
 
-        fn canCloseAfterFlush(this: *This) bool {
-            if (!this.flags.is_active) {
-                return false;
-            }
-            if (ssl) {
-                return this.flags.end_after_flush and this.empty_packet_pending == 0 and this.buffered_data_for_node_net.len == 0;
-            }
-            return this.flags.end_after_flush;
+        fn canEndAfterFlush(this: *This) bool {
+            return this.flags.is_active and this.flags.end_after_flush and !this.flags.empty_packet_pending and this.buffered_data_for_node_net.len == 0;
         }
 
         fn internalFlush(this: *This) void {
@@ -2514,8 +2514,7 @@ fn NewSocket(comptime ssl: bool) type {
             _ = this.tryWriteEmptyPacket();
             this.socket.flush();
 
-            if (this.canCloseAfterFlush()) {
-                this.flags.end_after_flush = false;
+            if (this.canEndAfterFlush()) {
                 this.markInactive();
             }
         }

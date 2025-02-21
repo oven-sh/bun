@@ -307,7 +307,7 @@ const Socket = (function (InternalSocket) {
       self.connecting = false;
       if (callback) {
         const writeChunk = self._pendingData;
-        if (!writeChunk || socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+        if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
           self._pendingData = self.#writeCallback = null;
           callback(null);
         } else {
@@ -894,6 +894,7 @@ const Socket = (function (InternalSocket) {
         // at this state destroyed will be true but we need to close the writable side
         this._writableState.destroyed = false;
         this.end();
+
         // we now restore the destroyed flag
         this._writableState.destroyed = true;
       }
@@ -1119,7 +1120,6 @@ const Socket = (function (InternalSocket) {
         callback($ERR_SOCKET_CLOSED("Socket is closed"));
         return false;
       }
-
       const success = socket.$write(chunk, encoding);
       this[kBytesWritten] = socket.bytesWritten;
       if (success) {

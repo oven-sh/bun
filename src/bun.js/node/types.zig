@@ -111,16 +111,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         }
 
         /// Unwrap the value if it is `result` or use the provided `default_value`
-        ///
-        /// `default_value` must be comptime known so the optimizer can optimize this branch out
-        pub inline fn unwrapOr(this: @This(), comptime default_value: ReturnType) ReturnType {
-            return switch (this) {
-                .result => |v| v,
-                .err => default_value,
-            };
-        }
-
-        pub inline fn unwrapOrNoOptmizations(this: @This(), default_value: ReturnType) ReturnType {
+        pub inline fn unwrapOr(this: @This(), default_value: ReturnType) ReturnType {
             return switch (this) {
                 .result => |v| v,
                 .err => default_value,

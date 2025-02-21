@@ -3044,7 +3044,7 @@ pub const OverrideMap = struct {
                 builder.count(entry.key.?.asString(lockfile.allocator).?);
                 switch (entry.value.?.data) {
                     .e_string => |s| {
-                        builder.count(s.slice(lockfile.allocator));
+                        builder.count(s.toWtf8MayAlloc(lockfile.allocator) catch bun.outOfMemory());
                     },
                     .e_object => {
                         if (entry.value.?.asProperty(".")) |dot| {
@@ -3143,7 +3143,7 @@ pub const OverrideMap = struct {
                 continue;
             };
 
-            const version_str = value.data.e_string.slice(lockfile.allocator);
+            const version_str = value.data.e_string.toWtf8MayAlloc(lockfile.allocator) catch bun.outOfMemory();
             if (strings.hasPrefixComptime(version_str, "patch:")) {
                 // TODO(dylan-conway): apply .patch files to packages
                 try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"overrides\"", .{});
@@ -3215,7 +3215,7 @@ pub const OverrideMap = struct {
                 continue;
             }
 
-            const version_str = value.data.e_string.data;
+            const version_str = value.data.e_string.asWtf8AssertNotRope();
             if (strings.hasPrefixComptime(version_str, "patch:")) {
                 // TODO(dylan-conway): apply .patch files to packages
                 try log.addWarningFmt(&source, key.loc, lockfile.allocator, "Bun currently does not support patched package \"resolutions\"", .{});
@@ -5701,11 +5701,11 @@ pub const Package = extern struct {
                         break :bin;
                     },
                     .e_string => |stri| {
-                        if (stri.data.len > 0) {
+                        if (!stri.isEmpty()) {
                             package.bin = .{
                                 .tag = .file,
                                 .value = .{
-                                    .file = string_builder.append(String, stri.data),
+                                    .file = string_builder.append(String, stri.asWtf8AssertNotRope()),
                                 },
                             };
                             break :bin;

@@ -1382,7 +1382,7 @@ pub fn parseIntoBinaryLockfile(
             const key = prop.key.?;
             const value = prop.value.?;
 
-            if (!key.isString() or key.data.e_string.len() == 0) {
+            if (!key.isString() or key.data.e_string.isEmpty()) {
                 try log.addError(source, key.loc, "Expected a non-empty string");
                 return error.InvalidOverridesObject;
             }

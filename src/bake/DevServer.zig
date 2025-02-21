@@ -1424,7 +1424,7 @@ fn getJavaScriptCodeForHTMLFile(
     const w = array.writer(sfa);
 
     try w.writeAll("  ");
-    try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
+    try bun.js_printer.writeJSONString(.wtf8_replace_invalid, input_file_sources[index.get()].path.pretty, @TypeOf(w), w);
     try w.writeAll("(m) {\n  ");
     for (import_records[index.get()].slice()) |import| {
         if (import.source_index.isValid()) {
@@ -1436,7 +1436,7 @@ fn getJavaScriptCodeForHTMLFile(
         }
 
         try w.writeAll("  m.dynamicImport(");
-        try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
+        try bun.js_printer.writeJSONString(.wtf8_replace_invalid, import.path.pretty, @TypeOf(w), w);
         try w.writeAll(");\n  ");
     }
     try w.writeAll("},\n");
@@ -4369,10 +4369,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const initial_response_entry_point = options.initial_response_entry_point;
                         if (initial_response_entry_point.len > 0) {
                             try bun.js_printer.writeJSONString(
+                                .wtf8_replace_invalid,
                                 g.owner().relativePath(initial_response_entry_point),
                                 @TypeOf(w),
                                 w,
-                                .utf8,
                             );
                         } else {
                             try w.writeAll("null");
@@ -4383,10 +4383,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         if (options.react_refresh_entry_point.len > 0) {
                             try w.writeAll(",\n  refresh: ");
                             try bun.js_printer.writeJSONString(
+                                .wtf8_replace_invalid,
                                 g.owner().relativePath(options.react_refresh_entry_point),
                                 @TypeOf(w),
                                 w,
-                                .utf8,
                             );
                         }
                         try w.writeAll("\n");
@@ -4473,39 +4473,24 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         "\"file://");
                     if (Environment.isWindows and !is_windows_drive_path) {
                         // UNC namespace -> file://server/share/path.ext
-                        bun.strings.percentEncodeWrite(
+                        try bun.strings.percentEncodeWrite(
                             if (path.len > 2 and bun.path.isSepAny(path[0]) and bun.path.isSepAny(path[1]))
                                 path[2..]
                             else
                                 path, // invalid but must not crash
                             &source_map_strings,
-                        ) catch |err| {
-                            switch (err) {
-                                error.IncompleteUTF8 => @panic("Unexpected: source file with incomplete UTF-8 as file path"),
-                                error.OutOfMemory => |e| return e,
-                            }
-                        };
+                        );
                     } else {
                         // posix paths always start with '/'
                         // -> file:///path/to/file.js
                         // windows drive letter paths have the extra slash added
                         // -> file:///C:/path/to/file.js
-                        bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| {
-                            switch (err) {
-                                error.IncompleteUTF8 => @panic("Unexpected: source file with incomplete UTF-8 as file path"),
-                                error.OutOfMemory => |e| return e,
-                            }
-                        };
+                        try bun.strings.percentEncodeWrite(path, &source_map_strings);
                     }
                     try source_map_strings.appendSlice("\"");
                 } else {
                     try source_map_strings.appendSlice("\"bun://");
-                    bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| {
-                        switch (err) {
-                            error.IncompleteUTF8 => @panic("Unexpected: source file with incomplete UTF-8 as file path"),
-                            error.OutOfMemory => |e| return e,
-                        }
-                    };
+                    try bun.strings.percentEncodeWrite(path, &source_map_strings);
                     try source_map_strings.appendSlice("\"");
                 }
             }

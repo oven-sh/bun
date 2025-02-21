@@ -132,7 +132,7 @@ pub fn parseJSON(
         bun.JSAst.Stmt.Data.Store.reset();
     }
     debug("parse (JSON, {d} bytes)", .{source.len});
-    var json = bun.JSON.parse(&json_src, &log, arena, false) catch {
+    var json = bun.JSON.parse(&json_src, &log, arena) catch {
         return error.InvalidJSON;
     };
 
@@ -179,7 +179,7 @@ pub fn parseJSON(
         if (item.data != .e_string)
             return error.InvalidSourceMap;
 
-        source_paths_slice.?[i] = try alloc.dupe(u8, try item.data.e_string.string(alloc));
+        source_paths_slice.?[i] = try alloc.dupe(u8, try item.data.e_string.toWtf8MayAlloc(alloc));
 
         i += 1;
     };
@@ -187,7 +187,7 @@ pub fn parseJSON(
     const map = if (hint != .source_only) map: {
         const map_data = switch (Mapping.parse(
             alloc,
-            mappings_str.data.e_string.slice(arena),
+            mappings_str.data.e_string.toWtf8MayAlloc(arena) catch bun.outOfMemory(),
             null,
             std.math.maxInt(i32),
             std.math.maxInt(i32),
@@ -221,7 +221,7 @@ pub fn parseJSON(
             break :content null;
         }
 
-        const str = item.data.e_string.string(arena) catch bun.outOfMemory();
+        const str = item.data.e_string.toWtf8MayAlloc(arena) catch bun.outOfMemory();
         if (str.len == 0) {
             break :content null;
         }
@@ -1397,8 +1397,9 @@ pub const LineOffsetTable = struct {
 
         var remaining = contents;
         while (remaining.len > 0) {
-            const len_ = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-            const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], len_, i32, 0);
+            const _result = strings.unicode.decodeFirst(.wtf8_replace_invalid, remaining).?;
+            const c: i32 = _result.codepoint;
+            const len_ = _result.advance;
             const cp_len = @as(usize, len_);
 
             if (column == 0) {
@@ -1804,8 +1805,9 @@ pub const Chunk = struct {
                 const n = @as(usize, @intCast(slice.len));
                 var c: i32 = 0;
                 while (i < n) {
-                    const len = strings.wtf8ByteSequenceLengthWithInvalid(slice[i]);
-                    c = strings.decodeWTF8RuneT(slice[i..].ptr[0..4], len, i32, strings.unicode_replacement);
+                    const dec_res = strings.unicode.decodeFirst(.wtf8_replace_invalid, slice[i..]).?;
+                    const len = dec_res.advance;
+                    c = dec_res.codepoint;
                     i += @as(usize, len);
 
                     switch (c) {

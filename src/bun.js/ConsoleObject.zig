@@ -2128,7 +2128,7 @@ pub const Formatter = struct {
                         return;
                     }
 
-                    JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                    JSPrinter.writeJSONString(.latin1, str.latin1(), Writer, writer_) catch unreachable;
 
                     return;
                 }

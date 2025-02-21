@@ -226,7 +226,7 @@ const JSONFormatter = struct {
     input: []const u8,
 
     pub fn format(self: JSONFormatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .latin1);
+        try bun.js_printer.writeJSONString(.latin1, self.input, @TypeOf(writer), writer);
     }
 };
 
@@ -240,9 +240,9 @@ const JSONFormatterUTF8 = struct {
 
     pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         if (self.opts.quote) {
-            try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+            try bun.js_printer.writeJSONString(.wtf8_replace_invalid, self.input, @TypeOf(writer), writer);
         } else {
-            try bun.js_printer.writePreQuotedString(self.input, @TypeOf(writer), writer, '"', false, true, .utf8);
+            try bun.js_printer.writePreQuotedString(.wtf8_replace_invalid, self.input, @TypeOf(writer), writer, '"', false, true);
         }
     }
 };
@@ -566,26 +566,25 @@ pub fn fmtIdentifier(name: string) FormatValidIdentifier {
 pub const FormatValidIdentifier = struct {
     name: string,
     pub fn format(self: FormatValidIdentifier, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        var iterator = strings.CodepointIterator.init(self.name);
-        var cursor = strings.CodepointIterator.Cursor{};
+        var it2 = strings.unicode.codepointIterator(.wtf8_replace_invalid, self.name);
 
         var has_needed_gap = false;
         var needs_gap = false;
         var start_i: usize = 0;
 
-        if (!iterator.next(&cursor)) {
+        if (!it2.next()) {
             try writer.writeAll("_");
             return;
         }
 
         // Common case: no gap necessary. No allocation necessary.
-        needs_gap = !js_lexer.isIdentifierStart(cursor.c);
+        needs_gap = !js_lexer.isIdentifierStart(it2.c);
         if (!needs_gap) {
             // Are there any non-alphanumeric chars at all?
-            while (iterator.next(&cursor)) {
-                if (!js_lexer.isIdentifierContinue(cursor.c) or cursor.width > 1) {
+            while (it2.next()) {
+                if (!js_lexer.isIdentifierContinue(it2.c) or it2.c >= 0x80) {
                     needs_gap = true;
-                    start_i = cursor.i;
+                    start_i = it2.i;
                     break;
                 }
             }
@@ -595,17 +594,16 @@ pub const FormatValidIdentifier = struct {
             needs_gap = false;
             if (start_i > 0) try writer.writeAll(self.name[0..start_i]);
             var slice = self.name[start_i..];
-            iterator = strings.CodepointIterator.init(slice);
-            cursor = strings.CodepointIterator.Cursor{};
+            it2 = strings.unicode.codepointIterator(.wtf8_replace_invalid, slice);
 
-            while (iterator.next(&cursor)) {
-                if (js_lexer.isIdentifierContinue(cursor.c) and cursor.width == 1) {
+            while (it2.next()) {
+                if (js_lexer.isIdentifierContinue(it2.c) and it2.c < 0x80) {
                     if (needs_gap) {
                         try writer.writeAll("_");
                         needs_gap = false;
                         has_needed_gap = true;
                     }
-                    try writer.writeAll(slice[cursor.i .. cursor.i + @as(u32, cursor.width)]);
+                    try writer.writeAll(slice[it2.i .. it2.i + @as(u32, it2.width)]);
                 } else if (!needs_gap) {
                     needs_gap = true;
                     // skip the code point, replace it with a single _
@@ -637,7 +635,7 @@ pub fn githubActionWriter(writer: anytype, self: string) !void {
         if (strings.indexOfNewlineOrNonASCIIOrANSI(self, @as(u32, @truncate(offset)))) |i| {
             const byte = self[i];
             if (byte > 0x7F) {
-                offset += @max(strings.wtf8ByteSequenceLength(byte), 1);
+                offset += strings.unicode.decodeFirst(.wtf8_replace_invalid, self[i..]).?.advance;
                 continue;
             }
             if (i > 0) {
@@ -684,14 +682,7 @@ pub fn githubAction(self: string) strings.GithubActionFormatter {
 }
 
 pub fn quotedWriter(writer: anytype, self: string) !void {
-    const remain = self;
-    if (strings.containsNewlineOrNonASCIIOrQuote(remain)) {
-        try bun.js_printer.writeJSONString(self, @TypeOf(writer), writer, strings.Encoding.utf8);
-    } else {
-        try writer.writeAll("\"");
-        try writer.writeAll(self);
-        try writer.writeAll("\"");
-    }
+    try bun.js_printer.writeJSONString(.wtf8_replace_invalid, self, @TypeOf(writer), writer);
 }
 
 pub const QuotedFormatter = struct {

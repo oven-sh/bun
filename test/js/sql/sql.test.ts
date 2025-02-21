@@ -1,4 +1,4 @@
-import { sql, SQL, randomUUIDv7 } from "bun";
+import { sql, SQL, randomUUIDv7, password } from "bun";
 const postgres = (...args) => new sql(...args);
 import { expect, test, mock, beforeAll, afterAll, describe } from "bun:test";
 import { $ } from "bun";
@@ -1054,15 +1054,15 @@ if (isDockerEnabled()) {
   });
 
   test("Support dynamic password function", async () => {
-    await using sql = postgres({ ...options, ...login_scram, pass: () => "bun_sql_test_scram", max: 1 });
+    await using sql = postgres({ ...options, ...login_scram, password: () => "bun_sql_test_scram", max: 1 });
     return expect((await sql`select true as x`)[0].x).toBe(true);
   });
 
-  test("Support dynamic async resolvedpassword function", async () => {
+  test("Support dynamic async resolved password function", async () => {
     await using sql = postgres({
       ...options,
       ...login_scram,
-      pass: () => Promise.resolve("bun_sql_test_scram"),
+      password: () => Promise.resolve("bun_sql_test_scram"),
       max: 1,
     });
     return expect((await sql`select true as x`)[0].x).toBe(true);
@@ -1073,12 +1073,44 @@ if (isDockerEnabled()) {
       ...options,
       ...login_scram,
       max: 1,
-      pass: async () => {
+      password: async () => {
         await Bun.sleep(10);
         return "bun_sql_test_scram";
       },
     });
     return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+  test("Support dynamic async rejected password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      password: () => Promise.reject(new Error("password error")),
+      max: 1,
+    });
+    try {
+      await sql`select true as x`;
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.message).toBe("password error");
+    }
+  });
+  test("Support dynamic async password function that throws", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      max: 1,
+      password: async () => {
+        await Bun.sleep(10);
+        throw new Error("password error");
+      },
+    });
+    try {
+      await sql`select true as x`;
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("password error");
+    }
   });
 
   // t('Point type', async() => {

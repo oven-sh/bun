@@ -402,7 +402,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .router = undefined,
         .watcher_atomics = undefined,
     });
-    dev.allocator = dev.allocation_scope.allocator();
+    dev.allocator = if (AllocationScope.enabled) dev.allocation_scope.allocator() else allocator;
     const global = dev.vm.global;
     errdefer allocator.destroy(dev);
 

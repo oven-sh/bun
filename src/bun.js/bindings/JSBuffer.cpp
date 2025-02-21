@@ -306,7 +306,7 @@ public:
         auto thisValue = callFrame.thisValue().toThis(&lexicalGlobalObject, JSC::ECMAMode::strict());
         if (thisValue.isUndefinedOrNull()) {
             throwTypeError(&lexicalGlobalObject, throwScope, "Cannot convert undefined or null to object"_s);
-            return JSC::JSValue::encode(JSC::jsUndefined());
+            return {};
         }
 
         auto thisObject = JSC::jsDynamicCast<JSC::JSUint8Array*>(thisValue);

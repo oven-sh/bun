@@ -3913,6 +3913,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_esmRegistryMap.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_internalModuleRegistry.visit(visitor);
+    thisObject->m_processBindingBuffer.visit(visitor);
+    thisObject->m_processBindingConstants.visit(visitor);
+    thisObject->m_processBindingFs.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferClassStructure.visit(visitor);
@@ -3983,6 +3986,10 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBunRequestStructure.visit(visitor);
     thisObject->m_JSBunRequestParamsPrototype.visit(visitor);
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
+    thisObject->m_statValues.visit(visitor);
+    thisObject->m_bigintStatValues.visit(visitor);
+    thisObject->m_statFsValues.visit(visitor);
+    thisObject->m_bigintStatFsValues.visit(visitor);
 
     thisObject->m_nodeErrorCache.visit(visitor);
 

@@ -1,5 +1,5 @@
 //! AllocationScope wraps another allocator, providing leak and invalid free assertions.
-//! It also allows measuring how much an
+//! It also allows measuring how much memory a scope has allocated.
 const AllocationScope = @This();
 
 pub const enabled = bun.Environment.isDebug;

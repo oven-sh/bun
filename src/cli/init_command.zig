@@ -1063,7 +1063,7 @@ const Template = enum {
                 InitCommand.Assets.createNew(path, contents);
             result catch |err| {
                 if (err == error.EEXIST) {
-                    Output.prettyln(" ○ <r><yellow>{s}<r> (already exists)", .{path});
+                    Output.prettyln(" ○ <r><yellow>{s}<r> (already exists, skipping)", .{path});
                     Output.flush();
                 } else {
                     Output.err(err, "failed to create file: '{s}'", .{path});

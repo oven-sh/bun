@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import * as dgram from "node:dgram";
+import { isWindows, isMacOS } from "harness";
 
 describe("node:dgram", () => {
   it("adds membership successfully (IPv6)", () => {
     const socket = makeSocket6();
     socket.bind(0, () => {
-      socket.addMembership("ff02::fb", "::%1");
+      socket.addMembership("ff02::fb", getInterface());
       socket.addMembership("ff02::fc");
     });
   });
@@ -16,7 +17,7 @@ describe("node:dgram", () => {
     socket.bind(0, () => {
       expect(() => {
         // fe00:: is not a valid multicast address
-        socket.addMembership("fe00::", "::%1");
+        socket.addMembership("fe00::", getInterface());
         reject();
       }).toThrow();
       expect(() => {
@@ -34,4 +35,16 @@ function makeSocket6() {
     type: "udp6",
     ipv6Only: true,
   });
+}
+
+function getInterface() {
+  if (isWindows) {
+    return "::%1";
+  }
+
+  if (isMacOS) {
+    return "::%lo0";
+  }
+
+  return "::%lo";
 }

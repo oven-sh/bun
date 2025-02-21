@@ -1,6 +1,7 @@
 /// <reference path="../../src/bake/bake.d.ts" />
 import { Bake, BunFile, Subprocess } from "bun";
 import fs, { readFileSync, realpathSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert";
@@ -43,6 +44,16 @@ export const reactRefreshStub = {
   "node_modules/react-refresh/runtime.js": `
     export const performReactRefresh = () => {};
     export const injectIntoGlobalHook = () => {};
+  `,
+};
+
+export const reactAndRefreshStub = {
+  "node_modules/react-refresh/runtime.js": `
+    export const performReactRefresh = () => {};
+    export const injectIntoGlobalHook = () => {};
+  `,
+  "node_modules/react/jsx-dev-runtime.js": `
+    export const jsxDEV = (tag, props, key) => {};
   `,
 };
 
@@ -180,7 +191,7 @@ export class Dev {
   }
 
   write(file: string, contents: string, options: { errors?: null | ErrorSpec[]; dedent?: boolean } = {}) {
-    const snapshot = snapshotCallerLocation();
+    const snapshot = snapshotCallerLocationMayFail();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
       const wait = this.waitForHotReload();
@@ -273,6 +284,19 @@ export class Dev {
       this.connectedClients.delete(client);
     });
     return client;
+  }
+
+  async read(file: string): Promise<string> {
+    return await readFile(path.join(this.rootDir, file), "utf8");
+  }
+
+  /**
+   * Writes the file back without any changes
+   * This is useful for triggering file watchers without modifying content
+   */
+  async writeNoChanges(file: string): Promise<void> {
+    const content = await this.read(file);
+    await this.write(file, content, { dedent: false });
   }
 }
 
@@ -741,25 +765,27 @@ export class Client extends EventEmitter {
     this.suppressInteractivePrompt = false;
   }
 
-  async getMostRecentHmrChunk() {
-    if (!this.#hmrChunk) {
-      // Wait up to a threshold before giving up
-      const resolver = Promise.withResolvers();
-      this.once("hmr-chunk", () => resolver.resolve());
-      this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.reject(new Error("Timeout waiting for HMR chunk"));
-      }, 1000);
-      await resolver.promise;
-      if (t) clearTimeout(t);
-    }
-    if (!this.#hmrChunk) {
-      throw new Error("No HMR chunks received. Make sure storeHotChunks is true");
-    }
-    const chunk = this.#hmrChunk;
-    this.#hmrChunk = null;
-    return chunk;
+  getMostRecentHmrChunk() {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      if (!this.#hmrChunk) {
+        // Wait up to a threshold before giving up
+        const resolver = Promise.withResolvers();
+        this.once("hmr-chunk", () => resolver.resolve());
+        this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
+        let t: any = setTimeout(() => {
+          t = null;
+          resolver.reject(new Error("Timeout waiting for HMR chunk"));
+        }, 1000);
+        await resolver.promise;
+        if (t) clearTimeout(t);
+      }
+      if (!this.#hmrChunk) {
+        throw new Error("No HMR chunks received. Make sure storeHotChunks is true");
+      }
+      const chunk = this.#hmrChunk;
+      this.#hmrChunk = null;
+      return chunk;
+    });
   }
 
   /**
@@ -1306,3 +1332,11 @@ process.on("exit", () => {
     proc.kill("SIGKILL");
   }
 });
+
+export function extractScriptSrc(html: string) {
+  const scriptUrls = [...html.matchAll(/src="([^"]+.js)"/g)];
+  if (scriptUrls.length !== 1) {
+    throw new Error("Expected 1 source file, got " + scriptUrls.length);
+  }
+  return scriptUrls[0][1];
+}

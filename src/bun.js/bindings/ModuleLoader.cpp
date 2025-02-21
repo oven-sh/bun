@@ -669,11 +669,9 @@ JSValue fetchCommonJSModule(
     // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        JSC::JSValue value = JSC::JSONParse(globalObject, res->result.value.source_code.toWTFString(BunString::ZeroCopy));
-        if (!value) {
-            JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s));
-            RELEASE_AND_RETURN(scope, {});
-        }
+        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::ZeroCopy);
+        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
+        RETURN_IF_EXCEPTION(scope, {});
 
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
@@ -861,10 +859,9 @@ static JSValue fetchESMSourceCode(
     // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        JSC::JSValue value = JSC::JSONParse(globalObject, res->result.value.source_code.toWTFString(BunString::ZeroCopy));
-        if (!value) {
-            return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s)));
-        }
+        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::ZeroCopy);
+        JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
+        RETURN_IF_EXCEPTION(scope, {});
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         auto function = generateJSValueModuleSourceCode(

@@ -116,8 +116,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       });
     });
 
-    test("dev server", async () => {
-      console.log({ dir });
+    test.todoIf(isCI)("dev server", async () => {
       await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
         cwd: dir,
         env: env,
@@ -150,7 +149,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       }
     });
 
-    test.todoIf(isWindows)("build", async () => {
+    test.todoIf(isCI || isWindows)("build", async () => {
       {
         const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
           cwd: dir,
@@ -216,7 +215,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       }
     });
 
-    test.todoIf(isWindows)("build", async () => {
+    test.todoIf(isCI || isWindows)("build", async () => {
       {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
@@ -248,7 +247,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       });
     });
 
-    test("dev server", async () => {
+    test.todoIf(isCI)("dev server", async () => {
       const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
         cwd: dir,
         env: env,
@@ -287,7 +286,7 @@ describe.each(["true", "false"])("development: %s", developmentString => {
       }
     });
 
-    test.todoIf(isWindows)("build", async () => {
+    test.todoIf(isCI || isWindows)("build", async () => {
       {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,

@@ -346,7 +346,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     const dev = bun.create(allocator, DevServer, .{
         .allocator = undefined,
-        .allocation_scope = AllocationScope.init(allocator),
+        .allocation_scope = if (AllocationScope.enabled) AllocationScope.init(allocator),
 
         .root = options.root,
         .vm = options.vm,

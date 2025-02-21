@@ -34,6 +34,15 @@ interface DepEntry {
   _expectedImports: string[] | undefined;
 }
 
+let dynamicImportWithOpts: any;
+
+/**
+ * The expression `import(a,b)` is not supported in all browsers, most notably
+ * in Mozilla Firefox. It is lazily evaluated, and will throw a SyntaxError
+ * upon first usage.
+ */
+let lazyDynamicImportWithOptions;
+
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
  * non-standard properties that are used for implementing hot-module reloading.
@@ -85,7 +94,12 @@ export class HotModule<E = any> {
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
     if (!registry.has(specifier) && !input_graph[specifier]) {
       try {
-        return await import(specifier, opts);
+        if (opts != null)
+          return await (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(
+            specifier,
+            opts,
+          );
+        return await import(specifier);
       } catch (err) {
         // fall through to loadModule, which will throw a more specific error.
         // but still show this one.
@@ -255,7 +269,6 @@ export function loadModule<T = any>(
           return mod;
         },
         err => {
-          console.error(err);
           mod._cached_failure = err;
           mod._state = State.Error;
           throw err;
@@ -267,7 +280,6 @@ export function loadModule<T = any>(
       entry?._callback(mod.exports);
     });
   } catch (err) {
-    console.error(err);
     mod._cached_failure = err;
     mod._state = State.Error;
     throw err;
@@ -378,6 +390,7 @@ if (side === "client") {
   registry.set(server_module.id, server_module);
 }
 
-runtimeHelpers.__name(HotModule.prototype.importStmt, "<HMR runtime> importStmt");
-runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");
-runtimeHelpers.__name(loadModule, "<HMR runtime> loadModule");
+runtimeHelpers.__name(HotModule.prototype.importStmt, "<Bun HMR Runtime> importStmt");
+runtimeHelpers.__name(HotModule.prototype.dynamicImport, "<Bun HMR Runtime> import");
+runtimeHelpers.__name(HotModule.prototype.require, "<Bun HMR Runtime> require");
+runtimeHelpers.__name(loadModule, "<Bun HMR Runtime> loadModule");

@@ -183,6 +183,14 @@ Simple queries are often useful for database migrations and setup scripts.
 
 Note that simple queries cannot use parameters (`${value}`). If you need parameters, you must split your query into separate statements.
 
+### Queries in files
+
+You can use the `sql.file` method to read a query from a file and execute it, if the file includes $1, $2, etc you can pass parameters to the query. If no parameters are used it can execute multiple commands per file.
+
+```ts
+const result = await sql.file("query.sql", [1, 2, 3]);
+```
+
 ### Unsafe Queries
 
 You can use the `sql.unsafe` function to execute raw SQL strings. Use this with caution, as it will not escape user input. Executing more than one command per query is allowed if no parameters are used.
@@ -285,6 +293,21 @@ const db = new SQL({
   onclose: client => {
     console.log("Connection closed");
   },
+});
+```
+
+## Dynamic passwords
+
+When clients need to use alternative authentication schemes such as access tokens or connections to databases with rotating passwords, provide either a synchronous or asynchronous function that will resolve the dynamic password value at connection time.
+
+```ts
+import { SQL } from "bun";
+
+const sql = new SQL(url, {
+  // Other connection config
+  ...
+  // Password function for the database user
+  password: async () => await signer.getAuthToken(),
 });
 ```
 

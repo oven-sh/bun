@@ -400,7 +400,7 @@ enum PooledConnectionFlags {
 
 class PooledConnection {
   pool: ConnectionPool;
-  connection: ReturnType<typeof createConnection>;
+  connection: ReturnType<typeof createConnection> | null = null;
   state: PooledConnectionState = PooledConnectionState.pending;
   storedError: Error | null = null;
   queries: Set<(err: Error) => void> = new Set();
@@ -430,7 +430,7 @@ class PooledConnection {
       if (err) {
         onFinish(err);
       } else {
-        this.connection.close();
+        this.connection?.close();
       }
       return;
     }
@@ -464,10 +464,17 @@ class PooledConnection {
     this.pool.release(this, true);
   }
   constructor(connectionInfo, pool: ConnectionPool) {
-    this.connection = createConnection(connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
     this.state = PooledConnectionState.pending;
     this.pool = pool;
     this.connectionInfo = connectionInfo;
+    this.#startConnection();
+  }
+  async #startConnection() {
+    this.connection = await createConnection(
+      this.connectionInfo,
+      this.#onConnected.bind(this),
+      this.#onClose.bind(this),
+    );
   }
   onClose(onClose: (err: Error) => void) {
     this.queries.add(onClose);
@@ -485,7 +492,7 @@ class PooledConnection {
     this.storedError = null;
     this.state = PooledConnectionState.pending;
     // retry connection
-    this.connection = createConnection(this.connectionInfo, this.#onConnected.bind(this), this.#onClose.bind(this));
+    this.#startConnection();
   }
   close() {
     try {
@@ -712,7 +719,7 @@ class ConnectionPool {
       for (let i = 0; i < pollSize; i++) {
         const connection = this.connections[i];
         if (connection.state === PooledConnectionState.connected) {
-          connection.connection.flush();
+          connection.connection?.flush();
         }
       }
     }
@@ -741,7 +748,7 @@ class ConnectionPool {
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
               promises.push(promise);
-              connection.connection.close();
+              connection.connection?.close();
             }
             break;
           case PooledConnectionState.connected:
@@ -749,7 +756,7 @@ class ConnectionPool {
               const { promise, resolve } = Promise.withResolvers();
               connection.onFinish = resolve;
               promises.push(promise);
-              connection.connection.close();
+              connection.connection?.close();
             }
             break;
         }
@@ -920,12 +927,11 @@ class ConnectionPool {
   }
 }
 
-function createConnection(
-  {
+async function createConnection(options, onConnected, onClose) {
+  const {
     hostname,
     port,
     username,
-    password,
     tls,
     query,
     database,
@@ -934,30 +940,38 @@ function createConnection(
     connectionTimeout = 30 * 1000,
     maxLifetime = 0,
     prepare = true,
-  },
-  onConnected,
-  onClose,
-) {
-  return _createConnection(
-    hostname,
-    Number(port),
-    username || "",
-    password || "",
-    database || "",
-    // > The default value for sslmode is prefer. As is shown in the table, this
-    // makes no sense from a security point of view, and it only promises
-    // performance overhead if possible. It is only provided as the default for
-    // backward compatibility, and is not recommended in secure deployments.
-    sslMode || SSLMode.disable,
-    tls || null,
-    query || "",
-    onConnected,
-    onClose,
-    idleTimeout,
-    connectionTimeout,
-    maxLifetime,
-    !prepare,
-  );
+  } = options;
+  let password = options.password;
+  try {
+    if (typeof password === "function") {
+      password = password();
+      if (password && $isPromise(password)) {
+        password = await password;
+      }
+    }
+    return _createConnection(
+      hostname,
+      Number(port),
+      username || "",
+      password || "",
+      database || "",
+      // > The default value for sslmode is prefer. As is shown in the table, this
+      // makes no sense from a security point of view, and it only promises
+      // performance overhead if possible. It is only provided as the default for
+      // backward compatibility, and is not recommended in secure deployments.
+      sslMode || SSLMode.disable,
+      tls || null,
+      query || "",
+      onConnected,
+      onClose,
+      idleTimeout,
+      connectionTimeout,
+      maxLifetime,
+      !prepare,
+    );
+  } catch (e) {
+    onClose(e);
+  }
 }
 
 var hasSQLArrayParameter = false;
@@ -1567,6 +1581,13 @@ function SQL(o, e = {}) {
     reserved_sql.unsafe = (string, args = []) => {
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
+    reserved_sql.file = async (path: string, args = []) => {
+      return await Bun.file(path)
+        .text()
+        .then(text => {
+          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+        });
+    };
     reserved_sql.connect = () => {
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.reject(connectionClosedError());
@@ -1892,6 +1913,13 @@ function SQL(o, e = {}) {
     transaction_sql.unsafe = (string, args = []) => {
       return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
     };
+    transaction_sql.file = async (path: string, args = []) => {
+      return await Bun.file(path)
+        .text()
+        .then(text => {
+          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+        });
+    };
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
     transaction_sql.reserve = () => sql.reserve();
@@ -2128,6 +2156,13 @@ function SQL(o, e = {}) {
   sql.unsafe = (string, args = []) => {
     return unsafeQuery(string, args);
   };
+  sql.file = async (path: string, args = []) => {
+    return await Bun.file(path)
+      .text()
+      .then(text => {
+        return unsafeQuery(text, args);
+      });
+  };
   sql.reserve = () => {
     if (pool.closed) {
       return Promise.reject(connectionClosedError());
@@ -2305,6 +2340,11 @@ defaultSQLObject.connect = (...args) => {
 defaultSQLObject.unsafe = (...args) => {
   ensureDefaultSQL();
   return lazyDefaultSQL.unsafe(...args);
+};
+
+defaultSQLObject.file = async (...args) => {
+  ensureDefaultSQL();
+  return lazyDefaultSQL.file(...args);
 };
 
 defaultSQLObject.transaction = defaultSQLObject.begin = (...args) => {

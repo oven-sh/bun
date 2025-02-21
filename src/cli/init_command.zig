@@ -1108,21 +1108,6 @@ const Template = enum {
             \\
         , .{});
 
-        Output.prettyln("Bun will now auto-start the dev server for you...", .{});
-
-        Output.flush();
-
-        var process = std.process.Child.init(
-            &.{
-                try bun.selfExePath(),
-                "dev",
-            },
-            allocator,
-        );
-        process.stderr_behavior = .Inherit;
-        process.stdin_behavior = .Inherit;
-        process.stdout_behavior = .Inherit;
-
-        _ = try process.spawnAndWait();
+        Global.exit(0);
     }
 };

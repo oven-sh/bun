@@ -1,7 +1,10 @@
 import { describe, expect, it, test, mock } from "bun:test";
 import { clearInterval, clearTimeout, promises, setInterval, setTimeout, setImmediate } from "node:timers";
 import { promisify } from "util";
+import { bunEnv, bunExe } from "harness";
 import jsc from "bun:jsc";
+import path from "node:path";
+import { EOL } from "node:os";
 
 for (const fn of [setTimeout, setInterval]) {
   describe(fn.name, () => {
@@ -161,6 +164,7 @@ describe("clear", () => {
     const interval1 = setInterval(() => {
       throw new Error("interval not cleared");
     }, 1);
+    // TODO: this may become wrong once https://github.com/nodejs/node/pull/57069 is merged
     const timeout2 = setTimeout(() => {
       throw new Error("timeout not cleared");
     }, 1);
@@ -186,7 +190,7 @@ describe("clear", () => {
   it("accepts a string", async () => {
     const timeout = setTimeout(() => {
       throw new Error("timeout not cleared");
-    });
+    }, 1);
     clearTimeout((+timeout).toString());
   });
 
@@ -224,4 +228,16 @@ describe("clear", () => {
     expect(jsc.jscDescribe(stringIdUtf16)).toContain("8Bit:(0)");
     clearTimeout(stringIdUtf16);
   });
+});
+
+describe("setImmediate", () => {
+  it("has reasonable performance when nested with no other timers running", async () => {
+    const process = Bun.spawn({
+      cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts")],
+      stdout: "pipe",
+      env: bunEnv,
+    });
+
+    expect(await new Response(process.stdout).text()).toBe(("callback" + EOL).repeat(5000));
+  }, 500);
 });

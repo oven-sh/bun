@@ -139,7 +139,7 @@ describe("Glob.match", () => {
       // { pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts", expected: 3 },
     ];
 
-    const filepaths = (await Bun.file(join(import.meta.dir, "fixtures", "filelist.txt")).text()).split("\n");
+    const filepaths = (await Bun.file(join(import.meta.dir, "filelist.txt")).text()).split("\n");
 
     for (const { pattern, expected } of tests) {
       glob = new Glob(pattern);

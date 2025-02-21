@@ -228,6 +228,8 @@ pub const Runtime = struct {
         // TODO: make this a bitset of all unsupported features
         lower_using: bool = true,
 
+        barrel_files: ?*const bun.StringHashMap(void) = null,
+
         const hash_fields_for_runtime_transpiler = .{
             .top_level_await,
             .auto_import_jsx,
@@ -246,6 +248,99 @@ pub const Runtime = struct {
 
             // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
         };
+
+        // Taken from: https://github.com/vercel/next.js/blob/d69f796522cb843b959e6d30d6964873cfd14d23/packages/next/src/server/config.ts#L937-L1067
+        const default_barrel_package_specifiers = &[_][]const u8{
+            "@ant-design/icons",
+            "@effect/experimental",
+            "@effect/opentelemetry",
+            "@effect/platform-browser",
+            "@effect/platform-bun",
+            "@effect/platform-node",
+            "@effect/platform",
+            "@effect/rpc-http",
+            "@effect/rpc",
+            "@effect/schema",
+            "@effect/sql-mssql",
+            "@effect/sql-mysql2",
+            "@effect/sql-pg",
+            "@effect/sql-squlite-bun",
+            "@effect/sql-squlite-node",
+            "@effect/sql-squlite-react-native",
+            "@effect/sql-squlite-wasm",
+            "@effect/sql",
+            "@effect/typeclass",
+            "@headlessui-float/react",
+            "@headlessui/react",
+            "@heroicons/react/20/solid",
+            "@heroicons/react/24/outline",
+            "@heroicons/react/24/solid",
+            "@material-ui/core",
+            "@material-ui/icons",
+            "@mui/icons-material",
+            "@mui/material",
+            "@tabler/icons-react",
+            "@tremor/react",
+            "@visx/visx",
+            "ahooks",
+            "antd",
+            "date-fns",
+            "effect",
+            "lodash-es",
+            "lucide-react",
+            "mui-core",
+            "ramda",
+            "react-bootstrap",
+            "react-icons/ai",
+            "react-icons/bi",
+            "react-icons/bs",
+            "react-icons/cg",
+            "react-icons/ci",
+            "react-icons/di",
+            "react-icons/fa",
+            "react-icons/fa6",
+            "react-icons/fc",
+            "react-icons/fi",
+            "react-icons/gi",
+            "react-icons/go",
+            "react-icons/gr",
+            "react-icons/hi",
+            "react-icons/hi2",
+            "react-icons/im",
+            "react-icons/io",
+            "react-icons/io5",
+            "react-icons/lia",
+            "react-icons/lib",
+            "react-icons/lu",
+            "react-icons/md",
+            "react-icons/pi",
+            "react-icons/ri",
+            "react-icons/rx",
+            "react-icons/si",
+            "react-icons/sl",
+            "react-icons/tb",
+            "react-icons/tfi",
+            "react-icons/ti",
+            "react-icons/vsc",
+            "react-icons/wi",
+            "react-use",
+            "recharts",
+            "rxjs",
+        };
+
+        pub fn getDefaultBarrelFiles(allocator: std.mem.Allocator) !*bun.StringHashMap(void) {
+            return getBarrelFilesList(allocator, default_barrel_package_specifiers);
+        }
+
+        pub fn getBarrelFilesList(allocator: std.mem.Allocator, files: []const []const u8) !*bun.StringHashMap(void) {
+            var map = try allocator.create(bun.StringHashMap(void));
+            map.* = bun.StringHashMap(void).init(allocator);
+            try map.ensureTotalCapacity(@truncate(files.len));
+            for (files) |file| {
+                map.putAssumeCapacityNoClobber(file, {});
+            }
+            return map;
+        }
 
         pub fn hashForRuntimeTranspiler(this: *const Features, hasher: *std.hash.Wyhash) void {
             bun.assert(this.runtime_transpiler_cache != null);

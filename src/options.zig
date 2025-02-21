@@ -1606,6 +1606,9 @@ pub const BundleOptions = struct {
 
     ignore_module_resolution_errors: bool = false,
 
+    /// Enable barrel file optimization
+    barrel_files: ?*const bun.StringHashMap(void) = null,
+
     pub const ForceNodeEnv = enum {
         unspecified,
         development,

@@ -380,7 +380,6 @@ fn matchBraceBranch(state: *State, glob: []const u8, path: []const u8, open_brac
 
 fn skipBranch(state: *State, glob: []const u8) void {
     var in_brackets = false;
-    const start = state.glob_index;
     while (state.glob_index < glob.len) {
         switch (glob[state.glob_index]) {
             '{' => if (!in_brackets) {
@@ -388,10 +387,8 @@ fn skipBranch(state: *State, glob: []const u8) void {
             },
             '}' => if (!in_brackets) {
                 state.brace_depth -= 1;
-                if (start == state.glob_index) {
-                    state.glob_index += 1;
-                    return;
-                }
+                state.glob_index += 1;
+                return;
             },
             '[' => if (!in_brackets) {
                 in_brackets = true;

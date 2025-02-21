@@ -25,6 +25,7 @@
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
+import { join } from "path";
 
 describe("Glob.match", () => {
   test("WTF", () => {
@@ -95,7 +96,7 @@ describe("Glob.match", () => {
     expect(new Glob("**/*/c.js").match("a/b/c.js")).toBeTrue();
   });
 
-  test("braces", () => {
+  test("braces", async () => {
     let glob: Glob;
 
     glob = new Glob("index.{ts,tsx,js,jsx}");
@@ -109,6 +110,47 @@ describe("Glob.match", () => {
     expect(glob.match("foobar")).toBeTrue();
     expect(glob.match("foobuzz")).toBeTrue();
     expect(glob.match("foobarz")).toBeTrue();
+
+    glob = new Glob("{a}/{b}/");
+    expect(glob.match("a/b/")).toBeTrue();
+
+    const tests = [
+      { pattern: "{src,extensions}/**/test/**/{fixtures,browser,common}/**/*.{ts,js}", expected: 726 },
+      { pattern: "{extensions,src}/**/{media,images,icons}/**/*.{svg,png,gif,jpg}", expected: 119 },
+      {
+        pattern: "{.github,build,test}/**/{workflows,azure-pipelines,integration,smoke}/**/*.{yml,yaml,json}",
+        expected: 53,
+      },
+      {
+        pattern: "src/vs/{base,editor,platform,workbench}/test/{browser,common,node}/**/[a-z]*[tT]est.ts",
+        expected: 224,
+      },
+      { pattern: "src/vs/workbench/{contrib,services}/**/*{Editor,Workspace,Terminal}*.ts", expected: 155 },
+      { pattern: "{extensions,src}/**/{markdown,json,javascript,typescript}/**/*.{ts,json}", expected: 19 },
+      {
+        pattern: "**/{electron-sandbox,electron-main,browser,node}/**/{*[sS]ervice*,*[cC]ontroller*}.ts",
+        expected: 419,
+      },
+      {
+        pattern: "{src,extensions}/**/{common,browser,electron-sandbox}/**/*{[cC]ontribution,[sS]ervice}.ts",
+        expected: 586,
+      },
+      { pattern: "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts", expected: 95 },
+      // { pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts", expected: 3 },
+    ];
+
+    const filepaths = (await Bun.file(join(import.meta.dir, "fixtures", "filelist.txt")).text()).split("\n");
+
+    for (const { pattern, expected } of tests) {
+      glob = new Glob(pattern);
+      let count = 0;
+      for (const filepath of filepaths) {
+        if (glob.match(filepath)) {
+          count++;
+        }
+      }
+      expect(count).toBe(expected);
+    }
   });
 
   test("nested braces", () => {

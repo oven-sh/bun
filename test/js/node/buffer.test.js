@@ -2889,8 +2889,8 @@ for (let withOverridenBufferWrite of [false, true]) {
         shouldBeSame("writeUint16LE", "writeUInt16LE", 1000);
         shouldBeSame("writeUint32BE", "writeUInt32BE", 1000);
         shouldBeSame("writeUint32LE", "writeUInt32LE", 1000);
-        shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", BigInt(1000));
-        shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", BigInt(1000));
+        shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", 1000n);
+        shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", 1000n);
       });
 
       it("construct buffer from UTF16, issue #3914", () => {
@@ -2979,4 +2979,32 @@ it("should not trim utf-8 start bytes at end of string", () => {
   // bugged
   const buf2 = Buffer.from("36e1", "hex");
   expect(buf2.toString("utf-8")).toEqual("6\uFFFD");
+});
+
+it("Buffer.from(arrayBuffer)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab);
+  expect(buf.length).toBe(10);
+  expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(0);
+  expect(buf.byteLength).toBe(10);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+});
+it("Buffer.from(arrayBuffer, byteOffset)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab, 2);
+  expect(buf.length).toBe(8);
+  expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(2);
+  expect(buf.byteLength).toBe(8);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([12, 13, 14, 15, 16, 17, 18, 19]);
+});
+it("Buffer.from(arrayBuffer, byteOffset, length)", () => {
+  const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
+  const buf = Buffer.from(ab, 3, 5);
+  expect(buf.length).toBe(5);
+  expect(buf.buffer).toBe(ab);
+  expect(buf.byteOffset).toBe(3);
+  expect(buf.byteLength).toBe(5);
+  expect(buf[Symbol.iterator]().toArray()).toEqual([13, 14, 15, 16, 17]);
 });

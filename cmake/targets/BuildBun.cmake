@@ -526,8 +526,7 @@ file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
-  ${CWD}/root.zig
-  ${CWD}/root_wasm.zig
+  ${CWD}/src/main.zig
   ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
@@ -1090,6 +1089,7 @@ add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)
+  target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
 endif()
 
 if(USE_STATIC_SQLITE)

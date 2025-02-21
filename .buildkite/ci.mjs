@@ -622,6 +622,21 @@ function getReleaseStep(buildPlatforms, options) {
 }
 
 /**
+ * @returns {Step}
+ */
+function getBenchmarkStep() {
+  return {
+    key: "benchmark",
+    label: "📊",
+    agents: {
+      queue: "build-zig",
+    },
+    command: "bun .buildkite/scripts/upload-benchmark.ts",
+    depends_on: [`linux-x64-build-bun`],
+  };
+}
+
+/**
  * @typedef {Object} Pipeline
  * @property {Step[]} [steps]
  * @property {number} [priority]
@@ -1098,6 +1113,8 @@ async function getPipeline(options = {}) {
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
   }
+
+  steps.push(getBenchmarkStep());
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();

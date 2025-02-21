@@ -73,6 +73,7 @@
 #include "wtf/text/ASCIIFastPath.h"
 #include "JavaScriptCore/WeakInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
+#include <wtf/TZoneMallocInlines.h>
 
 using namespace JSC;
 using namespace Zig;
@@ -261,8 +262,6 @@ void Napi::NapiRefSelfDeletingWeakHandleOwner::finalize(JSC::Handle<JSC::Unknown
     weakValue->callFinalizer();
     delete weakValue;
 }
-
-WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 
 static uint32_t getPropertyAttributes(napi_property_descriptor prop)
 {
@@ -2909,6 +2908,8 @@ extern "C" JSGlobalObject* NapiEnv__globalObject(napi_env env)
 {
     return env->globalObject();
 }
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(NapiRef);
 
 void NapiRef::ref()
 {

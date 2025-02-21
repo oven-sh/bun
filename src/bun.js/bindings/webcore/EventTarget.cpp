@@ -49,7 +49,7 @@
 // #include "ScriptController.h"
 // #include "ScriptDisallowedScope.h"
 // #include "Settings.h"
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
@@ -59,8 +59,8 @@
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventTarget);
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventTargetWithInlineData);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTarget);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventTargetWithInlineData);
 
 Ref<EventTarget> EventTarget::create(ScriptExecutionContext& context)
 {

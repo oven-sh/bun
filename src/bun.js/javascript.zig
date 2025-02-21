@@ -19,14 +19,14 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Transpiler = bun.Transpiler;
 const PluginRunner = bun.transpiler.PluginRunner;
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
+const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -293,6 +293,7 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
+    /// You must call `sourcemap.map.deref()` or you will leak memory
     fn getWithContent(
         this: *SavedSourceMap,
         path: string,
@@ -365,6 +366,7 @@ pub const SavedSourceMap = struct {
         }
     }
 
+    /// You must `deref()` the returned value or you will leak memory
     pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
         return this.getWithContent(path, .mappings_only).map;
     }
@@ -992,6 +994,10 @@ pub const VirtualMachine = struct {
                 return null;
             };
         }
+
+        pub export fn Bun__thisThreadHasVM() bool {
+            return vm != null;
+        }
     };
 
     pub inline fn get() *VirtualMachine {
@@ -1298,14 +1304,6 @@ pub const VirtualMachine = struct {
 
         this.global.reload();
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
-    }
-
-    pub fn io(this: *VirtualMachine) *bun.AsyncIO {
-        if (this.io_ == null) {
-            this.io_ = bun.AsyncIO.init(this) catch @panic("Failed to initialize AsyncIO");
-        }
-
-        return &this.io_.?;
     }
 
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
@@ -1646,7 +1644,7 @@ pub const VirtualMachine = struct {
                         this.eventLoop().autoTickActive();
 
                         if (comptime Environment.enable_logs)
-                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                            log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
                     },
                     .shortly => {
                         // Handle .incrementRefConcurrently
@@ -1661,7 +1659,7 @@ pub const VirtualMachine = struct {
                         this.uwsLoop().tickWithTimeout(&deadline);
 
                         if (comptime Environment.enable_logs)
-                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                            log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
 
                         const elapsed = bun.timespec.now();
                         if (elapsed.order(&deadline) != .lt) {

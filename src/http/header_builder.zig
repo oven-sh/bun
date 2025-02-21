@@ -1,5 +1,5 @@
 const HeaderBuilder = @This();
-const StringBuilder = @import("../string_builder.zig");
+const StringBuilder = bun.StringBuilder;
 const Headers = bun.JSC.WebCore.Headers;
 const string = bun.string;
 const HTTPClient = @import("../http.zig");

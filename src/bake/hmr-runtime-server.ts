@@ -35,8 +35,12 @@ server_exports = {
       });
     }
 
-    const serverRenderer = (await loadModule<Bake.ServerEntryPoint>(routerTypeMain, LoadModuleType.AsyncAssertPresent))
-      .exports.render;
+    const mod = await loadModule<Bake.ServerEntryPoint>(routerTypeMain, LoadModuleType.AsyncAssertPresent);
+    // TODO: fix a loading bug in the hmr runtime
+    await new Promise(resolve => process.nextTick(resolve));
+    await new Promise(resolve => process.nextTick(resolve));
+
+    const serverRenderer = mod.exports.render;
 
     if (!serverRenderer) {
       throw new Error('Framework server entrypoint is missing a "render" export.');
@@ -64,14 +68,13 @@ server_exports = {
 
     return response;
   },
-  registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
+  async registerUpdate(modules, componentManifestAdd, componentManifestDelete) {
     replaceModules(modules);
 
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
         try {
-          // TODO: async
-          const mod = loadModule(uid, LoadModuleType.SyncUserDynamic) as HotModule;
+          const mod = await (loadModule(uid, LoadModuleType.AsyncAssertPresent) as Promise<HotModule>);
           const { exports, __esModule } = mod;
           const exp = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
 

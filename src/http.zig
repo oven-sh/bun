@@ -22,7 +22,7 @@ const Lock = bun.Mutex;
 const HTTPClient = @This();
 const Zlib = @import("./zlib.zig");
 const Brotli = bun.brotli;
-const StringBuilder = @import("./string_builder.zig");
+const StringBuilder = bun.StringBuilder;
 const ThreadPool = bun.ThreadPool;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const posix = std.posix;
@@ -2833,7 +2833,7 @@ pub const AsyncHTTP = struct {
                 this.client.deinit();
                 var threadlocal_http: *ThreadlocalAsyncHTTP = @fieldParentPtr("async_http", async_http);
                 defer threadlocal_http.destroy();
-                log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
+                log("onAsyncHTTPCallback: {any}", .{std.fmt.fmtDuration(this.elapsed)});
                 callback.function(callback.ctx, async_http, result);
             }
 

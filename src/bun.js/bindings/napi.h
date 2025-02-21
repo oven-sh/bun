@@ -440,7 +440,7 @@ private:
 };
 
 class NapiRef {
-    WTF_MAKE_ISO_ALLOCATED(NapiRef);
+    WTF_MAKE_TZONE_ALLOCATED(NapiRef);
 
 public:
     void ref();
@@ -537,7 +537,7 @@ public:
     using Base = JSFunction;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static void destroy(JSCell* cell)
     {
         static_cast<NapiClass*>(cell)->NapiClass::~NapiClass();
@@ -599,7 +599,7 @@ public:
     using Base = JSC::JSDestructibleObject;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = true;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     template<typename CellType, SubspaceAccess>
     static CompleteSubspace* subspaceFor(VM& vm)

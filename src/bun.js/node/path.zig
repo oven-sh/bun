@@ -72,7 +72,7 @@ const CHAR_STR_BACKWARD_SLASH = "\\";
 const CHAR_STR_FORWARD_SLASH = "/";
 const CHAR_STR_DOT = ".";
 
-const StringBuilder = @import("../../string_builder.zig");
+const StringBuilder = bun.StringBuilder;
 
 const toJSString = JSC.JSValue.toJSString;
 

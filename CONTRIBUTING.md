@@ -67,7 +67,7 @@ $ wget https://apt.llvm.org/llvm.sh -O - | sudo bash -s -- 18 all
 ```
 
 ```bash#Arch
-$ sudo pacman -S llvm clang lld
+$ sudo pacman -S llvm clang18 lld
 ```
 
 ```bash#Fedora

@@ -102,7 +102,7 @@ pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
-pub const C = @import("root").C;
+pub const C = @import("c.zig");
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
@@ -138,11 +138,7 @@ pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
-pub const shell = struct {
-    pub usingnamespace @import("./shell/shell.zig");
-    pub const ShellSubprocess = @import("./shell/subproc.zig").ShellSubprocess;
-    // pub const ShellSubprocessMini = @import("./shell/subproc.zig").ShellSubprocessMini;
-};
+pub const shell = @import("./shell/shell.zig");
 
 pub const Output = @import("./output.zig");
 pub const Global = @import("./Global.zig");
@@ -319,10 +315,6 @@ pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
-pub const PathString = StringTypes.PathString;
-pub const HashedString = StringTypes.HashedString;
-pub const strings = @import("string_immutable.zig");
-pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
@@ -552,7 +544,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
     return try allocator.dupe(Child, item);
 }
 
-pub const StringBuilder = @import("./string_builder.zig");
+pub const StringBuilder = @import("./string.zig").StringBuilder;
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
@@ -728,7 +720,11 @@ pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
-pub usingnamespace @import("./tagged_pointer.zig");
+const tagged_pointer = @import("./tagged_pointer.zig");
+pub const TagTypeEnumWithTypeMap = tagged_pointer.TagTypeEnumWithTypeMap;
+pub const TaggedPointer = tagged_pointer.TaggedPointer;
+pub const TaggedPointerUnion = tagged_pointer.TaggedPointerUnion;
+pub const TypeMap = tagged_pointer.TypeMap;
 
 pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
@@ -789,8 +785,7 @@ pub const invalid_fd: FileDescriptor = FDImpl.invalid.encode();
 
 pub const simdutf = @import("./bun.js/bindings/bun-simdutf.zig");
 
-pub const JSC = @import("root").JavaScriptCore;
-pub const AsyncIO = @import("async_io");
+pub const JSC = @import("jsc.zig");
 
 pub const logger = @import("./logger.zig");
 pub const ThreadPool = @import("./thread_pool.zig");
@@ -1464,7 +1459,7 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     @panic("TODO unsupported platform for getFdPathW");
 }
 
-fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
+fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
     switch (@typeInfo(@TypeOf(ptr))) {
         .pointer => |ptr_info| switch (ptr_info.size) {
             .one => switch (@typeInfo(ptr_info.child)) {
@@ -1508,7 +1503,7 @@ fn lenSliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) usize {
 }
 
 /// Helper for the return type of sliceTo()
-fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
+fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
     switch (@typeInfo(T)) {
         .optional => |optional_info| {
             return ?SliceTo(optional_info.child, end);
@@ -1568,7 +1563,7 @@ fn SliceTo(comptime T: type, comptime end: meta.Elem(T)) type {
 /// resulting slice is also sentinel terminated.
 /// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
-pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
+pub fn sliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
     if (@typeInfo(@TypeOf(ptr)) == .optional) {
         const non_null = ptr orelse return null;
         return sliceTo(non_null, end);
@@ -1584,18 +1579,6 @@ pub fn sliceTo(ptr: anytype, comptime end: meta.Elem(@TypeOf(ptr))) SliceTo(@Typ
     }
 }
 
-pub fn cstring(input: []const u8) [:0]const u8 {
-    if (input.len == 0)
-        return "";
-
-    if (comptime Environment.allow_assert) {
-        assert(
-            input.ptr[input.len] == 0,
-        );
-    }
-    return @as([*:0]const u8, @ptrCast(input.ptr))[0..input.len :0];
-}
-
 pub const Semver = @import("./semver.zig");
 pub const ImportRecord = @import("./import_record.zig").ImportRecord;
 pub const ImportKind = @import("./import_record.zig").ImportKind;
@@ -1608,7 +1591,6 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
-pub const StringJoiner = @import("./StringJoiner.zig");
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
@@ -2102,12 +2084,18 @@ pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
-pub const String = @import("./string.zig").String;
-pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
+const _string = @import("./string.zig");
+pub const strings = @import("string_immutable.zig");
+pub const String = _string.String;
+pub const StringJoiner = _string.StringJoiner;
+pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
+pub const PathString = _string.PathString;
+pub const HashedString = _string.HashedString;
+pub const MutableString = _string.MutableString;
 
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.
-    pub const StringImpl = @import("./string.zig").WTFStringImpl;
+    pub const StringImpl = _string.WTFStringImpl;
 };
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
@@ -3127,132 +3115,8 @@ pub fn New(comptime T: type) type {
     };
 }
 
-/// Reference-counted heap-allocated instance value.
-///
-/// `ref_count` is expected to be defined on `T` with a default value set to `1`
-pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
-    if (!@hasField(T, "ref_count")) {
-        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-    }
-
-    for (std.meta.fields(T)) |field| {
-        if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-            }
-        }
-    }
-
-    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
-    const log = Output.scoped(output_name, true);
-
-    return struct {
-        pub fn destroy(self: *T) void {
-            if (Environment.allow_assert) {
-                assert(self.ref_count == 0);
-            }
-
-            bun.destroy(self);
-        }
-
-        pub fn ref(self: *T) void {
-            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
-
-            self.ref_count += 1;
-        }
-
-        pub fn deref(self: *T) void {
-            const ref_count = self.ref_count;
-            if (Environment.isDebug) {
-                if (ref_count == 0 or ref_count == std.math.maxInt(@TypeOf(ref_count))) {
-                    @panic("Use after-free detected on " ++ output_name);
-                }
-            }
-
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-
-            self.ref_count = ref_count - 1;
-
-            if (ref_count == 1) {
-                if (comptime deinit_fn) |deinit| {
-                    deinit(self);
-                } else {
-                    self.destroy();
-                }
-            }
-        }
-
-        pub inline fn new(t: T) *T {
-            const ptr = bun.new(T, t);
-
-            if (Environment.enable_logs) {
-                if (ptr.ref_count == 0) {
-                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
-                }
-            }
-
-            return ptr;
-        }
-    };
-}
-
-pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
-    if (!@hasField(T, "ref_count")) {
-        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-    }
-
-    for (std.meta.fields(T)) |field| {
-        if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-            }
-        }
-    }
-
-    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
-    const log = Output.scoped(output_name, true);
-
-    return struct {
-        pub fn destroy(self: *T) void {
-            if (Environment.allow_assert) {
-                assert(self.ref_count.load(.seq_cst) == 0);
-            }
-
-            bun.destroy(self);
-        }
-
-        pub fn ref(self: *T) void {
-            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
-            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-            bun.debugAssert(ref_count > 0);
-        }
-
-        pub fn deref(self: *T) void {
-            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
-
-            if (ref_count == 1) {
-                if (comptime deinit_fn) |deinit| {
-                    deinit(self);
-                } else {
-                    self.destroy();
-                }
-            }
-        }
-
-        pub inline fn new(t: T) *T {
-            const ptr = bun.new(T, t);
-
-            if (Environment.enable_logs) {
-                if (ptr.ref_count.load(.seq_cst) != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
-                }
-            }
-
-            return ptr;
-        }
-    };
-}
+pub const NewRefCounted = @import("ref_count.zig").NewRefCounted;
+pub const NewThreadSafeRefCounted = @import("ref_count.zig").NewThreadSafeRefCounted;
 
 pub fn exitThread() noreturn {
     const exiter = struct {
@@ -3597,7 +3461,7 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
     }
     if (!Environment.allow_assert) return;
     if (a != b) {
-        Output.panic("Assertion failure: {} != {}", .{ a, b });
+        Output.panic("Assertion failure: {any} != {any}", .{ a, b });
     }
 }
 
@@ -4038,7 +3902,8 @@ pub fn GenericIndex(backing_int: type, uid: anytype) type {
         }
 
         pub fn format(this: @This(), comptime f: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            comptime bun.assert(strings.eql(f, "d"));
+            comptime if (strings.eql(f, "d") or strings.eql(f, "any"))
+                @compileError("Invalid format specifier: " ++ f);
             try std.fmt.formatInt(@intFromEnum(this), 10, .lower, opts, writer);
         }
 

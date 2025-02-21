@@ -1962,4 +1962,4 @@ pub const DebugIDFormatter = struct {
 
 const assert = bun.assert;
 
-pub usingnamespace @import("./CodeCoverage.zig");
+pub const coverage = @import("./CodeCoverage.zig");

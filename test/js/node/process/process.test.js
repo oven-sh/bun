@@ -237,7 +237,7 @@ it("process.uptime()", () => {
 
 it("process.umask()", () => {
   expect(() => process.umask(265n)).toThrow('The "mask" argument must be of type number. Received type bigint (265n)');
-  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received "string"`); // prettier-ignore
+  expect(() => process.umask("string")).toThrow(`The argument 'mask' must be a 32-bit unsigned integer or an octal string. Received 'string'`); // prettier-ignore
   expect(() => process.umask(true)).toThrow('The "mask" argument must be of type number. Received type boolean (true)');
   expect(() => process.umask(false)).toThrow('The "mask" argument must be of type number. Received type boolean (false)'); // prettier-ignore
   expect(() => process.umask(null)).toThrow('The "mask" argument must be of type number. Received null');
@@ -374,7 +374,7 @@ it("process.argv in testing", () => {
 describe("process.exitCode", () => {
   it("validates int", () => {
     expect(() => (process.exitCode = "potato")).toThrow(
-      `The "code" argument must be of type number. Received type string ("potato")`,
+      `The "code" argument must be of type number. Received type string ('potato')`,
     );
     expect(() => (process.exitCode = 1.2)).toThrow(
       `The value of \"code\" is out of range. It must be an integer. Received 1.2`,

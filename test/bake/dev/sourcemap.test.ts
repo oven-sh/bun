@@ -23,13 +23,13 @@ devTest("source map emitted for primary chunk", {
   async test(dev) {
     const html = await dev.fetch("/").text();
     using sourceMap = await extractSourceMapHtml(dev, html);
-    expect(sourceMap.sources.map(Bun.fileURLToPath)) //
-      .toEqual([dev.join("index.ts"), dev.join("❤️.ts")]);
+    expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)) //
+      .toEqual([dev.join("index.html"), dev.join("index.ts"), dev.join("❤️.ts")]);
 
     const generated = indexOfLineColumn(sourceMap.script, "♠️");
     const original = sourceMap.originalPositionFor(generated);
     expect(original).toEqual({
-      source: sourceMap.sources[1],
+      source: sourceMap.sources[3],
       name: null,
       line: 2,
       column: "export default ".length,
@@ -57,12 +57,12 @@ devTest("source map emitted for hmr chunk", {
     await dev.write("App.tsx", "// yay\nconsole.log('magic');");
     const chunk = await c.getMostRecentHmrChunk();
     using sourceMap = await extractSourceMap(dev, chunk);
-    expect(sourceMap.sources.map(Bun.fileURLToPath)) //
+    expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)) //
       .toEqual([dev.join("App.tsx")]);
     const generated = indexOfLineColumn(sourceMap.script, "magic");
     const original = sourceMap.originalPositionFor(generated);
     expect(original).toEqual({
-      source: sourceMap.sources[0],
+      source: sourceMap.sources[1],
       name: null,
       line: 2,
       column: "console.log(".length,

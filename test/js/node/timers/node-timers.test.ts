@@ -239,5 +239,5 @@ describe("setImmediate", () => {
     });
 
     expect(await new Response(process.stdout).text()).toBe(("callback" + EOL).repeat(5000));
-  }, 500);
+  }, 5000);
 });

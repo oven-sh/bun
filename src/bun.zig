@@ -4250,7 +4250,8 @@ pub const CowString = CowSlice(u8);
 ///
 /// CowSlice does not support slices longer than 2^(@bitSizeOf(usize)-1).
 pub fn CowSlice(T: type) type {
-    const DebugData = if (Environment.allow_assert) struct {
+    const cow_str_assertions = Environment.isDebug;
+    const DebugData = if (cow_str_assertions) struct {
         mutex: std.Thread.Mutex,
         allocator: Allocator,
         borrows: usize,
@@ -4264,9 +4265,7 @@ pub fn CowSlice(T: type) type {
             } }),
             is_owned: bool,
         },
-        debug: if (Environment.allow_assert) ?*DebugData else void,
-
-        const cow_str_assertions = Environment.isDebug;
+        debug: if (cow_str_assertions) ?*DebugData else void,
 
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
@@ -4298,7 +4297,7 @@ pub fn CowSlice(T: type) type {
                     .is_owned = false,
                     .len = @intCast(data.len),
                 },
-                .debug = null,
+                .debug = if (cow_str_assertions) null,
             };
         }
 
@@ -4327,7 +4326,6 @@ pub fn CowSlice(T: type) type {
         pub fn deinit(str: @This(), allocator: Allocator) void {
             if (cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
-                defer debug.mutex.unlock();
                 bun.assert(
                     debug.allocator.ptr == allocator.ptr and
                         debug.allocator.vtable == allocator.vtable,
@@ -4342,6 +4340,18 @@ pub fn CowSlice(T: type) type {
             if (str.flags.is_owned) {
                 allocator.free(str.slice());
             }
+        }
+
+        /// Does not include debug safety checks.
+        pub fn initUnchecked(data: []const T, is_owned: bool) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = is_owned,
+                    .len = @intCast(data.len),
+                },
+                .debug = if (cow_str_assertions) null,
+            };
         }
     };
 }

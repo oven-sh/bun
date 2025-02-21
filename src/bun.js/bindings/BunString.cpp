@@ -65,14 +65,6 @@ extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::Encode
     return bunString->tag != BunStringTag::Dead;
 }
 
-extern "C" bool BunString__fromJSRef(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
-{
-
-    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
-    *bunString = Bun::toStringRef(globalObject, value);
-    return bunString->tag != BunStringTag::Dead;
-}
-
 extern "C" BunString BunString__createAtom(const char* bytes, size_t length)
 {
     ASSERT(simdutf::validate_ascii(bytes, length));
@@ -159,6 +151,7 @@ extern "C" int64_t BunString__toInt32(BunString* bunString)
 }
 
 namespace Bun {
+
 JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
 {
     if (bunString.tag == BunStringTag::Empty || bunString.tag == BunStringTag::Dead) {

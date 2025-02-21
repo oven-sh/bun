@@ -18,8 +18,7 @@ const unicode = std.unicode;
 const Ref = @import("./ast/base.zig").Ref;
 const expect = std.testing.expect;
 const assert = bun.assert;
-const StringBuilder = @import("./string_builder.zig");
-const Index = @import("./ast/base.zig").Index;
+const StringBuilder = bun.StringBuilder;
 const OOM = bun.OOM;
 const JSError = bun.JSError;
 
@@ -1331,6 +1330,8 @@ pub inline fn usize2Loc(loc: usize) Loc {
 }
 
 pub const Source = struct {
+    pub const Index = @import("./ast/base.zig").Index;
+
     path: fs.Path,
 
     contents: string,

@@ -3,7 +3,7 @@
 // work because hmr-runtime is minified in release builds, which would affect
 // the generated line/column numbers across different build configurations.
 import { expect } from "bun:test";
-import { Dev, devTest, emptyHtmlFile, reactRefreshStub } from "../dev-server-harness";
+import { Dev, devTest, emptyHtmlFile, extractScriptSrc, reactRefreshStub } from "../dev-server-harness";
 import { BasicSourceMapConsumer, IndexedSourceMapConsumer, SourceMapConsumer } from "source-map";
 
 devTest("source map emitted for primary chunk", {
@@ -23,13 +23,13 @@ devTest("source map emitted for primary chunk", {
   async test(dev) {
     const html = await dev.fetch("/").text();
     using sourceMap = await extractSourceMapHtml(dev, html);
-    expect(sourceMap.sources.map(Bun.fileURLToPath)) //
-      .toEqual([dev.join("index.ts"), dev.join("❤️.ts")]);
+    expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)) //
+      .toEqual([dev.join("index.html"), dev.join("index.ts"), dev.join("❤️.ts")]);
 
     const generated = indexOfLineColumn(sourceMap.script, "♠️");
     const original = sourceMap.originalPositionFor(generated);
     expect(original).toEqual({
-      source: sourceMap.sources[1],
+      source: sourceMap.sources[3],
       name: null,
       line: 2,
       column: "export default ".length,
@@ -57,12 +57,12 @@ devTest("source map emitted for hmr chunk", {
     await dev.write("App.tsx", "// yay\nconsole.log('magic');");
     const chunk = await c.getMostRecentHmrChunk();
     using sourceMap = await extractSourceMap(dev, chunk);
-    expect(sourceMap.sources.map(Bun.fileURLToPath)) //
+    expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)) //
       .toEqual([dev.join("App.tsx")]);
     const generated = indexOfLineColumn(sourceMap.script, "magic");
     const original = sourceMap.originalPositionFor(generated);
     expect(original).toEqual({
-      source: sourceMap.sources[0],
+      source: sourceMap.sources[1],
       name: null,
       line: 2,
       column: "console.log(".length,
@@ -78,11 +78,7 @@ type SourceMap = (BasicSourceMapConsumer | IndexedSourceMapConsumer) & {
 };
 
 async function extractSourceMapHtml(dev: Dev, html: string) {
-  const scriptUrls = [...html.matchAll(/src="([^"]+.js)"/g)];
-  if (scriptUrls.length !== 1) {
-    throw new Error("Expected 1 source file, got " + scriptUrls.length);
-  }
-  const scriptUrl = scriptUrls[0][1];
+  const scriptUrl = extractScriptSrc(html);
   const scriptSource = await dev.fetch(scriptUrl).text();
   return extractSourceMap(dev, scriptSource);
 }

@@ -960,10 +960,10 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
 }
 
 export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString2(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString(global);
+    const source_str = source.toBunString2(global) catch return .zero;
     defer source_str.deref();
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch {
@@ -975,10 +975,10 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 }
 
 export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString2(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString(global);
+    const source_str = source.toBunString2(global) catch return .zero;
     defer source_str.deref();
 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
@@ -990,7 +990,7 @@ export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.S
 }
 
 export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString2(global) catch return .zero;
     defer specifier_str.deref();
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true));
 }
@@ -3076,8 +3076,11 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
             globalObject,
             &config,
             &args,
-            callframe.isFromBunMain(globalObject.vm()),
-            true,
+            .{
+                .allow_bake_config = bun.FeatureFlags.bake() and callframe.isFromBunMain(globalObject.vm()),
+                .is_fetch_required = true,
+                .has_user_routes = false,
+            },
         );
 
         if (globalObject.hasException()) {
@@ -3141,11 +3144,14 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     if (globalObject.hasException()) {
                         return .zero;
                     }
-                    server.listen();
+                    const route_list_object = server.listen();
                     if (globalObject.hasException()) {
                         return .zero;
                     }
                     const obj = server.toJS(globalObject);
+                    if (route_list_object != .zero) {
+                        ServerType.routeListSetCached(obj, globalObject, route_list_object);
+                    }
                     obj.protect();
 
                     server.thisObject = obj;

@@ -51,7 +51,13 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
-  window.fetch = fetch;
+  window.fetch = async function (url, options) {
+    if (typeof url === "string") {
+      url = new URL(url, windowUrl).href;
+    }
+    const response = await fetch(url, options);
+    return response;
+  };
 
   // Provide WebSocket
   window.WebSocket = class extends WebSocket {
@@ -71,9 +77,6 @@ function createWindow(windowUrl) {
       webSockets = webSockets.filter(ws => ws !== this);
     }
   };
-
-  // Add fetch support
-  window.fetch = fetch;
 
   // Intercept console messages
   const originalConsole = window.console;
@@ -293,20 +296,19 @@ process.on("message", async message => {
       }
 
       const errors = [];
-      const messages = overlay.shadowRoot.querySelectorAll(".message");
-
+      const messages = overlay.shadowRoot.querySelectorAll(".b-msg");
       for (const message of messages) {
-        const fileName = message.closest(".message-group").querySelector(".file-name").textContent;
+        const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
         const label = message.querySelector(".log-label").textContent;
         const text = message.querySelector(".log-text").textContent;
 
-        const lineNumElem = message.querySelector(".line-num");
+        const lineNumElem = message.querySelector(".gutter");
         const spaceElem = message.querySelector(".highlight-wrap > .space");
 
         let formatted;
         if (lineNumElem && spaceElem) {
           const line = lineNumElem.textContent;
-          const col = spaceElem.textContent.length;
+          const col = spaceElem.textContent.length + 1;
           formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
         } else {
           formatted = `${fileName}: ${label}: ${text}`;

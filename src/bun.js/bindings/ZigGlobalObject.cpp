@@ -164,6 +164,10 @@
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
+#include "ProcessBindingFs.h"
+
+#include "JSBunRequest.h"
+#include "ServerRouteList.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -251,9 +255,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useConcurrentJIT() = true;
         // JSC::Options::useSigillCrashAnalyzer() = true;
         JSC::Options::useWasm() = true;
-        // remove when we have landed https://github.com/WebKit/WebKit/pull/39029 or WebKit no
-        // longer disables IPInt by default
-        JSC::Options::useWasmIPInt() = false;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
         JSC::Options::exposeInternalModuleLoader() = true;
@@ -3080,6 +3081,21 @@ void GlobalObject::finishCreation(VM& vm)
                 Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
+    m_ServerRouteListStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::createServerRouteListStructure(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_JSBunRequestParamsPrototype.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSObject>::Initializer& init) {
+            init.set(Bun::createJSBunRequestParamsPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_JSBunRequestStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::createJSBunRequestStructure(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
     m_NapiHandleScopeImplStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
         init.set(Bun::NapiHandleScopeImpl::createStructure(init.vm, init.owner));
     });
@@ -3240,6 +3256,14 @@ void GlobalObject::finishCreation(VM& vm)
                     ProcessBindingConstants::createStructure(init.vm, init.owner)));
         });
 
+    m_processBindingFs.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingFs::create(
+                    init.vm,
+                    ProcessBindingFs::createStructure(init.vm, init.owner)));
+        });
+
     m_importMetaObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
@@ -3364,6 +3388,19 @@ void GlobalObject::finishCreation(VM& vm)
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
+
+    m_statValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
+        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
+    });
+    m_bigintStatValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
+        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
+    });
+    m_statFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
+        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
+    m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
+        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
 
     configureNodeVM(vm, this);
 
@@ -3876,6 +3913,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_esmRegistryMap.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_internalModuleRegistry.visit(visitor);
+    thisObject->m_processBindingBuffer.visit(visitor);
+    thisObject->m_processBindingConstants.visit(visitor);
+    thisObject->m_processBindingFs.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferClassStructure.visit(visitor);
@@ -3942,8 +3982,14 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
-
+    thisObject->m_ServerRouteListStructure.visit(visitor);
+    thisObject->m_JSBunRequestStructure.visit(visitor);
+    thisObject->m_JSBunRequestParamsPrototype.visit(visitor);
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
+    thisObject->m_statValues.visit(visitor);
+    thisObject->m_bigintStatValues.visit(visitor);
+    thisObject->m_statFsValues.visit(visitor);
+    thisObject->m_bigintStatFsValues.visit(visitor);
 
     thisObject->m_nodeErrorCache.visit(visitor);
 

@@ -21,7 +21,7 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const strings = bun.strings;
-const MutableString = @import("./string_mutable.zig").MutableString;
+const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
@@ -4459,13 +4459,6 @@ pub const Prefill = struct {
         pub var REACT_ELEMENT_TYPE = Expr.Data{ .e_string = &Prefill.String.REACT_ELEMENT_TYPE };
         pub const This = Expr.Data{ .e_this = E.This{} };
         pub const Zero = Expr.Data{ .e_number = Value.Zero };
-    };
-    pub const Runtime = struct {
-        // pub var JSXFilename = "__jsxFilename";
-        // pub var MarkAsModule = "__markAsModule";
-        // pub var CommonJS = "__commonJS";
-        // pub var ToModule = "__toModule";
-        // const JSXShortname = "jsx";
     };
 };
 
@@ -18970,6 +18963,67 @@ fn NewParser_(
                     for (data.items) |*item| {
                         try p.recordDeclaredSymbol(item.name.ref.?);
                     }
+
+                    // we are importing something from a barrel file
+                    if (p.options.features.barrel_files) |barrel_files| {
+                        if (barrel_files.contains(p.import_records.items[data.import_record_index].path.text)) {
+                            const existing_import_record_idx = stmt.data.s_import.import_record_index;
+                            const existing_import_record = &p.import_records.items[existing_import_record_idx];
+                            // mark it so we can recognize it later in onParseTaskComplete
+                            existing_import_record.tag = .barrel;
+
+                            // if we import more than one thing in this statement, break up each
+                            // individual import into its own statement so we can rewrite each path:
+                            //
+                            // ```ts
+                            // /* before */
+                            // import { Ooga, Booga } from 'dictionary'
+                            //
+                            // /* after */
+                            // import { Ooga } from 'dictionary/words/Ooga.js'
+                            // import { Booga } from 'dictionary/words/Booga.js'
+                            // ```
+                            //
+                            // I don't want to make N allocations of arrays that each have 1 item each,
+                            // that is dumb. So we're just going to slice the array. This is fine because
+                            // everything here is arena allocated.
+                            if (data.items.len >= 1) {
+                                const old_items = data.items;
+                                data.items = &.{};
+                                for (old_items, 0..) |*item, i| {
+                                    const new_items = p.allocator.dupe(js_ast.ClauseItem, item[0..1]) catch unreachable;
+                                    p.symbols.items[new_items[0].name.ref.?.inner_index].namespace_alias = null;
+                                    if (i == 0) {
+                                        // data.items = old_items[0..1];
+                                        data.items = new_items;
+                                        try stmts.append(stmt.*);
+                                    } else {
+                                        const new_import_record_idx = p.import_records.items.len;
+                                        try p.import_records.append(existing_import_record.*);
+                                        const name = p.loadNameFromRef(data.namespace_ref);
+                                        const namespace_ref = try p.newSymbol(.other, name);
+
+                                        try stmts.append(p.s(
+                                            S.Import{
+                                                // .items = item[0..1],
+                                                .items = new_items,
+                                                .import_record_index = @truncate(new_import_record_idx),
+                                                .namespace_ref = namespace_ref,
+                                                // TODO(zack): support this later
+                                                .default_name = null,
+                                                .is_single_line = true,
+                                                // TODO(zack): support this later
+                                                .star_name_loc = null,
+                                            },
+                                            item.alias_loc,
+                                        ));
+                                    }
+                                }
+                            }
+
+                            return;
+                        }
+                    }
                 }
 
                 try stmts.append(stmt.*);
@@ -24213,6 +24267,10 @@ pub const ConvertESMExportsForHmr = struct {
                 return; // do not emit a statement here
             },
             .s_export_from => |st| {
+                if (p.import_records.items[st.import_record_index].tag == .barrel) {
+                    return;
+                }
+
                 const namespace_ref = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,
@@ -24246,6 +24304,13 @@ pub const ConvertESMExportsForHmr = struct {
                 return;
             },
             .s_export_star => |st| {
+                // we split out barrel imports into separate statements
+                // ... we don't want to deduplicate them back into a single statement
+                // here lol
+                if (p.import_records.items[st.import_record_index].tag == .barrel) {
+                    return;
+                }
+
                 const namespace_ref = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,
@@ -24265,6 +24330,14 @@ pub const ConvertESMExportsForHmr = struct {
             // named/default imports here as we always rewrite them as
             // full qualified property accesses (needed for live-bindings)
             .s_import => |st| {
+                // we split out barrel imports into separate statements
+                // ... we don't want to deduplicate them back into a single statement
+                // here lol
+                if (p.import_records.items[st.import_record_index].tag == .barrel) {
+                    try ctx.stmts.append(p.allocator, stmt);
+                    return;
+                }
+
                 _ = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,

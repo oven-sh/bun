@@ -1,9 +1,8 @@
-const std = @import("std");
-const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
-const Environment = bun.Environment;
-const string = @import("string_types.zig").string;
 const StringBuilder = @This();
+const std = @import("std");
+const bun = @import("root").bun;
+const Allocator = std.mem.Allocator;
+const Environment = bun.Environment;
 const assert = bun.assert;
 
 const DebugHashTable = if (Environment.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
@@ -15,7 +14,7 @@ ptr: ?[*]u8 = null,
 pub fn initCapacity(
     allocator: std.mem.Allocator,
     cap: usize,
-) !StringBuilder {
+) Allocator.Error!StringBuilder {
     return StringBuilder{
         .cap = cap,
         .len = 0,
@@ -23,15 +22,15 @@ pub fn initCapacity(
     };
 }
 
-pub fn countZ(this: *StringBuilder, slice: string) void {
+pub fn countZ(this: *StringBuilder, slice: []const u8) void {
     this.cap += slice.len + 1;
 }
 
-pub fn count(this: *StringBuilder, slice: string) void {
+pub fn count(this: *StringBuilder, slice: []const u8) void {
     this.cap += slice.len;
 }
 
-pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
+pub fn allocate(this: *StringBuilder, allocator: Allocator) Allocator.Error!void {
     const slice = try allocator.alloc(u8, this.cap);
     this.ptr = slice.ptr;
     this.len = 0;
@@ -73,7 +72,7 @@ pub fn append16(this: *StringBuilder, slice: []const u16, fallback_allocator: st
     }
 }
 
-pub fn appendZ(this: *StringBuilder, slice: string) [:0]const u8 {
+pub fn appendZ(this: *StringBuilder, slice: []const u8) [:0]const u8 {
     if (comptime Environment.allow_assert) {
         assert(this.len + 1 <= this.cap); // didn't count everything
         assert(this.ptr != null); // must call allocate first
@@ -89,13 +88,13 @@ pub fn appendZ(this: *StringBuilder, slice: string) [:0]const u8 {
     return result;
 }
 
-pub fn appendStr(this: *StringBuilder, str: bun.String) string {
+pub fn appendStr(this: *StringBuilder, str: bun.String) []const u8 {
     const slice = str.toUTF8(bun.default_allocator);
     defer slice.deinit();
     return this.append(slice.slice());
 }
 
-pub fn append(this: *StringBuilder, slice: string) string {
+pub fn append(this: *StringBuilder, slice: []const u8) []const u8 {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
         assert(this.ptr != null); // must call allocate first
@@ -110,7 +109,7 @@ pub fn append(this: *StringBuilder, slice: string) string {
     return result;
 }
 
-pub fn addConcat(this: *StringBuilder, slices: []const string) bun.StringPointer {
+pub fn addConcat(this: *StringBuilder, slices: []const []const u8) bun.StringPointer {
     var remain = this.allocatedSlice()[this.len..];
     var len: usize = 0;
     for (slices) |slice| {
@@ -134,7 +133,7 @@ pub fn add(this: *StringBuilder, len: usize) bun.StringPointer {
 
     return bun.StringPointer{ .offset = @as(u32, @truncate(start)), .length = @as(u32, @truncate(len)) };
 }
-pub fn appendCount(this: *StringBuilder, slice: string) bun.StringPointer {
+pub fn appendCount(this: *StringBuilder, slice: []const u8) bun.StringPointer {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
         assert(this.ptr != null); // must call allocate first
@@ -151,7 +150,7 @@ pub fn appendCount(this: *StringBuilder, slice: string) bun.StringPointer {
     return bun.StringPointer{ .offset = @as(u32, @truncate(start)), .length = @as(u32, @truncate(slice.len)) };
 }
 
-pub fn appendCountZ(this: *StringBuilder, slice: string) bun.StringPointer {
+pub fn appendCountZ(this: *StringBuilder, slice: []const u8) bun.StringPointer {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
         assert(this.ptr != null); // must call allocate first
@@ -170,7 +169,7 @@ pub fn appendCountZ(this: *StringBuilder, slice: string) bun.StringPointer {
     return bun.StringPointer{ .offset = @as(u32, @truncate(start)), .length = @as(u32, @truncate(slice.len)) };
 }
 
-pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
+pub fn fmt(this: *StringBuilder, comptime str: []const u8, args: anytype) []const u8 {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
         assert(this.ptr != null); // must call allocate first
@@ -185,7 +184,7 @@ pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
     return out;
 }
 
-pub fn fmtAppendCount(this: *StringBuilder, comptime str: string, args: anytype) bun.StringPointer {
+pub fn fmtAppendCount(this: *StringBuilder, comptime str: []const u8, args: anytype) bun.StringPointer {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
         assert(this.ptr != null); // must call allocate first
@@ -204,7 +203,7 @@ pub fn fmtAppendCount(this: *StringBuilder, comptime str: string, args: anytype)
     };
 }
 
-pub fn fmtAppendCountZ(this: *StringBuilder, comptime str: string, args: anytype) bun.StringPointer {
+pub fn fmtAppendCountZ(this: *StringBuilder, comptime str: []const u8, args: anytype) bun.StringPointer {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
         assert(this.ptr != null); // must call allocate first
@@ -224,7 +223,7 @@ pub fn fmtAppendCountZ(this: *StringBuilder, comptime str: string, args: anytype
     };
 }
 
-pub fn fmtCount(this: *StringBuilder, comptime str: string, args: anytype) void {
+pub fn fmtCount(this: *StringBuilder, comptime str: []const u8, args: anytype) void {
     this.cap += std.fmt.count(str, args);
 }
 

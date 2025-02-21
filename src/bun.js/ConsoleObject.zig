@@ -985,11 +985,12 @@ const CustomFormattedObject = struct {
 };
 
 pub const Formatter = struct {
+    globalThis: *JSGlobalObject,
+
     remaining_values: []const JSValue = &[_]JSValue{},
     map: Visited.Map = undefined,
     map_node: ?*Visited.Pool.Node = null,
     hide_native: bool = false,
-    globalThis: *JSGlobalObject,
     indent: u32 = 0,
     depth: u16 = 0,
     max_depth: u16 = 8,
@@ -2540,7 +2541,7 @@ pub const Formatter = struct {
                     response.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.WebCore.Request)) |request| {
-                    request.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    request.writeFormat(value, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.API.BuildArtifact)) |build| {
                     build.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};

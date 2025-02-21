@@ -1,9 +1,9 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
 import { loadModule, LoadModuleType, onServerSideReload, replaceModules } from "./hmr-module";
-import { hasFatalError, onErrorMessage, onRuntimeError, RuntimeErrorType } from "./client/overlay";
+import { hasFatalError, onServerErrorPayload, onRuntimeError } from "./client/overlay";
 import { Bake } from "bun";
-import { DataViewReader } from "./client/reader";
+import { DataViewReader } from "./client/data-view";
 import { initWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
@@ -132,6 +132,10 @@ const ws = initWebSocket(
       if (reader.hasMoreData()) {
         const code = td.decode(reader.rest());
         try {
+          // TODO: This functions in all browsers, but WebKit browsers do not
+          // provide stack traces to errors thrown in eval, meaning client-side
+          // errors from hot-reloaded modules cannot be mapped back to their
+          // source.
           const modules = (0, eval)(code);
           if (IS_BUN_DEVELOPMENT) {
             console.info("Updated modules:\n" + Object.keys(modules).join("\n"));
@@ -140,7 +144,7 @@ const ws = initWebSocket(
         } catch (e) {
           if (IS_BUN_DEVELOPMENT) {
             console.error(e, "Failed to parse HMR payload", { code });
-            onRuntimeError(e, RuntimeErrorType.fatal);
+            onRuntimeError(e, true, false);
             return;
           }
           throw e;
@@ -154,7 +158,7 @@ const ws = initWebSocket(
       const reader = new DataViewReader(view, 1);
       currentRouteIndex = reader.u32();
     },
-    [MessageId.errors]: onErrorMessage,
+    [MessageId.errors]: onServerErrorPayload,
   },
   {
     displayMessage: config.refresh ? "Hot-module-reloading socket" : "Live-reloading socket",
@@ -180,8 +184,16 @@ const ws = initWebSocket(
   };
 }
 
+window.addEventListener("error", event => {
+  onRuntimeError(event.error, true, true);
+});
+window.addEventListener("unhandledrejection", event => {
+  onRuntimeError(event.reason, true, true);
+});
+
 try {
   await loadModule<Bake.ClientEntryPoint>(config.main, LoadModuleType.AsyncAssertPresent);
 } catch (e) {
-  onRuntimeError(e, RuntimeErrorType.fatal);
+  console.error(e);
+  onRuntimeError(e, true, false);
 }

@@ -93,6 +93,9 @@ pub const InitCommand = struct {
         // Print the question prompt
         Output.prettyln("<r><cyan>?<r> {s}<d> - Press return to submit.<r>", .{label});
 
+        if (colors) Output.print("\x1b[?25l", .{}); // hide cursor
+        defer if (colors) Output.print("\x1b[?25h", .{}); // show cursor
+
         var selected: Choices = .default;
         var initial_draw = true;
         var reprint_menu = true;
@@ -479,12 +482,12 @@ pub const InitCommand = struct {
             }
 
             // Find any source file
-            var dir = try std.fs.cwd().openDir(".", .{ .iterate = true });
+            var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch break :infer;
             defer dir.close();
             var it = bun.DirIterator.iterate(dir, .u8);
             while (try it.next().unwrap()) |file| {
                 if (file.kind != .file) continue;
-                const loader = bun.options.Loader.fromString(file.name.slice()) orelse
+                const loader = bun.options.Loader.fromString(std.fs.path.extension(file.name.slice())) orelse
                     continue;
                 if (loader.isJavaScriptLike()) {
                     fields.entry_point = try alloc.dupeZ(u8, file.name.slice());
@@ -787,7 +790,7 @@ pub const InitCommand = struct {
                     };
                 }
 
-                if (fields.entry_point.len > 0) {
+                if (fields.entry_point.len > 0 and !did_load_package_json) {
                     Output.pretty("\nTo get started, run:\n\n\t", .{});
                     if (strings.containsAny(
                         " \"'",

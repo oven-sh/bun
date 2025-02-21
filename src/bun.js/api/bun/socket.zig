@@ -1391,7 +1391,6 @@ fn NewSocket(comptime ssl: bool) type {
             handshake_complete: bool = false,
             empty_packet_pending: bool = false,
             end_after_flush: bool = false,
-            close_after_flush: bool = false,
             owned_protos: bool = true,
             is_paused: bool = false,
             allow_half_open: bool = false,

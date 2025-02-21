@@ -70,11 +70,36 @@ pub const InitCommand = struct {
 
     fn processRadioButton(
         label: string,
-        comptime choices: []const []const u8,
-        comptime choices_uncolored: []const []const u8,
-        default_value: usize,
+        comptime Choices: type,
+        default_value: Choices,
         comptime colors: bool,
-    ) !usize {
+    ) !Choices {
+        const choices = comptime choices: {
+            const choices_fields = bun.meta.EnumFields(Choices);
+            if (choices_fields.len == 0) {
+                @compileError("Choices must be an enum type with at least one field");
+            }
+            var expected_value = 0;
+            var choices: [choices_fields.len][]const u8 = undefined;
+            for (choices_fields, 0..) |field, i| {
+                if (field.value != expected_value) {
+                    @compileError("Choices must be an enum type with consecutive values starting from 0");
+                }
+                const e: Choices = @enumFromInt(field.value);
+                choices[i] = e.toColoredString();
+                expected_value += 1;
+            }
+            break :choices choices;
+        };
+        const choices_uncolored = comptime choices_uncolored: {
+            const choices_fields = bun.meta.EnumFields(Choices);
+            var choices_uncolored: [choices_fields.len][]const u8 = undefined;
+            for (choices_fields, 0..) |field, i| {
+                choices_uncolored[i] = field.name;
+            }
+            break :choices_uncolored choices_uncolored;
+        };
+
         // Print the question prompt
         if (colors) {
             Output.prettyln("<r><cyan>?<r> {s}<d> - Press return to submit.<r>", .{label});
@@ -82,7 +107,7 @@ pub const InitCommand = struct {
             Output.prettyln("<r><cyan>?<r> {s}<d> - Press return to submit.<r>", .{label});
         }
 
-        var selected = default_value;
+        var selected: Choices = default_value;
         var initial_draw = true;
         var reprint_menu = true;
         errdefer reprint_menu = false;
@@ -98,9 +123,9 @@ pub const InitCommand = struct {
             if (reprint_menu) {
                 // Print final selection
                 if (colors) {
-                    Output.prettyln("<r><cyan>?<r> {s} <d>› {s}<r>", .{ label, choices[selected] });
+                    Output.prettyln("<r><cyan>?<r> {s} <d>› {s}<r>", .{ label, choices[@intFromEnum(selected)] });
                 } else {
-                    Output.prettyln("<r><cyan>?<r> {s} <d>> {s}<r>", .{ label, choices_uncolored[selected] });
+                    Output.prettyln("<r><cyan>?<r> {s} <d>> {s}<r>", .{ label, choices_uncolored[@intFromEnum(selected)] });
                 }
             }
         }
@@ -118,7 +143,7 @@ pub const InitCommand = struct {
             // Print options vertically
             inline for (choices, choices_uncolored, 0..) |option_colored, option_uncolored, i| {
                 const option = if (colors) option_colored else option_uncolored;
-                if (i == selected) {
+                if (i == @intFromEnum(selected)) {
                     if (colors) {
                         Output.pretty("<r><cyan>❯<r>   ", .{});
                     } else {
@@ -147,21 +172,21 @@ pub const InitCommand = struct {
                 '1'...'9' => {
                     const choice = byte - '1';
                     if (choice < choices.len) {
-                        return choice;
+                        return @enumFromInt(choice);
                     }
                 },
                 'j' => {
-                    if (selected == choices.len - 1) {
-                        selected = 0;
+                    if (@intFromEnum(selected) == choices.len - 1) {
+                        selected = @enumFromInt(0);
                     } else {
-                        selected += 1;
+                        selected = @enumFromInt(@intFromEnum(selected) + 1);
                     }
                 },
                 'k' => {
-                    if (selected == 0) {
-                        selected = choices.len - 1;
+                    if (@intFromEnum(selected) == 0) {
+                        selected = @enumFromInt(choices.len - 1);
                     } else {
-                        selected -= 1;
+                        selected = @enumFromInt(@intFromEnum(selected) - 1);
                     }
                 },
                 27 => { // ESC sequence
@@ -173,17 +198,17 @@ pub const InitCommand = struct {
                     const arrow = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
                     switch (arrow) {
                         'A' => { // Up arrow
-                            if (selected == 0) {
-                                selected = choices.len - 1;
+                            if (@intFromEnum(selected) == 0) {
+                                selected = @enumFromInt(choices.len - 1);
                             } else {
-                                selected -= 1;
+                                selected = @enumFromInt(@intFromEnum(selected) - 1);
                             }
                         },
                         'B' => { // Down arrow
-                            if (selected == choices.len - 1) {
-                                selected = 0;
+                            if (@intFromEnum(selected) == choices.len - 1) {
+                                selected = @enumFromInt(0);
                             } else {
-                                selected += 1;
+                                selected = @enumFromInt(@intFromEnum(selected) + 1);
                             }
                         },
                         else => {},
@@ -194,13 +219,13 @@ pub const InitCommand = struct {
         }
     }
 
+    /// `Choices` must be an enum type with the `toColoredString` method.
     pub fn radio(
         label: string,
-        comptime choices: []const []const u8,
-        comptime choices_uncolored: []const []const u8,
-        default_value: usize,
+        comptime Choices: type,
+        default_value: Choices,
         comptime colors: bool,
-    ) !usize {
+    ) !Choices {
 
         // Set raw mode to read single characters without echo
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
@@ -223,7 +248,7 @@ pub const InitCommand = struct {
             }
         }
 
-        const selection = processRadioButton(label, choices, choices_uncolored, default_value, colors) catch |err| {
+        const selection = processRadioButton(label, Choices, default_value, colors) catch |err| {
             if (err == error.EndOfStream) {
                 Output.flush();
                 // Add an "x" cancelled
@@ -503,29 +528,31 @@ pub const InitCommand = struct {
             if (!did_load_package_json) {
                 Output.pretty("\n", .{});
 
-                const choices = &[_][]const u8{
-                    "TypeScript",
-                    "React",
-                    "TypeScript Library",
-                };
-                const choices_colored = &[_][]const u8{
-                    comptime Output.prettyFmt("<blue>TypeScript<r> <d>(blank)<r>", true),
-                    comptime Output.prettyFmt("<cyan>React<r>", true),
-                    comptime Output.prettyFmt("<blue>TypeScript<r> <d>(library)<r>", true),
+                const Choices = enum {
+                    @"TypeScript (blank)",
+                    @"TypeScript Library",
+                    React,
+
+                    pub fn toColoredString(self: @This()) []const u8 {
+                        return switch (self) {
+                            .@"TypeScript (blank)" => Output.prettyFmt("<blue>TypeScript<r> <d>(blank)<r>", true),
+                            .@"TypeScript Library" => Output.prettyFmt("<blue>TypeScript<r> <d>(library)<r>", true),
+                            .React => Output.prettyFmt("<cyan>React<r>", true),
+                        };
+                    }
                 };
 
                 const selected = switch (Output.enable_ansi_colors_stdout) {
                     inline else => |colors| try radio(
-                        "Select a project",
-                        choices_colored,
-                        choices,
-                        0,
+                        "Select a project template",
+                        Choices,
+                        .@"TypeScript (blank)",
                         colors,
                     ),
                 };
 
                 switch (selected) {
-                    2 => {
+                    .@"TypeScript Library" => {
                         template = .typescript_library;
                         fields.name = prompt(
                             alloc,
@@ -546,47 +573,45 @@ pub const InitCommand = struct {
                         };
                         fields.private = false;
                     },
-                    1 => {
-                        const react_choices = &[_][]const u8{
-                            "Default (blank)",
-                            "Tailwind CSS",
-                            "Shadcn UI + Tailwind CSS",
-                        };
-                        const react_choices_colored = &[_][]const u8{
-                            "Default (blank)",
-                            // <magenta>Tailwind CSS
-                            "\x1B[36mTailwind CSS\x1B[39m",
-                            // <green>Shadcn + Tailwind CSS
-                            "\x1B[32mshadcn + Tailwind CSS\x1B[39m\x1B[0m",
+                    .React => {
+                        const ReactChoices = enum {
+                            @"Default (blank)",
+                            TailwindCSS,
+                            @"Shadcn UI + TailwindCSS",
+
+                            pub fn toColoredString(self: @This()) []const u8 {
+                                return switch (self) {
+                                    .@"Default (blank)" => Output.prettyFmt("<blue>Default (blank)<r>", true),
+                                    .TailwindCSS => Output.prettyFmt("<magenta>TailwindCSS<r>", true),
+                                    .@"Shadcn UI + TailwindCSS" => Output.prettyFmt("<green>Shadcn + TailwindCSS<r>", true),
+                                };
+                            }
                         };
 
                         const react_selected = switch (Output.enable_ansi_colors_stdout) {
                             inline else => |colors| try radio(
                                 "Select a React template",
-                                react_choices_colored,
-                                react_choices,
-                                0,
+                                ReactChoices,
+                                .@"Default (blank)",
                                 colors,
                             ),
                         };
 
                         switch (react_selected) {
-                            0 => {
+                            .@"Default (blank)" => {
                                 template = .react_blank;
                             },
-                            1 => {
+                            .TailwindCSS => {
                                 template = .react_tailwind;
                             },
-                            2 => {
+                            .@"Shadcn UI + TailwindCSS" => {
                                 template = .react_tailwind_shadcn;
                             },
-                            else => unreachable,
                         }
                     },
-                    0 => {
+                    .@"TypeScript (blank)" => {
                         template = .blank;
                     },
-                    else => unreachable,
                 }
 
                 try Output.writer().writeAll("\n");
@@ -884,6 +909,11 @@ const Template = enum {
     react_tailwind,
     react_tailwind_shadcn,
     typescript_library,
+    const TemplateFile = struct {
+        path: [:0]const u8,
+        contents: [:0]const u8,
+        can_skip_if_exists: bool = false,
+    };
     pub fn shouldUseSourceFileProjectGenerator(this: Template) bool {
         return switch (this) {
             .blank, .typescript_library => false,
@@ -949,81 +979,83 @@ const Template = enum {
     }
 
     const ReactBlank = struct {
-        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../init/react-app/bunfig.toml") },
-            .{ "package.json", @embedFile("../init/react-app/package.json") },
-            .{ "tsconfig.json", @embedFile("../init/react-app/tsconfig.json") },
-            .{ "README.md", InitCommand.Assets.@"README2.md" },
-            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../init/react-app/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../init/react-app/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../init/react-app/src/index.html") },
-            .{ "src/index.css", @embedFile("../init/react-app/src/index.css") },
-            .{ "src/APITester.tsx", @embedFile("../init/react-app/src/APITester.tsx") },
-            .{ "src/react.svg", @embedFile("../init/react-app/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../init/react-app/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../init/react-app/src/logo.svg") },
+        const files: []const TemplateFile = &.{
+            .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-app/bunfig.toml") },
+            .{ .path = "package.json", .contents = @embedFile("../init/react-app/package.json") },
+            .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-app/tsconfig.json") },
+            .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
+            .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
+            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-app/src/index.tsx") },
+            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-app/src/App.tsx") },
+            .{ .path = "src/index.html", .contents = @embedFile("../init/react-app/src/index.html") },
+            .{ .path = "src/index.css", .contents = @embedFile("../init/react-app/src/index.css") },
+            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-app/src/APITester.tsx") },
+            .{ .path = "src/react.svg", .contents = @embedFile("../init/react-app/src/react.svg") },
+            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-app/src/frontend.tsx") },
+            .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-app/src/logo.svg") },
         };
     };
 
     const ReactTailwind = struct {
-        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../init/react-tailwind/bunfig.toml") },
-            .{ "package.json", @embedFile("../init/react-tailwind/package.json") },
-            .{ "tsconfig.json", @embedFile("../init/react-tailwind/tsconfig.json") },
-            .{ "README.md", InitCommand.Assets.@"README2.md" },
-            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../init/react-tailwind/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../init/react-tailwind/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../init/react-tailwind/src/index.html") },
-            .{ "src/index.css", @embedFile("../init/react-tailwind/src/index.css") },
-            .{ "src/APITester.tsx", @embedFile("../init/react-tailwind/src/APITester.tsx") },
-            .{ "src/react.svg", @embedFile("../init/react-tailwind/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../init/react-tailwind/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../init/react-tailwind/src/logo.svg") },
+        const files: []const TemplateFile = &.{
+            .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-tailwind/bunfig.toml") },
+            .{ .path = "package.json", .contents = @embedFile("../init/react-tailwind/package.json") },
+            .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-tailwind/tsconfig.json") },
+            .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
+            .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
+            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-tailwind/src/index.tsx") },
+            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-tailwind/src/App.tsx") },
+            .{ .path = "src/index.html", .contents = @embedFile("../init/react-tailwind/src/index.html") },
+            .{ .path = "src/index.css", .contents = @embedFile("../init/react-tailwind/src/index.css") },
+            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-tailwind/src/APITester.tsx") },
+            .{ .path = "src/react.svg", .contents = @embedFile("../init/react-tailwind/src/react.svg") },
+            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-tailwind/src/frontend.tsx") },
+            .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-tailwind/src/logo.svg") },
         };
     };
 
     const ReactShadcn = struct {
-        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../init/react-shadcn/bunfig.toml") },
-            .{ "styles/globals.css", @embedFile("../init/react-shadcn/styles/globals.css") },
-            .{ "package.json", @embedFile("../init/react-shadcn/package.json") },
-            .{ "components.json", @embedFile("../init/react-shadcn/components.json") },
-            .{ "tsconfig.json", @embedFile("../init/react-shadcn/tsconfig.json") },
-            .{ "README.md", InitCommand.Assets.@"README2.md" },
-            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../init/react-shadcn/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../init/react-shadcn/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../init/react-shadcn/src/index.html") },
-            .{ "src/types.d.ts", @embedFile("../init/react-shadcn/src/types.d.ts") },
-            .{ "src/index.css", @embedFile("../init/react-shadcn/src/index.css") },
-            .{ "src/components/ui/card.tsx", @embedFile("../init/react-shadcn/src/components/ui/card.tsx") },
-            .{ "src/components/ui/label.tsx", @embedFile("../init/react-shadcn/src/components/ui/label.tsx") },
-            .{ "src/components/ui/button.tsx", @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
-            .{ "src/components/ui/select.tsx", @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
-            .{ "src/components/ui/input.tsx", @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
-            .{ "src/components/ui/form.tsx", @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
-            .{ "src/APITester.tsx", @embedFile("../init/react-shadcn/src/APITester.tsx") },
-            .{ "src/lib/utils.ts", @embedFile("../init/react-shadcn/src/lib/utils.ts") },
-            .{ "src/react.svg", @embedFile("../init/react-shadcn/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../init/react-shadcn/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../init/react-shadcn/src/logo.svg") },
+        const files: []const TemplateFile = &.{
+            .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-shadcn/bunfig.toml") },
+            .{ .path = "styles/globals.css", .contents = @embedFile("../init/react-shadcn/styles/globals.css") },
+            .{ .path = "package.json", .contents = @embedFile("../init/react-shadcn/package.json") },
+            .{ .path = "components.json", .contents = @embedFile("../init/react-shadcn/components.json") },
+            .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-shadcn/tsconfig.json") },
+            .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
+            .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
+            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-shadcn/src/index.tsx") },
+            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-shadcn/src/App.tsx") },
+            .{ .path = "src/index.html", .contents = @embedFile("../init/react-shadcn/src/index.html") },
+            .{ .path = "src/types.d.ts", .contents = @embedFile("../init/react-shadcn/src/types.d.ts") },
+            .{ .path = "src/index.css", .contents = @embedFile("../init/react-shadcn/src/index.css") },
+            .{ .path = "src/components/ui/card.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/card.tsx") },
+            .{ .path = "src/components/ui/label.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/label.tsx") },
+            .{ .path = "src/components/ui/button.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
+            .{ .path = "src/components/ui/select.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
+            .{ .path = "src/components/ui/input.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
+            .{ .path = "src/components/ui/form.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
+            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-shadcn/src/APITester.tsx") },
+            .{ .path = "src/lib/utils.ts", .contents = @embedFile("../init/react-shadcn/src/lib/utils.ts") },
+            .{ .path = "src/react.svg", .contents = @embedFile("../init/react-shadcn/src/react.svg") },
+            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-shadcn/src/frontend.tsx") },
+            .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-shadcn/src/logo.svg") },
         };
     };
 
-    pub fn files(this: Template) []const struct { [:0]const u8, []const u8 } {
+    pub fn files(this: Template) []const TemplateFile {
         return switch (this) {
             .react_blank => ReactBlank.files,
             .react_tailwind => ReactTailwind.files,
-            .react_tailwind_shadcn => ReactTailwind.files,
+            .react_tailwind_shadcn => ReactShadcn.files,
             else => &.{.{ &.{}, &.{} }},
         };
     }
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
         inline for (comptime this.files()) |file| {
-            const path, const contents = file;
+            const path = file.path;
+            const contents = file.contents;
+            const can_skip_if_exists = file.can_skip_if_exists;
 
             if (comptime strings.eqlComptime(path, "README.md")) {
                 InitCommand.Assets.createWithContents("README.md", contents, .{
@@ -1031,7 +1063,8 @@ const Template = enum {
                     .bunVersion = Environment.version_string,
                 }) catch |err| {
                     if (err == error.EEXISTS) {
-                        Output.errGeneric("'{s}' already exists", .{path});
+                        Output.print("\n", .{});
+                        Output.errGeneric("stopping because '{s}' already exists", .{path});
                     } else {
                         Output.err(err, "failed to create file: '{s}'", .{path});
                     }
@@ -1039,12 +1072,20 @@ const Template = enum {
                 };
             } else {
                 InitCommand.Assets.createNew(path, contents) catch |err| {
-                    if (err == error.EEXISTS) {
-                        Output.errGeneric("'{s}' already exists", .{path});
+                    var crash = true;
+                    if (err == error.EEXIST) {
+                        if (can_skip_if_exists) {
+                            Output.prettyln(" ○ <r><yellow>{s}<r> (already existed)", .{path});
+                            Output.flush();
+                            crash = false;
+                        } else {
+                            Output.print("\n", .{});
+                            Output.errGeneric("stopping because '{s}' already exists", .{path});
+                        }
                     } else {
                         Output.err(err, "failed to create file: '{s}'", .{path});
                     }
-                    Global.crash();
+                    if (crash) Global.crash();
                 };
             }
         }
@@ -1066,8 +1107,10 @@ const Template = enum {
         _ = try install.spawnAndWait();
 
         Output.prettyln("\nTo get started, run:\n\n\t<cyan>bun dev<r>", .{});
-        Output.prettyln("\nTo build statically site:\n\n\t<cyan>bun run bu<r>\n\n", .{});
+        Output.prettyln("\nTo generate a static build:\n\n\t<cyan>bun run build<r>\n\n", .{});
         Output.prettyln("\nTo run in production:\n\n\t<cyan>bun start<r>\n\n", .{});
+
+        Output.prettyln("Bun will now auto-start the dev server for you...\n\n", .{});
 
         Output.flush();
 

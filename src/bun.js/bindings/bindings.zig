@@ -250,6 +250,8 @@ pub const ZigString = extern struct {
     _unsafe_ptr_do_not_use: [*]const u8,
     len: usize,
 
+    pub const empty: ZigString = .{ ._unsafe_ptr_do_not_use = undefined, .len = 0 };
+
     pub const ByteString = union(enum) {
         latin1: []const u8,
         utf16: []const u16,
@@ -790,7 +792,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn from(slice_: JSC.C.JSValueRef, ctx: JSC.C.JSContextRef) ZigString {
-        return JSC.JSValue.fromRef(slice_).getZigString(ctx.ptr());
+        return JSC.JSValue.fromRef(slice_).getZigString(ctx.ptr()) catch .empty; // TODO: propogate JSError
     }
 
     pub fn from16Slice(slice_: []const u16) ZigString {
@@ -3997,7 +3999,7 @@ pub const JSValue = enum(i64) {
 
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
-            ZigString => this.getZigString(globalThis),
+            ZigString => this.getZigString(globalThis) catch .empty, // TODO: propogate JSError
             bool => this.toBoolean(),
             f64 => {
                 if (this.isDouble()) {
@@ -4943,9 +4945,9 @@ pub const JSValue = enum(i64) {
     }
 
     /// Deprecated: replace with 'toBunString2'
-    pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
+    pub fn getZigString(this: JSValue, global: *JSGlobalObject) bun.JSError!ZigString {
         var str = ZigString.init("");
-        this.toZigString(&str, global) catch {};
+        try this.toZigString(&str, global);
         return str;
     }
 

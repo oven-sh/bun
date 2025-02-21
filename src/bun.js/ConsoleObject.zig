@@ -2175,7 +2175,7 @@ pub const Formatter = struct {
                 writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
             },
             .BigInt => {
-                const out_str = value.getZigString(this.globalThis).slice();
+                const out_str = (try value.getZigString(this.globalThis)).slice();
                 this.addForNewLine(out_str.len);
 
                 writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
@@ -3139,7 +3139,7 @@ pub const Formatter = struct {
                                 print_children: {
                                     switch (tag.tag) {
                                         .String => {
-                                            const children_string = children.getZigString(this.globalThis);
+                                            const children_string = try children.getZigString(this.globalThis);
                                             if (children_string.len == 0) break :print_children;
                                             if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 

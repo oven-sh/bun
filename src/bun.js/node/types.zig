@@ -1541,7 +1541,7 @@ pub const FileSystemFlags = enum(c_int) {
 
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
-            const str = val.getZigString(ctx);
+            const str = try val.getZigString(ctx);
             if (str.isEmpty()) {
                 return ctx.throwInvalidArguments("Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{});
             }

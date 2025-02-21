@@ -293,7 +293,7 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
 
     if (value.isString()) {
         const str = JSAst.E.String{
-            .data = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis)}) catch unreachable,
+            .data = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis) catch unreachable}) catch unreachable,
         };
         const out = bun.default_allocator.create(JSAst.E.String) catch unreachable;
         out.* = str;
@@ -599,7 +599,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                     var length_iter = iter;
                     while (length_iter.next()) |value| {
                         if (!value.isString()) continue;
-                        const str = value.getZigString(globalThis);
+                        const str = try value.getZigString(globalThis);
                         if (str.len == 0) continue;
                         const name = std.fmt.bufPrint(buf.items.ptr[buf.items.len..buf.capacity], "{}", .{str}) catch {
                             return globalObject.throwInvalidArguments("Error reading exports.eliminate. TODO: utf-16", .{});

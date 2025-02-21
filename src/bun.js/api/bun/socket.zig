@@ -3293,7 +3293,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throw("Expected \"serverName\" to be a string", .{});
             }
 
-            const slice = server_name.getZigString(globalObject).toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const slice = try (try server_name.getZigString(globalObject)).toOwnedSlice(bun.default_allocator);
             if (this.server_name) |old| {
                 this.server_name = slice;
                 default_allocator.free(old);

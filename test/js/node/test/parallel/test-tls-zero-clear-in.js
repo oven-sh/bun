@@ -42,8 +42,8 @@ const server = tls.createServer({
   }, 20);
 }).listen(0, common.mustCall(function() {
   const conn = tls.connect({
-    // cert: cert,
-    // key: key,
+    cert: cert,
+    key: key,
     rejectUnauthorized: false,
     port: this.address().port
   }, function() {

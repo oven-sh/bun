@@ -966,8 +966,12 @@ const Template = enum {
                 "build", "bun 'REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts'",
             },
             .react_blank => &.{
-                "dev",    "bun ./src/",
-                "static", "bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+                "dev",
+                "bun --hot .",
+                "static",
+                "bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+                "build",
+                "NODE_ENV=production bun .",
             },
         };
 

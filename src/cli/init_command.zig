@@ -461,19 +461,35 @@ pub const InitCommand = struct {
             }
         }
 
-        if (fields.entry_point.len == 0) infer: {
+        // --minimal is a special preset to create only empty package.json + tsconfig.json
+        const minimal = brk: {
+            for (argv) |arg_| {
+                const arg = bun.span(arg_);
+                if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
+                    break :brk true;
+                }
+            }
+            break :brk false;
+        };
+
+        if (fields.entry_point.len == 0 and !minimal) infer: {
             fields.entry_point = "index.ts";
 
             // Prefer a file named index
             const paths_to_try = [_][:0]const u8{
-                @as([:0]const u8, "index.mts"),
-                @as([:0]const u8, "index.tsx"),
-                @as([:0]const u8, "index.ts"),
-                @as([:0]const u8, "index.jsx"),
-                @as([:0]const u8, "index.mjs"),
-                @as([:0]const u8, "index.js"),
+                "index.mts",
+                "index.tsx",
+                "index.ts",
+                "index.jsx",
+                "index.mjs",
+                "index.js",
+                "src/index.mts",
+                "src/index.tsx",
+                "src/index.ts",
+                "src/index.jsx",
+                "src/index.mjs",
+                "src/index.js",
             };
-
             for (paths_to_try) |path| {
                 if (existsZ(path)) {
                     fields.entry_point = path;
@@ -490,7 +506,10 @@ pub const InitCommand = struct {
                 const loader = bun.options.Loader.fromString(std.fs.path.extension(file.name.slice())) orelse
                     continue;
                 if (loader.isJavaScriptLike()) {
-                    fields.entry_point = try alloc.dupeZ(u8, file.name.slice());
+                    // If a non-index file is found, it might not be the "main"
+                    // file, and a generated package.json shouldn't get this
+                    // added noise.
+                    fields.entry_point = "";
                     break;
                 }
             }
@@ -504,7 +523,7 @@ pub const InitCommand = struct {
             ).data.e_object;
         }
 
-        const auto_yes = Output.stdout_descriptor_type != .terminal or brk: {
+        const auto_yes = Output.stdout_descriptor_type != .terminal or minimal or brk: {
             for (argv) |arg_| {
                 const arg = bun.span(arg_);
                 if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
@@ -598,17 +617,21 @@ pub const InitCommand = struct {
         }
 
         const Steps = struct {
-            write_gitignore: bool = true,
-            write_package_json: bool = true,
-            write_tsconfig: bool = true,
-            write_readme: bool = true,
+            write_gitignore: bool,
+            write_package_json: bool,
+            write_tsconfig: bool,
+            write_readme: bool,
         };
 
-        var steps = Steps{};
+        var steps = Steps{
+            .write_package_json = true,
+            .write_tsconfig = true,
+            .write_gitignore = !minimal,
+            .write_readme = !minimal,
+        };
 
-        steps.write_gitignore = !existsZ(".gitignore");
-
-        steps.write_readme = !existsZ("README.md") and !existsZ("README") and !existsZ("README.txt") and !existsZ("README.mdx");
+        steps.write_gitignore = steps.write_gitignore and !existsZ(".gitignore");
+        steps.write_readme = steps.write_readme and !existsZ("README.md") and !existsZ("README") and !existsZ("README.txt") and !existsZ("README.mdx");
 
         steps.write_tsconfig = brk: {
             if (existsZ("tsconfig.json")) {
@@ -622,8 +645,9 @@ pub const InitCommand = struct {
             break :brk true;
         };
 
-        {
-            try fields.object.putString(alloc, "name", fields.name);
+        if (!minimal) {
+            if (fields.name.len > 0)
+                try fields.object.putString(alloc, "name", fields.name);
             if (fields.entry_point.len > 0) {
                 if (fields.object.hasProperty("module")) {
                     try fields.object.putString(alloc, "module", fields.entry_point);
@@ -640,6 +664,8 @@ pub const InitCommand = struct {
                 try fields.object.put(alloc, "private", js_ast.Expr.init(js_ast.E.Boolean, .{ .value = true }, logger.Loc.Empty));
             }
         }
+
+        var need_run_bun_install = !did_load_package_json;
         {
             const all_dependencies = template.dependencies();
             const dependencies = all_dependencies.dependencies;
@@ -673,7 +699,7 @@ pub const InitCommand = struct {
                 break :brk needed_dev_dependencies.count() > 0;
             };
 
-            const needs_typescript_dependency = brk: {
+            const needs_typescript_dependency = !minimal and brk: {
                 if (fields.object.get("devDependencies")) |deps| {
                     if (deps.hasAnyPropertyNamed(&.{"typescript"})) {
                         break :brk false;
@@ -688,6 +714,8 @@ pub const InitCommand = struct {
 
                 break :brk true;
             };
+
+            need_run_bun_install = needs_dependencies or needs_dev_dependencies or needs_typescript_dependency;
 
             if (needs_dependencies) {
                 var dependencies_object = fields.object.get("dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
@@ -804,7 +832,7 @@ pub const InitCommand = struct {
 
                 Output.flush();
 
-                if (existsZ("package.json")) {
+                if (existsZ("package.json") and need_run_bun_install) {
                     var process = std.process.Child.init(
                         &.{
                             try bun.selfExePath(),

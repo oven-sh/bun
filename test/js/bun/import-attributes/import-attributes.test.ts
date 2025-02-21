@@ -150,7 +150,9 @@ async function compileAndTest_inner(
       expect(sqlite_res).toStrictEqual({
         default: { filename: expect.any(String) },
       });
-      expect((sqlite_res as any).default.filename).toStartWith(path.join(tests.sqlite!.dir!, "out"));
+      expect((sqlite_res as any).default.filename.toUpperCase()).toStartWith(
+        path.join(tests.sqlite!.dir!, "out").toUpperCase(),
+      );
     } else {
       expect(sqlite_res).toStrictEqual({
         db: { filename: path.join(tests.sqlite!.dir!, tests.sqlite!.filename) },

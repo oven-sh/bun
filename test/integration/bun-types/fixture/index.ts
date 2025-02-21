@@ -44,13 +44,18 @@ const body = await fetch(
 
 await body.text();
 
-fetch("", {
+Bun.S3Client;
+
+Bun.fetch("", {
   proxy: "",
   s3: {},
 });
 
+new TextEncoder();
+
 Bun.serve({
   fetch(req) {
+    req.headers;
     const headers = req.headers.toJSON();
 
     const body = req.method === "GET" || req.method === "HEAD" ? undefined : req.body;
@@ -63,6 +68,10 @@ Bun.serve({
 });
 
 import { serve } from "bun";
+
+new Worker("").on("message", (e: MessageEvent) => {
+  e;
+});
 
 serve({
   fetch(req) {

@@ -1,8 +1,11 @@
-type _Request = import("undici-types").Request;
 type _Headers = import("undici-types").Headers;
 type _Response = import("undici-types").Response;
 
 export {};
+
+declare interface Request {
+	headers: Headers;
+}
 
 declare global {
 	var Response: {
@@ -59,16 +62,16 @@ declare global {
 		error(): Response;
 	};
 
-	interface Request extends _Request {
-		headers: Headers;
-	}
+	// interface Request extends _Request {
+	//   headers: Headers;
+	// }
 
-	var Request: {
-		prototype: Request;
-		new (requestInfo: string, requestInit?: RequestInit): Request;
-		new (requestInfo: RequestInit & { url: string }): Request;
-		new (requestInfo: Request, requestInit?: RequestInit): Request;
-	};
+	// var Request: {
+	//   prototype: Request;
+	//   new (requestInfo: string, requestInit?: RequestInit): Request;
+	//   new (requestInfo: RequestInit & { url: string }): Request;
+	//   new (requestInfo: Request, requestInit?: RequestInit): Request;
+	// };
 
 	interface Headers extends _Headers {
 		/**
@@ -104,4 +107,6 @@ declare global {
 		 */
 		getAll(name: "set-cookie" | "Set-Cookie"): string[];
 	}
+
+	var fetch: (request: string | URL | Request) => Promise<Response>;
 }

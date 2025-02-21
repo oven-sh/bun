@@ -5115,7 +5115,7 @@ declare module "bun" {
 	 */
 	function openInEditor(path: string, options?: EditorOptions): void;
 
-	const fetch: typeof globalThis.fetch & {
+	var fetch: typeof globalThis.fetch & {
 		preconnect(url: string): void;
 	};
 

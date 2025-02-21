@@ -8,3 +8,5 @@ src/react-refresh.js
 test/snippets
 test/js/node/test
 bun.lock
+# formatting adds many levels of indent, doubling the file size
+src/bake/incremental_visualizer.html

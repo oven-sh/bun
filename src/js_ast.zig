@@ -6953,13 +6953,6 @@ pub const Ast = struct {
         };
     }
 
-    pub fn initTest(parts: []Part) Ast {
-        return Ast{
-            .parts = Part.List.init(parts),
-            .runtime_imports = .{},
-        };
-    }
-
     pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
@@ -7402,6 +7395,10 @@ pub const ExportsKind = enum {
     // Like "esm_with_dynamic_fallback", but the module was originally a CommonJS
     // module.
     esm_with_dynamic_fallback_from_cjs,
+
+    /// This file is an optimized barrel file, and itself shouldn't be reachable,
+    /// as all importer's get their
+    esm_barrel_file,
 
     const dynamic = std.EnumSet(ExportsKind).init(.{
         .esm_with_dynamic_fallback = true,

@@ -849,7 +849,11 @@ const TimerObjectInternals = struct {
     extern "c" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
 
     pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) void {
-        if (this.has_cleared_timer) {
+        if (this.has_cleared_timer or
+            // unref'd setImmediate callbacks should only run if there are things keeping the event
+            // loop alive other than setImmediates
+            (!this.is_keeping_event_loop_alive and !vm.isEventLoopAliveExcludingImmediates()))
+        {
             this.deref();
             return;
         }
@@ -1105,7 +1109,13 @@ const TimerObjectInternals = struct {
             return;
         }
         this.is_keeping_event_loop_alive = enable;
-        vm.timer.incrementTimerRef(if (enable) 1 else -1);
+        switch (this.kind) {
+            .setTimeout, .setInterval => vm.timer.incrementTimerRef(if (enable) 1 else -1),
+            // If setImmediate calls ref the event loop, then when the only pending tasks are
+            // immediate callbacks we will still try to check for I/O activity, when really we only
+            // want to run immediate callbacks.
+            .setImmediate => {},
+        }
     }
 
     pub fn hasRef(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {

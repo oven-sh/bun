@@ -1108,6 +1108,6 @@ const Template = enum {
             \\
         , .{});
 
-        Global.exit(0);
+        Output.flush();
     }
 };

@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { Client, Dev, devTest, emptyHtmlFile, minimalFramework, reactRefreshStub } from "../dev-server-harness";
+import { Client, devTest, emptyHtmlFile, minimalFramework, reactRefreshStub } from "../dev-server-harness";
+import { dedent } from "bundler/expectBundled";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -193,3 +194,23 @@ devTest("barrel file optimization (lucide-react)", {
     }
   },
 });
+// devTest("react refresh - default export function", {
+//   framework: minimalFramework,
+//   files: {
+//     ...reactAndRefreshStub,
+//     "index.html": emptyHtmlFile({
+//       styles: [],
+//       scripts: ["index.tsx"],
+//     }),
+//     "index.tsx": `
+//       import { render } from 'bun-devserver-react-mock';
+//       render(<App />);
+//     `,
+//     "App.tsx": `
+//       export default function App() {
+//         return <div>Hello, world!</div>;
+//       }
+//     `,
+//   },
+//   async test(dev) {},
+// });

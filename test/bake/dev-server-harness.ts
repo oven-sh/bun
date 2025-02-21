@@ -47,6 +47,16 @@ export const reactRefreshStub = {
   `,
 };
 
+export const reactAndRefreshStub = {
+  "node_modules/react-refresh/runtime.js": `
+    export const performReactRefresh = () => {};
+    export const injectIntoGlobalHook = () => {};
+  `,
+  "node_modules/react/jsx-dev-runtime.js": `
+    export const jsxDEV = (tag, props, key) => {};
+  `,
+};
+
 export function emptyHtmlFile({
   styles = [],
   scripts = [],

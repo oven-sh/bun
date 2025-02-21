@@ -261,13 +261,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useSharedArrayBuffer() = true;
         JSC::Options::useJIT() = true;
         JSC::Options::useBBQJIT() = true;
-        JSC::Options::useUint8ArrayBase64Methods() = true;
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useV8DateParser() = true;
         JSC::Options::evalMode() = evalMode;
-        JSC::Options::usePromiseTryMethod() = true;
-        JSC::Options::useRegExpEscape() = true;
         JSC::Options::useIteratorHelpers() = true;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 

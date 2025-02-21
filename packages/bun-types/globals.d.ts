@@ -697,8 +697,6 @@ declare global {
 		data: any;
 	};
 
-	type _WebSocket = import("ws").WebSocket;
-	interface WebSocket extends _WebSocket {}
 	var WebSocket: typeof import("ws").WebSocket;
 
 	interface Crypto extends _Crypto {}

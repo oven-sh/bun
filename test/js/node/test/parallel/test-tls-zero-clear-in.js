@@ -35,8 +35,10 @@ const server = tls.createServer({
   cert,
   key
 }, function(c) {
+  console.log('server');
   // Nop
   setTimeout(function() {
+    console.log('server end');
     c.end();
     server.close();
   }, 20);
@@ -47,7 +49,9 @@ const server = tls.createServer({
     rejectUnauthorized: false,
     port: this.address().port
   }, function() {
+    console.log('connected');
     setTimeout(function() {
+      console.log('client destroy');
       conn.destroy();
     }, 20);
   });

@@ -1393,6 +1393,7 @@ fn NewSocket(comptime ssl: bool) type {
             authorized: bool = false,
             handshake_complete: bool = false,
             end_after_flush: bool = false,
+            close_after_flush: bool = false,
             owned_protos: bool = true,
             is_paused: bool = false,
             allow_half_open: bool = false,
@@ -1862,6 +1863,12 @@ fn NewSocket(comptime ssl: bool) type {
             if (handlers.vm.isShuttingDown()) {
                 return;
             }
+            this.ref();
+            defer {
+                // we may have empty packets to write here
+                this.internalFlush();
+                this.deref();
+            }
 
             // Use open callback when handshake is not provided
             if (callback == .zero) {
@@ -2153,29 +2160,27 @@ fn NewSocket(comptime ssl: bool) type {
             return ZigString.init(text).toJS(globalThis);
         }
 
-        pub fn writeMaybeCorked(this: *This, buffer: []const u8, is_end: bool) i32 {
+        pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {
             if (this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;
             }
-            if (!this.flags.end_after_flush and is_end) {
-                this.flags.end_after_flush = true;
-            }
+
             // we don't cork yet but we might later
             if (comptime ssl) {
                 // TLS wrapped but in TCP mode
                 if (this.wrapped == .tcp) {
-                    const res = this.socket.rawWrite(buffer, is_end);
+                    const res = this.socket.rawWrite(buffer, false);
                     const uwrote: usize = @intCast(@max(res, 0));
                     this.bytes_written += uwrote;
-                    log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
+                    log("write({d}) = {d}", .{ buffer.len, res });
                     return res;
                 }
             }
 
-            const res = this.socket.write(buffer, is_end);
+            const res = this.socket.write(buffer, false);
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
-            log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
+            log("write({d}) = {d}", .{ buffer.len, res });
             return res;
         }
 
@@ -2210,14 +2215,11 @@ fn NewSocket(comptime ssl: bool) type {
             const args = callframe.argumentsUndef(2);
             this.ref();
             defer this.deref();
-
-            return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], false)) {
+            return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], true)) {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.socket.flush();
-                        // markInactive does .detached = true
-                        this.markInactive();
+                        this.internalFlush();
                     }
 
                     break :brk JSValue.jsBoolean(@as(usize, @max(result.wrote, 0)) == result.total);
@@ -2246,6 +2248,10 @@ fn NewSocket(comptime ssl: bool) type {
                     return .fail;
                 };
             defer buffer.deinit();
+            if (!this.flags.end_after_flush and is_end) {
+                this.flags.end_after_flush = true;
+            }
+
             if (this.socket.isShutdown() or this.socket.isClosed()) {
                 return .{
                     .success = .{
@@ -2257,6 +2263,21 @@ fn NewSocket(comptime ssl: bool) type {
 
             const total_to_write: usize = buffer.slice().len + @as(usize, this.buffered_data_for_node_net.len);
             if (total_to_write == 0) {
+                if (ssl) {
+                    if (!data_value.isUndefined()) {
+                        // special condition for SSL_write(0, "", 0)
+                        // we need to send an empty packet after the buffer is flushed and after the handshake is complete
+                        // and in this case we need to ignore SSL_write() return value because 0 should not be treated as an error
+                        this.empty_packet_pending += 1;
+                        if (!this.tryWriteEmptyPacket()) {
+                            return .{ .success = .{
+                                .wrote = -1,
+                                .total = total_to_write,
+                            } };
+                        }
+                    }
+                }
+
                 return .{ .success = .{} };
             }
 
@@ -2294,7 +2315,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                 // slower-path: clone the data, do one write.
                 this.buffered_data_for_node_net.append(bun.default_allocator, buffer.slice()) catch bun.outOfMemory();
-                const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice(), is_end);
+                const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice());
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
                     // did we write everything?
@@ -2415,26 +2436,27 @@ fn NewSocket(comptime ssl: bool) type {
                     },
                 };
             }
+            if (!this.flags.end_after_flush and is_end) {
+                this.flags.end_after_flush = true;
+            }
 
             if (bytes.len == 0) {
                 if (ssl) {
                     // special condition for SSL_write(0, "", 0)
                     // we need to send an empty packet after the buffer is flushed and after the handshake is complete
                     // and in this case we need to ignore SSL_write() return value because 0 should not be treated as an error
-                    if (this.flags.handshake_complete and buffer_unwritten_data and this.buffered_data_for_node_net.len == 0) {
-                        this.writeEmptyPacket(is_end);
-                        return .{ .success = .{} };
-                    } else {
-                        this.flags.empty_packet_pending += 1;
+                    this.empty_packet_pending += 1;
+                    if (!this.tryWriteEmptyPacket()) {
                         return .{ .success = .{
                             .wrote = -1,
                             .total = bytes.len,
                         } };
                     }
+                    return .{ .success = .{} };
                 }
                 return .{ .success = .{} };
             }
-            const wrote = this.writeMaybeCorked(bytes, is_end);
+            const wrote = this.writeMaybeCorked(bytes);
             const uwrote: usize = @intCast(@max(wrote, 0));
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
@@ -2451,11 +2473,26 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        fn writeEmptyPacket(this: *This, is_end: bool) void {
-            if (!this.flags.end_after_flush and is_end) {
-                this.flags.end_after_flush = true;
+        fn tryWriteEmptyPacket(this: *This) bool {
+            if (ssl) {
+                while (this.empty_packet_pending > 0 and this.flags.handshake_complete and this.buffered_data_for_node_net.len == 0 and this.socket.isConnectedSocket()) {
+                    // write as much as possible
+                    // this.socket.rawWrite("", is_end);
+                    this.empty_packet_pending -= 1;
+                    return true;
+                }
             }
-            this.socket.rawWrite("", is_end);
+            return false;
+        }
+
+        fn canCloseAfterFlush(this: *This) bool {
+            if (!this.flags.is_active) {
+                return false;
+            }
+            if (ssl) {
+                return this.flags.end_after_flush and this.empty_packet_pending == 0 and this.buffered_data_for_node_net.len == 0;
+            }
+            return this.flags.end_after_flush;
         }
 
         fn internalFlush(this: *This) void {
@@ -2473,12 +2510,14 @@ fn NewSocket(comptime ssl: bool) type {
                     }
                 }
             }
-            if (this.buffered_data_for_node_net.len == 0 and this.flags.empty_packet_pending > 0) {
-                this.writeEmptyPacket(this.flags.end_after_flush);
-                this.flags.empty_packet_pending -= 1;
-            }
 
+            _ = this.tryWriteEmptyPacket();
             this.socket.flush();
+
+            if (this.canCloseAfterFlush()) {
+                this.flags.end_after_flush = false;
+                this.markInactive();
+            }
         }
         pub fn flush(
             this: *This,
@@ -2526,7 +2565,6 @@ fn NewSocket(comptime ssl: bool) type {
             var args = callframe.argumentsUndef(5);
 
             log("end({d} args)", .{args.len});
-
             if (this.socket.isDetached()) {
                 return JSValue.jsNumber(@as(i32, -1));
             }
@@ -2537,10 +2575,8 @@ fn NewSocket(comptime ssl: bool) type {
             return switch (this.writeOrEnd(globalObject, args.mut(), false, true)) {
                 .fail => .zero,
                 .success => |result| brk: {
-                    if (result.wrote == result.total and this.flags.empty_packet_pending == 0) {
-                        this.socket.flush();
-                        // markInactive does .detached = true
-                        this.markInactive();
+                    if (result.wrote == result.total) {
+                        this.internalFlush();
                     }
                     break :brk JSValue.jsNumber(result.wrote);
                 },

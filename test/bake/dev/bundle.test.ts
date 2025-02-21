@@ -1,13 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import {
-  Client,
-  devTest,
-  emptyHtmlFile,
-  extractScriptSrc,
-  minimalFramework,
-  reactRefreshStub,
-} from "../dev-server-harness";
 import { dedent } from "bundler/expectBundled";
+import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../dev-server-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -106,123 +99,23 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
-devTest("barrel file optimization (lucide-react)", {
+devTest("react refresh - default export function", {
+  framework: minimalFramework,
   files: {
-    ...reactRefreshStub,
+    ...reactAndRefreshStub,
     "index.html": emptyHtmlFile({
       styles: [],
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.tsx"],
     }),
-    "index.ts": `
-      import { Icon1 } from 'lucide-react';
-      import { Icon2 } from 'lucide-react';
-      console.log(Icon1());
-      console.log(Icon2());
+    "index.tsx": `
+      import { render } from 'bun-devserver-react-mock';
+      render(<App />);
     `,
-    // Current BFO only handles some well-known package names, and only when the
-    // file is just re-exporting the icons.
-    "node_modules/lucide-react/index.js": `
-      export { default as Icon1 } from './icons/icon1';
-      export { default as Icon2 } from './icons/icon2';
-      export { default as Icon3 } from './icons/icon3';
-      export { default as Icon4 } from './icons/icon4';
+    "App.tsx": `
+      export default function App() {
+        return <div>Hello, world!</div>;
+      }
     `,
-    ...Object.fromEntries(
-      [1, 2, 3, 4].map(i => [
-        `node_modules/lucide-react/icons/icon${i}.ts`,
-        `export default function Icon${i}() { return "CAPTURE(${i})"; }`,
-      ]),
-    ),
   },
-  async test(dev) {
-    function captureIconRefs(text: string) {
-      const refs = text.matchAll(/CAPTURE\((\d+)\)/g);
-      return Array.from(refs)
-        .map(ref => ref[1])
-        .sort();
-    }
-    async function fetchScriptSrc() {
-      const html = await dev.fetch("/").text();
-      const srcUrl = extractScriptSrc(html);
-      return await dev.fetch(srcUrl).text();
-    }
-
-    // Should only serve icons 1 and 2 since those were the only ones referenced.
-    const c = await dev.client("/", { storeHotChunks: true });
-    await c.expectMessage("CAPTURE(1)", "CAPTURE(2)");
-    {
-      const src = await fetchScriptSrc();
-      const refs = captureIconRefs(src);
-      expect(refs).toEqual(["1", "2"]);
-    }
-
-    // Saving index.ts should re-run itself but only serve 'index.ts'
-    {
-      await dev.writeNoChanges("index.ts");
-      await c.expectMessage("CAPTURE(1)", "CAPTURE(2)");
-      const chunk = await c.getMostRecentHmrChunk();
-      const keys = eval(chunk);
-      expect(captureIconRefs(chunk)).toEqual([]);
-      expect(Object.keys(keys)).toEqual(["index.ts"]);
-
-      const src = await fetchScriptSrc();
-      expect(captureIconRefs(src)).toEqual(["1", "2"]);
-    }
-
-    // Changing the list of icons should
-    // 1. reload with the one new icon
-    // 2. rebuild will omit icon 2 (not really special DevServer behavior)
-    {
-      await dev.write(
-        "index.ts",
-        `
-        import { Icon1 } from 'lucide-react';
-        import { Icon3 } from 'lucide-react';
-        console.log(Icon1());
-        console.log(Icon3());
-      `,
-      );
-      // 1.
-      await c.expectMessage("CAPTURE(1)", "CAPTURE(3)");
-      const chunk = await c.getMostRecentHmrChunk();
-      expect(captureIconRefs(chunk)).toEqual(["3"]);
-
-      // 2.
-      const src = await fetchScriptSrc();
-      expect(captureIconRefs(src)).toEqual(["1", "3"]);
-    }
-
-    // Saving index.ts should re-run itself but only serve 'index.ts'
-    {
-      await dev.writeNoChanges("index.ts");
-      await c.expectMessage("CAPTURE(1)", "CAPTURE(3)");
-      const chunk = await c.getMostRecentHmrChunk();
-      const keys = eval(chunk);
-      expect(captureIconRefs(chunk)).toEqual([]);
-      expect(Object.keys(keys)).toEqual(["index.ts"]);
-
-      const src = await fetchScriptSrc();
-      expect(captureIconRefs(src)).toEqual(["1", "3"]);
-    }
-  },
+  async test(dev) {},
 });
-// devTest("react refresh - default export function", {
-//   framework: minimalFramework,
-//   files: {
-//     ...reactAndRefreshStub,
-//     "index.html": emptyHtmlFile({
-//       styles: [],
-//       scripts: ["index.tsx"],
-//     }),
-//     "index.tsx": `
-//       import { render } from 'bun-devserver-react-mock';
-//       render(<App />);
-//     `,
-//     "App.tsx": `
-//       export default function App() {
-//         return <div>Hello, world!</div>;
-//       }
-//     `,
-//   },
-//   async test(dev) {},
-// });

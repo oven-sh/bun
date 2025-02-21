@@ -134,7 +134,7 @@ pub fn match(_: Allocator, glob: []const u8, path: []const u8) MatchResult {
     }
 
     var brace_stack = BraceStack.init(0) catch unreachable;
-    const matched = globMatchImpl(&state, glob, path, &brace_stack);
+    const matched = globMatchImpl(&state, glob, 0, path, &brace_stack);
 
     // TODO: consider just returning a bool
     // return matched != negated;
@@ -145,7 +145,8 @@ pub fn match(_: Allocator, glob: []const u8, path: []const u8) MatchResult {
     }
 }
 
-inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8, brace_stack: *BraceStack) bool {
+// `glob_start` is the index where the glob pattern starts
+inline fn globMatchImpl(state: *State, glob: []const u8, glob_start: u32, path: []const u8, brace_stack: *BraceStack) bool {
     main_loop: while (state.glob_index < glob.len or state.path_index < path.len) {
         if (state.glob_index < glob.len) fallthrough: {
             const char = glob[state.glob_index];
@@ -173,7 +174,10 @@ inline fn globMatchImpl(state: *State, glob: []const u8, path: []const u8, brace
                                 continue;
                             }
 
-                            if ((state.glob_index < 3 or glob[state.glob_index - 3] == '/') and (!is_end_invalid or glob[state.glob_index] == '/')) {
+                            // subtract glob_start from glob index before checking if length is less than 3. Given the pattern:
+                            // {**/a,**/b}
+                            // if we start at index 6 (start of **/b pattern), we don't want to index into the pattern before it
+                            if ((state.glob_index -| glob_start < 3 or glob[state.glob_index - 3] == '/') and (!is_end_invalid or glob[state.glob_index] == '/')) {
                                 if (is_end_invalid) {
                                     state.glob_index += 1;
                                 }
@@ -371,7 +375,7 @@ fn matchBraceBranch(state: *State, glob: []const u8, path: []const u8, open_brac
     branch_state.glob_index = branch_index;
     branch_state.brace_depth = @intCast(brace_stack.len);
 
-    const matched = globMatchImpl(&branch_state, glob, path, brace_stack);
+    const matched = globMatchImpl(&branch_state, glob, branch_index, path, brace_stack);
 
     _ = brace_stack.pop();
 

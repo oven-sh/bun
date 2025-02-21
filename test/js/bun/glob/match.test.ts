@@ -136,7 +136,7 @@ describe("Glob.match", () => {
         expected: 586,
       },
       { pattern: "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts", expected: 95 },
-      // { pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts", expected: 3 },
+      { pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts", expected: 3 },
     ];
 
     const filepaths = (await Bun.file(join(import.meta.dir, "filelist.txt")).text()).split("\n");

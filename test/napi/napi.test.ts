@@ -433,10 +433,10 @@ describe("napi", () => {
     ["null", null],
     ["undefined", undefined],
   ])("works when the module register function returns %s", (returnKind, expected) => {
-    expect(require(`./napi-app/build/Release/${returnKind}_addon.node`)).toEqual(expected);
+    expect(require(`./napi-app/build/Debug/${returnKind}_addon.node`)).toEqual(expected);
   });
   it("works when the module register function throws", () => {
-    expect(() => require("./napi-app/build/Release/throw_addon.node")).toThrow(new Error("oops!"));
+    expect(() => require("./napi-app/build/Debug/throw_addon.node")).toThrow(new Error("oops!"));
   });
 });
 

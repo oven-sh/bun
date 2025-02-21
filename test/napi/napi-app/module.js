@@ -1,6 +1,6 @@
 const assert = require("node:assert");
-const nativeTests = require("./build/Release/napitests.node");
-const secondAddon = require("./build/Release/second_addon.node");
+const nativeTests = require("./build/Debug/napitests.node");
+const secondAddon = require("./build/Debug/second_addon.node");
 
 async function gcUntil(fn) {
   const MAX = 100;

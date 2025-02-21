@@ -1062,7 +1062,7 @@ const Template = enum {
             else
                 InitCommand.Assets.createNew(path, contents);
             result catch |err| {
-                if (err == error.EEXISTS) {
+                if (err == error.EEXIST) {
                     Output.prettyln(" ○ <r><yellow>{s}<r> (already exists)", .{path});
                     Output.flush();
                 } else {

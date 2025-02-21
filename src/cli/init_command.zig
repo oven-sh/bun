@@ -224,7 +224,7 @@ pub const InitCommand = struct {
             }
         }
 
-        const selection = processRadioButton(label, Choices, .default) catch |err| {
+        const selection = processRadioButton(label, Choices) catch |err| {
             if (err == error.EndOfStream) {
                 Output.flush();
                 // Add an "x" cancelled
@@ -570,10 +570,9 @@ pub const InitCommand = struct {
                         });
 
                         template = switch (react_selected) {
-                            .blank => .react_blank,
+                            .default => .react_blank,
                             .tailwind => .react_tailwind,
                             .shadcn_tailwind => .react_tailwind_shadcn,
-                            else => unreachable,
                         };
                     },
                     .blank => template = .blank,

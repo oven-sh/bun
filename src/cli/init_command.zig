@@ -833,6 +833,7 @@ pub const InitCommand = struct {
                 Output.flush();
 
                 if (existsZ("package.json") and need_run_bun_install) {
+                    Output.prettyln("", .{});
                     var process = std.process.Child.init(
                         &.{
                             try bun.selfExePath(),

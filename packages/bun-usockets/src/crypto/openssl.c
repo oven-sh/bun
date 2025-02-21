@@ -1778,9 +1778,9 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = msg_more;
   loop_ssl_data->last_write_was_msg_more = 0;
+
   int written = SSL_write(s->ssl, data, length);
   loop_ssl_data->msg_more = 0;
-
   if (loop_ssl_data->last_write_was_msg_more && !msg_more) {
     us_socket_flush(0, &s->s);
   }

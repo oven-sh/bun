@@ -54,6 +54,8 @@ const FrameType = enum(u8) {
     HTTP_FRAME_GOAWAY = 0x07,
     HTTP_FRAME_WINDOW_UPDATE = 0x08,
     HTTP_FRAME_CONTINUATION = 0x09,
+    HTTP_FRAME_ALTSVC = 0x0A, // https://datatracker.ietf.org/doc/html/rfc7838#section-7.2
+    HTTP_FRAME_ORIGIN = 0x0C, // https://datatracker.ietf.org/doc/html/rfc8336#section-2
 };
 
 const PingFrameFlags = enum(u8) {
@@ -239,6 +241,11 @@ const ValidPseudoHeaders = bun.ComptimeStringMap(void, .{
     .{":path"},
     .{":protocol"},
 });
+
+const ValidResponsePseudoHeaders = bun.ComptimeStringMap(void, .{
+    .{":status"},
+});
+
 const ValidRequestPseudoHeaders = bun.ComptimeStringMap(void, .{
     .{":method"},
     .{":authority"},
@@ -523,7 +530,8 @@ const Handlers = struct {
     onEnd: JSC.JSValue = .zero,
     onGoAway: JSC.JSValue = .zero,
     onAborted: JSC.JSValue = .zero,
-
+    onAltSvc: JSC.JSValue = .zero,
+    onOrigin: JSC.JSValue = .zero,
     binary_type: BinaryType = .Buffer,
 
     vm: *JSC.VirtualMachine,
@@ -580,6 +588,8 @@ const Handlers = struct {
             .{ "onGoAway", "goaway" },
             .{ "onAborted", "aborted" },
             .{ "onWrite", "write" },
+            .{ "onAltSvc", "altsvc" },
+            .{ "onOrigin", "origin" },
         };
 
         inline for (pairs) |pair| {
@@ -1121,6 +1131,7 @@ pub const H2FrameParser = struct {
 
     pub fn encode(this: *H2FrameParser, dst_buffer: []u8, dst_offset: usize, name: []const u8, value: []const u8, never_index: bool) !usize {
         if (this.hpack) |hpack| {
+            // lets make sure the name is lowercase
             return try hpack.encode(name, value, never_index, dst_buffer, dst_offset);
         }
         return error.UnableToEncode;
@@ -1266,13 +1277,40 @@ pub const H2FrameParser = struct {
         if (debug_data.len > 0) {
             _ = this.write(debug_data);
         }
+        const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
+
         if (emitError) {
-            const chunk = this.handlers.binary_type.toJS(debug_data, this.handlers.globalObject);
             if (rstCode != .NO_ERROR) {
                 this.dispatchWith2Extra(.onError, JSC.JSValue.jsNumber(@intFromEnum(rstCode)), JSC.JSValue.jsNumber(this.lastStreamID), chunk);
             }
             this.dispatchWithExtra(.onEnd, JSC.JSValue.jsNumber(this.lastStreamID), chunk);
         }
+    }
+
+    pub fn sendAltSvc(this: *H2FrameParser, streamIdentifier: u32, origin_str: []const u8, alt: []const u8) void {
+        log("HTTP_FRAME_ALTSVC stream {} origin {s} alt {s}", .{ streamIdentifier, origin_str, alt });
+
+        var buffer: [FrameHeader.byteSize + 2]u8 = undefined;
+        @memset(&buffer, 0);
+        var stream = std.io.fixedBufferStream(&buffer);
+        const writer = stream.writer();
+
+        var frame: FrameHeader = .{
+            .type = @intFromEnum(FrameType.HTTP_FRAME_ALTSVC),
+            .flags = 0,
+            .streamIdentifier = streamIdentifier,
+            .length = @intCast(origin_str.len + alt.len + 2),
+        };
+        _ = frame.write(@TypeOf(writer), writer);
+        _ = writer.writeInt(u16, @intCast(origin_str.len), .big) catch 0;
+        _ = this.write(&buffer);
+        if (origin_str.len > 0) {
+            _ = this.write(origin_str);
+        }
+        if (alt.len > 0) {
+            _ = this.write(alt);
+        }
+        _ = this.ajustWindowSize(null, @intCast(frame.length + FrameHeader.byteSize));
     }
 
     pub fn sendPing(this: *H2FrameParser, ack: bool, payload: []const u8) void {
@@ -1805,6 +1843,7 @@ pub const H2FrameParser = struct {
 
     pub fn handleDataFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         log("handleDataFrame {s}", .{if (this.isServer) "server" else "client"});
+        this.readBuffer.reset();
 
         var stream = stream_ orelse {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Data frame on connection stream", this.lastStreamID, true);
@@ -1817,13 +1856,6 @@ pub const H2FrameParser = struct {
             this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "Invalid dataframe frame size", this.lastStreamID, true);
             return data.len;
         }
-
-        // we actually dont want to process any if endAfterHeaders is set
-        if (stream.endAfterHeaders) {
-            return data.len;
-        }
-        this.readBuffer.reset();
-
         const end: usize = @min(@as(usize, @intCast(this.remainingLength)), data.len);
         var payload = data[0..end];
 
@@ -1907,6 +1939,101 @@ pub const H2FrameParser = struct {
         }
         return data.len;
     }
+
+    fn stringOrEmptyToJS(this: *H2FrameParser, payload: []const u8) JSC.JSValue {
+        if (payload.len == 0) {
+            return bun.String.empty.toJS(this.handlers.globalObject);
+        }
+        return bun.String.createUTF8ForJS(this.handlers.globalObject, payload);
+    }
+
+    pub fn handleOriginFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, _: ?*Stream) usize {
+        log("handleOriginFrame {s}", .{data});
+        if (this.isServer) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "ORIGIN frame on server", this.lastStreamID, true);
+            return data.len;
+        }
+        if (frame.streamIdentifier != 0) {
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "ORIGIN frame on stream", this.lastStreamID, true);
+            return data.len;
+        }
+        if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            var payload = content.data;
+            var originValue = JSC.JSValue.jsUndefined();
+            var count: usize = 0;
+            this.readBuffer.reset();
+
+            while (payload.len > 0) {
+                var stream = std.io.fixedBufferStream(payload);
+                const origin_length = stream.reader().readInt(u16, .big) catch |err| {
+                    log("error reading ORIGIN frame size: {s}", .{@errorName(err)});
+                    // origin length is the first 2 bytes of the payload
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
+                    return content.end;
+                };
+                var origin_str = payload[2..];
+                if (origin_str.len < origin_length) {
+                    this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ORIGIN frame size", this.lastStreamID, true);
+                    return content.end;
+                }
+                origin_str = origin_str[0..origin_length];
+                if (count == 0) {
+                    originValue = this.stringOrEmptyToJS(origin_str);
+                    originValue.ensureStillAlive();
+                } else if (count == 1) {
+                    // need to create an array
+                    const array = JSC.JSValue.createEmptyArray(this.handlers.globalObject, 0);
+                    array.ensureStillAlive();
+                    array.push(this.handlers.globalObject, originValue);
+                    array.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                    originValue = array;
+                } else {
+                    // we already have an array, just add the origin to it
+                    originValue.push(this.handlers.globalObject, this.stringOrEmptyToJS(origin_str));
+                }
+                count += 1;
+                payload = payload[origin_length + 2 ..];
+            }
+
+            this.dispatch(.onOrigin, originValue);
+            return content.end;
+        }
+        return data.len;
+    }
+    pub fn handleAltsvcFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
+        log("handleAltsvcFrame {s}", .{data});
+        if (this.isServer) {
+            // client should not send ALTSVC frame
+            this.sendGoAway(frame.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "ALTSVC frame on server", this.lastStreamID, true);
+            return data.len;
+        }
+        if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
+            const payload = content.data;
+
+            var stream = std.io.fixedBufferStream(payload);
+            this.readBuffer.reset();
+
+            const origin_length = stream.reader().readInt(u16, .big) catch {
+                // origin length is the first 2 bytes of the payload
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ALTSVC frame size", this.lastStreamID, true);
+                return content.end;
+            };
+            const origin_and_value = payload[2..];
+
+            if (origin_and_value.len < origin_length) {
+                this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid ALTSVC frame size", this.lastStreamID, true);
+                return content.end;
+            }
+            if (frame.streamIdentifier != 0 and stream_ == null) {
+                // dont error but stream dont exist so we can ignore it
+                return content.end;
+            }
+
+            this.dispatchWith2Extra(.onAltSvc, this.stringOrEmptyToJS(origin_and_value[0..origin_length]), this.stringOrEmptyToJS(origin_and_value[origin_length..]), JSC.JSValue.jsNumber(frame.streamIdentifier));
+            return content.end;
+        }
+        return data.len;
+    }
     pub fn handleRSTStreamFrame(this: *H2FrameParser, frame: FrameHeader, data: []const u8, stream_: ?*Stream) usize {
         log("handleRSTStreamFrame {s}", .{data});
         var stream = stream_ orelse {
@@ -1956,6 +2083,8 @@ pub const H2FrameParser = struct {
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
             const isNotACK = frame.flags & @intFromEnum(PingFrameFlags.ACK) == 0;
+            this.readBuffer.reset();
+
             // if is not ACK send response
             if (isNotACK) {
                 this.sendPing(true, payload);
@@ -1963,7 +2092,6 @@ pub const H2FrameParser = struct {
                 this.outStandingPings -|= 1;
             }
             const buffer = this.handlers.binary_type.toJS(payload, this.handlers.globalObject);
-            this.readBuffer.reset();
             this.dispatchWithExtra(.onPing, buffer, JSC.JSValue.jsBoolean(!isNotACK));
             return content.end;
         }
@@ -1985,17 +2113,17 @@ pub const H2FrameParser = struct {
 
             var priority: StreamPriority = undefined;
             priority.from(payload);
+            this.readBuffer.reset();
 
             const stream_identifier = UInt31WithReserved.from(priority.streamIdentifier);
             if (stream_identifier.uint31 == stream.id) {
                 this.sendGoAway(stream.id, ErrorCode.PROTOCOL_ERROR, "Priority frame with self dependency", this.lastStreamID, true);
-                return data.len;
+                return content.end;
             }
             stream.streamDependency = stream_identifier.uint31;
             stream.exclusive = stream_identifier.reserved;
             stream.weight = priority.weight;
 
-            this.readBuffer.reset();
             return content.end;
         }
         return data.len;
@@ -2013,15 +2141,14 @@ pub const H2FrameParser = struct {
         }
         if (handleIncommingPayload(this, data, frame.streamIdentifier)) |content| {
             const payload = content.data;
+            this.readBuffer.reset();
+            stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
             stream = this.decodeHeaderBlock(payload[0..payload.len], stream, frame.flags) orelse {
-                this.readBuffer.reset();
                 return content.end;
             };
-            this.readBuffer.reset();
-            if (frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) != 0) {
+            if (stream.endAfterHeaders) {
                 stream.isWaitingMoreHeaders = false;
                 if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
-                    stream.endAfterHeaders = true;
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
                     if (stream.state == .HALF_CLOSED_REMOTE) {
@@ -2064,6 +2191,8 @@ pub const H2FrameParser = struct {
             const payload = content.data;
             var offset: usize = 0;
             var padding: usize = 0;
+            this.readBuffer.reset();
+
             if (frame.flags & @intFromEnum(HeadersFrameFlags.PADDED) != 0) {
                 // padding length
                 padding = payload[0];
@@ -2075,19 +2204,18 @@ pub const H2FrameParser = struct {
             }
             const end = payload.len - padding;
             if (offset > end) {
-                this.readBuffer.reset();
                 this.sendGoAway(frame.streamIdentifier, ErrorCode.FRAME_SIZE_ERROR, "invalid Headers frame size", this.lastStreamID, true);
-                return data.len;
+                return content.end;
             }
+            stream.endAfterHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0;
             stream = this.decodeHeaderBlock(payload[offset..end], stream, frame.flags) orelse {
-                this.readBuffer.reset();
                 return content.end;
             };
-            this.readBuffer.reset();
             stream.isWaitingMoreHeaders = frame.flags & @intFromEnum(HeadersFrameFlags.END_HEADERS) == 0;
-            if (frame.flags & @intFromEnum(HeadersFrameFlags.END_STREAM) != 0) {
+            if (stream.endAfterHeaders) {
                 const identifier = stream.getIdentifier();
                 identifier.ensureStillAlive();
+
                 if (stream.isWaitingMoreHeaders) {
                     stream.state = .HALF_CLOSED_REMOTE;
                 } else {
@@ -2215,6 +2343,8 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes, stream),
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes, stream),
+                @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes, stream),
+                @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => this.handleOriginFrame(header, bytes, stream),
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
@@ -2264,6 +2394,8 @@ pub const H2FrameParser = struct {
                 @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[needed..], stream) + needed,
                 @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[needed..], stream) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes[needed..], stream) + needed,
+                @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => this.handleOriginFrame(header, bytes[needed..], stream) + needed,
                 else => {
                     this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                     return bytes.len;
@@ -2298,6 +2430,8 @@ pub const H2FrameParser = struct {
             @intFromEnum(FrameType.HTTP_FRAME_PING) => this.handlePingFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_GOAWAY) => this.handleGoAwayFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             @intFromEnum(FrameType.HTTP_FRAME_RST_STREAM) => this.handleRSTStreamFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_ALTSVC) => this.handleAltsvcFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
+            @intFromEnum(FrameType.HTTP_FRAME_ORIGIN) => this.handleOriginFrame(header, bytes[FrameHeader.byteSize..], stream) + FrameHeader.byteSize,
             else => {
                 this.sendGoAway(header.streamIdentifier, ErrorCode.PROTOCOL_ERROR, "Unknown frame type", this.lastStreamID, true);
                 return bytes.len;
@@ -2512,6 +2646,148 @@ pub const H2FrameParser = struct {
         }
 
         return globalObject.throw("Expected payload to be a Buffer", .{});
+    }
+
+    pub fn origin(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+        const origin_arg = callframe.argument(0);
+        if (origin_arg.isEmptyOrUndefinedOrNull()) {
+            // empty origin frame
+            var buffer: [FrameHeader.byteSize]u8 = undefined;
+            @memset(&buffer, 0);
+            var stream = std.io.fixedBufferStream(&buffer);
+            const writer = stream.writer();
+
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_ORIGIN),
+                .flags = 0,
+                .streamIdentifier = 0,
+                .length = 0,
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = this.write(&buffer);
+            _ = this.ajustWindowSize(null, @intCast(FrameHeader.byteSize));
+            return .undefined;
+        }
+
+        if (origin_arg.isString()) {
+            const origin_string = try origin_arg.toSlice(globalObject, bun.default_allocator);
+            defer origin_string.deinit();
+            const slice = origin_string.slice();
+            if (slice.len + 2 > 16384) {
+                const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes", .{}, globalObject);
+                return globalObject.throwValue(exception);
+            }
+
+            var buffer: [FrameHeader.byteSize + 2]u8 = undefined;
+            @memset(&buffer, 0);
+            var stream = std.io.fixedBufferStream(&buffer);
+            const writer = stream.writer();
+
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_ORIGIN),
+                .flags = 0,
+                .streamIdentifier = 0,
+                .length = @intCast(slice.len + 2),
+            };
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = writer.writeInt(u16, @intCast(slice.len), .big) catch 0;
+            _ = this.write(&buffer);
+            if (slice.len > 0) {
+                _ = this.write(slice);
+            }
+            _ = this.ajustWindowSize(null, @as(u32, @intCast(frame.length)) + @as(u32, @intCast(FrameHeader.byteSize)));
+        } else if (origin_arg.isArray()) {
+            var buffer: [FrameHeader.byteSize + 16384]u8 = undefined;
+            @memset(&buffer, 0);
+            var stream = std.io.fixedBufferStream(&buffer);
+            const writer = stream.writer();
+            stream.seekTo(FrameHeader.byteSize) catch {};
+            var value_iter = origin_arg.arrayIterator(globalObject);
+
+            while (value_iter.next()) |item| {
+                if (!item.isString()) {
+                    return globalObject.throwInvalidArguments("Expected origin to be a string or an array of strings", .{});
+                }
+                const origin_string = try item.toSlice(globalObject, bun.default_allocator);
+                defer origin_string.deinit();
+                const slice = origin_string.slice();
+                _ = writer.writeInt(u16, @intCast(slice.len), .big) catch {
+                    const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes", .{}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
+
+                _ = writer.write(slice) catch {
+                    const exception = JSC.toTypeError(.ERR_HTTP2_ORIGIN_LENGTH, "HTTP/2 ORIGIN frames are limited to 16382 bytes", .{}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
+            }
+
+            const total_length: u32 = @intCast(stream.getPos() catch FrameHeader.byteSize);
+            var frame: FrameHeader = .{
+                .type = @intFromEnum(FrameType.HTTP_FRAME_ORIGIN),
+                .flags = 0,
+                .streamIdentifier = 0,
+                .length = @intCast(total_length - FrameHeader.byteSize), // payload length
+            };
+            stream.reset();
+            _ = frame.write(@TypeOf(writer), writer);
+            _ = this.write(buffer[0..total_length]);
+            _ = this.ajustWindowSize(null, total_length);
+        }
+        return .undefined;
+    }
+
+    pub fn altsvc(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+        var origin_slice: ?bun.String.Slice = null;
+        var value_slice: ?bun.String.Slice = null;
+        defer {
+            if (origin_slice) |slice| {
+                slice.deinit();
+            }
+            if (value_slice) |slice| {
+                slice.deinit();
+            }
+        }
+
+        var origin_str: []const u8 = "";
+        var value_str: []const u8 = "";
+        var stream_id: u32 = 0;
+        const origin_string = callframe.argument(0);
+        if (!origin_string.isEmptyOrUndefinedOrNull()) {
+            if (!origin_string.isString()) {
+                return globalObject.throwInvalidArgumentTypeValue("origin", "origin", origin_string);
+            }
+
+            origin_slice = try origin_string.toSlice(globalObject, bun.default_allocator);
+            origin_str = origin_slice.?.slice();
+        }
+
+        const value_string = callframe.argument(1);
+        if (!value_string.isEmptyOrUndefinedOrNull()) {
+            if (!value_string.isString()) {
+                return globalObject.throwInvalidArgumentTypeValue("value", "value", value_string);
+            }
+            value_slice = try value_string.toSlice(globalObject, bun.default_allocator);
+            value_str = value_slice.?.slice();
+        }
+
+        const stream_id_js = callframe.argument(2);
+        if (!stream_id_js.isEmptyOrUndefinedOrNull()) {
+            if (!stream_id_js.isNumber()) {
+                return globalObject.throw("Expected streamId to be a number", .{});
+            }
+            stream_id = stream_id_js.toU32();
+        }
+        if (stream_id > 0) {
+            // dont error but dont send frame to invalid stream id
+            _ = this.streams.getPtr(stream_id) orelse {
+                return .undefined;
+            };
+        }
+        this.sendAltSvc(stream_id, origin_str, value_str);
+        return .undefined;
     }
 
     pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
@@ -2877,6 +3153,44 @@ pub const H2FrameParser = struct {
         this.dispatchWithExtra(.onStreamEnd, identifier, JSC.JSValue.jsNumber(@intFromEnum(stream.state)));
         return .undefined;
     }
+    /// validate header name and convert to lowecase if needed
+    fn toValidHeaderName(in: []const u8, out: []u8) ![]const u8 {
+        var in_slice = in;
+        var out_slice = out;
+        var any = false;
+        if (in.len > 4096) return error.InvalidHeaderName;
+        bun.assert(out.len >= in.len);
+        // lets validate and convert to lowercase in one pass
+        begin: while (true) {
+            for (in_slice, 0..) |c, i| {
+                switch (c) {
+                    'A'...'Z' => {
+                        bun.copy(u8, out_slice, in_slice[0..i]);
+                        out_slice[i] = std.ascii.toLower(c);
+                        const end = i + 1;
+                        in_slice = in_slice[end..];
+                        out_slice = out_slice[end..];
+                        any = true;
+                        continue :begin;
+                    },
+                    'a'...'z', '0'...'9', '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.', '^', '_', '`', '|', '~' => {},
+                    ':' => {
+                        // only allow pseudoheaders at the beginning
+                        if (i != 0 or any) {
+                            return error.InvalidHeaderName;
+                        }
+                        continue;
+                    },
+                    else => return error.InvalidHeaderName,
+                }
+            }
+
+            if (any) bun.copy(u8, out_slice, in_slice);
+            break :begin;
+        }
+
+        return if (any) out[0..in.len] else in;
+    }
 
     pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
         JSC.markBinding(@src());
@@ -2913,12 +3227,18 @@ pub const H2FrameParser = struct {
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize];
         var encoded_size: usize = 0;
+        // max header name length for lshpack
+        var name_buffer: [4096]u8 = undefined;
+        @memset(&name_buffer, 0);
 
         var iter = try JSC.JSPropertyIterator(.{
             .skip_empty_name = false,
             .include_value = true,
         }).init(globalObject, headers_arg);
         defer iter.deinit();
+
+        var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
+        @memset(&single_value_headers, false);
 
         // TODO: support CONTINUE for more headers if headers are too big
         while (try iter.next()) |header_name| {
@@ -2937,34 +3257,42 @@ pub const H2FrameParser = struct {
                 const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
                 return globalObject.throwValue(exception);
             };
+            const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received {s}", .{name}, globalObject);
+                return globalObject.throwValue(exception);
+            };
 
             if (js_value.jsType().isArray()) {
                 // https://github.com/oven-sh/bun/issues/8940
                 var value_iter = js_value.arrayIterator(globalObject);
 
-                if (SingleValueHeaders.has(name) and value_iter.len > 1) {
-                    const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER, "Header field \"{s}\" must only have a single value", .{name}, globalObject);
-                    return globalObject.throwValue(exception);
+                if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                    if (value_iter.len > 1 or single_value_headers[idx]) {
+                        const exception = JSC.toTypeError(.ERR_HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name}, globalObject);
+                        return globalObject.throwValue(exception);
+                    }
+                    single_value_headers[idx] = true;
                 }
 
                 while (value_iter.next()) |item| {
                     if (item.isEmptyOrUndefinedOrNull()) {
-                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
+                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}, globalObject);
                         return globalObject.throwValue(exception);
                     }
 
                     const value_str = item.toStringOrNull(globalObject) orelse {
-                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
+                        const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}, globalObject);
                         return globalObject.throwValue(exception);
                     };
 
-                    const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                    const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();
                     const value = value_slice.slice();
-                    log("encode header {s} {s}", .{ name, value });
-                    encoded_size += this.encode(buffer, encoded_size, name, value, never_index) catch {
+                    log("encode header {s} {s}", .{ validated_name, value });
+
+                    encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                         stream.state = .CLOSED;
                         const identifier = stream.getIdentifier();
                         identifier.ensureStillAlive();
@@ -2975,18 +3303,26 @@ pub const H2FrameParser = struct {
                     };
                 }
             } else {
+                if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                    if (single_value_headers[idx]) {
+                        const exception = JSC.toTypeError(.ERR_HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name}, globalObject);
+                        return globalObject.throwValue(exception);
+                    }
+                    single_value_headers[idx] = true;
+                }
                 const value_str = js_value.toStringOrNull(globalObject) orelse {
-                    const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{name}, globalObject);
+                    const exception = JSC.toTypeError(.ERR_HTTP2_INVALID_HEADER_VALUE, "Invalid value for header \"{s}\"", .{validated_name}, globalObject);
                     return globalObject.throwValue(exception);
                 };
 
-                const never_index = try sensitive_arg.getTruthy(globalObject, "neverIndex") != null;
+                const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
 
                 const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                 defer value_slice.deinit();
                 const value = value_slice.slice();
                 log("encode header {s} {s}", .{ name, value });
-                encoded_size += this.encode(buffer, encoded_size, name, value, never_index) catch {
+
+                encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                     stream.state = .CLOSED;
                     const identifier = stream.getIdentifier();
                     identifier.ensureStillAlive();
@@ -3239,7 +3575,9 @@ pub const H2FrameParser = struct {
         // max frame size will be always at least 16384
         var buffer = shared_request_buffer[0 .. shared_request_buffer.len - FrameHeader.byteSize - 5];
         var encoded_size: usize = 0;
-
+        // max header name length for lshpack
+        var name_buffer: [4096]u8 = undefined;
+        @memset(&name_buffer, 0);
         const stream_id: u32 = if (!stream_id_arg.isEmptyOrUndefinedOrNull() and stream_id_arg.isNumber()) stream_id_arg.to(u32) else this.getNextStreamID();
         if (stream_id > MAX_STREAM_ID) {
             return JSC.JSValue.jsNumber(-1);
@@ -3252,6 +3590,10 @@ pub const H2FrameParser = struct {
         }).init(globalObject, headers_arg);
         defer iter.deinit();
         var header_count: u32 = 0;
+
+        var single_value_headers: [SingleValueHeaders.keys().len]bool = undefined;
+        @memset(&single_value_headers, false);
+
         for (0..2) |ignore_pseudo_headers| {
             iter.reset();
 
@@ -3279,19 +3621,23 @@ pub const H2FrameParser = struct {
                     this.dispatchWithExtra(.onStreamError, identifier, JSC.JSValue.jsNumber(stream.rstCode));
                     return JSC.JSValue.jsNumber(stream_id);
                 }
+                const validated_name = toValidHeaderName(name, name_buffer[0..name.len]) catch {
+                    const exception = JSC.toTypeError(.ERR_INVALID_HTTP_TOKEN, "The arguments Header name is invalid. Received \"{s}\"", .{name}, globalObject);
+                    return globalObject.throwValue(exception);
+                };
 
                 if (header_name.charAt(0) == ':') {
                     if (ignore_pseudo_headers == 1) continue;
 
                     if (this.isServer) {
-                        if (!ValidPseudoHeaders.has(name)) {
+                        if (!ValidResponsePseudoHeaders.has(validated_name)) {
                             if (!globalObject.hasException()) {
                                 return globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
                             }
                             return .zero;
                         }
                     } else {
-                        if (!ValidRequestPseudoHeaders.has(name)) {
+                        if (!ValidRequestPseudoHeaders.has(validated_name)) {
                             if (!globalObject.hasException()) {
                                 return globalObject.ERR_HTTP2_INVALID_PSEUDOHEADER("\"{s}\" is an invalid pseudoheader or is used incorrectly", .{name}).throw();
                             }
@@ -3314,35 +3660,40 @@ pub const H2FrameParser = struct {
                     // https://github.com/oven-sh/bun/issues/8940
                     var value_iter = js_value.arrayIterator(globalObject);
 
-                    if (SingleValueHeaders.has(name) and value_iter.len > 1) {
-                        if (!globalObject.hasException()) {
-                            return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Header field \"{s}\" must only have a single value", .{name}).throw();
+                    if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                        if (value_iter.len > 1 or single_value_headers[idx]) {
+                            if (!globalObject.hasException()) {
+                                const exception = JSC.toTypeError(.ERR_HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name}, globalObject);
+                                return globalObject.throwValue(exception);
+                            }
+                            return .zero;
                         }
-                        return .zero;
+                        single_value_headers[idx] = true;
                     }
 
                     while (value_iter.next()) |item| {
                         if (item.isEmptyOrUndefinedOrNull()) {
                             if (!globalObject.hasException()) {
-                                return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
+                                return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{validated_name}).throw();
                             }
                             return .zero;
                         }
 
                         const value_str = item.toStringOrNull(globalObject) orelse {
                             if (!globalObject.hasException()) {
-                                return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
+                                return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{validated_name}).throw();
                             }
                             return .zero;
                         };
 
-                        const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
+                        const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
 
                         const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                         defer value_slice.deinit();
                         const value = value_slice.slice();
-                        log("encode header {s} {s}", .{ name, value });
-                        encoded_size += this.encode(buffer, encoded_size, name, value, never_index) catch {
+                        log("encode header {s} {s}", .{ validated_name, value });
+
+                        encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                             const stream = this.handleReceivedStreamID(stream_id) orelse {
                                 return JSC.JSValue.jsNumber(-1);
                             };
@@ -3357,6 +3708,13 @@ pub const H2FrameParser = struct {
                     }
                 } else if (!js_value.isEmptyOrUndefinedOrNull()) {
                     log("single header {s}", .{name});
+                    if (SingleValueHeaders.indexOf(validated_name)) |idx| {
+                        if (single_value_headers[idx]) {
+                            const exception = JSC.toTypeError(.ERR_HTTP2_HEADER_SINGLE_VALUE, "Header field \"{s}\" must only have a single value", .{validated_name}, globalObject);
+                            return globalObject.throwValue(exception);
+                        }
+                        single_value_headers[idx] = true;
+                    }
                     const value_str = js_value.toStringOrNull(globalObject) orelse {
                         if (!globalObject.hasException()) {
                             return globalObject.ERR_HTTP2_INVALID_HEADER_VALUE("Invalid value for header \"{s}\"", .{name}).throw();
@@ -3364,13 +3722,14 @@ pub const H2FrameParser = struct {
                         return .zero;
                     };
 
-                    const never_index = try sensitive_arg.getTruthy(globalObject, name) != null;
+                    const never_index = (try sensitive_arg.getTruthy(globalObject, validated_name) orelse try sensitive_arg.getTruthy(globalObject, name)) != null;
 
                     const value_slice = value_str.toSlice(globalObject, bun.default_allocator);
                     defer value_slice.deinit();
                     const value = value_slice.slice();
-                    log("encode header {s} {s}", .{ name, value });
-                    encoded_size += this.encode(buffer, encoded_size, name, value, never_index) catch {
+                    log("encode header {s} {s}", .{ validated_name, value });
+
+                    encoded_size += this.encode(buffer, encoded_size, validated_name, value, never_index) catch {
                         const stream = this.handleReceivedStreamID(stream_id) orelse {
                             return JSC.JSValue.jsNumber(-1);
                         };
@@ -3547,6 +3906,7 @@ pub const H2FrameParser = struct {
         _ = writer.write(buffer[0..payload_size]) catch 0;
 
         if (end_stream) {
+            stream.endAfterHeaders = true;
             stream.state = .HALF_CLOSED_LOCAL;
 
             if (waitForTrailers) {

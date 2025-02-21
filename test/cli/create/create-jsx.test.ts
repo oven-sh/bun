@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { cp, readdir } from "fs/promises";
-import { bunEnv, bunExe, isCI, isWindows, tempDirWithFiles as tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, tempDirWithFiles as tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {
@@ -54,6 +54,16 @@ async function checkBuildOutput(dir: string) {
   expect(files.some(f => f.endsWith(".css"))).toBe(true);
 }
 
+let dir_with_happy_dom = tempDirWithFiles("happy-dom", {
+  ["package.json"]: JSON.stringify({
+    name: "happy-dom-tester",
+    version: "0.0.0",
+    dependencies: {
+      "@happy-dom/global-registrator": "17.1.1",
+    },
+  }),
+});
+
 async function fetchAndInjectHTML(url: string) {
   var subprocess = Bun.spawn({
     cmd: [
@@ -61,6 +71,7 @@ async function fetchAndInjectHTML(url: string) {
       "--eval",
       `
         const url = ${JSON.stringify(url)};
+        const initial = await fetch(url).then(r => r.text());
         import { GlobalRegistrator } from "@happy-dom/global-registrator";
         GlobalRegistrator.register({
           url,
@@ -69,8 +80,7 @@ async function fetchAndInjectHTML(url: string) {
           constructor(url) {
           }
         };
-
-        const initial = await fetch(url).then(r => r.text());
+      
         location.href = url;
         document.write(initial);
         window.happyDOM.waitUntilComplete().then(() => {
@@ -81,6 +91,7 @@ async function fetchAndInjectHTML(url: string) {
         });
       `,
     ],
+    cwd: dir_with_happy_dom,
     env: bunEnv,
     stdout: "pipe",
     stdin: "ignore",
@@ -91,131 +102,163 @@ async function fetchAndInjectHTML(url: string) {
   return await new Response(subprocess.stdout).text();
 }
 
-describe.each(["true", "false"])("development: %s", developmentString => {
-  const development = developmentString === "true";
-  const tempDirWithFiles = (name: string, files: Record<string, string>) =>
-    tempDir(name + (development ? "-dev" : "-prod"), files);
-  const normalizeHTML = normalizeHTMLFn(development);
-  const env = {
-    ...bunEnv,
-    BUN_PORT: "0",
-    NODE_ENV: development ? undefined : "production",
-  };
+for (const development of [true, false]) {
+  describe(`development: ${development}`, () => {
+    const normalizeHTML = normalizeHTMLFn(development);
+    const env = {
+      ...bunEnv,
+      BUN_PORT: "0",
+      NODE_ENV: development ? undefined : "production",
+    };
 
-  const devServerLabel = development ? " dev server" : "";
-  describe("react spa (no tailwind)", async () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = tempDirWithFiles("react-spa-no-tailwind", {
-        "README.md": "Hello, world!",
+    const devServerLabel = development ? " dev server" : "";
+    describe("react spa (no tailwind)", async () => {
+      let dir: string;
+      beforeEach(async () => {
+        dir = tempDirWithFiles("react-spa-no-tailwind", {
+          "README.md": "Hello, world!",
+        });
+
+        await cp(path.join(__dirname, "react-spa-no-tailwind"), dir, {
+          recursive: true,
+          force: true,
+        });
       });
 
-      await cp(path.join(__dirname, "react-spa-no-tailwind"), dir, {
-        recursive: true,
-        force: true,
-      });
-    });
-
-    test("dev server", async () => {
-      await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
-        stdin: "ignore",
-      });
-      const all = { text: "" };
-
-      const serverUrl = await getServerUrl(process, all);
-
-      try {
+      test("dev server", async () => {
         console.log({ dir });
-        const content = await fetchAndInjectHTML(serverUrl);
-        expect(normalizeHTML(content)).toMatchSnapshot();
-
-        expect(
-          all.text
-            .replaceAll(Bun.version_with_sha, "v*.*.*")
-            .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?(?:-(debug|canary.*))?/g, "v*.*.*") // Handle version with git hash
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "") // Remove leading spaces
-            .replace(/installed react(-dom)?@\d+\.\d+\.\d+/g, "installed react$1@*.*.*") // Handle react versions
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-      } finally {
-        process.kill();
-      }
-    });
-
-    test.todoIf(isWindows)("build", async () => {
-      {
-        const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
+        await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
           cwd: dir,
           env: env,
           stdout: "pipe",
           stdin: "ignore",
         });
         const all = { text: "" };
+
         const serverUrl = await getServerUrl(process, all);
-        process.kill();
-      }
 
-      const process = Bun.spawn([bunExe(), "run", "build"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
+        try {
+          console.log({ dir });
+          const content = await fetchAndInjectHTML(serverUrl);
+          expect(normalizeHTML(content)).toMatchSnapshot();
+
+          expect(
+            all.text
+              .replaceAll(Bun.version, "*.*.*")
+              .replaceAll(Bun.version_with_sha, "*.*.*")
+              .replace(/v\d+\.\d+\.\d+(?:\s*\([a-f0-9]+\))?(?:-(debug|canary.*))?/g, "v*.*.*") // Handle version with git hash
+              .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+              .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+              .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+              .replace(/^\s+/gm, "") // Remove leading spaces
+              .replace(/installed react(-dom)?@\d+\.\d+\.\d+/g, "installed react$1@*.*.*") // Handle react versions
+              .trim()
+              .replaceAll(serverUrl, "http://[SERVER_URL]"),
+          ).toMatchSnapshot();
+        } finally {
+          process.kill();
+        }
       });
 
-      await process.exited;
-      await checkBuildOutput(dir);
-    });
-  });
+      test.todoIf(isWindows)("build", async () => {
+        {
+          const process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
+            cwd: dir,
+            env: env,
+            stdout: "pipe",
+            stdin: "ignore",
+          });
+          const all = { text: "" };
+          const serverUrl = await getServerUrl(process, all);
+          process.kill();
+        }
 
-  describe("react spa (tailwind)", async () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = tempDirWithFiles("react-spa-tailwind", {
-        "index.tsx": await Bun.file(path.join(__dirname, "tailwind.tsx")).text(),
+        const process = Bun.spawn([bunExe(), "run", "build"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+        });
+
+        await process.exited;
+        await checkBuildOutput(dir);
       });
     });
 
-    test.todoIf(isCI)("dev server", async () => {
-      const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
-        stdin: "ignore",
+    describe("react spa (tailwind)", async () => {
+      let dir: string;
+      beforeEach(async () => {
+        dir = tempDirWithFiles("react-spa-tailwind", {
+          "index.tsx": await Bun.file(path.join(__dirname, "tailwind.tsx")).text(),
+        });
       });
-      const all = { text: "" };
-      const serverUrl = await getServerUrl(process, all);
-      console.log(serverUrl);
 
-      try {
-        const content = await fetchAndInjectHTML(serverUrl);
+      test("dev server", async () => {
+        const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+          stdin: "ignore",
+        });
+        const all = { text: "" };
+        console.log({ dir });
+        const serverUrl = await getServerUrl(process, all);
+        console.log(serverUrl);
 
-        expect(normalizeHTML(content)).toMatchSnapshot();
+        try {
+          const content = await fetchAndInjectHTML(serverUrl);
 
-        expect(
-          all.text
-            .replaceAll(Bun.version_with_sha, "v*.*.*")
-            .replaceAll(Bun.version, "v*.*.*")
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "")
-            .replace(/installed (react(-dom)?|tailwindcss)@\d+\.\d+\.\d+/g, "installed $1@*.*.*")
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-      } finally {
-        process.kill();
-      }
+          expect(normalizeHTML(content)).toMatchSnapshot();
+
+          expect(
+            all.text
+              .replaceAll(Bun.version_with_sha, "*.*.*")
+              .replace(/Bun (v\d+\.\d+\.\d+)/, "Bun *.*.*")
+              .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+              .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+              .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+              .replace(/^\s+/gm, "")
+              .replace(/installed (react(-dom)?|tailwindcss)@\d+\.\d+\.\d+/g, "installed $1@*.*.*")
+              .trim()
+              .replaceAll(serverUrl, "http://[SERVER_URL]"),
+          ).toMatchSnapshot();
+        } finally {
+          process.kill();
+        }
+      });
+
+      test.todoIf(isWindows)("build", async () => {
+        {
+          const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+            cwd: dir,
+            env: env,
+            stdout: "pipe",
+            stdin: "ignore",
+          });
+          const all = { text: "" };
+          const serverUrl = await getServerUrl(process, all);
+          process.kill();
+        }
+
+        const process = Bun.spawn([bunExe(), "run", "build"], {
+          cwd: dir,
+          env: env,
+          stdout: "pipe",
+        });
+
+        await process.exited;
+        await checkBuildOutput(dir);
+      });
     });
 
-    test.todoIf(isWindows)("build", async () => {
-      {
+    describe("shadcn/ui", async () => {
+      let dir: string;
+      beforeEach(async () => {
+        dir = tempDirWithFiles("shadcn-ui", {
+          "index.tsx": await Bun.file(path.join(__dirname, "shadcn.tsx")).text(),
+        });
+      });
+
+      test("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,
@@ -224,91 +267,61 @@ describe.each(["true", "false"])("development: %s", developmentString => {
         });
         const all = { text: "" };
         const serverUrl = await getServerUrl(process, all);
-        process.kill();
-      }
+        console.log(serverUrl);
+        console.log(dir);
+        try {
+          const content = await fetchAndInjectHTML(serverUrl);
 
-      const process = Bun.spawn([bunExe(), "run", "build"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
+          // Check for components.json
+          const componentsJson = await Bun.file(path.join(dir, "components.json")).exists();
+          expect(componentsJson).toBe(true);
+
+          expect(
+            all.text
+              .replaceAll(Bun.version_with_sha, "*.*.*")
+              .replaceAll(Bun.version, "*.*.*")
+              .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
+              .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
+              .replace(/\d+\.\d+\s*ms/g, "*.** ms")
+              .replace(/^\s+/gm, "")
+              .replace(
+                /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
+                "installed $1@*.*.*",
+              )
+              .trim()
+              .replaceAll(serverUrl, "http://[SERVER_URL]"),
+          ).toMatchSnapshot();
+          expect(normalizeHTML(content)).toMatchSnapshot();
+        } finally {
+          process.kill();
+        }
       });
 
-      await process.exited;
-      await checkBuildOutput(dir);
-    });
-  });
+      test.todoIf(isWindows)("build", async () => {
+        {
+          const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+            cwd: dir,
+            env: env,
+            stdout: "pipe",
+            stdin: "ignore",
+          });
+          const all = { text: "" };
+          const serverUrl = await getServerUrl(process, all);
+          process.kill();
+        }
 
-  describe("shadcn/ui", async () => {
-    let dir: string;
-    beforeEach(async () => {
-      dir = tempDirWithFiles("shadcn-ui", {
-        "index.tsx": await Bun.file(path.join(__dirname, "shadcn.tsx")).text(),
-      });
-    });
-
-    test("dev server", async () => {
-      const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
-        stdin: "ignore",
-      });
-      const all = { text: "" };
-      const serverUrl = await getServerUrl(process, all);
-      console.log(serverUrl);
-      console.log(dir);
-      try {
-        const content = await fetchAndInjectHTML(serverUrl);
-
-        // Check for components.json
-        const componentsJson = await Bun.file(path.join(dir, "components.json")).exists();
-        expect(componentsJson).toBe(true);
-
-        expect(
-          all.text
-            .replaceAll(Bun.version_with_sha, "*.*.*")
-            .replaceAll(Bun.version, "*.*.*")
-            .replace(/\[\d+\.?\d*m?s\]/g, "[*ms]")
-            .replace(/@\d+\.\d+\.\d+/g, "@*.*.*")
-            .replace(/\d+\.\d+\s*ms/g, "*.** ms")
-            .replace(/^\s+/gm, "")
-            .replace(
-              /installed (react(-dom)?|@radix-ui\/.*|tailwindcss|class-variance-authority|clsx|lucide-react|tailwind-merge)@\d+\.\d+\.\d+/g,
-              "installed $1@*.*.*",
-            )
-            .trim()
-            .replaceAll(serverUrl, "http://[SERVER_URL]"),
-        ).toMatchSnapshot();
-        expect(normalizeHTML(content)).toMatchSnapshot();
-      } finally {
-        process.kill();
-      }
-    });
-
-    test.todoIf(isWindows)("build", async () => {
-      {
-        const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
+        const process = Bun.spawn([bunExe(), "run", "build"], {
           cwd: dir,
           env: env,
           stdout: "pipe",
-          stdin: "ignore",
         });
-        const all = { text: "" };
-        const serverUrl = await getServerUrl(process, all);
-        process.kill();
-      }
 
-      const process = Bun.spawn([bunExe(), "run", "build"], {
-        cwd: dir,
-        env: env,
-        stdout: "pipe",
+        await process.exited;
+        await checkBuildOutput(dir);
       });
-
-      await process.exited;
-      await checkBuildOutput(dir);
     });
   });
-});
+}
 
 function normalizeHTMLFn(development: boolean = true) {
   return (html: string) =>

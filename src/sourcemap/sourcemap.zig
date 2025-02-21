@@ -627,27 +627,29 @@ pub const ParsedSourceMap = struct {
     /// maps `source_index` to the correct filename.
     external_source_names: []const []const u8 = &.{},
     /// In order to load source contents from a source-map after the fact,
-    // / a handle to the underlying source provider is stored. Within this pointer,
+    /// a handle to the underlying source provider is stored. Within this pointer,
     /// a flag is stored if it is known to be an inline or external source map.
     ///
     /// Source contents are large, we don't preserve them in memory. This has
     /// the downside of repeatedly re-decoding sourcemaps if multiple errors
     /// are emitted (specifically with Bun.inspect / unhandled; the ones that
     /// rely on source contents)
-    underlying_provider: SourceContentPtr = .{ .data = 0 },
+    underlying_provider: SourceContentPtr = .none,
 
-    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+    ref_count: std.atomic.Value(u32) = .init(1),
 
     is_standalone_module_graph: bool = false,
 
     pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn, null);
 
     const SourceContentPtr = packed struct(u64) {
-        load_hint: SourceMapLoadHint = .none,
+        load_hint: SourceMapLoadHint,
         data: u62,
 
+        pub const none: SourceContentPtr = .{ .load_hint = .none, .data = 0 };
+
         fn fromProvider(p: *SourceProviderMap) SourceContentPtr {
-            return .{ .data = @intCast(@intFromPtr(p)) };
+            return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)) };
         }
 
         pub fn provider(sc: SourceContentPtr) ?*SourceProviderMap {
@@ -1165,6 +1167,10 @@ const vlq_max_in_bytes = 7;
 pub const VLQ = struct {
     bytes: [vlq_max_in_bytes]u8,
     len: u4 = 0,
+
+    pub fn slice(self: *const VLQ) []const u8 {
+        return self.bytes[0..self.len];
+    }
 
     pub fn writeTo(self: VLQ, writer: anytype) !void {
         try writer.writeAll(self.bytes[0..self.len]);

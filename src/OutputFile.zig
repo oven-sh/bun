@@ -367,7 +367,7 @@ pub fn toJS(
                     JSC.Node.PathOrFileDescriptor{
                         .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, copy.pathname) catch unreachable) },
                     },
-                this.loader.toMimeType(),
+                this.loader.toMimeType(&.{owned_pathname orelse ""}),
                 globalObject.allocator(),
             ) catch |err| {
                 Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
@@ -398,7 +398,7 @@ pub fn toJS(
                 JSC.Node.PathOrFileDescriptor{
                     .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
                 },
-                this.loader.toMimeType(),
+                this.loader.toMimeType(&.{owned_pathname orelse ""}),
                 globalObject.allocator(),
             ) catch |err| {
                 Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
@@ -424,10 +424,10 @@ pub fn toJS(
         .buffer => |buffer| brk: {
             var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
             if (blob.store) |store| {
-                store.mime_type = this.loader.toMimeType();
+                store.mime_type = this.loader.toMimeType(&.{owned_pathname orelse ""});
                 blob.content_type = store.mime_type.value;
             } else {
-                blob.content_type = this.loader.toMimeType().value;
+                blob.content_type = this.loader.toMimeType(&.{owned_pathname orelse ""}).value;
             }
 
             blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
@@ -471,7 +471,7 @@ pub fn toBlob(
                     JSC.Node.PathOrFileDescriptor{
                         .path = JSC.Node.PathLike{ .string = bun.PathString.init(allocator.dupe(u8, copy.pathname) catch unreachable) },
                     },
-                this.loader.toMimeType(),
+                this.loader.toMimeType(&.{ this.dest_path, this.src_path.text }),
                 allocator,
             );
 
@@ -489,7 +489,7 @@ pub fn toBlob(
                 JSC.Node.PathOrFileDescriptor{
                     .path = JSC.Node.PathLike{ .string = bun.PathString.init(allocator.dupe(u8, this.src_path.text) catch unreachable) },
                 },
-                this.loader.toMimeType(),
+                this.loader.toMimeType(&.{ this.dest_path, this.src_path.text }),
                 allocator,
             );
 
@@ -505,10 +505,10 @@ pub fn toBlob(
         .buffer => |buffer| brk: {
             var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalThis);
             if (blob.store) |store| {
-                store.mime_type = this.loader.toMimeType();
+                store.mime_type = this.loader.toMimeType(&.{ this.dest_path, this.src_path.text });
                 blob.content_type = store.mime_type.value;
             } else {
-                blob.content_type = this.loader.toMimeType().value;
+                blob.content_type = this.loader.toMimeType(&.{ this.dest_path, this.src_path.text }).value;
             }
 
             this.value = .{

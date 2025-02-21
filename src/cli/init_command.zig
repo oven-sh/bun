@@ -111,7 +111,7 @@ pub const InitCommand = struct {
 
             if (reprint_menu) {
                 // Print final selection
-                Output.prettyln("<r><cyan>?<r> {s} <d>> {s}<r>", .{ label, choices[@intFromEnum(selected)] });
+                Output.prettyln("<r><green>✓<r> {s}<d>:<r> {s}<r>", .{ label, choices[@intFromEnum(selected)] });
             }
         }
 

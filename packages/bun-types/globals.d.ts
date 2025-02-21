@@ -1,3 +1,8 @@
+export {};
+
+type _ReadableStream = import("stream/web").ReadableStream;
+type _WritableStream = import("stream/web").WritableStream;
+
 type _TextEncoder = Bun.TextEncoder;
 type _TextDecoder = Bun.TextDecoder;
 
@@ -71,8 +76,9 @@ type _SubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
 
 type _CryptoKey = import("crypto").webcrypto.CryptoKey;
 
+declare var onmessage: never;
+
 declare global {
-  var onmessage: never;
   var Bun: typeof import("bun");
 
   namespace NodeJS {
@@ -590,14 +596,14 @@ declare global {
     }
   }
 
-  interface ReadableStream<R = any> extends import("stream/web").ReadableStream<R> {}
+  interface ReadableStream<R = any> extends _ReadableStream {}
   var ReadableStream: {
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
   };
 
-  interface WritableStream<W = any> extends import("stream/web").WritableStream<W> {}
+  interface WritableStream<W = any> extends _WritableStream {}
   var WritableStream: {
     prototype: WritableStream;
     new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
@@ -697,7 +703,7 @@ declare global {
     /**
      * Override the default S3 options
      */
-    s3?: Bun.S3Options;
+    s3?: import("bun").S3Options;
   }
 
   /**
@@ -1811,127 +1817,4 @@ declare global {
   }
 
   var Blob: typeof Blob;
-
-  interface Response extends import("undici-types").Response {}
-  declare class Response {
-    constructor(body?: Bun.BodyInit | null | undefined, init?: Bun.ResponseInit | undefined);
-
-    /**
-     * Create a new {@link Response} with a JSON body
-     *
-     * @param body - The body of the response
-     * @param options - options to pass to the response
-     *
-     * @example
-     *
-     * ```ts
-     * const response = Response.json({hi: "there"});
-     * console.assert(
-     *   await response.text(),
-     *   `{"hi":"there"}`
-     * );
-     * ```
-     * -------
-     *
-     * This is syntactic sugar for:
-     * ```js
-     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
-     * ```
-     * @link https://github.com/whatwg/fetch/issues/1389
-     */
-    static json(body?: any, options?: Bun.ResponseInit | number): Response;
-    /**
-     * Create a new {@link Response} that redirects to url
-     *
-     * @param url - the URL to redirect to
-     * @param status - the HTTP status code to use for the redirect
-     */
-    // tslint:disable-next-line:unified-signatures
-    static redirect(url: string, status?: number): Response;
-
-    /**
-     * Create a new {@link Response} that redirects to url
-     *
-     * @param url - the URL to redirect to
-     * @param options - options to pass to the response
-     */
-    // tslint:disable-next-line:unified-signatures
-    static redirect(url: string, options?: Bun.ResponseInit): Response;
-
-    /**
-     * Create a new {@link Response} that has a network error
-     */
-    static error(): Response;
-  }
-
-  interface Request {
-    readonly cache: RequestCache;
-    readonly credentials: RequestCredentials;
-    readonly destination: RequestDestination;
-    readonly headers: Headers;
-    readonly integrity: string;
-    readonly method: string;
-    readonly mode: RequestMode;
-    readonly redirect: RequestRedirect;
-    readonly referrerPolicy: string;
-    readonly url: string;
-
-    readonly keepalive: boolean;
-    readonly signal: AbortSignal;
-    readonly duplex: RequestDuplex;
-
-    readonly body: ReadableStream | null;
-    readonly bodyUsed: boolean;
-
-    readonly arrayBuffer: () => Promise<ArrayBuffer>;
-    readonly blob: () => Promise<Blob>;
-    readonly formData: () => Promise<FormData>;
-    readonly json: () => Promise<unknown>;
-    readonly text: () => Promise<string>;
-
-    readonly clone: () => Request;
-  }
-  var Request: {
-    prototype: Request;
-    new (requestInfo: string, requestInit?: RequestInit): Request;
-    new (requestInfo: RequestInit & { url: string }): Request;
-    new (requestInfo: Request, requestInit?: RequestInit): Request;
-  };
-
-  type _UndiciHeaders = import("undici-types").Headers;
-
-  interface Headers extends _UndiciHeaders {
-    /**
-     * Convert {@link Headers} to a plain JavaScript object.
-     *
-     * About 10x faster than `Object.fromEntries(headers.entries())`
-     *
-     * Called when you run `JSON.stringify(headers)`
-     *
-     * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
-     */
-    toJSON(): Record<string, string>;
-    /**
-     * Get the total number of headers
-     */
-    readonly count: number;
-    /**
-     * Get all headers matching the name
-     *
-     * Only supports `"Set-Cookie"`. All other headers are empty arrays.
-     *
-     * @param name - The header name to get
-     *
-     * @returns An array of header values
-     *
-     * @example
-     * ```ts
-     * const headers = new Headers();
-     * headers.append("Set-Cookie", "foo=bar");
-     * headers.append("Set-Cookie", "baz=qux");
-     * headers.getAll("Set-Cookie"); // ["foo=bar", "baz=qux"]
-     * ```
-     */
-    getAll(name: "set-cookie" | "Set-Cookie"): string[];
-  }
 }

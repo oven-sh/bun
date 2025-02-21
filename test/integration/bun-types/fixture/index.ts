@@ -32,6 +32,10 @@ const r = new Request("", {
   body: "",
 });
 
+r.method;
+r.body;
+r.headers.get("content-type");
+
 const body = await fetch(
   new Request("", {
     body: "",
@@ -40,16 +44,10 @@ const body = await fetch(
 
 await body.text();
 
-r.method;
-r.body;
-r.headers.get("content-type");
-
 fetch("", {
   proxy: "",
   s3: {},
 });
-
-type C = Bun.WebAssembly.Global;
 
 Bun.serve({
   fetch(req) {

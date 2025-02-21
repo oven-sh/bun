@@ -2292,8 +2292,8 @@ pub const BundleV2 = struct {
         }
 
         for (this.graph.barrel_files.values()) |*barrel| switch (barrel.*) {
-            .pending, .deoptimized => {},
-            .done => |rq| for (rq.values()) |pt| {
+            .pending => {},
+            .done, .deoptimized => |rq| for (rq.values()) |pt| {
                 bun.debugAssert(!pt.source_index.isValid());
                 bun.default_allocator.destroy(pt);
             },
@@ -2413,7 +2413,7 @@ pub const BundleV2 = struct {
 
             const input_files = this.graph.input_files.slice();
             const loaders = input_files.items(.loader);
-            const sources = input_files.items(.source);
+            const sources: []Source = input_files.items(.source);
             for (
                 all_parts[1..],
                 asts.items(.import_records)[1..],
@@ -2460,8 +2460,16 @@ pub const BundleV2 = struct {
                         if (exports_kind == .esm_barrel_file) {
                             // Barrel files exist in the parse graph, but all
                             // import records have been disconnected from the
-                            // barrel, so this file can be skipped.
-                            continue;
+                            // barrel, so this file can be skipped unless it
+                            // was de-optimized.
+                            const key = sources[source_index.get()].path.hashKey() ^ bun.hash(std.mem.asBytes(&target));
+                            const barrel = this.graph.barrel_files.get(key) orelse {
+                                bun.debugAssert(false);
+                                continue;
+                            };
+                            bun.debugAssert(barrel != .pending);
+                            if (barrel != .deoptimized)
+                                continue;
                         }
 
                         // HTML files are special cased because they correspond
@@ -3030,11 +3038,28 @@ pub const BundleV2 = struct {
                         .importer_source_index = source.index,
                         .import_record_index = .init(@intCast(i)),
                     }) catch bun.outOfMemory(),
-                    .done => |rq| {
-                        _ = rq;
-                        @panic("TODO");
+                    .done, .deoptimized => |*rq| {
+                        const barrel_source_index = import_record.source_index;
+                        bun.assert(barrel_source_index.isValid());
+                        switch (this.processBarrelRecord(.{
+                            .resolve_queue = rq,
+                            .importer_source_index = source.index,
+                            .importer_named_imports = &ast.named_imports,
+                            .importer_record = import_record,
+                            .importer_record_index = .init(@intCast(i)),
+                            .barrel_named_exports = &this.graph.ast.items(.named_exports)[barrel_source_index.get()],
+                            .barrel_named_imports = &this.graph.ast.items(.named_imports)[barrel_source_index.get()],
+                            .barrel_import_records = this.graph.ast.items(.import_records)[barrel_source_index.get()].slice(),
+                            .path_to_source_index_map = this.pathToSourceIndexMap(target),
+                        })) {
+                            .reused_parse_task, .not_found => {},
+                            .new_parse_task => this.incrementScanCounter(),
+                            .deoptimize => {
+                                const rq_copy = rq.*; // avoid possible RLS aliasing
+                                gop.value_ptr.* = .{ .deoptimized = rq_copy };
+                            },
+                        }
                     },
-                    .deoptimized => @panic("TODO"),
                 }
             };
 
@@ -3364,8 +3389,6 @@ pub const BundleV2 = struct {
                     const all_import_record_lists = this.graph.ast.items(.import_records);
                     const all_named_imports: []JSAst.NamedImports = this.graph.ast.items(.named_imports);
 
-                    const barrel_ast = &result.ast;
-
                     var had_barrel_deoptimization = false;
                     for (pending.items) |request| {
                         const request_import_records = all_import_record_lists[request.importer_source_index.get()].slice();
@@ -3375,7 +3398,9 @@ pub const BundleV2 = struct {
                             .importer_named_imports = &all_named_imports[request.importer_source_index.get()],
                             .importer_record = &request_import_records[request.import_record_index.get()],
                             .importer_record_index = request.import_record_index,
-                            .barrel_ast = barrel_ast,
+                            .barrel_named_exports = &result.ast.named_exports,
+                            .barrel_named_imports = &result.ast.named_imports,
+                            .barrel_import_records = result.ast.import_records.slice(),
                             .path_to_source_index_map = path_to_source_index_map,
                         })) {
                             .reused_parse_task, .not_found => {},
@@ -3388,7 +3413,10 @@ pub const BundleV2 = struct {
                     }
 
                     pending.deinit(this.graph.allocator);
-                    barrel_ptr.* = .{ .done = resolve_queue };
+                    barrel_ptr.* = if (had_barrel_deoptimization)
+                        .{ .deoptimized = resolve_queue }
+                    else
+                        .{ .done = resolve_queue };
                     resolve_queue = .empty;
                 } else {
                     var iter = resolve_queue.iterator();
@@ -3554,7 +3582,9 @@ pub const BundleV2 = struct {
         importer_named_imports: *JSAst.NamedImports,
         importer_record: *ImportRecord,
         importer_record_index: ImportRecord.Index,
-        barrel_ast: *const JSAst,
+        barrel_named_exports: *JSAst.NamedExports,
+        barrel_named_imports: *JSAst.NamedImports,
+        barrel_import_records: []ImportRecord,
         path_to_source_index_map: *PathToSourceIndexMap,
     }) ProcessBarrelResult {
         bun.assert(opts.importer_record.tag == .barrel);
@@ -3564,20 +3594,23 @@ pub const BundleV2 = struct {
         const named_import: *js_ast.NamedImport = for (opts.importer_named_imports.values()) |*named_import| {
             if (named_import.import_record_index == opts.importer_record_index.get())
                 break named_import;
-        } else return .deoptimize;
+        } else {
+            bun.debugAssert(false);
+            return .deoptimize;
+        };
 
         // Locate the corresponding export in THIS file
         const alias = named_import.alias orelse return .deoptimize;
-        const barrel_named_export = opts.barrel_ast.named_exports.get(alias) orelse
-            return .deoptimize; // import does not exist
+        const barrel_named_export = opts.barrel_named_exports.get(alias) orelse
+            return .not_found; // import does not exist
 
         // Locate the import it maps to.
-        const barrel_named_import = opts.barrel_ast.named_imports.get(barrel_named_export.ref) orelse
+        const barrel_named_import = opts.barrel_named_imports.get(barrel_named_export.ref) orelse
             return .deoptimize; // not a re-export :(
 
         // TODO: dig through multiple layers of exports?
 
-        const barrel_import_record = opts.barrel_ast.import_records.mut(barrel_named_import.import_record_index);
+        const barrel_import_record = &opts.barrel_import_records[barrel_named_import.import_record_index];
         const result: ProcessBarrelResult = if (barrel_import_record.source_index.isValid()) res: {
             opts.importer_record.source_index = barrel_import_record.source_index;
             opts.importer_record.path = barrel_import_record.path;
@@ -3585,8 +3618,11 @@ pub const BundleV2 = struct {
         } else res: {
             const hash = barrel_import_record.path.hashKey();
             const entry = opts.resolve_queue.fetchSwapRemove(hash) orelse {
-                bun.debugAssert(false);
-                return .deoptimize;
+                // cached in incremental graph.
+                bun.debugAssert(this.transpiler.options.dev_server != null);
+                opts.importer_record.path = barrel_import_record.path;
+                opts.importer_record.source_index = .invalid;
+                break :res .reused_parse_task;
             };
             break :res if (this.processEnqueuedResolveTask(
                 entry.key,
@@ -3596,7 +3632,10 @@ pub const BundleV2 = struct {
             )) .new_parse_task else .reused_parse_task;
         };
 
-        // oh no call the disaster control people im sorry,,
+        // This code is extremely silly, but at this point the list of import
+        // `ClauseItem`s is not known, so the namespace_alias here (unused by
+        // default) is used to communicate the renamed alias.
+        bun.debugAssert(this.transpiler.options.dev_server != null);
         if (barrel_named_import.alias) |a| {
             const namespace_ref = named_import.namespace_ref.?;
             const symbol: *js_ast.Symbol = this.graph.ast.items(.symbols)[opts.importer_source_index.get()].mut(namespace_ref.inner_index);
@@ -5606,8 +5645,8 @@ pub const BarrelState = union(enum) {
     pending: std.ArrayListUnmanaged(PendingEntry),
     /// Refer to this map and the barrel's source index to lookup an entry.
     done: ResolveQueue,
-    /// Do not perform barrel file optimization
-    deoptimized,
+    /// The barrel was de-optimized at least once, but still try and use it.
+    deoptimized: ResolveQueue,
 
     pub const PendingEntry = struct {
         importer_source_index: Source.Index,
@@ -12927,10 +12966,15 @@ pub const LinkerContext = struct {
                             .data = path.pretty,
                         }, stmt.loc);
 
-                        const items = try allocator.alloc(Expr, st.items.len);
-                        for (st.items, items) |item, *str| {
-                            str.* = Expr.init(E.String, .{ .data = item.alias }, item.name.loc);
-                        }
+                        const items = if (barrel_actual_alias) |alias|
+                            try allocator.dupe(Expr, &.{Expr.init(E.String, .{ .data = alias }, .Empty)})
+                        else brk: {
+                            const items = try allocator.alloc(Expr, st.items.len);
+                            for (st.items, items) |item, *str| {
+                                str.* = Expr.init(E.String, .{ .data = item.alias }, item.name.loc);
+                            }
+                            break :brk items;
+                        };
 
                         const expr = Expr.init(E.Call, .{
                             .target = Expr.init(E.Dot, .{

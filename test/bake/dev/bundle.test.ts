@@ -1,5 +1,12 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { Client, devTest, emptyHtmlFile, minimalFramework, reactRefreshStub } from "../dev-server-harness";
+import {
+  Client,
+  devTest,
+  emptyHtmlFile,
+  extractScriptSrc,
+  minimalFramework,
+  reactRefreshStub,
+} from "../dev-server-harness";
 import { dedent } from "bundler/expectBundled";
 
 devTest("import identifier doesnt get renamed", {
@@ -109,7 +116,8 @@ devTest("barrel file optimization (lucide-react)", {
     "index.ts": `
       import { Icon1 } from 'lucide-react';
       import { Icon2 } from 'lucide-react';
-      console.log(Icon1(), Icon2());
+      console.log(Icon1());
+      console.log(Icon2());
     `,
     // Current BFO only handles some well-known package names, and only when the
     // file is just re-exporting the icons.
@@ -129,18 +137,21 @@ devTest("barrel file optimization (lucide-react)", {
   async test(dev) {
     function captureIconRefs(text: string) {
       const refs = text.matchAll(/CAPTURE\((\d+)\)/g);
-      return Array.from(refs).map(ref => ref[1]);
+      return Array.from(refs)
+        .map(ref => ref[1])
+        .sort();
     }
-    async function fetchScriptSrc(c: Client) {
-      const srcUrl = await c.js`document.querySelector("script").src`;
+    async function fetchScriptSrc() {
+      const html = await dev.fetch("/").text();
+      const srcUrl = extractScriptSrc(html);
       return await dev.fetch(srcUrl).text();
     }
 
     // Should only serve icons 1 and 2 since those were the only ones referenced.
-    const c = await dev.client("/", {});
+    const c = await dev.client("/", { storeHotChunks: true });
     await c.expectMessage("CAPTURE(1)", "CAPTURE(2)");
     {
-      const src = await fetchScriptSrc(c);
+      const src = await fetchScriptSrc();
       const refs = captureIconRefs(src);
       expect(refs).toEqual(["1", "2"]);
     }
@@ -152,9 +163,9 @@ devTest("barrel file optimization (lucide-react)", {
       const chunk = await c.getMostRecentHmrChunk();
       const keys = eval(chunk);
       expect(captureIconRefs(chunk)).toEqual([]);
-      expect(keys).toEqual(["index.ts"]);
+      expect(Object.keys(keys)).toEqual(["index.ts"]);
 
-      const src = await fetchScriptSrc(c);
+      const src = await fetchScriptSrc();
       expect(captureIconRefs(src)).toEqual(["1", "2"]);
     }
 
@@ -167,7 +178,8 @@ devTest("barrel file optimization (lucide-react)", {
         `
         import { Icon1 } from 'lucide-react';
         import { Icon3 } from 'lucide-react';
-        console.log(Icon1(), Icon3());
+        console.log(Icon1());
+        console.log(Icon3());
       `,
       );
       // 1.
@@ -176,21 +188,21 @@ devTest("barrel file optimization (lucide-react)", {
       expect(captureIconRefs(chunk)).toEqual(["3"]);
 
       // 2.
-      const src = await fetchScriptSrc(c);
+      const src = await fetchScriptSrc();
       expect(captureIconRefs(src)).toEqual(["1", "3"]);
     }
 
     // Saving index.ts should re-run itself but only serve 'index.ts'
     {
       await dev.writeNoChanges("index.ts");
-      await c.expectMessage("CAPTURE(1)", "CAPTURE(2)");
+      await c.expectMessage("CAPTURE(1)", "CAPTURE(3)");
       const chunk = await c.getMostRecentHmrChunk();
       const keys = eval(chunk);
       expect(captureIconRefs(chunk)).toEqual([]);
-      expect(keys).toEqual(["index.ts"]);
+      expect(Object.keys(keys)).toEqual(["index.ts"]);
 
-      const src = await fetchScriptSrc(c);
-      expect(captureIconRefs(src)).toEqual(["1", "2"]);
+      const src = await fetchScriptSrc();
+      expect(captureIconRefs(src)).toEqual(["1", "3"]);
     }
   },
 });

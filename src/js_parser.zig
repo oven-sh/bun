@@ -18992,6 +18992,7 @@ fn NewParser_(
                                 data.items = &.{};
                                 for (old_items, 0..) |*item, i| {
                                     const new_items = p.allocator.dupe(js_ast.ClauseItem, item[0..1]) catch unreachable;
+                                    p.symbols.items[new_items[0].name.ref.?.inner_index].namespace_alias = null;
                                     if (i == 0) {
                                         // data.items = old_items[0..1];
                                         data.items = new_items;

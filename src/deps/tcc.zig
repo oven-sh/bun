@@ -283,7 +283,6 @@ pub const State = opaque {
         const info = @typeInfo(@TypeOf(symbols));
         inline for (info.@"struct".fields) |field| {
             const value = @field(symbols, field.name);
-            std.mem.doNotOptimizeAway(value); // just in case
             try s.addSymbol(field.name, value);
         }
     }

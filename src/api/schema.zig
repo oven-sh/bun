@@ -342,7 +342,7 @@ pub const Api = struct {
         dataurl,
         text,
         sqlite,
-
+        html,
         _,
 
         pub fn jsonStringify(self: @This(), writer: anytype) !void {
@@ -1631,7 +1631,7 @@ pub const Api = struct {
         origin: ?[]const u8 = null,
 
         /// absolute_working_dir
-        absolute_working_dir: ?[]const u8 = null,
+        absolute_working_dir: ?[:0]const u8 = null,
 
         /// define
         define: ?StringMap = null,
@@ -1678,7 +1678,7 @@ pub const Api = struct {
         no_summary: ?bool = null,
 
         /// disable_hmr
-        disable_hmr: ?bool = null,
+        disable_hmr: bool = false,
 
         /// port
         port: ?u16 = null,
@@ -1697,6 +1697,21 @@ pub const Api = struct {
 
         /// ignore_dce_annotations
         ignore_dce_annotations: bool,
+
+        /// e.g.:
+        /// [serve.static]
+        /// plugins = ["tailwindcss"]
+        serve_plugins: ?[]const []const u8 = null,
+        serve_minify_syntax: ?bool = null,
+        serve_minify_whitespace: ?bool = null,
+        serve_minify_identifiers: ?bool = null,
+        serve_env_behavior: DotEnvBehavior = ._none,
+        serve_env_prefix: ?[]const u8 = null,
+        serve_splitting: bool = false,
+        serve_public_path: ?[]const u8 = null,
+        serve_hmr: ?bool = null,
+
+        bunfig_path: []const u8,
 
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
@@ -2979,10 +2994,14 @@ pub const Api = struct {
 
         cafile: ?[]const u8 = null,
 
+        save_text_lockfile: ?bool = null,
+
         ca: ?union(enum) {
             str: []const u8,
             list: []const []const u8,
         } = null,
+
+        ignore_scripts: ?bool = null,
 
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);

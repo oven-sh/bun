@@ -52,7 +52,7 @@ Local<FunctionTemplate> FunctionTemplate::New(
         "Passing allowed_receiver_instance_type_range_end to FunctionTemplate::New is not yet supported");
 
     auto globalObject = isolate->globalObject();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* globalInternals = globalObject->V8GlobalInternals();
     JSValue jsc_data = data.IsEmpty() ? JSC::jsUndefined() : data->localToJSValue();
 

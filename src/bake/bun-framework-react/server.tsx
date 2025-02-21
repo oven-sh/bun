@@ -12,16 +12,12 @@ function assertReactComponent(Component: any) {
 }
 
 // This function converts the route information into a React component tree.
-function getPage(meta: Bake.RouteMetadata) {
-  const { styles } = meta;
-
-  const Page = meta.pageModule.default;
-  if (import.meta.env.DEV) assertReactComponent(Page);
-  let route = <Page />;
+function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
+  let route = component(meta.pageModule, meta.params);
   for (const layout of meta.layouts) {
     const Layout = layout.default;
     if (import.meta.env.DEV) assertReactComponent(Layout);
-    route = <Layout>{route}</Layout>;
+    route = <Layout params={meta.params}>{route}</Layout>;
   }
 
   return (
@@ -30,12 +26,30 @@ function getPage(meta: Bake.RouteMetadata) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Bun + React Server Components</title>
         {styles.map(url => (
-          <link key={url} rel="stylesheet" href={url} />
+          // `data-bake-ssr` is used on the client-side to construct the styles array.
+          <link key={url} rel="stylesheet" href={url} data-bake-ssr />
         ))}
       </head>
       <body>{route}</body>
     </html>
   );
+}
+
+function component(mod: any, params: Record<string, string> | null) {
+  const Page = mod.default;
+  let props = {};
+  if (import.meta.env.DEV) assertReactComponent(Page);
+
+  let method;
+  if ((import.meta.env.DEV || import.meta.env.STATIC) && (method = mod.getStaticProps)) {
+    if (mod.getServerSideProps) {
+      throw new Error("Cannot have both getStaticProps and getServerSideProps");
+    }
+
+    props = method();
+  }
+
+  return <Page params={params} {...props} />;
 }
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
@@ -45,17 +59,45 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
   // - Standard browser navigation
   // - Client-side navigation
   //
-  // For React, this means we will always perform `renderToReadableStream` to
-  // generate the RSC payload, but only generate HTML for the former of these
-  // rendering modes. This is signaled by `client.tsx` via the `Accept` header.
+  // For React, this means calling `renderToReadableStream` to generate the RSC
+  // payload, but only generate HTML for the former of these rendering modes.
+  // This is signaled by `client.tsx` via the `Accept` header.
   const skipSSR = request.headers.get("Accept")?.includes("text/x-component");
 
-  const page = getPage(meta);
+  // Do not render <link> tags if the request is skipping SSR.
+  const page = getPage(meta, skipSSR ? [] : meta.styles);
+
+  // TODO: write a lightweight version of PassThrough
+  const rscPayload = new PassThrough();
+
+  if (skipSSR) {
+    // "client.tsx" reads the start of the response to determine the
+    // CSS files to load. The styles are loaded before the new page
+    // is presented, to avoid a flash of unstyled content.
+    const int = Buffer.allocUnsafe(4);
+    const str = meta.styles.join("\n");
+    int.writeUInt32LE(str.length, 0);
+    rscPayload.write(int);
+    rscPayload.write(str);
+  }
 
   // This renders Server Components to a ReadableStream "RSC Payload"
-  const rscPayload = renderToPipeableStream(page, serverManifest)
-    // TODO: write a lightweight version of PassThrough
-    .pipe(new PassThrough());
+  let pipe;
+  const signal: MiniAbortSignal = { aborted: false, abort: null! };
+  ({ pipe, abort: signal.abort } = renderToPipeableStream(page, serverManifest, {
+    onError: err => {
+      if (signal.aborted) return;
+      console.error(err);
+    },
+    filterStackFrame: () => false,
+  }));
+  pipe(rscPayload);
+
+  rscPayload.on("error", err => {
+    if (signal.aborted) return;
+    console.error(err);
+  });
+
   if (skipSSR) {
     return new Response(rscPayload as any, {
       status: 200,
@@ -63,8 +105,8 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
     });
   }
 
-  // Then the RSC payload is rendered into HTML
-  return new Response(await renderToHtml(rscPayload, meta.scripts), {
+  // The RSC payload is rendered into HTML
+  return new Response(await renderToHtml(rscPayload, meta.modules, signal), {
     headers: {
       "Content-Type": "text/html; charset=utf8",
     },
@@ -75,16 +117,18 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
 // function returns no files, the route is always dynamic. When building an app
 // to static files, all routes get pre-rendered (build failure if not possible).
 export async function prerender(meta: Bake.RouteMetadata) {
-  const page = getPage(meta);
+  const page = getPage(meta, meta.styles);
 
   const rscPayload = renderToPipeableStream(page, serverManifest)
     // TODO: write a lightweight version of PassThrough
     .pipe(new PassThrough());
 
-  let rscChunks: Uint8Array[] = [];
+  const int = new Uint32Array(1);
+  int[0] = meta.styles.length;
+  let rscChunks: Array<BlobPart> = [int.buffer as ArrayBuffer, meta.styles.join("\n")];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
-  const html = await renderToStaticHtml(rscPayload, meta.scripts);
+  const html = await renderToStaticHtml(rscPayload, meta.modules);
   const rsc = new Blob(rscChunks, { type: "text/x-component" });
 
   return {
@@ -109,9 +153,38 @@ export async function prerender(meta: Bake.RouteMetadata) {
   };
 }
 
+export async function getParams(meta: Bake.ParamsMetadata): Promise<Bake.GetParamIterator> {
+  const getStaticPaths = meta.pageModule.getStaticPaths;
+  if (getStaticPaths == null) {
+    if (import.meta.env.STATIC) {
+      throw new Error(
+        "In files with dynamic params, a `getStaticPaths` function must be exported to tell Bun what files to render.",
+      );
+    } else {
+      return { pages: [], exhaustive: false };
+    }
+  }
+  const result = await meta.pageModule.getStaticPaths();
+  // Remap the Next.js pagess paradigm to Bun's format
+  if (result.paths) {
+    return {
+      pages: result.paths.map(path => path.params),
+    };
+  }
+  // Allow returning the array directly
+  return result;
+}
+
 // When a dynamic build uses static assets, Bun can map content types in the
 // user's `Accept` header to the different static files.
 export const contentTypeToStaticFile = {
   "text/html": "index.html",
   "text/x-component": "index.rsc",
 };
+
+/** Instead of using AbortController, this is used */
+export interface MiniAbortSignal {
+  aborted: boolean;
+  /** Caller must set `aborted` to true before calling. */
+  abort: () => void;
+}

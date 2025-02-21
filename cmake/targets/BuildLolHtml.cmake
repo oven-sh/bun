@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     cloudflare/lol-html
   COMMIT
-    8d4c273ded322193d017042d1f48df2766b0f88b
+    4f8becea13a0021c8b71abd2dcc5899384973b66
 )
 
 set(LOLHTML_CWD ${VENDOR_PATH}/lolhtml/c-api)
@@ -49,6 +49,8 @@ register_command(
     CARGO_TERM_VERBOSE=true
     CARGO_TERM_DIAGNOSTIC=true
     CARGO_ENCODED_RUSTFLAGS=${RUSTFLAGS}
+    CARGO_HOME=${CARGO_HOME}
+    RUSTUP_HOME=${RUSTUP_HOME}
 )
 
 target_link_libraries(${bun} PRIVATE ${LOLHTML_LIBRARY})

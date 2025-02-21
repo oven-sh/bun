@@ -1,0 +1,48 @@
+{
+	"name": "bundled-transitive",
+	"versions": {
+		"1.0.0": {
+			"name": "bundled-transitive",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "1.0.0",
+				"one-dep": "1.0.0"
+			},
+			"bundleDependencies": [
+				"no-deps"
+			],
+			"_id": "bundled-transitive@1.0.0",
+			"_integrity": "sha512-1CC+XKeBwsdseQEm4yOpfBzom2zEyrXQcgb6N4t83pL2DalEunEFO80yUpkzylsQYIH1uxGLI8G+4jhwvyH1bQ==",
+			"_nodeVersion": "22.6.0",
+			"_npmVersion": "10.8.3",
+			"integrity": "sha512-1CC+XKeBwsdseQEm4yOpfBzom2zEyrXQcgb6N4t83pL2DalEunEFO80yUpkzylsQYIH1uxGLI8G+4jhwvyH1bQ==",
+			"shasum": "8e0417711660590c7317add4a4a28388d4628cb1",
+			"dist": {
+				"integrity": "sha512-1CC+XKeBwsdseQEm4yOpfBzom2zEyrXQcgb6N4t83pL2DalEunEFO80yUpkzylsQYIH1uxGLI8G+4jhwvyH1bQ==",
+				"shasum": "8e0417711660590c7317add4a4a28388d4628cb1",
+				"tarball": "http://http://localhost:4873/bundled-transitive/-/bundled-transitive-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-12-30T22:05:28.027Z",
+		"created": "2024-12-30T22:05:28.027Z",
+		"1.0.0": "2024-12-30T22:05:28.027Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bundled-transitive-1.0.0.tgz": {
+			"shasum": "8e0417711660590c7317add4a4a28388d4628cb1",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "bundled-transitive",
+	"readme": ""
+}

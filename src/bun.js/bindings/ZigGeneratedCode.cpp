@@ -20,7 +20,7 @@ using namespace WebCore;
 
 // JSC_DEFINE_JIT_OPERATION(FFI__ptr__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, JSC::JSUint8Array* arg1))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -67,7 +67,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__u8__fastpathWr
 
 // JSC_DEFINE_JIT_OPERATION(Reader__u8__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -116,7 +116,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__u16__fastpathW
 
 // JSC_DEFINE_JIT_OPERATION(Reader__u16__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -162,7 +162,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__u32__fastpathW
 
 // JSC_DEFINE_JIT_OPERATION(Reader__u32__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -208,7 +208,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__ptr__fastpathW
 
 // JSC_DEFINE_JIT_OPERATION(Reader__ptr__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -254,7 +254,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__i8__fastpathWr
 
 // JSC_DEFINE_JIT_OPERATION(Reader__i8__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -300,7 +300,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__i16__fastpathW
 
 // JSC_DEFINE_JIT_OPERATION(Reader__i16__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -346,7 +346,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__i32__fastpathW
 
 // JSC_DEFINE_JIT_OPERATION(Reader__i32__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -392,7 +392,7 @@ extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(Reader__i64__fastpathW
 
 // JSC_DEFINE_JIT_OPERATION(Reader__i64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -438,7 +438,7 @@ BUN_DECLARE_HOST_FUNCTION(Reader__u64__slowpathWrapper);
 
 // JSC_DEFINE_JIT_OPERATION(Reader__u64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -484,7 +484,7 @@ BUN_DECLARE_HOST_FUNCTION(Reader__intptr__slowpathWrapper);
 
 // JSC_DEFINE_JIT_OPERATION(Reader__intptr__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -530,7 +530,7 @@ BUN_DECLARE_HOST_FUNCTION(Reader__f32__slowpathWrapper);
 
 // JSC_DEFINE_JIT_OPERATION(Reader__f32__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -576,7 +576,7 @@ BUN_DECLARE_HOST_FUNCTION(Reader__f64__slowpathWrapper);
 
 // JSC_DEFINE_JIT_OPERATION(Reader__f64__fastpathWrapper, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int64_t arg1, int32_t arg2))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END

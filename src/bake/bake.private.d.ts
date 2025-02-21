@@ -11,6 +11,8 @@ interface Config {
   separateSSRGraph?: true;
 
   // Client
+  /** Bun version */
+  bun: string;
   /** Dev Server's `configuration_hash_key` */
   version: string;
   /** If available, this is the Id of `react-refresh/runtime` */
@@ -43,15 +45,18 @@ declare const side: "client" | "server";
  */
 declare const IS_BUN_DEVELOPMENT: any;
 
+/** If this is the fallback error page */
+declare const IS_ERROR_RUNTIME: boolean;
+
 declare var __bun_f: any;
 
 // The following interfaces have been transcribed manually.
 
-declare module "react-server-dom-webpack/client.browser" {
+declare module "react-server-dom-bun/client.browser" {
   export function createFromReadableStream<T = any>(readable: ReadableStream<Uint8Array>): Promise<T>;
 }
 
-declare module "react-server-dom-webpack/client.node.unbundled.js" {
+declare module "react-server-dom-bun/client.node.unbundled.js" {
   import type { ReactClientManifest } from "bun:bake/server";
   import type { Readable } from "node:stream";
   export interface Manifest {
@@ -70,7 +75,7 @@ declare module "react-server-dom-webpack/client.node.unbundled.js" {
   export function createFromNodeStream<T = any>(readable: Readable, manifest?: Manifest): Promise<T>;
 }
 
-declare module "react-server-dom-webpack/server.node.unbundled.js" {
+declare module "react-server-dom-bun/server.node.unbundled.js" {
   import type { ReactServerManifest } from "bun:bake/server";
   import type { ReactElement, ReactElement } from "react";
   import type { Writable } from "node:stream";
@@ -98,7 +103,7 @@ declare module "react-server-dom-webpack/server.node.unbundled.js" {
 }
 
 declare module "react-dom/server.node" {
-  import type { PipeableStream } from "react-server-dom-webpack/server.node.unbundled.js";
+  import type { PipeableStream } from "react-server-dom-bun/server.node.unbundled.js";
   import type { ReactElement } from "react";
 
   export type RenderToPipeableStreamOptions = any;

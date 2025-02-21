@@ -31,6 +31,8 @@
     macro(unsafe) \
     macro(semver) \
     macro(embeddedFiles) \
+    macro(S3Client) \
+    macro(s3) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \

@@ -5,7 +5,7 @@ const UUID = bun.UUID;
 const assert = bun.assert;
 const ObjectURLRegistry = @This();
 
-lock: bun.Lock = .{},
+lock: bun.Mutex = .{},
 map: std.AutoHashMap(UUID, *RegistryEntry) = std.AutoHashMap(UUID, *RegistryEntry).init(bun.default_allocator),
 
 pub const RegistryEntry = struct {
@@ -91,7 +91,7 @@ pub fn has(this: *ObjectURLRegistry, pathname: []const u8) bool {
 
 comptime {
     const Bun__createObjectURL = JSC.toJSHostFunction(Bun__createObjectURL_);
-    @export(Bun__createObjectURL, .{ .name = "Bun__createObjectURL" });
+    @export(&Bun__createObjectURL, .{ .name = "Bun__createObjectURL" });
 }
 fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1);
@@ -99,7 +99,7 @@ fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
         return globalObject.throwNotEnoughArguments("createObjectURL", 1, arguments.len);
     }
     const blob = arguments.ptr[0].as(JSC.WebCore.Blob) orelse {
-        return globalObject.throwInvalidArguments2("createObjectURL expects a Blob object", .{});
+        return globalObject.throwInvalidArguments("createObjectURL expects a Blob object", .{});
     };
     const registry = ObjectURLRegistry.singleton();
     const uuid = registry.register(globalObject.bunVM(), blob);
@@ -109,7 +109,7 @@ fn Bun__createObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
 
 comptime {
     const Bun__revokeObjectURL = JSC.toJSHostFunction(Bun__revokeObjectURL_);
-    @export(Bun__revokeObjectURL, .{ .name = "Bun__revokeObjectURL" });
+    @export(&Bun__revokeObjectURL, .{ .name = "Bun__revokeObjectURL" });
 }
 fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1);
@@ -117,7 +117,7 @@ fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
         return globalObject.throwNotEnoughArguments("revokeObjectURL", 1, arguments.len);
     }
     if (!arguments.ptr[0].isString()) {
-        return globalObject.throwInvalidArguments2("revokeObjectURL expects a string", .{});
+        return globalObject.throwInvalidArguments("revokeObjectURL expects a string", .{});
     }
     const str = arguments.ptr[0].toBunString(globalObject);
     if (!str.hasPrefixComptime("blob:")) {
@@ -138,7 +138,7 @@ fn Bun__revokeObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Call
 
 comptime {
     const jsFunctionResolveObjectURL = JSC.toJSHostFunction(jsFunctionResolveObjectURL_);
-    @export(jsFunctionResolveObjectURL, .{ .name = "jsFunctionResolveObjectURL" });
+    @export(&jsFunctionResolveObjectURL, .{ .name = "jsFunctionResolveObjectURL" });
 }
 fn jsFunctionResolveObjectURL_(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1);

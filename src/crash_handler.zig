@@ -44,11 +44,18 @@ var has_printed_message = false;
 var panicking = std.atomic.Value(u8).init(0);
 
 // Locked to avoid interleaving panic messages from multiple threads.
-var panic_mutex = std.Thread.Mutex{};
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var panic_mutex = bun.Mutex{};
 
 /// Counts how many times the panic handler is invoked by this thread.
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
+
+threadlocal var inside_native_plugin: ?[*:0]const u8 = null;
+
+export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
+    inside_native_plugin = name;
+}
 
 /// This can be set by various parts of the codebase to indicate a broader
 /// action being taken. It is printed when a crash happens, which can help
@@ -60,7 +67,9 @@ threadlocal var panic_stage: usize = 0;
 pub threadlocal var current_action: ?Action = null;
 
 var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
-var before_crash_handlers_mutex: std.Thread.Mutex = .{};
+
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var before_crash_handlers_mutex: bun.Mutex = .{};
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
 
@@ -169,7 +178,7 @@ pub fn crashHandler(
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
 ) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
@@ -226,6 +235,18 @@ pub fn crashHandler(
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.posix.abort();
                     printMetadata(writer) catch std.posix.abort();
+
+                    if (inside_native_plugin) |name| {
+                        const native_plugin_name = name;
+                        const fmt =
+                            \\
+                            \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                            \\
+                            \\This indicates either a bug in the native plugin or in Bun.
+                            \\
+                        ;
+                        writer.print(Output.prettyFmt(fmt, true), .{native_plugin_name}) catch std.posix.abort();
+                    }
                 } else {
                     if (Output.enable_ansi_colors) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
@@ -254,11 +275,11 @@ pub fn crashHandler(
                     } else switch (bun.Environment.os) {
                         .windows => {
                             var name: std.os.windows.PWSTR = undefined;
-                            const result = bun.windows.GetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), &name);
+                            const result = bun.windows.GetThreadDescription(bun.windows.GetCurrentThread(), &name);
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
                                 writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
-                                writer.print("(thread {d})", .{std.os.windows.kernel32.GetCurrentThreadId()}) catch std.posix.abort();
+                                writer.print("(thread {d})", .{bun.windows.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
                         .mac, .linux => {},
@@ -280,7 +301,13 @@ pub fn crashHandler(
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
-                const trace = error_return_trace orelse get_backtrace: {
+                const trace = @as(?*std.builtin.StackTrace, if (error_return_trace) |ert|
+                    if (ert.index > 0)
+                        ert
+                    else
+                        null
+                else
+                    null) orelse get_backtrace: {
                     trace_buf = std.builtin.StackTrace{
                         .index = 0,
                         .instruction_addresses = &addr_buf,
@@ -308,7 +335,17 @@ pub fn crashHandler(
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
                         }
-                        if (reason == .out_of_memory) {
+                        if (inside_native_plugin) |name| {
+                            const native_plugin_name = name;
+                            writer.print(Output.prettyFmt(
+                                \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                                \\
+                                \\To send a redacted crash report to Bun's team,
+                                \\please file a GitHub issue using the link below:
+                                \\
+                                \\
+                            , true), .{native_plugin_name}) catch std.posix.abort();
+                        } else if (reason == .out_of_memory) {
                             writer.writeAll(
                                 \\Bun has ran out of memory.
                                 \\
@@ -675,7 +712,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 }
 
 pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, begin_addr: ?usize) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     crashHandler(
         if (bun.strings.eqlComptime(msg, "reached unreachable code"))
             .{ .@"unreachable" = {} }
@@ -765,10 +802,10 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
         }
     }
 
-    try std.posix.sigaction(std.posix.SIG.SEGV, act, null);
-    try std.posix.sigaction(std.posix.SIG.ILL, act, null);
-    try std.posix.sigaction(std.posix.SIG.BUS, act, null);
-    try std.posix.sigaction(std.posix.SIG.FPE, act, null);
+    std.posix.sigaction(std.posix.SIG.SEGV, act, null);
+    std.posix.sigaction(std.posix.SIG.ILL, act, null);
+    std.posix.sigaction(std.posix.SIG.BUS, act, null);
+    std.posix.sigaction(std.posix.SIG.FPE, act, null);
 }
 
 var windows_segfault_handle: ?windows.HANDLE = null;
@@ -837,7 +874,7 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
     );
 }
 
-extern "C" fn gnu_get_libc_version() ?[*:0]const u8;
+extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {
@@ -943,7 +980,7 @@ fn waitForOtherThreadToFinishPanicking() void {
 
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -959,7 +996,7 @@ pub fn sleepForeverIfAnotherThreadIsCrashing() void {
     if (panicking.load(.acquire) > 0) {
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -1115,19 +1152,19 @@ const StackLine = struct {
                     fn callback(info: *std.posix.dl_phdr_info, _: usize, context: *CtxTy) !void {
                         defer context.i += 1;
 
-                        if (context.address < info.dlpi_addr) return;
-                        const phdrs = info.dlpi_phdr[0..info.dlpi_phnum];
+                        if (context.address < info.addr) return;
+                        const phdrs = info.phdr[0..info.phnum];
                         for (phdrs) |*phdr| {
                             if (phdr.p_type != std.elf.PT_LOAD) continue;
 
                             // Overflowing addition is used to handle the case of VSDOs
                             // having a p_vaddr = 0xffffffffff700000
-                            const seg_start = info.dlpi_addr +% phdr.p_vaddr;
+                            const seg_start = info.addr +% phdr.p_vaddr;
                             const seg_end = seg_start + phdr.p_memsz;
                             if (context.address >= seg_start and context.address < seg_end) {
-                                // const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
+                                // const name = bun.sliceTo(info.name, 0) orelse "";
                                 context.result = .{
-                                    .address = @intCast(context.address - info.dlpi_addr),
+                                    .address = @intCast(context.address - info.addr),
                                     .object = null,
                                 };
                                 return error.Found;
@@ -1439,7 +1476,7 @@ fn crash() noreturn {
                 std.posix.SIG.HUP,
                 std.posix.SIG.TERM,
             }) |sig| {
-                std.posix.sigaction(sig, &sigact, null) catch {};
+                std.posix.sigaction(sig, &sigact, null);
             }
 
             @trap();
@@ -1449,63 +1486,70 @@ fn crash() noreturn {
 
 pub var verbose_error_trace = false;
 
-fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
+noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std.meta.Int(.unsigned, @bitSizeOf(anyerror)), trace: *std.builtin.StackTrace, comptime is_root: bool) void {
+    @branchHint(.cold);
+    const err = @errorFromInt(err_int_workaround_for_zig_ccall_bug);
+
+    // The format of the panic trace is slightly different in debug
+    // builds Mainly, we demangle the backtrace immediately instead
+    // of using a trace string.
+    //
+    // To make the release-mode behavior easier to demo, debug mode
+    // checks for this CLI flag.
+    const is_debug = bun.Environment.isDebug and check_flag: {
+        for (bun.argv) |arg| {
+            if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
+                break :check_flag false;
+            }
+        }
+        break :check_flag true;
+    };
+
+    if (is_debug) {
+        if (is_root) {
+            if (verbose_error_trace) {
+                Output.note("Release build will not have this trace by default:", .{});
+            }
+        } else {
+            Output.note(
+                "caught error.{s}:",
+                .{@errorName(err)},
+            );
+        }
+        Output.flush();
+        dumpStackTrace(trace.*);
+    } else {
+        const ts = TraceString{
+            .trace = trace,
+            .reason = .{ .zig_error = err },
+            .action = .view_trace,
+        };
+        if (is_root) {
+            Output.prettyErrorln(
+                \\
+                \\To send a redacted crash report to Bun's team,
+                \\please file a GitHub issue using the link below:
+                \\
+                \\ <cyan>{}<r>
+                \\
+            ,
+                .{ts},
+            );
+        } else {
+            Output.prettyErrorln(
+                "<cyan>trace<r>: error.{s}: <d>{}<r>",
+                .{ @errorName(err), ts },
+            );
+        }
+    }
+}
+
+inline fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
     if (!builtin.have_error_return_tracing) return;
     if (!verbose_error_trace and !is_root) return;
 
     if (maybe_trace) |trace| {
-        // The format of the panic trace is slightly different in debug
-        // builds Mainly, we demangle the backtrace immediately instead
-        // of using a trace string.
-        //
-        // To make the release-mode behavior easier to demo, debug mode
-        // checks for this CLI flag.
-        const is_debug = bun.Environment.isDebug and check_flag: {
-            for (bun.argv) |arg| {
-                if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
-                    break :check_flag false;
-                }
-            }
-            break :check_flag true;
-        };
-
-        if (is_debug) {
-            if (is_root) {
-                if (verbose_error_trace) {
-                    Output.note("Release build will not have this trace by default:", .{});
-                }
-            } else {
-                Output.note(
-                    "caught error.{s}:",
-                    .{@errorName(err)},
-                );
-            }
-            Output.flush();
-            dumpStackTrace(trace.*);
-        } else {
-            const ts = TraceString{
-                .trace = trace,
-                .reason = .{ .zig_error = err },
-                .action = .view_trace,
-            };
-            if (is_root) {
-                Output.prettyErrorln(
-                    \\
-                    \\To send a redacted crash report to Bun's team,
-                    \\please file a GitHub issue using the link below:
-                    \\
-                    \\ <cyan>{}<r>
-                    \\
-                ,
-                    .{ts},
-                );
-            } else {
-                Output.prettyErrorln(
-                    "<cyan>trace<r>: error.{s}: <d>{}<r>",
-                    .{ @errorName(err), ts },
-                );
-            }
-        }
+        coldHandleErrorReturnTrace(@intFromError(err), trace, is_root);
     }
 }
 
@@ -1525,6 +1569,7 @@ const stdDumpStackTrace = debug.dumpStackTrace;
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
+    Output.flush();
     const stderr = std.io.getStdErr().writer();
     if (!bun.Environment.isDebug) {
         // debug symbols aren't available, lets print a tracestring
@@ -1543,9 +1588,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
                 stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
-            var arena = bun.ArenaAllocator.init(bun.default_allocator);
-            defer arena.deinit();
-            debug.writeStackTrace(trace, stderr, arena.allocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
+            debug.writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
                 stderr.print("Unable to dump stack trace: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
@@ -1613,6 +1656,13 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     stderr.writeAll(proc.stderr) catch return;
 }
 
+pub fn dumpCurrentStackTrace(first_address: ?usize) void {
+    var addrs: [32]usize = undefined;
+    var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
+    std.debug.captureStackTrace(first_address orelse @returnAddress(), &stack);
+    dumpStackTrace(stack);
+}
+
 /// A variant of `std.builtin.StackTrace` that stores its data within itself
 /// instead of being a pointer. This allows storing captured stack traces
 /// for later printing.
@@ -1637,6 +1687,12 @@ pub const StoredTrace = struct {
         var frame = stored.trace();
         std.debug.captureStackTrace(begin orelse @returnAddress(), &frame);
         stored.index = frame.index;
+        for (frame.instruction_addresses[0..frame.index], 0..) |addr, i| {
+            if (addr == 0) {
+                stored.index = i;
+                break;
+            }
+        }
         return stored;
     }
 

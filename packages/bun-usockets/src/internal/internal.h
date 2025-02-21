@@ -90,8 +90,8 @@ enum {
 #define POLL_TYPE_MASK (POLL_TYPE_KIND_MASK | POLL_TYPE_POLLING_MASK)
 
 /* Bun APIs implemented in Zig */
-void Bun__lock(uint32_t *lock);
-void Bun__unlock(uint32_t *lock);
+void Bun__lock(zig_mutex_t *lock);
+void Bun__unlock(zig_mutex_t *lock);
 
 struct addrinfo_request;
 struct addrinfo_result_entry {
@@ -400,11 +400,11 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     us_internal_ssl_socket_context_r context, const char *path,
     size_t pathlen, int options, int socket_ext_size, int* error);
 
-struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
+struct us_socket_t *us_internal_ssl_socket_context_connect(
     us_internal_ssl_socket_context_r context, const char *host,
     int port, int options, int socket_ext_size, int* is_resolved);
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
+struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     us_internal_ssl_socket_context_r context, const char *server_path,
     size_t pathlen, int options, int socket_ext_size);
 

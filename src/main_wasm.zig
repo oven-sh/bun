@@ -205,7 +205,7 @@ export fn init(heapsize: u32) void {
         buffer_writer = writer.ctx;
     }
 }
-const Arena = @import("./mimalloc_arena.zig").Arena;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 
 var log: Logger.Log = undefined;
 

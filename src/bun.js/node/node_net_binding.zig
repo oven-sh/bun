@@ -26,13 +26,11 @@ pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(1);
             if (arguments.len < 1) {
-                globalThis.throw("missing argument", .{});
-                return .undefined;
+                return globalThis.throw("missing argument", .{});
             }
             const arg = arguments.slice()[0];
             if (!arg.isBoolean()) {
-                globalThis.throwInvalidArguments("autoSelectFamilyDefault", .{});
-                return .undefined;
+                return globalThis.throwInvalidArguments("autoSelectFamilyDefault", .{});
             }
             const value = arg.toBoolean();
             autoSelectFamilyDefault = value;
@@ -61,13 +59,11 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(1);
             if (arguments.len < 1) {
-                globalThis.throw("missing argument", .{});
-                return .undefined;
+                return globalThis.throw("missing argument", .{});
             }
             const arg = arguments.slice()[0];
             if (!arg.isInt32AsAnyInt()) {
-                globalThis.throwInvalidArguments("autoSelectFamilyAttemptTimeoutDefault", .{});
-                return .undefined;
+                return globalThis.throwInvalidArguments("autoSelectFamilyAttemptTimeoutDefault", .{});
             }
             const value: u32 = @max(10, arg.coerceToInt32(globalThis));
             autoSelectFamilyAttemptTimeoutDefault = value;

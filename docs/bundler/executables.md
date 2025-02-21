@@ -196,6 +196,8 @@ import icon from "./icon.png" with { type: "file" };
 import { file } from "bun";
 
 const bytes = await file(icon).arrayBuffer();
+// await fs.promises.readFile(icon)
+// fs.readFileSync(icon)
 ```
 
 ### Embed SQLite databases
@@ -278,6 +280,19 @@ $ bun build --compile --asset-naming="[name].[ext]" ./index.ts
 ## Minification
 
 To trim down the size of the executable a little, pass `--minify` to `bun build --compile`. This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.
+
+## Windows-specific flags
+
+When compiling a standalone executable on Windows, there are two platform-specific options that can be used to customize metadata on the generated `.exe` file:
+
+- `--windows-icon=path/to/icon.ico` to customize the executable file icon.
+- `--windows-hide-console` to disable the background terminal, which can be used for applications that do not need a TTY.
+
+{% callout %}
+
+These flags currently cannot be used when cross-compiling because they depend on Windows APIs.
+
+{% /callout %}
 
 ## Unsupported CLI arguments
 

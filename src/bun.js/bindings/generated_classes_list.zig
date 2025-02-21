@@ -12,7 +12,6 @@ pub const Classes = struct {
     pub const EndTag = JSC.Cloudflare.EndTag;
     pub const AttributeIterator = JSC.Cloudflare.AttributeIterator;
     pub const CryptoHasher = JSC.API.Bun.Crypto.CryptoHasher;
-    pub const Dirent = JSC.Node.Dirent;
     pub const Expect = JSC.Expect.Expect;
     pub const ExpectAny = JSC.Expect.ExpectAny;
     pub const ExpectAnything = JSC.Expect.ExpectAnything;
@@ -47,8 +46,6 @@ pub const Classes = struct {
     pub const SHA512 = JSC.API.Bun.Crypto.SHA512;
     pub const SHA512_256 = JSC.API.Bun.Crypto.SHA512_256;
     pub const ServerWebSocket = JSC.API.ServerWebSocket;
-    pub const Stats = JSC.Node.StatsSmall;
-    pub const BigIntStats = JSC.Node.StatsBig;
     pub const Subprocess = JSC.Subprocess;
     pub const ResourceUsage = JSC.ResourceUsage;
     pub const TCPSocket = JSC.API.TCPSocket;
@@ -77,4 +74,12 @@ pub const Classes = struct {
     pub const NativeZlib = JSC.API.NativeZlib;
     pub const NativeBrotli = JSC.API.NativeBrotli;
     pub const FrameworkFileSystemRouter = bun.bake.FrameworkRouter.JSFrameworkRouter;
+    pub const DNSResolver = JSC.DNS.DNSResolver;
+
+    pub const S3Client = JSC.WebCore.S3Client;
+    pub const S3Stat = JSC.WebCore.S3Stat;
+    pub const HTMLBundle = JSC.API.HTMLBundle;
+
+    pub const StatFs = JSC.Node.StatFSSmall;
+    pub const BigIntStatFs = JSC.Node.StatFSBig;
 };

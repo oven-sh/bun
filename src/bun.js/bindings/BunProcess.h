@@ -12,8 +12,7 @@ class GlobalObject;
 
 namespace Bun {
 
-// TODO: find a better place for this
-int getRSS(size_t* rss);
+extern "C" int getRSS(size_t* rss);
 
 using namespace JSC;
 
@@ -36,6 +35,7 @@ public:
     }
 
     DECLARE_EXPORT_INFO;
+    bool m_reportOnUncaughtException = false;
 
     static void destroy(JSC::JSCell* cell)
     {

@@ -20,7 +20,7 @@ pub const BuildMessage = struct {
     pub usingnamespace JSC.Codegen.JSBuildMessage;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*BuildMessage {
-        return globalThis.throw2("BuildMessage is not constructable", .{});
+        return globalThis.throw("BuildMessage is not constructable", .{});
     }
 
     pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -28,8 +28,7 @@ pub const BuildMessage = struct {
         const array = JSC.JSValue.createEmptyArray(globalThis, notes.len);
         for (notes, 0..) |note, i| {
             const cloned = note.clone(bun.default_allocator) catch {
-                globalThis.throwOutOfMemory();
-                return .zero;
+                return globalThis.throwOutOfMemoryValue();
             };
             array.putIndex(
                 globalThis,
@@ -43,8 +42,7 @@ pub const BuildMessage = struct {
 
     pub fn toStringFn(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const text = std.fmt.allocPrint(default_allocator, "BuildMessage: {s}", .{this.msg.data.text}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         var str = ZigString.init(text);
         str.setOutputEncoding();

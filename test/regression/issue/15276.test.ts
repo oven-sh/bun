@@ -1,7 +1,7 @@
 import { bunExe, bunEnv } from "harness";
 import { test, expect } from "bun:test";
 
-test("parsing npm alises without package manager does not crash", () => {
+test("parsing npm aliases without package manager does not crash", () => {
   // Easiest way to repro this regression with `bunx bunbunbunbunbun@npm:another-bun@1.0.0`. The package
   // doesn't need to exist, we just need `bunx` to parse the package version.
   const { stdout, stderr, exitCode } = Bun.spawnSync({

@@ -194,21 +194,19 @@ const json = struct {
     // 1 is regular
     // 2 is internal
 
-    pub fn decodeIPCMessage(
-        data: []const u8,
-        globalThis: *JSC.JSGlobalObject,
-    ) IPCDecodeError!DecodeIPCMessageResult {
+    pub fn decodeIPCMessage(data: []const u8, globalThis: *JSC.JSGlobalObject) IPCDecodeError!DecodeIPCMessageResult {
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
             var kind = data[0];
-            var json_data = data[1..idx];
+            var json_data = data[0..idx];
 
             switch (kind) {
-                1, 2 => {},
+                2 => {
+                    json_data = data[1..idx];
+                },
                 else => {
-                    // if the message being recieved is from a node process then it wont have the leading marker byte
-                    // assume full message will be json
+                    // assume it's valid json with no header
+                    // any error will be thrown by toJSByParseJSON below
                     kind = 1;
-                    json_data = data[0..idx];
                 },
             }
 
@@ -230,6 +228,7 @@ const json = struct {
             }
 
             const deserialized = str.toJSByParseJSON(globalThis);
+            if (deserialized == .zero) return error.InvalidFormat;
 
             return switch (kind) {
                 1 => .{
@@ -259,13 +258,12 @@ const json = struct {
 
         const slice = str.slice();
 
-        try writer.ensureUnusedCapacity(1 + slice.len + 1);
+        try writer.ensureUnusedCapacity(slice.len + 1);
 
-        writer.writeAssumeCapacity(&.{1});
         writer.writeAssumeCapacity(slice);
         writer.writeAssumeCapacity("\n");
 
-        return 1 + slice.len + 1;
+        return slice.len + 1;
     }
 
     pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
@@ -341,7 +339,7 @@ const SocketIPCData = struct {
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
             const n = this.socket.write(bytes, false);
-            if (n != bytes.len) {
+            if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
                 this.outgoing.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
             }
         }
@@ -697,8 +695,8 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .Pointer => this.globalThis,
-                .Optional => brk: {
+                .pointer => this.globalThis,
+                .optional => brk: {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
@@ -844,8 +842,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             bun.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
 
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .Pointer => this.globalThis,
-                .Optional => brk: {
+                .pointer => this.globalThis,
+                .optional => brk: {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
@@ -860,7 +858,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                         // copy the remaining bytes to the start of the buffer
                         bun.copy(u8, ipc.incoming.ptr[0..slice.len], slice);
                         ipc.incoming.len = @truncate(slice.len);
-                        log("hit NotEnoughBytes2", .{});
+                        log("hit NotEnoughBytes3", .{});
                         return;
                     },
                     error.InvalidFormat => {

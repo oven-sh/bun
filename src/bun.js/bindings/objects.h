@@ -14,7 +14,7 @@
 //     using Base = JSC::JSNonFinalObject;
 //     DECLARE_EXPORT_INFO;
 //     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::ImplementsHasInstance | JSC::ImplementsDefaultHasInstance;
-//     static constexpr bool needsDestruction = true;
+//     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
 //     template<typename CellType, JSC::SubspaceAccess>
 //     static JSC::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -54,7 +54,7 @@
 //     using Base = JSC::JSNonFinalObject;
 //     DECLARE_EXPORT_INFO;
 //     static constexpr unsigned StructureFlags = Base::StructureFlags;
-//     static constexpr bool needsDestruction = true;
+//     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
 //     template<typename CellType, JSC::SubspaceAccess>
 //     static JSC::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -98,7 +98,7 @@
 //     using Base = JSC::JSNonFinalObject;
 //     DECLARE_EXPORT_INFO;
 //     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::ImplementsHasInstance | JSC::ImplementsDefaultHasInstance;
-//     static constexpr bool needsDestruction = true;
+//     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
 //     template<typename CellType, JSC::SubspaceAccess>
 //     static JSC::IsoSubspace* subspaceFor(JSC::VM& vm)
@@ -209,7 +209,7 @@
 //     using Base = JSC::JSNonFinalObject;
 //     DECLARE_EXPORT_INFO;
 //     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::ImplementsHasInstance | JSC::ImplementsDefaultHasInstance;
-//     static constexpr bool needsDestruction = true;
+//     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
 //     template<typename CellType, JSC::SubspaceAccess>
 //     static JSC::IsoSubspace* subspaceFor(JSC::VM& vm)

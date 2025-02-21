@@ -56,9 +56,9 @@ By default, `await`ing will return stdout and stderr as `Buffer`s.
 ```js
 import { $ } from "bun";
 
-const { stdout, stderr } = await $`echo "Hello World!"`.quiet();
+const { stdout, stderr } = await $`echo "Hello!"`.quiet();
 
-console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
+console.log(stdout); // Buffer(7) [ 72, 101, 108, 108, 111, 33, 10 ]
 console.log(stderr); // Buffer(0) []
 ```
 
@@ -102,7 +102,7 @@ The default handling of non-zero exit codes can be configured by calling `.nothr
 import { $ } from "bun";
 // shell promises will not throw, meaning you will have to
 // check for `exitCode` manually on every shell command.
-$.nothrow(); // equivilent to $.throws(false)
+$.nothrow(); // equivalent to $.throws(false)
 
 // default behavior, non-zero exit codes will throw an error
 $.throws(true);

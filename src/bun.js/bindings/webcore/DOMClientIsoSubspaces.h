@@ -57,6 +57,10 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHandleScopeBuffer;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8Function;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3Bucket;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
@@ -698,9 +702,9 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserver;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceObserverEntryList;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformancePaintTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceResourceTiming;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPerformanceServerTiming;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRemoteDOMWindow;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserver;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForResizeObserverEntry;
@@ -916,5 +920,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventListener;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventTarget;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventEmitter;
+
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
 };
 } // namespace WebCore

@@ -66,7 +66,7 @@ pub const Integrity = extern struct {
         return integrity;
     }
 
-    pub fn parse(buf: []const u8) !Integrity {
+    pub fn parse(buf: []const u8) Integrity {
         if (buf.len < "sha256-".len) {
             return Integrity{
                 .tag = Tag.unknown,

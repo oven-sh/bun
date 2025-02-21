@@ -4,12 +4,13 @@ import { join } from "node:path";
 import * as vscode from "vscode";
 import {
   type DAP,
-  DebugAdapter,
   getAvailablePort,
   getRandomId,
   TCPSocketSignal,
   UnixSignal,
+  WebSocketDebugAdapter,
 } from "../../../bun-debug-adapter-protocol";
+import { getConfig } from "../extension";
 
 export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
@@ -63,8 +64,11 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
       vscode.DebugConfigurationProviderTriggerKind.Dynamic,
     ),
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
-    vscode.window.onDidOpenTerminal(injectDebugTerminal),
   );
+
+  if (getConfig("debugTerminal.enabled")) {
+    injectDebugTerminal2().then(context.subscriptions.push)
+  }
 }
 
 function runFileCommand(resource?: vscode.Uri): void {
@@ -93,24 +97,24 @@ function debugFileCommand(resource?: vscode.Uri) {
 }
 
 async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
-  if (!getConfig("debugTerminal.enabled")) return;
-
   const { name, creationOptions } = terminal;
   if (name !== "JavaScript Debug Terminal") {
     return;
   }
 
   const { env } = creationOptions as vscode.TerminalOptions;
-  if (env["BUN_INSPECT"]) {
+  if (env && env["BUN_INSPECT"]) {
     return;
   }
+
+  const session = new TerminalDebugSession();
+  await session.initialize();
+
+  const { adapter, signal } = session;
 
   const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
   const query = stopOnEntry ? "break=1" : "wait=1";
 
-  const debugSession = new TerminalDebugSession();
-  await debugSession.initialize();
-  const { adapter, signal } = debugSession;
   const debug = vscode.window.createTerminal({
     ...creationOptions,
     name: "JavaScript Debug Terminal",
@@ -118,6 +122,7 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
       ...env,
       "BUN_INSPECT": `${adapter.url}?${query}`,
       "BUN_INSPECT_NOTIFY": signal.url,
+      BUN_INSPECT_CONNECT_TO: "",
     },
   });
 
@@ -128,6 +133,41 @@ async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
   // Until a proper fix is found, we can just wait a bit before
   // disposing the terminal.
   setTimeout(() => terminal.dispose(), 100);
+}
+
+async function injectDebugTerminal2() {
+  const jsDebugExt = vscode.extensions.getExtension('ms-vscode.js-debug-nightly') || vscode.extensions.getExtension('ms-vscode.js-debug');
+  if (!jsDebugExt) {
+    return vscode.window.onDidOpenTerminal(injectDebugTerminal)
+  }
+
+  await jsDebugExt.activate()
+  const jsDebug: import('@vscode/js-debug').IExports = jsDebugExt.exports;
+  if (!jsDebug) {
+    return vscode.window.onDidOpenTerminal(injectDebugTerminal)
+  }
+
+  return jsDebug.registerDebugTerminalOptionsProvider({
+    async provideTerminalOptions(options) {
+      const session = new TerminalDebugSession();
+      await session.initialize();
+
+      const { adapter, signal } = session;
+
+      const stopOnEntry = getConfig("debugTerminal.stopOnEntry") === true;
+      const query = stopOnEntry ? "break=1" : "wait=1";
+
+      return {
+        ...options,
+        env: {
+          ...options.env,
+          "BUN_INSPECT": `${adapter.url}?${query}`,
+          "BUN_INSPECT_NOTIFY": signal.url,
+          BUN_INSPECT_CONNECT_TO: " ",
+        },
+      };
+    },
+  });
 }
 
 class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
@@ -234,7 +274,10 @@ interface RuntimeExceptionThrownEvent {
 }
 
 class FileDebugSession extends DebugSession {
-  adapter: DebugAdapter;
+  // If these classes are moved/published, we should make sure
+  // we remove these non-null assertions so consumers of
+  // this lib are not running into these hard
+  adapter!: WebSocketDebugAdapter;
   sessionId?: string;
   untitledDocPath?: string;
   bunEvalPath?: string;
@@ -258,7 +301,7 @@ class FileDebugSession extends DebugSession {
         : `ws+unix://${tmpdir()}/${uniqueId}.sock`;
 
     const { untitledDocPath, bunEvalPath } = this;
-    this.adapter = new DebugAdapter(url, untitledDocPath, bunEvalPath);
+    this.adapter = new WebSocketDebugAdapter(url, untitledDocPath, bunEvalPath);
 
     if (untitledDocPath) {
       this.adapter.on("Adapter.response", (response: DebugProtocolResponse) => {
@@ -288,7 +331,7 @@ class FileDebugSession extends DebugSession {
     }
 
     this.adapter.on("Adapter.reverseRequest", ({ command, arguments: args }) =>
-      this.sendRequest(command, args, 5000, () => {}),
+      this.sendRequest(command, args, 5000, () => { }),
     );
 
     adapters.set(url, this);
@@ -319,7 +362,7 @@ class FileDebugSession extends DebugSession {
 }
 
 class TerminalDebugSession extends FileDebugSession {
-  signal: TCPSocketSignal | UnixSignal;
+  signal!: TCPSocketSignal | UnixSignal;
 
   constructor() {
     super();
@@ -346,6 +389,7 @@ class TerminalDebugSession extends FileDebugSession {
       env: {
         "BUN_INSPECT": `${this.adapter.url}?wait=1`,
         "BUN_INSPECT_NOTIFY": this.signal.url,
+        BUN_INSPECT_CONNECT_TO: "",
       },
       isTransient: true,
       iconPath: new vscode.ThemeIcon("debug-console"),
@@ -363,10 +407,6 @@ function getRuntime(scope?: vscode.ConfigurationScope): string {
     return value;
   }
   return "bun";
-}
-
-function getConfig<T>(path: string, scope?: vscode.ConfigurationScope) {
-  return vscode.workspace.getConfiguration("bun", scope).get<T>(path);
 }
 
 export async function runUnsavedCode() {

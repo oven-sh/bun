@@ -41,7 +41,7 @@ const Precompute = struct {
         var result: [std.math.maxInt(u10)]Value = undefined;
 
         @setEvalBranchQuota(2_000);
-        const info = @typeInfo(GraphemeBoundaryClass).Enum;
+        const info = @typeInfo(GraphemeBoundaryClass).@"enum";
         for (0..std.math.maxInt(u2) + 1) |state_init| {
             for (info.fields) |field1| {
                 for (info.fields) |field2| {

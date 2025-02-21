@@ -179,6 +179,32 @@ register_command(
     ${BUN_NODE_FALLBACKS_OUTPUTS}
 )
 
+# An embedded copy of react-refresh is used when the user forgets to install it.
+# The library is not versioned alongside React.
+set(BUN_REACT_REFRESH_OUTPUT ${BUN_NODE_FALLBACKS_OUTPUT}/react-refresh.js)
+register_command(
+  TARGET
+    bun-node-fallbacks-react-refresh
+  COMMENT
+    "Building node-fallbacks/react-refresh.js"
+  CWD
+    ${BUN_NODE_FALLBACKS_SOURCE}
+  COMMAND
+    ${BUN_EXECUTABLE} build
+      ${BUN_NODE_FALLBACKS_SOURCE}/node_modules/react-refresh/cjs/react-refresh-runtime.development.js
+      --outfile=${BUN_REACT_REFRESH_OUTPUT}
+      --target=browser
+      --format=cjs
+      --minify
+      --define:process.env.NODE_ENV=\"'development'\"
+  SOURCES
+    ${BUN_NODE_FALLBACKS_SOURCE}/package.json
+    ${BUN_NODE_FALLBACKS_SOURCE}/bun.lock
+    ${BUN_NODE_FALLBACKS_NODE_MODULES}
+  OUTPUTS
+    ${BUN_REACT_REFRESH_OUTPUT}
+)
+
 set(BUN_ERROR_CODE_SCRIPT ${CWD}/src/codegen/generate-node-errors.ts)
 
 set(BUN_ERROR_CODE_SOURCES
@@ -228,6 +254,7 @@ set(BUN_ZIG_GENERATED_CLASSES_OUTPUTS
   ${CODEGEN_PATH}/ZigGeneratedClasses+DOMIsoSubspaces.h
   ${CODEGEN_PATH}/ZigGeneratedClasses+lazyStructureImpl.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.zig
+  ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
 )
 
 register_command(
@@ -318,13 +345,13 @@ register_command(
   TARGET
     bun-bake-codegen
   COMMENT
-    "Bundling Kit Runtime"
+    "Bundling Bake Runtime"
   COMMAND
     ${BUN_EXECUTABLE}
       run
       ${BUN_BAKE_RUNTIME_CODEGEN_SCRIPT}
         --debug=${DEBUG}
-        --codegen_root=${CODEGEN_PATH}
+        --codegen-root=${CODEGEN_PATH}
   SOURCES
     ${BUN_BAKE_RUNTIME_SOURCES}
     ${BUN_BAKE_RUNTIME_CODEGEN_SOURCES}
@@ -332,6 +359,39 @@ register_command(
   OUTPUTS
     ${CODEGEN_PATH}/bake_empty_file
     ${BUN_BAKE_RUNTIME_OUTPUTS}
+)
+
+set(BUN_BINDGEN_SCRIPT ${CWD}/src/codegen/bindgen.ts)
+
+file(GLOB_RECURSE BUN_BINDGEN_SOURCES ${CONFIGURE_DEPENDS}
+  ${CWD}/src/**/*.bind.ts
+)
+
+set(BUN_BINDGEN_CPP_OUTPUTS
+  ${CODEGEN_PATH}/GeneratedBindings.cpp
+)
+
+set(BUN_BINDGEN_ZIG_OUTPUTS
+  ${CWD}/src/bun.js/bindings/GeneratedBindings.zig
+)
+
+register_command(
+  TARGET
+    bun-binding-generator
+  COMMENT
+    "Processing \".bind.ts\" files"
+  COMMAND
+    ${BUN_EXECUTABLE}
+      run
+      ${BUN_BINDGEN_SCRIPT}
+        --debug=${DEBUG}
+        --codegen-root=${CODEGEN_PATH}
+  SOURCES
+    ${BUN_BINDGEN_SOURCES}
+    ${BUN_BINDGEN_SCRIPT}
+  OUTPUTS
+    ${BUN_BINDGEN_CPP_OUTPUTS}
+    ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
 set(BUN_JS_SINK_SCRIPT ${CWD}/src/codegen/generate-jssink.ts)
@@ -370,9 +430,12 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/ZigGlobalObject.lut.txt
   ${CWD}/src/bun.js/bindings/JSBuffer.cpp
   ${CWD}/src/bun.js/bindings/BunProcess.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingBuffer.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingFs.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
+  ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
 )
 
 set(BUN_OBJECT_LUT_OUTPUTS
@@ -380,11 +443,13 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
   ${CODEGEN_PATH}/JSBuffer.lut.h
   ${CODEGEN_PATH}/BunProcess.lut.h
+  ${CODEGEN_PATH}/ProcessBindingBuffer.lut.h
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
+  ${CODEGEN_PATH}/ProcessBindingFs.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
+  ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
 )
-
 
 macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
   set(_tmp)
@@ -415,6 +480,8 @@ foreach(i RANGE 0 ${BUN_OBJECT_LUT_SOURCES_MAX_INDEX})
       bun-codegen-lut-${filename}
     COMMENT
       "Generating ${filename}.lut.h"
+    DEPENDS
+      ${BUN_OBJECT_LUT_SOURCE}
     COMMAND
       ${BUN_EXECUTABLE}
         run
@@ -446,6 +513,8 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CODEGEN_PATH}/ZigGlobalObject.lut.h
 )
 
+
+
 WEBKIT_ADD_SOURCE_DEPENDENCIES(
   ${CWD}/src/bun.js/bindings/InternalModuleRegistry.cpp
   ${CODEGEN_PATH}/InternalModuleRegistryConstants.h
@@ -459,8 +528,8 @@ file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
-  ${CWD}/root.zig
-  ${CWD}/root_wasm.zig
+  ${CWD}/src/main.zig
+  ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
 set(BUN_ZIG_GENERATED_SOURCES
@@ -468,6 +537,7 @@ set(BUN_ZIG_GENERATED_SOURCES
   ${BUN_FALLBACK_DECODER_OUTPUT}
   ${BUN_RUNTIME_JS_OUTPUT}
   ${BUN_NODE_FALLBACKS_OUTPUTS}
+  ${BUN_REACT_REFRESH_OUTPUT}
   ${BUN_ERROR_CODE_OUTPUTS}
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
@@ -481,7 +551,6 @@ else()
 endif()
 
 set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
-
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)
@@ -544,6 +613,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
 
 set(BUN_USOCKETS_SOURCE ${CWD}/packages/bun-usockets)
 
+# hand written cpp source files. Full list of "source" code (including codegen) is in BUN_CPP_SOURCES
 file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/io/*.cpp
   ${CWD}/src/bun.js/modules/*.cpp
@@ -567,7 +637,8 @@ file(GLOB BUN_C_SOURCES ${CONFIGURE_DEPENDS}
 )
 
 if(WIN32)
-  list(APPEND BUN_C_SOURCES ${CWD}/src/bun.js/bindings/windows/musl-memmem.c)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle.cpp)
+  list(APPEND BUN_CXX_SOURCES ${CWD}/src/bun.js/bindings/windows/rescle-binding.cpp)
 endif()
 
 register_repository(
@@ -600,12 +671,14 @@ register_command(
 list(APPEND BUN_CPP_SOURCES
   ${BUN_C_SOURCES}
   ${BUN_CXX_SOURCES}
+  ${BUN_ERROR_CODE_OUTPUTS}
   ${VENDOR_PATH}/picohttpparser/picohttpparser.c
   ${NODEJS_HEADERS_PATH}/include/node/node_version.h
   ${BUN_ZIG_GENERATED_CLASSES_OUTPUTS}
   ${BUN_JS_SINK_OUTPUTS}
   ${BUN_JAVASCRIPT_OUTPUTS}
   ${BUN_OBJECT_LUT_OUTPUTS}
+  ${BUN_BINDGEN_CPP_OUTPUTS}
 )
 
 if(WIN32)
@@ -615,11 +688,19 @@ if(WIN32)
     set(Bun_VERSION_WITH_TAG ${VERSION})
   endif()
   set(BUN_ICO_PATH ${CWD}/src/bun.ico)
+  configure_file(${CWD}/src/bun.ico ${CODEGEN_PATH}/bun.ico COPYONLY)
   configure_file(
     ${CWD}/src/windows-app-info.rc
     ${CODEGEN_PATH}/windows-app-info.rc
+    @ONLY
   )
-  list(APPEND BUN_CPP_SOURCES ${CODEGEN_PATH}/windows-app-info.rc)
+  add_custom_command(
+    OUTPUT ${CODEGEN_PATH}/windows-app-info.res
+    COMMAND rc.exe /fo ${CODEGEN_PATH}/windows-app-info.res ${CODEGEN_PATH}/windows-app-info.rc
+    DEPENDS ${CODEGEN_PATH}/windows-app-info.rc ${CODEGEN_PATH}/bun.ico
+    COMMENT "Adding Windows resource file ${CODEGEN_PATH}/windows-app-info.res with ico in ${CODEGEN_PATH}/bun.ico"
+  )
+  set(WINDOWS_RESOURCES ${CODEGEN_PATH}/windows-app-info.res)
 endif()
 
 # --- Executable ---
@@ -627,7 +708,7 @@ endif()
 set(BUN_CPP_OUTPUT ${BUILD_PATH}/${CMAKE_STATIC_LIBRARY_PREFIX}${bun}${CMAKE_STATIC_LIBRARY_SUFFIX})
 
 if(BUN_LINK_ONLY)
-  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT})
+  add_executable(${bun} ${BUN_CPP_OUTPUT} ${BUN_ZIG_OUTPUT} ${WINDOWS_RESOURCES})
   set_target_properties(${bun} PROPERTIES LINKER_LANGUAGE CXX)
   target_link_libraries(${bun} PRIVATE ${BUN_CPP_OUTPUT})
 elseif(BUN_CPP_ONLY)
@@ -645,7 +726,7 @@ elseif(BUN_CPP_ONLY)
       ${BUN_CPP_OUTPUT}
   )
 else()
-  add_executable(${bun} ${BUN_CPP_SOURCES})
+  add_executable(${bun} ${BUN_CPP_SOURCES} ${WINDOWS_RESOURCES})
   target_link_libraries(${bun} PRIVATE ${BUN_ZIG_OUTPUT})
 endif()
 
@@ -776,6 +857,15 @@ if(NOT WIN32)
       )
     endif()
 
+    if (ENABLE_ASAN)
+      target_compile_options(${bun} PUBLIC
+        -fsanitize=address
+      )
+      target_link_libraries(${bun} PUBLIC
+        -fsanitize=address
+      )
+    endif()
+
     target_compile_options(${bun} PUBLIC
       -Werror=return-type
       -Werror=return-stack-address
@@ -815,7 +905,7 @@ endif()
 
 if(WIN32)
   target_link_options(${bun} PUBLIC
-    /STACK:0x1200000,0x100000
+    /STACK:0x1200000,0x200000
     /errorlimit:0
   )
   if(RELEASE)
@@ -851,48 +941,28 @@ endif()
 
 if(LINUX)
   if(NOT ABI STREQUAL "musl")
-    if(ARCH STREQUAL "aarch64")
-      target_link_options(${bun} PUBLIC
-        -Wl,--wrap=fcntl64
-        -Wl,--wrap=statx
-      )
-    endif()
-    
-    if(ARCH STREQUAL "x64")
-      target_link_options(${bun} PUBLIC
-        -Wl,--wrap=fcntl
-        -Wl,--wrap=fcntl64
-        -Wl,--wrap=fstat
-        -Wl,--wrap=fstat64
-        -Wl,--wrap=fstatat
-        -Wl,--wrap=fstatat64
-        -Wl,--wrap=lstat
-        -Wl,--wrap=lstat64
-        -Wl,--wrap=mknod
-        -Wl,--wrap=mknodat
-        -Wl,--wrap=stat
-        -Wl,--wrap=stat64
-        -Wl,--wrap=statx
-      )
-    endif()
-
+  # on arm64
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
     target_link_options(${bun} PUBLIC
-      -Wl,--wrap=cosf
       -Wl,--wrap=exp
       -Wl,--wrap=expf
-      -Wl,--wrap=fmod
-      -Wl,--wrap=fmodf
+      -Wl,--wrap=fcntl64
       -Wl,--wrap=log
-      -Wl,--wrap=log10f
       -Wl,--wrap=log2
       -Wl,--wrap=log2f
       -Wl,--wrap=logf
       -Wl,--wrap=pow
       -Wl,--wrap=powf
-      -Wl,--wrap=sincosf
-      -Wl,--wrap=sinf
-      -Wl,--wrap=tanf
     )
+  else()
+    target_link_options(${bun} PUBLIC
+      -Wl,--wrap=exp
+      -Wl,--wrap=expf
+      -Wl,--wrap=log2f
+      -Wl,--wrap=logf
+      -Wl,--wrap=powf
+    )
+  endif()
   endif()
 
   if(NOT ABI STREQUAL "musl")
@@ -921,7 +991,7 @@ if(LINUX)
     -Wl,-z,combreloc
     -Wl,--no-eh-frame-hdr
     -Wl,--sort-section=name
-    -Wl,--hash-style=gnu
+    -Wl,--hash-style=both
     -Wl,--build-id=sha1  # Better for debugging than default
     -Wl,-Map=${bun}.linker-map
   )
@@ -933,6 +1003,7 @@ if(WIN32)
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.def)
   target_link_options(${bun} PUBLIC /DEF:${BUN_SYMBOLS_PATH})
 elseif(APPLE)
+
   set(BUN_SYMBOLS_PATH ${CWD}/src/symbols.txt)
   target_link_options(${bun} PUBLIC -exported_symbols_list ${BUN_SYMBOLS_PATH})
 else()
@@ -1020,6 +1091,7 @@ add_custom_target(dependencies DEPENDS ${BUN_TARGETS})
 
 if(APPLE)
   target_link_libraries(${bun} PRIVATE icucore resolv)
+  target_compile_definitions(${bun} PRIVATE U_DISABLE_RENAMING=1)
 endif()
 
 if(USE_STATIC_SQLITE)
@@ -1163,7 +1235,7 @@ if(NOT BUN_CPP_ONLY)
 
   if(CI)
     set(bunTriplet bun-${OS}-${ARCH})
-    if(ABI STREQUAL "musl")
+    if(LINUX AND ABI STREQUAL "musl")
       set(bunTriplet ${bunTriplet}-musl)
     endif()
     if(ENABLE_BASELINE)

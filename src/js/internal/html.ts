@@ -282,6 +282,9 @@ yourself with Bun.serve().
       if (isFirst) {
         topLine += ` \x1b[2mready in\x1b[0m \x1b[1m${elapsed}\x1b[0m ms`;
       }
+      if (IS_BUN_DEVELOPMENT && process.env.BUN_DEBUG_DevServer) {
+        topLine += `\x1b[2m (PID ${process.pid})\x1b[0m`;
+      }
       console.log(topLine + "\n");
       console.log(`\x1b[1;34m➜\x1b[0m \x1b[36m${new URL(pathnameToPrint, server!.url)}\x1b[0m`);
     } else {

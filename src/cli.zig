@@ -1330,7 +1330,7 @@ pub const HelpCommand = struct {
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
-        \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
+        \\  <b><cyan>init<r>                           Start an empty Bun project from a built-in template
         \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.

@@ -3,7 +3,7 @@ const common = require('../common');
 
 const assert = require('assert');
 const stream = require('stream');
-const { inspect } = Bun;
+const { inspect } = require('util');
 
 {
   // This test ensures that the stream implementation correctly handles values

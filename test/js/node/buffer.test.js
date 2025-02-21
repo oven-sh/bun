@@ -2891,8 +2891,8 @@ for (let withOverridenBufferWrite of [false, true]) {
         shouldBeSame("writeUint16LE", "writeUInt16LE", 1000);
         shouldBeSame("writeUint32BE", "writeUInt32BE", 1000);
         shouldBeSame("writeUint32LE", "writeUInt32LE", 1000);
-        shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", BigInt(1000));
-        shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", BigInt(1000));
+        shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", 1000n);
+        shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", 1000n);
       });
 
       it("construct buffer from UTF16, issue #3914", () => {

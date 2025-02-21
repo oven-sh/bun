@@ -3,38 +3,56 @@ import fs from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 
-test("bun install --frozen-lockfile does not create a new lockfile", async () => {
+test("bun install does create a new lockfile", async () => {
   const testDir = tmpdirSync();
-  console.log(join(import.meta.dir), testDir, {
-    recursive: true,
-  });
   fs.cpSync(join(import.meta.dir), testDir, {
     recursive: true,
   });
-  const { exitCode } = Bun.spawnSync([bunExe(), "install", "--frozen-lockfile"], {
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install"], {
     env: bunEnv,
     cwd: testDir,
   });
-  const bunLock = Bun.file(join(testDir, "bun.lock"));
+  const err = stderr.toString();
+  expect(err).toContain("Saved lockfile");
 
-  expect(await bunLock.exists()).toBeFalse();
+  const bunLock = Bun.file(join(testDir, "bun.lock"));
+  expect(await bunLock.exists()).toBeTrue();
+
   expect(exitCode).toBe(0);
 });
 
-test("bun install does create a new lockfile", async () => {
+test("bun install --frozen-lockfile does not create a new lockfile", async () => {
   const testDir = tmpdirSync();
-  console.log(join(import.meta.dir), testDir, {
-    recursive: true,
-  });
   fs.cpSync(join(import.meta.dir), testDir, {
     recursive: true,
   });
-  const { exitCode } = Bun.spawnSync([bunExe(), "install"], {
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install", "--frozen-lockfile"], {
     env: bunEnv,
     cwd: testDir,
   });
-  const bunLock = Bun.file(join(testDir, "bun.lock"));
+  const err = stderr.toString();
+  expect(err).not.toContain("Saved lockfile");
 
-  expect(await bunLock.exists()).toBeTrue();
+  const bunLock = Bun.file(join(testDir, "bun.lock"));
+  expect(await bunLock.exists()).toBeFalse();
+
+  expect(exitCode).toBe(0);
+});
+
+test("bun install --no-save does not create a new lockfile", async () => {
+  const testDir = tmpdirSync();
+  fs.cpSync(join(import.meta.dir), testDir, {
+    recursive: true,
+  });
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install", "--no-save"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+  const err = stderr.toString();
+  expect(err).not.toContain("Saved lockfile");
+
+  const bunLock = Bun.file(join(testDir, "bun.lock"));
+  expect(await bunLock.exists()).toBeFalse();
+
   expect(exitCode).toBe(0);
 });

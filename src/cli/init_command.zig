@@ -457,25 +457,38 @@ pub const InitCommand = struct {
             }
         }
 
-        if (fields.entry_point.len == 0) {
-            infer: {
-                const paths_to_try = [_][:0]const u8{
-                    @as([:0]const u8, "index.mts"),
-                    @as([:0]const u8, "index.tsx"),
-                    @as([:0]const u8, "index.ts"),
-                    @as([:0]const u8, "index.jsx"),
-                    @as([:0]const u8, "index.mjs"),
-                    @as([:0]const u8, "index.js"),
-                };
+        if (fields.entry_point.len == 0) infer: {
+            fields.entry_point = "index.ts";
 
-                for (paths_to_try) |path| {
-                    if (existsZ(path)) {
-                        fields.entry_point = path;
-                        break :infer;
-                    }
+            // Prefer a file named index
+            const paths_to_try = [_][:0]const u8{
+                @as([:0]const u8, "index.mts"),
+                @as([:0]const u8, "index.tsx"),
+                @as([:0]const u8, "index.ts"),
+                @as([:0]const u8, "index.jsx"),
+                @as([:0]const u8, "index.mjs"),
+                @as([:0]const u8, "index.js"),
+            };
+
+            for (paths_to_try) |path| {
+                if (existsZ(path)) {
+                    fields.entry_point = path;
+                    break :infer;
                 }
+            }
 
-                fields.entry_point = "index.ts";
+            // Find any source file
+            var dir = try std.fs.cwd().openDir(".", .{ .iterate = true });
+            defer dir.close();
+            var it = bun.DirIterator.iterate(dir, .u8);
+            while (try it.next().unwrap()) |file| {
+                if (file.kind != .file) continue;
+                const loader = bun.options.Loader.fromString(file.name.slice()) orelse
+                    continue;
+                if (loader.isJavaScriptLike()) {
+                    fields.entry_point = try alloc.dupeZ(u8, file.name.slice());
+                    break;
+                }
             }
         }
 
@@ -504,14 +517,14 @@ pub const InitCommand = struct {
                 Output.pretty("\n", .{});
 
                 const choices = &[_][]const u8{
-                    "TypeScript",
+                    "Blank",
                     "React",
-                    "TypeScript Library",
+                    "Library",
                 };
-                const choices_colored = &[_][]const u8{
-                    comptime Output.prettyFmt("<blue>TypeScript<r> <d>(blank)<r>", true),
-                    comptime Output.prettyFmt("<cyan>React<r>", true),
-                    comptime Output.prettyFmt("<blue>TypeScript<r> <d>(library)<r>", true),
+                const choices_colored = comptime &[_][]const u8{
+                    Output.prettyFmt("<yellow>Blank<r>", true),
+                    Output.prettyFmt("<cyan>React<r>", true),
+                    Output.prettyFmt("<blue>Library<r>", true),
                 };
 
                 const selected = switch (Output.enable_ansi_colors_stdout) {
@@ -570,18 +583,12 @@ pub const InitCommand = struct {
                             ),
                         };
 
-                        switch (react_selected) {
-                            0 => {
-                                template = .react_blank;
-                            },
-                            1 => {
-                                template = .react_tailwind;
-                            },
-                            2 => {
-                                template = .react_tailwind_shadcn;
-                            },
+                        template = switch (react_selected) {
+                            0 => .react_blank,
+                            1 => .react_tailwind,
+                            2 => .react_tailwind_shadcn,
                             else => unreachable,
-                        }
+                        };
                     },
                     0 => {
                         template = .blank;
@@ -592,8 +599,8 @@ pub const InitCommand = struct {
                 try Output.writer().writeAll("\n");
                 Output.flush();
             } else {
-                Output.errGeneric("A package.json already exists here", .{});
-                Global.crash();
+                Output.note("package.json already exists, configuring existing project", .{});
+                template = .blank;
             }
         }
 
@@ -758,7 +765,7 @@ pub const InitCommand = struct {
 
         switch (template) {
             .blank, .typescript_library => {
-                if (package_json_file != null) {
+                if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});
                     Output.flush();
                 }
@@ -941,7 +948,7 @@ const Template = enum {
             },
             .react_blank => &.{
                 "dev",    "bun ./src/",
-                "static", "bun build ./src/index.html --outdir=dist --sourcemap=linked --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+                "static", "bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
             },
         };
 
@@ -981,6 +988,7 @@ const Template = enum {
             .{ "src/react.svg", @embedFile("../create/projects/react-tailwind/src/react.svg") },
             .{ "src/frontend.tsx", @embedFile("../create/projects/react-tailwind/src/frontend.tsx") },
             .{ "src/logo.svg", @embedFile("../create/projects/react-tailwind/src/logo.svg") },
+            .{ "build.ts", @embedFile("../create/projects/react-tailwind/build.ts") },
         };
     };
 
@@ -1009,6 +1017,7 @@ const Template = enum {
             .{ "src/react.svg", @embedFile("../create/projects/react-shadcn/src/react.svg") },
             .{ "src/frontend.tsx", @embedFile("../create/projects/react-shadcn/src/frontend.tsx") },
             .{ "src/logo.svg", @embedFile("../create/projects/react-shadcn/src/logo.svg") },
+            .{ "build.ts", @embedFile("../create/projects/react-tailwind/build.ts") },
         };
     };
 
@@ -1016,7 +1025,7 @@ const Template = enum {
         return switch (this) {
             .react_blank => ReactBlank.files,
             .react_tailwind => ReactTailwind.files,
-            .react_tailwind_shadcn => ReactTailwind.files,
+            .react_tailwind_shadcn => ReactShadcn.files,
             else => &.{.{ &.{}, &.{} }},
         };
     }
@@ -1025,28 +1034,22 @@ const Template = enum {
         inline for (comptime this.files()) |file| {
             const path, const contents = file;
 
-            if (comptime strings.eqlComptime(path, "README.md")) {
+            const result = if (comptime strings.eqlComptime(path, "README.md"))
                 InitCommand.Assets.createWithContents("README.md", contents, .{
                     .name = this.name(),
                     .bunVersion = Environment.version_string,
-                }) catch |err| {
-                    if (err == error.EEXISTS) {
-                        Output.errGeneric("'{s}' already exists", .{path});
-                    } else {
-                        Output.err(err, "failed to create file: '{s}'", .{path});
-                    }
-                    Global.crash();
-                };
-            } else {
-                InitCommand.Assets.createNew(path, contents) catch |err| {
-                    if (err == error.EEXISTS) {
-                        Output.errGeneric("'{s}' already exists", .{path});
-                    } else {
-                        Output.err(err, "failed to create file: '{s}'", .{path});
-                    }
-                    Global.crash();
-                };
-            }
+                })
+            else
+                InitCommand.Assets.createNew(path, contents);
+            result catch |err| brk: {
+                if (err == error.EEXIST) {
+                    Output.warn("'{s}' already exists, not overwriting", .{path});
+                    break :brk;
+                } else {
+                    Output.err(err, "failed to create file: '{s}'", .{path});
+                }
+                Global.crash();
+            };
         }
 
         Output.pretty("\n", .{});
@@ -1066,7 +1069,27 @@ const Template = enum {
         _ = try install.spawnAndWait();
 
         Output.prettyln("\nTo get started, run:\n\n\t<cyan>bun dev<r>", .{});
+        Output.prettyln("\nTo build a static site:\n\n\t<cyan>bun run build<r>\n\n", .{});
         Output.prettyln("\nTo run for production:\n\n\t<cyan>bun start<r>\n\n", .{});
+
+        Output.prettyln(
+            \\
+            \\✨ New project configured!
+            \\
+            \\<b><cyan>Development<r><d> - full-stack dev server with hot reload<r>
+            \\
+            \\      <cyan><b>bun dev<r>
+            \\
+            \\<b><yellow>Static Site<r><d> - build optimized assets to disk (no backend)<r>
+            \\
+            \\      <yellow><b>bun run build<r>
+            \\
+            \\<b><green>Production<r><d> - serve a full-stack production build<r>
+            \\
+            \\      <green><b>bun start<r>
+            \\
+            \\<blue>Happy bunning! 🐇<r>
+        , .{});
 
         Output.flush();
 

@@ -2092,6 +2092,30 @@ pub const BundleV2 = struct {
                     .contents = code.source_code,
                 };
                 this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
+
+                if (this.bun_watcher) |watcher| add_watchers: {
+                    // TODO: support explicit watchFiles array
+                    const fd = if (bun.Watcher.requires_file_descriptors)
+                        switch (bun.sys.open(
+                            &(std.posix.toPosixPath(load.path) catch break :add_watchers),
+                            bun.C.O_EVTONLY,
+                            0,
+                        )) {
+                            .result => |fd| fd,
+                            .err => break :add_watchers,
+                        }
+                    else
+                        bun.invalid_fd;
+                    _ = watcher.appendFile(
+                        fd,
+                        load.path,
+                        bun.Watcher.getHash(load.path),
+                        code.loader,
+                        bun.invalid_fd,
+                        null,
+                        true,
+                    );
+                }
             },
             .err => |msg| {
                 if (this.transpiler.options.dev_server) |dev| {

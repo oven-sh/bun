@@ -7,6 +7,7 @@
   "module": "src/index.tsx",
   "scripts": {
     "dev": "bun --hot src/index.tsx",
+    "build": "bun build.ts",
     "start": "NODE_ENV=production bun src/index.tsx"
   },
   "dependencies": {

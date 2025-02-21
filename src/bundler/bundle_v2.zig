@@ -2080,6 +2080,7 @@ pub const BundleV2 = struct {
                 }
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
                 this.graph.input_files.items(.source)[load.source_index.get()].contents = code.source_code;
+                this.graph.input_files.items(.is_plugin_file)[load.source_index.get()] = true;
                 var parse_task = load.parse_task;
                 parse_task.loader = code.loader;
                 if (!should_copy_for_bundling) this.free_list.append(code.source_code) catch unreachable;
@@ -2517,8 +2518,17 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        // Compute line offset tables, used in source maps.
+        // Compute line offset tables and quoted contents, used in source maps.
+        // Quoted contents will be default-allocated
+        if (Environment.isDebug) for (js_reachable_files) |idx| {
+            bun.assert(this.graph.ast.items(.parts)[idx.get()].len != 0); // will create a memory leak
+        };
         this.linker.computeDataForSourceMap(@as([]Index.Int, @ptrCast(js_reachable_files)));
+        errdefer {
+            // reminder that the caller cannot handle this error, since source contents
+            // are default-allocated. the only option is to crash here.
+            bun.outOfMemory();
+        }
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -2590,6 +2600,11 @@ pub const BundleV2 = struct {
         this.graph.heap.helpCatchMemoryIssues();
 
         try this.linker.generateChunksInParallel(chunks, true);
+        errdefer {
+            // reminder that the caller cannot handle this error, since
+            // the contents in this generation are default-allocated.
+            bun.outOfMemory();
+        }
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -5387,6 +5402,7 @@ pub const Graph = struct {
         additional_files: BabyList(AdditionalFile) = .{},
         unique_key_for_additional_file: string = "",
         content_hash_for_additional_file: u64 = 0,
+        is_plugin_file: bool = false,
     };
 
     /// Schedule a task to be run on the JS thread which resolves the promise of
@@ -5494,6 +5510,7 @@ const LinkerGraph = struct {
     /// to help ensure deterministic builds (source indices are random).
     reachable_files: []Index = &[_]Index{},
 
+    /// Index from `.parse_graph.input_files` to index in `.files`
     stable_source_indices: []const u32 = &[_]u32{},
 
     is_scb_bitset: BitSet = .{},
@@ -6007,7 +6024,9 @@ pub const LinkerContext = struct {
                     task.ctx.source_maps.line_offset_wait_group.finish();
                 }
 
-                SourceMapData.computeLineOffsets(task.ctx, ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx)).allocator, task.source_index);
+                const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx));
+                defer worker.unget();
+                SourceMapData.computeLineOffsets(task.ctx, worker.allocator, task.source_index);
             }
 
             pub fn runQuotedSourceContents(thread_task: *ThreadPoolLib.Task) void {
@@ -6017,7 +6036,19 @@ pub const LinkerContext = struct {
                     task.ctx.source_maps.quoted_contents_wait_group.finish();
                 }
 
-                SourceMapData.computeQuotedSourceContents(task.ctx, ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx)).allocator, task.source_index);
+                const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx));
+                defer worker.unget();
+
+                // Use the default allocator when using DevServer and the file
+                // was generated. This will be preserved so that remapping
+                // stack traces can show the source code, even after incremental
+                // rebuilds occur.
+                const allocator = if (worker.ctx.transpiler.options.dev_server != null)
+                    bun.default_allocator
+                else
+                    worker.allocator;
+
+                SourceMapData.computeQuotedSourceContents(task.ctx, allocator, task.source_index);
             }
         };
 

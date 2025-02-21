@@ -77,11 +77,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_WRITE_CALLED = 2, // used
         HTTP_END_CALLED = 4, // used
         HTTP_RESPONSE_PENDING = 8, // used
-        HTTP_CONNECTION_CLOSE = 16 // used
+        HTTP_CONNECTION_CLOSE = 16, // used
+        HTTP_WROTE_CONTENT_LENGTH_HEADER = 32, // used
+        HTTP_WROTE_DATE_HEADER = 64, // used
     };
 
     /* Shared context pointer */
     void* userData = nullptr;
+    void* socketData = nullptr;
 
     /* Per socket event handlers */
     OnWritableCallback onWritable = nullptr;

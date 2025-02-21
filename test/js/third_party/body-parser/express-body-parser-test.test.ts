@@ -35,9 +35,21 @@ test("httpServer", async () => {
   });
   app.use(json());
 
+  let closeCount = 0;
+  let responseCloseCount = 0;
   var reached = false;
   // This throws a TypeError since it uses body-parser.json
   app.post("/ping", (request: Request, response: Response) => {
+    request.on("close", () => {
+      if (closeCount++ === 1) {
+        throw new Error("request Close called multiple times");
+      }
+    });
+    response.on("close", () => {
+      if (responseCloseCount++ === 1) {
+        throw new Error("response Close called multiple times");
+      }
+    });
     expect(request.body).toEqual({ hello: "world" });
     expect(request.query).toStrictEqual({
       hello: "123",

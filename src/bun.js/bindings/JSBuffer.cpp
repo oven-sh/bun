@@ -1943,12 +1943,16 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
 
     if (offsetValue.isUndefined()) {
         offset = 0;
+    } else if (offsetValue.isNumber()) {
+        offset = offsetValue.asNumber();
     } else {
         offset = offsetValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
     if (lengthValue.isUndefined()) {
         length = byteLength - offset;
+    } else if (lengthValue.isNumber()) {
+        length = lengthValue.asNumber();
     } else {
         length = lengthValue.toNumber(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});

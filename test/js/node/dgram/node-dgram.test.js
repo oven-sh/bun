@@ -6,8 +6,8 @@ describe.skipIf(!isIPv6())("node:dgram", () => {
   it("adds membership successfully (IPv6)", () => {
     const socket = makeSocket6();
     socket.bind(0, () => {
-      socket.addMembership("ff02::fb", getInterface());
-      socket.addMembership("ff02::fc");
+      socket.addMembership("ff01::1", getInterface());
+      socket.addMembership("ff01::1");
     });
   });
 

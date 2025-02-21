@@ -132,7 +132,7 @@ function writeAfterFIN(chunk, encoding, cb) {
 }
 
 function onConnectEnd() {
-  if (!this._hadError) {
+  if (!this._hadError && this.secureConnecting) {
     const options = this[kConnectOptions];
     this._hadError = true;
     const error = new ConnResetException(

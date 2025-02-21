@@ -357,7 +357,8 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
 
   // check if we are already closed
   if (us_internal_ssl_socket_is_closed(s)) return s;
-  
+  us_internal_update_handshake(s);
+
   if (s->handshake_state != HANDSHAKE_COMPLETED) {
     // if we have some pending handshake we cancel it and try to check the
     // latest handshake error this way we will always call on_handshake with the

@@ -604,6 +604,7 @@ pub fn deinit(dev: *DevServer) void {
     // TODO: Currently deinit is not implemented, as it was assumed to be alive for
     // the remainder of this process' lifespan. This isn't always true.
     const allocator = dev.allocator;
+    _ = allocator;
 
     // _ = VoidFieldTypes(DevServer){
     //     // has no action taken

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import * as dgram from "node:dgram";
-import { isWindows, isMacOS } from "harness";
+import { isWindows, isMacOS, isIPv6 } from "harness";
 
-describe("node:dgram", () => {
+describe.skipIf(!isIPv6)("node:dgram", () => {
   it("adds membership successfully (IPv6)", () => {
     const socket = makeSocket6();
     socket.bind(0, () => {

@@ -707,7 +707,7 @@ pub fn deinit(dev: *DevServer) void {
     // };
 
     // dev.allocation_scope.deinit();
-    allocator.destroy(dev);
+    bun.destroy(dev);
     // if (bun.Environment.isDebug)
     //     bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
 }

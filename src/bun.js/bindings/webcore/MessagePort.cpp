@@ -41,7 +41,7 @@
 // #include "WorkerThread.h"
 #include "TaskSource.h"
 #include <wtf/CompletionHandler.h>
-#include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/Lock.h>
 #include <wtf/Scope.h>
 
@@ -49,11 +49,7 @@ extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta)
 
 namespace WebCore {
 
-#if ENABLE(MALLOC_BREAKDOWN)
-DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MessagePort);
-#else
-WTF_MAKE_ISO_ALLOCATED_IMPL(MessagePort);
-#endif
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MessagePort);
 
 static Lock allMessagePortsLock;
 static UncheckedKeyHashMap<MessagePortIdentifier, ThreadSafeWeakPtr<MessagePort>>& allMessagePorts() WTF_REQUIRES_LOCK(allMessagePortsLock)

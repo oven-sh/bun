@@ -352,7 +352,19 @@ pub const Error = struct {
     }
 
     pub fn format(self: Error, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-        try self.toShellSystemError().format(fmt, opts, writer);
+        // We want to reuse the code from SystemError for formatting.
+        // But, we do not want to call String.createUTF8 on the path/dest strings
+        // because we're intending to pass them to writer.print()
+        // which will convert them back into UTF*.
+        var that = self.withoutPath().toShellSystemError();
+        bun.debugAssert(that.path.tag != .WTFStringImpl);
+        bun.debugAssert(that.dest.tag != .WTFStringImpl);
+        that.path = bun.String.fromUTF8(self.path);
+        that.dest = bun.String.fromUTF8(self.dest);
+        bun.debugAssert(that.path.tag != .WTFStringImpl);
+        bun.debugAssert(that.dest.tag != .WTFStringImpl);
+
+        return that.format(fmt, opts, writer);
     }
 
     pub inline fn getErrno(this: Error) E {
@@ -419,6 +431,14 @@ pub const Error = struct {
             .fd => |fd| this.withFd(fd),
             .path => |path| this.withPath(path.slice()),
         };
+    }
+
+    /// When the memory of the path/dest buffer is unsafe to use, call this function to clone the error without the path/dest.
+    pub fn withoutPath(this: *const Error) Error {
+        var copy = this.*;
+        copy.path = "";
+        copy.dest = "";
+        return copy;
     }
 
     pub fn name(this: *const Error) []const u8 {
@@ -3760,6 +3780,30 @@ pub const File = struct {
 
     pub fn open(path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
         return File.openat(bun.FD.cwd(), path, flags, mode);
+    }
+
+    pub fn makeOpen(path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
+        return File.makeOpenat(bun.FD.cwd(), path, flags, mode);
+    }
+
+    pub fn makeOpenat(other: anytype, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
+        const dir = bun.toFD(other);
+        const fd = switch (This.openat(dir, path, flags, mode)) {
+            .result => |fd| fd,
+            .err => |err| fd: {
+                if (std.fs.path.dirname(path)) |dir_path| {
+                    bun.makePath(dir.asDir(), dir_path) catch {};
+                    break :fd switch (This.openat(dir, path, flags, mode)) {
+                        .result => |fd| fd,
+                        .err => |err2| return .{ .err = err2 },
+                    };
+                }
+
+                return .{ .err = err };
+            },
+        };
+
+        return .{ .result = .{ .handle = fd } };
     }
 
     pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: i32, mode: bun.Mode) Maybe(File) {

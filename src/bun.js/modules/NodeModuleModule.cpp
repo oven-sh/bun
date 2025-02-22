@@ -732,7 +732,7 @@ class JSModuleConstructor : public JSC::InternalFunction {
 
 public:
     DECLARE_EXPORT_INFO;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     static JSC::Structure* createStructure(JSC::VM& vm,

@@ -500,7 +500,6 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     if (arguments.len > 1) {
         try formatOptions.fromJS(globalThis, arguments[1..]);
     }
-    const value = arguments[0];
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
@@ -509,13 +508,13 @@ pub fn inspect(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
     var buffered_writer = &buffered_writer_;
 
     const writer = buffered_writer.writer();
-    const Writer = @TypeOf(writer);
+    const Writer = MutableString.BufferedWriter.Writer;
     // we buffer this because it'll almost always be < 4096
     // when it's under 4096, we want to avoid the dynamic allocation
     try ConsoleObject.format2(
         .Debug,
         globalThis,
-        @as([*]const JSValue, @ptrCast(&value)),
+        arguments.ptr,
         1,
         Writer,
         Writer,
@@ -543,6 +542,26 @@ export fn Bun__inspect(globalThis: *JSGlobalObject, value: JSValue) bun.String {
     var formatter = ConsoleObject.Formatter{ .globalThis = globalThis };
     defer formatter.deinit();
     writer.print("{}", .{value.toFmt(&formatter)}) catch return .empty;
+    buffered_writer.flush() catch return .empty;
+    return bun.String.createUTF8(array.slice());
+}
+
+export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String {
+    var array = MutableString.init(getAllocator(globalThis), 0) catch unreachable;
+    defer array.deinit();
+    var buffered_writer = MutableString.BufferedWriter{ .context = &array };
+    const writer = buffered_writer.writer();
+    const Writer = MutableString.BufferedWriter.Writer;
+    ConsoleObject.format2(.Debug, globalThis, (&value)[0..1].ptr, 1, Writer, Writer, writer, .{
+        .enable_colors = false,
+        .add_newline = false,
+        .flush = false,
+        .max_depth = std.math.maxInt(u16),
+        .quote_strings = true,
+        .ordered_properties = false,
+        .single_line = true,
+    }) catch return .empty;
+    if (globalThis.hasException()) return .empty;
     buffered_writer.flush() catch return .empty;
     return bun.String.createUTF8(array.slice());
 }
@@ -941,10 +960,10 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
 }
 
 export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString2(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString(global);
+    const source_str = source.toBunString2(global) catch return .zero;
     defer source_str.deref();
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch {
@@ -956,10 +975,10 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 }
 
 export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString2(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString(global);
+    const source_str = source.toBunString2(global) catch return .zero;
     defer source_str.deref();
 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
@@ -971,7 +990,7 @@ export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.S
 }
 
 export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString(global);
+    const specifier_str = specifier.toBunString2(global) catch return .zero;
     defer specifier_str.deref();
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true));
 }
@@ -2805,9 +2824,12 @@ pub const Crypto = struct {
         }
 
         fn final(self: *CryptoHasherZig, output_digest_slice: []u8) []u8 {
-            inline for (algo_map) |item| {
-                if (self.algorithm == @field(EVP.Algorithm, item[0])) {
-                    item[1].final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+            inline for (algo_map) |pair| {
+                const name, const T = pair;
+                if (self.algorithm == @field(EVP.Algorithm, name)) {
+                    T.final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+                    const reset: *T = @ptrCast(@alignCast(self.state));
+                    reset.* = T.init(.{});
                     return output_digest_slice[0..self.digest_length];
                 }
             }
@@ -3057,8 +3079,11 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
             globalObject,
             &config,
             &args,
-            callframe.isFromBunMain(globalObject.vm()),
-            true,
+            .{
+                .allow_bake_config = bun.FeatureFlags.bake() and callframe.isFromBunMain(globalObject.vm()),
+                .is_fetch_required = true,
+                .has_user_routes = false,
+            },
         );
 
         if (globalObject.hasException()) {
@@ -3122,11 +3147,14 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     if (globalObject.hasException()) {
                         return .zero;
                     }
-                    server.listen();
+                    const route_list_object = server.listen();
                     if (globalObject.hasException()) {
                         return .zero;
                     }
                     const obj = server.toJS(globalObject);
+                    if (route_list_object != .zero) {
+                        ServerType.routeListSetCached(obj, globalObject, route_list_object);
+                    }
                     obj.protect();
 
                     server.thisObject = obj;

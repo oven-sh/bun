@@ -17,25 +17,34 @@ ref_count: u32 = 1,
 pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 pub const InitFromBytesOptions = struct {
-    server: AnyServer,
-    mime_type: ?bun.http.MimeType = null,
+    server: ?AnyServer,
+    mime_type: ?*const bun.http.MimeType = null,
+    status_code: u16 = 200,
 };
 
-pub fn initFromAnyBlob(blob: AnyBlob, options: InitFromBytesOptions) *StaticRoute {
-    var headers = Headers.from(null, bun.default_allocator, .{ .body = &blob }) catch bun.outOfMemory();
+/// Ownership of `blob` is transferred to this function.
+pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
+    var headers = Headers.from(null, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
     if (options.mime_type) |mime_type| {
         if (headers.getContentType() == null) {
             headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
         }
     }
     return StaticRoute.new(.{
-        .blob = blob,
+        .blob = blob.*,
         .cached_blob_size = blob.size(),
         .has_content_disposition = false,
         .headers = headers,
         .server = options.server,
-        .status_code = 200,
+        .status_code = options.status_code,
     });
+}
+
+/// Create a static route to be used on a single response, freeing the bytes once sent.
+pub fn sendBlobThenDeinit(resp: AnyResponse, blob: *const AnyBlob, options: InitFromBytesOptions) void {
+    const temp_route = StaticRoute.initFromAnyBlob(blob, options);
+    defer temp_route.deref();
+    temp_route.on(resp);
 }
 
 fn deinit(this: *StaticRoute) void {
@@ -134,7 +143,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
     }
 
     return globalThis.throwInvalidArguments(
-        \\'static' expects a Record<string, Response | HTMLBundle>
+        \\'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
         \\
         \\To bundle frontend apps on-demand with Bun.serve(), import HTML files.
         \\
@@ -145,9 +154,21 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         \\import app from "./app.html";
         \\
         \\serve({
-        \\  static: {
+        \\  routes: {
         \\    "/index.json": Response.json({ message: "Hello World" }),
         \\    "/app": app,
+        \\    "/path/:param": (req) => {
+        \\      const param = req.params.param;
+        \\      return Response.json({ message: `Hello ${param}` });
+        \\    },
+        \\    "/path": {
+        \\      GET(req) {
+        \\        return Response.json({ message: "Hello World" });
+        \\      },
+        \\      POST(req) {
+        \\        return Response.json({ message: "Hello World" });
+        \\      },
+        \\    },
         \\  },
         \\
         \\  fetch(request) {

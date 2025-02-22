@@ -149,6 +149,40 @@ fn getContentType(headers: ?*JSC.FetchHeaders, blob: *const JSC.WebCore.AnyBlob,
     return .{ content_type, needs_content_type, content_type_needs_free };
 }
 
+fn validateRouteName(global: *JSC.JSGlobalObject, path: []const u8) !void {
+    // Already validated by the caller
+    bun.debugAssert(path.len > 0 and path[0] == '/');
+
+    // For now, we don't support params that start with a number.
+    // Mostly because it makes the params object more complicated to implement and it's easier to cut scope this way for now.
+    var remaining = path;
+    var duped_route_names = bun.StringHashMap(void).init(bun.default_allocator);
+    defer duped_route_names.deinit();
+    while (strings.indexOfChar(remaining, ':')) |index| {
+        remaining = remaining[index + 1 ..];
+        const end = strings.indexOfChar(remaining, '/') orelse remaining.len;
+        const route_name = remaining[0..end];
+        if (route_name.len > 0 and std.ascii.isDigit(route_name[0])) {
+            return global.throwTODO(
+                \\Route parameter names cannot start with a number.
+                \\
+                \\If you run into this, please file an issue and we will add support for it.
+            );
+        }
+
+        const entry = duped_route_names.getOrPut(route_name) catch bun.outOfMemory();
+        if (entry.found_existing) {
+            return global.throwTODO(
+                \\Support for duplicate route parameter names is not yet implemented.
+                \\
+                \\If you run into this, please file an issue and we will add support for it.
+            );
+        }
+
+        remaining = remaining[end..];
+    }
+}
+
 fn writeHeaders(
     headers: *JSC.FetchHeaders,
     comptime ssl: bool,
@@ -174,56 +208,148 @@ pub fn writeStatus(comptime ssl: bool, resp_ptr: ?*uws.NewApp(ssl).Response, sta
     }
 }
 
-// TODO: rename to StaticBlobRoute, rename AnyStaticRoute to StaticRoute
+// TODO: rename to StaticBlobRoute? the html bundle is sometimes a static route
 pub const StaticRoute = @import("./server/StaticRoute.zig");
 
 const HTMLBundle = JSC.API.HTMLBundle;
-const HTMLBundleRoute = HTMLBundle.HTMLBundleRoute;
-pub const AnyStaticRoute = union(enum) {
-    StaticRoute: *StaticRoute,
-    HTMLBundleRoute: *HTMLBundleRoute,
 
-    pub fn memoryCost(this: AnyStaticRoute) usize {
+pub const AnyRoute = union(enum) {
+    /// Serve a static file
+    /// "/robots.txt": new Response(...),
+    static: *StaticRoute,
+    /// Bundle an HTML import
+    /// import html from "./index.html";
+    /// "/": html,
+    html: *HTMLBundle.Route,
+    /// Use file system routing.
+    /// "/*": {
+    ///   "dir": import.meta.resolve("./pages"),
+    ///   "style": "nextjs-pages",
+    /// }
+    framework_router: bun.bake.FrameworkRouter.Type.Index,
+
+    pub fn memoryCost(this: AnyRoute) usize {
         return switch (this) {
-            .StaticRoute => |static_route| static_route.memoryCost(),
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.memoryCost(),
+            .static => |static_route| static_route.memoryCost(),
+            .html => |html_bundle_route| html_bundle_route.memoryCost(),
+            .framework_router => @sizeOf(bun.bake.Framework.FileSystemRouterType),
         };
     }
 
-    pub fn setServer(this: AnyStaticRoute, server: ?AnyServer) void {
+    pub fn setServer(this: AnyRoute, server: ?AnyServer) void {
         switch (this) {
-            .StaticRoute => |static_route| static_route.server = server,
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.server = server,
+            .static => |static_route| static_route.server = server,
+            .html => |html_bundle_route| html_bundle_route.server = server,
+            .framework_router => {}, // DevServer contains .server field
         }
     }
 
-    pub fn deref(this: AnyStaticRoute) void {
+    pub fn deref(this: AnyRoute) void {
         switch (this) {
-            .StaticRoute => |static_route| static_route.deref(),
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.deref(),
+            .static => |static_route| static_route.deref(),
+            .html => |html_bundle_route| html_bundle_route.deref(),
+            .framework_router => {}, // not reference counted
         }
     }
 
-    pub fn ref(this: AnyStaticRoute) void {
+    pub fn ref(this: AnyRoute) void {
         switch (this) {
-            .StaticRoute => |static_route| static_route.ref(),
-            .HTMLBundleRoute => |html_bundle_route| html_bundle_route.ref(),
+            .static => |static_route| static_route.ref(),
+            .html => |html_bundle_route| html_bundle_route.ref(),
+            .framework_router => {}, // not reference counted
         }
     }
 
-    pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue, dedupe_html_bundle_map: *std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute)) bun.JSError!AnyStaticRoute {
+    pub fn fromJS(
+        global: *JSC.JSGlobalObject,
+        path: []const u8,
+        argument: JSC.JSValue,
+        init_ctx: *ServerInitContext,
+    ) bun.JSError!AnyRoute {
         if (argument.as(HTMLBundle)) |html_bundle| {
-            const entry = try dedupe_html_bundle_map.getOrPut(html_bundle);
+            const entry = try init_ctx.dedupe_html_bundle_map.getOrPut(html_bundle);
             if (!entry.found_existing) {
-                entry.value_ptr.* = HTMLBundleRoute.init(html_bundle);
+                entry.value_ptr.* = HTMLBundle.Route.init(html_bundle);
             } else {
                 entry.value_ptr.*.ref();
             }
 
-            return .{ .HTMLBundleRoute = entry.value_ptr.* };
+            return .{ .html = entry.value_ptr.* };
         }
 
-        return .{ .StaticRoute = try StaticRoute.fromJS(globalThis, argument) };
+        if (argument.isObject()) {
+            const FrameworkRouter = bun.bake.FrameworkRouter;
+            if (try argument.getOptional(global, "dir", bun.String.Slice)) |dir| {
+                var alloc = init_ctx.js_string_allocations;
+                const relative_root = alloc.track(dir);
+
+                var style: FrameworkRouter.Style = if (try argument.get(global, "style")) |style|
+                    try FrameworkRouter.Style.fromJS(style, global)
+                else
+                    .nextjs_pages;
+                errdefer style.deinit();
+
+                if (!bun.strings.endsWith(path, "/*")) {
+                    return global.throwInvalidArguments("To mount a directory, make sure the path ends in `/*`", .{});
+                }
+
+                try init_ctx.framework_router_list.append(.{
+                    .root = relative_root,
+                    .style = style,
+
+                    // trim the /*
+                    .prefix = if (path.len == 2) "/" else path[0 .. path.len - 2],
+
+                    // TODO: customizable framework option.
+                    .entry_client = "bun-framework-react/client.tsx",
+                    .entry_server = "bun-framework-react/server.tsx",
+                    .ignore_underscores = true,
+                    .ignore_dirs = &.{ "node_modules", ".git" },
+                    .extensions = &.{ ".tsx", ".jsx" },
+                    .allow_layouts = true,
+                });
+
+                const limit = std.math.maxInt(@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type);
+                if (init_ctx.framework_router_list.items.len > limit) {
+                    return global.throwInvalidArguments("Too many framework routers. Maximum is {d}.", .{limit});
+                }
+                return .{ .framework_router = .init(@intCast(init_ctx.framework_router_list.items.len - 1)) };
+            }
+        }
+
+        return .{ .static = try StaticRoute.fromJS(global, argument) };
+    }
+};
+
+pub const ServerInitContext = struct {
+    arena: std.heap.ArenaAllocator,
+    dedupe_html_bundle_map: std.AutoHashMap(*HTMLBundle, *HTMLBundle.Route),
+    js_string_allocations: bun.bake.StringRefList,
+    framework_router_list: std.ArrayList(bun.bake.Framework.FileSystemRouterType),
+};
+
+const UserRouteBuilder = struct {
+    route: RouteDeclaration,
+    callback: JSC.Strong = .{},
+
+    // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
+    pub const RouteDeclaration = struct {
+        path: [:0]const u8 = "",
+        method: union(enum) {
+            any: void,
+            specific: HTTP.Method,
+        } = .any,
+
+        pub fn deinit(this: *RouteDeclaration) void {
+            if (this.path.len > 0) {
+                bun.default_allocator.free(this.path);
+            }
+        }
+    };
+
+    pub fn deinit(this: *UserRouteBuilder) void {
+        this.route.deinit();
+        this.callback.deinit();
     }
 };
 
@@ -273,7 +399,11 @@ pub const ServerConfig = struct {
     allow_hot: bool = true,
     ipv6_only: bool = false,
 
+    had_routes_object: bool = false,
+
     static_routes: std.ArrayList(StaticRouteEntry) = std.ArrayList(StaticRouteEntry).init(bun.default_allocator),
+    negative_routes: std.ArrayList([:0]const u8) = std.ArrayList([:0]const u8).init(bun.default_allocator),
+    user_routes_to_build: std.ArrayList(UserRouteBuilder) = std.ArrayList(UserRouteBuilder).init(bun.default_allocator),
 
     bake: ?bun.bake.UserOptions = null,
 
@@ -281,6 +411,10 @@ pub const ServerConfig = struct {
         development,
         production,
         development_without_hmr,
+
+        pub fn isHMREnabled(this: DevelopmentOption) bool {
+            return this == .development;
+        }
 
         pub fn isDevelopment(this: DevelopmentOption) bool {
             return this == .development or this == .development_without_hmr;
@@ -299,13 +433,17 @@ pub const ServerConfig = struct {
         }
         cost += this.id.len;
         cost += this.base_url.href.len;
+        for (this.negative_routes.items) |route| {
+            cost += route.len;
+        }
+
         return cost;
     }
 
     // TODO: rename to StaticRoute.Entry
     pub const StaticRouteEntry = struct {
         path: []const u8,
-        route: AnyStaticRoute,
+        route: AnyRoute,
 
         pub fn memoryCost(this: *const StaticRouteEntry) usize {
             return this.path.len + this.route.memoryCost();
@@ -369,7 +507,7 @@ pub const ServerConfig = struct {
         return that;
     }
 
-    pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: AnyStaticRoute) !void {
+    pub fn appendStaticRoute(this: *ServerConfig, path: []const u8, route: AnyRoute) !void {
         try this.static_routes.append(StaticRouteEntry{
             .path = try bun.default_allocator.dupe(u8, path),
             .route = route,
@@ -400,6 +538,11 @@ pub const ServerConfig = struct {
     pub fn deinit(this: *ServerConfig) void {
         this.address.deinit(bun.default_allocator);
 
+        for (this.negative_routes.items) |route| {
+            bun.default_allocator.free(route);
+        }
+        this.negative_routes.clearAndFree();
+
         if (this.base_url.href.len > 0) {
             bun.default_allocator.free(this.base_url.href);
             this.base_url = URL{};
@@ -424,6 +567,11 @@ pub const ServerConfig = struct {
         if (this.bake) |*bake| {
             bake.deinit();
         }
+
+        for (this.user_routes_to_build.items) |*builder| {
+            builder.deinit();
+        }
+        this.user_routes_to_build.clearAndFree();
     }
 
     pub fn computeID(this: *const ServerConfig, allocator: std.mem.Allocator) []const u8 {
@@ -1062,12 +1210,17 @@ pub const ServerConfig = struct {
         }
     };
 
+    pub const FromJSOptions = struct {
+        allow_bake_config: bool = true,
+        is_fetch_required: bool = true,
+        has_user_routes: bool = false,
+    };
+
     pub fn fromJS(
         global: *JSC.JSGlobalObject,
         args: *ServerConfig,
         arguments: *JSC.Node.ArgumentsSlice,
-        allow_bake_config: bool,
-        is_fetch_required: bool,
+        opts: FromJSOptions,
     ) bun.JSError!void {
         const vm = arguments.vm;
         const env = vm.transpiler.env;
@@ -1079,13 +1232,22 @@ pub const ServerConfig = struct {
                     .hostname = null,
                 },
             },
-            .development = .development,
+            .development = if (vm.transpiler.options.transform_options.serve_hmr) |hmr|
+                if (!hmr) .development_without_hmr else .development
+            else
+                .development,
 
             // If this is a node:cluster child, let's default to SO_REUSEPORT.
             // That way you don't have to remember to set reusePort: true in Bun.serve() when using node:cluster.
             .reuse_port = env.get("NODE_UNIQUE_ID") != null,
         };
         var has_hostname = false;
+
+        defer {
+            if (!args.development.isHMREnabled()) {
+                bun.assert(args.bake == null);
+            }
+        }
 
         if (strings.eqlComptime(env.get("NODE_ENV") orelse "", "production")) {
             args.development = .production;
@@ -1132,10 +1294,39 @@ pub const ServerConfig = struct {
                 return global.throwInvalidArguments("Bun.serve expects an object", .{});
             }
 
-            if (try arg.get(global, "static")) |static| {
-                if (!static.isObject()) {
-                    return global.throwInvalidArguments("Bun.serve expects 'static' to be an object shaped like { [pathname: string]: Response }", .{});
+            // "development" impacts other settings like bake.
+            if (try arg.get(global, "development")) |dev| {
+                if (dev.isObject()) {
+                    if (try dev.getBooleanStrict(global, "hmr")) |hmr| {
+                        args.development = if (!hmr) .development_without_hmr else .development;
+                    } else {
+                        args.development = .development;
+                    }
+                } else {
+                    args.development = if (dev.toBoolean()) .development else .production;
                 }
+                args.reuse_port = args.development == .production;
+            }
+            if (global.hasException()) return error.JSError;
+
+            if ((try arg.get(global, "routes")) orelse (try arg.get(global, "static"))) |static| {
+                if (!static.isObject()) {
+                    return global.throwInvalidArguments(
+                        \\Bun.serve() expects 'routes' to be an object shaped like:
+                        \\
+                        \\  {
+                        \\    "/path": {
+                        \\      GET: (req) => new Response("Hello"),
+                        \\      POST: (req) => new Response("Hello"),
+                        \\    },
+                        \\    "/path2/:param": new Response("Hello"),
+                        \\    "/path3/:param1/:param2": (req) => new Response("Hello")
+                        \\  }
+                        \\
+                        \\Learn more at https://bun.sh/docs/api/http
+                    , .{});
+                }
+                args.had_routes_object = true;
 
                 var iter = try JSC.JSPropertyIterator(.{
                     .skip_empty_name = true,
@@ -1143,8 +1334,21 @@ pub const ServerConfig = struct {
                 }).init(global, static);
                 defer iter.deinit();
 
-                var dedupe_html_bundle_map = std.AutoHashMap(*HTMLBundle, *HTMLBundleRoute).init(bun.default_allocator);
-                defer dedupe_html_bundle_map.deinit();
+                var init_ctx: ServerInitContext = .{
+                    .arena = .init(bun.default_allocator),
+                    .dedupe_html_bundle_map = .init(bun.default_allocator),
+                    .framework_router_list = .init(bun.default_allocator),
+                    .js_string_allocations = .empty,
+                };
+                errdefer {
+                    init_ctx.arena.deinit();
+                    init_ctx.framework_router_list.deinit();
+                }
+                // This list is not used in the success case
+                defer init_ctx.dedupe_html_bundle_map.deinit();
+
+                var framework_router_list = std.ArrayList(bun.bake.FrameworkRouter.Type).init(bun.default_allocator);
+                errdefer framework_router_list.deinit();
 
                 errdefer {
                     for (args.static_routes.items) |*static_route| {
@@ -1157,17 +1361,77 @@ pub const ServerConfig = struct {
                     const path, const is_ascii = key.toOwnedSliceReturningAllASCII(bun.default_allocator) catch bun.outOfMemory();
                     errdefer bun.default_allocator.free(path);
 
-                    const value = iter.value;
+                    const value: JSC.JSValue = iter.value;
+
+                    if (value.isUndefined()) {
+                        continue;
+                    }
 
                     if (path.len == 0 or (path[0] != '/')) {
-                        return global.throwInvalidArguments("Invalid static route \"{s}\". path must start with '/'", .{path});
+                        return global.throwInvalidArguments("Invalid route {}. Path must start with '/'", .{bun.fmt.quote(path)});
                     }
 
                     if (!is_ascii) {
-                        return global.throwInvalidArguments("Invalid static route \"{s}\". Please encode all non-ASCII characters in the path.", .{path});
+                        return global.throwInvalidArguments("Invalid route {}. Please encode all non-ASCII characters in the path.", .{bun.fmt.quote(path)});
                     }
 
-                    const route = try AnyStaticRoute.fromJS(global, value, &dedupe_html_bundle_map);
+                    if (value == .false) {
+                        const duped = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                        defer bun.default_allocator.free(path);
+                        args.negative_routes.append(duped) catch bun.outOfMemory();
+                        continue;
+                    }
+
+                    if (value.isCallable(global.vm())) {
+                        try validateRouteName(global, path);
+                        args.user_routes_to_build.append(.{
+                            .route = .{
+                                .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
+                                .method = .any,
+                            },
+                            .callback = JSC.Strong.create(value.withAsyncContextIfNeeded(global), global),
+                        }) catch bun.outOfMemory();
+                        bun.default_allocator.free(path);
+                        continue;
+                    } else if (value.isObject()) {
+                        const methods = .{
+                            HTTP.Method.CONNECT,
+                            HTTP.Method.DELETE,
+                            HTTP.Method.GET,
+                            HTTP.Method.HEAD,
+                            HTTP.Method.OPTIONS,
+                            HTTP.Method.PATCH,
+                            HTTP.Method.POST,
+                            HTTP.Method.PUT,
+                            HTTP.Method.TRACE,
+                        };
+                        var found = false;
+                        inline for (methods) |method| {
+                            if (value.getOwn(global, @tagName(method))) |function| {
+                                if (!function.isCallable(global.vm())) {
+                                    return global.throwInvalidArguments("Expected {s} in {} route to be a function", .{ @tagName(method), bun.fmt.quote(path) });
+                                }
+                                if (!found) {
+                                    try validateRouteName(global, path);
+                                }
+                                found = true;
+                                args.user_routes_to_build.append(.{
+                                    .route = .{
+                                        .path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory(),
+                                        .method = .{ .specific = method },
+                                    },
+                                    .callback = JSC.Strong.create(function.withAsyncContextIfNeeded(global), global),
+                                }) catch bun.outOfMemory();
+                            }
+                        }
+
+                        if (found) {
+                            bun.default_allocator.free(path);
+                            continue;
+                        }
+                    }
+
+                    const route = try AnyRoute.fromJS(global, path, value, &init_ctx);
                     args.static_routes.append(.{
                         .path = path,
                         .route = route,
@@ -1176,33 +1440,47 @@ pub const ServerConfig = struct {
 
                 // When HTML bundles are provided, ensure DevServer options are ready
                 // The presence of these options causes Bun.serve to initialize things.
-                if (args.development == .development and dedupe_html_bundle_map.count() > 0) {
-                    // TODO: this should be the dir with bunfig??
-                    const root = bun.fs.FileSystem.instance.top_level_dir;
-                    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
-                    const framework = try bun.bake.Framework.auto(arena.allocator(), &global.bunVM().transpiler.resolver);
-                    args.bake = .{
-                        .arena = arena,
-                        .allocations = bun.bake.StringRefList.empty,
-                        .root = root,
-                        .framework = framework,
-                        .frontend_only = true,
-                        .bundler_options = bun.bake.SplitBundlerOptions.empty,
-                    };
+                if ((init_ctx.dedupe_html_bundle_map.count() > 0 or
+                    init_ctx.framework_router_list.items.len > 0))
+                {
+                    if (args.development.isHMREnabled()) {
+                        const root = bun.fs.FileSystem.instance.top_level_dir;
+                        const framework = try bun.bake.Framework.auto(
+                            init_ctx.arena.allocator(),
+                            &global.bunVM().transpiler.resolver,
+                            init_ctx.framework_router_list.items,
+                        );
+                        args.bake = .{
+                            .arena = init_ctx.arena,
+                            .allocations = init_ctx.js_string_allocations,
+                            .root = root,
+                            .framework = framework,
+                            .bundler_options = bun.bake.SplitBundlerOptions.empty,
+                        };
 
-                    switch (vm.transpiler.options.transform_options.serve_env_behavior) {
-                        .prefix => {
-                            args.bake.?.bundler_options.client.env_prefix = vm.transpiler.options.transform_options.serve_env_prefix;
-                            args.bake.?.bundler_options.client.env = .prefix;
-                        },
-                        .load_all => {
-                            args.bake.?.bundler_options.client.env = .load_all;
-                        },
-                        .disable => {
-                            args.bake.?.bundler_options.client.env = .disable;
-                        },
-                        else => {},
+                        switch (vm.transpiler.options.transform_options.serve_env_behavior) {
+                            .prefix => {
+                                args.bake.?.bundler_options.client.env_prefix = vm.transpiler.options.transform_options.serve_env_prefix;
+                                args.bake.?.bundler_options.client.env = .prefix;
+                            },
+                            .load_all => {
+                                args.bake.?.bundler_options.client.env = .load_all;
+                            },
+                            .disable => {
+                                args.bake.?.bundler_options.client.env = .disable;
+                            },
+                            else => {},
+                        }
+                    } else {
+                        if (init_ctx.framework_router_list.items.len > 0) {
+                            return global.throwInvalidArguments("FrameworkRouter is currently only supported when `development: true`", .{});
+                        }
+                        init_ctx.arena.deinit();
                     }
+                } else {
+                    bun.debugAssert(init_ctx.arena.state.end_index == 0 and
+                        init_ctx.arena.state.buffer_list.first == null);
+                    init_ctx.arena.deinit();
                 }
             }
 
@@ -1306,36 +1584,22 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if (try arg.get(global, "development")) |dev| {
-                if (dev.isObject()) {
-                    if (try dev.getBooleanStrict(global, "hmr")) |hmr| {
-                        args.development = if (!hmr) .development_without_hmr else .development;
-                    } else {
-                        args.development = .development;
+            if (opts.allow_bake_config) {
+                if (try arg.getTruthy(global, "app")) |bake_args_js| brk: {
+                    if (!bun.FeatureFlags.bake()) {
+                        break :brk;
                     }
-                } else {
-                    args.development = if (dev.toBoolean()) .development else .production;
-                }
-                args.reuse_port = args.development == .production;
-            }
-            if (global.hasException()) return error.JSError;
+                    if (args.bake != null) {
+                        // "app" is likely to be removed in favor of the HTML loader.
+                        return global.throwInvalidArguments("'app' + HTML loader not supported.", .{});
+                    }
 
-            if (try arg.getTruthy(global, "app")) |bake_args_js| {
-                if (args.bake != null) {
-                    // "app" is likely to be removed in favor of the HTML loader.
-                    return global.throwInvalidArguments("'app' + HTML loader not supported.", .{});
-                }
-                if (!bun.FeatureFlags.bake()) {
-                    return global.throwInvalidArguments("To use the experimental \"app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
-                }
-                if (!allow_bake_config) {
-                    return global.throwInvalidArguments("To use the \"app\" option, change from calling \"Bun.serve({ app })\" to \"export default { app: ... }\"", .{});
-                }
-                if (args.development == .production) {
-                    return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
-                }
+                    if (args.development == .production) {
+                        return global.throwInvalidArguments("TODO: 'development: false' in serve options with 'app'. For now, use `bun build --app` or set 'development: true'", .{});
+                    }
 
-                args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
+                    args.bake = try bun.bake.UserOptions.fromJS(bake_args_js, global);
+                }
             }
 
             if (try arg.get(global, "reusePort")) |dev| {
@@ -1381,9 +1645,25 @@ pub const ServerConfig = struct {
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);
                 JSC.C.JSValueProtect(global, onRequest.asObjectRef());
                 args.onRequest = onRequest;
-            } else if (args.bake == null and is_fetch_required) {
+            } else if (args.bake == null and ((args.static_routes.items.len + args.user_routes_to_build.items.len) == 0 and !opts.has_user_routes) and opts.is_fetch_required) {
                 if (global.hasException()) return error.JSError;
-                return global.throwInvalidArguments("Expected fetch() to be a function", .{});
+                return global.throwInvalidArguments(
+                    \\Bun.serve() needs either:
+                    \\
+                    \\  - A routes object:
+                    \\     routes: {
+                    \\       "/path": {
+                    \\         GET: (req) => new Response("Hello")
+                    \\       }
+                    \\     }
+                    \\
+                    \\  - Or a fetch handler:
+                    \\     fetch: (req) => {
+                    \\       return new Response("Hello")
+                    \\     }
+                    \\
+                    \\Learn more at https://bun.sh/docs/api/http
+                , .{});
             } else {
                 if (global.hasException()) return error.JSError;
             }
@@ -5854,7 +6134,7 @@ const ServePlugins = struct {
             /// Promise may be empty if the plugin load finishes synchronously.
             plugin: *bun.JSC.API.JSBundler.Plugin,
             promise: JSC.JSPromise.Strong,
-            html_bundle_routes: std.ArrayListUnmanaged(*HTMLBundleRoute),
+            html_bundle_routes: std.ArrayListUnmanaged(*HTMLBundle.Route),
             dev_server: ?*bun.bake.DevServer,
         },
         loaded: *bun.JSC.API.JSBundler.Plugin,
@@ -5870,7 +6150,7 @@ const ServePlugins = struct {
     };
 
     pub const Callback = union(enum) {
-        html_bundle_route: *HTMLBundleRoute,
+        html_bundle_route: *HTMLBundle.Route,
         dev_server: *bun.bake.DevServer,
     };
 
@@ -6106,6 +6386,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         dev_server: ?*bun.bake.DevServer,
 
+        /// These associate a route to the index in RouteList.cpp.
+        /// User routes may get applied multiple times due to SNI.
+        /// So we have to store it.
+        user_routes: std.ArrayListUnmanaged(UserRoute) = .{},
+
         pub const doStop = JSC.wrapInstanceMethod(ThisServer, "stopFromJS", false);
         pub const dispose = JSC.wrapInstanceMethod(ThisServer, "disposeFromJS", false);
         pub const doUpgrade = JSC.wrapInstanceMethod(ThisServer, "onUpgrade", false);
@@ -6114,6 +6399,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doFetch = onFetch;
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
         pub const doTimeout = JSC.wrapInstanceMethod(ThisServer, "timeout", false);
+
+        const UserRoute = struct {
+            id: u32,
+            server: *ThisServer,
+            route: UserRouteBuilder.RouteDeclaration,
+
+            pub fn deinit(this: *UserRoute) void {
+                this.route.deinit();
+            }
+        };
 
         /// Returns:
         /// - .ready if no plugin has to be loaded
@@ -6158,21 +6453,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return globalThis.throw("Server() is not a constructor", .{});
         }
 
-        extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
-
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
             if (this.config.address == .unix) {
                 return JSValue.jsNull();
             }
-            return if (request.request_context.getRemoteSocketInfo()) |info|
-                JSSocketAddress__create(
-                    this.globalThis,
-                    bun.String.createUTF8ForJS(this.globalThis, info.ip),
-                    info.port,
-                    info.is_ipv6,
-                )
-            else
-                JSValue.jsNull();
+            return request.getRemoteSocketInfo(this.globalThis) orelse .null;
         }
 
         pub fn memoryCost(this: *ThisServer) usize {
@@ -6194,7 +6479,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.config.idleTimeout = @truncate(@min(seconds, 255));
         }
 
-        pub fn appendStaticRoute(this: *ThisServer, path: []const u8, route: AnyStaticRoute) !void {
+        pub fn appendStaticRoute(this: *ThisServer, path: []const u8, route: AnyRoute) !void {
             try this.config.appendStaticRoute(path, route);
         }
 
@@ -6466,7 +6751,28 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             static_routes.deinit();
             this.config.static_routes = new_config.static_routes;
 
-            this.setRoutes();
+            for (this.config.negative_routes.items) |route| {
+                bun.default_allocator.free(route);
+            }
+            this.config.negative_routes.clearAndFree();
+            this.config.negative_routes = new_config.negative_routes;
+
+            if (new_config.had_routes_object) {
+                for (this.config.user_routes_to_build.items) |*route| {
+                    route.deinit();
+                }
+                this.config.user_routes_to_build.clearAndFree();
+                this.config.user_routes_to_build = new_config.user_routes_to_build;
+                for (this.user_routes.items) |*route| {
+                    route.deinit();
+                }
+                this.user_routes.clearAndFree(bun.default_allocator);
+            }
+
+            const route_list_value = this.setRoutes();
+            if (new_config.had_routes_object) {
+                NamespaceType.routeListSetCached(this.thisObject, this.globalThis, route_list_value);
+            }
         }
 
         pub fn reloadStaticRoutes(this: *ThisServer) !bool {
@@ -6476,7 +6782,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
             this.config = try this.config.cloneForReloadingStaticRoutes();
             this.app.?.clearRoutes();
-            this.setRoutes();
+            const route_list_value = this.setRoutes();
+            if (route_list_value != .zero) {
+                NamespaceType.routeListSetCached(this.thisObject, this.globalThis, route_list_value);
+            }
             return true;
         }
 
@@ -6490,7 +6799,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer args_slice.deinit();
 
             var new_config: ServerConfig = .{};
-            try ServerConfig.fromJS(globalThis, &new_config, &args_slice, false, false);
+            try ServerConfig.fromJS(globalThis, &new_config, &args_slice, .{
+                .allow_bake_config = false,
+                .is_fetch_required = true,
+                .has_user_routes = this.user_routes.items.len > 0,
+            });
             if (globalThis.hasException()) {
                 new_config.deinit();
                 return error.JSError;
@@ -6698,11 +7011,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         var is_ipv6: bool = false;
 
                         if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
-                            var ip = bun.String.createUTF8(slice);
-                            defer ip.deref();
-                            return JSSocketAddress__create(
+                            return JSC.JSSocketAddress.create(
                                 this.globalThis,
-                                ip.toJS(this.globalThis),
+                                slice,
                                 port,
                                 is_ipv6,
                             );
@@ -6916,6 +7227,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             httplog("deinit", .{});
             this.cached_hostname.deref();
             this.all_closed_promise.deinit();
+            for (this.user_routes.items) |*user_route| {
+                user_route.deinit();
+            }
+            this.user_routes.deinit(bun.default_allocator);
 
             this.config.deinit();
             if (this.app) |app| {
@@ -6938,20 +7253,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const base_url = try bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/"));
             errdefer bun.default_allocator.free(base_url);
 
-            const dev_server = if (config.bake) |*bake_options| dev_server: {
-                if (!bake_options.frontend_only) {
-                    bun.bake.printWarning();
-                }
-
-                break :dev_server try bun.bake.DevServer.init(.{
+            const dev_server = if (config.bake) |*bake_options|
+                try bun.bake.DevServer.init(.{
                     .arena = bake_options.arena.allocator(),
                     .root = bake_options.root,
                     .framework = bake_options.framework,
                     .bundler_options = bake_options.bundler_options,
                     .vm = global.bunVM(),
-                    .frontend_only = bake_options.frontend_only,
-                });
-            } else null;
+                })
+            else
+                null;
             errdefer if (dev_server) |d| d.deinit();
 
             var server = ThisServer.new(.{
@@ -7154,37 +7465,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             resp.end(buffer, false);
         }
 
-        pub fn onSrcRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            JSC.markBinding(@src());
-            this.pending_requests += 1;
-            defer this.pending_requests -= 1;
-            req.setYield(false);
-
-            if (req.header("open-in-editor") == null) {
-                resp.writeStatus("501 Not Implemented");
-                resp.end("Viewing source without opening in editor is not implemented yet!", false);
-                return;
-            }
-
-            var ctx = &JSC.VirtualMachine.get().rareData().editor_context;
-            ctx.autoDetectEditor(JSC.VirtualMachine.get().transpiler.env);
-            const line: ?string = req.header("editor-line");
-            const column: ?string = req.header("editor-column");
-
-            if (ctx.editor) |editor| {
-                resp.writeStatus("200 Opened");
-                resp.end("Opened in editor", false);
-                var url = req.url()["/src:".len..];
-                if (strings.indexOfChar(url, ':')) |colon| {
-                    url = url[0..colon];
-                }
-                editor.open(ctx.path, url, line, column, this.allocator) catch Output.prettyErrorln("Failed to open editor", .{});
-            } else {
-                resp.writeStatus("500 Missing Editor :(");
-                resp.end("Please set your editor in bunfig.toml", false);
-            }
-        }
-
         pub fn onPendingRequest(this: *ThisServer) void {
             this.pending_requests += 1;
         }
@@ -7210,19 +7490,25 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return false;
         }
 
-        pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
-            // Track this before we enter JavaScript.
+        pub fn onUserRouteRequest(user_route: *UserRoute, req: *uws.Request, resp: *App.Response) void {
+            const server = user_route.server;
+            const index = user_route.id;
+
             var should_deinit_context = false;
-            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context) orelse return;
+            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false) orelse return;
+
+            const server_request_list = NamespaceType.routeListGetCached(server.thisObject).?;
+            var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.thisObject, server_request_list, &prepared.js_request, req);
+
+            if (server.globalThis.tryTakeException()) |exception| {
+                response_value = exception;
+            }
+
+            server.handleRequest(&should_deinit_context, prepared, req, response_value);
+        }
+
+        fn handleRequest(this: *ThisServer, should_deinit_context: *bool, prepared: PreparedRequest, req: *uws.Request, response_value: JSC.JSValue) void {
             const ctx = prepared.ctx;
-
-            bun.assert(this.config.onRequest != .zero);
-
-            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &.{
-                prepared.js_request,
-                this.thisObject,
-            }) catch |err|
-                this.globalThis.takeException(err);
 
             defer {
                 // uWS request will not live longer than this function
@@ -7230,13 +7516,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             ctx.onResponse(this, prepared.js_request, response_value);
-
             // Reference in the stack here in case it is not for whatever reason
             prepared.js_request.ensureStillAlive();
 
             ctx.defer_deinit_until_callback_completes = null;
 
-            if (should_deinit_context) {
+            if (should_deinit_context.*) {
                 ctx.deinit();
                 return;
             }
@@ -7251,6 +7536,21 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.toAsync(req, prepared.request_object);
         }
 
+        pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            var should_deinit_context = false;
+            const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, true) orelse return;
+
+            bun.assert(this.config.onRequest != .zero);
+
+            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &.{
+                prepared.js_request,
+                this.thisObject,
+            }) catch |err|
+                this.globalThis.takeException(err);
+
+            this.handleRequest(&should_deinit_context, prepared, req, response_value);
+        }
+
         pub fn onRequestFromSaved(
             this: *ThisServer,
             req: SavedRequest.Union,
@@ -7260,7 +7560,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             extra_args: [arg_count]JSValue,
         ) void {
             const prepared: PreparedRequest = switch (req) {
-                .stack => |r| this.prepareJsRequestContext(r, resp, null) orelse return,
+                .stack => |r| this.prepareJsRequestContext(r, resp, null, true) orelse return,
                 .saved => |data| .{
                     .js_request = data.js_request.get() orelse @panic("Request was unexpectedly freed"),
                     .request_object = data.request,
@@ -7332,7 +7632,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         };
 
-        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool) ?PreparedRequest {
+        pub fn prepareJsRequestContext(this: *ThisServer, req: *uws.Request, resp: *App.Response, should_deinit_context: ?*bool, create_js_request: bool) ?PreparedRequest {
             JSC.markBinding(@src());
             this.onPendingRequest();
             if (comptime Environment.isDebug) {
@@ -7425,7 +7725,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             return .{
-                .js_request = request_object.toJS(this.globalThis),
+                .js_request = if (create_js_request) request_object.toJS(this.globalThis) else .zero,
                 .request_object = request_object,
                 .ctx = ctx,
             };
@@ -7494,7 +7794,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.toAsync(req, request_object);
         }
 
-        fn setRoutes(this: *ThisServer) void {
+        fn setRoutes(this: *ThisServer) JSC.JSValue {
+            var route_list_value = JSC.JSValue.zero;
             // TODO: move devserver and plugin logic away
             const app = this.app.?;
             const any_server = AnyServer.from(this);
@@ -7508,19 +7809,76 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var needs_plugins = dev_server != null;
             var has_html_catch_all = false;
 
+            if (this.config.user_routes_to_build.items.len > 0) {
+                var user_routes_to_build = this.config.user_routes_to_build.moveToUnmanaged();
+                var old_user_routes = this.user_routes;
+
+                defer {
+                    for (old_user_routes.items) |*route| {
+                        route.route.deinit();
+                    }
+
+                    old_user_routes.deinit(bun.default_allocator);
+                }
+                this.user_routes = std.ArrayListUnmanaged(UserRoute).initCapacity(bun.default_allocator, user_routes_to_build.items.len) catch bun.outOfMemory();
+                const paths = bun.default_allocator.alloc(ZigString, user_routes_to_build.items.len) catch bun.outOfMemory();
+                const callbacks = bun.default_allocator.alloc(JSC.JSValue, user_routes_to_build.items.len) catch bun.outOfMemory();
+                defer bun.default_allocator.free(paths);
+                defer bun.default_allocator.free(callbacks);
+
+                for (user_routes_to_build.items, paths, callbacks, 0..) |*route, *path, *callback, i| {
+                    path.* = ZigString.init(route.route.path);
+                    callback.* = route.callback.get().?;
+                    this.user_routes.appendAssumeCapacity(.{
+                        .id = @truncate(i),
+                        .server = this,
+                        .route = route.route,
+                    });
+                    route.route = .{};
+                }
+
+                route_list_value = Bun__ServerRouteList__create(this.globalThis, callbacks.ptr, paths.ptr, user_routes_to_build.items.len);
+
+                for (user_routes_to_build.items) |*route| {
+                    route.deinit();
+                }
+                user_routes_to_build.deinit(bun.default_allocator);
+            }
+
+            // This may get applied multiple times.
+            for (this.user_routes.items) |*user_route| {
+                switch (user_route.route.method) {
+                    .any => {
+                        app.any(user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
+                    },
+                    .specific => |method| {
+                        app.method(method, user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
+                    },
+                }
+            }
+
+            // negative routes have backwards precedence.
+            for (this.config.negative_routes.items) |route| {
+                // Since .applyStaticRoute does head, we need to do it first here too.
+                app.head(route, *ThisServer, this, onRequest);
+
+                app.any(route, *ThisServer, this, onRequest);
+            }
+
             if (this.config.static_routes.items.len > 0) {
                 for (this.config.static_routes.items) |*entry| {
                     switch (entry.route) {
-                        .StaticRoute => |static_route| {
+                        .static => |static_route| {
                             ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *StaticRoute, static_route, entry.path);
                         },
-                        .HTMLBundleRoute => |html_bundle_route| {
-                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundleRoute, html_bundle_route, entry.path);
+                        .html => |html_bundle_route| {
+                            ServerConfig.applyStaticRoute(any_server, ssl_enabled, app, *HTMLBundle.Route, html_bundle_route, entry.path);
                             if (dev_server) |dev| {
                                 dev.html_router.put(dev.allocator, entry.path, html_bundle_route) catch bun.outOfMemory();
                             }
                             needs_plugins = true;
                         },
+                        .framework_router => {},
                     }
                     if (!has_html_catch_all and strings.eqlComptime(entry.path, "/*")) {
                         has_html_catch_all = true;
@@ -7556,8 +7914,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     JSC.markBinding(@src());
                     Bun__addInspector(ssl_enabled, app, this.globalThis);
                 }
-
-                app.get("/src:/*", *ThisServer, this, onSrcRequest);
             }
 
             var has_dev_catch_all = false;
@@ -7565,14 +7921,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // DevServer adds a catch-all handler to use FrameworkRouter (full stack apps)
                 has_dev_catch_all = dev.attachRoutes(this) catch bun.outOfMemory();
             }
-            if (!has_dev_catch_all) {
+
+            if (!has_dev_catch_all and this.config.onRequest != .zero) {
                 // "/*" routes are added backwards, so if they have a static route,
                 // it will never be matched so we need to check for that first
                 if (!has_html_catch_all) {
-                    bun.assert(this.config.onRequest != .zero);
                     app.any("/*", *ThisServer, this, onRequest);
-                } else if (this.config.onRequest != .zero) {
-                    // The HTML catch all recieves GET, HEAD, and OPTIONS
+                } else {
+                    // The HTML catch-all receives GET, HEAD.
                     app.post("/*", *ThisServer, this, onRequest);
                     app.put("/*", *ThisServer, this, onRequest);
                     app.patch("/*", *ThisServer, this, onRequest);
@@ -7581,14 +7937,37 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.trace("/*", *ThisServer, this, onRequest);
                     app.connect("/*", *ThisServer, this, onRequest);
                 }
+            } else if (!has_dev_catch_all and this.config.onRequest == .zero and !has_html_catch_all) {
+                app.any("/*", *ThisServer, this, on404);
+            } else if (!has_dev_catch_all and this.config.onRequest == .zero) {
+                app.post("/*", *ThisServer, this, on404);
+                app.put("/*", *ThisServer, this, on404);
+                app.patch("/*", *ThisServer, this, on404);
+                app.delete("/*", *ThisServer, this, on404);
+                app.options("/*", *ThisServer, this, on404);
+                app.trace("/*", *ThisServer, this, on404);
+                app.connect("/*", *ThisServer, this, on404);
             }
+
+            return route_list_value;
+        }
+
+        pub fn on404(_: *ThisServer, req: *uws.Request, resp: *App.Response) void {
+            if (comptime Environment.enable_logs)
+                httplog("{s} - {s} 404", .{ req.method(), req.url() });
+
+            resp.writeStatus("404 Not Found");
+
+            // Rely on browser default page for now.
+            resp.end("", false);
         }
 
         // TODO: make this return JSError!void, and do not deinitialize on synchronous failure, to allow errdefer in caller scope
-        pub fn listen(this: *ThisServer) void {
+        pub fn listen(this: *ThisServer) JSC.JSValue {
             httplog("listen", .{});
             var app: *App = undefined;
             const globalThis = this.globalThis;
+            var route_list_value = JSC.JSValue.zero;
             if (ssl_enabled) {
                 BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
@@ -7603,12 +7982,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
                     this.app = null;
                     this.deinit();
-                    return;
+                    return .zero;
                 };
 
                 this.app = app;
 
-                this.setRoutes();
+                route_list_value = this.setRoutes();
 
                 // add serverName to the SSL context using default ssl options
                 if (ssl_config.server_name) |server_name_ptr| {
@@ -7622,21 +8001,21 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                             }
 
                             this.deinit();
-                            return;
+                            return .zero;
                         };
                         if (throwSSLErrorIfNecessary(globalThis)) {
                             this.deinit();
-                            return;
+                            return .zero;
                         }
 
                         app.domain(server_name);
                         if (throwSSLErrorIfNecessary(globalThis)) {
                             this.deinit();
-                            return;
+                            return .zero;
                         }
 
                         // Ensure the routes are set for that domain name.
-                        this.setRoutes();
+                        _ = this.setRoutes();
                     }
                 }
 
@@ -7653,18 +8032,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                                 }
 
                                 this.deinit();
-                                return;
+                                return .zero;
                             };
 
                             app.domain(sni_servername);
 
                             if (throwSSLErrorIfNecessary(globalThis)) {
                                 this.deinit();
-                                return;
+                                return .zero;
                             }
 
                             // Ensure the routes are set for that domain name.
-                            this.setRoutes();
+                            _ = this.setRoutes();
                         }
                     }
                 }
@@ -7674,11 +8053,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         globalThis.throw("Failed to create HTTP server", .{}) catch {};
                     }
                     this.deinit();
-                    return;
+                    return .zero;
                 };
                 this.app = app;
 
-                this.setRoutes();
+                route_list_value = this.setRoutes();
             }
 
             switch (this.config.address) {
@@ -7717,7 +8096,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             if (globalThis.hasException()) {
                 this.deinit();
-                return;
+                return .zero;
             }
 
             this.ref();
@@ -7728,6 +8107,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             } else {
                 this.vm.eventLoop().performGC();
             }
+
+            return route_list_value;
         }
     };
 }
@@ -7800,7 +8181,7 @@ pub const AnyServer = union(enum) {
         };
     }
 
-    pub fn appendStaticRoute(this: AnyServer, path: []const u8, route: AnyStaticRoute) !void {
+    pub fn appendStaticRoute(this: AnyServer, path: []const u8, route: AnyRoute) !void {
         return switch (this) {
             inline else => |server| server.appendStaticRoute(path, route),
         };
@@ -7873,8 +8254,8 @@ pub const AnyServer = union(enum) {
         global: *JSC.JSGlobalObject,
     ) ?SavedRequest {
         return switch (server) {
-            inline .HTTPServer, .DebugHTTPServer => |s| (s.prepareJsRequestContext(req, resp.TCP, null) orelse return null).save(global, req, resp.TCP),
-            inline .HTTPSServer, .DebugHTTPSServer => |s| (s.prepareJsRequestContext(req, resp.SSL, null) orelse return null).save(global, req, resp.SSL),
+            inline .HTTPServer, .DebugHTTPServer => |s| (s.prepareJsRequestContext(req, resp.TCP, null, true) orelse return null).save(global, req, resp.TCP),
+            inline .HTTPSServer, .DebugHTTPSServer => |s| (s.prepareJsRequestContext(req, resp.SSL, null, true) orelse return null).save(global, req, resp.SSL),
         };
     }
 
@@ -7935,3 +8316,20 @@ fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
 
     return false;
 }
+
+extern "c" fn Bun__ServerRouteList__callRoute(
+    globalObject: *JSC.JSGlobalObject,
+    index: u32,
+    requestPtr: *Request,
+    serverObject: JSC.JSValue,
+    routeListObject: JSC.JSValue,
+    requestObject: *JSC.JSValue,
+    req: *uws.Request,
+) JSC.JSValue;
+
+extern "c" fn Bun__ServerRouteList__create(
+    globalObject: *JSC.JSGlobalObject,
+    callbacks: [*]JSC.JSValue,
+    paths: [*]ZigString,
+    pathsLength: usize,
+) JSC.JSValue;

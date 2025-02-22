@@ -244,7 +244,6 @@ CPP_DECL void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* arg0, 
 CPP_DECL void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-CPP_DECL void JSC__JSPromise__resolveOnNextTick(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSValue JSC__JSPromise__result(JSC__JSPromise* arg0, JSC__VM* arg1);
 CPP_DECL void JSC__JSPromise__setHandled(JSC__JSPromise* arg0, JSC__VM* arg1);
 CPP_DECL uint32_t JSC__JSPromise__status(const JSC__JSPromise* arg0, JSC__VM* arg1);
@@ -410,7 +409,6 @@ CPP_DECL size_t JSC__VM__blockBytesAllocated(JSC__VM* arg0);
 CPP_DECL void JSC__VM__clearExecutionTimeLimit(JSC__VM* arg0);
 CPP_DECL void JSC__VM__collectAsync(JSC__VM* arg0);
 CPP_DECL JSC__VM* JSC__VM__create(unsigned char HeapType0);
-CPP_DECL void JSC__VM__deferGC(JSC__VM* arg0, void* arg1, void(* ArgFn2)(void* arg0));
 CPP_DECL void JSC__VM__deinit(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__deleteAllCode(JSC__VM* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC__VM* arg0);

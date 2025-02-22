@@ -705,7 +705,7 @@ pub const Blob = struct {
             const store = this.store.?;
             switch (store.data) {
                 .s3 => |*s3| {
-                    try S3File.writeFormat(s3, Formatter, formatter, writer, enable_ansi_colors);
+                    try S3File.writeFormat(s3, Formatter, formatter, writer, enable_ansi_colors, this.content_type, this.offset);
                 },
                 .file => |file| {
                     try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));
@@ -752,7 +752,7 @@ pub const Blob = struct {
         }
 
         const show_name = (this.is_jsdom_file and this.getNameString() != null) or (!this.name.isEmpty() and this.store != null and this.store.?.data == .bytes);
-        if (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0) {
+        if (!this.isS3() and (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0)) {
             try writer.writeAll(" {\n");
             {
                 formatter.indent += 1;
@@ -1205,7 +1205,7 @@ pub const Blob = struct {
                     const len = data.getLength(globalThis);
 
                     if (len < 256 * 1024) {
-                        const str = data.toBunString(globalThis);
+                        const str = try data.toBunString2(globalThis);
                         defer str.deref();
 
                         const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
@@ -5528,7 +5528,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
                     if (!fail_if_top_value_is_not_typed_array_like) {
-                        var str = top_value.toBunString(global);
+                        var str = try top_value.toBunString2(global);
                         defer str.deref();
                         const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
                         return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);

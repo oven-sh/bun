@@ -3493,6 +3493,27 @@ pub fn NewApp(comptime ssl: bool) type {
         ) void {
             uws_app_trace(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
         }
+        pub fn method(
+            app: *ThisApp,
+            method_: bun.http.Method,
+            pattern: [:0]const u8,
+            comptime UserDataType: type,
+            user_data: UserDataType,
+            comptime handler: (fn (UserDataType, *Request, *Response) void),
+        ) void {
+            switch (method_) {
+                .GET => app.get(pattern, UserDataType, user_data, handler),
+                .POST => app.post(pattern, UserDataType, user_data, handler),
+                .PUT => app.put(pattern, UserDataType, user_data, handler),
+                .DELETE => app.delete(pattern, UserDataType, user_data, handler),
+                .PATCH => app.patch(pattern, UserDataType, user_data, handler),
+                .OPTIONS => app.options(pattern, UserDataType, user_data, handler),
+                .HEAD => app.head(pattern, UserDataType, user_data, handler),
+                .CONNECT => app.connect(pattern, UserDataType, user_data, handler),
+                .TRACE => app.trace(pattern, UserDataType, user_data, handler),
+                else => @panic("TODO: implement other methods"),
+            }
+        }
         pub fn any(
             app: *ThisApp,
             pattern: []const u8,
@@ -4578,13 +4599,11 @@ pub const udp = struct {
     extern fn us_udp_socket_set_source_specific_membership(socket: ?*udp.Socket, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: c_int) c_int;
 
     pub const PacketBuffer = opaque {
-        const This = @This();
-
-        pub fn getPeer(this: *This, index: c_int) *std.posix.sockaddr.storage {
+        pub fn getPeer(this: *PacketBuffer, index: c_int) *std.posix.sockaddr.storage {
             return us_udp_packet_buffer_peer(this, index);
         }
 
-        pub fn getPayload(this: *This, index: c_int) []u8 {
+        pub fn getPayload(this: *PacketBuffer, index: c_int) []u8 {
             const payload = us_udp_packet_buffer_payload(this, index);
             const len = us_udp_packet_buffer_payload_length(this, index);
             return payload[0..@as(usize, @intCast(len))];
@@ -4604,3 +4623,81 @@ pub fn onThreadExit() void {
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
 
 pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;
+
+export fn BUN__warn__extra_ca_load_failed(filename: [*c]const u8, error_msg: [*c]const u8) void {
+    bun.Output.warn("ignoring extra certs from {s}, load failed: {s}", .{ filename, error_msg });
+}
+
+/// Mixin to read an entire request body into memory and run a callback.
+/// Consumers should make sure a reference count is held on the server,
+/// and is unreferenced after one of the two callbacks are called.
+///
+/// See DevServer.zig's ErrorReportRequest for an example.
+pub fn BodyReaderMixin(
+    Wrap: type,
+    field: []const u8,
+    // `body` is freed after this function returns.
+    onBody: fn (*Wrap, body: []const u8, resp: AnyResponse) anyerror!void,
+    // Called on error or request abort
+    onError: fn (*Wrap) void,
+) type {
+    return struct {
+        body: std.ArrayList(u8),
+
+        pub fn init(allocator: std.mem.Allocator) @This() {
+            return .{ .body = .init(allocator) };
+        }
+
+        /// Memory is freed after the callback returns, or automatically on failure.
+        pub fn readBody(ctx: *@This(), resp: anytype) void {
+            const Mixin = @This();
+            const Response = @TypeOf(resp);
+            const handlers = struct {
+                fn onDataGeneric(mixin: *Mixin, r: Response, chunk: []const u8, last: bool) void {
+                    const any = AnyResponse.init(r);
+                    onData(mixin, any, chunk, last) catch |e| switch (e) {
+                        error.OutOfMemory => return mixin.onOOM(any),
+                        else => return mixin.onInvalid(any),
+                    };
+                }
+                fn onAborted(mixin: *Mixin, _: Response) void {
+                    mixin.body.deinit();
+                    onError(@fieldParentPtr(field, mixin));
+                }
+            };
+            resp.onData(*@This(), handlers.onDataGeneric, ctx);
+            resp.onAborted(*@This(), handlers.onAborted, ctx);
+        }
+
+        fn onData(ctx: *@This(), resp: AnyResponse, chunk: []const u8, last: bool) !void {
+            if (last) {
+                var body = ctx.body; // stack copy so onBody can free everything
+                resp.clearAborted();
+                resp.clearOnData();
+                if (body.items.len > 0) {
+                    try body.appendSlice(chunk);
+                    try onBody(@fieldParentPtr(field, ctx), ctx.body.items, resp);
+                } else {
+                    try onBody(@fieldParentPtr(field, ctx), chunk, resp);
+                }
+                body.deinit();
+            } else {
+                try ctx.body.appendSlice(chunk);
+            }
+        }
+
+        fn onOOM(ctx: *@This(), r: AnyResponse) void {
+            r.writeStatus("500 Internal Server Error");
+            r.endWithoutBody(false);
+            ctx.body.deinit();
+            onError(@fieldParentPtr(field, ctx));
+        }
+
+        fn onInvalid(ctx: *@This(), r: AnyResponse) void {
+            r.writeStatus("400 Bad Request");
+            r.endWithoutBody(false);
+            ctx.body.deinit();
+            onError(@fieldParentPtr(field, ctx));
+        }
+    };
+}

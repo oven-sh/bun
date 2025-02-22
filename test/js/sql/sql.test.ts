@@ -1,8 +1,8 @@
-import { sql, SQL, randomUUIDv7 } from "bun";
+import { sql, SQL, randomUUIDv7, password } from "bun";
 const postgres = (...args) => new sql(...args);
 import { expect, test, mock, beforeAll, afterAll, describe } from "bun:test";
 import { $ } from "bun";
-import { bunExe, isCI, withoutAggressiveGC, isLinux } from "harness";
+import { bunExe, isCI, withoutAggressiveGC, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
 
 import { exec, execSync } from "child_process";
@@ -12,6 +12,14 @@ const execAsync = promisify(exec);
 import net from "net";
 const dockerCLI = Bun.which("docker") as string;
 
+const dir = tempDirWithFiles("sql-test", {
+  "select-param.sql": `select $1 as x`,
+  "select.sql": `select 1 as x`,
+});
+
+function rel(filename: string) {
+  return path.join(dir, filename);
+}
 async function findRandomPort() {
   return new Promise((resolve, reject) => {
     // Create a server to listen on a random port
@@ -172,6 +180,27 @@ if (isDockerEnabled()) {
     const result = (await sql`select 1 as x`)[0].x;
     sql.close();
     expect(result).toBe(1);
+  });
+
+  describe("should work with more than the max inline capacity", () => {
+    for (let size of [50, 60, 62, 64, 70, 100]) {
+      for (let duplicated of [true, false]) {
+        test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
+          const longQuery = `select ${Array.from({ length: size }, (_, i) => {
+            if (duplicated) {
+              return i % 2 === 0 ? `${i + 1} as f${i}, ${i} as f${i}` : `${i} as f${i}`;
+            }
+            return `${i} as f${i}`;
+          }).join(",\n")}`;
+          const result = await sql.unsafe(longQuery);
+          let value = 0;
+          for (const column of Object.values(result[0])) {
+            expect(column).toBe(value);
+            value++;
+          }
+        });
+      }
+    }
   });
 
   test("Connection timeout works", async () => {
@@ -699,7 +728,6 @@ if (isDockerEnabled()) {
       await sql.beginDistributed("tx1", async sql => {
         await sql`insert into test values(1)`;
       });
-
       await sql.commitDistributed("tx1");
       expect((await sql`select count(1) from test`)[0].count).toBe("1");
     } finally {
@@ -870,6 +898,56 @@ if (isDockerEnabled()) {
     }),
   ]);
 
+  test("should work with fragments", async () => {
+    await using sql = postgres({ ...options, max: 1 });
+    const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+    await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+    // single escaped identifier
+    {
+      const results = await sql`SELECT * FROM ${random_name}`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+    // multiple escaped identifiers
+    {
+      const results = await sql`SELECT ${random_name}.* FROM ${random_name}`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+    // even more complex fragment
+    {
+      const results =
+        await sql`SELECT ${random_name}.* FROM ${random_name} WHERE ${random_name}.hotel_id = ${1} ORDER BY ${random_name}.created_at DESC`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+  });
+  test("should handle nested fragments", async () => {
+    await using sql = postgres({ ...options, max: 1 });
+    const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+    await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+    await sql`INSERT INTO ${random_name} VALUES (2, 1, '2024-01-02 10:00:00')`;
+    await sql`INSERT INTO ${random_name} VALUES (3, 2, '2024-01-03 10:00:00')`;
+
+    // fragment containing another scape fragment for the field name
+    const orderBy = (field_name: string) => sql`ORDER BY ${sql(field_name)} DESC`;
+
+    // dynamic information
+    const sortBy = { should_sort: true, field: "created_at" };
+    const user = { hotel_id: 1 };
+
+    // query containing the fragments
+    const results = await sql`
+    SELECT ${random_name}.*
+    FROM ${random_name}
+    WHERE ${random_name}.hotel_id = ${user.hotel_id} 
+    ${sortBy.should_sort ? orderBy(sortBy.field) : sql``}`;
+    expect(results).toEqual([
+      { id: 2, hotel_id: 1, created_at: new Date("2024-01-02T10:00:00.000Z") },
+      { id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") },
+    ]);
+  });
+
   // t('Options from uri with special characters in user and pass', async() => {
   //   const opt = postgres({ user: 'öla', pass: 'pass^word' }).options
   //   return [[opt.user, opt.pass].toString(), 'öla,pass^word']
@@ -975,21 +1053,65 @@ if (isDockerEnabled()) {
     ];
   });
 
-  // t('Support dynamic password function', async() => {
-  //   return [true, (await postgres({
-  //     ...options,
-  //     ...login_scram,
-  //     pass: () => 'bun_sql_test_scram'
-  //   })`select true as x`)[0].x]
-  // })
+  test("Support dynamic password function", async () => {
+    await using sql = postgres({ ...options, ...login_scram, password: () => "bun_sql_test_scram", max: 1 });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
 
-  // t('Support dynamic async password function', async() => {
-  //   return [true, (await postgres({
-  //     ...options,
-  //     ...login_scram,
-  //     pass: () => Promise.resolve('bun_sql_test_scram')
-  //   })`select true as x`)[0].x]
-  // })
+  test("Support dynamic async resolved password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      password: () => Promise.resolve("bun_sql_test_scram"),
+      max: 1,
+    });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+
+  test("Support dynamic async password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      max: 1,
+      password: async () => {
+        await Bun.sleep(10);
+        return "bun_sql_test_scram";
+      },
+    });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+  test("Support dynamic async rejected password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      password: () => Promise.reject(new Error("password error")),
+      max: 1,
+    });
+    try {
+      await sql`select true as x`;
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.message).toBe("password error");
+    }
+  });
+  test("Support dynamic async password function that throws", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      max: 1,
+      password: async () => {
+        await Bun.sleep(10);
+        throw new Error("password error");
+      },
+    });
+    try {
+      await sql`select true as x`;
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("password error");
+    }
+  });
 
   // t('Point type', async() => {
   //   const sql = postgres({
@@ -1027,37 +1149,34 @@ if (isDockerEnabled()) {
   //   return [30, (await sql`select x from test`)[0].x[1][1], await sql`drop table test`]
   // })
 
-  // t('sql file', async() =>
-  //   [1, (await sql.file(rel('select.sql')))[0].x]
-  // )
+  test("sql file", async () => {
+    await using sql = postgres(options);
+    expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
+  });
 
-  // t('sql file has forEach', async() => {
-  //   let result
-  //   await sql
-  //     .file(rel('select.sql'), { cache: false })
-  //     .forEach(({ x }) => result = x)
+  test("sql file throws", async () => {
+    await using sql = postgres(options);
+    expect(await sql.file(rel("selectomondo.sql")).catch(x => x.code)).toBe("ENOENT");
+  });
+  test("Parameters in file", async () => {
+    const result = await sql.file(rel("select-param.sql"), ["hello"]);
+    return expect(result[0].x).toBe("hello");
+  });
 
-  //   return [1, result]
-  // })
+  // this test passes but it's not clear where cached is implemented in postgres.js and this also doesn't seem to be a valid test
+  // test("sql file cached", async () => {
+  //   await sql.file(rel("select.sql"));
+  //   await delay(20);
 
-  // t('sql file throws', async() =>
-  //   ['ENOENT', (await sql.file(rel('selectomondo.sql')).catch(x => x.code))]
-  // )
+  //   return [1, (await sql.file(rel("select.sql")))[0].x];
+  // });
+  // we dont have .forEach yet
+  // test("sql file has forEach", async () => {
+  //   let result;
+  //   await sql.file(rel("select.sql"), { cache: false }).forEach(({ x }) => (result = x));
 
-  // t('sql file cached', async() => {
-  //   await sql.file(rel('select.sql'))
-  //   await delay(20)
-
-  //   return [1, (await sql.file(rel('select.sql')))[0].x]
-  // })
-
-  // t('Parameters in file', async() => {
-  //   const result = await sql.file(
-  //     rel('select-param.sql'),
-  //     ['hello']
-  //   )
-  //   return ['hello', result[0].x]
-  // })
+  //   return expect(result).toBe(1);
+  // });
 
   test("Connection ended promise", async () => {
     const sql = postgres(options);
@@ -1238,6 +1357,14 @@ if (isDockerEnabled()) {
     expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
   });
 
+  test("simple query with multiple statements", async () => {
+    const result = await sql`select 1 as x;select 2 as x`.simple();
+    expect(result).toBeDefined();
+    expect(result.length).toEqual(2);
+    expect(result[0][0].x).toEqual(1);
+    expect(result[1][0].x).toEqual(2);
+  });
+
   // t('unsafe simple includes columns', async() => {
   //   return ['x', (await sql.unsafe('select 1 as x').values()).columns[0].name]
   // })
@@ -1254,21 +1381,13 @@ if (isDockerEnabled()) {
   //   ]
   // })
 
-  test.todo("simple query using unsafe with multiple statements", async () => {
-    // bun always uses prepared statements, so this is not supported
-    //     PostgresError: cannot insert multiple commands into a prepared statement
-    //  errno: "42601",
-    //   code: "ERR_POSTGRES_SYNTAX_ERROR"
-    expect(await sql.unsafe("select 1 as x;select 2 as x")).toEqual([{ x: 1 }, { x: 2 }]);
-    // return ["1,2", (await sql.unsafe("select 1 as x;select 2 as x")).map(x => x[0].x).join()];
+  test("simple query using unsafe with multiple statements", async () => {
+    const result = await sql.unsafe("select 1 as x;select 2 as x");
+    expect(result).toBeDefined();
+    expect(result.length).toEqual(2);
+    expect(result[0][0].x).toEqual(1);
+    expect(result[1][0].x).toEqual(2);
   });
-
-  // t('simple query using simple() with multiple statements', async() => {
-  //   return [
-  //     '1,2',
-  //     (await sql`select 1 as x;select 2 as x`.simple()).map(x => x[0].x).join()
-  //   ]
-  // })
 
   // t('listen and notify', async() => {
   //   const sql = postgres(options)
@@ -1506,45 +1625,47 @@ if (isDockerEnabled()) {
     expect(await sql`select 1; select 2`.catch(e => e.errno)).toBe("42601");
   });
 
-  // t('await sql() throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     await sql('select 1')
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("await sql() throws not tagged error", async () => {
+    try {
+      await sql("select 1");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().then throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     sql('select 1').then(() => { /* noop */ })
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().then throws not tagged error", async () => {
+    try {
+      await sql("select 1").then(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().catch throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     await sql('select 1')
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().catch throws not tagged error", async () => {
+    try {
+      sql("select 1").catch(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().finally throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     sql('select 1').finally(() => { /* noop */ })
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().finally throws not tagged error", async () => {
+    try {
+      sql("select 1").finally(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
   test("little bobby tables", async () => {
     const name = "Robert'); DROP TABLE students;--";

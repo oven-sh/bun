@@ -133,15 +133,18 @@ pub const FilterSet = struct {
     }
 
     const Pattern = struct {
-        codepoints: []u32,
+        pattern: []const u8,
         kind: enum {
             name,
+            /// THIS MEANS THE PATTERN IS ALLOCATED ON THE HEAP! FREE IT!
             path,
         },
         // negate: bool = false,
     };
 
-    pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd: []const u8) !FilterSet {
+    pub fn init(allocator: std.mem.Allocator, filters: []const []const u8, cwd_: []const u8) !FilterSet {
+        const cwd = cwd_;
+
         var buf: bun.PathBuffer = undefined;
         // TODO fixed buffer allocator with fallback?
         var list = try std.ArrayList(Pattern).initCapacity(allocator, filters.len);
@@ -156,22 +159,20 @@ pub const FilterSet = struct {
             const is_path = filter_utf8.len > 0 and filter_utf8[0] == '.';
             if (is_path) {
                 const parts = [_]string{filter_utf8};
-                filter_utf8 = bun.path.joinAbsStringBuf(cwd, &buf, &parts, .auto);
+                const filter_utf8_temp = try allocator.dupe(u8, bun.path.joinAbsStringBuf(cwd, &buf, &parts, .loose));
+                std.mem.replaceScalar(u8, filter_utf8_temp, '\\', '/');
+                filter_utf8 = filter_utf8_temp;
+                try list.append(.{
+                    .pattern = filter_utf8,
+                    .kind = .path,
+                });
+            } else {
+                self.has_name_filters = true;
+                try list.append(.{
+                    .pattern = filter_utf8,
+                    .kind = .name,
+                });
             }
-            var filter_utf32 = try std.ArrayListUnmanaged(u32).initCapacity(allocator, filter_utf8.len + 1);
-            var codepointer_iter = strings.UnsignedCodepointIterator.init(filter_utf8);
-            var cursor = strings.UnsignedCodepointIterator.Cursor{};
-            while (codepointer_iter.next(&cursor)) {
-                if (cursor.c == @as(u32, '\\')) {
-                    try filter_utf32.append(self.allocator, cursor.c);
-                }
-                try filter_utf32.append(self.allocator, cursor.c);
-            }
-            self.has_name_filters = self.has_name_filters or !is_path;
-            try list.append(.{
-                .codepoints = filter_utf32.items,
-                .kind = if (is_path) .path else .name,
-            });
         }
         self.filters = list.items;
         return self;
@@ -179,15 +180,16 @@ pub const FilterSet = struct {
 
     pub fn deinit(self: *FilterSet) void {
         for (self.filters) |filter| {
-            // TODO is this free correct? we're freeing only part of the array
-            self.allocator.free(filter.codepoints);
+            if (filter.kind == .path) {
+                self.allocator.free(filter.pattern);
+            }
         }
         self.allocator.free(self.filters);
     }
 
     pub fn matchesPath(self: *const FilterSet, path: []const u8) bool {
         for (self.filters) |filter| {
-            if (Glob.walk.matchImpl(filter.codepoints, path).matches()) {
+            if (Glob.walk.matchImpl(self.allocator, filter.pattern, path).matches()) {
                 return true;
             }
         }
@@ -200,7 +202,7 @@ pub const FilterSet = struct {
                 .name => name,
                 .path => path,
             };
-            if (Glob.walk.matchImpl(filter.codepoints, target).matches()) {
+            if (Glob.walk.matchImpl(self.allocator, filter.pattern, target).matches()) {
                 return true;
             }
         }

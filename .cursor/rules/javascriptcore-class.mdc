@@ -268,15 +268,15 @@ If there's a class, prototype, and constructor:
 2. Initialize the class structure in [ZigGlobalObject.cpp](mdc:src/bun.js/bindings/ZigGlobalObject.cpp) in `void GlobalObject::finishCreation(VM& vm)`
 3. Visit the class structure in visitChildren in [ZigGlobalObject.cpp](mdc:src/bun.js/bindings/ZigGlobalObject.cpp) in `void GlobalObject::visitChildrenImpl`
 
-```c++
-
+```c++#ZigGlobalObject.cpp
+void GlobalObject::finishCreation(VM& vm) {
+// ...
     m_JSStatsBigIntClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
+            // Call the function to initialize our class structure.
             Bun::initJSBigIntStatsClassStructure(init);
         });
 ```
-
-If there's only a class, use `JSC::LazyProperty<JSGlobalObject, Structure>` instead of `JSC::LazyClassStructure`. 
 
 Then, implement the function that creates the structure:
 ```c++
@@ -295,6 +295,36 @@ void setupX509CertificateClassStructure(LazyClassStructure::Initializer& init)
     init.setConstructor(constructor);
 }
 ```
+
+If there's only a class, use `JSC::LazyProperty<JSGlobalObject, Structure>` instead of `JSC::LazyClassStructure`:
+
+1. Add the `JSC::LazyProperty<JSGlobalObject, Structure>` to @ZigGlobalObject.h
+2. Initialize the class structure in @ZigGlobalObject.cpp in `void GlobalObject::finishCreation(VM& vm)`
+3. Visit the lazy property in visitChildren in @ZigGlobalObject.cpp in `void GlobalObject::visitChildrenImpl`
+void GlobalObject::finishCreation(VM& vm) {
+// ...
+   this.m_myLazyProperty.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
+        init.set(Bun::initMyStructure(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+    });
+```
+
+Then, implement the function that creates the structure:
+```c++
+Structure* setupX509CertificateStructure(JSC::VM &vm, Zig::GlobalObject* globalObject)
+{
+    // If there is a prototype:
+    auto* prototypeStructure = JSX509CertificatePrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
+    auto* prototype = JSX509CertificatePrototype::create(init.vm, init.global, prototypeStructure);
+
+    // If there is no prototype or it only has 
+
+    auto* structure = JSX509Certificate::createStructure(init.vm, init.global, prototype);
+    init.setPrototype(prototype);
+    init.setStructure(structure);
+    init.setConstructor(constructor);
+}
+```
+
 
 Then, use the structure by calling `globalObject.m_myStructureName.get(globalObject)`
 

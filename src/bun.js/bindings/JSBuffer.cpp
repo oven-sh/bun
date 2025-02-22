@@ -299,20 +299,20 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
 
 uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, uint32_t min, uint32_t max)
 {
-    if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    if (UNLIKELY(!value.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     auto value_num = value.asNumber();
-    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+    if (UNLIKELY(std::fmod(value_num, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (UNLIKELY(value_num < min || value_num > max)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
     uint32_t result = JSC::toInt32(value_num);
     RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, WTF::ASCIILiteral name, uint32_t min, uint32_t max)
 {
-    if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+    if (UNLIKELY(!value.isNumber())) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     auto value_num = value.asNumber();
-    if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+    if (UNLIKELY(std::fmod(value_num, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
+    if (UNLIKELY(value_num < min || value_num > max)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
     uint32_t result = JSC::toInt32(value_num);
     RETURN_IF_EXCEPTION(scope, {});
     return result;

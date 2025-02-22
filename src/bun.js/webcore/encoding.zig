@@ -424,7 +424,7 @@ pub const TextEncoderStreamEncoder = struct {
             return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
         }
 
-        const str: ZigString = (arguments[0].toStringOrNull(globalObject) orelse return .zero).getZigString(globalObject);
+        const str = try arguments[0].getZigString(globalObject);
 
         if (str.is16Bit()) {
             return this.encodeUTF16(globalObject, str.utf16SliceAligned());

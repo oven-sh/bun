@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../dev-server-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -295,9 +295,10 @@ devTest("react refresh cases", {
 });
 devTest("default export same-scope handling", {
   files: {
+    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
       styles: [],
-      scripts: ["index.ts"],
+      scripts: ["index.ts", "react-refresh/runtime"],
     }),
     "index.ts": `
       await import("./fixture1.ts"); 
@@ -306,6 +307,9 @@ devTest("default export same-scope handling", {
       console.log((new ((await import("./fixture4.ts")).default)).result); 
       console.log((await import("./fixture5.ts")).default);
       console.log((await import("./fixture6.ts")).default);
+      console.log((await import("./fixture7.ts")).default());
+      console.log((await import("./fixture8.ts")).default());
+      console.log((await import("./fixture9.ts")).default(false));
     `,
     "fixture1.ts": `
       const sideEffect = () => "a";
@@ -316,7 +320,7 @@ devTest("default export same-scope handling", {
     `,
     "fixture2.ts": `
       const sideEffect = () => "a";
-      export default class MOVE {
+      export default class A {
         [sideEffect()] = "TWO";
       }
     `,
@@ -343,19 +347,45 @@ devTest("default export same-scope handling", {
       export default sideEffect();
       console.log(default_export + "IX");
     `,
+    "fixture7.ts": `
+      export default function() { return "EIGHT" };
+    `,
+    "fixture8.ts": `
+      export default function MOVE() { return "NINE" };
+    `,
+    "fixture9.ts": `
+      export default function named(flag = true) { return flag ? "TEN" : "ELEVEN" };
+      console.log(named());
+    `,
   },
   async test(dev) {
     await using c = await dev.client("/", { storeHotChunks: true });
-    c.expectMessage("ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN");
+    c.expectMessage(
+      //
+      "ONE",
+      "TWO",
+      "THREE",
+      "FOUR",
+      "FIVE",
+      "SIX",
+      "SEVEN",
+      "EIGHT",
+      "NINE",
+      "TEN",
+      "ELEVEN",
+    );
 
     const filesExpectingMove = Object.entries(dev.options.files)
-      .filter(([path]) => path.includes("MOVE"))
+      .filter(([, content]) => content.includes("MOVE"))
       .map(([path]) => path);
     for (const file of filesExpectingMove) {
       await dev.writeNoChanges(file);
-      const chunk = c.getMostRecentHmrChunk();
-      expect(chunk).toMatch(/:\s*(function|class)\s*MOVE/);
-      console.log(chunk);
+      const chunk = await c.getMostRecentHmrChunk();
+      expect(chunk).toMatch(/default:\s*(function|class)\s*MOVE/);
     }
+
+    await dev.writeNoChanges("fixture7.ts");
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).toMatch(/default:\s*function/);
   },
 });

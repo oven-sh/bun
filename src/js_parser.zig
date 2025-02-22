@@ -19168,7 +19168,7 @@ fn NewParser_(
                         if (p.options.features.react_fast_refresh and switch (data.value.expr.data) {
                             .e_arrow => true,
                             .e_call => |call| switch (call.target.data) {
-                                .e_identifier => |id| id.ref == p.react_refresh.register_ref,
+                                .e_identifier => |id| id.ref == p.react_refresh.create_signature_ref,
                                 else => false,
                             },
                             else => false,

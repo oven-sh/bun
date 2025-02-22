@@ -304,7 +304,6 @@ uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObjec
     if (UNLIKELY(std::fmod(value_num, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (UNLIKELY(value_num < min || value_num > max)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
     uint32_t result = JSC::toInt32(value_num);
-    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, WTF::ASCIILiteral name, uint32_t min, uint32_t max)
@@ -314,7 +313,6 @@ uint32_t validateOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObjec
     if (UNLIKELY(std::fmod(value_num, 1.0) != 0)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (UNLIKELY(value_num < min || value_num > max)) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
     uint32_t result = JSC::toInt32(value_num);
-    RETURN_IF_EXCEPTION(scope, {});
     return result;
 }
 
@@ -2019,10 +2017,13 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     }
     if (lengthValue.isUndefined() && offsetValue.isString()) {
         encodingValue = offsetValue;
-        lengthValue = jsNumber(castedThis->byteLength());
-        offsetValue = jsNumber(0);
         offset = 0;
         length = castedThis->byteLength();
+
+        auto* str = stringValue.toString(lexicalGlobalObject);
+        auto encoding = parseEncoding(scope, lexicalGlobalObject, encodingValue, false);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
     } else {
         length = castedThis->byteLength();
         offset = validateOffset(scope, lexicalGlobalObject, offsetValue, "offset"_s, 0, length);
@@ -2030,17 +2031,14 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
         uint32_t remaining = castedThis->byteLength() - offset;
 
         if (lengthValue.isUndefined()) {
-            lengthValue = jsNumber(remaining);
             length = remaining;
         } else if (lengthValue.isString()) {
             encodingValue = lengthValue;
-            lengthValue = jsNumber(remaining);
             length = remaining;
         } else {
             length = validateOffset(scope, lexicalGlobalObject, lengthValue, "length"_s, 0, length);
             RETURN_IF_EXCEPTION(scope, {});
             if (length > remaining) {
-                lengthValue = jsNumber(remaining);
                 length = remaining;
             }
         }

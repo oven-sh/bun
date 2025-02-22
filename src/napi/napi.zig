@@ -2124,7 +2124,7 @@ pub fn fixDeadCodeElimination() void {
 }
 
 pub const NapiFinalizerTask = struct {
-    finalizer: Finalizer = undefined,
+    finalizer: Finalizer,
 
     const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
 
@@ -2137,7 +2137,13 @@ pub const NapiFinalizerTask = struct {
     }
 
     pub fn schedule(this: *NapiFinalizerTask) void {
-        this.finalizer.env.?.toJS().bunVM().event_loop.enqueueImmediateTask(JSC.Task.init(this));
+        const vm = this.finalizer.env.?.toJS().bunVM();
+        if (vm.isShuttingDown()) {
+            // Immediate tasks won't run, so we run this as a cleanup hook instead
+            vm.rareData().pushCleanupHook(vm.global, this, runAsCleanupHook);
+        } else {
+            this.finalizer.env.?.toJS().bunVM().event_loop.enqueueImmediateTask(JSC.Task.init(this));
+        }
     }
 
     pub fn deinit(this: *NapiFinalizerTask) void {
@@ -2147,5 +2153,10 @@ pub const NapiFinalizerTask = struct {
     pub fn runOnJSThread(this: *NapiFinalizerTask) void {
         this.finalizer.run();
         this.deinit();
+    }
+
+    fn runAsCleanupHook(opaque_this: ?*anyopaque) callconv(.c) void {
+        const this: *NapiFinalizerTask = @alignCast(@ptrCast(opaque_this.?));
+        this.runOnJSThread();
     }
 };

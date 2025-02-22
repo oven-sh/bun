@@ -252,7 +252,7 @@ pub const TransformTask = struct {
     }
 };
 
-fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Expr {
+fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) bun.JSError!?JSAst.Expr {
     if (value.isBoolean()) {
         return Expr{
             .data = .{
@@ -293,9 +293,9 @@ fn exportReplacementValue(value: JSValue, globalThis: *JSGlobalObject) ?JSAst.Ex
 
     if (value.isString()) {
         const str = JSAst.E.String{
-            .data = std.fmt.allocPrint(bun.default_allocator, "{}", .{value.getZigString(globalThis) catch unreachable}) catch unreachable,
+            .data = try std.fmt.allocPrint(bun.default_allocator, "{}", .{try value.getZigString(globalThis)}),
         };
-        const out = bun.default_allocator.create(JSAst.E.String) catch unreachable;
+        const out = try bun.default_allocator.create(JSAst.E.String);
         out.* = str;
         return Expr{
             .data = .{
@@ -649,14 +649,14 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 
                     const entry = replacements.getOrPutAssumeCapacity(key);
 
-                    if (exportReplacementValue(value, globalThis)) |expr| {
+                    if (try exportReplacementValue(value, globalThis)) |expr| {
                         entry.value_ptr.* = .{ .replace = expr };
                         continue;
                     }
 
                     if (value.isObject() and value.getLength(globalObject) == 2) {
                         const replacementValue = JSC.JSObject.getIndex(value, globalThis, 1);
-                        if (exportReplacementValue(replacementValue, globalThis)) |to_replace| {
+                        if (try exportReplacementValue(replacementValue, globalThis)) |to_replace| {
                             const replacementKey = JSC.JSObject.getIndex(value, globalThis, 0);
                             var slice = (try (try replacementKey.toSlice(globalThis, bun.default_allocator)).cloneIfNeeded(bun.default_allocator));
                             const replacement_name = slice.slice();

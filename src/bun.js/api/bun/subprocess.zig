@@ -787,7 +787,7 @@ pub const Subprocess = struct {
         if (message.isUndefined()) {
             return global.throwMissingArgumentsValue(&.{"message"});
         }
-        if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+        if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
             return global.throwInvalidArgumentTypeValueOneOf("message", "string, object, number, or boolean", message);
         }
 
@@ -808,7 +808,7 @@ pub const Subprocess = struct {
             }
         }
 
-        return .undefined;
+        return .false;
     }
     pub fn disconnectIPC(this: *Subprocess, nextTick: bool) void {
         const ipc_data = this.ipc() orelse return;

@@ -464,7 +464,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
     if (message.isUndefined()) {
         return globalObject.throwMissingArgumentsValue(&.{"message"});
     }
-    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
         return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
     }
 

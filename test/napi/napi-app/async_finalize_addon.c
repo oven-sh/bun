@@ -11,7 +11,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-_Static_assert(NAPI_VERSION == 8, "version is wrong");
+// "we have static_assert at home" - MSVC
+char assertion[NAPI_VERSION == 8 ? 0 : -1];
 
 #define NODE_API_CALL_CUSTOM_RETURN(env, call, retval)                         \
   do {                                                                         \

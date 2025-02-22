@@ -12,7 +12,7 @@
 #include <stdlib.h>
 
 // "we have static_assert at home" - MSVC
-char assertion[NAPI_VERSION == 8 ? 0 : -1];
+char assertion[NAPI_VERSION == 8 ? 1 : -1];
 
 #define NODE_API_CALL_CUSTOM_RETURN(env, call, retval)                         \
   do {                                                                         \

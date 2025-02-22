@@ -7,7 +7,10 @@ describe.skipIf(!isIPv6())("node:dgram", () => {
     const socket = makeSocket6();
     socket.bind(0, () => {
       socket.addMembership("ff01::1", getInterface());
-      socket.addMembership("ff02::1");
+      if (!isMacOS) {
+        // macOS seems to be iffy with automatically choosing an interface.
+        socket.addMembership("ff02::1");
+      }
     });
   });
 

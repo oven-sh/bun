@@ -1164,25 +1164,6 @@ pub const FileSystem = struct {
         ) !PathContentsPair {
             FileSystem.setMaxFd(file.handle);
 
-            // Skip the extra file.stat() call when possible
-            var size = _size orelse (file.getEndPos() catch |err| {
-                fs.readFileError(path, err);
-                return err;
-            });
-            debug("stat({d}) = {d}", .{ file.handle, size });
-
-            // Skip the pread call for empty files
-            // Otherwise will get out of bounds errors
-            // plus it's an unnecessary syscall
-            if (size == 0) {
-                if (comptime use_shared_buffer) {
-                    shared_buffer.reset();
-                    return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
-                } else {
-                    return PathContentsPair{ .path = Path.init(path), .contents = "" };
-                }
-            }
-
             var file_contents: []u8 = undefined;
 
             // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
@@ -1191,6 +1172,26 @@ pub const FileSystem = struct {
             // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
             if (use_shared_buffer) {
                 shared_buffer.reset();
+
+                // Skip the extra file.stat() call when possible
+                var size = _size orelse (file.getEndPos() catch |err| {
+                    fs.readFileError(path, err);
+                    return err;
+                });
+                debug("stat({d}) = {d}", .{ file.handle, size });
+
+                // Skip the pread call for empty files
+                // Otherwise will get out of bounds errors
+                // plus it's an unnecessary syscall
+                if (size == 0) {
+                    if (comptime use_shared_buffer) {
+                        shared_buffer.reset();
+                        return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
+                    } else {
+                        return PathContentsPair{ .path = Path.init(path), .contents = "" };
+                    }
+                }
+
                 var offset: u64 = 0;
                 try shared_buffer.growBy(size + 1);
                 shared_buffer.list.expandToCapacity();
@@ -1244,14 +1245,56 @@ pub const FileSystem = struct {
                     file_contents = try bom.removeAndConvertToUTF8WithoutDealloc(allocator, &shared_buffer.list);
                 }
             } else {
-                // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+                var initial_buf: [16384]u8 = undefined;
+                var prev_file_pos: ?u64 = null;
+
+                // Optimization: don't call stat() unless the file is big enough
+                // that we need to dynamically allocate memory to read it.
+                const initial_read = if (_size == null) brk: {
+                    var buf: []u8 = &initial_buf;
+                    prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
+                    const read_count = file.preadAll(buf, 0) catch |err| {
+                        fs.readFileError(path, err);
+                        return err;
+                    };
+                    if (read_count < initial_buf.len) {
+                        file_contents = try bun.default_allocator.dupeZ(u8, initial_buf[0..read_count]);
+                        if (strings.BOM.detect(initial_buf[0..read_count])) |bom| {
+                            debug("Convert {s} BOM", .{@tagName(bom)});
+                            file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
+                        }
+                        if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
+
+                        return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
+                    }
+
+                    break :brk buf[0..read_count];
+                } else initial_buf[0..0];
+
+                if (comptime Environment.isWindows) {
+                    if (prev_file_pos == null) {
+                        prev_file_pos = try file.getPos();
+                    }
+                }
+
+                // Skip the extra file.stat() call when possible
+                const size = _size orelse (file.getEndPos() catch |err| {
+                    fs.readFileError(path, err);
+                    return err;
+                });
+                debug("stat({d}) = {d}", .{ file.handle, size });
+
                 var buf = try allocator.alloc(u8, size + 1);
+                @memcpy(buf[0..initial_read.len], initial_read);
+
+                if (size == 0) {
+                    return PathContentsPair{ .path = Path.init(path), .contents = "" };
+                }
 
                 // stick a zero at the end
                 buf[size] = 0;
 
-                const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                const read_count = file.preadAll(buf, 0) catch |err| {
+                const read_count = file.preadAll(buf, initial_read.len) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };

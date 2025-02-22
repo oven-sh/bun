@@ -1257,13 +1257,17 @@ pub const FileSystem = struct {
                         fs.readFileError(path, err);
                         return err;
                     };
-                    if (read_count < initial_buf.len) {
-                        file_contents = try bun.default_allocator.dupeZ(u8, initial_buf[0..read_count]);
-                        if (strings.BOM.detect(initial_buf[0..read_count])) |bom| {
+                    if (read_count + 1 < buf.len) {
+                        var allocation = try allocator.alloc(u8, read_count + 1);
+                        @memcpy(allocation[0..read_count], buf[0..read_count]);
+                        allocation[read_count] = 0;
+                        file_contents = allocation[0..read_count];
+
+                        if (strings.BOM.detect(file_contents)) |bom| {
                             debug("Convert {s} BOM", .{@tagName(bom)});
                             file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
                         }
-                        if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
+                        if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
 
                         return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
                     }
@@ -1294,12 +1298,12 @@ pub const FileSystem = struct {
                 // stick a zero at the end
                 buf[size] = 0;
 
-                const read_count = file.preadAll(buf, initial_read.len) catch |err| {
+                const read_count = file.preadAll(buf[initial_read.len..], initial_read.len) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
-                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                file_contents = buf[0..read_count];
+                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
+                file_contents = buf[0 .. read_count + initial_read.len];
                 debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
                 if (strings.BOM.detect(file_contents)) |bom| {

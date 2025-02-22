@@ -444,12 +444,12 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Expected 1 argument, got {}", .{arguments.len});
         }
 
-        var addr: std.posix.sockaddr.storage = undefined;
+        var addr = std.mem.zeroes(std.posix.sockaddr.storage);
         if (!parseAddr(this, globalThis, JSC.jsNumber(0), arguments[0], &addr)) {
             return globalThis.throwValue(bun.JSC.Maybe(void).errnoSys(@as(i32, @intCast(@intFromEnum(std.posix.E.INVAL))), .setsockopt).?.toJS(globalThis));
         }
 
-        var interface: std.posix.sockaddr.storage = undefined;
+        var interface = std.mem.zeroes(std.posix.sockaddr.storage);
 
         const res = if (arguments.len > 1 and parseAddr(this, globalThis, JSC.jsNumber(0), arguments[1], &interface)) blk: {
             if (addr.family != interface.family) {

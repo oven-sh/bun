@@ -78,6 +78,7 @@ const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
+const kConnectOptions = Symbol("connect-options");
 
 function endNT(socket, callback, err) {
   socket.$end();
@@ -130,6 +131,20 @@ function writeAfterFIN(chunk, encoding, cb) {
   return false;
 }
 
+function onConnectEnd() {
+  if (!this._hadError && this.secureConnecting) {
+    const options = this[kConnectOptions];
+    this._hadError = true;
+    const error = new ConnResetException(
+      "Client network socket disconnected before secure TLS connection was established",
+    );
+    error.path = options.path;
+    error.host = options.host;
+    error.port = options.port;
+    error.localAddress = options.localAddress;
+    this.destroy(error);
+  }
+}
 var SocketClass;
 const Socket = (function (InternalSocket) {
   SocketClass = InternalSocket;
@@ -162,9 +177,11 @@ const Socket = (function (InternalSocket) {
       },
       drain: Socket.#Drain,
       end: Socket.#End,
-      error(socket, error) {
+      error(socket, error, ignoreHadError) {
         const self = socket.data;
         if (!self) return;
+        if (self._hadError && !ignoreHadError) return;
+        self._hadError = true;
 
         const callback = self.#writeCallback;
         if (callback) {
@@ -211,6 +228,10 @@ const Socket = (function (InternalSocket) {
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
         if (!self) return;
+        if (!success && verifyError?.code === "ECONNRESET") {
+          // will be handled in onConnectEnd
+          return;
+        }
 
         self._securePending = false;
         self.secureConnecting = false;
@@ -238,6 +259,7 @@ const Socket = (function (InternalSocket) {
           self.authorized = true;
         }
         self.emit("secureConnect", verifyError);
+        self.removeListener("end", onConnectEnd);
       },
       timeout(socket) {
         const self = socket.data;
@@ -285,7 +307,7 @@ const Socket = (function (InternalSocket) {
       self.connecting = false;
       if (callback) {
         const writeChunk = self._pendingData;
-        if (!writeChunk || socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+        if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
           self._pendingData = self.#writeCallback = null;
           callback(null);
         } else {
@@ -301,8 +323,18 @@ const Socket = (function (InternalSocket) {
       close(socket, err) {
         const data = this.data;
         if (!data) return;
-        Socket.#Handlers.close(socket, err);
+
         data.server[bunSocketServerConnections]--;
+        {
+          if (!data.#closed) {
+            data.#closed = true;
+            //socket cannot be used after close
+            detachSocket(data);
+            Socket.#EmitEndNT(data, err);
+            data.data = null;
+          }
+        }
+
         data.server._emitCloseIfDrained();
       },
       end(socket) {
@@ -356,6 +388,15 @@ const Socket = (function (InternalSocket) {
 
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
+        if (!success && verifyError?.code === "ECONNRESET") {
+          const err = new ConnResetException("socket hang up");
+          self.emit("_tlsError", err);
+          self.server.emit("tlsClientError", err, self);
+          self._hadError = true;
+          // error before handshake on the server side will only be emitted using tlsClientError
+          self.destroy();
+          return;
+        }
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
@@ -394,12 +435,35 @@ const Socket = (function (InternalSocket) {
       error(socket, error) {
         const data = this.data;
         if (!data) return;
-        Socket.#Handlers.error(socket, error);
-        data.emit("error", error);
+
+        if (data._hadError) return;
+        data._hadError = true;
+        const bunTLS = this[bunTlsSymbol];
+
+        if (typeof bunTLS === "function") {
+          // Destroy socket if error happened before handshake's finish
+          if (!data._secureEstablished) {
+            data.destroy(error);
+          } else if (
+            data.isServer &&
+            data._rejectUnauthorized &&
+            /peer did not return a certificate/.test(error?.message)
+          ) {
+            // Ignore server's authorization errors
+            data.destroy();
+          } else {
+            // Emit error
+            data._emitTLSError(error);
+            this.emit("_tlsError", error);
+            this.server.emit("tlsClientError", error, data);
+            Socket.#Handlers.error(socket, error, true);
+            return;
+          }
+        }
+        Socket.#Handlers.error(socket, error, true);
         data.server.emit("clientError", error, data);
       },
       timeout: Socket.#Handlers.timeout,
-      connectError: Socket.#Handlers.connectError,
       drain: Socket.#Handlers.drain,
       binaryType: "buffer",
     };
@@ -417,7 +481,7 @@ const Socket = (function (InternalSocket) {
     _pendingData;
     _pendingEncoding; // for compatibility
     #pendingRead;
-
+    _hadError = false;
     isServer = false;
     _handle = null;
     _parent;
@@ -427,6 +491,7 @@ const Socket = (function (InternalSocket) {
     pauseOnConnect = false;
     #upgraded;
     #unrefOnConnected = false;
+
     #handlers = Socket.#Handlers;
     [kSetNoDelay];
     [kSetKeepAlive];
@@ -675,6 +740,9 @@ const Socket = (function (InternalSocket) {
         this._securePending = true;
 
         if (connectListener) this.on("secureConnect", connectListener);
+        this[kConnectOptions] = options;
+
+        this.prependListener("end", onConnectEnd);
       } else if (connectListener) this.on("connect", connectListener);
 
       // start using existing connection
@@ -820,15 +888,13 @@ const Socket = (function (InternalSocket) {
     _destroy(err, callback) {
       this.connecting = false;
       const { ending } = this._writableState;
-      if (!err && this.secureConnecting && !this.isServer) {
-        this.secureConnecting = false;
-        err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
-      }
+
       // lets make sure that the writable side is closed
       if (!ending) {
         // at this state destroyed will be true but we need to close the writable side
         this._writableState.destroyed = false;
         this.end();
+
         // we now restore the destroyed flag
         this._writableState.destroyed = true;
       }
@@ -1054,7 +1120,6 @@ const Socket = (function (InternalSocket) {
         callback($ERR_SOCKET_CLOSED("Socket is closed"));
         return false;
       }
-
       const success = socket.$write(chunk, encoding);
       this[kBytesWritten] = socket.bytesWritten;
       if (success) {

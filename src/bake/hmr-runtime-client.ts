@@ -185,7 +185,7 @@ const ws = initWebSocket(
 }
 
 window.addEventListener("error", event => {
-  onRuntimeError(event.error, true, true);
+  onRuntimeError(event.error, true, false);
 });
 window.addEventListener("unhandledrejection", event => {
   onRuntimeError(event.reason, true, true);

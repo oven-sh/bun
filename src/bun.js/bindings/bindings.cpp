@@ -5285,13 +5285,6 @@ void JSC__JSString__iterator(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, voi
     jsstring_iterator* iter = (jsstring_iterator*)arg2;
     arg0->value(iter);
 }
-void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
-{
-    JSC::GCDeferralContext deferralContext(reinterpret_cast<JSC__VM&>(vm));
-    JSC::DisallowGC disallowGC;
-
-    callback(ctx);
-}
 
 void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
 {

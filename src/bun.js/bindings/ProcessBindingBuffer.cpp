@@ -13,7 +13,7 @@ using namespace JSC;
             auto& vm = JSC::getVM(lexicalGlobalObject);                                                                                           \
             auto throwScope = DECLARE_THROW_SCOPE(vm);                                                                                            \
             auto prelude = "process.binding('buffer')."_s;                                                                                        \
-            auto name = WTF::ASCIILiteral::fromLiteralUnsafe(#str);                                                                               \
+            auto name = #str##_s;                                                                                                                 \
             auto finale = " is not implemented in Bun. If that breaks something, please file an issue and include a reproducible code sample."_s; \
             auto message = makeString(prelude, name, finale);                                                                                     \
             throwScope.throwException(lexicalGlobalObject, createError(lexicalGlobalObject, message));                                            \

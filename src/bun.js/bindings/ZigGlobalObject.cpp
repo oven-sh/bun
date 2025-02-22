@@ -164,6 +164,7 @@
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
+#include "ProcessBindingFs.h"
 
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
@@ -260,13 +261,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useSharedArrayBuffer() = true;
         JSC::Options::useJIT() = true;
         JSC::Options::useBBQJIT() = true;
-        JSC::Options::useUint8ArrayBase64Methods() = true;
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useV8DateParser() = true;
         JSC::Options::evalMode() = evalMode;
-        JSC::Options::usePromiseTryMethod() = true;
-        JSC::Options::useRegExpEscape() = true;
         JSC::Options::useIteratorHelpers() = true;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
@@ -3244,6 +3242,14 @@ void GlobalObject::finishCreation(VM& vm)
                     ProcessBindingConstants::createStructure(init.vm, init.owner)));
         });
 
+    m_processBindingFs.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingFs::create(
+                    init.vm,
+                    ProcessBindingFs::createStructure(init.vm, init.owner)));
+        });
+
     m_importMetaObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
@@ -3368,6 +3374,19 @@ void GlobalObject::finishCreation(VM& vm)
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
+
+    m_statValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
+        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
+    });
+    m_bigintStatValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
+        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
+    });
+    m_statFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
+        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
+    m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
+        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
 
     configureNodeVM(vm, this);
 
@@ -3880,6 +3899,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_esmRegistryMap.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_internalModuleRegistry.visit(visitor);
+    thisObject->m_processBindingBuffer.visit(visitor);
+    thisObject->m_processBindingConstants.visit(visitor);
+    thisObject->m_processBindingFs.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferClassStructure.visit(visitor);
@@ -3950,6 +3972,10 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBunRequestStructure.visit(visitor);
     thisObject->m_JSBunRequestParamsPrototype.visit(visitor);
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
+    thisObject->m_statValues.visit(visitor);
+    thisObject->m_bigintStatValues.visit(visitor);
+    thisObject->m_statFsValues.visit(visitor);
+    thisObject->m_bigintStatFsValues.visit(visitor);
 
     thisObject->m_nodeErrorCache.visit(visitor);
 

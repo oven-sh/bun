@@ -252,6 +252,7 @@ public:
 
     JSObject* processBindingBuffer() const { return m_processBindingBuffer.getInitializedOnMainThread(this); }
     JSObject* processBindingConstants() const { return m_processBindingConstants.getInitializedOnMainThread(this); }
+    JSObject* processBindingFs() const { return m_processBindingFs.getInitializedOnMainThread(this); }
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
@@ -577,6 +578,7 @@ public:
     LazyProperty<JSGlobalObject, Bun::InternalModuleRegistry> m_internalModuleRegistry;
     LazyProperty<JSGlobalObject, JSObject> m_processBindingBuffer;
     LazyProperty<JSGlobalObject, JSObject> m_processBindingConstants;
+    LazyProperty<JSGlobalObject, JSObject> m_processBindingFs;
     LazyProperty<JSGlobalObject, Structure> m_importMetaObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_asyncBoundFunctionStructure;
     LazyProperty<JSGlobalObject, JSC::JSObject> m_JSDOMFileConstructor;
@@ -599,6 +601,11 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_ServerRouteListStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSBunRequestStructure;
     LazyProperty<JSGlobalObject, JSObject> m_JSBunRequestParamsPrototype;
+
+    LazyProperty<JSGlobalObject, JSFloat64Array> m_statValues;
+    LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatValues;
+    LazyProperty<JSGlobalObject, JSFloat64Array> m_statFsValues;
+    LazyProperty<JSGlobalObject, JSBigInt64Array> m_bigintStatFsValues;
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 

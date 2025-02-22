@@ -14,21 +14,25 @@ if (!codegenRoot) {
 const base_dir = join(import.meta.dirname, "../bake");
 process.chdir(base_dir); // to make bun build predictable in development
 
-function convertZigEnum(zig: string) {
-  const startTrigger = "\npub const MessageId = enum(u8) {";
-  const start = zig.indexOf(startTrigger) + startTrigger.length;
-  const endTrigger = /\n    pub (inline )?fn |\n};/g;
-  const end = zig.slice(start).search(endTrigger) + start;
-  const enumText = zig.slice(start, end);
-  const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
-    return `\n  ${name} = ${value.charCodeAt(0)},`;
-  });
-  return `/** Generated from DevServer.zig */\nexport const enum MessageId {${values}}`;
+function convertZigEnum(zig: string, names: string[]) {
+  let output = "/** Generated from DevServer.zig */\n";
+  for (const name of names) {
+    const startTrigger = `\npub const ${name} = enum(u8) {`;
+    const start = zig.indexOf(startTrigger) + startTrigger.length;
+    const endTrigger = /\n    pub (inline )?fn |\n};/g;
+    const end = zig.slice(start).search(endTrigger) + start;
+    const enumText = zig.slice(start, end);
+    const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
+      return `\n  ${name} = ${value.charCodeAt(0)},`;
+    });
+    output += `export const enum ${name} {${values}}\n`;
+  }
+  return output;
 }
 
 async function run() {
   const devServerZig = readFileSync(join(base_dir, "DevServer.zig"), "utf-8");
-  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig));
+  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig, ["IncomingMessageId", "MessageId"]));
 
   const results = await Promise.allSettled(
     ["client", "server", "error"].map(async file => {
@@ -167,6 +171,7 @@ async function run() {
       console.error(`Errors while bundling Bake ${kind.map(x => map[x]).join(" and ")}:`);
       console.error(err);
     }
+    process.exit(1);
   } else {
     console.log("-> bake.client.js, bake.server.js, bake.error.js");
 

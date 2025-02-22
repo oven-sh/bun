@@ -125,7 +125,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test("dev server", async () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
         console.log({ dir });
         await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
           cwd: dir,

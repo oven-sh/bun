@@ -492,8 +492,11 @@ public:
 
     void callFinalizer()
     {
-        finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
-        finalizer.clear();
+        // Calling the finalizer may delete `this`, so we have to do state changes on `this` before
+        // calling the finalizer
+        Bun::NapiFinalizer saved_finalizer = this->finalizer;
+        this->finalizer.clear();
+        saved_finalizer.call(env, nativeObject, !env->mustDeferFinalizers() || !env->inGC());
     }
 
     ~NapiRef()

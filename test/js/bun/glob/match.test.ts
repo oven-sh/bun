@@ -120,42 +120,64 @@ describe("Glob.match", () => {
     glob = new Glob("{**/a,**/b}");
     expect(glob.match("b")).toBeTrue();
 
-    const tests = [
-      { pattern: "{src,extensions}/**/test/**/{fixtures,browser,common}/**/*.{ts,js}", expected: 726 },
-      { pattern: "{extensions,src}/**/{media,images,icons}/**/*.{svg,png,gif,jpg}", expected: 119 },
+    const fixtures = [
+      {
+        pattern: "{src,extensions}/**/test/**/{fixtures,browser,common}/**/*.{ts,js}",
+        expectedMatches: "matched-0.txt",
+      },
+      { pattern: "{extensions,src}/**/{media,images,icons}/**/*.{svg,png,gif,jpg}", expectedMatches: "matched-1.txt" },
       {
         pattern: "{.github,build,test}/**/{workflows,azure-pipelines,integration,smoke}/**/*.{yml,yaml,json}",
-        expected: 53,
+        expectedMatches: "matched-2.txt",
       },
       {
         pattern: "src/vs/{base,editor,platform,workbench}/test/{browser,common,node}/**/[a-z]*[tT]est.ts",
-        expected: 224,
+        expectedMatches: "matched-3.txt",
       },
-      { pattern: "src/vs/workbench/{contrib,services}/**/*{Editor,Workspace,Terminal}*.ts", expected: 155 },
-      { pattern: "{extensions,src}/**/{markdown,json,javascript,typescript}/**/*.{ts,json}", expected: 19 },
+      {
+        pattern: "src/vs/workbench/{contrib,services}/**/*{Editor,Workspace,Terminal}*.ts",
+        expectedMatches: "matched-4.txt",
+      },
+      {
+        pattern: "{extensions,src}/**/{markdown,json,javascript,typescript}/**/*.{ts,json}",
+        expectedMatches: "matched-5.txt",
+      },
       {
         pattern: "**/{electron-sandbox,electron-main,browser,node}/**/{*[sS]ervice*,*[cC]ontroller*}.ts",
-        expected: 419,
+        expectedMatches: "matched-6.txt",
       },
       {
         pattern: "{src,extensions}/**/{common,browser,electron-sandbox}/**/*{[cC]ontribution,[sS]ervice}.ts",
-        expected: 586,
+        expectedMatches: "matched-7.txt",
       },
-      { pattern: "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts", expected: 95 },
-      { pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts", expected: 3 },
+      {
+        pattern: "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts",
+        expectedMatches: "matched-8.txt",
+      },
+      {
+        pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts",
+        expectedMatches: "matched-9.txt",
+      },
     ];
 
-    const filepaths = (await Bun.file(join(import.meta.dir, "filelist.txt")).text()).split("\n");
+    const allFilePaths = (
+      await Bun.file(join(import.meta.dir, "..", "..", "..", "fixtures", "glob", "filelist.txt")).text()
+    ).split("\n");
 
-    for (const { pattern, expected } of tests) {
+    for (const { pattern, expectedMatches } of fixtures) {
+      const shouldMatch = (
+        await Bun.file(join(import.meta.dir, "..", "..", "..", "fixtures", "glob", `${expectedMatches}`)).text()
+      ).split("\n");
+
       glob = new Glob(pattern);
-      let count = 0;
-      for (const filepath of filepaths) {
+      let matched: string[] = [];
+      for (const filepath of allFilePaths) {
         if (glob.match(filepath)) {
-          count++;
+          matched.push(filepath);
         }
       }
-      expect(count).toBe(expected);
+
+      expect(matched).toEqual(shouldMatch);
     }
   });
 

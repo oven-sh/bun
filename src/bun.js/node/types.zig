@@ -111,16 +111,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
         }
 
         /// Unwrap the value if it is `result` or use the provided `default_value`
-        ///
-        /// `default_value` must be comptime known so the optimizer can optimize this branch out
-        pub inline fn unwrapOr(this: @This(), comptime default_value: ReturnType) ReturnType {
-            return switch (this) {
-                .result => |v| v,
-                .err => default_value,
-            };
-        }
-
-        pub inline fn unwrapOrNoOptmizations(this: @This(), default_value: ReturnType) ReturnType {
+        pub inline fn unwrapOr(this: @This(), default_value: ReturnType) ReturnType {
             return switch (this) {
                 .result => |v| v,
                 .err => default_value,
@@ -1358,7 +1349,7 @@ pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue) bun.JSError!?Mode
         // digit (5 in the example), specifies the permissions for others.
 
         var zig_str = JSC.ZigString.Empty;
-        value.toZigString(&zig_str, ctx);
+        try value.toZigString(&zig_str, ctx);
         var slice = zig_str.slice();
         if (strings.hasPrefix(slice, "0o")) {
             slice = slice[2..];
@@ -1541,7 +1532,7 @@ pub const FileSystemFlags = enum(c_int) {
 
         const jsType = val.jsType();
         if (jsType.isStringLike()) {
-            const str = val.getZigString(ctx);
+            const str = try val.getZigString(ctx);
             if (str.isEmpty()) {
                 return ctx.throwInvalidArguments("Expected flags to be a non-empty string. Learn more at https://nodejs.org/api/fs.html#fs_file_system_flags", .{});
             }

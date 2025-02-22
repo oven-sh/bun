@@ -31,8 +31,8 @@ pub const Options = struct {
 
 /// Used for all server-wide allocations. In debug, this shows up in
 /// a separate named heap. Thread-safe.
-// TODO: make this an "AllocationScope" (debug memory tool i've yet to write)
 allocator: Allocator,
+allocation_scope: if (AllocationScope.enabled) AllocationScope else void,
 /// Absolute path to project root directory. For the HMR
 /// runtime, its module IDs are strings relative to this.
 root: []const u8,
@@ -309,9 +309,8 @@ pub const RouteBundle = struct {
         }
     }
 
-    /// Does NOT count @sizeOf(RouteBundle)
     pub fn memoryCost(self: *const RouteBundle) usize {
-        var cost: usize = 0;
+        var cost: usize = @sizeOf(RouteBundle);
         if (self.client_bundle) |bundle| cost += bundle.memoryCost();
         switch (self.data) {
             .framework => {
@@ -346,7 +345,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
     const dev = bun.create(allocator, DevServer, .{
-        .allocator = allocator,
+        .allocator = undefined,
+        .allocation_scope = if (AllocationScope.enabled) AllocationScope.init(allocator),
 
         .root = options.root,
         .vm = options.vm,
@@ -402,6 +402,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .router = undefined,
         .watcher_atomics = undefined,
     });
+    dev.allocator = if (AllocationScope.enabled) dev.allocation_scope.allocator() else allocator;
     const global = dev.vm.global;
     errdefer allocator.destroy(dev);
 
@@ -442,14 +443,10 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.server_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     dev.client_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
 
-    dev.client_transpiler.options.barrel_files = try @import("../runtime.zig").Runtime.Features.getDefaultBarrelFiles(allocator);
-    dev.server_transpiler.options.barrel_files = dev.client_transpiler.options.barrel_files;
-
     if (separate_ssr_graph) {
         dev.framework.initTranspiler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler, &dev.bundler_options.ssr) catch |err|
             return global.throwError(err, generic_action);
         dev.ssr_transpiler.options.dev_server = dev;
-        dev.ssr_transpiler.options.barrel_files = dev.client_transpiler.options.barrel_files;
         dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     }
 
@@ -603,6 +600,7 @@ pub fn deinit(dev: *DevServer) void {
     // TODO: Currently deinit is not implemented, as it was assumed to be alive for
     // the remainder of this process' lifespan. This isn't always true.
     const allocator = dev.allocator;
+    _ = allocator;
 
     // _ = VoidFieldTypes(DevServer){
     //     // has no action taken
@@ -705,7 +703,8 @@ pub fn deinit(dev: *DevServer) void {
     //     },
     // };
 
-    allocator.destroy(dev);
+    // dev.allocation_scope.deinit();
+    bun.destroy(dev);
     // if (bun.Environment.isDebug)
     //     bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
 }
@@ -748,8 +747,9 @@ pub fn memoryCost(dev: *DevServer) usize {
         .client_transpiler = {},
         .ssr_transpiler = {},
         .log = {},
-        .framework = {}, // TODO: maybe
-        .bundler_options = {}, // TODO: maybe
+        .framework = {},
+        .bundler_options = {},
+        .allocation_scope = {},
 
         // to be counted.
         .root = {
@@ -1409,7 +1409,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
 
     const payload_size = bundled_html.len +
         ("<link rel=\"stylesheet\" href=\"" ++ asset_prefix ++ "/0000000000000000.css\">").len * css_ids.len +
-        "<script type=\"module\" crossorigin async src=\"\"></script>".len +
+        "<script type=\"module\" crossorigin src=\"\"></script>".len +
         client_prefix.len + "/".len +
         display_name.len +
         "-0000000000000000.js".len;
@@ -1423,9 +1423,8 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
         array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&name), .lower));
         array.appendSliceAssumeCapacity(".css\">");
     }
-    array.appendSliceAssumeCapacity(before_body_end);
-    // Insert the client script tag before "</body>"
-    array.appendSliceAssumeCapacity("<script type=\"module\" crossorigin async src=\"");
+
+    array.appendSliceAssumeCapacity("<script type=\"module\" crossorigin src=\"");
     array.appendSliceAssumeCapacity(client_prefix);
     array.appendSliceAssumeCapacity("/");
     array.appendSliceAssumeCapacity(display_name);
@@ -1433,6 +1432,9 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&@as(u32, route_bundle_index.get())), .lower));
     array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&route_bundle.client_script_generation), .lower));
     array.appendSliceAssumeCapacity(".js\"></script>");
+
+    array.appendSliceAssumeCapacity(before_body_end);
+    // DevServer used to put the script tag before the body end, but to match the regular bundler it does not do this.
     array.appendSliceAssumeCapacity(after_body_end);
     assert(array.items.len == array.capacity); // incorrect memory allocation size
     return array.items;
@@ -1638,6 +1640,7 @@ fn startAsyncBundle(
     );
     bv2.bun_watcher = dev.bun_watcher;
     bv2.asynchronous = true;
+
     {
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
@@ -2463,12 +2466,7 @@ pub fn finalizeBundle(
                 Output.enableBuffering();
             }
 
-            if (debug.isVisible()) {
-                Output.prettyErrorln("<d>DevServer: {}, RSS: {}<r>", .{
-                    bun.fmt.size(dev.memoryCost(), .{}),
-                    bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
-                });
-            }
+            dev.printMemoryLine();
 
             dev.bundles_since_last_error += 1;
             if (dev.bundles_since_last_error > 1) {
@@ -2476,12 +2474,7 @@ pub fn finalizeBundle(
             }
         } else {
             dev.bundles_since_last_error = 0;
-            if (debug.isVisible()) {
-                Output.prettyErrorln("<d>DevServer: {}, RSS: {}<r>", .{
-                    bun.fmt.size(dev.memoryCost(), .{}),
-                    bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
-                });
-            }
+            dev.printMemoryLine();
         }
 
         Output.prettyError("<green>{s} in {d}ms<r>", .{
@@ -2852,6 +2845,15 @@ fn sendBuiltInNotFound(resp: anytype) void {
     const message = "404 Not Found";
     resp.writeStatus("404 Not Found");
     resp.end(message, true);
+}
+
+fn printMemoryLine(dev: *DevServer) void {
+    if (!debug.isVisible()) return;
+    Output.prettyErrorln("<d>DevServer tracked {}, measured: {}, process: {}<r>", .{
+        bun.fmt.size(dev.memoryCost(), .{}),
+        bun.fmt.size(dev.allocation_scope.state.total_memory_allocated, .{}),
+        bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
+    });
 }
 
 const FileKind = enum(u2) {
@@ -7228,3 +7230,4 @@ const SourceMap = bun.sourcemap;
 const VLQ = SourceMap.VLQ;
 
 const StringJoiner = bun.StringJoiner;
+const AllocationScope = bun.AllocationScope;

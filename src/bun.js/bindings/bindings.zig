@@ -789,10 +789,6 @@ pub const ZigString = extern struct {
         return out;
     }
 
-    pub fn from(slice_: JSC.C.JSValueRef, ctx: JSC.C.JSContextRef) ZigString {
-        return JSC.JSValue.fromRef(slice_).getZigString(ctx.ptr());
-    }
-
     pub fn from16Slice(slice_: []const u16) ZigString {
         return from16(slice_.ptr, slice_.len);
     }
@@ -1830,7 +1826,7 @@ pub const SystemError = extern struct {
     };
 };
 
-pub const Sizes = @import("../bindings/sizes.zig");
+pub const Sizes = @import("./sizes.zig");
 
 pub const JSUint8Array = opaque {
     pub const name = "Uint8Array_alias";
@@ -3997,7 +3993,6 @@ pub const JSValue = enum(i64) {
 
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
-            ZigString => this.getZigString(globalThis),
             bool => this.toBoolean(),
             f64 => {
                 if (this.isDouble()) {
@@ -4873,8 +4868,10 @@ pub const JSValue = enum(i64) {
         return cppFn("toZigException", .{ this, global, exception });
     }
 
-    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void {
-        return cppFn("toZigString", .{ this, out, global });
+    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) error{JSError}!void {
+        const str = cppFn("toZigString", .{ this, out, global });
+        if (global.hasException()) return error.JSError;
+        return str;
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
@@ -4941,9 +4938,9 @@ pub const JSValue = enum(i64) {
     }
 
     /// Deprecated: replace with 'toBunString2'
-    pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
+    pub fn getZigString(this: JSValue, global: *JSGlobalObject) bun.JSError!ZigString {
         var str = ZigString.init("");
-        this.toZigString(&str, global);
+        try this.toZigString(&str, global);
         return str;
     }
 

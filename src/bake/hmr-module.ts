@@ -34,8 +34,6 @@ interface DepEntry {
   _expectedImports: string[] | undefined;
 }
 
-let dynamicImportWithOpts: any;
-
 /**
  * The expression `import(a,b)` is not supported in all browsers, most notably
  * in Mozilla Firefox. It is lazily evaluated, and will throw a SyntaxError

@@ -1,8 +1,8 @@
-import { sql, SQL, randomUUIDv7 } from "bun";
+import { sql, SQL, randomUUIDv7, password } from "bun";
 const postgres = (...args) => new sql(...args);
 import { expect, test, mock, beforeAll, afterAll, describe } from "bun:test";
 import { $ } from "bun";
-import { bunExe, isCI, withoutAggressiveGC, isLinux } from "harness";
+import { bunExe, isCI, withoutAggressiveGC, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
 
 import { exec, execSync } from "child_process";
@@ -12,6 +12,14 @@ const execAsync = promisify(exec);
 import net from "net";
 const dockerCLI = Bun.which("docker") as string;
 
+const dir = tempDirWithFiles("sql-test", {
+  "select-param.sql": `select $1 as x`,
+  "select.sql": `select 1 as x`,
+});
+
+function rel(filename: string) {
+  return path.join(dir, filename);
+}
 async function findRandomPort() {
   return new Promise((resolve, reject) => {
     // Create a server to listen on a random port
@@ -1045,21 +1053,65 @@ if (isDockerEnabled()) {
     ];
   });
 
-  // t('Support dynamic password function', async() => {
-  //   return [true, (await postgres({
-  //     ...options,
-  //     ...login_scram,
-  //     pass: () => 'bun_sql_test_scram'
-  //   })`select true as x`)[0].x]
-  // })
+  test("Support dynamic password function", async () => {
+    await using sql = postgres({ ...options, ...login_scram, password: () => "bun_sql_test_scram", max: 1 });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
 
-  // t('Support dynamic async password function', async() => {
-  //   return [true, (await postgres({
-  //     ...options,
-  //     ...login_scram,
-  //     pass: () => Promise.resolve('bun_sql_test_scram')
-  //   })`select true as x`)[0].x]
-  // })
+  test("Support dynamic async resolved password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      password: () => Promise.resolve("bun_sql_test_scram"),
+      max: 1,
+    });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+
+  test("Support dynamic async password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      max: 1,
+      password: async () => {
+        await Bun.sleep(10);
+        return "bun_sql_test_scram";
+      },
+    });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+  test("Support dynamic async rejected password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      password: () => Promise.reject(new Error("password error")),
+      max: 1,
+    });
+    try {
+      await sql`select true as x`;
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.message).toBe("password error");
+    }
+  });
+  test("Support dynamic async password function that throws", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      max: 1,
+      password: async () => {
+        await Bun.sleep(10);
+        throw new Error("password error");
+      },
+    });
+    try {
+      await sql`select true as x`;
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("password error");
+    }
+  });
 
   // t('Point type', async() => {
   //   const sql = postgres({
@@ -1097,37 +1149,34 @@ if (isDockerEnabled()) {
   //   return [30, (await sql`select x from test`)[0].x[1][1], await sql`drop table test`]
   // })
 
-  // t('sql file', async() =>
-  //   [1, (await sql.file(rel('select.sql')))[0].x]
-  // )
+  test("sql file", async () => {
+    await using sql = postgres(options);
+    expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
+  });
 
-  // t('sql file has forEach', async() => {
-  //   let result
-  //   await sql
-  //     .file(rel('select.sql'), { cache: false })
-  //     .forEach(({ x }) => result = x)
+  test("sql file throws", async () => {
+    await using sql = postgres(options);
+    expect(await sql.file(rel("selectomondo.sql")).catch(x => x.code)).toBe("ENOENT");
+  });
+  test("Parameters in file", async () => {
+    const result = await sql.file(rel("select-param.sql"), ["hello"]);
+    return expect(result[0].x).toBe("hello");
+  });
 
-  //   return [1, result]
-  // })
+  // this test passes but it's not clear where cached is implemented in postgres.js and this also doesn't seem to be a valid test
+  // test("sql file cached", async () => {
+  //   await sql.file(rel("select.sql"));
+  //   await delay(20);
 
-  // t('sql file throws', async() =>
-  //   ['ENOENT', (await sql.file(rel('selectomondo.sql')).catch(x => x.code))]
-  // )
+  //   return [1, (await sql.file(rel("select.sql")))[0].x];
+  // });
+  // we dont have .forEach yet
+  // test("sql file has forEach", async () => {
+  //   let result;
+  //   await sql.file(rel("select.sql"), { cache: false }).forEach(({ x }) => (result = x));
 
-  // t('sql file cached', async() => {
-  //   await sql.file(rel('select.sql'))
-  //   await delay(20)
-
-  //   return [1, (await sql.file(rel('select.sql')))[0].x]
-  // })
-
-  // t('Parameters in file', async() => {
-  //   const result = await sql.file(
-  //     rel('select-param.sql'),
-  //     ['hello']
-  //   )
-  //   return ['hello', result[0].x]
-  // })
+  //   return expect(result).toBe(1);
+  // });
 
   test("Connection ended promise", async () => {
     const sql = postgres(options);

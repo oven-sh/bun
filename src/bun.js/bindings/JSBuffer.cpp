@@ -613,6 +613,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
     Bun::V::validateNumber(scope, lexicalGlobalObject, lengthValue, "size"_s, jsNumber(0), jsNumber(Bun::Buffer::kMaxLength));
     RETURN_IF_EXCEPTION(scope, {});
     size_t length = lengthValue.toLength(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (length == 0) {
         return JSValue::encode(createEmptyBuffer(lexicalGlobalObject));

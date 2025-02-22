@@ -4868,7 +4868,7 @@ pub const JSValue = enum(i64) {
         return cppFn("toZigException", .{ this, global, exception });
     }
 
-    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) bun.JSError!void {
+    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) error{JSError}!void {
         const str = cppFn("toZigString", .{ this, out, global });
         if (global.hasException()) return error.JSError;
         return str;

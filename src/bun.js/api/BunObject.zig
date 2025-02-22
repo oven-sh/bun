@@ -2824,9 +2824,12 @@ pub const Crypto = struct {
         }
 
         fn final(self: *CryptoHasherZig, output_digest_slice: []u8) []u8 {
-            inline for (algo_map) |item| {
-                if (self.algorithm == @field(EVP.Algorithm, item[0])) {
-                    item[1].final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+            inline for (algo_map) |pair| {
+                const name, const T = pair;
+                if (self.algorithm == @field(EVP.Algorithm, name)) {
+                    T.final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+                    const reset: *T = @ptrCast(@alignCast(self.state));
+                    reset.* = T.init(.{});
                     return output_digest_slice[0..self.digest_length];
                 }
             }

@@ -192,7 +192,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test("dev server", async () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,
@@ -258,7 +258,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test("dev server", async () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,

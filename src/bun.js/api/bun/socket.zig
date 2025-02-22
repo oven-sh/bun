@@ -613,11 +613,6 @@ pub const Listener = struct {
         handlers.is_server = true;
 
         const ssl_enabled = ssl != null;
-        if (ssl_enabled) {
-            bun.Analytics.Features.tls_server += 1;
-        } else {
-            bun.Analytics.Features.tcp_server += 1;
-        }
 
         var socket_flags: i32 = if (exclusive)
             uws.LIBUS_LISTEN_EXCLUSIVE_PORT
@@ -1859,12 +1854,6 @@ fn NewSocket(comptime ssl: bool) type {
 
             if (handlers.vm.isShuttingDown()) {
                 return;
-            }
-            this.ref();
-            defer {
-                // we may have empty packets to write here
-                this.internalFlush();
-                this.deref();
             }
 
             // Use open callback when handshake is not provided

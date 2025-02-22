@@ -45,7 +45,7 @@ pub fn Size2D(comptime T: type) type {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
-            const second = input.tryParse(parseVal, .{}).unwrapOrNoOptmizations(first);
+            const second = input.tryParse(parseVal, .{}).unwrapOr(first);
             return .{ .result = Size2D(T){
                 .a = first,
                 .b = second,

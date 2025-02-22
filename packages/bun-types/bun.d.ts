@@ -1984,9 +1984,9 @@ declare module "bun" {
     /** Database user for authentication (alias for username) */
     user?: string;
     /** Database password for authentication */
-    password?: string;
+    password?: string | (() => Promise<string>);
     /** Database password for authentication (alias for password) */
-    pass?: string;
+    pass?: string | (() => Promise<string>);
     /** Name of the database to connect to */
     database?: string;
     /** Name of the database to connect to (alias for database) */
@@ -2263,6 +2263,13 @@ declare module "bun" {
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      */
     unsafe(string: string, values?: any[]): SQLQuery;
+    /**
+     * Reads a file and uses the contents as a query.
+     * Optional parameters can be used if the file includes $1, $2, etc
+     * @example
+     * const result = await sql.file("query.sql", [1, 2, 3]);
+     */
+    file(filename: string, values?: any[]): SQLQuery;
 
     /** Current client options */
     options: SQLOptions;

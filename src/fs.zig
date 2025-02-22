@@ -1050,32 +1050,38 @@ pub const FileSystem = struct {
             var dir = bun.strings.withoutTrailingSlashWindowsPath(dir_maybe_trail_slash);
 
             bun.resolver.Resolver.assertValidCacheKey(dir);
-            var cache_result: ?allocators.Result = null;
             if (comptime FeatureFlags.enable_entry_cache) {
                 fs.entries_mutex.lock();
             }
-            defer {
-                if (comptime FeatureFlags.enable_entry_cache) {
-                    fs.entries_mutex.unlock();
-                }
-            }
+            defer if (comptime FeatureFlags.enable_entry_cache) {
+                fs.entries_mutex.unlock();
+            };
+
             var in_place: ?*DirEntry = null;
 
-            if (comptime FeatureFlags.enable_entry_cache) {
-                cache_result = try fs.entries.getOrPut(dir);
+            var cache_result = if (comptime FeatureFlags.enable_entry_cache) brk: {
+                const cache_result = try fs.entries.getOrPut(dir);
 
-                if (cache_result.?.hasCheckedIfExists()) {
-                    if (fs.entries.atIndex(cache_result.?.index)) |cached_result| {
+                if (cache_result.hasCheckedIfExists()) {
+                    if (fs.entries.atIndex(cache_result.index)) |cached_result| {
                         if (cached_result.* != .entries or (cached_result.* == .entries and cached_result.entries.generation >= generation)) {
                             return cached_result;
                         }
 
                         in_place = cached_result.entries;
+                    } else {
+                        return error.ENOENT;
                     }
                 }
-            }
+                break :brk cache_result;
+            };
 
-            var handle = maybe_handle orelse try fs.openDir(dir);
+            var handle = maybe_handle orelse fs.openDir(dir) catch |err| {
+                if (comptime FeatureFlags.enable_entry_cache) {
+                    fs.entries.markNotFound(cache_result);
+                }
+                return err;
+            };
 
             defer {
                 if (maybe_handle == null and (!store_fd or fs.needToCloseFiles())) {
@@ -1119,7 +1125,7 @@ pub const FileSystem = struct {
                     .entries = entries_ptr,
                 };
 
-                const out = try fs.entries.put(&cache_result.?, result);
+                const out = try fs.entries.put(&cache_result, result);
 
                 return out;
             }

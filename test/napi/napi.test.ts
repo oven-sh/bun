@@ -361,6 +361,10 @@ describe("napi", () => {
       checkSameOutput("test_wrap_lifetime_with_strong_ref", []);
       checkSameOutput("test_remove_wrap_lifetime_with_weak_ref", []);
       checkSameOutput("test_remove_wrap_lifetime_with_strong_ref", []);
+      // check that napi finalizers also run at VM exit, even if they didn't get run by GC
+      checkSameOutput("test_ref_deleted_in_cleanup", []);
+      // check that calling napi_delete_ref in the ref's finalizer is not use-after-free
+      checkSameOutput("test_ref_deleted_in_async_finalize", []);
     });
   });
 

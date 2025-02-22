@@ -1,6 +1,7 @@
 const assert = require("node:assert");
 const nativeTests = require("./build/Debug/napitests.node");
 const secondAddon = require("./build/Debug/second_addon.node");
+const asyncFinalizeAddon = require("./build/Debug/async_finalize_addon.node");
 
 async function gcUntil(fn) {
   const MAX = 100;
@@ -559,6 +560,16 @@ nativeTests.test_remove_wrap_lifetime_with_strong_ref = async () => {
   // now it gets deleted
   nativeTests.unref_wrapped_value();
   await gcUntil(() => nativeTests.get_object_from_ref() === undefined);
+};
+
+nativeTests.test_ref_deleted_in_cleanup = () => {
+  let object = { foo: "bar" };
+  assert(createWrapWithWeakRef(object) === object);
+  assert(nativeTests.get_wrap_data(object) === 42);
+};
+
+nativeTests.test_ref_deleted_in_async_finalize = () => {
+  asyncFinalizeAddon.create_ref();
 };
 
 nativeTests.test_create_bigint_words = () => {

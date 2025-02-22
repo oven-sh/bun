@@ -1210,6 +1210,19 @@ pub const ServerConfig = struct {
         }
     };
 
+    fn getRoutesObject(global: *JSC.JSGlobalObject, arg: JSC.JSValue) bun.JSError!?JSC.JSValue {
+        inline for (.{ "routes", "static" }) |key| {
+            if (try arg.get(global, key)) |routes| {
+                // https://github.com/oven-sh/bun/issues/17568
+                if (routes.isArray()) {
+                    return null;
+                }
+                return routes;
+            }
+        }
+        return null;
+    }
+
     pub const FromJSOptions = struct {
         allow_bake_config: bool = true,
         is_fetch_required: bool = true,
@@ -1309,7 +1322,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if ((try arg.get(global, "routes")) orelse (try arg.get(global, "static"))) |static| {
+            if (try getRoutesObject(global, arg)) |static| {
                 if (!static.isObject()) {
                     return global.throwInvalidArguments(
                         \\Bun.serve() expects 'routes' to be an object shaped like:

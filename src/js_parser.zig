@@ -19168,7 +19168,7 @@ fn NewParser_(
                         if (p.options.features.react_fast_refresh and switch (data.value.expr.data) {
                             .e_arrow => true,
                             .e_call => |call| switch (call.target.data) {
-                                .e_identifier => |id| id.ref == p.react_refresh.create_signature_ref,
+                                .e_identifier => |id| id.ref == p.react_refresh.latest_signature_ref,
                                 else => false,
                             },
                             else => false,
@@ -19657,35 +19657,19 @@ fn NewParser_(
                 data.kind = kind;
                 try stmts.append(stmt.*);
 
-                if (data.is_export and p.options.features.server_components.wrapsExports()) {
-                    for (data.decls.slice()) |*decl| try_annotate: {
-                        const val = decl.value orelse break :try_annotate;
+                if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
+                    for (data.decls.slice()) |decl| try_register: {
+                        const val = decl.value orelse break :try_register;
                         switch (val.data) {
                             // Assigning a component to a local.
                             .e_arrow, .e_function => {},
 
                             // A wrapped component.
                             .e_call => |call| switch (call.target.data) {
-                                .e_identifier => |id| if (id.ref != p.react_refresh.create_signature_ref)
-                                    break :try_annotate,
-                                else => break :try_annotate,
+                                .e_identifier => |id| if (id.ref != p.react_refresh.latest_signature_ref)
+                                    break :try_register,
+                                else => break :try_register,
                             },
-                            else => break :try_annotate,
-                        }
-                        const id = switch (decl.binding.data) {
-                            .b_identifier => |id| id.ref,
-                            else => break :try_annotate,
-                        };
-                        const original_name = p.symbols.items[id.innerIndex()].original_name;
-                        decl.value = p.wrapValueForServerComponentReference(val, original_name);
-                    }
-                }
-
-                if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
-                    for (data.decls.slice()) |decl| try_register: {
-                        const val = decl.value orelse break :try_register;
-                        switch (val.data) {
-                            .e_arrow, .e_function => {},
                             else => break :try_register,
                         }
                         const id = switch (decl.binding.data) {
@@ -19694,6 +19678,18 @@ fn NewParser_(
                         };
                         const original_name = p.symbols.items[id.innerIndex()].original_name;
                         try p.handleReactRefreshRegister(stmts, original_name, id, .named);
+                    }
+                }
+
+                if (data.is_export and p.options.features.server_components.wrapsExports()) {
+                    for (data.decls.slice()) |*decl| try_annotate: {
+                        const val = decl.value orelse break :try_annotate;
+                        const id = switch (decl.binding.data) {
+                            .b_identifier => |id| id.ref,
+                            else => break :try_annotate,
+                        };
+                        const original_name = p.symbols.items[id.innerIndex()].original_name;
+                        decl.value = p.wrapValueForServerComponentReference(val, original_name);
                     }
                 }
 
@@ -23373,6 +23369,7 @@ fn NewParser_(
 
         pub fn getReactRefreshHookSignalDecl(p: *P, signal_cb_ref: Ref) Stmt {
             const loc = logger.Loc.Empty;
+            p.react_refresh.latest_signature_ref = signal_cb_ref;
             // var s_ = $RefreshSig$();
             return p.s(S.Local{ .decls = G.Decl.List.fromSlice(p.allocator, &.{.{
                 .binding = p.b(B.Identifier{ .ref = signal_cb_ref }, loc),
@@ -24074,6 +24071,12 @@ const ReactRefresh = struct {
     /// and then it will insert `var _s = ...`, add the `_s()` call at
     /// the start of the function, and then add the call to `_s(func, ...)`.
     hook_ctx_storage: ?*?HookContext = null,
+
+    /// This is the most recently generated `_s` call. This is used to compare
+    /// against seen calls to plain identifiers when in "export default" and in
+    /// "const Component =" to know if an expression had been wrapped in a hook
+    /// signature function.
+    latest_signature_ref: Ref = Ref.None,
 
     pub const HookContext = struct {
         hasher: std.hash.Wyhash,

@@ -213,8 +213,20 @@ devTest("react refresh cases", {
         return <div></div>;
       }
 
+      // Anonymous function with name
+      const NonExportedAnon = (function MyNamedAnon() {
+        return <div></div>;
+      });
+
+      // Anonymous function without name
+      const NonExportedAnonUnnamed = (function() {
+        return <div></div>;
+      });
+
       expectRegistered(NonExportedFunc, "non_exported.tsx", "NonExportedFunc");
       expectRegistered(NonExportedVar, "non_exported.tsx", "NonExportedVar");
+      expectRegistered(NonExportedAnon, "non_exported.tsx", "NonExportedAnon");
+      expectRegistered(NonExportedAnonUnnamed, "non_exported.tsx", "NonExportedAnonUnnamed");
     `,
     "default_unnamed_hooks.tsx": `
       export default function() {
@@ -259,8 +271,22 @@ devTest("react refresh cases", {
         return <div>{count}</div>;
       }
 
+      // Anonymous function with name
+      const NonExportedAnon = (function MyNamedAnon() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      });
+
+      // Anonymous function without name
+      const NonExportedAnonUnnamed = (function() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      });
+
       expectRegistered(NonExportedFunc, "non_exported_hooks.tsx", "NonExportedFunc");
       expectRegistered(NonExportedVar, "non_exported_hooks.tsx", "NonExportedVar");
+      expectRegistered(NonExportedAnon, "non_exported_hooks.tsx", "NonExportedAnon");
+      expectRegistered(NonExportedAnonUnnamed, "non_exported_hooks.tsx", "NonExportedAnonUnnamed");
     `,
   },
   async test(dev) {

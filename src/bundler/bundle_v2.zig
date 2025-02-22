@@ -3158,7 +3158,7 @@ pub const BundleV2 = struct {
             if (!loader.shouldCopyForBundling()) {
                 this.finalizers.append(bun.default_allocator, parse_result.external) catch bun.outOfMemory();
             } else {
-                this.graph.input_files.items(.allocator)[source] = ExternalFreeFunctionAllocator.create(@ptrCast(parse_result.external.function.?), parse_result.external.ctx.?);
+                this.graph.input_files.items(.allocator)[source] = ExternalFreeFunctionAllocator.create(parse_result.external.function.?, parse_result.external.ctx.?);
             }
         }
 
@@ -17030,7 +17030,7 @@ pub fn generateUniqueKey() u64 {
 }
 
 const ExternalFreeFunctionAllocator = struct {
-    free_callback: *const fn (ctx: *anyopaque) void,
+    free_callback: *const fn (ctx: *anyopaque) callconv(.C) void,
     context: *anyopaque,
 
     const vtable: std.mem.Allocator.VTable = .{
@@ -17039,7 +17039,7 @@ const ExternalFreeFunctionAllocator = struct {
         .resize = &resize,
     };
 
-    pub fn create(free_callback: *const fn (ctx: *anyopaque) void, context: *anyopaque) std.mem.Allocator {
+    pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.C) void, context: *anyopaque) std.mem.Allocator {
         return .{
             .ptr = bun.create(bun.default_allocator, ExternalFreeFunctionAllocator, .{
                 .free_callback = free_callback,

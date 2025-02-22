@@ -3,7 +3,7 @@
 // work because hmr-runtime is minified in release builds, which would affect
 // the generated line/column numbers across different build configurations.
 import { expect } from "bun:test";
-import { Dev, devTest, emptyHtmlFile, extractScriptSrc, reactRefreshStub } from "../dev-server-harness";
+import { Dev, devTest, emptyHtmlFile, reactRefreshStub } from "../dev-server-harness";
 import { BasicSourceMapConsumer, IndexedSourceMapConsumer, SourceMapConsumer } from "source-map";
 
 devTest("source map emitted for primary chunk", {
@@ -78,7 +78,11 @@ type SourceMap = (BasicSourceMapConsumer | IndexedSourceMapConsumer) & {
 };
 
 async function extractSourceMapHtml(dev: Dev, html: string) {
-  const scriptUrl = extractScriptSrc(html);
+  const scriptUrls = [...html.matchAll(/src="([^"]+.js)"/g)];
+  if (scriptUrls.length !== 1) {
+    throw new Error("Expected 1 source file, got " + scriptUrls.length);
+  }
+  const scriptUrl = scriptUrls[0][1];
   const scriptSource = await dev.fetch(scriptUrl).text();
   return extractSourceMap(dev, scriptSource);
 }

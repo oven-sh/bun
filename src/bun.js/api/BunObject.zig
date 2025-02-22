@@ -1599,7 +1599,7 @@ pub const Crypto = struct {
                                 return globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
                             }
 
-                            const algorithm_string = algorithm_value.getZigString(globalObject);
+                            const algorithm_string = try algorithm_value.getZigString(globalObject);
 
                             switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                                 return globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
@@ -1665,7 +1665,7 @@ pub const Crypto = struct {
                             return globalObject.throwInvalidArgumentType("hash", "options.algorithm", "string");
                         }
                     } else if (value.isString()) {
-                        const algorithm_string = value.getZigString(globalObject);
+                        const algorithm_string = try value.getZigString(globalObject);
 
                         switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                             return globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
@@ -2230,7 +2230,7 @@ pub const Crypto = struct {
                     return globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
                 }
 
-                const algorithm_string = arguments[2].getZigString(globalObject);
+                const algorithm_string = try arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                     if (!globalObject.hasException()) {
@@ -2280,7 +2280,7 @@ pub const Crypto = struct {
                     return globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
                 }
 
-                const algorithm_string = arguments[2].getZigString(globalObject);
+                const algorithm_string = try arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                     if (!globalObject.hasException()) {
@@ -2458,7 +2458,7 @@ pub const Crypto = struct {
                 return globalThis.throwInvalidArguments("algorithm must be a string", .{});
             }
 
-            const algorithm = algorithm_name.getZigString(globalThis);
+            const algorithm = try algorithm_name.getZigString(globalThis);
 
             if (algorithm.len == 0) {
                 return globalThis.throwInvalidArguments("Invalid algorithm name", .{});
@@ -2824,9 +2824,12 @@ pub const Crypto = struct {
         }
 
         fn final(self: *CryptoHasherZig, output_digest_slice: []u8) []u8 {
-            inline for (algo_map) |item| {
-                if (self.algorithm == @field(EVP.Algorithm, item[0])) {
-                    item[1].final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+            inline for (algo_map) |pair| {
+                const name, const T = pair;
+                if (self.algorithm == @field(EVP.Algorithm, name)) {
+                    T.final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+                    const reset: *T = @ptrCast(@alignCast(self.state));
+                    reset.* = T.init(.{});
                     return output_digest_slice[0..self.digest_length];
                 }
             }

@@ -1,7 +1,16 @@
 /// <reference path="../../src/bake/bake.d.ts" />
+/* Dev server tests can be run with `bun test` or in interactive mode with `bun run test.ts "name filter"`
+ *
+ * Env vars:
+ *
+ * To run with an out-of-path node.js:
+ * export BUN_DEV_SERVER_CLIENT_EXECUTABLE="/Users/clo/.local/share/nvm/v22.13.1/bin/node"
+ *
+ * To write files to a stable location:
+ * export BUN_DEV_SERVER_TEST_TEMP="/Users/clo/scratch/dev"
+ */
 import { Bake, BunFile, Subprocess } from "bun";
 import fs, { readFileSync, realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import assert from "node:assert";
@@ -47,13 +56,73 @@ export const reactRefreshStub = {
   `,
 };
 
+/** To test react refresh's registration system */
 export const reactAndRefreshStub = {
   "node_modules/react-refresh/runtime.js": `
-    export const performReactRefresh = () => {};
-    export const injectIntoGlobalHook = () => {};
+    exports.performReactRefresh = () => {};
+    exports.injectIntoGlobalHook = () => {};
+    exports.register = require("bun-devserver-react-mock").register;
+    exports.createSignatureFunctionForTransform = require("bun-devserver-react-mock").createSignatureFunctionForTransform;
+  `,
+  "node_modules/react/index.js": `
+    exports.useState = (y) => [y, x => {}];
+  `,
+  "node_modules/bun-devserver-react-mock/index.js": `
+    globalThis.components = new Map();
+    globalThis.functionToComponent = new Map();
+    exports.expectRegistered = function(fn, filename, exportId) {
+      const name = filename + ":" + exportId;
+      try {
+        if (!components.has(name)) {
+          for (const [k, v] of components) {
+            if (v.fn === fn) throw new Error("Component registered under name " + k + " instead of " + name);
+          }
+          throw new Error("Component not registered: " + name);
+        }
+        if (components.get(name).fn !== fn) throw new Error("Component registered with wrong name: " + name);
+      } catch (e) {
+        console.log(components);
+        throw e;
+      }
+    }
+    exports.hashFromFunction = function(fn) {
+      if (!keyFromFunction.has(fn)) throw new Error("Function not registered: " + fn);
+      return keyFromFunction.get(fn).hash;
+    }
+    exports.register = function(fn, name) {
+      if (typeof name !== "string") throw new Error("name must be a string");
+      if (typeof fn !== "function") throw new Error("fn must be a function");
+      if (components.has(name)) throw new Error("Component already registered: " + name + ". Read its hash from test harness first");
+      const entry = functionToComponent.get(fn) ?? { fn, calls: 0, hash: undefined };
+      components.set(name, entry);
+      functionToComponent.set(fn, entry);
+    }
+    exports.createSignatureFunctionForTransform = function(fn) {
+      let entry = null;
+      return function(fn, hash) {
+        if (fn !== undefined) {
+          entry = functionToComponent.get(fn) ?? { fn, calls: 0, hash: undefined };
+          functionToComponent.set(fn, entry);
+          entry.hash = hash;
+          entry.calls = 0;
+          return fn;
+        } else {
+          if (!entry) throw new Error("Function not registered");
+          entry.calls++;
+          return entry.fn;
+        }
+      }
+    }
   `,
   "node_modules/react/jsx-dev-runtime.js": `
-    export const jsxDEV = (tag, props, key) => {};
+    export const $$typeof = Symbol.for("react.element");
+    export const jsxDEV = (tag, props, key) => ({
+      $$typeof,
+      props,
+      key,
+      ref: null,
+      type: tag,
+    });
   `,
 };
 
@@ -157,17 +226,25 @@ export class Dev {
   baseUrl: string;
   panicked = false;
   connectedClients: Set<Client> = new Set();
+  options: { files: Record<string, string> };
 
   // These properties are not owned by this class
   devProcess: Subprocess<"pipe", "pipe", "pipe">;
   output: OutputLineStream;
 
-  constructor(root: string, port: number, process: Subprocess<"pipe", "pipe", "pipe">, stream: OutputLineStream) {
+  constructor(
+    root: string,
+    port: number,
+    process: Subprocess<"pipe", "pipe", "pipe">,
+    stream: OutputLineStream,
+    options: DevServerTest,
+  ) {
     this.rootDir = realpathSync(root);
     this.port = port;
     this.baseUrl = `http://localhost:${port}`;
     this.devProcess = process;
     this.output = stream;
+    this.options = options as any;
     this.output.on("panic", () => {
       this.panicked = true;
     });
@@ -191,7 +268,7 @@ export class Dev {
   }
 
   write(file: string, contents: string, options: { errors?: null | ErrorSpec[]; dedent?: boolean } = {}) {
-    const snapshot = snapshotCallerLocationMayFail();
+    const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
       const wait = this.waitForHotReload();
@@ -209,6 +286,19 @@ export class Dev {
         }
       }
     });
+  }
+
+  read(file: string): string {
+    return fs.readFileSync(path.join(this.rootDir, file), "utf8");
+  }
+
+  /**
+   * Writes the file back without any changes
+   * This is useful for triggering file watchers without modifying content
+   */
+  async writeNoChanges(file: string): Promise<void> {
+    const content = this.read(file);
+    await this.write(file, content, { dedent: false });
   }
 
   patch(
@@ -285,22 +375,7 @@ export class Dev {
     });
     return client;
   }
-
-  async read(file: string): Promise<string> {
-    return await readFile(path.join(this.rootDir, file), "utf8");
-  }
-
-  /**
-   * Writes the file back without any changes
-   * This is useful for triggering file watchers without modifying content
-   */
-  async writeNoChanges(file: string): Promise<void> {
-    const content = await this.read(file);
-    await this.write(file, content, { dedent: false });
-  }
 }
-
-type StepFn = (dev: Dev) => Promise<void>;
 
 export interface Step {
   run: StepFn;
@@ -446,7 +521,7 @@ class StylePromise extends Promise<Record<string, string>> {
   }
 }
 
-const node = process.env.DEV_SERVER_CLIENT_EXECUTABLE ?? Bun.which("node");
+const node = process.env.BUN_DEV_SERVER_CLIENT_EXECUTABLE ?? Bun.which("node");
 expect(node, "test will fail if this is not node").not.toBe(process.execPath);
 
 const danglingProcesses = new Set<Subprocess>();
@@ -765,27 +840,25 @@ export class Client extends EventEmitter {
     this.suppressInteractivePrompt = false;
   }
 
-  getMostRecentHmrChunk() {
-    return withAnnotatedStack(snapshotCallerLocation(), async () => {
-      if (!this.#hmrChunk) {
-        // Wait up to a threshold before giving up
-        const resolver = Promise.withResolvers();
-        this.once("hmr-chunk", () => resolver.resolve());
-        this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
-        let t: any = setTimeout(() => {
-          t = null;
-          resolver.reject(new Error("Timeout waiting for HMR chunk"));
-        }, 1000);
-        await resolver.promise;
-        if (t) clearTimeout(t);
-      }
-      if (!this.#hmrChunk) {
-        throw new Error("No HMR chunks received. Make sure storeHotChunks is true");
-      }
-      const chunk = this.#hmrChunk;
-      this.#hmrChunk = null;
-      return chunk;
-    });
+  async getMostRecentHmrChunk() {
+    if (!this.#hmrChunk) {
+      // Wait up to a threshold before giving up
+      const resolver = Promise.withResolvers();
+      this.once("hmr-chunk", () => resolver.resolve());
+      this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
+      let t: any = setTimeout(() => {
+        t = null;
+        resolver.reject(new Error("Timeout waiting for HMR chunk"));
+      }, 1000);
+      await resolver.promise;
+      if (t) clearTimeout(t);
+    }
+    if (!this.#hmrChunk) {
+      throw new Error("No HMR chunks received. Make sure storeHotChunks is true");
+    }
+    const chunk = this.#hmrChunk;
+    this.#hmrChunk = null;
+    return chunk;
   }
 
   /**
@@ -836,6 +909,20 @@ export class Client extends EventEmitter {
         // Re-enable WebSocket messages
         this.#proc.send({ type: "set-allow-websocket-messages", args: [true] });
       }
+    });
+  }
+
+  async reactRefreshComponentHash(file: string, name: string): Promise<string> {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      const component = await this.js<any>`
+        const k = ${file} + ":" + ${name};
+        const entry = globalThis.components.get(k);
+        if (!entry) throw new Error("Component not found: " + k);
+        globalThis.components.delete(k);
+        globalThis.functionToComponent.delete(entry.fn);
+        return entry.hash;
+      `;
+      return component;
     });
   }
 }
@@ -984,9 +1071,24 @@ async function withAnnotatedStack<T>(stackLine: string, cb: () => Promise<T>): P
   }
 }
 
-const tempDir = fs.mkdtempSync(
-  path.join(process.platform === "darwin" && !process.env.CI ? "/tmp" : os.tmpdir(), "bun-dev-test-"),
-);
+const tempDir =
+  process.env.BUN_DEV_SERVER_TEST_TEMP ||
+  fs.mkdtempSync(path.join(process.platform === "darwin" && !process.env.CI ? "/tmp" : os.tmpdir(), "bun-dev-test-"));
+
+// Ensure temp directory exists
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir, { recursive: true });
+}
+
+function cleanTestDir(dir: string) {
+  if (!fs.existsSync(dir)) return;
+  const files = fs.readdirSync(dir);
+  for (const file of files) {
+    const filePath = path.join(dir, file);
+    fs.rmSync(filePath, { recursive: true, force: true });
+  }
+}
+
 const devTestRoot = path.join(import.meta.dir, "dev").replaceAll("\\", "/");
 const counts: Record<string, number> = {};
 
@@ -1164,6 +1266,10 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 
   async function run() {
     const root = path.join(tempDir, basename + count);
+
+    // Clean the test directory if it exists
+    cleanTestDir(root);
+
     if ("files" in options) {
       const htmlFiles = Object.keys(options.files).filter(file => file.endsWith(".html"));
       await writeAll(root, options.files);
@@ -1256,7 +1362,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     // @ts-expect-error
-    const dev = new Dev(root, port, devProcess, stream);
+    const dev = new Dev(root, port, devProcess, stream, options);
 
     await maybeWaitInteractive("start");
 
@@ -1299,12 +1405,15 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     return options;
   } catch {
     // not in bun test. allow interactive use
-    const arg = process.argv[2];
+    let arg = process.argv.slice(2).join(" ").trim();
+    if (arg.startsWith("-t")) {
+      arg = arg.slice(2).trim();
+    }
     if (!arg) {
       const mainFile = Bun.$.escape(path.relative(process.cwd(), process.argv[1]));
       console.error("Options for running Dev Server tests:");
       console.error(" - automated:   bun test " + mainFile);
-      console.error(" - interactive: bun " + mainFile + " <filter or number for test>");
+      console.error(" - interactive: bun " + mainFile + " [-t] <filter or number for test>");
       process.exit(1);
     }
     if (name.includes(arg)) {
@@ -1332,11 +1441,3 @@ process.on("exit", () => {
     proc.kill("SIGKILL");
   }
 });
-
-export function extractScriptSrc(html: string) {
-  const scriptUrls = [...html.matchAll(/src="([^"]+.js)"/g)];
-  if (scriptUrls.length !== 1) {
-    throw new Error("Expected 1 source file, got " + scriptUrls.length);
-  }
-  return scriptUrls[0][1];
-}

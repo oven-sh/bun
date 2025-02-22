@@ -7,7 +7,8 @@
   "module": "src/index.tsx",
   "scripts": {
     "dev": "bun --hot src/index.tsx",
-    "start": "NODE_ENV=production bun src/index.tsx"
+    "start": "NODE_ENV=production bun src/index.tsx",
+    "build": "bun run build.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^4.1.0",

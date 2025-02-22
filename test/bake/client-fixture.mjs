@@ -87,6 +87,7 @@ function createWindow(windowUrl) {
     error: (...args) => {
       console.error("[E]", ...args);
       originalConsole.error(...args);
+      process.exit(4);
     },
     warn: (...args) => {
       console.warn("[W]", ...args);

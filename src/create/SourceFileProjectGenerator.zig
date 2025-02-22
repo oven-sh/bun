@@ -666,22 +666,22 @@ const Reason = enum {
 const ReactTailwindSpa = struct {
     pub const files = &[_]TemplateFile{
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             .content = shared_build_ts,
             .reason = .build,
         },
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
             .content = @embedFile("projects/react-tailwind-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
             .reason = .css,
         },
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             .content = shared_html,
             .reason = .html,
         },
         .{
-            .name = "src/client.tsx",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             .content = shared_client_tsx,
             .reason = .bun,
         },
@@ -713,23 +713,23 @@ const shared_index_tsx = @embedFile("projects/react-spa/index.tsx");
 const ReactSpa = struct {
     pub const files = &[_]TemplateFile{
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             .content = shared_build_ts,
             .reason = .build,
         },
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
             .content = @embedFile("projects/react-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
             .reason = .css,
             .overwrite = false,
         },
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             .content = shared_html,
             .reason = .html,
         },
         .{
-            .name = "src/client.tsx",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             .content = shared_client_tsx,
             .reason = .bun,
         },
@@ -751,32 +751,32 @@ const ReactShadcnSpa = struct {
             .reason = .shadcn,
         },
         .{
-            .name = "src/index.css",
+            .name = "index.css",
             .content = @embedFile("projects/react-shadcn-spa/styles/index.css"),
             .reason = .shadcn,
         },
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts",
             .content = shared_build_ts,
             .reason = .bun,
         },
         .{
-            .name = "src/client.tsx",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.client.tsx",
             .content = shared_client_tsx,
             .reason = .bun,
         },
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css",
             .content = @embedFile("projects/react-shadcn-spa/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.css"),
             .reason = .css,
         },
         .{
-            .name = "src/REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
+            .name = "REPLACE_ME_WITH_YOUR_APP_FILE_NAME.html",
             .content = shared_html,
             .reason = .html,
         },
         .{
-            .name = "src/styles/globals.css",
+            .name = "styles/globals.css",
             .content = @embedFile("projects/react-shadcn-spa/styles/globals.css"),
             .reason = .shadcn,
         },

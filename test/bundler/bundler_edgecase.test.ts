@@ -2263,6 +2263,159 @@ describe("bundler", () => {
       stdout: "success",
     },
   });
+
+  itBundled("edgecase/CrossFileEnumInliningNegative", {
+    files: {
+      "/entry.ts": `
+        import { Foo } from './enum';
+        export const FooRecord = {
+          [Foo.foo]: 'foo',
+          [Foo.bar]: 'bar',
+        };
+        console.log(JSON.stringify(FooRecord));
+      `,
+      "/enum.ts": `
+        export const enum Foo {
+          foo = -1,
+          bar = 1,
+        }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: {
+      stdout: '{"1":"bar","-1":"foo"}',
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("/out.js");
+      // Should use proper negative number syntax in property key
+      expect(content).toContain("[-1]");
+      expect(content).not.toContain("-1:");
+      // expect(content).toContain("1:");
+    },
+  });
+
+  itBundled("edgecase/SameFileEnumInliningNegative", {
+    files: {
+      "/entry.ts": `
+        const enum Foo {
+          foo = -1,
+          bar = 1,
+        }
+        export const FooRecord = {
+          [Foo.foo]: 'foo',
+          [Foo.bar]: 'bar',
+        };
+        console.log(JSON.stringify(FooRecord));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: {
+      stdout: '{"1":"bar","-1":"foo"}',
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("/out.js");
+      // Should use proper negative number syntax in property key
+      expect(content).toContain("[-1]");
+      expect(content).not.toContain("-1:");
+      // expect(content).toContain("1:");
+    },
+  });
+
+  itBundled("edgecase/LiteralNegativeOnePropertyKey", {
+    files: {
+      "/entry.ts": `
+        const obj = {
+          [-1]: "negative one",
+          1: "positive one",
+        };
+        console.log(JSON.stringify(obj));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: {
+      stdout: '{"1":"positive one","-1":"negative one"}',
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("/out.js");
+      // Should use proper negative number syntax in property key
+      expect(content).toContain("[-1]");
+      expect(content).not.toContain("-1:");
+      expect(content).toContain("1:");
+    },
+  });
+
+  itBundled("edgecase/MixedEnumValuesPropertyKeys", {
+    files: {
+      "/entry.ts": `
+        const enum Numbers {
+          NegTwo = -2,
+          NegOne = -1,
+          Zero = 0,
+          One = 1,
+          Two = 2
+        }
+        const record = {
+          [Numbers.NegTwo]: "neg two",
+          [Numbers.NegOne]: "neg one",
+          [Numbers.Zero]: "zero",
+          [Numbers.One]: "one",
+          [Numbers.Two]: "two",
+        };
+        console.log(JSON.stringify(record));
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: {
+      stdout: '{"0":"zero","1":"one","2":"two","-2":"neg two","-1":"neg one"}',
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("/out.js");
+      // Should use proper negative number syntax in property keys
+      expect(content).toContain("[-2]");
+      expect(content).toContain("[-1]");
+      expect(content).not.toContain("-1:");
+      expect(content).not.toContain("-2:");
+      // expect(content).toContain("0:");
+      // expect(content).toContain("1:");
+    },
+  });
+
+  itBundled("edgecase/NegativeEnumNoMinify", {
+    files: {
+      "/entry.ts": `
+        const enum Foo {
+          foo = -1,
+          bar = 1,
+        }
+        const obj = {
+          [Foo.foo]: "negative",
+          [Foo.bar]: "positive",
+        };
+        console.log(JSON.stringify(obj));
+      `,
+    },
+    minifySyntax: false,
+    minifyIdentifiers: false,
+    minifyWhitespace: false,
+    run: {
+      stdout: '{"1":"positive","-1":"negative"}',
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("/out.js");
+      // Should use proper negative number syntax in property key even without minification
+      expect(content).toContain("[-1");
+      expect(content).not.toContain("-1:");
+      // expect(content).toContain("1:");
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

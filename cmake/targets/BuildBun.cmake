@@ -1179,25 +1179,6 @@ if(NOT BUN_CPP_ONLY)
       OUTPUTS
         ${BUILD_PATH}/${bunStripExe}
     )
-
-    if(LINUX AND CMAKE_DWP_PROGRAM AND BUN_LINK_ONLY)
-      register_command(
-        TARGET
-          ${bun}
-        TARGET_PHASE
-          POST_BUILD
-        COMMENT
-          "Generating ${bunStrip}.dwp"
-        COMMAND
-          ${CMAKE_DWP_PROGRAM}
-            -e ${bunStripExe}
-            -o ${bunStrip}.dwp
-        CWD
-          ${BUILD_PATH}
-        OUTPUTS
-          ${BUILD_PATH}/${bunStrip}.dwp
-      )
-    endif()
   endif()
 
   register_command(
@@ -1273,7 +1254,7 @@ if(NOT BUN_CPP_ONLY)
         "Generating ${bun}.dwp"
       COMMAND
         ${CMAKE_DWP_PROGRAM}
-          -e ${bunExe}
+          -e ${bun}
           -o ${bun}.dwp
       CWD
         ${BUILD_PATH}
@@ -1298,13 +1279,13 @@ if(NOT BUN_CPP_ONLY)
       list(APPEND bunFiles ${bun}.dSYM)
     elseif(LINUX AND CMAKE_DWP_PROGRAM)
       file(GLOB DWO_FILES "${BUILD_PATH}/*.dwo")
-      list(APPEND bunFiles ${DWO_FILES} ${bun}.dwp)
+      list(APPEND bunFiles ${DWO_FILES})
+      list(APPEND bunFiles ${bun}.dwp)
     endif()
 
     if(APPLE OR LINUX)
       list(APPEND bunFiles ${bun}.linker-map)
     endif()
-
 
     register_command(
       TARGET

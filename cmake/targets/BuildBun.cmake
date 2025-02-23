@@ -1214,8 +1214,6 @@ if(NOT BUN_CPP_ONLY)
         --revision
     CWD
       ${BUILD_PATH}
-    SOURCES
-      ${BUILD_PATH}/${bunExe}
   )
 
   if(CI)

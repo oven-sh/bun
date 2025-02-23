@@ -123,6 +123,14 @@ else()
       REQUIRED
         ON
     )
+    find_command(
+      VARIABLE
+        CMAKE_DWP_PROGRAM
+      COMMAND
+        llvm-dwp
+      REQUIRED
+        ON
+    )
   else()
     find_llvm_command(CMAKE_STRIP llvm-strip)
   endif()

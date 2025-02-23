@@ -78,7 +78,7 @@ if(WIN32)
     DESCRIPTION "Enable debug symbols (.pdb)"
     /Z7
   )
-elseif(APPLE)
+elseif(APPLE OR LINUX)
   register_compiler_flags(
     DESCRIPTION "Enable debug symbols (.dSYM)"
     -gdwarf-4

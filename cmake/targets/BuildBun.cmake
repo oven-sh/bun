@@ -1156,7 +1156,7 @@ if(NOT BUN_CPP_ONLY)
   if(bunStrip)
     if(LINUX)
       # For split DWARF, we need to keep the .gnu_debuglink section
-      set(LINUX_STRIP_FLAGS ${CMAKE_STRIP_FLAGS} --keep-section=.gnu_debuglink)
+      set(CMAKE_STRIP_FLAGS ${CMAKE_STRIP_FLAGS} --keep-section=.gnu_debuglink)
     endif()
 
     register_command(
@@ -1169,7 +1169,7 @@ if(NOT BUN_CPP_ONLY)
       COMMAND
         ${CMAKE_STRIP}
           ${bunExe}
-          $<IF:$<BOOL:${LINUX}>,${LINUX_STRIP_FLAGS},${CMAKE_STRIP_FLAGS}>
+          ${CMAKE_STRIP_FLAGS}
           --strip-all
           --strip-debug
           --discard-all

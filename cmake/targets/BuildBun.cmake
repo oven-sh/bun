@@ -914,15 +914,7 @@ if(WIN32)
       /OPT:REF
       /OPT:NOICF
       /DEBUG:FULL
-      /delayload:ole32.dll
-      /delayload:WINMM.dll
       /delayload:dbghelp.dll
-      /delayload:VCRUNTIME140_1.dll
-      # libuv loads these two immediately, but for some reason it seems to still be slightly faster to delayload them
-      /delayload:WS2_32.dll
-      /delayload:WSOCK32.dll
-      /delayload:ADVAPI32.dll
-      /delayload:IPHLPAPI.dll
     )
   endif()
 endif()

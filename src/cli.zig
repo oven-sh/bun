@@ -23,7 +23,7 @@ const RegularExpression = bun.RegularExpression;
 const builtin = @import("builtin");
 const File = bun.sys.File;
 
-const debug = Output.scoped(.CLI, true);
+const debug = Output.scoped(.CLI, false);
 
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
@@ -396,7 +396,7 @@ pub const Arguments = struct {
 
         var auto_loaded: bool = false;
         if (config_path_.len == 0 and (user_config_path_ != null or
-            Command.Tag.always_loads_config.get(cmd) or
+            Command.Tag.loads_config.get(cmd) or
             (cmd == .AutoCommand and
             // "bun"
             (ctx.positionals.len == 0 or
@@ -1136,6 +1136,11 @@ pub const Arguments = struct {
                 ctx.debug.silent = true;
             }
 
+            // "run.bun" in bunfig.toml
+            if (args.flag("--bun")) {
+                ctx.debug.run_in_bun = true;
+            }
+
             if (args.option("--elide-lines")) |elide_lines| {
                 if (elide_lines.len > 0) {
                     ctx.bundler_options.elide_lines = std.fmt.parseInt(usize, elide_lines, 10) catch {
@@ -1148,13 +1153,6 @@ pub const Arguments = struct {
             if (opts.define) |define| {
                 if (define.keys.len > 0)
                     bun.JSC.RuntimeTranspilerCache.is_disabled = true;
-            }
-        }
-
-        if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunxCommand) {
-            // "run.bun" in bunfig.toml
-            if (args.flag("--bun")) {
-                ctx.debug.run_in_bun = true;
             }
         }
 
@@ -2576,14 +2574,19 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand,
-                .PackageManagerCommand,
+                .BuildCommand,
+                .TestCommand,
                 .InstallCommand,
                 .AddCommand,
                 .RemoveCommand,
                 .UpdateCommand,
                 .PatchCommand,
                 .PatchCommitCommand,
+                .PackageManagerCommand,
+                .BunxCommand,
+                .AutoCommand,
+                .RunCommand,
+                .RunAsNodeCommand,
                 .OutdatedCommand,
                 .PublishCommand,
                 => true,
@@ -2624,21 +2627,6 @@ pub const Command = struct {
             .AutoCommand = true,
             .RunCommand = true,
             .RunAsNodeCommand = true,
-            .OutdatedCommand = true,
-            .PublishCommand = true,
-        });
-
-        pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
-            .BuildCommand = true,
-            .TestCommand = true,
-            .InstallCommand = true,
-            .AddCommand = true,
-            .RemoveCommand = true,
-            .UpdateCommand = true,
-            .PatchCommand = true,
-            .PatchCommitCommand = true,
-            .PackageManagerCommand = true,
-            .BunxCommand = true,
             .OutdatedCommand = true,
             .PublishCommand = true,
         });

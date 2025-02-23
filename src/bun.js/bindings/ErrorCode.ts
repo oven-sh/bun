@@ -63,16 +63,16 @@ const errors: ErrorCodeMapping = [
   ["ERR_SOCKET_DGRAM_IS_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_CONNECTED", Error],
   ["ERR_SOCKET_DGRAM_NOT_RUNNING", Error],
-  ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_STREAM_ALREADY_FINISHED", Error],
   ["ERR_STREAM_CANNOT_PIPE", Error],
   ["ERR_STREAM_DESTROYED", Error],
   ["ERR_STREAM_NULL_VALUES", TypeError],
-  ["ERR_STREAM_WRITE_AFTER_END", Error],
+  ["ERR_STREAM_PREMATURE_CLOSE", Error],
   ["ERR_STREAM_PUSH_AFTER_EOF", Error],
   ["ERR_STREAM_RELEASE_LOCK", Error, "AbortError"],
   ["ERR_STREAM_UNABLE_TO_PIPE", Error],
   ["ERR_STREAM_UNSHIFT_AFTER_END_EVENT", Error],
+  ["ERR_STREAM_WRITE_AFTER_END", Error],
   ["ERR_STRING_TOO_LONG", Error],
   ["ERR_UNAVAILABLE_DURING_EXIT", Error],
   ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
@@ -81,6 +81,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_UNKNOWN_ENCODING", TypeError],
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
+  ["ERR_INVALID_CHAR", TypeError],
   ["MODULE_NOT_FOUND", Error],
 
   // Bun-specific
@@ -91,6 +92,9 @@ const errors: ErrorCodeMapping = [
 
   // Console
   ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
+
+  // FS
+  ["ERR_DIR_CLOSED", Error],
 
   // DNS
   ["ERR_DNS_SET_SERVERS_FAILED", Error],
@@ -116,7 +120,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_INVALID_HEADER_VALUE", TypeError],
   ["ERR_HTTP2_PING_CANCEL", Error],
   ["ERR_HTTP2_STREAM_ERROR", Error],
-  ["ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", TypeError],
+  ["ERR_HTTP2_HEADER_SINGLE_VALUE", TypeError],
   ["ERR_HTTP2_SESSION_ERROR", Error],
   ["ERR_HTTP2_INVALID_SESSION", Error],
   ["ERR_HTTP2_INVALID_HEADERS", Error],
@@ -129,7 +133,13 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_SOCKET_UNBOUND", Error],
   ["ERR_HTTP2_ERROR", Error],
   ["ERR_HTTP2_OUT_OF_STREAMS", Error],
-
+  ["ERR_HTTP2_ORIGIN_LENGTH", TypeError],
+  ["ERR_HTTP2_INVALID_ORIGIN", TypeError],
+  ["ERR_HTTP2_ALTSVC_LENGTH", TypeError],
+  ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
+  ["ERR_HTTP2_STATUS_101", Error],
+  ["ERR_HTTP2_INVALID_INFO_STATUS", RangeError],
+  ["ERR_HTTP2_HEADERS_AFTER_RESPOND", Error],
   // AsyncHooks
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
@@ -163,11 +173,16 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_UNKNOWN_AUTHENTICATION_METHOD", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_AUTHENTICATION_METHOD", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT", TypeError, "PostgresError"],
   ["ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE", TypeError, "PostgresError"],
+  ["ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT", TypeError, "PostgresError"],
   ["ERR_POSTGRES_IDLE_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_CONNECTION_TIMEOUT", Error, "PostgresError"],
   ["ERR_POSTGRES_LIFETIME_TIMEOUT", Error, "PostgresError"],
-
+  ["ERR_POSTGRES_INVALID_TRANSACTION_STATE", Error, "PostgresError"],
+  ["ERR_POSTGRES_QUERY_CANCELLED", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNSAFE_TRANSACTION", Error, "PostgresError"],
+  ["ERR_POSTGRES_NOT_TAGGED_CALL", Error, "PostgresError"],
   // S3
   ["ERR_S3_MISSING_CREDENTIALS", Error],
   ["ERR_S3_INVALID_METHOD", Error],

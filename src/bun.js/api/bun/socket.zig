@@ -614,7 +614,13 @@ pub const Listener = struct {
 
         const ssl_enabled = ssl != null;
 
-        var socket_flags: i32 = if (exclusive) uws.LIBUS_LISTEN_EXCLUSIVE_PORT else (if (socket_config.reusePort) uws.LIBUS_SOCKET_REUSE_PORT else uws.LIBUS_LISTEN_DEFAULT);
+        var socket_flags: i32 = if (exclusive)
+            uws.LIBUS_LISTEN_EXCLUSIVE_PORT
+        else if (socket_config.reusePort)
+            uws.LIBUS_LISTEN_REUSE_PORT | uws.LIBUS_LISTEN_REUSE_ADDR
+        else
+            uws.LIBUS_LISTEN_DEFAULT;
+
         if (socket_config.allowHalfOpen) {
             socket_flags |= uws.LIBUS_SOCKET_ALLOW_HALF_OPEN;
         }
@@ -906,7 +912,7 @@ pub const Listener = struct {
         if (!hostname.isString()) {
             return global.throwInvalidArguments("hostname pattern expects a string", .{});
         }
-        const host_str = hostname.toSlice(
+        const host_str = try hostname.toSlice(
             global,
             bun.default_allocator,
         );
@@ -1336,9 +1342,7 @@ fn NewSocket(comptime ssl: bool) type {
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
         native_callback: NativeCallbacks = .none,
-        pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
-
-        pub const DEBUG_REFCOUNT_NAME = "Socket";
+        pub usingnamespace bun.NewRefCounted(@This(), deinit, "Socket");
 
         // We use this direct callbacks on HTTP2 when available
         pub const NativeCallbacks = union(enum) {
@@ -1379,18 +1383,20 @@ fn NewSocket(comptime ssl: bool) type {
             /// Prevent onClose from calling into JavaScript while we are finalizing
             finalizing: bool = false,
             authorized: bool = false,
+            handshake_complete: bool = false,
+            empty_packet_pending: bool = false,
+            end_after_flush: bool = false,
             owned_protos: bool = true,
             is_paused: bool = false,
             allow_half_open: bool = false,
         };
+
         pub usingnamespace if (!ssl)
             JSC.Codegen.JSTCPSocket
         else
             JSC.Codegen.JSTLSSocket;
 
         pub fn hasPendingActivity(this: *This) callconv(.C) bool {
-            @fence(.acquire);
-
             return this.has_pending_activity.load(.acquire);
         }
 
@@ -1836,6 +1842,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
+            this.flags.handshake_complete = true;
             if (this.socket.isDetached()) return;
             const authorized = if (success == 1) true else false;
 
@@ -2139,26 +2146,27 @@ fn NewSocket(comptime ssl: bool) type {
             return ZigString.init(text).toJS(globalThis);
         }
 
-        pub fn writeMaybeCorked(this: *This, buffer: []const u8, is_end: bool) i32 {
+        pub fn writeMaybeCorked(this: *This, buffer: []const u8) i32 {
             if (this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;
             }
+
             // we don't cork yet but we might later
             if (comptime ssl) {
                 // TLS wrapped but in TCP mode
                 if (this.wrapped == .tcp) {
-                    const res = this.socket.rawWrite(buffer, is_end);
+                    const res = this.socket.rawWrite(buffer, false);
                     const uwrote: usize = @intCast(@max(res, 0));
                     this.bytes_written += uwrote;
-                    log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
+                    log("write({d}) = {d}", .{ buffer.len, res });
                     return res;
                 }
             }
 
-            const res = this.socket.write(buffer, is_end);
+            const res = this.socket.write(buffer, false);
             const uwrote: usize = @intCast(@max(res, 0));
             this.bytes_written += uwrote;
-            log("write({d}, {any}) = {d}", .{ buffer.len, is_end, res });
+            log("write({d}) = {d}", .{ buffer.len, res });
             return res;
         }
 
@@ -2193,14 +2201,11 @@ fn NewSocket(comptime ssl: bool) type {
             const args = callframe.argumentsUndef(2);
             this.ref();
             defer this.deref();
-
-            return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], false)) {
+            return switch (this.writeOrEndBuffered(globalObject, args.ptr[0], args.ptr[1], true)) {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.socket.flush();
-                        // markInactive does .detached = true
-                        this.markInactive();
+                        this.internalFlush();
                     }
 
                     break :brk JSValue.jsBoolean(@as(usize, @max(result.wrote, 0)) == result.total);
@@ -2215,10 +2220,11 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             var stack_fallback = std.heap.stackFallback(16 * 1024, bun.default_allocator);
+            const allow_string_object = true;
             const buffer: JSC.Node.StringOrBuffer = if (data_value.isUndefined())
                 JSC.Node.StringOrBuffer.empty
             else
-                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false) catch {
+                JSC.Node.StringOrBuffer.fromJSWithEncodingValueMaybeAsync(globalObject, stack_fallback.get(), data_value, encoding_value, false, allow_string_object) catch {
                     return .fail;
                 } orelse {
                     if (!globalObject.hasException()) {
@@ -2228,6 +2234,10 @@ fn NewSocket(comptime ssl: bool) type {
                     return .fail;
                 };
             defer buffer.deinit();
+            if (!this.flags.end_after_flush and is_end) {
+                this.flags.end_after_flush = true;
+            }
+
             if (this.socket.isShutdown() or this.socket.isClosed()) {
                 return .{
                     .success = .{
@@ -2239,6 +2249,23 @@ fn NewSocket(comptime ssl: bool) type {
 
             const total_to_write: usize = buffer.slice().len + @as(usize, this.buffered_data_for_node_net.len);
             if (total_to_write == 0) {
+                if (ssl) {
+                    log("total_to_write == 0", .{});
+                    if (!data_value.isUndefined()) {
+                        log("data_value is not undefined", .{});
+                        // special condition for SSL_write(0, "", 0)
+                        // we need to send an empty packet after the buffer is flushed and after the handshake is complete
+                        // and in this case we need to ignore SSL_write() return value because 0 should not be treated as an error
+                        this.flags.empty_packet_pending = true;
+                        if (!this.tryWriteEmptyPacket()) {
+                            return .{ .success = .{
+                                .wrote = -1,
+                                .total = total_to_write,
+                            } };
+                        }
+                    }
+                }
+
                 return .{ .success = .{} };
             }
 
@@ -2276,7 +2303,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                 // slower-path: clone the data, do one write.
                 this.buffered_data_for_node_net.append(bun.default_allocator, buffer.slice()) catch bun.outOfMemory();
-                const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice(), is_end);
+                const rc = this.writeMaybeCorked(this.buffered_data_for_node_net.slice());
                 if (rc > 0) {
                     const wrote: usize = @intCast(@max(rc, 0));
                     // did we write everything?
@@ -2306,7 +2333,13 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         fn writeOrEnd(this: *This, globalObject: *JSC.JSGlobalObject, args: []JSC.JSValue, buffer_unwritten_data: bool, comptime is_end: bool) WriteResult {
-            if (args[0].isUndefined()) return .{ .success = .{} };
+            if (args[0].isUndefined()) {
+                if (!this.flags.end_after_flush and is_end) {
+                    this.flags.end_after_flush = true;
+                }
+                log("writeOrEnd undefined", .{});
+                return .{ .success = .{} };
+            }
 
             bun.debugAssert(this.buffered_data_for_node_net.len == 0);
             var encoding_value: JSC.JSValue = args[3];
@@ -2385,10 +2418,6 @@ fn NewSocket(comptime ssl: bool) type {
 
             bytes = bytes[0..byte_length];
 
-            if (bytes.len == 0) {
-                return .{ .success = .{} };
-            }
-
             if (globalObject.hasException()) {
                 return .fail;
             }
@@ -2401,8 +2430,28 @@ fn NewSocket(comptime ssl: bool) type {
                     },
                 };
             }
+            if (!this.flags.end_after_flush and is_end) {
+                this.flags.end_after_flush = true;
+            }
 
-            const wrote = this.writeMaybeCorked(bytes, is_end);
+            if (bytes.len == 0) {
+                if (ssl) {
+                    log("writeOrEnd 0", .{});
+                    // special condition for SSL_write(0, "", 0)
+                    // we need to send an empty packet after the buffer is flushed and after the handshake is complete
+                    // and in this case we need to ignore SSL_write() return value because 0 should not be treated as an error
+                    this.flags.empty_packet_pending = true;
+                    if (!this.tryWriteEmptyPacket()) {
+                        return .{ .success = .{
+                            .wrote = -1,
+                            .total = bytes.len,
+                        } };
+                    }
+                }
+                return .{ .success = .{} };
+            }
+            log("writeOrEnd {d}", .{bytes.len});
+            const wrote = this.writeMaybeCorked(bytes);
             const uwrote: usize = @intCast(@max(wrote, 0));
             if (buffer_unwritten_data) {
                 const remaining = bytes[uwrote..];
@@ -2418,6 +2467,22 @@ fn NewSocket(comptime ssl: bool) type {
                 },
             };
         }
+
+        fn tryWriteEmptyPacket(this: *This) bool {
+            if (ssl) {
+                // just mimic the side-effect dont actually write empty non-TLS data onto the socket, we just wanna to have same behavior of node.js
+                if (!this.flags.handshake_complete or this.buffered_data_for_node_net.len > 0) return false;
+
+                this.flags.empty_packet_pending = false;
+                return true;
+            }
+            return false;
+        }
+
+        fn canEndAfterFlush(this: *This) bool {
+            return this.flags.is_active and this.flags.end_after_flush and !this.flags.empty_packet_pending and this.buffered_data_for_node_net.len == 0;
+        }
+
         fn internalFlush(this: *This) void {
             if (this.buffered_data_for_node_net.len > 0) {
                 const written: usize = @intCast(@max(this.socket.write(this.buffered_data_for_node_net.slice(), false), 0));
@@ -2434,7 +2499,12 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
+            _ = this.tryWriteEmptyPacket();
             this.socket.flush();
+
+            if (this.canEndAfterFlush()) {
+                this.markInactive();
+            }
         }
         pub fn flush(
             this: *This,
@@ -2482,7 +2552,6 @@ fn NewSocket(comptime ssl: bool) type {
             var args = callframe.argumentsUndef(5);
 
             log("end({d} args)", .{args.len});
-
             if (this.socket.isDetached()) {
                 return JSValue.jsNumber(@as(i32, -1));
             }
@@ -2494,9 +2563,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .fail => .zero,
                 .success => |result| brk: {
                     if (result.wrote == result.total) {
-                        this.socket.flush();
-                        // markInactive does .detached = true
-                        this.markInactive();
+                        this.internalFlush();
                     }
                     break :brk JSValue.jsNumber(result.wrote);
                 },
@@ -3290,7 +3357,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return globalObject.throw("Expected \"serverName\" to be a string", .{});
             }
 
-            const slice = server_name.getZigString(globalObject).toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
+            const slice = try (try server_name.getZigString(globalObject)).toOwnedSlice(bun.default_allocator);
             if (this.server_name) |old| {
                 this.server_name = slice;
                 default_allocator.free(old);
@@ -3876,9 +3943,9 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
             BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
-            errdefer BoringSSL.SSL_CTX_free(ctx);
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts, &err) orelse return error.InvalidOptions; // invalid options
             this.ctx = ctx;
         }
 
@@ -4370,6 +4437,9 @@ pub fn jsCreateSocketPair(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JS
         const err = bun.sys.Error.fromCode(bun.C.getErrno(rc), .socketpair);
         return global.throwValue(err.toJSC(global));
     }
+
+    _ = bun.sys.setNonblocking(bun.toFD(fds_[0]));
+    _ = bun.sys.setNonblocking(bun.toFD(fds_[1]));
 
     const array = JSC.JSValue.createEmptyArray(global, 2);
     array.putIndex(global, 0, JSC.jsNumber(fds_[0]));

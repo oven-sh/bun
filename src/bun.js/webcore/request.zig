@@ -107,11 +107,9 @@ pub const Request = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = Request__getUWSRequest;
-            _ = Request__setInternalEventCallback;
-            _ = Request__setTimeout;
-        }
+        _ = Request__getUWSRequest;
+        _ = Request__setInternalEventCallback;
+        _ = Request__setTimeout;
     }
 
     pub const InternalJSEventCallback = struct {
@@ -194,8 +192,20 @@ pub const Request = struct {
         return this.reported_estimated_size;
     }
 
+    pub fn getRemoteSocketInfo(this: *Request, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+        if (this.request_context.getRemoteSocketInfo()) |info| {
+            return JSC.JSSocketAddress.create(globalObject, info.ip, info.port, info.is_ipv6);
+        }
+
+        return null;
+    }
+
     pub fn calculateEstimatedByteSize(this: *Request) void {
         this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    }
+
+    pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
+        this.calculateEstimatedByteSize();
     }
 
     pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
@@ -203,9 +213,18 @@ pub const Request = struct {
         return Request.toJSUnchecked(globalObject, this);
     }
 
-    pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;
+
+    pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size(), .{})});
+
+        const params_object = Bun__getParamsIfBunRequest(this_value);
+
+        const class_label = switch (params_object) {
+            .zero => "Request",
+            else => "BunRequest",
+        };
+        try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(), .{}) });
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -224,6 +243,14 @@ pub const Request = struct {
             try writer.print(comptime Output.prettyFmt("\"<b>{}<r>\"", enable_ansi_colors), .{this.url});
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
+
+            if (params_object.isCell()) {
+                try formatter.writeIndent(Writer, writer);
+                try writer.writeAll(comptime Output.prettyFmt("<r>params<d>:<r> ", enable_ansi_colors));
+                try formatter.printAs(.Private, Writer, writer, params_object, .Object, enable_ansi_colors);
+                formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                try writer.writeAll("\n");
+            }
 
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
@@ -490,6 +517,7 @@ pub const Request = struct {
                     const href = bun.JSC.URL.hrefFromString(this.url);
                     // TODO: what is the right thing to do for invalid URLS?
                     if (!href.isEmpty()) {
+                        this.url.deref();
                         this.url = href;
                     }
 
@@ -612,7 +640,7 @@ pub const Request = struct {
                     }
                 }
 
-                if (value.asDirect(JSC.WebCore.Response)) |response| {
+                if (value.asDirect(Response)) |response| {
                     if (!fields.contains(.method)) {
                         req.method = response.init.method;
                         fields.insert(.method);

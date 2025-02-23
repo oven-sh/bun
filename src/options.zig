@@ -660,12 +660,7 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub const Experimental = struct {
-        css: bool = bun.FeatureFlags.breaking_changes_1_2,
-        html: bool = bun.FeatureFlags.breaking_changes_1_2,
-    };
-
-    pub fn shouldCopyForBundling(this: Loader, experimental: Experimental) bool {
+    pub fn shouldCopyForBundling(this: Loader) bool {
         return switch (this) {
             .file,
             .napi,
@@ -674,20 +669,34 @@ pub const Loader = enum(u8) {
             // TODO: loader for reading bytes and creating module or instance
             .wasm,
             => true,
-            .css => !experimental.css,
-            .html => !experimental.html,
+            .css => false,
+            .html => false,
             else => false,
         };
     }
 
-    pub fn toMimeType(this: Loader) bun.http.MimeType {
+    pub fn toMimeType(this: Loader, paths: []const []const u8) bun.http.MimeType {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
             .toml, .json => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
-            else => bun.http.MimeType.other,
+            else => {
+                for (paths) |path| {
+                    var extname = std.fs.path.extension(path);
+                    if (strings.startsWithChar(extname, '.')) {
+                        extname = extname[1..];
+                    }
+                    if (extname.len > 0) {
+                        if (bun.http.MimeType.byExtensionNoDefault(extname)) |mime| {
+                            return mime;
+                        }
+                    }
+                }
+
+                return bun.http.MimeType.other;
+            },
         };
     }
 
@@ -702,7 +711,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
+            .jsx, .js, .ts, .tsx, .wasm, .bunsh => true,
             else => false,
         };
     }
@@ -738,7 +747,7 @@ pub const Loader = enum(u8) {
         }
 
         var zig_str = JSC.ZigString.init("");
-        loader.toZigString(&zig_str, global);
+        try loader.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
@@ -924,34 +933,41 @@ pub const ESMConditions = struct {
     default: ConditionsMap,
     import: ConditionsMap,
     require: ConditionsMap,
+    style: ConditionsMap,
 
     pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
+        var style_condition_map = ConditionsMap.init(allocator);
 
         try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
         try import_condition_map.ensureTotalCapacity(defaults.len + 2);
         try require_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try style_condition_map.ensureTotalCapacity(defaults.len + 2);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
+        style_condition_map.putAssumeCapacity("style", {});
 
         for (defaults) |default| {
             default_condition_amp.putAssumeCapacityNoClobber(default, {});
             import_condition_map.putAssumeCapacityNoClobber(default, {});
             require_condition_map.putAssumeCapacityNoClobber(default, {});
+            style_condition_map.putAssumeCapacityNoClobber(default, {});
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
         import_condition_map.putAssumeCapacity("default", {});
         require_condition_map.putAssumeCapacity("default", {});
+        style_condition_map.putAssumeCapacity("default", {});
 
         return .{
             .default = default_condition_amp,
             .import = import_condition_map,
             .require = require_condition_map,
+            .style = style_condition_map,
         };
     }
 
@@ -962,11 +978,14 @@ pub const ESMConditions = struct {
         errdefer import.deinit();
         var require = try self.require.clone();
         errdefer require.deinit();
+        var style = try self.style.clone();
+        errdefer style.deinit();
 
         return .{
             .default = default,
             .import = import,
             .require = require,
+            .style = style,
         };
     }
 
@@ -974,23 +993,30 @@ pub const ESMConditions = struct {
         try self.default.ensureUnusedCapacity(conditions.len);
         try self.import.ensureUnusedCapacity(conditions.len);
         try self.require.ensureUnusedCapacity(conditions.len);
+        try self.style.ensureUnusedCapacity(conditions.len);
 
         for (conditions) |condition| {
             self.default.putAssumeCapacity(condition, {});
             self.import.putAssumeCapacity(condition, {});
             self.require.putAssumeCapacity(condition, {});
+            self.style.putAssumeCapacity(condition, {});
         }
     }
 };
 
 pub const JSX = struct {
-    pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
-        .{ "classic", .classic },
-        .{ "automatic", .automatic },
-        .{ "react", .classic },
-        .{ "react-jsx", .automatic },
-        .{ "react-jsxdev", .automatic },
-        .{ "solid", .solid },
+    const RuntimeDevelopmentPair = struct {
+        runtime: JSX.Runtime,
+        development: ?bool,
+    };
+
+    pub const RuntimeMap = bun.ComptimeStringMap(RuntimeDevelopmentPair, .{
+        .{ "classic", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
+        .{ "automatic", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
+        .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
     });
 
     pub const Pragma = struct {
@@ -1006,6 +1032,10 @@ pub const JSX = struct {
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
 
+        /// Configuration Priority:
+        /// - `--define=process.env.NODE_ENV=...`
+        /// - `NODE_ENV=...`
+        /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
         development: bool = true,
         parse: bool = true,
 
@@ -1099,7 +1129,7 @@ pub const JSX = struct {
         // ...unless new is "React.createElement" and original is ["React", "createElement"]
         // saves an allocation for the majority case
         pub fn memberListToComponentsIfDifferent(allocator: std.mem.Allocator, original: []const string, new: string) ![]const string {
-            var splitter = std.mem.split(u8, new, ".");
+            var splitter = std.mem.splitScalar(u8, new, '.');
             const count = strings.countChar(new, '.') + 1;
 
             var needs_alloc = false;
@@ -1124,7 +1154,7 @@ pub const JSX = struct {
 
             var out = try allocator.alloc(string, count);
 
-            splitter = std.mem.split(u8, new, ".");
+            splitter = std.mem.splitScalar(u8, new, '.');
             var i: usize = 0;
             while (splitter.next()) |str| {
                 if (str.len == 0) continue;
@@ -1287,7 +1317,7 @@ pub fn definesFromTransformOptions(
     );
 }
 
-const default_loader_ext_bun = [_]string{".node"};
+const default_loader_ext_bun = [_]string{ ".node", ".html" };
 const default_loader_ext = [_]string{
     ".jsx",   ".json",
     ".js",    ".mjs",
@@ -1344,7 +1374,7 @@ pub const ResolveFileExtensions = struct {
 
     pub fn kind(this: *const ResolveFileExtensions, kind_: bun.ImportKind, is_node_modules: bool) []const string {
         return switch (kind_) {
-            .stmt, .entry_point, .dynamic => this.group(is_node_modules).esm,
+            .stmt, .entry_point_build, .entry_point_run, .dynamic => this.group(is_node_modules).esm,
             else => this.group(is_node_modules).default,
         };
     }
@@ -1377,10 +1407,6 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
-        }
-
-        if (bun.CLI.Command.get().bundler_options.experimental.html) {
-            _ = try loaders.getOrPutValue(".html", .html);
         }
     }
 
@@ -1543,8 +1569,6 @@ pub const BundleOptions = struct {
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
-
-    experimental: Loader.Experimental = .{},
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1561,6 +1585,9 @@ pub const BundleOptions = struct {
     /// Set when Bake is bundling. Affects module resolution.
     framework: ?*bun.bake.Framework = null,
 
+    serve_plugins: ?[]const []const u8 = null,
+    bunfig_path: string = "",
+
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
     ///
@@ -1571,13 +1598,29 @@ pub const BundleOptions = struct {
 
     supports_multiple_outputs: bool = true,
 
+    /// This is set by the process environment, which is used to override the
+    /// JSX configuration. When this is unspecified, the tsconfig.json is used
+    /// to determine if a development jsx-runtime is used (by going between
+    /// "react-jsx" or "react-jsx-dev-runtime")
+    force_node_env: ForceNodeEnv = .unspecified,
+
+    ignore_module_resolution_errors: bool = false,
+
+    pub const ForceNodeEnv = enum {
+        unspecified,
+        development,
+        production,
+    };
+
     pub fn isTest(this: *const BundleOptions) bool {
         return this.rewrite_jest_for_tests;
     }
 
     pub fn setProduction(this: *BundleOptions, value: bool) void {
-        this.production = value;
-        this.jsx.development = !value;
+        if (this.force_node_env == .unspecified) {
+            this.production = value;
+            this.jsx.development = !value;
+        }
     }
 
     pub const default_unwrap_commonjs_packages = [_]string{
@@ -1729,13 +1772,15 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
-            .experimental = .{},
             .css_chunking = false,
             .drop = transform.drop,
         };
 
         Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
         Analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
+
+        opts.serve_plugins = transform.serve_plugins;
+        opts.bunfig_path = transform.bunfig_path;
 
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;

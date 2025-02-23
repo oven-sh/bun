@@ -564,7 +564,7 @@ pub const Body = struct {
             const js_type = value.jsType();
 
             if (js_type.isStringLike()) {
-                var str = value.toBunString(globalThis);
+                var str = try value.toBunString2(globalThis);
                 if (str.length() == 0) {
                     return Body.Value{
                         .Empty = {},
@@ -578,7 +578,7 @@ pub const Body = struct {
                 };
             }
 
-            if (js_type.isTypedArray()) {
+            if (js_type.isTypedArrayOrArrayBuffer()) {
                 if (value.asArrayBuffer(globalThis)) |buffer| {
                     const bytes = buffer.byteSlice();
 
@@ -1427,7 +1427,7 @@ pub const BodyValueBufferer = struct {
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
     ) @This() {
-        const this = .{
+        const this: BodyValueBufferer = .{
             .ctx = ctx,
             .onFinishedBuffering = onFinish,
             .allocator = allocator,
@@ -1486,7 +1486,7 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    fn onFinishedLoadingFile(sink: *@This(), bytes: JSC.WebCore.Blob.ReadFile.ResultType) void {
+    fn onFinishedLoadingFile(sink: *@This(), bytes: Blob.ReadFileResultType) void {
         switch (bytes) {
             .err => |err| {
                 log("onFinishedLoadingFile Error", .{});
@@ -1721,12 +1721,10 @@ pub const BodyValueBufferer = struct {
     });
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(jsonResolveStream, .{ .name = Export[0].symbol_name });
-            const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(jsonRejectStream, .{ .name = Export[1].symbol_name });
-        }
+        const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
+        @export(&jsonResolveStream, .{ .name = Export[0].symbol_name });
+        const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
+        @export(&jsonRejectStream, .{ .name = Export[1].symbol_name });
     }
 };
 

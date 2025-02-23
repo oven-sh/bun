@@ -29,6 +29,14 @@ pub inline fn containsChar(self: string, char: u8) bool {
     return indexOfChar(self, char) != null;
 }
 
+pub inline fn containsCharT(comptime T: type, self: []const T, char: u8) bool {
+    return switch (T) {
+        u8 => containsChar(self, char),
+        u16 => std.mem.indexOfScalar(u16, self, char) != null,
+        else => @compileError("invalid type"),
+    };
+}
+
 pub inline fn contains(self: string, str: string) bool {
     return containsT(u8, self, str);
 }
@@ -182,8 +190,12 @@ pub inline fn containsAny(in: anytype, target: string) bool {
 ///   a folder name. Therefore, the name can't contain any non-URL-safe
 ///   characters.
 pub fn isNPMPackageName(target: string) bool {
-    if (target.len == 0) return false;
     if (target.len > 214) return false;
+    return isNPMPackageNameIgnoreLength(target);
+}
+
+pub fn isNPMPackageNameIgnoreLength(target: string) bool {
+    if (target.len == 0) return false;
 
     const scoped = switch (target[0]) {
         // Old packages may have capital letters
@@ -820,7 +832,7 @@ pub fn isOnCharBoundary(self: string, idx: usize) bool {
 
 pub fn isUtf8CharBoundary(c: u8) bool {
     // This is bit magic equivalent to: b < 128 || b >= 192
-    return @as(i8, @intCast(c)) >= -0x40;
+    return @as(i8, @bitCast(c)) >= -0x40;
 }
 
 pub fn startsWithCaseInsensitiveAscii(self: string, prefix: string) bool {
@@ -1083,7 +1095,7 @@ fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, compti
 ///   strings.eqlComptime(input, "hello world");
 ///   strings.eqlComptime(input, "hai");
 pub fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
-    return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .Pointer) &b else b, comptime check_len);
+    return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .pointer) &b else b, comptime check_len);
 }
 
 pub fn eqlCaseInsensitiveASCIIIgnoreLength(
@@ -1893,10 +1905,29 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
     bun.unsafeAssert(buf.len > 0);
-    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, utf16, false);
+    const to_copy = trimPrefixComptime(u16, utf16, bun.windows.long_path_prefix);
+    const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy, false);
     bun.unsafeAssert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];
+}
+
+pub fn withoutNTPrefix(comptime T: type, path: []const T) []const T {
+    if (comptime !Environment.isWindows) return path;
+    const cmp = if (T == u8)
+        hasPrefixComptime
+    else
+        hasPrefixComptimeUTF16;
+    if (cmp(path, &bun.windows.nt_object_prefix_u8)) {
+        return path[bun.windows.nt_object_prefix.len..];
+    }
+    if (cmp(path, &bun.windows.long_path_prefix_u8)) {
+        return path[bun.windows.long_path_prefix.len..];
+    }
+    if (cmp(path, &bun.windows.nt_unc_object_prefix_u8)) {
+        return path[bun.windows.nt_unc_object_prefix.len..];
+    }
+    return path;
 }
 
 pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
@@ -1904,8 +1935,19 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
         return toWPathNormalized(wbuf, utf8);
     }
 
+    if (strings.hasPrefixComptime(utf8, &bun.windows.nt_object_prefix_u8) or
+        strings.hasPrefixComptime(utf8, &bun.windows.nt_unc_object_prefix_u8))
+    {
+        return wbuf[0..toWPathNormalized(wbuf, utf8).len :0];
+    }
+
     // UNC absolute path, replace leading '\\' with '\??\UNC\'
     if (strings.hasPrefixComptime(utf8, "\\\\")) {
+        if (strings.hasPrefixComptime(utf8[2..], bun.windows.long_path_prefix_u8[2..])) {
+            const prefix = bun.windows.nt_object_prefix;
+            wbuf[0..prefix.len].* = prefix;
+            return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[4..]).len + prefix.len :0];
+        }
         const prefix = bun.windows.nt_unc_object_prefix;
         wbuf[0..prefix.len].* = prefix;
         return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8[2..]).len + prefix.len :0];
@@ -1914,6 +1956,33 @@ pub fn toNTPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     const prefix = bun.windows.nt_object_prefix;
     wbuf[0..prefix.len].* = prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[prefix.len..], utf8).len + prefix.len :0];
+}
+
+pub fn toNTPath16(wbuf: []u16, path: []const u16) [:0]u16 {
+    if (!std.fs.path.isAbsoluteWindowsWTF16(path)) {
+        return toWPathNormalized16(wbuf, path);
+    }
+
+    if (strings.hasPrefixComptimeUTF16(path, &bun.windows.nt_object_prefix_u8) or
+        strings.hasPrefixComptimeUTF16(path, &bun.windows.nt_unc_object_prefix_u8))
+    {
+        return wbuf[0..toWPathNormalized16(wbuf, path).len :0];
+    }
+
+    if (strings.hasPrefixComptimeUTF16(path, "\\\\")) {
+        if (strings.hasPrefixComptimeUTF16(path[2..], bun.windows.long_path_prefix_u8[2..])) {
+            const prefix = bun.windows.nt_object_prefix;
+            wbuf[0..prefix.len].* = prefix;
+            return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path[4..]).len + prefix.len :0];
+        }
+        const prefix = bun.windows.nt_unc_object_prefix;
+        wbuf[0..prefix.len].* = prefix;
+        return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path[2..]).len + prefix.len :0];
+    }
+
+    const prefix = bun.windows.nt_object_prefix;
+    wbuf[0..prefix.len].* = prefix;
+    return wbuf[0 .. toWPathNormalized16(wbuf[prefix.len..], path).len + prefix.len :0];
 }
 
 pub fn toNTMaxPath(buf: []u8, utf8: []const u8) [:0]const u8 {
@@ -1941,9 +2010,9 @@ pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
         wbuf[utf16.len] = 0;
         return wbuf[0..utf16.len :0];
     }
-    if (hasPrefixComptimeType(u16, utf16, bun.windows.nt_maxpath_prefix)) {
+    if (hasPrefixComptimeType(u16, utf16, bun.windows.long_path_prefix)) {
         // Replace prefix
-        return addNTPathPrefix(wbuf, utf16[bun.windows.nt_maxpath_prefix.len..]);
+        return addNTPathPrefix(wbuf, utf16[bun.windows.long_path_prefix.len..]);
     }
     return addNTPathPrefix(wbuf, utf16);
 }
@@ -1953,7 +2022,7 @@ pub const toNTDir = toNTPath;
 
 pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     bun.unsafeAssert(wbuf.len > 4);
-    wbuf[0..4].* = bun.windows.nt_maxpath_prefix;
+    wbuf[0..4].* = bun.windows.long_path_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
 
@@ -1978,6 +2047,20 @@ pub fn toWPathNormalized(wbuf: []u16, utf8: []const u8) [:0]u16 {
 
     return toWPath(wbuf, path_to_use);
 }
+
+pub fn toWPathNormalized16(wbuf: []u16, path: []const u16) [:0]u16 {
+    var path_to_use = normalizeSlashesOnlyT(u16, wbuf, path, '\\', true);
+
+    // is there a trailing slash? Let's remove it before converting to UTF-16
+    if (path_to_use.len > 3 and bun.path.isSepAnyT(u16, path_to_use[path_to_use.len - 1])) {
+        path_to_use = path_to_use[0 .. path_to_use.len - 1];
+    }
+
+    wbuf[path_to_use.len] = 0;
+
+    return wbuf[0..path_to_use.len :0];
+}
+
 pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
     const renormalized = bun.PathBufferPool.get();
     defer bun.PathBufferPool.put(renormalized);
@@ -1992,21 +2075,29 @@ pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
     return toPath(buf, path_to_use);
 }
 
-pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
+pub fn normalizeSlashesOnlyT(comptime T: type, buf: []T, path: []const T, comptime desired_slash: u8, comptime always_copy: bool) []const T {
     comptime bun.unsafeAssert(desired_slash == '/' or desired_slash == '\\');
     const undesired_slash = if (desired_slash == '/') '\\' else '/';
 
-    if (bun.strings.containsChar(utf8, undesired_slash)) {
-        @memcpy(buf[0..utf8.len], utf8);
-        for (buf[0..utf8.len]) |*c| {
+    if (bun.strings.containsCharT(T, path, undesired_slash)) {
+        @memcpy(buf[0..path.len], path);
+        for (buf[0..path.len]) |*c| {
             if (c.* == undesired_slash) {
                 c.* = desired_slash;
             }
         }
-        return buf[0..utf8.len];
+        return buf[0..path.len];
     }
 
-    return utf8;
+    if (comptime always_copy) {
+        @memcpy(buf[0..path.len], path);
+        return buf[0..path.len];
+    }
+    return path;
+}
+
+pub fn normalizeSlashesOnly(buf: []u8, utf8: []const u8, comptime desired_slash: u8) []const u8 {
+    return normalizeSlashesOnlyT(u8, buf, utf8, desired_slash, false);
 }
 
 pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
@@ -2032,6 +2123,7 @@ pub fn toWDirNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 pub fn toWPath(wbuf: []u16, utf8: []const u8) [:0]u16 {
     return toWPathMaybeDir(wbuf, utf8, false);
 }
+
 pub fn toPath(buf: []u8, utf8: []const u8) [:0]u8 {
     return toPathMaybeDir(buf, utf8, false);
 }
@@ -2039,6 +2131,23 @@ pub fn toPath(buf: []u8, utf8: []const u8) [:0]u8 {
 pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
     return toWPathMaybeDir(wbuf, utf8, true);
 }
+
+pub fn toKernel32Path(wbuf: []u16, utf8: []const u8) [:0]u16 {
+    const path = if (hasPrefixComptime(utf8, bun.windows.nt_object_prefix_u8))
+        utf8[bun.windows.nt_object_prefix_u8.len..]
+    else
+        utf8;
+    if (hasPrefixComptime(path, bun.windows.long_path_prefix_u8)) {
+        return toWPath(wbuf, path);
+    }
+    if (utf8.len > 2 and bun.path.isDriveLetter(utf8[0]) and utf8[1] == ':' and bun.path.isSepAny(utf8[2])) {
+        wbuf[0..4].* = bun.windows.long_path_prefix;
+        const wpath = toWPath(wbuf[4..], path);
+        return wbuf[0 .. wpath.len + 4 :0];
+    }
+    return toWPath(wbuf, path);
+}
+
 fn isUNCPath(comptime T: type, path: []const T) bool {
     return path.len >= 3 and
         bun.path.Platform.windows.isSeparatorT(T, path[0]) and
@@ -2072,6 +2181,14 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
         utf8,
         wbuf[0..wbuf.len -| (1 + @as(usize, @intFromBool(add_trailing_lash)))],
     );
+
+    // Many Windows APIs expect normalized path slashes, particularly when the
+    // long path prefix is added or the nt object prefix. To make this easier,
+    // but a little redundant, this function always normalizes the slashes here.
+    //
+    // An example of this is GetFileAttributesW(L"C:\\hello/world.txt") being OK
+    // but GetFileAttributesW(L"\\\\?\\C:\\hello/world.txt") is NOT
+    bun.path.dangerouslyConvertPathToWindowsInPlace(u16, wbuf[0..result.count]);
 
     if (add_trailing_lash and result.count > 0 and wbuf[result.count - 1] != '\\') {
         wbuf[result.count] = '\\';
@@ -2198,9 +2315,6 @@ pub fn toUTF8AppendToList(list: *std.ArrayList(u8), utf16: []const u16) !void {
 }
 
 pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
-    if (bun.JSC.is_bindgen)
-        unreachable;
-
     if (isAllASCII(latin1))
         return null;
 
@@ -2209,9 +2323,6 @@ pub fn toUTF8FromLatin1(allocator: std.mem.Allocator, latin1: []const u8) !?std.
 }
 
 pub fn toUTF8FromLatin1Z(allocator: std.mem.Allocator, latin1: []const u8) !?std.ArrayList(u8) {
-    if (bun.JSC.is_bindgen)
-        unreachable;
-
     if (isAllASCII(latin1))
         return null;
 
@@ -2291,7 +2402,7 @@ pub fn allocateLatin1IntoUTF8(allocator: std.mem.Allocator, comptime Type: type,
     return try foo.toOwnedSlice();
 }
 
-pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list: usize, comptime Type: type, latin1_: Type) !std.ArrayList(u8) {
+pub fn allocateLatin1IntoUTF8WithList(list_: std.ArrayList(u8), offset_into_list: usize, comptime Type: type, latin1_: Type) OOM!std.ArrayList(u8) {
     var latin1 = latin1_;
     var i: usize = offset_into_list;
     var list = list_;
@@ -4217,6 +4328,7 @@ pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
     return false;
 }
 
+/// JSON escape
 pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
     var remaining = slice;
     if (remaining.len == 0)
@@ -4256,6 +4368,72 @@ pub fn indexOfNeedsEscape(slice: []const u8, comptime quote_char: u8) ?u32 {
     for (remaining) |*char_| {
         const char = char_.*;
         if (char > 127 or char < 0x20 or char == '\\' or char == quote_char or (quote_char == '`' and char == '$')) {
+            return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
+        }
+    }
+
+    return null;
+}
+
+pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
+    var remaining = slice;
+    if (remaining.len == 0)
+        return null;
+
+    if (remaining[0] >= 127 or
+        remaining[0] < 0x20 or
+        remaining[0] == '\\' or
+        remaining[0] == '"' or
+        remaining[0] == '#' or
+        remaining[0] == '?' or
+        remaining[0] == '[' or
+        remaining[0] == ']' or
+        remaining[0] == '^' or
+        remaining[0] == '|' or
+        remaining[0] == '~')
+    {
+        return 0;
+    }
+
+    if (comptime Environment.enableSIMD) {
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+            const cmp: AsciiVectorU1 =
+                @as(AsciiVectorU1, @bitCast(vec > max_16_ascii)) |
+                @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('%')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('"')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('#')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('?')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('[')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat(']')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('^')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('|')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('~'))));
+
+            if (@reduce(.Max, cmp) > 0) {
+                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
+                const first = @ctz(bitmask);
+                return @as(u32, first) + @as(u32, @truncate(@intFromPtr(remaining.ptr) - @intFromPtr(slice.ptr)));
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+    }
+
+    for (remaining) |*char_| {
+        const char = char_.*;
+        if (char > 127 or char < 0x20 or
+            char == '\\' or
+            char == '"' or
+            char == '#' or
+            char == '?' or
+            char == '[' or
+            char == ']' or
+            char == '^' or
+            char == '|' or
+            char == '~')
+        {
             return @as(u32, @truncate(@intFromPtr(char_) - @intFromPtr(slice.ptr)));
         }
     }
@@ -4535,11 +4713,10 @@ pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
 /// e.g.
 /// `trimLeadingPattern2("abcdef", 'a', 'b') == "cdef"`
 pub fn trimLeadingPattern2(slice_: []const u8, comptime byte1: u8, comptime byte2: u8) []const u8 {
-    const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
+    // const pattern: u16 = comptime @as(u16, byte2) << 8 | @as(u16, byte1);
     var slice = slice_;
     while (slice.len >= 2) {
-        const sliceu16: [*]const u16 = @ptrCast(@alignCast(slice.ptr));
-        if (sliceu16[0] == pattern) {
+        if (slice[0] == byte1 and slice[1] == byte2) {
             slice = slice[2..];
         } else {
             break;
@@ -4656,6 +4833,7 @@ pub fn indexOfLineRanges(text: []const u8, target_line: u32, comptime line_range
                     else => continue,
                 }
             }
+            @panic("unreachable");
         };
 
         if (ranges.len == line_range_count and current_line <= target_line) {
@@ -5447,7 +5625,7 @@ pub fn cloneNormalizingSeparators(
 ) ![]u8 {
     // remove duplicate slashes in the file path
     const base = withoutTrailingSlash(input);
-    var tokenized = std.mem.tokenize(u8, base, std.fs.path.sep_str);
+    var tokenized = std.mem.tokenizeScalar(u8, base, std.fs.path.sep);
     var buf = try allocator.alloc(u8, base.len + 2);
     if (comptime Environment.allow_assert) assert(base.len > 0);
     if (base[0] == std.fs.path.sep) {
@@ -6566,4 +6744,40 @@ pub fn splitFirstWithExpected(self: string, comptime expected: u8) ?[]const u8 {
         return self[1..];
     }
     return null;
+}
+
+pub fn percentEncodeWrite(
+    utf8_input: []const u8,
+    writer: *std.ArrayList(u8),
+) error{ OutOfMemory, IncompleteUTF8 }!void {
+    var remaining = utf8_input;
+    while (indexOfNeedsURLEncode(remaining)) |j| {
+        const safe = remaining[0..j];
+        remaining = remaining[j..];
+        const code_point_len: usize = wtf8ByteSequenceLengthWithInvalid(remaining[0]);
+        if (remaining.len < code_point_len) {
+            @branchHint(.unlikely);
+            return error.IncompleteUTF8;
+        }
+
+        const to_encode = remaining[0..code_point_len];
+        remaining = remaining[code_point_len..];
+
+        try writer.ensureUnusedCapacity(safe.len + ("%FF".len) * code_point_len);
+
+        // Write the safe bytes
+        writer.appendSliceAssumeCapacity(safe);
+
+        // URL encode the code point
+        for (to_encode) |byte| {
+            writer.appendSliceAssumeCapacity(&.{
+                '%',
+                byte2hex((byte >> 4) & 0xF),
+                byte2hex(byte & 0xF),
+            });
+        }
+    }
+
+    // Write the rest of the string
+    try writer.appendSlice(remaining);
 }

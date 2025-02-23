@@ -9,8 +9,6 @@ const fmt = std.fmt;
 const Environment = bun.Environment;
 const sha = bun.sha;
 
-pub usingnamespace std.fmt;
-
 pub const TableSymbols = struct {
     enable_ansi_colors: bool,
 
@@ -1344,7 +1342,7 @@ pub fn quote(self: string) bun.fmt.QuotedFormatter {
     };
 }
 
-pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.EnumLiteral)) type {
+pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.enum_literal)) type {
     return struct {
         pretty: bool = true,
         const output = brk: {
@@ -1375,7 +1373,7 @@ pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.Enum
     };
 }
 
-pub fn enumTagList(comptime Enum: type, comptime separator: @Type(.EnumLiteral)) EnumTagListFormatter(Enum, separator) {
+pub fn enumTagList(comptime Enum: type, comptime separator: @Type(.enum_literal)) EnumTagListFormatter(Enum, separator) {
     return EnumTagListFormatter(Enum, separator){};
 }
 
@@ -1491,12 +1489,12 @@ pub const SizeFormatter = struct {
     }
 };
 
-pub fn size(value: anytype, opts: SizeFormatter.Options) SizeFormatter {
+pub fn size(bytes: anytype, opts: SizeFormatter.Options) SizeFormatter {
     return .{
-        .value = switch (@TypeOf(value)) {
-            f64, f32, f128 => @intFromFloat(value),
-            i64, isize => @intCast(value),
-            else => value,
+        .value = switch (@TypeOf(bytes)) {
+            f64, f32, f128 => @intFromFloat(bytes),
+            i64, isize => @intCast(bytes),
+            else => bytes,
         },
         .opts = opts,
     };

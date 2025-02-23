@@ -127,6 +127,7 @@ export async function dummyBeforeEach() {
 [install]
 cache = false
 registry = "http://localhost:${server.port}/"
+saveTextLockfile = false
 `,
   );
 }

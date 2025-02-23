@@ -45,7 +45,7 @@ pub fn Size2D(comptime T: type) type {
                 .result => |vv| vv,
                 .err => |e| return .{ .err = e },
             };
-            const second = input.tryParse(parseVal, .{}).unwrapOrNoOptmizations(first);
+            const second = input.tryParse(parseVal, .{}).unwrapOr(first);
             return .{ .result = Size2D(T){
                 .a = first,
                 .b = second,
@@ -65,6 +65,10 @@ pub fn Size2D(comptime T: type) type {
                 f32 => CSSNumberFns.toCss(val, W, dest),
                 else => val.toCss(W, dest),
             };
+        }
+
+        pub fn isCompatible(this: *const @This(), browsers: bun.css.targets.Browsers) bool {
+            return this.a.isCompatible(browsers) and this.b.isCompatible(browsers);
         }
 
         pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {

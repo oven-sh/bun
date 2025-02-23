@@ -44,11 +44,12 @@ for (let id = 0; id < jsclasses.length; id++) {
 export const globalReplacements: ReplacementRule[] = [
   {
     from: /\bnotImplementedIssue\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
-    to: "new TypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
+    toRaw: "__intrinsic__makeTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
   },
   {
     from: /\bnotImplementedIssueFn\(\s*([0-9]+)\s*,\s*((?:"[^"]*"|'[^']+'))\s*\)/g,
-    to: "() => $throwTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
+    toRaw:
+      "() => void __intrinsic__throwTypeError(`${$2} is not implemented yet. See https://github.com/oven-sh/bun/issues/$1`)",
   },
 ];
 
@@ -93,7 +94,8 @@ replacements.push({
 export const enums = {
   Loader: LoaderKeys,
   ImportKind: [
-    "entry-point",
+    "entry-point-run",
+    "entry-point-build",
     "import-statement",
     "require-call",
     "dynamic-import",
@@ -155,7 +157,8 @@ for (const key in define) {
 
 export interface ReplacementRule {
   from: RegExp;
-  to: string;
+  to?: string;
+  toRaw?: string;
   global?: boolean;
 }
 
@@ -177,7 +180,10 @@ export function applyReplacements(src: string, length: number) {
   let rest = src.slice(length);
   slice = slice.replace(/([^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
   for (const replacement of replacements) {
-    slice = slice.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__").replaceAll("%", "$"));
+    slice = slice.replace(
+      replacement.from,
+      replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
+    );
   }
   let match;
   if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {
@@ -200,7 +206,7 @@ export function applyReplacements(src: string, length: number) {
       }
       return [
         slice.slice(0, match.index) +
-          "(IS_BUN_DEVELOPMENT?$assert(" +
+          "!(IS_BUN_DEVELOPMENT?$assert(" +
           checkSlice.result.slice(1, -1) +
           "," +
           JSON.stringify(
@@ -291,7 +297,7 @@ export function applyReplacements(src: string, length: number) {
 export function applyGlobalReplacements(src: string) {
   let result = src;
   for (const replacement of globalReplacements) {
-    result = result.replace(replacement.from, replacement.to.replaceAll("$", "__intrinsic__"));
+    result = result.replace(replacement.from, replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__"));
   }
   return result;
 }

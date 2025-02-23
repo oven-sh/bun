@@ -4,7 +4,6 @@ const Output = bun.Output;
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const is_bindgen: bool = false;
 const default_allocator = bun.default_allocator;
 const CAPI = JSC.C;
 const ZigString = JSC.ZigString;
@@ -13,7 +12,6 @@ const string = bun.string;
 const JSLexer = bun.js_lexer;
 const JSPrinter = bun.js_printer;
 const JSPrivateDataPtr = JSC.JSPrivateDataPtr;
-const JS = @import("../javascript.zig");
 const JSPromise = JSC.JSPromise;
 const expect = @import("./expect.zig");
 
@@ -933,7 +931,7 @@ pub const JestPrettyFormat = struct {
 
             switch (comptime Format) {
                 .StringPossiblyFormatted => {
-                    var str = value.toSlice(this.globalThis, bun.default_allocator);
+                    var str = try value.toSlice(this.globalThis, bun.default_allocator);
                     defer str.deinit();
                     this.addForNewLine(str.len);
                     const slice = str.slice();
@@ -941,7 +939,7 @@ pub const JestPrettyFormat = struct {
                 },
                 .String => {
                     var str = ZigString.init("");
-                    value.toZigString(&str, this.globalThis);
+                    try value.toZigString(&str, this.globalThis);
                     this.addForNewLine(str.len);
 
                     if (value.jsType() == .StringObject or value.jsType() == .DerivedStringObject) {
@@ -1051,12 +1049,12 @@ pub const JestPrettyFormat = struct {
                             1;
                         this.addForNewLine(digits);
                     } else {
-                        this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                        this.addForNewLine(std.fmt.count("{d}", .{int}));
                     }
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
                 },
                 .BigInt => {
-                    const out_str = value.getZigString(this.globalThis).slice();
+                    const out_str = (try value.getZigString(this.globalThis)).slice();
                     this.addForNewLine(out_str.len);
 
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
@@ -1235,7 +1233,7 @@ pub const JestPrettyFormat = struct {
                             return error.JSError;
                         };
                     } else if (value.as(JSC.WebCore.Request)) |request| {
-                        request.writeFormat(Formatter, this, writer_, enable_ansi_colors) catch |err| {
+                        request.writeFormat(value, Formatter, this, writer_, enable_ansi_colors) catch |err| {
                             this.failed = true;
                             // TODO: make this better
                             if (!this.globalThis.hasException()) {
@@ -1522,7 +1520,7 @@ pub const JestPrettyFormat = struct {
                         const _tag = Tag.get(type_value, this.globalThis);
 
                         if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                            type_value.toZigString(&tag_name_str, this.globalThis);
+                            try type_value.toZigString(&tag_name_str, this.globalThis);
                             is_tag_kind_primitive = true;
                         } else if (_tag.cell.isObject() or type_value.isCallable(this.globalThis.vm())) {
                             type_value.getNameProperty(this.globalThis, &tag_name_str);
@@ -1530,7 +1528,7 @@ pub const JestPrettyFormat = struct {
                                 tag_name_str = ZigString.init("NoName");
                             }
                         } else {
-                            type_value.toZigString(&tag_name_str, this.globalThis);
+                            try type_value.toZigString(&tag_name_str, this.globalThis);
                         }
 
                         tag_name_slice = tag_name_str.toSlice(default_allocator);
@@ -1646,7 +1644,7 @@ pub const JestPrettyFormat = struct {
                                     print_children: {
                                         switch (tag.tag) {
                                             .String => {
-                                                const children_string = children.getZigString(this.globalThis);
+                                                const children_string = try children.getZigString(this.globalThis);
                                                 if (children_string.len == 0) break :print_children;
                                                 if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
@@ -1979,9 +1977,6 @@ pub const JestPrettyFormat = struct {
         }
 
         pub fn format(this: *JestPrettyFormat.Formatter, result: Tag.Result, comptime Writer: type, writer: Writer, value: JSValue, globalThis: *JSGlobalObject, comptime enable_ansi_colors: bool) bun.JSError!void {
-            if (comptime is_bindgen) {
-                return;
-            }
             const prevGlobalThis = this.globalThis;
             defer this.globalThis = prevGlobalThis;
             this.globalThis = globalThis;
@@ -1990,7 +1985,7 @@ pub const JestPrettyFormat = struct {
             // comptime var so we have to repeat it here. The rationale there is
             // it _should_ limit the stack usage because each version of the
             // function will be relatively small
-            return try switch (result.tag) {
+            return switch (result.tag) {
                 .StringPossiblyFormatted => this.printAs(.StringPossiblyFormatted, Writer, writer, value, result.cell, enable_ansi_colors),
                 .String => this.printAs(.String, Writer, writer, value, result.cell, enable_ansi_colors),
                 .Undefined => this.printAs(.Undefined, Writer, writer, value, result.cell, enable_ansi_colors),

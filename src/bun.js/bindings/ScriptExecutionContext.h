@@ -2,7 +2,6 @@
 
 #include "root.h"
 #include "ActiveDOMObject.h"
-#include "ContextDestructionObserver.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -33,14 +32,18 @@ class MessagePort;
 class ScriptExecutionContext;
 class EventLoopTask;
 
-using ScriptExecutionContextIdentifier = uint32_t;
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+class ContextDestructionObserver;
 
+using ScriptExecutionContextIdentifier = uint32_t;
+
+#if ENABLE(MALLOC_BREAKDOWN)
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
+#endif
 class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, public RefCounted<ScriptExecutionContext> {
 #if ENABLE(MALLOC_BREAKDOWN)
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(ScriptExecutionContext);
 #else
-    WTF_MAKE_ISO_ALLOCATED(ScriptExecutionContext);
+    WTF_MAKE_TZONE_ALLOCATED(ScriptExecutionContext);
 #endif
 
 public:

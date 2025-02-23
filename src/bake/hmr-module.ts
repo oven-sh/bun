@@ -1,7 +1,16 @@
+// This is an implementation of an ES module loader with hot-module reloading support.
+//
+// TODO: solve a major design flaw where circular dependencies initialize stuff
+// wrong, as well as the over-aggressive use of async functions.
 import * as runtimeHelpers from "../runtime.bun.js";
 
 let refreshRuntime: any;
 const registry = new Map<Id, HotModule>();
+
+const asyncFunctionPrototype = Object.getPrototypeOf(async function () {});
+function isAsyncFunction(fn: Function) {
+  return Object.getPrototypeOf(fn) === asyncFunctionPrototype;
+}
 
 export type ModuleLoadFunction = (module: HotModule) => void;
 export type ExportsCallbackFunction = (new_exports: any) => void;
@@ -10,17 +19,27 @@ export const enum State {
   Loading,
   Ready,
   Error,
+  Replacing,
 }
 
+// negative = sync, positive = async
 export const enum LoadModuleType {
-  AssertPresent,
-  UserDynamic,
+  AsyncAssertPresent = 1,
+  AsyncUserDynamic = 2,
+  SyncUserDynamic = -1,
 }
 
 interface DepEntry {
   _callback: ExportsCallbackFunction;
   _expectedImports: string[] | undefined;
 }
+
+/**
+ * The expression `import(a,b)` is not supported in all browsers, most notably
+ * in Mozilla Firefox. It is lazily evaluated, and will throw a SyntaxError
+ * upon first usage.
+ */
+let lazyDynamicImportWithOptions;
 
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
@@ -46,30 +65,46 @@ export class HotModule<E = any> {
   }
 
   require(id: Id, onReload?: ExportsCallbackFunction) {
-    const mod = loadModule(id, LoadModuleType.UserDynamic);
+    const mod = loadModule(id, LoadModuleType.SyncUserDynamic) as HotModule;
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: undefined } : undefined);
     return mod.exports;
   }
 
-  importSync(id: Id, onReload?: ExportsCallbackFunction, expectedImports?: string[]) {
-    const mod = loadModule(id, LoadModuleType.AssertPresent);
+  async importStmt(id: Id, onReload?: ExportsCallbackFunction, expectedImports?: string[]) {
+    const mod = await (loadModule(id, LoadModuleType.AsyncAssertPresent) as Promise<HotModule>);
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, __esModule } = mod;
-    const object = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+    const object = __esModule
+      ? exports
+      : (mod._ext_exports ??= { ...(typeof exports === "object" && exports), default: exports });
 
-    if (expectedImports && mod._state === State.Ready) {
-      for (const key of expectedImports) {
-        if (!(key in object)) {
-          throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
-        }
-      }
-    }
+    // if (expectedImports && mod._state === State.Ready) {
+    //   for (const key of expectedImports) {
+    //     if (!(key in object)) {
+    //       throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
+    //     }
+    //   }
+    // }
     return object;
   }
 
   /// Equivalent to `import()` in ES modules
   async dynamicImport(specifier: string, opts?: ImportCallOptions) {
-    const mod = loadModule(specifier, LoadModuleType.UserDynamic);
+    if (!registry.has(specifier) && !input_graph[specifier]) {
+      try {
+        if (opts != null)
+          return await (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(
+            specifier,
+            opts,
+          );
+        return await import(specifier);
+      } catch (err) {
+        // fall through to loadModule, which will throw a more specific error.
+        // but still show this one.
+        console.error(err);
+      }
+    }
+    const mod = await (loadModule(specifier, LoadModuleType.AsyncUserDynamic) as Promise<HotModule>);
     // insert into the map if not present
     mod._deps.set(this, mod._deps.get(this));
     const { exports, __esModule } = mod;
@@ -88,6 +123,16 @@ if (side === "server") {
   HotModule.prototype.importBuiltin = function (id: string) {
     return import.meta.require(id);
   };
+}
+
+const enumerableEntries = ["id", "exports", "require"];
+for (const k in HotModule.prototype) {
+  if (!enumerableEntries.includes(k)) {
+    const descriptor = Object.getOwnPropertyDescriptor(HotModule.prototype, k);
+    if (descriptor) {
+      Object.defineProperty(HotModule.prototype, k, { ...descriptor, enumerable: false });
+    }
+  }
 }
 
 function initImportMeta(m: HotModule): ImportMeta {
@@ -109,25 +154,25 @@ type HotDisposeFunction = (data: any) => void;
 type HotEventHandler = (data: any) => void;
 
 class Hot {
-  private _module: HotModule;
+  #module: HotModule;
 
   data = {};
 
   constructor(module: HotModule) {
-    this._module = module;
+    this.#module = module;
   }
 
   accept(
     arg1: string | readonly string[] | HotAcceptFunction,
     arg2: HotAcceptFunction | HotArrayAcceptFunction | undefined,
   ) {
-    console.warn("TODO: implement ImportMetaHot.accept (called from " + JSON.stringify(this._module.id) + ")");
+    console.warn("TODO: implement ImportMetaHot.accept (called from " + JSON.stringify(this.#module.id) + ")");
   }
 
   decline() {} // Vite: "This is currently a noop and is there for backward compatibility"
 
   dispose(cb: HotDisposeFunction) {
-    (this._module._onDispose ??= []).push(cb);
+    (this.#module._onDispose ??= []).push(cb);
   }
 
   prune(cb: HotDisposeFunction) {
@@ -172,36 +217,67 @@ function isUnsupportedViteEventName(str: string) {
  * Load a module by ID. Use `type` to specify if the module is supposed to be
  * present, or is something a user is able to dynamically specify.
  */
-export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T> {
+export function loadModule<T = any>(
+  key: Id,
+  type: LoadModuleType,
+  opts?: ImportCallOptions,
+): HotModule<T> | Promise<HotModule<T>> {
   let mod = registry.get(key);
   if (mod) {
     // Preserve failures until they are re-saved.
     if (mod._state == State.Error) throw mod._cached_failure;
-
-    return mod;
+    if (mod._state != State.Replacing) return mod;
+  } else {
+    mod = new HotModule(key);
   }
-  mod = new HotModule(key);
   const load = input_graph[key];
+  if (type < 0 && isAsyncFunction(load)) {
+    // TODO: This is possible to implement, but requires some care.
+    throw new Error("Cannot load ES module synchronously");
+  }
   if (!load) {
-    if (type == LoadModuleType.AssertPresent) {
+    if (type == LoadModuleType.AsyncAssertPresent) {
       throw new Error(
         `Failed to load bundled module '${key}'. This is not a dynamic import, and therefore is a bug in Bun's bundler.`,
       );
     } else {
       throw new Error(
-        `Failed to resolve dynamic import '${key}'. In Bun Bake, all imports must be statically known at compile time so that the bundler can trace everything.`,
+        `Failed to resolve dynamic import '${key}'. With Bun's DevServer, all imports must be statically known at build time so that the bundler can trace everything.`,
       );
     }
   }
   try {
     registry.set(key, mod);
-    load(mod);
+    const promise = load(mod);
+    if (promise) {
+      if (IS_BUN_DEVELOPMENT) {
+        if (type !== LoadModuleType.AsyncUserDynamic && type !== LoadModuleType.AsyncAssertPresent) {
+          throw new Error("Did not expect a promise from loadModule");
+        }
+        if (!(promise instanceof Promise)) {
+          throw new Error("Expected a promise from loadModule");
+        }
+      }
+      return promise.then(
+        () => {
+          mod._state = State.Ready;
+          mod._deps.forEach((entry, dep) => {
+            entry?._callback(mod.exports);
+          });
+          return mod;
+        },
+        err => {
+          mod._cached_failure = err;
+          mod._state = State.Error;
+          throw err;
+        },
+      );
+    }
     mod._state = State.Ready;
     mod._deps.forEach((entry, dep) => {
       entry?._callback(mod.exports);
     });
   } catch (err) {
-    console.error(err);
     mod._cached_failure = err;
     mod._state = State.Error;
     throw err;
@@ -211,12 +287,19 @@ export function loadModule<T = any>(key: Id, type: LoadModuleType): HotModule<T>
 
 export const getModule = registry.get.bind(registry);
 
-export function replaceModule(key: Id, load: ModuleLoadFunction) {
+export function replaceModule(key: Id, load: ModuleLoadFunction): Promise<void> | void {
   const module = registry.get(key);
-  if (module) {
+  if (module && module._state == State.Replacing) {
     module._onDispose?.forEach(cb => cb(null));
-    module.exports = {};
-    load(module);
+    const promise = load(module) as Promise<void> | undefined;
+    if (promise) {
+      return promise.then(() => {
+        const { exports } = module;
+        for (const updater of module._deps.values()) {
+          updater?._callback?.(exports);
+        }
+      });
+    }
     const { exports } = module;
     for (const updater of module._deps.values()) {
       updater?._callback?.(exports);
@@ -224,20 +307,48 @@ export function replaceModule(key: Id, load: ModuleLoadFunction) {
   }
 }
 
-export function replaceModules(modules: any) {
+export async function replaceModules(modules: any) {
+  let needsHardReload = false;
   for (const k in modules) {
     input_graph[k] = modules[k];
+    const mod = registry.get(k);
+    if (mod) {
+      mod._onDispose?.forEach(cb => cb(null));
+      mod._state = State.Replacing;
+      mod.exports = {};
+      mod._ext_exports = undefined;
+      if (side === "client" && !config.refresh && !needsHardReload) {
+        // TODO: import meta hot
+        needsHardReload = true;
+        console.info("[Bun] Reloading because there was not an `import.meta.hot.accept` boundary");
+        location.reload();
+        return;
+      }
+    }
   }
+  const promises: Promise<void>[] = [];
   for (const k in modules) {
     try {
-      replaceModule(k, modules[k]);
+      const p = replaceModule(k, modules[k]);
+      if (p) {
+        promises.push(p);
+      }
     } catch (err) {
       // TODO: overlay for client
       console.error(err);
     }
   }
-  if (side === "client" && refreshRuntime) {
-    refreshRuntime.performReactRefresh(window);
+  if (promises.length) {
+    try {
+      await Promise.all(promises);
+    } catch (err) {
+      console.error(err);
+    }
+  }
+  if (side === "client") {
+    if (refreshRuntime) {
+      refreshRuntime.performReactRefresh(window);
+    }
   }
 }
 
@@ -263,7 +374,7 @@ if (side === "server") {
 if (side === "client") {
   const { refresh } = config;
   if (refresh) {
-    refreshRuntime = loadModule(refresh, LoadModuleType.AssertPresent).exports;
+    refreshRuntime = (await loadModule(refresh, LoadModuleType.AsyncAssertPresent)).exports;
     refreshRuntime.injectIntoGlobalHook(window);
   }
 
@@ -277,6 +388,7 @@ if (side === "client") {
   registry.set(server_module.id, server_module);
 }
 
-runtimeHelpers.__name(HotModule.prototype.importSync, "<HMR runtime> importSync");
-runtimeHelpers.__name(HotModule.prototype.require, "<HMR runtime> require");
-runtimeHelpers.__name(loadModule, "<HMR runtime> loadModule");
+runtimeHelpers.__name(HotModule.prototype.importStmt, "<Bun HMR Runtime> importStmt");
+runtimeHelpers.__name(HotModule.prototype.dynamicImport, "<Bun HMR Runtime> import");
+runtimeHelpers.__name(HotModule.prototype.require, "<Bun HMR Runtime> require");
+runtimeHelpers.__name(loadModule, "<Bun HMR Runtime> loadModule");

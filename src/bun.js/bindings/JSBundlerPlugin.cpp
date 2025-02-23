@@ -157,7 +157,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     Bun::BundlerPlugin plugin;
-    /// These are the user implementation of the plugin callbacks
+    /// These are defined in BundlerPlugin.ts
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onLoadFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> onResolveFunction;
     JSC::LazyProperty<JSBundlerPlugin, JSC::JSFunction> setupFunction;
@@ -203,7 +203,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_addFilter, (JSC::JSGlobalObject
     }
 
     uint32_t isOnLoad = callFrame->argument(2).toUInt32(globalObject);
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     unsigned index = 0;
     if (isOnLoad) {
@@ -300,6 +300,7 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
 
         if (filters[i].match(vm, path)) {
             Bun::NapiExternal* external = callbacks[i].external;
+            ASSERT(onBeforeParseArgs != nullptr);
             if (external) {
                 onBeforeParseArgs->external = external->value();
             } else {
@@ -324,7 +325,7 @@ int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, in
 }
 JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onBeforeParse, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSBundlerPlugin* thisObject = jsCast<JSBundlerPlugin*>(callFrame->thisValue());
     if (thisObject->plugin.tombstoned) {
@@ -543,7 +544,7 @@ extern "C" void JSBundlerPlugin__matchOnResolve(Bun::JSBundlerPlugin* plugin, co
     }
     WTF::String pathStr = path ? path->toWTFString(BunString::ZeroCopy) : WTF::String();
     WTF::String importerStr = importer ? importer->toWTFString(BunString::ZeroCopy) : WTF::String();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     JSFunction* function = plugin->onResolveFunction.get(plugin);
     if (UNLIKELY(!function))
@@ -590,6 +591,27 @@ extern "C" Bun::JSBundlerPlugin* JSBundlerPlugin__create(Zig::GlobalObject* glob
             globalObject->objectPrototype()),
         nullptr,
         target);
+}
+
+extern "C" JSC::EncodedJSValue JSBundlerPlugin__loadAndResolvePluginsForServe(Bun::JSBundlerPlugin* plugin, JSC::EncodedJSValue encodedPlugins, JSC::EncodedJSValue encodedBunfigFolder)
+{
+    auto& vm = plugin->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    auto* loadAndResolvePluginsForServeBuiltinFn = JSC::JSFunction::create(vm, plugin->globalObject(), WebCore::bundlerPluginLoadAndResolvePluginsForServeCodeGenerator(vm), plugin->globalObject());
+
+    auto* runSetupFn = plugin->setupFunction.get(plugin);
+
+    JSC::CallData callData = JSC::getCallData(loadAndResolvePluginsForServeBuiltinFn);
+    if (UNLIKELY(callData.type == JSC::CallData::Type::None))
+        return JSValue::encode(jsUndefined());
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(JSValue::decode(encodedPlugins));
+    arguments.append(JSValue::decode(encodedBunfigFolder));
+    arguments.append(runSetupFn);
+
+    return JSC::JSValue::encode(JSC::profiledCall(plugin->globalObject(), ProfilingReason::API, loadAndResolvePluginsForServeBuiltinFn, callData, plugin, arguments));
 }
 
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__runSetupFunction(

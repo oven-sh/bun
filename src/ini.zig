@@ -543,7 +543,7 @@ pub const IniTestingAPIs = struct {
                 var value = object_iter.value;
                 if (value == .undefined) continue;
 
-                const value_str = value.getZigString(globalThis);
+                const value_str = try value.getZigString(globalThis);
                 const slice = try value_str.toOwnedSlice(allocator);
 
                 envmap.put(keyslice, .{
@@ -1030,6 +1030,12 @@ pub fn loadNpmrc(
                 }
             },
             else => {},
+        }
+    }
+
+    if (out.get("ignore-scripts")) |ignore_scripts| {
+        if (ignore_scripts.isBoolean()) {
+            install.ignore_scripts = ignore_scripts.data.e_boolean.value;
         }
     }
 

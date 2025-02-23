@@ -186,6 +186,23 @@ export async function makeTree(base: string, tree: DirectoryTree) {
   }
 }
 
+/**
+ * Recursively create files within a new temporary directory.
+ *
+ * @param basename prefix of the new temporary directory
+ * @param files directory tree. Each key is a folder or file, and each value is the contents of the file. Use objects for directories.
+ * @returns an absolute path to the new temporary directory
+ *
+ * @example
+ * ```ts
+ * const dir = tempDirWithFiles("my-test", {
+ *   "index.js": `import foo from "./src/foo";`,
+ *   "src": {
+ *     "foo.js": `export default "foo";`,
+ *   },
+ * });
+ * ```
+ */
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
   const base = fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), basename + "_"));
   makeTree(base, files);
@@ -1040,8 +1057,8 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   return flat;
 }
 
-export function tmpdirSync(pattern: string = "bun.test.") {
-  return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
+export function tmpdirSync(pattern: string = "bun.test."): string {
+  return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
 export async function runBunInstall(
@@ -1053,10 +1070,29 @@ export async function runBunInstall(
     expectedExitCode?: number;
     savesLockfile?: boolean;
     production?: boolean;
+    frozenLockfile?: boolean;
+    saveTextLockfile?: boolean;
+    packages?: string[];
+    verbose?: boolean;
   },
 ) {
   const production = options?.production ?? false;
   const args = production ? [bunExe(), "install", "--production"] : [bunExe(), "install"];
+  if (options?.packages) {
+    args.push(...options.packages);
+  }
+  if (production) {
+    args.push("--production");
+  }
+  if (options?.frozenLockfile) {
+    args.push("--frozen-lockfile");
+  }
+  if (options?.saveTextLockfile) {
+    args.push("--save-text-lockfile");
+  }
+  if (options?.verbose) {
+    args.push("--verbose");
+  }
   const { stdout, stderr, exited } = Bun.spawn({
     cmd: args,
     cwd,
@@ -1150,6 +1186,11 @@ export const expiredTls = Object.freeze({
 export const tls = Object.freeze({
   cert: "-----BEGIN CERTIFICATE-----\nMIIDrzCCApegAwIBAgIUHaenuNcUAu0tjDZGpc7fK4EX78gwDQYJKoZIhvcNAQEL\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yMzA5MDYyMzI3MzRaFw0yNTA5MDUyMzI3MzRaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC+7odzr3yI\nYewRNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MB\nKw3rl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwP\ndwVUeR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn\n0oH9HbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOF\nzDpcp1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FU\nIDHtnUsoHX3RAgMBAAGjTzBNMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQ\nAAAAAAAAAAAAAAAAAAAAATAdBgNVHQ4EFgQUF3y/su4J/8ScpK+rM2LwTct6EQow\nDQYJKoZIhvcNAQELBQADggEBAGWGWp59Bmrk3Gt0bidFLEbvlOgGPWCT9ZrJUjgc\nhY44E+/t4gIBdoKOSwxo1tjtz7WsC2IYReLTXh1vTsgEitk0Bf4y7P40+pBwwZwK\naeIF9+PC6ZoAkXGFRoyEalaPVQDBg/DPOMRG9OH0lKfen9OGkZxmmjRLJzbyfAhU\noI/hExIjV8vehcvaJXmkfybJDYOYkN4BCNqPQHNf87ZNdFCb9Zgxwp/Ou+47J5k4\n5plQ+K7trfKXG3ABMbOJXNt1b0sH8jnpAsyHY4DLEQqxKYADbXsr3YX/yy6c0eOo\nX2bHGD1+zGsb7lGyNyoZrCZ0233glrEM4UxmvldBcWwOWfk=\n-----END CERTIFICATE-----\n",
   key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC+7odzr3yIYewR\nNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MBKw3r\nl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwPdwVU\neR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn0oH9\nHbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOFzDpc\np1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FUIDHt\nnUsoHX3RAgMBAAECggEAAckMqkn+ER3c7YMsKRLc5bUE9ELe+ftUwfA6G+oXVorn\nE+uWCXGdNqI+TOZkQpurQBWn9IzTwv19QY+H740cxo0ozZVSPE4v4czIilv9XlVw\n3YCNa2uMxeqp76WMbz1xEhaFEgn6ASTVf3hxYJYKM0ljhPX8Vb8wWwlLONxr4w4X\nOnQAB5QE7i7LVRsQIpWKnGsALePeQjzhzUZDhz0UnTyGU6GfC+V+hN3RkC34A8oK\njR3/Wsjahev0Rpb+9Pbu3SgTrZTtQ+srlRrEsDG0wVqxkIk9ueSMOHlEtQ7zYZsk\nlX59Bb8LHNGQD5o+H1EDaC6OCsgzUAAJtDRZsPiZEQKBgQDs+YtVsc9RDMoC0x2y\nlVnP6IUDXt+2UXndZfJI3YS+wsfxiEkgK7G3AhjgB+C+DKEJzptVxP+212hHnXgr\n1gfW/x4g7OWBu4IxFmZ2J/Ojor+prhHJdCvD0VqnMzauzqLTe92aexiexXQGm+WW\nwRl3YZLmkft3rzs3ZPhc1G2X9QKBgQDOQq3rrxcvxSYaDZAb+6B/H7ZE4natMCiz\nLx/cWT8n+/CrJI2v3kDfdPl9yyXIOGrsqFgR3uhiUJnz+oeZFFHfYpslb8KvimHx\nKI+qcVDcprmYyXj2Lrf3fvj4pKorc+8TgOBDUpXIFhFDyM+0DmHLfq+7UqvjU9Hs\nkjER7baQ7QKBgQDTh508jU/FxWi9RL4Jnw9gaunwrEt9bxUc79dp+3J25V+c1k6Q\nDPDBr3mM4PtYKeXF30sBMKwiBf3rj0CpwI+W9ntqYIwtVbdNIfWsGtV8h9YWHG98\nJ9q5HLOS9EAnogPuS27walj7wL1k+NvjydJ1of+DGWQi3aQ6OkMIegap0QKBgBlR\nzCHLa5A8plG6an9U4z3Xubs5BZJ6//QHC+Uzu3IAFmob4Zy+Lr5/kITlpCyw6EdG\n3xDKiUJQXKW7kluzR92hMCRnVMHRvfYpoYEtydxcRxo/WS73SzQBjTSQmicdYzLE\ntkLtZ1+ZfeMRSpXy0gR198KKAnm0d2eQBqAJy0h9AoGBAM80zkd+LehBKq87Zoh7\ndtREVWslRD1C5HvFcAxYxBybcKzVpL89jIRGKB8SoZkF7edzhqvVzAMP0FFsEgCh\naClYGtO+uo+B91+5v2CCqowRJUGfbFOtCuSPR7+B3LDK8pkjK2SQ0mFPUfRA5z0z\nNVWtC0EYNBTRkqhYtqr3ZpUc\n-----END PRIVATE KEY-----\n",
+});
+
+export const invalidTls = Object.freeze({
+  cert: "-----BEGIN CERTIFICATE-----\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yNTAyMDQwNDUyNTdaFw0yNzAyMDQwNDUyNTdaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC1rZqCnASs\nHPzPjs/mls+z3qTl6OsCNI+kTsA23/+ZkvtBe7EI+9LfV1Sy4MF66ZovR0UgeJUB\nlL7ExadXkfZJS0N6LEAIyEMQI0cpILv3i6sJCcRwHV7X7N55lkUdsJtQ3fSKsyn9\nPDWJGVdwtRjdod3XyevYcx5NLGZOF/4KJmR4eNkX8ycG8zvW/srPHHE95/+k/5Wo\n/RrS+OLl+bgVznxmXtnFMdbYvJ1RLyipCED2P569NWXAgCzYESX2tqLr20R8ca8Q\niTcXXijY1Wq+pVR5NhIckt+zyZlUQ5IT3DvAQn4aW30wA514k1AKDKQjtxdRzVmV\nGDOTOzAlpmeZAgMBAAGjTzBNMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQ\nAAAAAAAAAAAAAAAAAAAAATAdBgNVHQ4EFgQUkgeZUw9BZc/9mxAym4BjaVYhHoow\nDQYJKoZIhvcNAQELBQADggEBAJGQomt68rO1wuhHaG355kGaIsTsoUJgs7VAKNI2\n0/vtMKODX2Zo2BHhiI1wSH751IySqWbGYCvXl6QrsV5tD/jdIYKvyXLFmV0KgQSY\nkZ91sde4jIiiqL5h03GJSUydCl4SE1A1H8Ht41NYoyVaWVPzv5lprt654vpRPbPq\nYBQTWSFcYkmGnza/tRALUftM5U3yKOTQ8sKH/eKGC9KU0DI5pZ2XAxrIyvrJZMm1\n0WwWTrO0KlXN8N9v8tVCVm7g6mYug4HEADQ4kymyfwM6mPY1EmsGy36KOqCRUtUR\n+jmAZr9m+l+27GxR9zjxoLWHkARuWZM/hL//u90cNfNDRgQ=\n-----END CERTIFICATE-----\n",
+  key: "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC1rZqCnASsHPzP\njs/mls+z3qTl6OsCNI+kTsA23/+ZkvtBe7EI+9LfV1Sy4MF66ZovR0UgeJUBlL7E\nxadXkfZJS0N6LEAIyEMQI0cpILv3i6sJCcRwHV7X7N55lkUdsJtQ3fSKsyn9PDWJ\nGVdwtRjdod3XyevYcx5NLGZOF/4KJmR4eNkX8ycG8zvW/srPHHE95/+k/5Wo/RrS\n+OLl+bgVznxmXtnFMdbYvJ1RLyipCED2P569NWXAgCzYESX2tqLr20R8ca8QiTcX\nXijY1Wq+pVR5NhIckt+zyZlUQ5IT3DvAQn4aW30wA514k1AKDKQjtxdRzVmVGDOT\nOzAlpmeZAgMBAAECggEANW6F2zTckOwDlF2pmmUvV/S6pZ1/hIoF1uqMUHdHmpim\nSaeBtSUu6x2pnORKMwaCILaCx55/IFRpWMDSywf0GbFHeqaJ/Ks9QgFGG/vzHEZY\n+pMDUX/p1XJmKfc+g5Fd1IY6thIkXsR28EfiNhUk54YEE0NhGCsfNc5BlmUrAzuw\nSevCkbChsZzLoasskt5hgWOb1wT757xDrOOss3LXvwaFkMXANQHiaGWxSpmyXTVf\nmtIX4wpN2K5BQxRBV6xmRaBBp7fWJlbqvV67wwh2cxIAyvQ68VVVHTbfv44TUw62\nyCKle6hSLi/OnMr1FJv16Ez+K3lUIkYE0nTYIvQkYwKBgQD34Nwy0U8WcHcOSbU1\nMIREfvPNYfl/hH94wmLyKZWhpqOfqgrUg+19+n9TXw4DGdO7lwAzz+ud7TImbGDI\n+1cb9/FxTK5cRwICTLC+Pse6pVkKUvPdil/TfHZBJP1jeIMGMDVi0fcGv97LxrHV\nJGQwA5x1nHGHl0JrENRqm3M2NwKBgQC7oXkWb0s2C8ANI14gz+q/2EmTSJxxrzXR\nz5EQk87PmPfkY4I1T8vKFcaiJynyReLwpYTip2WYGqc7qAO9oLwmA+d/NMOBI2sg\noEn154Q9zvr3jqIgu9/AapEgEDlA+v18veoIz3bae6wu57lpGvGtCoQLBS6q2UZg\n3zFI3BJorwKBgDz4WjFFuqZSU3Z4OtIydNZEQ8Oo7a2n8ZLKfXwDLoLsciK7uJ49\nNRVfoCHpp5CrsaDaq3oTEmluBn/c+JF3AR4oBoNP0TNxY9Uc9/xThN0r/pLDhKhh\neOCUJKIxbwIgilnjUb5U1uYaG7sTzHoY0Wvd94YWTPaFBhk/sn/mbJhRAoGAA+/E\nWZsmKdEfS2dFj0ytcS75hDSOy7fQWkGPmphvS127Pbh0v+eXr/q6+yX1NFcRBtmC\nKzs133YXsiG5Sl439Fg6oCmcPHZgxgN26cjctmtESrNcZXFrpV7XAqQ0f0+Ex/w4\nD81Cghz8JNPJyRG+plHFKXIHY6BBYMDuCMhNPpMCgYEA1BVG5scNtmBE3SaRns2G\npKgWiwmzPDTqwf3R0rgkHQroZUIz616jLgKXIVMBPaq/771uq+hzJZro9sNcNL8p\n9PkLRr4V4KtUSqkjvitU68vMM1qxtO9NVwCI5u3wicVC5mMqcH8FN+sO/5/jIPBl\nO/qEOVDlCuYtURcnh/Oz1cE=\n-----END PRIVATE KEY-----\n",
 });
 
 export function disableAggressiveGCScope() {
@@ -1437,6 +1478,7 @@ export class VerdaccioRegistry {
   process: ChildProcess | undefined;
   configPath: string;
   packagesPath: string;
+  users: Record<string, string> = {};
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
     this.port = randomPort();
@@ -1486,24 +1528,79 @@ export class VerdaccioRegistry {
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill();
+    this.process?.kill(0);
   }
 
-  async createTestDir() {
+  /**
+   * returns auth token
+   */
+  async generateUser(username: string, password: string): Promise<string> {
+    if (this.users[username]) {
+      throw new Error(`User ${username} already exists`);
+    } else this.users[username] = password;
+
+    const url = `http://localhost:${this.port}/-/user/org.couchdb.user:${username}`;
+    const user = {
+      name: username,
+      password: password,
+      email: `${username}@example.com`,
+    };
+
+    const response = await fetch(url, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(user),
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.token;
+    }
+
+    throw new Error("Failed to create user:", response.statusText);
+  }
+
+  async authBunfig(user: string) {
+    const authToken = await this.generateUser(user, user);
+    return `
+        [install]
+        cache = false
+        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
+        `;
+  }
+
+  async createTestDir(bunfigOpts: BunfigOpts = {}) {
+    await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
+    await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
     const packageDir = tmpdirSync();
     const packageJson = join(packageDir, "package.json");
-    await write(
-      join(packageDir, "bunfig.toml"),
-      `
-      [install]
-      cache = "${join(packageDir, ".bun-cache")}"
-      registry = "${this.registryUrl()}"
-      `,
-    );
-
+    await this.writeBunfig(packageDir, bunfigOpts);
+    this.users = {};
     return { packageDir, packageJson };
   }
+
+  async writeBunfig(dir: string, opts: BunfigOpts = {}) {
+    let bunfig = `
+    [install]
+    cache = "${join(dir, ".bun-cache")}"
+    `;
+    if ("saveTextLockfile" in opts) {
+      bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
+      `;
+    }
+    if (!opts.npm) {
+      bunfig += `registry = "${this.registryUrl()}"`;
+    }
+    await write(join(dir, "bunfig.toml"), bunfig);
+  }
 }
+
+type BunfigOpts = {
+  saveTextLockfile?: boolean;
+  npm?: boolean;
+};
 
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);

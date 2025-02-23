@@ -27,7 +27,7 @@ export default {
     divider("Intro"),
     page("index", "What is Bun?", {
       description:
-        "Bun is an all-in-one runtime for JavaScript and TypeScript apps. Run, bundle, and test apps with one fast tool.",
+        "Bun is an all-in-one runtime for JavaScript and TypeScript apps. Build, run, and test apps with one fast tool.",
     }),
     page("installation", "Installation", {
       description: "Install Bun with npm, Homebrew, Docker, or the official install script.",
@@ -181,7 +181,7 @@ export default {
         "Bun's package manager installs all packages into a shared global cache to avoid redundant re-downloads.",
     }),
     page("install/workspaces", "Workspaces", {
-      description: "Bun's package manager supports workspaces and mono-repo development workflows.",
+      description: "Bun's package manager supports workspaces and monorepo development workflows.",
     }),
     page("install/lifecycle", "Lifecycle scripts", {
       description: "How Bun handles package lifecycle scripts with trustedDependencies",
@@ -191,10 +191,11 @@ export default {
     }),
     page("install/lockfile", "Lockfile", {
       description:
-        "Bun's binary lockfile `bun.lockb` tracks your resolved dependency tree, making future installs fast and repeatable.",
+        "Bun's lockfile `bun.lock` tracks your resolved dependency tree, making future installs fast and repeatable.",
     }),
     page("install/registries", "Scopes and registries", {
-      description: "How to configure private scopes and custom package registries.",
+      description:
+        "How to configure private scopes, custom package registries, authenticating with npm token, and more.",
     }),
     page("install/overrides", "Overrides and resolutions", {
       description: "Specify version ranges for nested dependencies",
@@ -214,8 +215,8 @@ export default {
     page("bundler", "`Bun.build`", {
       description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
-    page("bundler/html", "HTML", {
-      description: `Bundle html files with Bun's native bundler.`,
+    page("bundler/html", "Bundle frontend & static sites", {
+      description: `Zero-config HTML bundler for single-page apps and multi-page apps. Automatic bundling, TailwindCSS plugins, TypeScript, JSX, React support, and incredibly fast builds`,
     }),
     page("bundler/fullstack", "Fullstack Dev Server", {
       description: "Serve your frontend and backend from the same app with Bun's dev server.",
@@ -314,6 +315,9 @@ export default {
     page("api/streams", "Streams", {
       description: `Reading, writing, and manipulating streams of data in Bun.`,
     }), // "`Bun.serve`"),
+    page("api/sql", "SQL", {
+      description: `Bun provides fast, native bindings for interacting with PostgreSQL databases.`,
+    }),
     page("api/s3", "S3 Object Storage", {
       description: `Bun provides fast, native bindings for interacting with S3-compatible object storage services.`,
     }),

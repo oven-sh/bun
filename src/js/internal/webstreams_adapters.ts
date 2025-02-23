@@ -28,31 +28,14 @@ const PromiseResolve = Promise.resolve.bind(Promise);
 const PromisePrototypeThen = Promise.prototype.then;
 const SafePromisePrototypeFinally = Promise.prototype.finally;
 
-const constants_zlib = process.binding("constants").zlib;
+const constants_zlib = $processBindingConstants.zlib;
 
-//
-//
-const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
-
-function getNativeReadableStream(Readable, stream, options) {
+function tryTransferToNativeReadable(stream, options) {
   const ptr = stream.$bunNativePtr;
   if (!ptr || ptr === -1) {
-    $debug("no native readable stream");
     return undefined;
   }
-  const type = stream.$bunNativeType;
-  $assert(typeof type === "number", "Invalid native type");
-  $assert(typeof ptr === "object", "Invalid native ptr");
-
-  const NativeReadable = require("node:stream")[kGetNativeReadableProto](type);
-  // https://github.com/oven-sh/bun/pull/12801
-  // https://github.com/oven-sh/bun/issues/9555
-  // There may be a ReadableStream.Strong handle to the ReadableStream.
-  // We can't update those handles to point to the NativeReadable from JS
-  // So we instead mark it as no longer usable, and create a new NativeReadable
-  transferToNativeReadable(stream);
-
-  return new NativeReadable(ptr, options);
+  return require("internal/streams/native-readable").constructNativeReadable(stream, options);
 }
 
 class ReadableFromWeb extends Readable {
@@ -177,8 +160,6 @@ class ReadableFromWeb extends Readable {
     }
   }
 }
-//
-//
 
 const encoder = new TextEncoder();
 
@@ -542,7 +523,7 @@ function newStreamReadableFromReadableStream(readableStream, options = kEmptyObj
     throw $ERR_INVALID_ARG_VALUE("options.encoding", encoding);
   validateBoolean(objectMode, "options.objectMode");
 
-  const nativeStream = getNativeReadableStream(Readable, readableStream, options);
+  const nativeStream = tryTransferToNativeReadable(readableStream, options);
 
   return (
     nativeStream ||

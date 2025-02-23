@@ -737,6 +737,10 @@
           "value": "1",
         },
         {
+          "name": "BUN_DEBUG_SYS",
+          "value": "1",
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2",
         },

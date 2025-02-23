@@ -53,7 +53,7 @@ app.listen(port, () => {
 Commit your changes and push to GitHub.
 
 ```sh
-$ git add app.ts bun.lockb package.json
+$ git add app.ts bun.lock package.json
 $ git commit -m "Create simple Express app"
 $ git push origin main
 ```
@@ -70,7 +70,7 @@ In the Render UI, provide the following values during web service creation:
 | ----------------- | ------------- |
 | **Runtime**       | `Node`        |
 | **Build Command** | `bun install` |
-| **Start Command** | `bun app.js`  |
+| **Start Command** | `bun app.ts`  |
 
 ---
 

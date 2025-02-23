@@ -1,43 +1,57 @@
-As of Bun v1.1.44, we've added initial support for bundling frontend apps directly in Bun's HTTP server: `Bun.serve()`. Run your frontend and backend in the same app with no extra steps.
+Using `Bun.serve()`'s `routes` option, you can run your frontend and backend in the same app with no extra steps.
 
-To get started, import your HTML files and pass them to the `static` option in `Bun.serve()`.
+To get started, import HTML files and pass them to the `routes` option in `Bun.serve()`.
 
 ```ts
+import { sql, serve } from "bun";
 import dashboard from "./dashboard.html";
 import homepage from "./index.html";
 
-Bun.serve({
-  // Add HTML imports to `static`
-  static: {
-    // Bundle & route index.html to "/"
+const server = serve({
+  routes: {
+    // ** HTML imports **
+    // Bundle & route index.html to "/". This uses HTMLRewriter to scan the HTML for `<script>` and `<link>` tags, run's Bun's JavaScript & CSS bundler on them, transpiles any TypeScript, JSX, and TSX, downlevels CSS with Bun's CSS parser and serves the result.
     "/": homepage,
     // Bundle & route dashboard.html to "/dashboard"
     "/dashboard": dashboard,
+
+    // ** API endpoints ** (Bun v1.2.3+ required)
+    "/api/users": {
+      async GET(req) {
+        const users = await sql`SELECT * FROM users`;
+        return Response.json(users);
+      },
+      async POST(req) {
+        const { name, email } = await req.json();
+        const [user] =
+          await sql`INSERT INTO users (name, email) VALUES (${name}, ${email})`;
+        return Response.json(user);
+      },
+    },
+    "/api/users/:id": async req => {
+      const { id } = req.params;
+      const [user] = await sql`SELECT * FROM users WHERE id = ${id}`;
+      return Response.json(user);
+    },
   },
 
   // Enable development mode for:
   // - Detailed error messages
-  // - Rebuild on request
+  // - Hot reloading (Bun v1.2.3+ required)
   development: true,
 
-  // Handle API requests
-  async fetch(req) {
-    // ...your API code
-    if (req.url.endsWith("/api/users")) {
-      const users = await Bun.sql`SELECT * FROM users`;
-      return Response.json(users);
-    }
-
-    // Return 404 for unmatched routes
-    return new Response("Not Found", { status: 404 });
-  },
+  // Prior to v1.2.3, the `fetch` option was used to handle all API requests. It is now optional.
+  // async fetch(req) {
+  //   // Return 404 for unmatched routes
+  //   return new Response("Not Found", { status: 404 });
+  // },
 });
+
+console.log(`Listening on ${server.url}`);
 ```
 
-You'll need to run your app with `bun --experimental-html` to enable this feature:
-
 ```bash
-$ bun --experimental-html run app.ts
+$ bun run app.ts
 ```
 
 ## HTML imports are routes
@@ -55,7 +69,7 @@ These HTML files are used as routes in Bun's dev server you can pass to `Bun.ser
 
 ```ts
 Bun.serve({
-  static: {
+  routes: {
     "/": homepage,
     "/dashboard": dashboard,
   }
@@ -109,11 +123,11 @@ To use React in your client-side code, import `react-dom/client` and render your
 {% codetabs %}
 
 ```ts#src/backend.ts
-import dashboard from "./public/dashboard.html";
+import dashboard from "../public/dashboard.html";
 import { serve } from "bun";
 
 serve({
-  static: {
+  routes: {
     "/": dashboard,
   },
 
@@ -171,7 +185,7 @@ import homepage from "./index.html";
 import dashboard from "./dashboard.html";
 
 Bun.serve({
-  static: {
+  routes: {
     "/": homepage,
     "/dashboard": dashboard,
   }
@@ -197,6 +211,59 @@ When serving your app in production, set `development: false` in `Bun.serve()`.
 - Enable in-memory caching of bundled assets. Bun will bundle assets lazily on the first request to an `.html` file, and cache the result in memory until the server restarts.
 - Enables `Cache-Control` headers and `ETag` headers
 - Minifies JavaScript/TypeScript/TSX/JSX files
+
+## Plugins
+
+Bun's [bundler plugins](https://bun.sh/docs/bundler/plugins) are also supported when bundling static routes.
+
+To configure plugins for `Bun.serve`, add a `plugins` array in the `[serve.static]` section of your `bunfig.toml`.
+
+### Using TailwindCSS in HTML routes
+
+For example, enable TailwindCSS on your routes by installing and adding the `bun-plugin-tailwind` plugin:
+
+```sh
+$ bun add bun-plugin-tailwind
+```
+
+```toml#bunfig.toml
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+```
+
+This will allow you to use TailwindCSS utility classes in your HTML and CSS files. All you need to do is import `tailwindcss` somewhere:
+
+```html#index.html
+<!doctype html>
+<html>
+  <head>
+    <title>Home</title>
+    <link rel="stylesheet" href="tailwindcss" />
+  </head>
+  <body>
+    <!-- the rest of your HTML... -->
+  </body>
+</html>
+```
+
+Or in your CSS:
+
+```css#style.css
+@import "tailwindcss";
+```
+
+### Custom plugins
+
+Any JS file or module which exports a [valid bundler plugin object](https://bun.sh/docs/bundler/plugins#usage) (essentially an object with a `name` and `setup` field) can be placed inside the `plugins` array:
+
+```toml#bunfig.toml
+[serve.static]
+plugins = ["./my-plugin-implementation.ts"]
+```
+
+Bun will lazily resolve and load each plugin and use them to bundle your routes.
+
+Note: this is currently in `bunfig.toml` to make it possible to know statically which plugins are in use when we eventually integrate this with the `bun build` CLI. These plugins work in `Bun.build()`'s JS API, but are not yet supported in the CLI.
 
 ## How this works
 
@@ -242,6 +309,5 @@ This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/htm
 
 ## This is a work in progress
 
-- Client-side hot reloading isn't wired up yet. It will be in the future.
+- ~Client-side hot reloading isn't wired up yet. It will be in the future.~ New in Bun v1.2.3
 - This doesn't support `bun build` yet. It also will in the future.
-- We haven't figured out plugins yet. This probably will live in `bunfig.toml` with the same API as in `Bun.build` otherwise.

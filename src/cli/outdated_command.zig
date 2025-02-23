@@ -116,10 +116,10 @@ pub const OutdatedCommand = struct {
     // TODO: use in `bun pack, publish, run, ...`
     const FilterType = union(enum) {
         all,
-        name: []const u32,
-        path: []const u32,
+        name: []const u8,
+        path: []const u8,
 
-        pub fn init(pattern: []const u32, is_path: bool) @This() {
+        pub fn init(pattern: []const u8, is_path: bool) @This() {
             return if (is_path) .{
                 .path = pattern,
             } else .{
@@ -127,12 +127,9 @@ pub const OutdatedCommand = struct {
             };
         }
 
-        pub fn deinit(this: @This(), allocator: std.mem.Allocator) void {
-            switch (this) {
-                .path, .name => |pattern| allocator.free(pattern),
-                else => {},
-            }
-        }
+        /// *NOTE*: Currently this does nothing since name and path are not
+        /// allocated.
+        pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
     };
 
     fn findMatchingWorkspaces(
@@ -188,14 +185,14 @@ pub const OutdatedCommand = struct {
 
                             const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
 
-                            if (!glob.walk.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
+                            if (!glob.walk.matchImpl(allocator, pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;
                             }
                         },
                         .name => |pattern| {
                             const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                            if (!glob.walk.matchImpl(pattern, name).matches()) {
+                            if (!glob.walk.matchImpl(allocator, pattern, name).matches()) {
                                 break :matched false;
                             }
                         },
@@ -241,17 +238,8 @@ pub const OutdatedCommand = struct {
                     continue;
                 }
 
-                const length = bun.simdutf.length.utf32.from.utf8.le(arg);
-                const convert_buf = bun.default_allocator.alloc(u32, length) catch bun.outOfMemory();
-
-                const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(arg, convert_buf);
-                if (!convert_result.isSuccessful()) {
-                    converted.* = FilterType.init(&.{}, false);
-                    continue;
-                }
-
-                converted.* = FilterType.init(convert_buf[0..convert_result.count], false);
-                at_least_one_greater_than_zero = at_least_one_greater_than_zero or convert_result.count > 0;
+                converted.* = FilterType.init(arg, false);
+                at_least_one_greater_than_zero = at_least_one_greater_than_zero or arg.len > 0;
             }
 
             // nothing will match
@@ -307,7 +295,7 @@ pub const OutdatedCommand = struct {
                                 .path => unreachable,
                                 .name => |name_pattern| {
                                     if (name_pattern.len == 0) continue;
-                                    if (!glob.walk.matchImpl(name_pattern, dep.name.slice(string_buf)).matches()) {
+                                    if (!glob.walk.matchImpl(bun.default_allocator, name_pattern, dep.name.slice(string_buf)).matches()) {
                                         break :match false;
                                     }
                                 },
@@ -427,14 +415,12 @@ pub const OutdatedCommand = struct {
         table.printColumnNames();
 
         for (workspace_pkg_ids) |workspace_pkg_id| {
-            inline for (
-                .{
-                    Behavior.prod,
-                    Behavior.dev,
-                    Behavior.peer,
-                    Behavior.optional,
-                },
-            ) |group_behavior| {
+            inline for ([_]Behavior{
+                .{ .prod = true },
+                .{ .dev = true },
+                .{ .peer = true },
+                .{ .optional = true },
+            }) |group_behavior| {
                 for (outdated_ids.items) |ids| {
                     if (workspace_pkg_id != ids.workspace_pkg_id) continue;
                     const package_id = ids.package_id;

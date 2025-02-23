@@ -51,6 +51,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     // similar code as Bun__Process__send
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+    defer formatter.deinit();
     if (Environment.isDebug) log("child: {}", .{message.toFmt(&formatter)});
 
     const ipc_instance = vm.getIPCInstance().?;
@@ -205,6 +206,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
     // similar code as bun.JSC.Subprocess.doSend
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+    defer formatter.deinit();
     if (Environment.isDebug) log("primary: {}", .{message.toFmt(&formatter)});
 
     _ = handle;

@@ -125,7 +125,7 @@ size_t JSFetchHeaders::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSFetchHeadersDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSFetchHeadersDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -377,7 +377,7 @@ void JSFetchHeaders::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSFetchHeadersPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

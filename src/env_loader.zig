@@ -144,9 +144,9 @@ pub const Loader = struct {
             region = region_;
         }
         if (this.get("S3_ENDPOINT")) |endpoint_| {
-            endpoint = bun.URL.parse(endpoint_).host;
+            endpoint = bun.URL.parse(endpoint_).hostWithPath();
         } else if (this.get("AWS_ENDPOINT")) |endpoint_| {
-            endpoint = bun.URL.parse(endpoint_).host;
+            endpoint = bun.URL.parse(endpoint_).hostWithPath();
         }
         if (this.get("S3_BUCKET")) |bucket_| {
             bucket = bucket_;
@@ -221,7 +221,7 @@ pub const Loader = struct {
                     return http_proxy;
                 }
 
-                var no_proxy_list = std.mem.split(u8, no_proxy_text, ",");
+                var no_proxy_list = std.mem.splitScalar(u8, no_proxy_text, ',');
                 var next = no_proxy_list.next();
                 while (next != null) {
                     var host = strings.trim(next.?, &strings.whitespace_chars);
@@ -1163,11 +1163,11 @@ pub const Map = struct {
 
     map: HashTable,
 
-    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]u8 {
+    pub fn createNullDelimitedEnvMap(this: *Map, arena: std.mem.Allocator) ![:null]?[*:0]const u8 {
         var env_map = &this.map;
 
         const envp_count = env_map.count();
-        const envp_buf = try arena.allocSentinel(?[*:0]u8, envp_count, null);
+        const envp_buf = try arena.allocSentinel(?[*:0]const u8, envp_count, null);
         {
             var it = env_map.iterator();
             var i: usize = 0;

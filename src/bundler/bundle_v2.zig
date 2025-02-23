@@ -204,10 +204,10 @@ pub const ThreadPool = struct {
         }
 
         switch (parse_task.stage) {
-            .needs_source_code => {
+            .needs_parse => {
                 this.pool.schedule(.from(&parse_task.task));
             },
-            .needs_parse => {
+            .needs_source_code => {
                 this.io_pool.schedule(.from(&parse_task.task));
             },
         }

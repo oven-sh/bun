@@ -146,33 +146,46 @@ pub const ThreadPool = struct {
     /// On Linux, this was a performance regression.
     /// In some benchmarks on macOS, this yielded up to a 60% performance improvement in microbenchmarks that load ~10,000 files.
     io_pool: *ThreadPoolLib = undefined,
-
-    pool: *ThreadPoolLib = undefined,
+    worker_pool: *ThreadPoolLib = undefined,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Mutex = .{},
     v2: *BundleV2 = undefined,
 
     const debug = Output.scoped(.ThreadPool, false);
 
+    pub fn reset(this: *ThreadPool) void {
+        if (this.usesIOPool()) {
+            if (this.io_pool.threadpool_context == @as(?*anyopaque, @ptrCast(this))) {
+                this.io_pool.threadpool_context = null;
+            }
+        }
+
+        if (this.worker_pool.threadpool_context == @as(?*anyopaque, @ptrCast(this))) {
+            this.worker_pool.threadpool_context = null;
+        }
+    }
+
     pub fn go(this: *ThreadPool, allocator: std.mem.Allocator, comptime Function: anytype) !ThreadPoolLib.ConcurrentFunction(Function) {
-        return this.pool.go(allocator, Function);
+        return this.worker_pool.go(allocator, Function);
     }
 
     pub fn start(this: *ThreadPool, v2: *BundleV2, existing_thread_pool: ?*ThreadPoolLib) !void {
         this.v2 = v2;
 
         if (existing_thread_pool) |pool| {
-            this.pool = pool;
+            this.worker_pool = pool;
         } else {
             const cpu_count = bun.getThreadCount();
-            this.pool = try v2.graph.allocator.create(ThreadPoolLib);
-            this.pool.* = ThreadPoolLib.init(.{
+            this.worker_pool = try v2.graph.allocator.create(ThreadPoolLib);
+            this.worker_pool.* = ThreadPoolLib.init(.{
                 .max_threads = cpu_count,
             });
             debug("{d} workers", .{cpu_count});
         }
 
-        this.pool.warm(8);
+        this.worker_pool.setThreadContext(this);
+
+        this.worker_pool.warm(8);
 
         const IOThreadPool = struct {
             var thread_pool: ThreadPoolLib = undefined;
@@ -193,11 +206,10 @@ pub const ThreadPool = struct {
             }
         };
 
-        this.pool.setThreadContext(this);
-
         if (this.usesIOPool()) {
             this.io_pool = IOThreadPool.get();
             this.io_pool.setThreadContext(this);
+            this.io_pool.warm(1);
         }
     }
 
@@ -220,8 +232,8 @@ pub const ThreadPool = struct {
         return false;
     }
 
-    pub fn schedule(this: *ThreadPool, parse_task: *ParseTask) void {
-        if (parse_task.contents_or_fd == .contents) {
+    pub fn scheduleWithOptions(this: *ThreadPool, parse_task: *ParseTask, is_inside_thread_pool: bool) void {
+        if (parse_task.contents_or_fd == .contents and parse_task.stage == .needs_source_code) {
             parse_task.stage = .{
                 .needs_parse = .{
                     .contents = parse_task.contents_or_fd.contents,
@@ -230,24 +242,28 @@ pub const ThreadPool = struct {
             };
         }
 
+        const scheduleFn = if (is_inside_thread_pool) &ThreadPoolLib.scheduleInsideThreadPool else &ThreadPoolLib.schedule;
+
         if (this.usesIOPool()) {
             switch (parse_task.stage) {
                 .needs_parse => {
-                    parse_task.task = .{
-                        .callback = ParseTask.callback,
-                    };
-                    this.pool.schedule(.from(&parse_task.task));
+                    scheduleFn(this.worker_pool, .from(&parse_task.task));
                 },
                 .needs_source_code => {
-                    parse_task.io_task = .{
-                        .callback = ParseTask.callback,
-                    };
-                    this.io_pool.schedule(.from(&parse_task.io_task));
+                    scheduleFn(this.io_pool, .from(&parse_task.io_task));
                 },
             }
         } else {
-            this.pool.schedule(.from(&parse_task.task));
+            scheduleFn(this.worker_pool, .from(&parse_task.task));
         }
+    }
+
+    pub fn schedule(this: *ThreadPool, parse_task: *ParseTask) void {
+        this.scheduleWithOptions(parse_task, false);
+    }
+
+    pub fn scheduleInsideThreadPool(this: *ThreadPool, parse_task: *ParseTask) void {
+        this.scheduleWithOptions(parse_task, true);
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
@@ -1182,7 +1198,6 @@ pub const BundleV2 = struct {
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
-            runtime_parse_task.task = .{ .callback = &ParseTask.callback };
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
             this.incrementScanCounter();
@@ -1429,6 +1444,7 @@ pub const BundleV2 = struct {
         task.loader = loader;
         task.jsx = this.transpilerForTarget(known_target).options.jsx;
         task.task.node.next = null;
+        task.io_task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
         task.known_target = known_target;
 
@@ -1487,6 +1503,7 @@ pub const BundleV2 = struct {
             .known_target = known_target,
         };
         task.task.node.next = null;
+        task.io_task.node.next = null;
 
         this.incrementScanCounter();
 
@@ -1529,7 +1546,7 @@ pub const BundleV2 = struct {
 
         this.incrementScanCounter();
 
-        this.graph.pool.pool.schedule(.from(&task.task));
+        this.graph.pool.worker_pool.schedule(.from(&task.task));
 
         return @intCast(source_index);
     }
@@ -2318,7 +2335,7 @@ pub const BundleV2 = struct {
                             .known_target = resolve.import_record.original_target,
                         };
                         task.task.node.next = null;
-
+                        task.io_task.node.next = null;
                         this.incrementScanCounter();
 
                         // Handle onLoad plugins
@@ -2397,7 +2414,7 @@ pub const BundleV2 = struct {
                 this.graph.pool.workers_assignments.deinit();
             }
 
-            this.graph.pool.pool.wakeForIdleEvents();
+            this.graph.pool.worker_pool.wakeForIdleEvents();
         }
 
         for (this.free_list.items) |free| {
@@ -3677,10 +3694,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             completion.transpiler = this;
 
             defer {
-                if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
-                    this.graph.pool.pool.threadpool_context = null;
-                }
-
+                this.graph.pool.reset();
                 ast_memory_allocator.pop();
                 this.deinit();
             }
@@ -3776,11 +3790,11 @@ pub const ParseTask = struct {
     loader: ?Loader = null,
     jsx: options.JSX.Pragma,
     source_index: Index = Index.invalid,
-    task: ThreadPoolLib.Task = .{ .callback = &callback },
+    task: ThreadPoolLib.Task = .{ .callback = &taskCallback },
 
     // Split this into a different task so that we don't accidentally run the
     // tasks for io on the threads that are meant for parsing.
-    io_task: ThreadPoolLib.Task = .{ .callback = &callback },
+    io_task: ThreadPoolLib.Task = .{ .callback = &ioTaskCallback },
 
     // Used for splitting up the work between the io and parse steps.
     stage: ParseTaskStage = .needs_source_code,
@@ -5006,8 +5020,15 @@ pub const ParseTask = struct {
         };
     }
 
-    pub fn callback(task: *ThreadPoolLib.Task) void {
-        const this: *ParseTask = @fieldParentPtr("task", task);
+    fn ioTaskCallback(task: *ThreadPoolLib.Task) void {
+        runFromThreadPool(@fieldParentPtr("io_task", task));
+    }
+
+    fn taskCallback(task: *ThreadPoolLib.Task) void {
+        runFromThreadPool(@fieldParentPtr("task", task));
+    }
+
+    pub fn runFromThreadPool(this: *ParseTask) void {
         var worker = ThreadPool.Worker.get(this.ctx);
         defer worker.unget();
         debug("ParseTask(0x{x}, {s}) callback", .{ @intFromPtr(this), this.path.text });
@@ -5041,11 +5062,7 @@ pub const ParseTask = struct {
                 }
 
                 if (this.ctx.graph.pool.usesIOPool()) {
-                    this.task = .{
-                        .callback = &callback,
-                    };
-
-                    this.ctx.graph.pool.schedule(this);
+                    this.ctx.graph.pool.scheduleInsideThreadPool(this);
                     return;
                 }
             }
@@ -6390,7 +6407,7 @@ pub const LinkerContext = struct {
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
         _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .monotonic);
-        this.parse_graph.pool.pool.schedule(batch);
+        this.parse_graph.pool.worker_pool.schedule(batch);
     }
 
     pub fn markPendingTaskDone(this: *LinkerContext) void {
@@ -8052,8 +8069,8 @@ pub const LinkerContext = struct {
 
                 // If the output format doesn't have an implicit CommonJS wrapper, any file
                 // that uses CommonJS features will need to be wrapped, even though the
-                // resulting wrapper won't be invoked by other files. An exception is made
-                // for entry point files in CommonJS format (or when in pass-through mode).
+                // resulting wrapper won't be invoked by other files. An exception is
+                // made for entry point files in CommonJS format (or when in pass-through mode).
                 if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
                     flags[id].wrap = .cjs;
                 }
@@ -8260,7 +8277,7 @@ pub const LinkerContext = struct {
             // for CommonJS files, and is also necessary for other files if they are
             // imported using an import star statement.
             // Note: `do` will wait for all to finish before moving forward
-            try this.parse_graph.pool.pool.do(this.allocator, &this.wait_group, this, doStep5, this.graph.reachable_files);
+            try this.parse_graph.pool.worker_pool.do(this.allocator, &this.wait_group, this, doStep5, this.graph.reachable_files);
         }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -9771,7 +9788,7 @@ pub const LinkerContext = struct {
                 .symbols = &c.graph.symbols,
             };
 
-            c.parse_graph.pool.pool.doPtr(
+            c.parse_graph.pool.worker_pool.doPtr(
                 c.allocator,
                 &c.wait_group,
                 cross_chunk_dependencies,
@@ -13685,7 +13702,7 @@ pub const LinkerContext = struct {
             }
             wait_group.counter = @as(u32, @truncate(chunks.len));
             const ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
-            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
+            try c.parse_graph.pool.worker_pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
         }
 
         if (c.source_maps.line_offset_tasks.len > 0) {
@@ -13736,7 +13753,7 @@ pub const LinkerContext = struct {
                     }
                 }
                 wait_group.counter = @as(u32, @truncate(total_count));
-                c.parse_graph.pool.pool.schedule(batch);
+                c.parse_graph.pool.worker_pool.schedule(batch);
                 wait_group.wait();
             } else if (Environment.isDebug) {
                 for (chunks) |*chunk| {
@@ -13848,7 +13865,7 @@ pub const LinkerContext = struct {
                     }
                 }
                 wait_group.counter = @as(u32, @truncate(total_count));
-                c.parse_graph.pool.pool.schedule(batch);
+                c.parse_graph.pool.worker_pool.schedule(batch);
                 wait_group.wait();
             }
 
@@ -13869,7 +13886,7 @@ pub const LinkerContext = struct {
                 wait_group.init();
                 wait_group.counter = @as(u32, @truncate(chunks_to_do.len));
 
-                try c.parse_graph.pool.pool.doPtr(
+                try c.parse_graph.pool.worker_pool.doPtr(
                     c.allocator,
                     wait_group,
                     chunk_contexts[0],

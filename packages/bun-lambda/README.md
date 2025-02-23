@@ -98,11 +98,12 @@ bun run build-layer -- \
 
 Builds a Lambda layer for Bun then publishes it to your AWS account.
 
-| Flag       | Description                               | Default |
-| ---------- | ----------------------------------------- | ------- |
-| `--layer`  | The layer name.                           | bun     |
-| `--region` | The region name, or "\*" for all regions. |         |
-| `--public` | If the layer should be public.            | false   |
+| Flag        | Description                               | Default |
+| ----------- | ----------------------------------------- | ------- |
+| `--layer`   | The layer name.                           | bun     |
+| `--region`  | The region name, or "\*" for all regions. |         |
+| `--public`  | If the layer should be public.            | false   |
+| `--profile` | The AWS CLI profile to use                | default |
 
 Example:
 
@@ -112,4 +113,5 @@ bun run publish-layer -- \
   --release latest \
   --output /path/to/layer.zip \
   --region us-east-1
+  --profile default
 ```

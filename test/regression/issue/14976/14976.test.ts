@@ -71,7 +71,7 @@ test("constant-folded equals doesn't lie", async () => {
   console.log("\"" === '"');
 });
 
-test.skip("template literal raw property with unicode in an ascii-only build", async () => {
+test("template literal raw property with unicode in an ascii-only build", async () => {
   expect(String.raw`你好𐃘\\`).toBe("你好𐃘\\\\");
   expect((await $`echo 你好𐃘`.text()).trim()).toBe("你好𐃘");
 });

@@ -140,6 +140,7 @@ fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8)
 }
 
 pub const ThreadPool = struct {
+    io_pool: *ThreadPoolLib = undefined,
     pool: *ThreadPoolLib = undefined,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Mutex = .{},
@@ -168,7 +169,48 @@ pub const ThreadPool = struct {
 
         this.pool.warm(8);
 
+        const IOThreadPool = struct {
+            var thread_pool: ThreadPoolLib = undefined;
+            var once = bun.once(startIOThreadPool);
+
+            fn startIOThreadPool() void {
+                thread_pool = ThreadPoolLib.init(.{
+                    .max_threads = @max(@min(bun.getThreadCount(), 4), 2),
+
+                    // Use a much smaller stack size for the IO thread pool
+                    .stack_size = 512 * 1024,
+                });
+            }
+
+            pub fn get() *ThreadPoolLib {
+                once.call(.{});
+                return &thread_pool;
+            }
+        };
+
+        this.io_pool = IOThreadPool.get();
         this.pool.setThreadContext(this);
+        this.io_pool.setThreadContext(this);
+    }
+
+    pub fn schedule(this: *ThreadPool, parse_task: *ParseTask) void {
+        if (parse_task.contents_or_fd == .contents) {
+            parse_task.stage = .{
+                .needs_parse = .{
+                    .contents = parse_task.contents_or_fd.contents,
+                    .fd = bun.invalid_fd,
+                },
+            };
+        }
+
+        switch (parse_task.stage) {
+            .needs_source_code => {
+                this.pool.schedule(.from(&parse_task.task));
+            },
+            .needs_parse => {
+                this.io_pool.schedule(.from(&parse_task.task));
+            },
+        }
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
@@ -881,7 +923,6 @@ pub const BundleV2 = struct {
     pub fn enqueueEntryItem(
         this: *BundleV2,
         hash: ?u64,
-        batch: *ThreadPoolLib.Batch,
         resolve: _resolver.Result,
         is_entry_point: bool,
         target: options.Target,
@@ -939,7 +980,7 @@ pub const BundleV2 = struct {
                 this.graph.estimated_file_loader_count += 1;
             }
 
-            batch.push(.from(&task.task));
+            this.graph.pool.schedule(task);
         }
 
         try this.graph.entry_points.append(this.graph.allocator, source_index);
@@ -1088,9 +1129,7 @@ pub const BundleV2 = struct {
             },
             .bake_production => bake.production.EntryPointMap,
         },
-    ) !ThreadPoolLib.Batch {
-        var batch = ThreadPoolLib.Batch{};
-
+    ) !void {
         {
             // Add the runtime
             const rt = ParseTask.getRuntimeSource(this.transpiler.options.target);
@@ -1110,7 +1149,7 @@ pub const BundleV2 = struct {
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
             this.incrementScanCounter();
-            batch.push(.from(&runtime_parse_task.task));
+            this.graph.pool.schedule(runtime_parse_task);
         }
 
         // Bake reserves two source indexes at the start of the file list, but
@@ -1139,7 +1178,7 @@ pub const BundleV2 = struct {
                         const resolved = this.transpiler.resolveEntryPoint(entry_point) catch
                             continue;
 
-                        _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.transpiler.options.target);
+                        _ = try this.enqueueEntryItem(null, resolved, true, this.transpiler.options.target);
                     }
                 },
                 .dev_server => {
@@ -1148,13 +1187,13 @@ pub const BundleV2 = struct {
                             continue;
 
                         if (flags.client) brk: {
-                            const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, .browser) orelse break :brk;
+                            const source_index = try this.enqueueEntryItem(null, resolved, true, .browser) orelse break :brk;
                             if (flags.css) {
                                 try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });
                             }
                         }
-                        if (flags.server) _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.transpiler.options.target);
-                        if (flags.ssr) _ = try this.enqueueEntryItem(null, &batch, resolved, true, .bake_server_components_ssr);
+                        if (flags.server) _ = try this.enqueueEntryItem(null, resolved, true, this.transpiler.options.target);
+                        if (flags.ssr) _ = try this.enqueueEntryItem(null, resolved, true, .bake_server_components_ssr);
                     }
                 },
                 .bake_production => {
@@ -1163,7 +1202,7 @@ pub const BundleV2 = struct {
                             continue;
 
                         // TODO: wrap client files so the exports arent preserved.
-                        _ = try this.enqueueEntryItem(null, &batch, resolved, true, switch (key.side) {
+                        _ = try this.enqueueEntryItem(null, resolved, true, switch (key.side) {
                             .client => .browser,
                             .server => this.transpiler.options.target,
                         }) orelse continue;
@@ -1171,8 +1210,6 @@ pub const BundleV2 = struct {
                 },
             }
         }
-
-        return batch;
     }
 
     fn cloneAST(this: *BundleV2) !void {
@@ -1369,7 +1406,7 @@ pub const BundleV2 = struct {
                 this.graph.estimated_file_loader_count += 1;
             }
 
-            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+            this.graph.pool.schedule(task);
         }
 
         return source_index.get();
@@ -1425,7 +1462,7 @@ pub const BundleV2 = struct {
                 this.graph.estimated_file_loader_count += 1;
             }
 
-            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+            this.graph.pool.schedule(task);
         }
         return source_index.get();
     }
@@ -1455,7 +1492,7 @@ pub const BundleV2 = struct {
 
         this.incrementScanCounter();
 
-        this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+        this.graph.pool.pool.schedule(.from(&task.task));
 
         return @intCast(source_index);
     }
@@ -1530,7 +1567,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.normal, this.transpiler.options.entry_points));
+        try this.enqueueEntryPoints(.normal, this.transpiler.options.entry_points);
 
         if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1586,7 +1623,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.bake_production, entry_points));
+        try this.enqueueEntryPoints(.bake_production, entry_points);
 
         if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
@@ -2055,7 +2092,7 @@ pub const BundleV2 = struct {
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
                 if (source.path.isFile()) {
-                    this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&load.parse_task.task));
+                    this.graph.pool.schedule(load.parse_task);
                     return;
                 }
 
@@ -2087,7 +2124,7 @@ pub const BundleV2 = struct {
                 parse_task.contents_or_fd = .{
                     .contents = code.source_code,
                 };
-                this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
+                this.graph.pool.schedule(parse_task);
 
                 if (this.bun_watcher) |watcher| add_watchers: {
                     // TODO: support explicit watchFiles array
@@ -2256,7 +2293,7 @@ pub const BundleV2 = struct {
                                 this.graph.estimated_file_loader_count += 1;
                             }
 
-                            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+                            this.graph.pool.schedule(task);
                         }
                     } else {
                         out_source_index = Index.init(existing.value_ptr.*);
@@ -2345,7 +2382,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.normal, entry_points));
+        try this.enqueueEntryPoints(.normal, entry_points);
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -2391,10 +2428,10 @@ pub const BundleV2 = struct {
         this.graph.heap.helpCatchMemoryIssues();
 
         var ctx: DevServerInput = .{ .css_entry_points = .{} };
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.dev_server, .{
+        try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
             .css_data = &ctx.css_entry_points,
-        }));
+        });
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -3304,8 +3341,7 @@ pub const BundleV2 = struct {
                             graph.estimated_file_loader_count += 1;
                         }
 
-                        // schedule as early as possible
-                        graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
+                        graph.pool.schedule(new_task);
                     } else {
                         const loader = value.loader orelse
                             graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse
@@ -3715,6 +3751,13 @@ pub const ParseTask = struct {
     /// In this case we want to defer adding this to additional_files until after
     /// the onLoad plugin has finished.
     defer_copy_for_bundling: bool = false,
+
+    stage: ParseTaskStage = .needs_source_code,
+
+    const ParseTaskStage = union(enum) {
+        needs_source_code: void,
+        needs_parse: CacheEntry,
+    };
 
     /// The information returned to the Bundler thread when a parse finishes.
     pub const Result = struct {
@@ -4683,20 +4726,18 @@ pub const ParseTask = struct {
         }
     };
 
-    fn run(
+    fn getSourceCode(
         task: *ParseTask,
         this: *ThreadPool.Worker,
-        step: *ParseTask.Result.Error.Step,
         log: *Logger.Log,
-    ) anyerror!Result.Success {
+    ) anyerror!CacheEntry {
         const allocator = this.allocator;
 
         var data = this.data;
         var transpiler = &data.transpiler;
         errdefer transpiler.resetStore();
-        var resolver: *Resolver = &transpiler.resolver;
+        const resolver: *Resolver = &transpiler.resolver;
         var file_path = task.path;
-        step.* = .read_file;
         var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
         // Do not process files as HTML if any of the following are true:
@@ -4710,7 +4751,34 @@ pub const ParseTask = struct {
         }
 
         var contents_came_from_plugin: bool = false;
-        var entry = try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, &contents_came_from_plugin);
+        return try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, &contents_came_from_plugin);
+    }
+
+    fn runWithSourceCode(
+        task: *ParseTask,
+        this: *ThreadPool.Worker,
+        step: *ParseTask.Result.Error.Step,
+        log: *Logger.Log,
+        entry: *CacheEntry,
+    ) anyerror!Result.Success {
+        const allocator = this.allocator;
+
+        var data = this.data;
+        var transpiler = &data.transpiler;
+        errdefer transpiler.resetStore();
+        var resolver: *Resolver = &transpiler.resolver;
+        var file_path = task.path;
+        var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
+
+        // Do not process files as HTML if any of the following are true:
+        // - building for node or bun.js
+        //
+        //   We allow non-entrypoints to import HTML so that people could
+        //   potentially use an onLoad plugin that returns HTML.
+        if (task.known_target != .browser) {
+            loader = loader.disableHTML();
+            task.loader = loader;
+        }
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!
@@ -4905,42 +4973,77 @@ pub const ParseTask = struct {
         var log = Logger.Log.init(worker.allocator);
         bun.assert(this.source_index.isValid()); // forgot to set source_index
 
-        const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
-        const value: ParseTask.Result.Value = if (run(this, worker, &step, &log)) |ast| value: {
-            // When using HMR, always flag asts with errors as parse failures.
-            // Not done outside of the dev server out of fear of breaking existing code.
-            if (this.ctx.transpiler.options.dev_server != null and ast.log.hasErrors()) {
-                break :value .{
-                    .err = .{
-                        .err = error.SyntaxError,
-                        .step = .parse,
-                        .log = ast.log,
-                        .source_index = this.source_index,
-                        .target = this.known_target,
+        const value: ParseTask.Result.Value = value: {
+            if (this.stage == .needs_source_code) {
+                this.stage = .{
+                    .needs_parse = getSourceCode(this, worker, &log) catch |err| {
+                        break :value .{ .err = .{
+                            .err = err,
+                            .step = step,
+                            .log = log,
+                            .source_index = this.source_index,
+                            .target = this.known_target,
+                        } };
                     },
                 };
+
+                if (log.hasErrors()) {
+                    break :value .{ .err = .{
+                        .err = error.SyntaxError,
+                        .step = step,
+                        .log = log,
+                        .source_index = this.source_index,
+                        .target = this.known_target,
+                    } };
+                }
+
+                this.task = .{
+                    .callback = &callback,
+                };
+
+                this.ctx.graph.pool.schedule(this);
+                return;
             }
 
-            break :value .{ .success = ast };
-        } else |err| value: {
-            if (err == error.EmptyAST) {
-                log.deinit();
-                break :value .{ .empty = .{
+            if (runWithSourceCode(this, worker, &step, &log, &this.stage.needs_parse)) |ast| {
+                // When using HMR, always flag asts with errors as parse failures.
+                // Not done outside of the dev server out of fear of breaking existing code.
+                if (this.ctx.transpiler.options.dev_server != null and ast.log.hasErrors()) {
+                    break :value .{
+                        .err = .{
+                            .err = error.SyntaxError,
+                            .step = .parse,
+                            .log = ast.log,
+                            .source_index = this.source_index,
+                            .target = this.known_target,
+                        },
+                    };
+                }
+
+                break :value .{ .success = ast };
+            } else |err| {
+                if (err == error.EmptyAST) {
+                    log.deinit();
+                    break :value .{ .empty = .{
+                        .source_index = this.source_index,
+                    } };
+                }
+
+                break :value .{ .err = .{
+                    .err = err,
+                    .step = step,
+                    .log = log,
                     .source_index = this.source_index,
+                    .target = this.known_target,
                 } };
             }
-
-            break :value .{ .err = .{
-                .err = err,
-                .step = step,
-                .log = log,
-                .source_index = this.source_index,
-                .target = this.known_target,
-            } };
         };
+
+        const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
+
         result.* = .{
             .ctx = this.ctx,
-            .task = undefined,
+            .task = .{},
             .value = value,
             .external = this.external_free_function,
             .watcher_data = switch (this.contents_or_fd) {

@@ -129,7 +129,7 @@ else()
       COMMAND
         llvm-dwp
       REQUIRED
-        ON
+        OFF
     )
   else()
     find_llvm_command(CMAKE_STRIP llvm-strip)

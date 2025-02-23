@@ -836,7 +836,7 @@ if(NOT WIN32)
     -faddrsig
   )
 
-  if(LINUX)
+  if(LINUX AND CMAKE_DWP_PROGRAM)
     target_compile_options(${bun} PUBLIC
       -gsplit-dwarf
     )
@@ -1180,7 +1180,7 @@ if(NOT BUN_CPP_ONLY)
         ${BUILD_PATH}/${bunStripExe}
     )
 
-    if(LINUX)
+    if(LINUX AND CMAKE_DWP_PROGRAM AND BUN_LINK_ONLY)
       register_command(
         TARGET
           ${bun}
@@ -1214,6 +1214,8 @@ if(NOT BUN_CPP_ONLY)
         --revision
     CWD
       ${BUILD_PATH}
+    SOURCES
+      ${BUILD_PATH}/${bunExe}
   )
 
   if(CI)
@@ -1263,7 +1265,7 @@ if(NOT BUN_CPP_ONLY)
     )
   endif()
 
-  if(LINUX)
+  if(LINUX AND CMAKE_DWP_PROGRAM)
     register_command(
       TARGET
         ${bun}
@@ -1296,7 +1298,7 @@ if(NOT BUN_CPP_ONLY)
       list(APPEND bunFiles ${bun}.pdb)
     elseif(APPLE)
       list(APPEND bunFiles ${bun}.dSYM)
-    elseif(LINUX)
+    elseif(LINUX AND CMAKE_DWP_PROGRAM)
       file(GLOB DWO_FILES "${BUILD_PATH}/*.dwo")
       list(APPEND bunFiles ${DWO_FILES} ${bun}.dwp)
     endif()

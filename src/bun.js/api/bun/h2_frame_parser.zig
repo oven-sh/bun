@@ -2951,7 +2951,7 @@ pub const H2FrameParser = struct {
 
             var priority: StreamPriority = .{
                 .streamIdentifier = stream_identifier.toUInt32(),
-                .weight = @truncate(stream.weight),
+                .weight = @truncate(stream.weight - 1),
             };
             var frame: FrameHeader = .{
                 .type = @intFromEnum(FrameType.HTTP_FRAME_PRIORITY),
@@ -3894,7 +3894,7 @@ pub const H2FrameParser = struct {
 
             var priority: StreamPriority = .{
                 .streamIdentifier = stream_identifier.toUInt32(),
-                .weight = @intCast(weight),
+                .weight = @intCast(weight - 1),
             };
 
             _ = priority.write(@TypeOf(writer), writer);

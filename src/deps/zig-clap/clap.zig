@@ -10,6 +10,8 @@ const Output = @import("../../output.zig");
 
 pub const args = @import("clap/args.zig");
 
+pub const default_assignment_separators = "=";
+
 test "clap" {
     testing.refAllDecls(@This());
 }

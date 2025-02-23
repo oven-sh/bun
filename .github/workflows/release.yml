@@ -167,12 +167,16 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout
+      - name: Checkout (DefinitelyTyped)
         uses: actions/checkout@v4
         with:
           repository: DefinitelyTyped/DefinitelyTyped
+      - name: Checkout (bun)
+        uses: actions/checkout@v4
+        with:
+          path: bun
       - name: Setup Bun
-        uses: ./.github/actions/setup-bun
+        uses: ./bun/.github/actions/setup-bun
         with:
           bun-version: "1.2.0"
       - id: bun-version

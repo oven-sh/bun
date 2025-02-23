@@ -1244,10 +1244,53 @@ ServerResponse.prototype._implicitHeader = function () {
   this.writeHead(this.statusCode);
 };
 
+function flushFirstWrite(self) {
+  // headersSent = already flushed the first write
+  if (self.headersSent) return;
+  self.headersSent = true;
+  let firstWrite = self[firstWriteSymbol];
+  // at this point, the user did not call end and we have not flushed the first write
+  // we need to flush it now and behave like chunked encoding
+
+  self._reply(
+    new Response(
+      new ReadableStream({
+        type: "direct",
+        pull: async controller => {
+          self[controllerSymbol] = controller;
+          if (firstWrite) {
+            controller.write(firstWrite);
+            await controller.flush(); // flush the first write
+          }
+          firstWrite = undefined;
+          if (!self[finishedSymbol]) {
+            const { promise, resolve } = $newPromiseCapability(GlobalPromise);
+            self[deferredSymbol] = resolve;
+            return await promise;
+          }
+        },
+      }),
+      {
+        headers: self[headersSymbol],
+        status: self.statusCode,
+        statusText: self.statusMessage ?? STATUS_CODES[self.statusCode],
+      },
+    ),
+  );
+}
 ServerResponse.prototype._write = function (chunk, encoding, callback) {
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
     this[firstWriteSymbol] = chunk;
     callback();
+    const headers = this[headersSymbol];
+    const hasContentLength = headers && headers.has("Content-Length");
+    if (hasContentLength) {
+      // wait for .end()
+      return;
+    }
+    // We still wanna to wait for more writes if the user call 2 consecutives writes
+    // but if the user delay it too much we need to flush
+    setTimeout(flushFirstWrite, 1, this);
     return;
   }
 
@@ -1261,6 +1304,17 @@ ServerResponse.prototype._writev = function (chunks, callback) {
   if (chunks.length === 1 && !this.headersSent && this[firstWriteSymbol] === undefined) {
     this[firstWriteSymbol] = chunks[0].chunk;
     callback();
+
+    const headers = this[headersSymbol];
+    const hasContentLength = headers && headers.has("Content-Length");
+    if (hasContentLength) {
+      // wait for .end()
+      return;
+    }
+
+    // We still wanna to wait for more writes if the user call 2 consecutives writes
+    // but if the user delay it too much we need to flush
+    setTimeout(flushFirstWrite, 1, this);
     return;
   }
 
@@ -1268,7 +1322,6 @@ ServerResponse.prototype._writev = function (chunks, callback) {
     for (const chunk of chunks) {
       controller.write(chunk.chunk);
     }
-
     callback();
   });
 };

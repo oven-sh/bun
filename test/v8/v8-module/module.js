@@ -1,7 +1,58 @@
+// usually returns x, but overridden if x is a boxed String or equal to globalThis
+// to overcome differences in bun vs. node's logging
+function describeValue(x) {
+  if (x == globalThis) {
+    return "globalThis";
+  } else if (x instanceof String) {
+    return `boxed String: ${x.toString()}`;
+  } else if (x instanceof Object) {
+    return JSON.stringify(x);
+  } else {
+    return x;
+  }
+}
+
+function printValues() {
+  console.log(`this = ${typeof this}`, describeValue(this));
+  console.log(`${arguments.length} arguments`);
+  for (let i = 0; i < arguments.length; i++) {
+    console.log(`argument ${i} = ${typeof arguments[i]}`, describeValue(arguments[i]));
+  }
+  return "hello";
+}
+
 module.exports = debugMode => {
   const nativeModule = require(`./build/${debugMode ? "Debug" : "Release"}/v8tests`);
   return {
     ...nativeModule,
+
+    test_v8_value_uint32value_and_numbervalue_throw() {
+      // TODO(@190n) once Symbol and BigInt are supported in the V8 API, do this test in C++
+      const values = [
+        Symbol("20"),
+        190n,
+        {
+          [Symbol.toPrimitive]() {
+            throw new RangeError("oops");
+          },
+        },
+      ];
+      for (const value of values) {
+        try {
+          nativeModule.call_uint32value_on_arg_from_js(value);
+          console.log(`Uint32Value() on ${typeof value} did not throw`);
+        } catch (e) {
+          console.log("threw", e.name);
+        }
+
+        try {
+          nativeModule.call_numbervalue_on_arg_from_js(value);
+          console.log(`NumberValue() on ${typeof value} did not throw`);
+        } catch (e) {
+          console.log("threw", e.name);
+        }
+      }
+    },
 
     test_v8_global() {
       console.log("global initial value =", nativeModule.global_get());
@@ -27,6 +78,27 @@ module.exports = debugMode => {
       console.log(f());
     },
 
+    test_v8_function_template_instance() {
+      const instance = nativeModule.create_object_from_template();
+      const constructor = instance.constructor;
+
+      console.log("instanceof =", instance instanceof constructor);
+      console.log("func_property =", constructor.func_property);
+      console.log("proto_method() on prototype =", constructor.prototype.proto_method());
+      console.log("proto_method() on instance =", instance.proto_method());
+      console.log("proto_const on prototype =", constructor.prototype.proto_const);
+      console.log("proto_const on instance =", instance.proto_const);
+      console.log("hasOwnProperty('proto_const') =", instance.hasOwnProperty("proto_const"));
+      console.log("instance_accessor on prototype =", constructor.prototype.instance_accessor);
+      console.log("instance_accessor on instance =", instance.instance_accessor);
+      console.log("hasOwnProperty('instance_accessor') =", instance.hasOwnProperty("instance_accessor"));
+      instance.instance_accessor = "hello";
+      console.log("instance_accessor on instance after assignment =", instance.instance_accessor);
+      console.log("instance_property on prototype =", constructor.prototype.instance_property);
+      console.log("instance_property on instance =", instance.instance_property);
+      console.log("hasOwnProperty('instance_property') =", instance.hasOwnProperty("instance_property"));
+    },
+
     print_native_function() {
       nativeModule.print_values_from_js(nativeModule.create_function_with_data());
     },
@@ -35,14 +107,149 @@ module.exports = debugMode => {
       for (const thisValue of [null, undefined, 5, "abc"]) {
         const ret = nativeModule.return_this.call(thisValue);
         console.log("typeof =", typeof ret);
-        if (ret == globalThis) {
-          console.log("returned globalThis");
-        } else if (ret instanceof String) {
-          console.log("returned boxed String:", ret.toString());
-        } else {
-          console.log("returned", ret);
-        }
+        console.log("returned", describeValue(ret));
         console.log("constructor is", ret.constructor.name);
+      }
+    },
+
+    call_js_functions_from_native() {
+      console.log(
+        "nativeModule.run_function_from_js returned",
+        nativeModule.run_function_from_js(printValues, 1, 2, 3, { foo: "bar" }),
+      );
+
+      try {
+        nativeModule.run_function_from_js(function () {
+          printValues.apply(this, arguments);
+          throw new Error("oh no");
+        }, null);
+
+        console.log("nativeModule.run_function_from_js did not throw");
+      } catch (e) {
+        console.log("nativeModule.run_function_from_js threw:", e.toString());
+      }
+    },
+
+    call_native_function_from_native() {
+      console.log(
+        "nativeModule.run_function_from_js returned",
+        nativeModule.run_function_from_js(nativeModule.create_function_with_data(), null),
+      );
+    },
+
+    test_v8_object_set_proxy() {
+      "use strict";
+      const object = {};
+      const proxy = new Proxy(object, {
+        set(obj, prop, value) {
+          obj[prop] = 2 * value;
+          // should NOT throw because the native function behaves as if it is in sloppy mode
+          return false;
+        },
+      });
+
+      nativeModule.set_field_from_js(proxy, "foo");
+      console.log("proxy.foo =", proxy.foo);
+      console.log("object.foo =", object.foo);
+    },
+
+    test_v8_object_set_failure() {
+      const object = {};
+      const key = {
+        toString() {
+          throw new Error("thrown by key.toString()");
+        },
+      };
+
+      console.log("=== key with a toString() that throws ===");
+
+      try {
+        nativeModule.set_field_from_js(object, key);
+        console.log("no exception while setting with key that throws in toString()");
+      } catch (e) {
+        console.log(e.toString());
+      }
+
+      const setterThrows = new Proxy(object, {
+        set(obj, prop, value) {
+          throw new Error(`proxy setting ${prop} to ${value}`);
+        },
+      });
+
+      console.log("=== proxy that throws in set() ===");
+
+      try {
+        nativeModule.set_field_from_js(setterThrows, "xyz");
+        console.log("no exception while setting on Proxy that throws");
+      } catch (e) {
+        console.log(e.toString());
+      }
+
+      console.log("after setting, object.xyz is", object.xyz);
+
+      const onlyGetter = {
+        get foo() {
+          return 5;
+        },
+      };
+
+      console.log("=== object with only a getter for the key ===");
+
+      try {
+        nativeModule.set_field_from_js(onlyGetter, "foo");
+        // apparently this is expected in node
+        console.log("no exception while setting a key that only has a getter");
+      } catch (e) {
+        console.log(e.toString());
+      }
+
+      console.log("after setting, onlyGetter.foo is", onlyGetter.foo);
+    },
+
+    test_v8_value_to_string() {
+      for (const value of [
+        null,
+        undefined,
+        true,
+        false,
+        5.0,
+        190n,
+        "foo bar",
+        {},
+        [],
+        {
+          toString() {
+            return "abc";
+          },
+          [Symbol.toPrimitive]() {
+            return "123";
+          },
+        },
+      ]) {
+        console.log(nativeModule.call_value_to_string(value));
+      }
+    },
+
+    test_v8_value_to_string_exceptions() {
+      for (const value of [
+        Symbol("abc"),
+        {
+          toString() {
+            throw new TypeError("oops");
+          },
+        },
+        {
+          [Symbol.toPrimitive]() {
+            throw new RangeError("oops");
+          },
+        },
+      ]) {
+        try {
+          const string = nativeModule.call_value_to_string(value);
+          console.log(`returned '${string}' instead of throwing`);
+        } catch (e) {
+          console.log("threw", e.name);
+        }
       }
     },
   };

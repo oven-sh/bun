@@ -88,7 +88,7 @@ async function build(
   };
 }
 
-describe.todoIf(isBroken && isMusl)("node:v8", () => {
+describe.todoIf(isBroken && isMusl)("V8 C++ API", () => {
   beforeAll(async () => {
     // set up clean directories for our 4 builds
     directories.bunRelease = tmpdirSync();
@@ -127,18 +127,36 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     });
   });
 
-  describe("Number", () => {
-    it("can create small integer", async () => {
-      await checkSameOutput("test_v8_number_int", []);
+describe("Number & Integer", () => {
+  it("can create small integer", async () => {
+    await checkSameOutput("test_v8_number_int", []);
+  });
+  it("can create large integer", async () => {
+    await checkSameOutput("test_v8_number_large_int", []);
+  });
+  it("can create fraction", async () => {
+    await checkSameOutput("test_v8_number_fraction", []);
+  });
+});
+
+describe("Value", () => {
+  describe("Uint32Value & NumberValue", () => {
+    it("coerces correctly", async () => {
+      await checkSameOutput("test_v8_value_uint32value_and_numbervalue", []);
     });
-    // non-i32 v8::Number is not implemented yet
-    it("can create large integer", async () => {
-      await checkSameOutput("test_v8_number_large_int", []);
-    });
-    it("can create fraction", async () => {
-      await checkSameOutput("test_v8_number_fraction", []);
+    it("throws in the right cases", async () => {
+      await checkSameOutput("test_v8_value_uint32value_and_numbervalue_throw", []);
     });
   });
+  describe("ToString", () => {
+    it("returns the right result", async () => {
+      await checkSameOutput("test_v8_value_to_string", []);
+    });
+    it("handles exceptions", async () => {
+      await checkSameOutput("test_v8_value_to_string_exceptions", []);
+    });
+  });
+});
 
   describe("String", () => {
     it("can create and read back strings with only ASCII characters", async () => {
@@ -171,8 +189,14 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("can create an object and set properties", async () => {
       await checkSameOutput("test_v8_object", []);
     });
+    it("uses proxies properly", async () => {
+      await checkSameOutput("test_v8_object_set_proxy", []);
+    });
+    it("can handle failure in Set()", async () => {
+      await checkSameOutput("test_v8_object_set_failure", []);
+    });
   });
-  describe("Array", () => {
+    describe("Array", () => {
     // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
     it.skip("can create an array from a C array of Locals", async () => {
       await checkSameOutput("test_v8_array_new", []);
@@ -189,16 +213,26 @@ describe.todoIf(isBroken && isMusl)("node:v8", () => {
     it("keeps the data parameter alive", async () => {
       await checkSameOutput("test_v8_function_template", []);
     });
+    // calls tons of functions we don't implement yet
+    it.skip("can create an object with prototype properties, instance properties, and an accessor", async () => {
+      await checkSameOutput("test_v8_function_template_instance", []);
+    });
   });
 
   describe("Function", () => {
+    // TODO call native from native and napi from native
     it("correctly receives all its arguments from JS", async () => {
-      await checkSameOutput("print_values_from_js", [5.0, true, null, false, "async meow", {}]);
+      // this will print out all the values we pass it
+      await checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}, [5, 6]]);
       await checkSameOutput("print_native_function", []);
     });
-
+  
     it("correctly receives the this value from JS", async () => {
       await checkSameOutput("call_function_with_weird_this_values", []);
+    });
+  
+    it("can call a JS function from native code", async () => {
+      await checkSameOutput("call_js_functions_from_native", []);
     });
   });
 

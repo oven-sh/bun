@@ -9,6 +9,22 @@ interface PropertyAttribute {
   privateSymbol?: string;
 }
 
+/**
+ * Specifies what happens when a method is called with `this` set to a value that is not an instance
+ * of the class.
+ */
+export enum InvalidThisBehavior {
+  /**
+   * Default. Throws a `TypeError`.
+   */
+  Throw,
+  /**
+   * Do not call the native implementation; return `undefined`. Some Node.js methods are supposed to
+   * work like this.
+   */
+  NoOp,
+}
+
 export type Field =
   | ({
       getter: string;
@@ -30,6 +46,7 @@ export type Field =
       fn: string;
       length?: number;
       passThis?: boolean;
+      invalidThisBehavior?: InvalidThisBehavior;
       DOMJIT?: {
         returns: string;
         args?: [string, string] | [string, string, string] | [string] | [];

@@ -1193,21 +1193,27 @@ static bool isJSValueEqualToASCIILiteral(JSC::JSGlobalObject* globalObject, JSC:
     return view == literal;
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+extern "C" void Bun__Process__emitWarning(Zig::GlobalObject* globalObject, EncodedJSValue warning, EncodedJSValue type, EncodedJSValue code, EncodedJSValue ctor)
 {
-    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    VM& vm = globalObject->vm();
+    // ignoring return value -- emitWarning only ever returns undefined or throws
+    (void)Process::emitWarning(
+        globalObject,
+        JSValue::decode(warning),
+        JSValue::decode(type),
+        JSValue::decode(code),
+        JSValue::decode(ctor));
+}
+
+JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor)
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* process = jsCast<Process*>(globalObject->processObject());
-
-    auto warning = callFrame->argument(0);
-    auto type = callFrame->argument(1);
-    auto code = callFrame->argument(2);
-    auto ctor = callFrame->argument(3);
-    auto detail = jsUndefined();
+    JSValue detail = jsUndefined();
 
     if (Bun__Node__ProcessNoDeprecation && isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
-        return JSValue::encode(jsUndefined());
+        return jsUndefined();
     }
 
     if (!type.isNull() && type.isObject() && !isJSArray(type)) {
@@ -1254,7 +1260,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "warning"_s, "string or Error"_s, warning);
+        return JSValue::decode(Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "warning"_s, "string or Error"_s, warning));
     }
 
     if (!code.isUndefined()) errorInstance->putDirect(vm, builtinNames(vm).codePublicName(), code, JSC::PropertyAttribute::DontEnum | 0);
@@ -1263,7 +1269,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
 
     if (isJSValueEqualToASCIILiteral(globalObject, type, "DeprecationWarning"_s)) {
         if (Bun__Node__ProcessNoDeprecation) {
-            return JSValue::encode(jsUndefined());
+            return jsUndefined();
         }
         if (Bun__Node__ProcessThrowDeprecation) {
             // // Delay throwing the error to guarantee that all former warnings were properly logged.
@@ -1272,14 +1278,24 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
             // });
             auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_throwValue, JSC::ImplementationVisibility::Private);
             process->queueNextTick(vm, globalObject, func, errorInstance);
-            return JSValue::encode(jsUndefined());
+            return jsUndefined();
         }
     }
 
     //   process.nextTick(doEmitWarning, warning);
     auto func = JSFunction::create(vm, globalObject, 1, ""_s, jsFunction_emitWarning, JSC::ImplementationVisibility::Private);
     process->queueNextTick(vm, globalObject, func, errorInstance);
-    return JSValue::encode(jsUndefined());
+    return jsUndefined();
+}
+
+JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto warning = callFrame->argument(0);
+    auto type = callFrame->argument(1);
+    auto code = callFrame->argument(2);
+    auto ctor = callFrame->argument(3);
+    return JSValue::encode(Process::emitWarning(globalObject, warning, type, code, ctor));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))

@@ -1,4 +1,4 @@
-import { define } from "../../codegen/class-definitions";
+import { define, InvalidThisBehavior } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -131,8 +131,7 @@ export default [
   }),
   define({
     name: "Timeout",
-    construct: false,
-    noConstructor: true,
+    construct: true,
     finalize: true,
     configurable: false,
     klass: {},
@@ -141,22 +140,74 @@ export default [
       ref: {
         fn: "doRef",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       refresh: {
         fn: "doRefresh",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       unref: {
         fn: "doUnref",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       hasRef: {
         fn: "hasRef",
         length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      _destroyed: {
+        getter: "getDestroyed",
+      },
+      ["@@dispose"]: {
+        fn: "dispose",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+    },
+    values: ["arguments", "callback"],
+  }),
+  define({
+    name: "Immediate",
+    construct: true,
+    finalize: true,
+    configurable: false,
+    klass: {},
+    JSType: "0b11101110",
+    proto: {
+      ref: {
+        fn: "doRef",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      unref: {
+        fn: "doUnref",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      hasRef: {
+        fn: "hasRef",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      ["@@toPrimitive"]: {
+        fn: "toPrimitive",
+        length: 1,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
+      },
+      _destroyed: {
+        getter: "getDestroyed",
+      },
+      ["@@dispose"]: {
+        fn: "dispose",
+        length: 0,
+        invalidThisBehavior: InvalidThisBehavior.NoOp,
       },
     },
     values: ["arguments", "callback"],

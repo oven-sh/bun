@@ -140,11 +140,16 @@ fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8)
 }
 
 pub const ThreadPool = struct {
+    /// macOS holds an IORWLock on every file open.
+    /// This causes massive contention after about 4 threads as of macOS 15.2
+    /// On Windows, this seemed to be a small performance improvement.
+    /// On Linux, this was a performance regression.
+    /// In some benchmarks on macOS, this yielded up to a 60% performance improvement in microbenchmarks that load ~10,000 files.
     io_pool: *ThreadPoolLib = undefined,
+
     pool: *ThreadPoolLib = undefined,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Mutex = .{},
-
     v2: *BundleV2 = undefined,
 
     const debug = Output.scoped(.ThreadPool, false);
@@ -188,9 +193,31 @@ pub const ThreadPool = struct {
             }
         };
 
-        this.io_pool = IOThreadPool.get();
         this.pool.setThreadContext(this);
-        this.io_pool.setThreadContext(this);
+
+        if (this.usesIOPool()) {
+            this.io_pool = IOThreadPool.get();
+            this.io_pool.setThreadContext(this);
+        }
+    }
+
+    pub fn usesIOPool(_: *const ThreadPool) bool {
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL")) {
+            // For testing.
+            return true;
+        }
+
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL")) {
+            // For testing.
+            return false;
+        }
+
+        if (Environment.isMac or Environment.isWindows) {
+            // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
+            return bun.getThreadCount() > 3;
+        }
+
+        return false;
     }
 
     pub fn schedule(this: *ThreadPool, parse_task: *ParseTask) void {
@@ -203,13 +230,23 @@ pub const ThreadPool = struct {
             };
         }
 
-        switch (parse_task.stage) {
-            .needs_parse => {
-                this.pool.schedule(.from(&parse_task.task));
-            },
-            .needs_source_code => {
-                this.io_pool.schedule(.from(&parse_task.task));
-            },
+        if (this.usesIOPool()) {
+            switch (parse_task.stage) {
+                .needs_parse => {
+                    parse_task.task = .{
+                        .callback = ParseTask.callback,
+                    };
+                    this.pool.schedule(.from(&parse_task.task));
+                },
+                .needs_source_code => {
+                    parse_task.io_task = .{
+                        .callback = ParseTask.callback,
+                    };
+                    this.io_pool.schedule(.from(&parse_task.io_task));
+                },
+            }
+        } else {
+            this.pool.schedule(.from(&parse_task.task));
         }
     }
 
@@ -3740,6 +3777,14 @@ pub const ParseTask = struct {
     jsx: options.JSX.Pragma,
     source_index: Index = Index.invalid,
     task: ThreadPoolLib.Task = .{ .callback = &callback },
+
+    // Split this into a different task so that we don't accidentally run the
+    // tasks for io on the threads that are meant for parsing.
+    io_task: ThreadPoolLib.Task = .{ .callback = &callback },
+
+    // Used for splitting up the work between the io and parse steps.
+    stage: ParseTaskStage = .needs_source_code,
+
     tree_shaking: bool = false,
     known_target: options.Target,
     module_type: options.ModuleType = .unknown,
@@ -3751,8 +3796,6 @@ pub const ParseTask = struct {
     /// In this case we want to defer adding this to additional_files until after
     /// the onLoad plugin has finished.
     defer_copy_for_bundling: bool = false,
-
-    stage: ParseTaskStage = .needs_source_code,
 
     const ParseTaskStage = union(enum) {
         needs_source_code: void,
@@ -4997,12 +5040,14 @@ pub const ParseTask = struct {
                     } };
                 }
 
-                this.task = .{
-                    .callback = &callback,
-                };
+                if (this.ctx.graph.pool.usesIOPool()) {
+                    this.task = .{
+                        .callback = &callback,
+                    };
 
-                this.ctx.graph.pool.schedule(this);
-                return;
+                    this.ctx.graph.pool.schedule(this);
+                    return;
+                }
             }
 
             if (runWithSourceCode(this, worker, &step, &log, &this.stage.needs_parse)) |ast| {

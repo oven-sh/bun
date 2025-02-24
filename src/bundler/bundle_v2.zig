@@ -329,7 +329,7 @@ pub const ThreadPool = struct {
                                 const available_cpus = std.os.linux.CPU_COUNT(set);
                                 if (available_cpus == 0) return;
 
-                                const cpu = cpu_index.fetchAdd(1, .monotonic) % available_cpus;
+                                const cpu = (cpu_index.fetchAdd(1, .monotonic) + 1) % available_cpus;
 
                                 // Pin to that CPU
                                 var new_set = std.mem.zeroes(std.os.linux.cpu_set_t);

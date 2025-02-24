@@ -1093,7 +1093,7 @@ pub fn wrapInstanceMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = string_value.getZigString(globalThis);
+                        args[i] = try string_value.getZigString(globalThis);
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -1246,7 +1246,7 @@ pub fn wrapStaticMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = string_value.getZigString(globalThis);
+                        args[i] = try string_value.getZigString(globalThis);
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {

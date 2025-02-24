@@ -65,7 +65,7 @@ pub const FileSystemRouter = struct {
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (try argument.get(globalThis, "style")) |style_val| {
-            if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
+            if (!(try style_val.getZigString(globalThis)).eqlComptime("nextjs")) {
                 return globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
             }
         } else {

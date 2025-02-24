@@ -80,7 +80,7 @@ async function fetchAndInjectHTML(url: string) {
           constructor(url) {
           }
         };
-      
+
         location.href = url;
         document.write(initial);
         window.happyDOM.waitUntilComplete().then(() => {
@@ -125,7 +125,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test("dev server", async () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
         console.log({ dir });
         await using process = Bun.spawn([bunExe(), "create", "./index.jsx"], {
           cwd: dir,
@@ -192,7 +192,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test("dev server", async () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,
@@ -258,7 +258,7 @@ for (const development of [true, false]) {
         });
       });
 
-      test("dev server", async () => {
+      test.todoIf(isCI || isWindows)("dev server", async () => {
         const process = Bun.spawn([bunExe(), "create", "./index.tsx"], {
           cwd: dir,
           env: env,

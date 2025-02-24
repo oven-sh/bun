@@ -114,7 +114,7 @@
 #include "JSReadableStreamDefaultController.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSSink.h"
-#include "JSSocketAddress.h"
+#include "JSSocketAddressDTO.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -1724,7 +1724,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     if (!encodedString.is8Bit()) {
         std::span<LChar> ptr;
         unsigned length = encodedString.length();
-        auto dest = WTF::String::createUninitialized(length, ptr);
+        auto dest = WTF::String::tryCreateUninitialized(length, ptr);
         if (UNLIKELY(dest.isNull())) {
             throwOutOfMemoryError(globalObject, throwScope);
             return {};
@@ -2874,6 +2874,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createCommonJSModuleStructure(reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
+    m_JSSocketAddressDTOStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
+        });
+
     m_JSSQLStatementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
@@ -2903,11 +2908,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(
                 createMemoryFootprintStructure(
                     init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
-        });
-
-    m_JSSocketAddressStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(JSSocketAddress::createStructure(init.vm, init.owner));
         });
 
     m_errorConstructorPrepareStackTraceInternalValue.initLater(
@@ -3845,6 +3845,21 @@ extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalO
     return JSValue::encode(JSValue::JSUndefined);
 }
 
+#define IMPL_GET_COMMON_STRING(name)                                                                         \
+    extern "C" EncodedJSValue JSC__JSGlobalObject__commonStrings__get##name(Zig::GlobalObject* globalObject) \
+    {                                                                                                        \
+        JSC::JSString* value = globalObject->commonStrings().name##String(globalObject);                     \
+        ASSERT(value != nullptr);                                                                            \
+        return JSValue::encode(value);                                                                       \
+    }
+
+IMPL_GET_COMMON_STRING(IPv4)
+IMPL_GET_COMMON_STRING(IPv6)
+IMPL_GET_COMMON_STRING(IN4Loopback)
+IMPL_GET_COMMON_STRING(IN6Any)
+
+#undef IMPL_GET_COMMON_STRING
+
 template<typename Visitor>
 void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -3894,6 +3909,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_JSSocketAddressDTOStructure.visit(visitor);
     thisObject->m_cryptoObject.visit(visitor);
     thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
     thisObject->m_esmRegistryMap.visit(visitor);
@@ -3922,7 +3938,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSNetworkSinkClassStructure.visit(visitor);
     thisObject->m_JSFetchTaskletChunkedRequestControllerPrototype.visit(visitor);
-    thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_V8GlobalInternals.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);

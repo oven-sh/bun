@@ -178,3 +178,10 @@ code {
 .response-area::placeholder {
   color: rgba(251, 240, 223, 0.4);
 }
+@media (prefers-reduced-motion) {
+  *,
+  ::before,
+  ::after {
+    animation: none !important;
+  }
+}

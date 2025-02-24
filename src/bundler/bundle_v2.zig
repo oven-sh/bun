@@ -140,35 +140,130 @@ fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8)
 }
 
 pub const ThreadPool = struct {
-    pool: *ThreadPoolLib = undefined,
+    /// macOS holds an IORWLock on every file open.
+    /// This causes massive contention after about 4 threads as of macOS 15.2
+    /// On Windows, this seemed to be a small performance improvement.
+    /// On Linux, this was a performance regression.
+    /// In some benchmarks on macOS, this yielded up to a 60% performance improvement in microbenchmarks that load ~10,000 files.
+    io_pool: *ThreadPoolLib = undefined,
+    worker_pool: *ThreadPoolLib = undefined,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
     workers_assignments_lock: bun.Mutex = .{},
-
     v2: *BundleV2 = undefined,
 
     const debug = Output.scoped(.ThreadPool, false);
 
+    pub fn reset(this: *ThreadPool) void {
+        if (this.usesIOPool()) {
+            if (this.io_pool.threadpool_context == @as(?*anyopaque, @ptrCast(this))) {
+                this.io_pool.threadpool_context = null;
+            }
+        }
+
+        if (this.worker_pool.threadpool_context == @as(?*anyopaque, @ptrCast(this))) {
+            this.worker_pool.threadpool_context = null;
+        }
+    }
+
     pub fn go(this: *ThreadPool, allocator: std.mem.Allocator, comptime Function: anytype) !ThreadPoolLib.ConcurrentFunction(Function) {
-        return this.pool.go(allocator, Function);
+        return this.worker_pool.go(allocator, Function);
     }
 
     pub fn start(this: *ThreadPool, v2: *BundleV2, existing_thread_pool: ?*ThreadPoolLib) !void {
         this.v2 = v2;
 
         if (existing_thread_pool) |pool| {
-            this.pool = pool;
+            this.worker_pool = pool;
         } else {
             const cpu_count = bun.getThreadCount();
-            this.pool = try v2.graph.allocator.create(ThreadPoolLib);
-            this.pool.* = ThreadPoolLib.init(.{
+            this.worker_pool = try v2.graph.allocator.create(ThreadPoolLib);
+            this.worker_pool.* = ThreadPoolLib.init(.{
                 .max_threads = cpu_count,
             });
             debug("{d} workers", .{cpu_count});
         }
 
-        this.pool.warm(8);
+        this.worker_pool.setThreadContext(this);
 
-        this.pool.setThreadContext(this);
+        this.worker_pool.warm(8);
+
+        const IOThreadPool = struct {
+            var thread_pool: ThreadPoolLib = undefined;
+            var once = bun.once(startIOThreadPool);
+
+            fn startIOThreadPool() void {
+                thread_pool = ThreadPoolLib.init(.{
+                    .max_threads = @max(@min(bun.getThreadCount(), 4), 2),
+
+                    // Use a much smaller stack size for the IO thread pool
+                    .stack_size = 512 * 1024,
+                });
+            }
+
+            pub fn get() *ThreadPoolLib {
+                once.call(.{});
+                return &thread_pool;
+            }
+        };
+
+        if (this.usesIOPool()) {
+            this.io_pool = IOThreadPool.get();
+            this.io_pool.setThreadContext(this);
+            this.io_pool.warm(1);
+        }
+    }
+
+    pub fn usesIOPool(_: *const ThreadPool) bool {
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_FORCE_IO_POOL")) {
+            // For testing.
+            return true;
+        }
+
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_IO_POOL")) {
+            // For testing.
+            return false;
+        }
+
+        if (Environment.isMac or Environment.isWindows) {
+            // 4 was the sweet spot on macOS. Didn't check the sweet spot on Windows.
+            return bun.getThreadCount() > 3;
+        }
+
+        return false;
+    }
+
+    pub fn scheduleWithOptions(this: *ThreadPool, parse_task: *ParseTask, is_inside_thread_pool: bool) void {
+        if (parse_task.contents_or_fd == .contents and parse_task.stage == .needs_source_code) {
+            parse_task.stage = .{
+                .needs_parse = .{
+                    .contents = parse_task.contents_or_fd.contents,
+                    .fd = bun.invalid_fd,
+                },
+            };
+        }
+
+        const scheduleFn = if (is_inside_thread_pool) &ThreadPoolLib.scheduleInsideThreadPool else &ThreadPoolLib.schedule;
+
+        if (this.usesIOPool()) {
+            switch (parse_task.stage) {
+                .needs_parse => {
+                    scheduleFn(this.worker_pool, .from(&parse_task.task));
+                },
+                .needs_source_code => {
+                    scheduleFn(this.io_pool, .from(&parse_task.io_task));
+                },
+            }
+        } else {
+            scheduleFn(this.worker_pool, .from(&parse_task.task));
+        }
+    }
+
+    pub fn schedule(this: *ThreadPool, parse_task: *ParseTask) void {
+        this.scheduleWithOptions(parse_task, false);
+    }
+
+    pub fn scheduleInsideThreadPool(this: *ThreadPool, parse_task: *ParseTask) void {
+        this.scheduleWithOptions(parse_task, true);
     }
 
     pub fn getWorker(this: *ThreadPool, id: std.Thread.Id) *Worker {
@@ -881,7 +976,6 @@ pub const BundleV2 = struct {
     pub fn enqueueEntryItem(
         this: *BundleV2,
         hash: ?u64,
-        batch: *ThreadPoolLib.Batch,
         resolve: _resolver.Result,
         is_entry_point: bool,
         target: options.Target,
@@ -939,7 +1033,7 @@ pub const BundleV2 = struct {
                 this.graph.estimated_file_loader_count += 1;
             }
 
-            batch.push(.from(&task.task));
+            this.graph.pool.schedule(task);
         }
 
         try this.graph.entry_points.append(this.graph.allocator, source_index);
@@ -1088,9 +1182,7 @@ pub const BundleV2 = struct {
             },
             .bake_production => bake.production.EntryPointMap,
         },
-    ) !ThreadPoolLib.Batch {
-        var batch = ThreadPoolLib.Batch{};
-
+    ) !void {
         {
             // Add the runtime
             const rt = ParseTask.getRuntimeSource(this.transpiler.options.target);
@@ -1106,11 +1198,10 @@ pub const BundleV2 = struct {
             var runtime_parse_task = try this.graph.allocator.create(ParseTask);
             runtime_parse_task.* = rt.parse_task;
             runtime_parse_task.ctx = this;
-            runtime_parse_task.task = .{ .callback = &ParseTask.callback };
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
             this.incrementScanCounter();
-            batch.push(.from(&runtime_parse_task.task));
+            this.graph.pool.schedule(runtime_parse_task);
         }
 
         // Bake reserves two source indexes at the start of the file list, but
@@ -1139,7 +1230,7 @@ pub const BundleV2 = struct {
                         const resolved = this.transpiler.resolveEntryPoint(entry_point) catch
                             continue;
 
-                        _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.transpiler.options.target);
+                        _ = try this.enqueueEntryItem(null, resolved, true, this.transpiler.options.target);
                     }
                 },
                 .dev_server => {
@@ -1148,13 +1239,13 @@ pub const BundleV2 = struct {
                             continue;
 
                         if (flags.client) brk: {
-                            const source_index = try this.enqueueEntryItem(null, &batch, resolved, true, .browser) orelse break :brk;
+                            const source_index = try this.enqueueEntryItem(null, resolved, true, .browser) orelse break :brk;
                             if (flags.css) {
                                 try data.css_data.putNoClobber(this.graph.allocator, Index.init(source_index), .{ .imported_on_server = false });
                             }
                         }
-                        if (flags.server) _ = try this.enqueueEntryItem(null, &batch, resolved, true, this.transpiler.options.target);
-                        if (flags.ssr) _ = try this.enqueueEntryItem(null, &batch, resolved, true, .bake_server_components_ssr);
+                        if (flags.server) _ = try this.enqueueEntryItem(null, resolved, true, this.transpiler.options.target);
+                        if (flags.ssr) _ = try this.enqueueEntryItem(null, resolved, true, .bake_server_components_ssr);
                     }
                 },
                 .bake_production => {
@@ -1163,7 +1254,7 @@ pub const BundleV2 = struct {
                             continue;
 
                         // TODO: wrap client files so the exports arent preserved.
-                        _ = try this.enqueueEntryItem(null, &batch, resolved, true, switch (key.side) {
+                        _ = try this.enqueueEntryItem(null, resolved, true, switch (key.side) {
                             .client => .browser,
                             .server => this.transpiler.options.target,
                         }) orelse continue;
@@ -1171,8 +1262,6 @@ pub const BundleV2 = struct {
                 },
             }
         }
-
-        return batch;
     }
 
     fn cloneAST(this: *BundleV2) !void {
@@ -1355,6 +1444,7 @@ pub const BundleV2 = struct {
         task.loader = loader;
         task.jsx = this.transpilerForTarget(known_target).options.jsx;
         task.task.node.next = null;
+        task.io_task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
         task.known_target = known_target;
 
@@ -1369,7 +1459,7 @@ pub const BundleV2 = struct {
                 this.graph.estimated_file_loader_count += 1;
             }
 
-            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+            this.graph.pool.schedule(task);
         }
 
         return source_index.get();
@@ -1413,6 +1503,7 @@ pub const BundleV2 = struct {
             .known_target = known_target,
         };
         task.task.node.next = null;
+        task.io_task.node.next = null;
 
         this.incrementScanCounter();
 
@@ -1425,7 +1516,7 @@ pub const BundleV2 = struct {
                 this.graph.estimated_file_loader_count += 1;
             }
 
-            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+            this.graph.pool.schedule(task);
         }
         return source_index.get();
     }
@@ -1455,7 +1546,7 @@ pub const BundleV2 = struct {
 
         this.incrementScanCounter();
 
-        this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+        this.graph.pool.worker_pool.schedule(.from(&task.task));
 
         return @intCast(source_index);
     }
@@ -1530,7 +1621,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.normal, this.transpiler.options.entry_points));
+        try this.enqueueEntryPoints(.normal, this.transpiler.options.entry_points);
 
         if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
@@ -1586,7 +1677,7 @@ pub const BundleV2 = struct {
             return error.BuildFailed;
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.bake_production, entry_points));
+        try this.enqueueEntryPoints(.bake_production, entry_points);
 
         if (this.transpiler.log.hasErrors()) {
             return error.BuildFailed;
@@ -2055,7 +2146,7 @@ pub const BundleV2 = struct {
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
                 if (source.path.isFile()) {
-                    this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&load.parse_task.task));
+                    this.graph.pool.schedule(load.parse_task);
                     return;
                 }
 
@@ -2087,7 +2178,7 @@ pub const BundleV2 = struct {
                 parse_task.contents_or_fd = .{
                     .contents = code.source_code,
                 };
-                this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&parse_task.task));
+                this.graph.pool.schedule(parse_task);
 
                 if (this.bun_watcher) |watcher| add_watchers: {
                     // TODO: support explicit watchFiles array
@@ -2244,7 +2335,7 @@ pub const BundleV2 = struct {
                             .known_target = resolve.import_record.original_target,
                         };
                         task.task.node.next = null;
-
+                        task.io_task.node.next = null;
                         this.incrementScanCounter();
 
                         // Handle onLoad plugins
@@ -2256,7 +2347,7 @@ pub const BundleV2 = struct {
                                 this.graph.estimated_file_loader_count += 1;
                             }
 
-                            this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
+                            this.graph.pool.schedule(task);
                         }
                     } else {
                         out_source_index = Index.init(existing.value_ptr.*);
@@ -2323,7 +2414,7 @@ pub const BundleV2 = struct {
                 this.graph.pool.workers_assignments.deinit();
             }
 
-            this.graph.pool.pool.wakeForIdleEvents();
+            this.graph.pool.worker_pool.wakeForIdleEvents();
         }
 
         for (this.free_list.items) |free| {
@@ -2345,7 +2436,7 @@ pub const BundleV2 = struct {
 
         this.graph.heap.helpCatchMemoryIssues();
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.normal, entry_points));
+        try this.enqueueEntryPoints(.normal, entry_points);
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -2391,10 +2482,10 @@ pub const BundleV2 = struct {
         this.graph.heap.helpCatchMemoryIssues();
 
         var ctx: DevServerInput = .{ .css_entry_points = .{} };
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(.dev_server, .{
+        try this.enqueueEntryPoints(.dev_server, .{
             .files = bake_entry_points,
             .css_data = &ctx.css_entry_points,
-        }));
+        });
 
         this.graph.heap.helpCatchMemoryIssues();
 
@@ -3158,7 +3249,7 @@ pub const BundleV2 = struct {
             if (!loader.shouldCopyForBundling()) {
                 this.finalizers.append(bun.default_allocator, parse_result.external) catch bun.outOfMemory();
             } else {
-                this.graph.input_files.items(.allocator)[source] = ExternalFreeFunctionAllocator.create(@ptrCast(parse_result.external.function.?), parse_result.external.ctx.?);
+                this.graph.input_files.items(.allocator)[source] = ExternalFreeFunctionAllocator.create(parse_result.external.function.?, parse_result.external.ctx.?);
             }
         }
 
@@ -3304,8 +3395,7 @@ pub const BundleV2 = struct {
                             graph.estimated_file_loader_count += 1;
                         }
 
-                        // schedule as early as possible
-                        graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&new_task.task));
+                        graph.pool.schedule(new_task);
                     } else {
                         const loader = value.loader orelse
                             graph.input_files.items(.source)[existing.value_ptr.*].path.loader(&this.transpiler.options.loaders) orelse
@@ -3604,10 +3694,7 @@ pub fn BundleThread(CompletionStruct: type) type {
             completion.transpiler = this;
 
             defer {
-                if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
-                    this.graph.pool.pool.threadpool_context = null;
-                }
-
+                this.graph.pool.reset();
                 ast_memory_allocator.pop();
                 this.deinit();
             }
@@ -3703,7 +3790,15 @@ pub const ParseTask = struct {
     loader: ?Loader = null,
     jsx: options.JSX.Pragma,
     source_index: Index = Index.invalid,
-    task: ThreadPoolLib.Task = .{ .callback = &callback },
+    task: ThreadPoolLib.Task = .{ .callback = &taskCallback },
+
+    // Split this into a different task so that we don't accidentally run the
+    // tasks for io on the threads that are meant for parsing.
+    io_task: ThreadPoolLib.Task = .{ .callback = &ioTaskCallback },
+
+    // Used for splitting up the work between the io and parse steps.
+    stage: ParseTaskStage = .needs_source_code,
+
     tree_shaking: bool = false,
     known_target: options.Target,
     module_type: options.ModuleType = .unknown,
@@ -3715,6 +3810,11 @@ pub const ParseTask = struct {
     /// In this case we want to defer adding this to additional_files until after
     /// the onLoad plugin has finished.
     defer_copy_for_bundling: bool = false,
+
+    const ParseTaskStage = union(enum) {
+        needs_source_code: void,
+        needs_parse: CacheEntry,
+    };
 
     /// The information returned to the Bundler thread when a parse finishes.
     pub const Result = struct {
@@ -4683,20 +4783,18 @@ pub const ParseTask = struct {
         }
     };
 
-    fn run(
+    fn getSourceCode(
         task: *ParseTask,
         this: *ThreadPool.Worker,
-        step: *ParseTask.Result.Error.Step,
         log: *Logger.Log,
-    ) anyerror!Result.Success {
+    ) anyerror!CacheEntry {
         const allocator = this.allocator;
 
         var data = this.data;
         var transpiler = &data.transpiler;
         errdefer transpiler.resetStore();
-        var resolver: *Resolver = &transpiler.resolver;
+        const resolver: *Resolver = &transpiler.resolver;
         var file_path = task.path;
-        step.* = .read_file;
         var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
 
         // Do not process files as HTML if any of the following are true:
@@ -4710,7 +4808,34 @@ pub const ParseTask = struct {
         }
 
         var contents_came_from_plugin: bool = false;
-        var entry = try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, &contents_came_from_plugin);
+        return try getCodeForParseTask(task, log, transpiler, resolver, allocator, &file_path, &loader, &contents_came_from_plugin);
+    }
+
+    fn runWithSourceCode(
+        task: *ParseTask,
+        this: *ThreadPool.Worker,
+        step: *ParseTask.Result.Error.Step,
+        log: *Logger.Log,
+        entry: *CacheEntry,
+    ) anyerror!Result.Success {
+        const allocator = this.allocator;
+
+        var data = this.data;
+        var transpiler = &data.transpiler;
+        errdefer transpiler.resetStore();
+        var resolver: *Resolver = &transpiler.resolver;
+        var file_path = task.path;
+        var loader = task.loader orelse file_path.loader(&transpiler.options.loaders) orelse options.Loader.file;
+
+        // Do not process files as HTML if any of the following are true:
+        // - building for node or bun.js
+        //
+        //   We allow non-entrypoints to import HTML so that people could
+        //   potentially use an onLoad plugin that returns HTML.
+        if (task.known_target != .browser) {
+            loader = loader.disableHTML();
+            task.loader = loader;
+        }
 
         // WARNING: Do not change the variant of `task.contents_or_fd` from
         // `.fd` to `.contents` (or back) after this point!
@@ -4895,8 +5020,15 @@ pub const ParseTask = struct {
         };
     }
 
-    pub fn callback(task: *ThreadPoolLib.Task) void {
-        const this: *ParseTask = @fieldParentPtr("task", task);
+    fn ioTaskCallback(task: *ThreadPoolLib.Task) void {
+        runFromThreadPool(@fieldParentPtr("io_task", task));
+    }
+
+    fn taskCallback(task: *ThreadPoolLib.Task) void {
+        runFromThreadPool(@fieldParentPtr("task", task));
+    }
+
+    pub fn runFromThreadPool(this: *ParseTask) void {
         var worker = ThreadPool.Worker.get(this.ctx);
         defer worker.unget();
         debug("ParseTask(0x{x}, {s}) callback", .{ @intFromPtr(this), this.path.text });
@@ -4905,42 +5037,75 @@ pub const ParseTask = struct {
         var log = Logger.Log.init(worker.allocator);
         bun.assert(this.source_index.isValid()); // forgot to set source_index
 
-        const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
-        const value: ParseTask.Result.Value = if (run(this, worker, &step, &log)) |ast| value: {
-            // When using HMR, always flag asts with errors as parse failures.
-            // Not done outside of the dev server out of fear of breaking existing code.
-            if (this.ctx.transpiler.options.dev_server != null and ast.log.hasErrors()) {
-                break :value .{
-                    .err = .{
-                        .err = error.SyntaxError,
-                        .step = .parse,
-                        .log = ast.log,
-                        .source_index = this.source_index,
-                        .target = this.known_target,
+        const value: ParseTask.Result.Value = value: {
+            if (this.stage == .needs_source_code) {
+                this.stage = .{
+                    .needs_parse = getSourceCode(this, worker, &log) catch |err| {
+                        break :value .{ .err = .{
+                            .err = err,
+                            .step = step,
+                            .log = log,
+                            .source_index = this.source_index,
+                            .target = this.known_target,
+                        } };
                     },
                 };
+
+                if (log.hasErrors()) {
+                    break :value .{ .err = .{
+                        .err = error.SyntaxError,
+                        .step = step,
+                        .log = log,
+                        .source_index = this.source_index,
+                        .target = this.known_target,
+                    } };
+                }
+
+                if (this.ctx.graph.pool.usesIOPool()) {
+                    this.ctx.graph.pool.scheduleInsideThreadPool(this);
+                    return;
+                }
             }
 
-            break :value .{ .success = ast };
-        } else |err| value: {
-            if (err == error.EmptyAST) {
-                log.deinit();
-                break :value .{ .empty = .{
+            if (runWithSourceCode(this, worker, &step, &log, &this.stage.needs_parse)) |ast| {
+                // When using HMR, always flag asts with errors as parse failures.
+                // Not done outside of the dev server out of fear of breaking existing code.
+                if (this.ctx.transpiler.options.dev_server != null and ast.log.hasErrors()) {
+                    break :value .{
+                        .err = .{
+                            .err = error.SyntaxError,
+                            .step = .parse,
+                            .log = ast.log,
+                            .source_index = this.source_index,
+                            .target = this.known_target,
+                        },
+                    };
+                }
+
+                break :value .{ .success = ast };
+            } else |err| {
+                if (err == error.EmptyAST) {
+                    log.deinit();
+                    break :value .{ .empty = .{
+                        .source_index = this.source_index,
+                    } };
+                }
+
+                break :value .{ .err = .{
+                    .err = err,
+                    .step = step,
+                    .log = log,
                     .source_index = this.source_index,
+                    .target = this.known_target,
                 } };
             }
-
-            break :value .{ .err = .{
-                .err = err,
-                .step = step,
-                .log = log,
-                .source_index = this.source_index,
-                .target = this.known_target,
-            } };
         };
+
+        const result = bun.default_allocator.create(Result) catch bun.outOfMemory();
+
         result.* = .{
             .ctx = this.ctx,
-            .task = undefined,
+            .task = .{},
             .value = value,
             .external = this.external_free_function,
             .watcher_data = switch (this.contents_or_fd) {
@@ -6242,7 +6407,7 @@ pub const LinkerContext = struct {
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
         _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .monotonic);
-        this.parse_graph.pool.pool.schedule(batch);
+        this.parse_graph.pool.worker_pool.schedule(batch);
     }
 
     pub fn markPendingTaskDone(this: *LinkerContext) void {
@@ -7904,8 +8069,8 @@ pub const LinkerContext = struct {
 
                 // If the output format doesn't have an implicit CommonJS wrapper, any file
                 // that uses CommonJS features will need to be wrapped, even though the
-                // resulting wrapper won't be invoked by other files. An exception is made
-                // for entry point files in CommonJS format (or when in pass-through mode).
+                // resulting wrapper won't be invoked by other files. An exception is
+                // made for entry point files in CommonJS format (or when in pass-through mode).
                 if (kind == .cjs and (!entry_point_kinds[id].isEntryPoint() or output_format == .iife or output_format == .esm)) {
                     flags[id].wrap = .cjs;
                 }
@@ -8112,7 +8277,7 @@ pub const LinkerContext = struct {
             // for CommonJS files, and is also necessary for other files if they are
             // imported using an import star statement.
             // Note: `do` will wait for all to finish before moving forward
-            try this.parse_graph.pool.pool.do(this.allocator, &this.wait_group, this, doStep5, this.graph.reachable_files);
+            try this.parse_graph.pool.worker_pool.do(this.allocator, &this.wait_group, this, doStep5, this.graph.reachable_files);
         }
 
         if (comptime FeatureFlags.help_catch_memory_issues) {
@@ -9623,7 +9788,7 @@ pub const LinkerContext = struct {
                 .symbols = &c.graph.symbols,
             };
 
-            c.parse_graph.pool.pool.doPtr(
+            c.parse_graph.pool.worker_pool.doPtr(
                 c.allocator,
                 &c.wait_group,
                 cross_chunk_dependencies,
@@ -13537,7 +13702,7 @@ pub const LinkerContext = struct {
             }
             wait_group.counter = @as(u32, @truncate(chunks.len));
             const ctx = GenerateChunkCtx{ .chunk = &chunks[0], .wg = wait_group, .c = c, .chunks = chunks };
-            try c.parse_graph.pool.pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
+            try c.parse_graph.pool.worker_pool.doPtr(c.allocator, wait_group, ctx, generateJSRenamer, chunks);
         }
 
         if (c.source_maps.line_offset_tasks.len > 0) {
@@ -13588,7 +13753,7 @@ pub const LinkerContext = struct {
                     }
                 }
                 wait_group.counter = @as(u32, @truncate(total_count));
-                c.parse_graph.pool.pool.schedule(batch);
+                c.parse_graph.pool.worker_pool.schedule(batch);
                 wait_group.wait();
             } else if (Environment.isDebug) {
                 for (chunks) |*chunk| {
@@ -13700,7 +13865,7 @@ pub const LinkerContext = struct {
                     }
                 }
                 wait_group.counter = @as(u32, @truncate(total_count));
-                c.parse_graph.pool.pool.schedule(batch);
+                c.parse_graph.pool.worker_pool.schedule(batch);
                 wait_group.wait();
             }
 
@@ -13721,7 +13886,7 @@ pub const LinkerContext = struct {
                 wait_group.init();
                 wait_group.counter = @as(u32, @truncate(chunks_to_do.len));
 
-                try c.parse_graph.pool.pool.doPtr(
+                try c.parse_graph.pool.worker_pool.doPtr(
                     c.allocator,
                     wait_group,
                     chunk_contexts[0],
@@ -17030,7 +17195,7 @@ pub fn generateUniqueKey() u64 {
 }
 
 const ExternalFreeFunctionAllocator = struct {
-    free_callback: *const fn (ctx: *anyopaque) void,
+    free_callback: *const fn (ctx: *anyopaque) callconv(.C) void,
     context: *anyopaque,
 
     const vtable: std.mem.Allocator.VTable = .{
@@ -17039,7 +17204,7 @@ const ExternalFreeFunctionAllocator = struct {
         .resize = &resize,
     };
 
-    pub fn create(free_callback: *const fn (ctx: *anyopaque) void, context: *anyopaque) std.mem.Allocator {
+    pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.C) void, context: *anyopaque) std.mem.Allocator {
         return .{
             .ptr = bun.create(bun.default_allocator, ExternalFreeFunctionAllocator, .{
                 .free_callback = free_callback,

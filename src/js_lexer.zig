@@ -831,14 +831,6 @@ fn NewLexer_(
 
         pub fn step(lexer: *LexerType) void {
             lexer.code_point = lexer.nextCodepoint();
-
-            // Track the approximate number of newlines in the file so we can preallocate
-            // the line offset table in the printer for source maps. The line offset table
-            // is the #1 highest allocation in the heap profile, so this is worth doing.
-            // This count is approximate because it handles "\n" and "\r\n" (the common
-            // cases) but not "\r" or "\u2028" or "\u2029". Getting this wrong is harmless
-            // because it's only a preallocation. The array will just grow if it's too small.
-            lexer.approximate_newline_count += @intFromBool(lexer.code_point == '\n');
         }
 
         pub inline fn expect(self: *LexerType, comptime token: T) !void {
@@ -1110,12 +1102,8 @@ fn NewLexer_(
                 lexer.start = lexer.end;
                 lexer.token = T.t_end_of_file;
 
-                switch (lexer.code_point) {
-                    -1 => {
-                        lexer.token = T.t_end_of_file;
-                    },
-
-                    '#' => {
+                switch (tables.CharacterType.get(lexer.code_point)) {
+                    .hash => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Private identifiers are not allowed in JSON");
                         }
@@ -1156,10 +1144,10 @@ fn NewLexer_(
                                 }
                             }
                             lexer.token = T.t_private_identifier;
-                            break;
+                            return;
                         }
                     },
-                    '\r', '\n', 0x2028, 0x2029 => {
+                    .line_terminator => {
                         lexer.has_newline_before = true;
 
                         if (comptime json_options.guess_indentation) {
@@ -1190,69 +1178,25 @@ fn NewLexer_(
                         }
 
                         lexer.step();
+                        lexer.approximate_newline_count += 1;
+                        if (switch (lexer.code_point) {
+                            ' ', '\t', '\r', '\n' => true,
+                            else => false,
+                        }) {
+                            @branchHint(.likely);
+                            const count = countOfConsecutiveASCIIWhitespace(lexer.source.contents[lexer.current..]);
+                            lexer.current += count;
+                            lexer.step();
+                        }
+
                         continue;
                     },
-                    '\t', ' ' => {
+                    .white_space => {
                         lexer.step();
                         continue;
                     },
-                    '(' => {
-                        lexer.step();
-                        lexer.token = T.t_open_paren;
-                    },
-                    ')' => {
-                        lexer.step();
-                        lexer.token = T.t_close_paren;
-                    },
-                    '[' => {
-                        lexer.step();
-                        lexer.token = T.t_open_bracket;
-                    },
-                    ']' => {
-                        lexer.step();
-                        lexer.token = T.t_close_bracket;
-                    },
-                    '{' => {
-                        lexer.step();
-                        lexer.token = T.t_open_brace;
-                    },
-                    '}' => {
-                        lexer.step();
-                        lexer.token = T.t_close_brace;
-                    },
-                    ',' => {
-                        lexer.step();
-                        lexer.token = T.t_comma;
-                    },
-                    ':' => {
-                        lexer.step();
-                        lexer.token = T.t_colon;
-                    },
-                    ';' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
-                        }
 
-                        lexer.step();
-                        lexer.token = T.t_semicolon;
-                    },
-                    '@' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("Decorators are not allowed in JSON");
-                        }
-
-                        lexer.step();
-                        lexer.token = T.t_at;
-                    },
-                    '~' => {
-                        if (comptime is_json) {
-                            return lexer.addUnsupportedSyntaxError("~ is not allowed in JSON");
-                        }
-
-                        lexer.step();
-                        lexer.token = T.t_tilde;
-                    },
-                    '?' => {
+                    .question => {
                         // '?' or '?.' or '??' or '??='
                         lexer.step();
                         switch (lexer.code_point) {
@@ -1288,7 +1232,7 @@ fn NewLexer_(
                             },
                         }
                     },
-                    '%' => {
+                    .modulo => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1307,7 +1251,41 @@ fn NewLexer_(
                         }
                     },
 
-                    '&' => {
+                    .open_paren,
+                    .close_paren,
+                    .open_bracket,
+                    .close_bracket,
+                    .open_brace,
+                    .close_brace,
+                    .comma,
+                    .colon,
+                    .semicolon,
+                    .at,
+                    .tilde,
+                    => |token| {
+                        lexer.step();
+                        lexer.token = @enumFromInt(@intFromEnum(token));
+
+                        if (comptime is_json) {
+                            switch (token) {
+                                .semicolon => {
+                                    @branchHint(.unlikely);
+                                    return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
+                                },
+                                .at => {
+                                    @branchHint(.unlikely);
+                                    return lexer.addUnsupportedSyntaxError("Decorators are not allowed in JSON");
+                                },
+                                .tilde => {
+                                    @branchHint(.unlikely);
+                                    return lexer.addUnsupportedSyntaxError("~ is not allowed in JSON");
+                                },
+                                else => {},
+                            }
+                        }
+                    },
+
+                    .@"and" => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1339,7 +1317,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '|' => {
+                    .@"or" => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1370,7 +1348,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '^' => {
+                    .xor => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1389,7 +1367,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '+' => {
+                    .add => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1413,7 +1391,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '-' => {
+                    .sub => {
 
                         // '+' or '+=' or '++'
                         lexer.step();
@@ -1460,7 +1438,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '*' => {
+                    .multiply => {
                         // '*' or '*=' or '**' or '**='
 
                         lexer.step();
@@ -1486,7 +1464,7 @@ fn NewLexer_(
                             },
                         }
                     },
-                    '/' => {
+                    .slash => {
 
                         // '/' or '/=' or '//' or '/* ... */'
                         lexer.step();
@@ -1579,7 +1557,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '=' => {
+                    .equal => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1612,7 +1590,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '<' => {
+                    .less => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1654,7 +1632,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '>' => {
+                    .greater => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1697,7 +1675,7 @@ fn NewLexer_(
                         }
                     },
 
-                    '!' => {
+                    .exclamation_mark => {
                         if (comptime is_json) {
                             return lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                         }
@@ -1724,43 +1702,21 @@ fn NewLexer_(
                         }
                     },
 
-                    '\'' => {
+                    .quote => {
                         try lexer.parseStringLiteral('\'');
                     },
-                    '"' => {
+                    .double_quote => {
                         try lexer.parseStringLiteral('"');
                     },
-                    '`' => {
+                    .back_quote => {
                         try lexer.parseStringLiteral('`');
                     },
 
-                    '_', '$', 'a'...'z', 'A'...'Z' => {
-                        const advance = latin1IdentifierContinueLength(lexer.source.contents[lexer.current..]);
-
-                        lexer.end = lexer.current + advance;
-                        lexer.current = lexer.end;
-
-                        lexer.step();
-
-                        if (lexer.code_point >= 0x80) {
-                            while (isIdentifierContinue(lexer.code_point)) {
-                                lexer.step();
-                            }
-                        }
-
-                        if (lexer.code_point != '\\') {
-                            // this code is so hot that if you save lexer.raw() into a temporary variable
-                            // it shows up in profiling
-                            lexer.identifier = lexer.raw();
-                            lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
-                        } else {
-                            const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
-                            lexer.identifier = scan_result.contents;
-                            lexer.token = scan_result.token;
-                        }
+                    .identifier_start => {
+                        try lexer.parseIdentifier();
                     },
 
-                    '\\' => {
+                    .back_slash => {
                         if (comptime is_json and json_options.ignore_leading_escape_sequences) {
                             if (lexer.start == 0 or lexer.current == lexer.source.contents.len - 1) {
                                 lexer.step();
@@ -1773,32 +1729,17 @@ fn NewLexer_(
                         lexer.token = scan_result.token;
                     },
 
-                    '.', '0'...'9' => {
+                    .dot_or_number => {
                         try lexer.parseNumericLiteralOrDot();
                     },
 
-                    else => {
-                        // Check for unusual whitespace characters
-                        if (isWhitespace(lexer.code_point)) {
-                            lexer.step();
-                            continue;
-                        }
+                    .eof => {
+                        @branchHint(.unlikely);
+                        lexer.token = T.t_end_of_file;
+                    },
 
-                        if (isIdentifierStart(lexer.code_point)) {
-                            lexer.step();
-                            while (isIdentifierContinue(lexer.code_point)) {
-                                lexer.step();
-                            }
-                            if (lexer.code_point == '\\') {
-                                const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
-                                lexer.identifier = scan_result.contents;
-                                lexer.token = scan_result.token;
-                            } else {
-                                lexer.token = T.t_identifier;
-                                lexer.identifier = lexer.raw();
-                            }
-                            break;
-                        }
+                    .invalid => {
+                        @branchHint(.unlikely);
 
                         lexer.end = lexer.current;
                         lexer.token = T.t_syntax_error;
@@ -1840,6 +1781,32 @@ fn NewLexer_(
 
         pub fn isContextualKeyword(self: *LexerType, comptime keyword: string) bool {
             return self.token == .t_identifier and strings.eqlComptime(self.raw(), keyword);
+        }
+
+        fn parseIdentifier(lexer: *LexerType) anyerror!void {
+            const advance = latin1IdentifierContinueLength(lexer.source.contents[lexer.current..]);
+
+            lexer.end = lexer.current + advance;
+            lexer.current = lexer.end;
+
+            lexer.step();
+
+            if (lexer.code_point >= 0x80) {
+                while (isIdentifierContinue(lexer.code_point)) {
+                    lexer.step();
+                }
+            }
+
+            if (lexer.code_point != '\\') {
+                // this code is so hot that if you save lexer.raw() into a temporary variable
+                // it shows up in profiling
+                lexer.identifier = lexer.raw();
+                lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
+            } else {
+                const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
+                lexer.identifier = scan_result.contents;
+                lexer.token = scan_result.token;
+            }
         }
 
         pub fn expectedString(self: *LexerType, text: string) !void {
@@ -3047,42 +3014,8 @@ fn NewLexer_(
 
 pub const Lexer = NewLexer(.{});
 
-const JSIdentifier = @import("./js_lexer/identifier.zig");
-pub inline fn isIdentifierStart(codepoint: i32) bool {
-    return JSIdentifier.isIdentifierStart(codepoint);
-}
-pub inline fn isIdentifierContinue(codepoint: i32) bool {
-    return JSIdentifier.isIdentifierPart(codepoint);
-}
-
-pub fn isWhitespace(codepoint: CodePoint) bool {
-    return switch (codepoint) {
-        0x000B, // line tabulation
-        0x0009, // character tabulation
-        0x000C, // form feed
-        0x0020, // space
-        0x00A0, // no-break space
-        // Unicode "Space_Separator" code points
-        0x1680, // ogham space mark
-        0x2000, // en quad
-        0x2001, // em quad
-        0x2002, // en space
-        0x2003, // em space
-        0x2004, // three-per-em space
-        0x2005, // four-per-em space
-        0x2006, // six-per-em space
-        0x2007, // figure space
-        0x2008, // punctuation space
-        0x2009, // thin space
-        0x200A, // hair space
-        0x202F, // narrow no-break space
-        0x205F, // medium mathematical space
-        0x3000, // ideographic space
-        0xFEFF, // zero width non-breaking space
-        => true,
-        else => false,
-    };
-}
+pub const isIdentifierStart = tables.CharacterType.isIdentifierStart;
+pub const isIdentifierContinue = tables.CharacterType.isIdentifierContinue;
 
 pub fn isIdentifier(text: string) bool {
     if (text.len == 0) {
@@ -3419,4 +3352,85 @@ fn indexOfInterestingCharacterInStringLiteral(text_: []const u8, quote: u8) ?usi
     }
 
     return null;
+}
+
+pub fn isWhitespace(codepoint: CodePoint) bool {
+    return switch (codepoint) {
+        0x000B, // line tabulation
+        0x0009, // character tabulation
+        0x000C, // form feed
+        0x0020, // space
+        0x00A0, // no-break space
+        // Unicode "Space_Separator" code points
+        0x1680, // ogham space mark
+        0x2000, // en quad
+        0x2001, // em quad
+        0x2002, // en space
+        0x2003, // em space
+        0x2004, // three-per-em space
+        0x2005, // four-per-em space
+        0x2006, // six-per-em space
+        0x2007, // figure space
+        0x2008, // punctuation space
+        0x2009, // thin space
+        0x200A, // hair space
+        0x202F, // narrow no-break space
+        0x205F, // medium mathematical space
+        0x3000, // ideographic space
+        0xFEFF, // zero width non-breaking space
+        => true,
+        else => false,
+    };
+}
+
+fn countOfConsecutiveASCIIWhitespace(slice: []const u8) usize {
+    var remaining = slice;
+
+    const AsciiVector = strings.AsciiVector;
+    const AsciiVectorU1 = strings.AsciiVectorU1;
+    const AsciiVectorInt = strings.AsciiVectorInt;
+
+    if (comptime Environment.enableSIMD) {
+        // Define the whitespace characters we want to skip
+        const space_vec: AsciiVector = @splat(' '); // 0x20
+        const tab_vec: AsciiVector = @splat('\t'); // 0x09
+        const cr_vec: AsciiVector = @splat('\r'); // 0x0D
+        const nl_vec: AsciiVector = @splat('\n'); // 0x0A
+        const ascii_vector_size = strings.ascii_vector_size;
+
+        while (remaining.len >= ascii_vector_size) {
+            const vec: AsciiVector = remaining[0..ascii_vector_size].*;
+
+            // Compare against all whitespace characters
+            const cmp = @as(AsciiVectorU1, @bitCast(vec != space_vec)) &
+                @as(AsciiVectorU1, @bitCast(vec != tab_vec)) &
+                @as(AsciiVectorU1, @bitCast(vec != cr_vec)) &
+                @as(AsciiVectorU1, @bitCast(vec != nl_vec));
+
+            // If any character isn't a whitespace, find its position
+            if (@reduce(.Max, cmp) > 0) {
+                const bitmask = @as(AsciiVectorInt, @bitCast(cmp));
+                const first = @ctz(bitmask);
+                return first + (slice.len - remaining.len);
+            }
+
+            remaining = remaining[ascii_vector_size..];
+        }
+
+        if (remaining.len >= ascii_vector_size) {
+            // Explicit unreachable to prevent Clang from auto-vectorizing the loop below
+            unreachable;
+        }
+    }
+
+    // Handle remaining bytes that don't fit in a vector
+    for (remaining) |*char_| {
+        const char = char_.*;
+        switch (char) {
+            ' ', '\t', '\r', '\n' => {},
+            else => return @intFromPtr(char_) - @intFromPtr(slice.ptr),
+        }
+    }
+
+    return slice.len;
 }

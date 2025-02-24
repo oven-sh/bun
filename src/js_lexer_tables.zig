@@ -10,131 +10,131 @@ const CodePoint = @import("string_types.zig").CodePoint;
 const ComptimeStringMap = bun.ComptimeStringMap;
 
 pub const T = enum(u8) {
-    t_end_of_file,
+    t_end_of_file = 0,
     // close brace is here so that we can do comparisons against EOF or close brace in one branch
-    t_close_brace,
+    t_close_brace = 1,
 
-    t_syntax_error,
+    t_syntax_error = 2,
 
     // "#!/usr/bin/env node"
-    t_hashbang,
+    t_hashbang = 3,
 
     // literals
-    t_no_substitution_template_literal, // contents are in lexer.string_literal ([]uint16)
-    t_numeric_literal, // contents are in lexer.number (float64)
-    t_string_literal, // contents are in lexer.string_literal ([]uint16)
-    t_big_integer_literal, // contents are in lexer.identifier (string)
+    t_no_substitution_template_literal = 4, // contents are in lexer.string_literal ([]uint16)
+    t_numeric_literal = 5, // contents are in lexer.number (float64)
+    t_string_literal = 6, // contents are in lexer.string_literal ([]uint16)
+    t_big_integer_literal = 7, // contents are in lexer.identifier (string)
 
     // pseudo-literals
-    t_template_head, // contents are in lexer.string_literal ([]uint16)
-    t_template_middle, // contents are in lexer.string_literal ([]uint16)
-    t_template_tail, // contents are in lexer.string_literal ([]uint16)
+    t_template_head = 8, // contents are in lexer.string_literal ([]uint16)
+    t_template_middle = 9, // contents are in lexer.string_literal ([]uint16)
+    t_template_tail = 10, // contents are in lexer.string_literal ([]uint16)
 
     // punctuation
-    t_ampersand,
-    t_ampersand_ampersand,
-    t_asterisk,
-    t_asterisk_asterisk,
-    t_at,
-    t_bar,
-    t_bar_bar,
-    t_caret,
-    t_close_bracket,
-    t_close_paren,
-    t_colon,
-    t_comma,
-    t_dot,
-    t_dot_dot_dot,
-    t_equals_equals,
-    t_equals_equals_equals,
-    t_equals_greater_than,
-    t_exclamation,
-    t_exclamation_equals,
-    t_exclamation_equals_equals,
-    t_greater_than,
-    t_greater_than_equals,
-    t_greater_than_greater_than,
-    t_greater_than_greater_than_greater_than,
-    t_less_than,
-    t_less_than_equals,
-    t_less_than_less_than,
-    t_minus,
-    t_minus_minus,
-    t_open_brace,
-    t_open_bracket,
-    t_open_paren,
-    t_percent,
-    t_plus,
-    t_plus_plus,
-    t_question,
-    t_question_dot,
-    t_question_question,
-    t_semicolon,
-    t_slash,
-    t_tilde,
+    t_ampersand = 11,
+    t_ampersand_ampersand = 12,
+    t_asterisk = 13,
+    t_asterisk_asterisk = 14,
+    t_at = 15,
+    t_bar = 16,
+    t_bar_bar = 17,
+    t_caret = 18,
+    t_close_bracket = 19,
+    t_close_paren = 20,
+    t_colon = 21,
+    t_comma = 22,
+    t_dot = 23,
+    t_dot_dot_dot = 24,
+    t_equals_equals = 25,
+    t_equals_equals_equals = 26,
+    t_equals_greater_than = 27,
+    t_exclamation = 28,
+    t_exclamation_equals = 29,
+    t_exclamation_equals_equals = 30,
+    t_greater_than = 31,
+    t_greater_than_equals = 32,
+    t_greater_than_greater_than = 33,
+    t_greater_than_greater_than_greater_than = 34,
+    t_less_than = 35,
+    t_less_than_equals = 36,
+    t_less_than_less_than = 37,
+    t_minus = 38,
+    t_minus_minus = 39,
+    t_open_brace = 40,
+    t_open_bracket = 41,
+    t_open_paren = 42,
+    t_percent = 43,
+    t_plus = 44,
+    t_plus_plus = 45,
+    t_question = 46,
+    t_question_dot = 47,
+    t_question_question = 48,
+    t_semicolon = 49,
+    t_slash = 50,
+    t_tilde = 51,
 
     // assignments (keep in sync with is_assign() below)
-    t_ampersand_ampersand_equals,
-    t_ampersand_equals,
-    t_asterisk_asterisk_equals,
-    t_asterisk_equals,
-    t_bar_bar_equals,
-    t_bar_equals,
-    t_caret_equals,
-    t_equals,
-    t_greater_than_greater_than_equals,
-    t_greater_than_greater_than_greater_than_equals,
-    t_less_than_less_than_equals,
-    t_minus_equals,
-    t_percent_equals,
-    t_plus_equals,
-    t_question_question_equals,
-    t_slash_equals,
+    t_ampersand_ampersand_equals = 52,
+    t_ampersand_equals = 53,
+    t_asterisk_asterisk_equals = 54,
+    t_asterisk_equals = 55,
+    t_bar_bar_equals = 56,
+    t_bar_equals = 57,
+    t_caret_equals = 58,
+    t_equals = 59,
+    t_greater_than_greater_than_equals = 60,
+    t_greater_than_greater_than_greater_than_equals = 61,
+    t_less_than_less_than_equals = 62,
+    t_minus_equals = 63,
+    t_percent_equals = 64,
+    t_plus_equals = 65,
+    t_question_question_equals = 66,
+    t_slash_equals = 67,
 
     // class-private fields and methods
-    t_private_identifier,
+    t_private_identifier = 68,
 
     // identifiers
-    t_identifier, // contents are in lexer.identifier (string)
-    t_escaped_keyword, // a keyword that has been escaped as an identifer
+    t_identifier = 69, // contents are in lexer.identifier (string)
+    t_escaped_keyword = 70, // a keyword that has been escaped as an identifer
 
     // reserved words
-    t_break,
-    t_case,
-    t_catch,
-    t_class,
-    t_const,
-    t_continue,
-    t_debugger,
-    t_default,
-    t_delete,
-    t_do,
-    t_else,
-    t_enum,
-    t_export,
-    t_extends,
-    t_false,
-    t_finally,
-    t_for,
-    t_function,
-    t_if,
-    t_import,
-    t_in,
-    t_instanceof,
-    t_new,
-    t_null,
-    t_return,
-    t_super,
-    t_switch,
-    t_this,
-    t_throw,
-    t_true,
-    t_try,
-    t_typeof,
-    t_var,
-    t_void,
-    t_while,
-    t_with,
+    t_break = 71,
+    t_case = 72,
+    t_catch = 73,
+    t_class = 74,
+    t_const = 75,
+    t_continue = 76,
+    t_debugger = 77,
+    t_default = 78,
+    t_delete = 79,
+    t_do = 80,
+    t_else = 81,
+    t_enum = 82,
+    t_export = 83,
+    t_extends = 84,
+    t_false = 85,
+    t_finally = 86,
+    t_for = 87,
+    t_function = 88,
+    t_if = 89,
+    t_import = 90,
+    t_in = 91,
+    t_instanceof = 92,
+    t_new = 93,
+    t_null = 94,
+    t_return = 95,
+    t_super = 96,
+    t_switch = 97,
+    t_this = 98,
+    t_throw = 99,
+    t_true = 100,
+    t_try = 101,
+    t_typeof = 102,
+    t_var = 103,
+    t_void = 104,
+    t_while = 105,
+    t_with = 106,
 
     pub fn isAssign(self: T) bool {
         return @intFromEnum(self) >= @intFromEnum(T.t_ampersand_ampersand_equals) and @intFromEnum(self) <= @intFromEnum(T.t_slash_equals);
@@ -808,3 +808,227 @@ pub const jsxEntity = ComptimeStringMap(CodePoint, .{
     .{ "zwj", @as(CodePoint, 0x200D) },
     .{ "zwnj", @as(CodePoint, 0x200C) },
 });
+
+pub const CharacterType = enum(u8) {
+    /// Start of an identifier: a-z, A-Z, $, _
+    identifier_start = @as(u8, @intFromEnum(T.t_identifier)),
+
+    /// Invalid/unsupported characters
+    invalid = @as(u8, @intFromEnum(T.t_syntax_error)),
+    /// Line breaks: \n, \r
+    line_terminator = @as(u8, @intFromEnum(T.t_bar_bar)),
+    /// '!'
+    exclamation_mark = @as(u8, @intFromEnum(T.t_exclamation)),
+    /// (
+    open_paren = @as(u8, @intFromEnum(T.t_open_paren)),
+    /// )
+    close_paren = @as(u8, @intFromEnum(T.t_close_paren)),
+    /// [
+    open_bracket = @as(u8, @intFromEnum(T.t_open_bracket)),
+    /// ]
+    close_bracket = @as(u8, @intFromEnum(T.t_close_bracket)),
+    /// ,
+    comma = @as(u8, @intFromEnum(T.t_comma)),
+    /// :
+    colon = @as(u8, @intFromEnum(T.t_colon)),
+    /// ?
+    question = @as(u8, @intFromEnum(T.t_question)),
+    /// ~
+    tilde = @as(u8, @intFromEnum(T.t_tilde)),
+    /// '
+    quote = @as(u8, @intFromEnum(T.t_string_literal)),
+    /// "
+    double_quote = @as(u8, @intFromEnum(T.t_template_middle)),
+    /// `
+    back_quote = @as(u8, @intFromEnum(T.t_no_substitution_template_literal)),
+    /// .0-9
+    dot_or_number = @as(u8, @intFromEnum(T.t_numeric_literal)),
+    /// /
+    slash = @as(u8, @intFromEnum(T.t_slash)),
+    /// \
+    back_slash = @as(u8, @intFromEnum(T.t_break)),
+    /// ;
+    semicolon = @as(u8, @intFromEnum(T.t_semicolon)),
+    /// {
+    open_brace = @as(u8, @intFromEnum(T.t_open_brace)),
+    /// }
+    close_brace = @as(u8, @intFromEnum(T.t_close_brace)),
+    /// +
+    add = @as(u8, @intFromEnum(T.t_plus)),
+    /// -
+    sub = @as(u8, @intFromEnum(T.t_minus)),
+    /// *
+    multiply = @as(u8, @intFromEnum(T.t_asterisk)),
+    /// %
+    modulo = @as(u8, @intFromEnum(T.t_percent)),
+    /// &
+    @"and" = @as(u8, @intFromEnum(T.t_ampersand)),
+    /// ^
+    xor = @as(u8, @intFromEnum(T.t_caret)),
+    /// |
+    @"or" = @as(u8, @intFromEnum(T.t_bar)),
+    /// <
+    less = @as(u8, @intFromEnum(T.t_less_than)),
+    /// >
+    greater = @as(u8, @intFromEnum(T.t_greater_than)),
+    /// =
+    equal = @as(u8, @intFromEnum(T.t_equals)),
+    /// Space, tab, etc
+    white_space = @as(u8, @intFromEnum(T.t_super)), // Using arbitrary non-conflicting valu)e
+    /// #
+    hash = @as(u8, @intFromEnum(T.t_hashbang)),
+    /// @
+    at = @as(u8, @intFromEnum(T.t_at)),
+
+    eof = 255,
+
+    // Lookup table for ASCII characters (0-127)
+    const ascii_types = [128]CharacterType{
+        // 0-31 control characters
+        .invalid, // NUL
+        .invalid, // SOH
+        .invalid, // STX
+        .invalid, // ETX
+        .invalid, // EOT
+        .invalid, // ENQ
+        .invalid, // ACK
+        .invalid, // BEL
+        .invalid, // BS
+        .white_space, // TAB
+        .line_terminator, // LF
+        .white_space, // VT
+        .white_space, // FF
+        .line_terminator, // CR
+        .invalid, // SO
+        .invalid, // SI
+        .invalid, // DLE
+        .invalid, // DC1
+        .invalid, // DC2
+        .invalid, // DC3
+        .invalid, // DC4
+        .invalid, // NAK
+        .invalid, // SYN
+        .invalid, // ETB
+        .invalid, // CAN
+        .invalid, // EM
+        .invalid, // SUB
+        .invalid, // ESC
+        .invalid, // FS
+        .invalid, // GS
+        .invalid, // RS
+        .invalid, // US
+
+        // 32-47 punctuation and symbols
+        .white_space, // Space
+        .exclamation_mark, // !
+        .double_quote, // "
+        .hash, // #
+        .identifier_start, // $
+        .modulo, // %
+        .@"and", // &
+        .quote, // '
+        .open_paren, // (
+        .close_paren, // )
+        .multiply, // *
+        .add, // +
+        .comma, // ,
+        .sub, // -
+        .dot_or_number, // .
+        .slash, // /
+
+        // 48-57 numbers
+        .dot_or_number, // 0
+        .dot_or_number, .dot_or_number, .dot_or_number, .dot_or_number, .dot_or_number, // 1-5
+        .dot_or_number, .dot_or_number, .dot_or_number, .dot_or_number, // 6-9
+
+        // 58-64 more punctuation
+        .colon, // :
+        .semicolon, // ;
+        .less, // <
+        .equal, // =
+        .greater, // >
+        .question, // ?
+        .at, // @
+
+        // 65-90 uppercase letters
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // A-E
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // F-J
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // K-O
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // P-T
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // U-Y
+        .identifier_start, // Z
+
+        // 91-96 more punctuation
+        .open_bracket, // [
+        .back_slash, // \
+        .close_bracket, // ]
+        .xor, // ^
+        .identifier_start, // _
+        .back_quote, // `
+
+        // 97-122 lowercase letters
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // a-e
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // f-j
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // k-o
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // p-t
+        .identifier_start, .identifier_start, .identifier_start, .identifier_start, .identifier_start, // u-y
+        .identifier_start, // z
+
+        // 123-127 final punctuation
+        .open_brace, // {
+        .@"or", // |
+        .close_brace, // }
+        .tilde, // ~
+        .invalid, // DEL
+    };
+
+    const JSIdentifier = @import("./js_lexer/identifier.zig");
+    pub fn isIdentifierStart(codepoint: i32) bool {
+        return JSIdentifier.isIdentifierStart(codepoint);
+    }
+    pub fn isIdentifierContinue(codepoint: i32) bool {
+        return JSIdentifier.isIdentifierPart(codepoint);
+    }
+
+    /// Get the character type for a given code point
+    pub fn get(cp: i32) CharacterType {
+        if (cp >= 0 and cp < 128) {
+            @branchHint(.likely);
+            return ascii_types[@as(usize, @intCast(cp))];
+        }
+
+        return switch (cp) {
+            -1 => .eof,
+
+            0x2028, 0x2029 => .line_terminator,
+            0x000B, // line tabulation
+            0x0009, // character tabulation
+            0x000C, // form feed
+            0x0020, // space
+            0x00A0, // no-break space
+            // Unicode "Space_Separator" code points
+            0x1680, // ogham space mark
+            0x2000, // en quad
+            0x2001, // em quad
+            0x2002, // en space
+            0x2003, // em space
+            0x2004, // three-per-em space
+            0x2005, // four-per-em space
+            0x2006, // six-per-em space
+            0x2007, // figure space
+            0x2008, // punctuation space
+            0x2009, // thin space
+            0x200A, // hair space
+            0x202F, // narrow no-break space
+            0x205F, // medium mathematical space
+            0x3000, // ideographic space
+            0xFEFF, // zero width non-breaking space
+            => .white_space,
+
+            else => if (isIdentifierStart(cp))
+                .identifier_start
+            else
+                .invalid,
+        };
+    }
+};

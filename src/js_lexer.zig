@@ -1289,7 +1289,20 @@ fn NewLexer_(
 
             fn punctuationFn(lexer: *LexerType, comptime charater_type: tables.CharacterType) Continuation {
                 lexer.step();
-                lexer.token = @enumFromInt(@intFromEnum(charater_type));
+                lexer.token = switch (comptime charater_type) {
+                    .open_brace => .t_open_brace,
+                    .close_brace => .t_close_brace,
+                    .open_bracket => .t_open_bracket,
+                    .close_bracket => .t_close_bracket,
+                    .open_paren => .t_open_paren,
+                    .close_paren => .t_close_paren,
+                    .comma => .t_comma,
+                    .semicolon => .t_semicolon,
+                    .at => .t_at,
+                    .tilde => .t_tilde,
+                    .colon => .t_colon,
+                    else => @compileError("Invalid character type: " ++ @tagName(charater_type)),
+                };
 
                 if (comptime is_json) {
                     switch (comptime charater_type) {
@@ -1597,6 +1610,7 @@ fn NewLexer_(
 
             pub fn equal(lexer: *LexerType) Continuation {
                 if (comptime is_json) {
+                    @branchHint(.cold);
                     try lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                     return error.SyntaxError;
                 }
@@ -1633,6 +1647,7 @@ fn NewLexer_(
 
             pub fn less(lexer: *LexerType) Continuation {
                 if (comptime is_json) {
+                    @branchHint(.cold);
                     try lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                     return error.SyntaxError;
                 }
@@ -1678,6 +1693,7 @@ fn NewLexer_(
 
             pub fn greater(lexer: *LexerType) Continuation {
                 if (comptime is_json) {
+                    @branchHint(.cold);
                     try lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                     return error.SyntaxError;
                 }
@@ -1724,6 +1740,7 @@ fn NewLexer_(
 
             pub fn exclamation_mark(lexer: *LexerType) Continuation {
                 if (comptime is_json) {
+                    @branchHint(.cold);
                     try lexer.addUnsupportedSyntaxError("Operators are not allowed in JSON");
                     return error.SyntaxError;
                 }
@@ -1790,13 +1807,13 @@ fn NewLexer_(
             }
 
             pub fn eof(lexer: *LexerType) Continuation {
-                @branchHint(.unlikely);
+                @branchHint(.cold);
                 lexer.token = T.t_end_of_file;
                 return .stop;
             }
 
             pub fn invalid(lexer: *LexerType) Continuation {
-                @branchHint(.unlikely);
+                @branchHint(.cold);
 
                 lexer.end = lexer.current;
                 lexer.token = T.t_syntax_error;

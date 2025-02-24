@@ -629,22 +629,26 @@ console.log(JSON.stringify(json))
     },
     {
       name: "index.js",
-      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      contents: /* ts */ `console.log('HELLO FRIENDS');
+export default {}`,
       loader: "js",
     },
     {
       name: "index.ts",
-      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      contents: /* ts */ `console.log('HELLO FRIENDS');
+export default {}`,
       loader: "ts",
     },
     {
       name: "lmao.jsx",
-      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      contents: /* ts */ `console.log('HELLO FRIENDS');
+export default {}`,
       loader: "jsx",
     },
     {
       name: "lmao.tsx",
-      contents: /* ts */ `console.log('HELLO FRIENDS')`,
+      contents: /* ts */ `console.log('HELLO FRIENDS');
+export default {}`,
       loader: "tsx",
     },
     {
@@ -661,14 +665,17 @@ console.log(JSON.stringify(json))
 
   for (const { name, contents, loader } of additional_files) {
     it(`works with ${loader} loader`, async () => {
-      await Bun.$`echo ${contents} > ${name}`;
+      const dependencyPath = path.join(tempdir, name);
+      const sourcePath = path.join(tempdir, "index.ts");
+
+      await Bun.$`echo ${contents} > ${dependencyPath}`;
       const source = /* ts */ `import foo from "./${name}";
       console.log(foo);`;
-      await Bun.$`echo ${source} > index.ts`;
+      await Bun.$`echo ${source} > ${sourcePath}`;
 
       const result = await Bun.build({
         outdir,
-        entrypoints: [path.join(tempdir, "index.ts")],
+        entrypoints: [sourcePath],
         plugins: [
           {
             name: "test",
@@ -684,6 +691,7 @@ console.log(JSON.stringify(json))
         ],
       });
 
+      if (!result.success) console.log(result);
       expect(result.success).toBeTrue();
     });
   }

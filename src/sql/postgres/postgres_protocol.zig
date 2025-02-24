@@ -1010,7 +1010,7 @@ pub const FieldDescription = struct {
     table_oid: int4 = 0,
     column_index: short = 0,
     type_oid: int4 = 0,
-
+    format_code: FormatCode = .text,
     pub fn typeTag(this: @This()) types.Tag {
         return @enumFromInt(@as(short, @truncate(this.type_oid)));
     }
@@ -1024,25 +1024,35 @@ pub const FieldDescription = struct {
         errdefer {
             name.deinit();
         }
-        // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
-        // Int16
-        // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
-        // Int32
-        // The object ID of the field's data type.
-        // Int16
-        // The data type size (see pg_type.typlen). Note that negative values denote variable-width types.
-        // Int32
-        // The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
-        // Int16
-        // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
-        this.* = .{
-            .table_oid = try reader.int4(),
-            .column_index = try reader.short(),
-            .type_oid = try reader.int4(),
-            .name_or_index = try ColumnIdentifier.init(name),
-        };
 
-        try reader.skip(2 + 4 + 2);
+        // Field name (null-terminated string)
+        const field_name = try ColumnIdentifier.init(name);
+        // Table OID (4 bytes)
+        // If the field can be identified as a column of a specific table, the object ID of the table; otherwise zero.
+        const table_oid = try reader.int4();
+
+        // Column attribute number (2 bytes)
+        // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
+        const column_index = try reader.short();
+
+        // Data type OID (4 bytes) The data type size (see pg_type.typlen). Note that negative values denote variable-width types.
+        // The object ID of the field's data type. The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
+        const type_oid = try reader.int4();
+
+        // Data type size (2 bytes)
+        // Type modifier (4 bytes)
+        try reader.skip(6);
+
+        // Format code (2 bytes)
+        // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
+        const format_code = try FormatCode.from(try reader.short());
+        this.* = .{
+            .table_oid = table_oid,
+            .column_index = column_index,
+            .type_oid = type_oid,
+            .format_code = format_code,
+            .name_or_index = field_name,
+        };
     }
 
     pub const decode = decoderWrap(FieldDescription, decodeInternal).decode;

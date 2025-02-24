@@ -45,6 +45,7 @@ pub const AnyPostgresError = error{
     UnsupportedIntegerSize,
     UnsupportedArrayFormat,
     UnsupportedNumericFormat,
+    UnknownFormatCode,
 };
 
 pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
@@ -77,6 +78,7 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
         error.UnsupportedArrayFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
         error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
         error.UnsupportedNumericFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
+        error.UnknownFormatCode => JSC.Error.ERR_POSTGRES_UNKNOWN_FORMAT_CODE,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -3246,7 +3248,6 @@ pub const PostgresSQLConnection = struct {
         pub const Putter = struct {
             list: []DataCell,
             fields: []const protocol.FieldDescription,
-            binary: bool = false,
             bigint: bool = false,
             count: usize = 0,
             globalObject: *JSC.JSGlobalObject,
@@ -3295,7 +3296,7 @@ pub const PostgresSQLConnection = struct {
                     cell.* = DataCell.raw(optional_bytes);
                 } else {
                     cell.* = if (optional_bytes) |data|
-                        try DataCell.fromBytes(this.binary, this.bigint, oid, data.slice(), this.globalObject)
+                        try DataCell.fromBytes(field.format_code == .binary, this.bigint, oid, data.slice(), this.globalObject)
                     else
                         DataCell{
                             .tag = .null,
@@ -3482,7 +3483,6 @@ pub const PostgresSQLConnection = struct {
                 var putter = DataCell.Putter{
                     .list = &.{},
                     .fields = statement.fields,
-                    .binary = request.flags.binary,
                     .bigint = request.flags.bigint,
                     .globalObject = this.globalObject,
                 };

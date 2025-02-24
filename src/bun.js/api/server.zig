@@ -89,6 +89,8 @@ const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
 const S3 = bun.S3;
+const SocketAddress = @import("bun/socket.zig").SocketAddress;
+
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
@@ -6467,10 +6469,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
-            if (this.config.address == .unix) {
-                return JSValue.jsNull();
-            }
-            return request.getRemoteSocketInfo(this.globalThis) orelse .null;
+            if (this.config.address == .unix) return JSValue.jsNull();
+            const info = request.request_context.getRemoteSocketInfo() orelse return JSValue.jsNull();
+            return SocketAddress.createDTO(this.globalThis, info.ip, @intCast(info.port), info.is_ipv6);
         }
 
         pub fn memoryCost(this: *ThisServer) usize {
@@ -7021,16 +7022,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         port = @intCast(listener.getLocalPort());
 
                         var buf: [64]u8 = [_]u8{0} ** 64;
-                        var is_ipv6: bool = false;
-
-                        if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
-                            return JSC.JSSocketAddress.create(
-                                this.globalThis,
-                                slice,
-                                port,
-                                is_ipv6,
-                            );
-                        }
+                        const address_bytes = listener.socket().localAddress(&buf) orelse return JSValue.jsNull();
+                        var addr = SocketAddress.init(address_bytes, port) catch {
+                            @branchHint(.unlikely);
+                            return JSValue.jsNull();
+                        };
+                        return addr.intoDTO(this.globalThis);
                     }
                     return JSValue.jsNull();
                 },

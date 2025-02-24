@@ -1485,11 +1485,9 @@ fn NewLexer_(
                                             break :singleLineComment;
                                         },
                                         else => {
-                                            if (comptime Environment.enableSIMD) {
-                                                if (strings.indexOfNewlineOrNonASCIICheckStart(lexer.source.contents[lexer.current..], 0, false)) |i| {
-                                                    lexer.current += i;
-                                                    continue :singleLineComment;
-                                                }
+                                            if (strings.indexOfNewlineOrNonASCIICheckStart(lexer.source.contents[lexer.current..], 0, false)) |i| {
+                                                lexer.current += i;
+                                                continue :singleLineComment;
                                             }
                                         },
                                     }
@@ -1529,21 +1527,9 @@ fn NewLexer_(
                                             );
                                         },
                                         else => {
-                                            // if (comptime Environment.enableSIMD) {
-                                            // TODO: this seems to work, but we shouldn't enable this until after improving test coverage
-                                            // if (lexer.code_point < 128) {
-                                            //     const remainder = lexer.source.contents[lexer.current..];
-                                            //     if (remainder.len >= 4096) {
-                                            //         lexer.current += skipToInterestingCharacterInMultilineComment(remainder) orelse {
-                                            //             lexer.step();
-                                            //             continue;
-                                            //         };
-                                            //         lexer.end = lexer.current -| 1;
-                                            //         lexer.step();
-                                            //         continue;
-                                            //     }
-                                            // }
-                                            // }
+                                            if (strings.indexOfNewlineOrNonASCIICheckStart(lexer.source.contents[lexer.current..], 0, false)) |i| {
+                                                lexer.current += i;
+                                            }
 
                                             lexer.step();
                                         },

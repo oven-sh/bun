@@ -149,36 +149,37 @@ export function emptyHtmlFile({
   `;
 }
 
-export type DevServerTest = (
-  | {
-      /** Starting files */
-      files: FileObject;
-      /**
-       * Framework to use. Consider `minimalFramework` if possible.
-       * Provide this object or `files['bun.app.ts']` for a dynamic one.
-       */
-      framework?: Bake.Framework | "react";
-      /**
-       * Source code for a TSX file that `export default`s an array of BunPlugin,
-       * combined with the `framework` option.
-       */
-      pluginFile?: string;
-    }
-  | {
-      /**
-       * Copy all files from test/bake/fixtures/<name>
-       * This directory must contain `bun.app.ts` or `index.html` to allow hacking on fixtures manually via `bun run .`
-       */
-      fixture: string;
-    }
-) & {
+export interface DevServerTest {
+  /** Execute the test */
   test: (dev: Dev) => Promise<void>;
 
+  /** Starting files */
+  files?: FileObject;
+  /**
+   * Framework to use. Consider `minimalFramework` if possible.
+   * Provide this object or `files['bun.app.ts']` for a dynamic one.
+   */
+  framework?: Bake.Framework | "react";
+  /**
+   * Source code for a TSX file that `export default`s an array of BunPlugin,
+   * combined with the `framework` option.
+   */
+  pluginFile?: string;
+  /**
+   * Copy all files from test/bake/fixtures/<name>
+   * This directory must contain `bun.app.ts` or `index.html` to allow hacking on fixtures manually via `bun run .`
+   */
+  fixture?: string;
   /**
    * Multiply the timeout by this number.
    */
   timeoutMultiplier?: number;
-};
+  /**
+   * Directory to write the bootstrap files into.
+   * Avoid if possible, this is to reproduce specific bugs.
+   */
+  mainDir?: string;
+}
 
 let interactive = false;
 let activeClient: Client | null = null;
@@ -1270,8 +1271,11 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     // Clean the test directory if it exists
     cleanTestDir(root);
 
-    if ("files" in options) {
-      const htmlFiles = Object.keys(options.files).filter(file => file.endsWith(".html"));
+    const mainDir = path.resolve(root, options.mainDir ?? ".");
+    if (options.files) {
+      const htmlFiles = Object.keys(options.files)
+        .filter(file => file.endsWith(".html"))
+        .map(x => path.join(root, x));
       await writeAll(root, options.files);
       if (options.files["bun.app.ts"] == undefined && htmlFiles.length === 0) {
         if (!options.framework) {
@@ -1296,7 +1300,10 @@ export function devTest<T extends DevServerTest>(description: string, options: T
         if (options.files["bun.app.ts"]) {
           throw new Error("Cannot provide both bun.app.ts and index.html");
         }
-        fs.writeFileSync(path.join(root, "bun.app.ts"), indexHtmlScript(htmlFiles));
+        await Bun.write(
+          path.join(mainDir, "bun.app.ts"),
+          indexHtmlScript(htmlFiles.map(file => path.relative(mainDir, file))),
+        );
       }
     } else {
       if (!options.fixture) {
@@ -1305,11 +1312,11 @@ export function devTest<T extends DevServerTest>(description: string, options: T
       const fixture = path.join(devTestRoot, "../fixtures", options.fixture);
       fs.cpSync(fixture, root, { recursive: true });
 
-      if (!fs.existsSync(path.join(root, "bun.app.ts"))) {
-        if (!fs.existsSync(path.join(root, "index.html"))) {
+      if (!fs.existsSync(path.join(mainDir, "bun.app.ts"))) {
+        if (!fs.existsSync(path.join(mainDir, "index.html"))) {
           throw new Error(`Fixture ${fixture} must contain a bun.app.ts or index.html file.`);
         } else {
-          fs.writeFileSync(path.join(root, "bun.app.ts"), indexHtmlScript(["index.html"]));
+          await Bun.write(path.join(root, "bun.app.ts"), indexHtmlScript(["index.html"]));
         }
       }
       if (!fs.existsSync(path.join(root, "node_modules"))) {
@@ -1330,7 +1337,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
       dedent`
-        import appConfig from "./bun.app.ts";
+        import appConfig from "${path.join(mainDir, "bun.app.ts")}";
         export default {
           ...appConfig,
           port: ${interactive ? 3000 : 0},

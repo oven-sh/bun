@@ -753,7 +753,8 @@ pub fn isHeapMemory(memory: anytype) bool {
     return false;
 }
 
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
+pub const Mimalloc = @import("allocators/mimalloc.zig");
+pub const AllocationScope = @import("allocators/AllocationScope.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -4271,6 +4272,9 @@ pub fn CowSlice(T: type) type {
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
         pub fn initOwned(data: []const T, allocator: Allocator) @This() {
+            if (AllocationScope.downcast(allocator)) |scope|
+                scope.assertOwned(data);
+
             return .{
                 .ptr = data.ptr,
                 .flags = .{
@@ -4360,5 +4364,3 @@ pub fn CowSlice(T: type) type {
 const Allocator = std.mem.Allocator;
 
 pub const server = @import("./bun.js/api/server.zig");
-
-pub const AllocationScope = @import("AllocationScope.zig");

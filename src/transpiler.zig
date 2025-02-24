@@ -110,8 +110,6 @@ pub const ParseResult = struct {
     }
 };
 
-const cache_files = false;
-
 pub const PluginRunner = struct {
     global_object: *JSC.JSGlobalObject,
     allocator: std.mem.Allocator,
@@ -360,7 +358,7 @@ pub const Transpiler = struct {
 
     macro_context: ?js_ast.Macro.MacroContext = null,
 
-    pub const isCacheEnabled = cache_files;
+    pub const isCacheEnabled = false;
 
     pub inline fn getPackageManager(this: *Transpiler) *PackageManager {
         return this.resolver.getPackageManager();
@@ -372,6 +370,7 @@ pub const Transpiler = struct {
         this.resolver.log = log;
     }
 
+    // TODO: remove this method. it does not make sense
     pub fn setAllocator(this: *Transpiler, allocator: std.mem.Allocator) void {
         this.allocator = allocator;
         this.linker.allocator = allocator;

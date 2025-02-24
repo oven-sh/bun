@@ -594,7 +594,7 @@ pub const Framework = struct {
 
     pub fn initTranspiler(
         framework: *Framework,
-        allocator: std.mem.Allocator,
+        arena: std.mem.Allocator,
         log: *bun.logger.Log,
         mode: Mode,
         renderer: Graph,
@@ -602,7 +602,7 @@ pub const Framework = struct {
         bundler_options: *const BuildConfigSubset,
     ) !void {
         out.* = try bun.Transpiler.init(
-            allocator, // TODO: this is likely a memory leak
+            arena,
             log,
             std.mem.zeroes(bun.Schema.Api.TransformOptions),
             null,
@@ -634,7 +634,7 @@ pub const Framework = struct {
         out.options.react_fast_refresh = mode == .development and renderer == .client and framework.react_fast_refresh != null;
         out.options.server_components = framework.server_components != null;
 
-        out.options.conditions = try bun.options.ESMConditions.init(allocator, out.options.target.defaultConditions());
+        out.options.conditions = try bun.options.ESMConditions.init(arena, out.options.target.defaultConditions());
         if (renderer == .server and framework.server_components != null) {
             try out.options.conditions.appendSlice(&.{"react-server"});
         }
@@ -669,7 +669,7 @@ pub const Framework = struct {
 
         out.options.jsx.development = mode == .development;
 
-        try addImportMetaDefines(allocator, out.options.define, mode, switch (renderer) {
+        try addImportMetaDefines(arena, out.options.define, mode, switch (renderer) {
             .client => .client,
             .server, .ssr => .server,
         });

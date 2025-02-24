@@ -811,76 +811,75 @@ pub const jsxEntity = ComptimeStringMap(CodePoint, .{
 
 pub const CharacterType = enum(u8) {
     /// Start of an identifier: a-z, A-Z, $, _
-    identifier_start = @as(u8, @intFromEnum(T.t_identifier)),
+    identifier_start,
 
     /// Invalid/unsupported characters
-    invalid = @as(u8, @intFromEnum(T.t_syntax_error)),
+    invalid,
     /// Line breaks: \n, \r
-    line_terminator = @as(u8, @intFromEnum(T.t_bar_bar)),
+    line_terminator,
     /// '!'
-    exclamation_mark = @as(u8, @intFromEnum(T.t_exclamation)),
+    exclamation_mark,
     /// (
-    open_paren = @as(u8, @intFromEnum(T.t_open_paren)),
+    open_paren,
     /// )
-    close_paren = @as(u8, @intFromEnum(T.t_close_paren)),
+    close_paren,
     /// [
-    open_bracket = @as(u8, @intFromEnum(T.t_open_bracket)),
+    open_bracket,
     /// ]
-    close_bracket = @as(u8, @intFromEnum(T.t_close_bracket)),
+    close_bracket,
     /// ,
-    comma = @as(u8, @intFromEnum(T.t_comma)),
+    comma,
     /// :
-    colon = @as(u8, @intFromEnum(T.t_colon)),
+    colon,
     /// ?
-    question = @as(u8, @intFromEnum(T.t_question)),
+    question,
     /// ~
-    tilde = @as(u8, @intFromEnum(T.t_tilde)),
+    tilde,
     /// '
-    quote = @as(u8, @intFromEnum(T.t_string_literal)),
+    quote,
     /// "
-    double_quote = @as(u8, @intFromEnum(T.t_template_middle)),
+    double_quote,
     /// `
-    back_quote = @as(u8, @intFromEnum(T.t_no_substitution_template_literal)),
+    back_quote,
     /// .0-9
-    dot_or_number = @as(u8, @intFromEnum(T.t_numeric_literal)),
+    dot_or_number,
     /// /
-    slash = @as(u8, @intFromEnum(T.t_slash)),
+    slash,
     /// \
-    back_slash = @as(u8, @intFromEnum(T.t_break)),
+    back_slash,
     /// ;
-    semicolon = @as(u8, @intFromEnum(T.t_semicolon)),
+    semicolon,
     /// {
-    open_brace = @as(u8, @intFromEnum(T.t_open_brace)),
+    open_brace,
     /// }
-    close_brace = @as(u8, @intFromEnum(T.t_close_brace)),
+    close_brace,
     /// +
-    add = @as(u8, @intFromEnum(T.t_plus)),
+    add,
     /// -
-    sub = @as(u8, @intFromEnum(T.t_minus)),
+    sub,
     /// *
-    multiply = @as(u8, @intFromEnum(T.t_asterisk)),
+    multiply,
     /// %
-    modulo = @as(u8, @intFromEnum(T.t_percent)),
+    modulo,
     /// &
-    @"and" = @as(u8, @intFromEnum(T.t_ampersand)),
+    @"and",
     /// ^
-    xor = @as(u8, @intFromEnum(T.t_caret)),
+    xor,
     /// |
-    @"or" = @as(u8, @intFromEnum(T.t_bar)),
+    @"or",
     /// <
-    less = @as(u8, @intFromEnum(T.t_less_than)),
+    less,
     /// >
-    greater = @as(u8, @intFromEnum(T.t_greater_than)),
+    greater,
     /// =
-    equal = @as(u8, @intFromEnum(T.t_equals)),
+    equal,
     /// Space, tab, etc
-    white_space = @as(u8, @intFromEnum(T.t_super)), // Using arbitrary non-conflicting valu)e
+    white_space,
     /// #
-    hash = @as(u8, @intFromEnum(T.t_hashbang)),
+    hash,
     /// @
-    at = @as(u8, @intFromEnum(T.t_at)),
-
-    eof = 255,
+    at,
+    eof,
 
     // Lookup table for ASCII characters (0-127)
     const ascii_types = [128]CharacterType{

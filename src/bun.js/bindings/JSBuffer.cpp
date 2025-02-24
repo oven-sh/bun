@@ -1426,7 +1426,7 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     }
     span = span.subspan(byteOffset);
     auto result = WTF::find<uint8_t>(span, byteValue);
-    if (result == -1) return -1;
+    if (result == WTF::notFound) return -1;
     return result + byteOffset;
 }
 

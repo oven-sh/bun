@@ -284,6 +284,39 @@ describe("flags", () => {
     });
   }
 
+  const filenameTests = [
+    {
+      "filename": "test.tgz",
+    },
+    {
+      "filename": "no-extension",
+    },
+    {
+      "filename": "no-extension.tar",
+    },
+  ];
+
+  for (const { filename } of filenameTests) {
+    test(`--filename="${filename}"`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-dest-test",
+            version: "1.1.1",
+          }),
+        ),
+        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      ]);
+
+      const dest = join(packageDir, filename);
+      await pack(packageDir, bunEnv, `--filename=${filename}`);
+
+      const tarball = readTarball(dest);
+      expect(tarball.entries).toHaveLength(2);
+    });
+  }
+
   test("--ignore-scripts", async () => {
     await Promise.all([
       write(

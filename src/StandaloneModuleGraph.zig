@@ -793,7 +793,7 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 },
             .{ .windows_hide_console = windows_hide_console },
-            target
+            target,
         );
         fd.assertKind(.system);
 

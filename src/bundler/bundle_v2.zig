@@ -311,7 +311,7 @@ pub const ThreadPool = struct {
             if (Environment.isLinux) {
                 if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_CPU_AFFINITY")) {
                     const Affinity = struct {
-                        var cpu_index: usize = 0;
+                        var cpu_index: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
                         threadlocal var has_set_affinity_on_thread: bool = false;
 
                         pub fn pin() void {
@@ -329,7 +329,7 @@ pub const ThreadPool = struct {
                                 const available_cpus = std.os.linux.CPU_COUNT(set);
                                 if (available_cpus == 0) return;
 
-                                const cpu = @atomicRmw(usize, &cpu_index, .Add, 1, .monotonic) % available_cpus;
+                                const cpu = cpu_index.fetchAdd(1, .monotonic) % available_cpus;
 
                                 // Pin to that CPU
                                 var new_set = std.mem.zeroes(std.os.linux.cpu_set_t);

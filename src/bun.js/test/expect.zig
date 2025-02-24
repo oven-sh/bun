@@ -429,7 +429,7 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("pass", "message", "string");
             }
 
-            value.toZigString(&_msg, globalThis);
+            try value.toZigString(&_msg, globalThis);
         } else {
             _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
@@ -474,7 +474,7 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("fail", "message", "string");
             }
 
-            value.toZigString(&_msg, globalThis);
+            try value.toZigString(&_msg, globalThis);
         } else {
             _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
@@ -1693,7 +1693,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         var path_string = ZigString.Empty;
-        expected_property_path.toZigString(&path_string, globalThis);
+        try expected_property_path.toZigString(&path_string, globalThis);
 
         var pass = !value.isUndefinedOrNull();
         var received_property: JSValue = .zero;
@@ -2571,7 +2571,7 @@ pub const Expect = struct {
             0 => {},
             1 => {
                 if (arguments[0].isString()) {
-                    arguments[0].toZigString(&hint_string, globalThis);
+                    try arguments[0].toZigString(&hint_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
                 }
@@ -2622,7 +2622,7 @@ pub const Expect = struct {
             1 => {
                 if (arguments[0].isString()) {
                     has_expected = true;
-                    arguments[0].toZigString(&expected_string, globalThis);
+                    try arguments[0].toZigString(&expected_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
                 }
@@ -2664,7 +2664,7 @@ pub const Expect = struct {
             1 => {
                 if (arguments[0].isString()) {
                     has_expected = true;
-                    arguments[0].toZigString(&expected_string, globalThis);
+                    try arguments[0].toZigString(&expected_string, globalThis);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
                 } else {
@@ -2681,7 +2681,7 @@ pub const Expect = struct {
 
                 if (arguments[1].isString()) {
                     has_expected = true;
-                    arguments[1].toZigString(&expected_string, globalThis);
+                    try arguments[1].toZigString(&expected_string, globalThis);
                 }
             },
         }
@@ -2887,7 +2887,7 @@ pub const Expect = struct {
             0 => {},
             1 => {
                 if (arguments[0].isString()) {
-                    arguments[0].toZigString(&hint_string, globalThis);
+                    try arguments[0].toZigString(&hint_string, globalThis);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
                 } else {
@@ -2903,7 +2903,7 @@ pub const Expect = struct {
                 property_matchers = arguments[0];
 
                 if (arguments[1].isString()) {
-                    arguments[1].toZigString(&hint_string, globalThis);
+                    try arguments[1].toZigString(&hint_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected second argument to be a string\n", .{});
                 }

@@ -1834,6 +1834,16 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.indexOf("b", {})).toBe(1);
         expect(b.indexOf("b", null)).toBe(1);
         expect(b.indexOf("b", [])).toBe(1);
+
+        expect(b.indexOf("f", 5)).toBe(5);
+        expect(b.indexOf("d", 2)).toBe(3);
+        expect(b.indexOf("f", -1)).toBe(5);
+        expect(b.indexOf("f", 6)).toBe(-1);
+
+        expect(b.indexOf(100, 2)).toBe(3);
+        expect(b.indexOf(102, 5)).toBe(5);
+        expect(b.indexOf(102, -1)).toBe(5);
+        expect(b.indexOf(102, 6)).toBe(-1);
       });
 
       it("lastIndexOf", () => {

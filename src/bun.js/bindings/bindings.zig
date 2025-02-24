@@ -7039,3 +7039,7 @@ pub const DeferredError = struct {
 };
 
 pub const JSSocketAddress = @import("./JSSocketAddress.zig").JSSocketAddress;
+
+comptime {
+    _ = @import("../../analyze_transpiled_module.zig");
+}

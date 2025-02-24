@@ -1675,6 +1675,7 @@ pub const Interpreter = struct {
         }
         fn executeAllowInner(self: NextExec) void {
             var next_exec = self;
+            // FIXME: use labelled switch statement
             while (true) switch (next_exec) {
                 .script => |a| next_exec = a._executeNext(),
                 .stmt => |a| next_exec = a._executeNext(),
@@ -3706,7 +3707,6 @@ pub const Interpreter = struct {
 
         const ChildPtr = StatePtrUnion(.{
             Script,
-            Subshell,
             Expansion,
         });
 

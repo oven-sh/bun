@@ -159,8 +159,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     }
     if (bunString.tag == BunStringTag::WTFStringImpl) {
 #if ASSERT_ENABLED
-        unsigned refCount = bunString.impl.wtf->refCount();
-        ASSERT(refCount > 0 && !bunString.impl.wtf->isEmpty());
+        ASSERT(bunString.impl.wtf->hasAtLeastOneRef() && !bunString.impl.wtf->isEmpty());
 #endif
 
         return JSValue(jsString(globalObject->vm(), String(bunString.impl.wtf)));

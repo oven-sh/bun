@@ -311,26 +311,38 @@ pub const ThreadPool = struct {
             if (Environment.isLinux) {
                 if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_CPU_AFFINITY")) {
                     const Affinity = struct {
+                        var cpu_index: usize = 0;
                         threadlocal var has_set_affinity_on_thread: bool = false;
 
                         pub fn pin() void {
                             if (!has_set_affinity_on_thread) {
                                 has_set_affinity_on_thread = true;
-                                var cpu: usize = 0;
-                                if (std.os.linux.getcpu(&cpu, null) == 0) {
-                                    var set = std.mem.zeroes(std.os.linux.cpu_set_t);
-                                    const word_index = cpu / @bitSizeOf(usize);
-                                    const bit_index = cpu % @bitSizeOf(usize);
-                                    set[word_index] = @as(usize, 1) << @as(u6, @intCast(bit_index));
 
-                                    std.os.linux.sched_setaffinity(0, &set) catch |err| {
-                                        Output.debugWarn("Failed to set affinity for worker thread: {s}", .{@errorName(err)});
-                                        return;
-                                    };
-                                    debug("Pinned worker thread to CPU {d}", .{cpu});
-                                } else {
-                                    Output.debugWarn("Failed to get CPU for worker thread", .{});
+                                // Get available CPUs
+                                var set = std.mem.zeroes(std.os.linux.cpu_set_t);
+                                if (std.os.linux.sched_getaffinity(0, @sizeOf(std.os.linux.cpu_set_t), &set) != 0) {
+                                    Output.debugWarn("Failed to get CPU affinity mask", .{});
+                                    return;
                                 }
+
+                                // Count available CPUs and get next CPU in round-robin
+                                const available_cpus = std.os.linux.CPU_COUNT(set);
+                                if (available_cpus == 0) return;
+
+                                const cpu = @atomicRmw(usize, &cpu_index, .Add, 1, .monotonic) % available_cpus;
+
+                                // Pin to that CPU
+                                var new_set = std.mem.zeroes(std.os.linux.cpu_set_t);
+                                const word_index = cpu / @bitSizeOf(usize);
+                                const bit_index = cpu % @bitSizeOf(usize);
+                                new_set[word_index] = @as(usize, 1) << @as(u6, @intCast(bit_index));
+
+                                std.os.linux.sched_setaffinity(0, &new_set) catch |err| {
+                                    Output.debugWarn("Failed to set affinity for worker thread: {s}", .{@errorName(err)});
+                                    return;
+                                };
+
+                                debug("Pinned worker thread to CPU {d}", .{cpu});
                             }
                         }
                     };

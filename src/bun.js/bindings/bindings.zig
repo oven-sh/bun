@@ -5873,13 +5873,6 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    pub fn parseJSON(this: JSValue, globalObject: *JSGlobalObject) JSValue {
-        return cppFn("parseJSON", .{
-            this,
-            globalObject,
-        });
-    }
-
     pub fn stringIncludes(this: JSValue, globalObject: *JSGlobalObject, other: JSValue) bool {
         return cppFn("stringIncludes", .{ this, globalObject, other });
     }

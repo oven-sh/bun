@@ -1,4 +1,5 @@
 const { hideFromStack } = require("internal/shared");
+const defineProperties = Object.defineProperties;
 
 const enum QueryStatus {
   active = 1 << 1,
@@ -38,9 +39,18 @@ const escapeIdentifier = function escape(str) {
 class SQLResultArray extends PublicArray {
   static [Symbol.toStringTag] = "SQLResults";
 
-  command;
-  count;
+  constructor() {
+    super();
+    Object.defineProperties(this, {
+      count: { value: null, writable: true },
+      command: { value: null, writable: true },
+    });
+  }
+  static get [Symbol.species]() {
+    return Array;
+  }
 }
+
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
 const _handle = Symbol("handle");
@@ -2361,7 +2371,7 @@ defaultSQLObject.flush = (...args) => {
   return lazyDefaultSQL.flush(...args);
 };
 //define lazy properties
-Object.defineProperties(defaultSQLObject, {
+defineProperties(defaultSQLObject, {
   options: {
     get: () => {
       ensureDefaultSQL();

@@ -2837,11 +2837,11 @@ pub const PostgresSQLConnection = struct {
             return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
         }
 
-        pub fn fromBytes(binary: bool, bigint: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
+        pub fn fromBytes(binary: bool, request_is_binary: bool, bigint: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
             switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
                 // TODO: .int2_array, .float8_array
                 inline .int4_array, .float4_array => |tag| {
-                    if (binary) {
+                    if (binary or request_is_binary) {
                         if (bytes.len < 16) {
                             return error.InvalidBinaryData;
                         }
@@ -3248,6 +3248,7 @@ pub const PostgresSQLConnection = struct {
         pub const Putter = struct {
             list: []DataCell,
             fields: []const protocol.FieldDescription,
+            binary: bool = false,
             bigint: bool = false,
             count: usize = 0,
             globalObject: *JSC.JSGlobalObject,
@@ -3296,7 +3297,7 @@ pub const PostgresSQLConnection = struct {
                     cell.* = DataCell.raw(optional_bytes);
                 } else {
                     cell.* = if (optional_bytes) |data|
-                        try DataCell.fromBytes(field.format_code == .binary, this.bigint, oid, data.slice(), this.globalObject)
+                        try DataCell.fromBytes(field.binary, this.binary, this.bigint, oid, data.slice(), this.globalObject)
                     else
                         DataCell{
                             .tag = .null,
@@ -3483,6 +3484,7 @@ pub const PostgresSQLConnection = struct {
                 var putter = DataCell.Putter{
                     .list = &.{},
                     .fields = statement.fields,
+                    .binary = request.flags.binary,
                     .bigint = request.flags.bigint,
                     .globalObject = this.globalObject,
                 };

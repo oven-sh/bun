@@ -923,19 +923,6 @@ pub const ReadyForQuery = struct {
     pub const decode = decoderWrap(ReadyForQuery, decodeInternal).decode;
 };
 
-pub const FormatCode = enum {
-    text,
-    binary,
-
-    pub fn from(value: short) !FormatCode {
-        return switch (value) {
-            0 => .text,
-            1 => .binary,
-            else => error.UnknownFormatCode,
-        };
-    }
-};
-
 pub const null_int4 = 4294967295;
 
 pub const DataRow = struct {
@@ -1010,7 +997,7 @@ pub const FieldDescription = struct {
     table_oid: int4 = 0,
     column_index: short = 0,
     type_oid: int4 = 0,
-    format_code: FormatCode = .text,
+    binary: bool = false,
     pub fn typeTag(this: @This()) types.Tag {
         return @enumFromInt(@as(short, @truncate(this.type_oid)));
     }
@@ -1045,12 +1032,16 @@ pub const FieldDescription = struct {
 
         // Format code (2 bytes)
         // The format code being used for the field. Currently will be zero (text) or one (binary). In a RowDescription returned from the statement variant of Describe, the format code is not yet known and will always be zero.
-        const format_code = try FormatCode.from(try reader.short());
+        const binary = switch (try reader.short()) {
+            0 => false,
+            1 => true,
+            else => return error.UnknownFormatCode,
+        };
         this.* = .{
             .table_oid = table_oid,
             .column_index = column_index,
             .type_oid = type_oid,
-            .format_code = format_code,
+            .binary = binary,
             .name_or_index = field_name,
         };
     }

@@ -1097,7 +1097,7 @@ fn NewLexer_(
             }
         }
 
-        const byte_handlers = struct {
+        const handlers = struct {
             pub fn hash(lexer: *LexerType) Continuation {
                 if (comptime is_json) {
                     try lexer.addUnsupportedSyntaxError("Private identifiers are not allowed in JSON");
@@ -1866,19 +1866,16 @@ fn NewLexer_(
             lexer.has_pure_comment_before = false;
             lexer.has_no_side_effect_comment_before = false;
             lexer.prev_token_was_await_keyword = false;
+            lexer.start = lexer.end;
+            lexer.token = T.t_end_of_file;
 
-            while (true) {
-                lexer.start = lexer.end;
-                lexer.token = T.t_end_of_file;
-
-                switch (try byte_handlers.functions[@intFromEnum(tables.CharacterType.get(lexer.code_point))](lexer)) {
-                    .stop => {
-                        break;
-                    },
-                    .@"continue" => {
-                        continue;
-                    },
-                }
+            handle: switch (try handlers.functions[@intFromEnum(tables.CharacterType.get(lexer.code_point))](lexer)) {
+                .stop => {},
+                .@"continue" => {
+                    lexer.start = lexer.end;
+                    lexer.token = T.t_end_of_file;
+                    continue :handle try handlers.functions[@intFromEnum(tables.CharacterType.get(lexer.code_point))](lexer);
+                },
             }
         }
 

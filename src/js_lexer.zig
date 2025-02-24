@@ -1251,7 +1251,7 @@ fn NewLexer_(
                         }
                     },
 
-                    .open_paren,
+                    inline .open_paren,
                     .close_paren,
                     .open_bracket,
                     .close_bracket,
@@ -1267,7 +1267,7 @@ fn NewLexer_(
                         lexer.token = @enumFromInt(@intFromEnum(token));
 
                         if (comptime is_json) {
-                            switch (token) {
+                            switch (comptime token) {
                                 .semicolon => {
                                     @branchHint(.unlikely);
                                     return lexer.addUnsupportedSyntaxError("Semicolons are not allowed in JSON");
@@ -1484,7 +1484,14 @@ fn NewLexer_(
                                         -1 => {
                                             break :singleLineComment;
                                         },
-                                        else => {},
+                                        else => {
+                                            if (comptime Environment.enableSIMD) {
+                                                if (strings.indexOfNewlineOrNonASCIICheckStart(lexer.source.contents[lexer.current..], 0, false)) |i| {
+                                                    lexer.current += i;
+                                                    continue :singleLineComment;
+                                                }
+                                            }
+                                        },
                                     }
                                 }
 

@@ -4195,7 +4195,9 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
         }
     }
 
-    if (comptime Environment.allow_assert) assert(remaining.len < 8);
+    // This is a compiler optimization!
+    // Force clang to not auto-vectorize the loop below.
+    bun.unsafeAssert(remaining.len < 8);
 
     for (remaining) |*char| {
         if (char.* > 127) {
@@ -4232,7 +4234,9 @@ pub fn indexOfNewlineOrNonASCIIOrANSI(slice_: []const u8, offset: u32) ?u32 {
             remaining = remaining[ascii_vector_size..];
         }
 
-        if (comptime Environment.allow_assert) assert(remaining.len < ascii_vector_size);
+        // This is a compiler optimization!
+        // Force clang to not auto-vectorize the loop below.
+        bun.unsafeAssert(remaining.len < ascii_vector_size);
     }
 
     for (remaining) |*char_| {
@@ -4280,7 +4284,9 @@ pub fn indexOfNewlineOrNonASCIICheckStart(slice_: []const u8, offset: u32, compt
             remaining = remaining[ascii_vector_size..];
         }
 
-        if (comptime Environment.allow_assert) assert(remaining.len < ascii_vector_size);
+        // This is a compiler optimization!
+        // Force clang to not auto-vectorize the loop below.
+        bun.unsafeAssert(remaining.len < ascii_vector_size);
     }
 
     for (remaining) |*char_| {
@@ -4315,7 +4321,9 @@ pub fn containsNewlineOrNonASCIIOrQuote(slice_: []const u8) bool {
             remaining = remaining[ascii_vector_size..];
         }
 
-        if (comptime Environment.allow_assert) assert(remaining.len < ascii_vector_size);
+        // This is a compiler optimization!
+        // Force clang to not auto-vectorize the loop below.
+        bun.unsafeAssert(remaining.len < ascii_vector_size);
     }
 
     for (remaining) |*char_| {

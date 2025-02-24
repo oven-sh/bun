@@ -1734,7 +1734,11 @@ static JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* le
     switch (encoding) {
     case WebCore::BufferEncodingType::latin1: {
         std::span<LChar> data;
-        auto str = String::createUninitialized(length, data);
+        auto str = String::tryCreateUninitialized(length, data);
+        if (UNLIKELY(str.isNull())) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return JSValue::encode({});
+        }
         memcpy(data.data(), reinterpret_cast<const char*>(castedThis->vector()) + offset, length);
         return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
     }
@@ -1746,7 +1750,11 @@ static JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* le
         if (u16length == 0) {
             return JSC::JSValue::encode(JSC::jsEmptyString(vm));
         } else {
-            auto str = String::createUninitialized(u16length, data);
+            auto str = String::tryCreateUninitialized(u16length, data);
+            if (UNLIKELY(str.isNull())) {
+                throwOutOfMemoryError(lexicalGlobalObject, scope);
+                return JSValue::encode({});
+            }
             memcpy(reinterpret_cast<void*>(data.data()), reinterpret_cast<const char*>(castedThis->vector()) + offset, u16length * 2);
             return JSC::JSValue::encode(JSC::jsString(vm, str));
         }
@@ -1758,7 +1766,11 @@ static JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* le
         // ascii: we always know the length
         // so we might as well allocate upfront
         std::span<LChar> data;
-        auto str = String::createUninitialized(length, data);
+        auto str = String::tryCreateUninitialized(length, data);
+        if (UNLIKELY(str.isNull())) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return JSValue::encode({});
+        }
         Bun__encoding__writeLatin1(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, data.data(), length, static_cast<uint8_t>(encoding));
         return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
     }

@@ -662,6 +662,17 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     return WTF::String();
 }
 
+WTF::String BunString::toWTFString(NonNullTag) const
+{
+    WTF::String res = toWTFString(ZeroCopy);
+    if (res.isNull()) {
+        // TODO(dylan-conway): also use emptyString in toWTFString(ZeroCopy) and toWTFString. This will
+        // require reviewing each call site for isNull() checks and most likely changing them to isEmpty()
+        return WTF::emptyString();
+    }
+    return res;
+}
+
 WTF::String BunString::transferToWTFString()
 {
     if (this->tag == BunStringTag::ZigString) {

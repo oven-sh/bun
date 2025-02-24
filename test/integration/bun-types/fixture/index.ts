@@ -46,6 +46,8 @@ const req1 = new Request("", {
   body: "",
 });
 
+new ReadableStream({});
+
 req1.headers;
 
 req1.headers.toJSON();

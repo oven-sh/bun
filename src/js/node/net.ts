@@ -25,6 +25,7 @@ const EventEmitter = require("node:events");
 const { SocketAddress, addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
+import type { ServerOpts, Server as ServerType } from "node:net";
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -38,11 +39,11 @@ var IPv6Reg;
 const DEFAULT_IPV4_ADDR = "0.0.0.0";
 const DEFAULT_IPV6_ADDR = "::";
 
-function isIPv4(s) {
+function isIPv4(s): boolean {
   return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
 }
 
-function isIPv6(s) {
+function isIPv6(s): boolean {
   return (IPv6Reg ??= new RegExp(
     "^(?:" +
       `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
@@ -57,7 +58,7 @@ function isIPv6(s) {
   )).test(s);
 }
 
-function isIP(s) {
+function isIP(s): 0 | 4 | 6 {
   if (isIPv4(s)) return 4;
   if (isIPv6(s)) return 6;
   return 0;
@@ -1147,7 +1148,11 @@ const connect = createConnection;
 
 type MaybeListener = SocketListener<unknown> | null;
 
-function Server(options, connectionListener): void {
+function Server(): void;
+function Server(options?: null | undefined): void;
+function Server(connectionListener: () => {}): void;
+function Server(options: ServerOpts, connectionListener?: () => {}): void;
+function Server(options?, connectionListener?): void {
   if (!(this instanceof Server)) {
     return new Server(options, connectionListener);
   }

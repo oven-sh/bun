@@ -1,4 +1,5 @@
 import net from "node:net";
+import type { SocketConnectOpts } from "node:net";
 import EventEmitter from "node:events";
 
 describe("net.createServer(connectionListener)", () => {
@@ -38,7 +39,6 @@ describe("net.Server", () => {
   it("extends EventEmitter", () => {
     expect(defaultServer).toBeInstanceOf(EventEmitter);
     expect(net.Server.__proto__).toBe(EventEmitter);
-    expect(net.Server.prototype.__proto__).toBe(EventEmitter.prototype);
   });
 
   // @ts-expect-error -- Types lie. Server constructor is callable
@@ -58,6 +58,30 @@ describe("net.Server", () => {
     },
   );
 }); // </net.Server constructor>
+
+describe("net.Server.prototype", () => {
+  it("has the expected methods", () => {
+    expect(net.Server.prototype).toMatchObject(
+      expect.objectContaining({
+        address: expect.any(Function),
+        close: expect.any(Function),
+        getConnections: expect.any(Function),
+        listen: expect.any(Function),
+        ref: expect.any(Function),
+        unref: expect.any(Function),
+      }),
+    );
+  });
+
+  it("is disposable", () => {
+    expect(Symbol.asyncDispose in net.Server.prototype).toBe(true);
+  });
+
+  it("has EventEmitter methods", () => {
+    expect(net.Server.prototype.__proto__).toBe(EventEmitter.prototype);
+    expect(net.Server.prototype).toMatchObject(EventEmitter.prototype);
+  });
+}); // </net.Server.prototype>
 
 describe("new net.Server()", () => {
   let server: net.Server;
@@ -122,6 +146,7 @@ describe("server.address()", () => {
       server.listen(resolve);
       await promise;
     });
+
     it("address defaults to ipv6 any address", () => {
       const address = server.address();
       expect(address.address).toBe("::");
@@ -135,13 +160,97 @@ describe("server.address()", () => {
       expect(port).toBeGreaterThan(0);
       expect(port).toBeLessThanOrEqual(65_535);
     });
-  });
+  }); // </when the server listens to an unspecified port>
 
   it("when listening on a specified port, returns an AddressInfo object with the same port", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     server.listen(6543, resolve);
     await promise;
-    const address = server.address();
-    expect(address).toEqual({ address: "::", port: 6543, family: "IPv6" });
+    expect(server.address()).toEqual({ address: "::", port: 6543, family: "IPv6" });
+  });
+
+  // FIXME: hostname is not resolved
+  it.skip("when server.listen(port, hostname), returns an AddressInfo object with the same port and hostname", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    server.listen(1234, "localhost", resolve);
+    await promise;
+    expect(server.address()).toEqual({
+      address: "127.0.0.1",
+      port: 1234,
+      family: "IPv4",
+    });
+  });
+
+  it("when listening on a specified host and port, returns an AddressInfo object with the same host and port", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    server.listen({ port: 1234, host: "127.0.0.1" }, resolve);
+    await promise;
+    expect(server.address()).toEqual({ address: "127.0.0.1", port: 1234, family: "IPv4" });
   });
 }); // </server.address()>
+
+describe("server.close()", () => {
+  let server: net.Server;
+  const handlers = {
+    close: jest.fn(),
+    error: jest.fn(),
+    connection: jest.fn(),
+  } as const;
+
+  beforeEach(() => {
+    server = new net.Server();
+    for (const handler in handlers) {
+      server.on(handler, handlers[handler]);
+    }
+  });
+
+  afterEach(() => {
+    server.close();
+    for (const handler in handlers) {
+      handlers[handler].mockClear();
+    }
+  });
+
+  it("if the server is not listening, does nothing", () => {
+    expect(server.listening).toBe(false);
+    expect(() => server.close()).not.toThrow();
+    expect(server.listening).toBe(false);
+  });
+
+  describe("given a server listening for connections", () => {
+    let address: net.AddressInfo;
+    beforeEach(async () => {
+      await new Promise<void>(resolve =>
+        server.listen(() => {
+          address = server.address() as net.AddressInfo;
+          resolve();
+        }),
+      );
+    });
+
+    it("is listening", () => expect(server.listening).toBe(true));
+
+    describe("when closed", () => {
+      beforeEach(() => server.close());
+      // FIXME: should emit with `hasError: false`, but emits `undefined`
+      it("emits a 'close' event", () => expect(handlers.close).toHaveBeenCalled());
+      it("does not emit an 'error' event", () => expect(handlers.error).not.toHaveBeenCalled());
+      it("server is no longer listening", () => expect(server.listening).toBe(false));
+      it("server will not accept new connections", async () => {
+        let client = new net.Socket();
+        const onError = jest.fn();
+        const onConnect = jest.fn();
+        client.on("error", onError);
+        client.connect(address as SocketConnectOpts, onConnect);
+        await Bun.sleep(1); // next event loop cycle
+        expect(onError).toHaveBeenCalledWith(expect.objectContaining({ code: "ECONNREFUSED" }));
+        expect(onConnect).not.toHaveBeenCalled();
+        expect(handlers.connection).not.toHaveBeenCalled();
+      });
+
+      it(".address() returns null", () => {
+        expect(server.address()).toBeNull();
+      });
+    });
+  }); // </given a server listening for connections>
+}); // </server.close()>

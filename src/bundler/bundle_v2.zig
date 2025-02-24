@@ -312,37 +312,66 @@ pub const ThreadPool = struct {
                 if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_CPU_AFFINITY")) {
                     const Affinity = struct {
                         var cpu_index: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
+                        var affinity_lock: bun.Mutex = .{};
+                        var shared_cpu_mask: std.os.linux.cpu_set_t = undefined;
+                        var is_initialized: bool = false;
                         threadlocal var has_set_affinity_on_thread: bool = false;
+
+                        pub fn CPU_SET(cpu: usize, set: *std.os.linux.cpu_set_t) void {
+                            const word_index = cpu / @bitSizeOf(usize);
+                            const bit_index = cpu % @bitSizeOf(usize);
+                            set[word_index] |= @as(usize, 1) << @as(u6, @intCast(bit_index));
+                        }
+
+                        pub fn CPU_ISSET(cpu: usize, set: *const std.os.linux.cpu_set_t) bool {
+                            const word_index = cpu / @bitSizeOf(usize);
+                            const bit_index = cpu % @bitSizeOf(usize);
+                            return (set[word_index] & (@as(usize, 1) << @as(u6, @intCast(bit_index)))) != 0;
+                        }
 
                         pub fn pin() void {
                             if (!has_set_affinity_on_thread) {
                                 has_set_affinity_on_thread = true;
 
-                                // Get available CPUs
-                                var set = std.mem.zeroes(std.os.linux.cpu_set_t);
-                                if (std.os.linux.sched_getaffinity(0, @sizeOf(std.os.linux.cpu_set_t), &set) != 0) {
-                                    Output.debugWarn("Failed to get CPU affinity mask", .{});
-                                    return;
+                                affinity_lock.lock();
+                                defer affinity_lock.unlock();
+
+                                // Initialize shared mask on first use
+                                if (!is_initialized) {
+                                    shared_cpu_mask = std.mem.zeroes(std.os.linux.cpu_set_t);
+                                    if (std.os.linux.sched_getaffinity(0, @sizeOf(std.os.linux.cpu_set_t), &shared_cpu_mask) != 0) {
+                                        Output.debugWarn("Failed to get CPU affinity mask", .{});
+                                        return;
+                                    }
+                                    is_initialized = true;
                                 }
 
-                                // Count available CPUs and get next CPU in round-robin
-                                const available_cpus = std.os.linux.CPU_COUNT(set);
-                                if (available_cpus == 0) return;
+                                // Find the first available CPU in the shared mask
+                                var target_cpu: ?usize = null;
+                                for (0..std.os.linux.CPU_SETSIZE) |i| {
+                                    if (CPU_ISSET(i, &shared_cpu_mask)) {
+                                        target_cpu = i;
+                                        break;
+                                    }
+                                }
 
-                                const cpu = (cpu_index.fetchAdd(1, .monotonic) + 1) % available_cpus;
+                                if (target_cpu) |cpu| {
+                                    var new_set = std.mem.zeroes(std.os.linux.cpu_set_t);
+                                    CPU_SET(cpu, &new_set);
 
-                                // Pin to that CPU
-                                var new_set = std.mem.zeroes(std.os.linux.cpu_set_t);
-                                const word_index = cpu / @bitSizeOf(usize);
-                                const bit_index = cpu % @bitSizeOf(usize);
-                                new_set[word_index] = @as(usize, 1) << @as(u6, @intCast(bit_index));
+                                    // Clear this CPU from the shared mask so next thread won't use it
+                                    shared_cpu_mask[cpu / @bitSizeOf(usize)] &= ~(@as(usize, 1) << @as(u6, @intCast(cpu % @bitSizeOf(usize))));
 
-                                std.os.linux.sched_setaffinity(0, &new_set) catch |err| {
-                                    Output.debugWarn("Failed to set affinity for worker thread: {s}", .{@errorName(err)});
-                                    return;
-                                };
+                                    std.os.linux.sched_setaffinity(0, &new_set) catch |err| {
+                                        Output.debugWarn("Failed to set affinity for worker thread: {s}", .{@errorName(err)});
+                                        return;
+                                    };
 
-                                debug("Pinned worker thread to CPU {d}", .{cpu});
+                                    const available = std.os.linux.CPU_COUNT(shared_cpu_mask);
+                                    debug("Pinned worker thread to CPU {d} ({d} CPUs remaining available)", .{ cpu, available });
+                                } else {
+                                    debug("Out of CPUs", .{});
+                                }
                             }
                         }
                     };

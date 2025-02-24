@@ -743,7 +743,7 @@ pub const Log = struct {
             @branchHint(.cold);
             try log.addMsg(.{
                 .kind = .verbose,
-                .data = rangeData(source, Range{ .loc = loc }, text),
+                .data = try rangeData(source, Range{ .loc = loc }, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
             });
         }
     }
@@ -876,7 +876,7 @@ pub const Log = struct {
 
         try log.addMsg(.{
             .kind = .verbose,
-            .data = rangeData(source, Range{ .loc = loc }, text),
+            .data = try rangeData(source, Range{ .loc = loc }, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -920,11 +920,11 @@ pub const Log = struct {
                 }
             }
             break :brk _data;
-        } else rangeData(
+        } else try rangeData(
             source,
             r,
             text,
-        );
+        ).cloneLineText(log.clone_line_text, log.msgs.allocator);
 
         const msg = Msg{
             // .kind = if (comptime error_type == .err) Kind.err else Kind.warn,
@@ -972,7 +972,7 @@ pub const Log = struct {
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, r, text),
+            .data = try rangeData(source, r, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -1039,11 +1039,11 @@ pub const Log = struct {
         log.errors += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(null, Range.None, try allocPrint(allocator, noteFmt, args));
+        notes[0] = try rangeData(null, Range.None, try allocPrint(allocator, noteFmt, args)).cloneLineText(log.clone_line_text, log.msgs.allocator);
 
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(null, Range.None, @errorName(err)),
+            .data = try rangeData(null, Range.None, @errorName(err)).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1114,11 +1114,11 @@ pub const Log = struct {
         log.warnings += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(source, note_range, try allocPrint(allocator, note_fmt, note_args));
+        notes[0] = try rangeData(source, note_range, try allocPrint(allocator, note_fmt, note_args)).cloneLineText(log.clone_line_text, log.msgs.allocator);
 
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, r, try allocPrint(allocator, fmt, args)),
+            .data = try rangeData(source, r, try allocPrint(allocator, fmt, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1149,11 +1149,11 @@ pub const Log = struct {
         log.errors += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(source, note_range, try allocPrint(allocator, note_fmt, note_args));
+        notes[0] = try rangeData(source, note_range, try allocPrint(allocator, note_fmt, note_args)).cloneLineText(log.clone_line_text, log.msgs.allocator);
 
         try log.addMsg(.{
             .kind = .err,
-            .data = rangeData(source, r, try allocPrint(allocator, fmt, args)),
+            .data = try rangeData(source, r, try allocPrint(allocator, fmt, args)).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1164,7 +1164,7 @@ pub const Log = struct {
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(source, Range{ .loc = l }, text),
+            .data = try rangeData(source, Range{ .loc = l }, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -1174,11 +1174,11 @@ pub const Log = struct {
         log.warnings += 1;
 
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(source, Range{ .loc = l }, try allocPrint(allocator, note_fmt, note_args));
+        notes[0] = try rangeData(source, Range{ .loc = l }, try allocPrint(allocator, note_fmt, note_args)).cloneLineText(log.clone_line_text, log.msgs.allocator);
 
         try log.addMsg(.{
             .kind = .warn,
-            .data = rangeData(null, Range.None, warn),
+            .data = try rangeData(null, Range.None, warn).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1188,7 +1188,7 @@ pub const Log = struct {
         if (!Kind.shouldPrint(.debug, log.level)) return;
         try log.addMsg(.{
             .kind = .debug,
-            .data = rangeData(source, r, text),
+            .data = try rangeData(source, r, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
         });
     }
 
@@ -1198,7 +1198,7 @@ pub const Log = struct {
         // log.de += 1;
         try log.addMsg(.{
             .kind = Kind.debug,
-            .data = rangeData(source, r, text),
+            .data = try rangeData(source, r, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1208,7 +1208,7 @@ pub const Log = struct {
         log.errors += 1;
         try log.addMsg(.{
             .kind = Kind.err,
-            .data = rangeData(source, r, text),
+            .data = try rangeData(source, r, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1219,7 +1219,7 @@ pub const Log = struct {
         log.warnings += 1;
         try log.addMsg(.{
             .kind = .warning,
-            .data = rangeData(source, r, text),
+            .data = try rangeData(source, r, text).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
     }
@@ -1231,7 +1231,7 @@ pub const Log = struct {
     pub fn addError(self: *Log, _source: ?*const Source, loc: Loc, text: string) OOM!void {
         @branchHint(.cold);
         self.errors += 1;
-        try self.addMsg(.{ .kind = .err, .data = rangeData(_source, Range{ .loc = loc }, text) });
+        try self.addMsg(.{ .kind = .err, .data = try rangeData(_source, Range{ .loc = loc }, text).cloneLineText(self.clone_line_text, self.msgs.allocator) });
     }
 
     const AddErrorOptions = struct {
@@ -1247,18 +1247,18 @@ pub const Log = struct {
         self.errors += 1;
         try self.addMsg(.{
             .kind = .err,
-            .data = rangeData(opts.source, .{ .loc = opts.loc, .len = opts.len }, text),
+            .data = try rangeData(opts.source, .{ .loc = opts.loc, .len = opts.len }, text).cloneLineText(self.clone_line_text, self.msgs.allocator),
             .redact_sensitive_information = opts.redact_sensitive_information,
         });
     }
 
     pub fn addSymbolAlreadyDeclaredError(self: *Log, allocator: std.mem.Allocator, source: *const Source, name: string, new_loc: Loc, old_loc: Loc) OOM!void {
         var notes = try allocator.alloc(Data, 1);
-        notes[0] = rangeData(
+        notes[0] = try rangeData(
             source,
             source.rangeOfIdentifier(old_loc),
             try std.fmt.allocPrint(allocator, "\"{s}\" was originally declared here", .{name}),
-        );
+        ).cloneLineText(self.clone_line_text, self.msgs.allocator);
 
         try self.addRangeErrorFmtWithNotes(
             source,

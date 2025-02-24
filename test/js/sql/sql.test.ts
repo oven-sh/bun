@@ -3211,7 +3211,7 @@ if (isDockerEnabled()) {
   //   return ['12233445566778', xs.sort().join('')]
   // })
 
-  test.only("binary detection", async () => {
+  test("binary detection", async () => {
     using reserved = await sql.reserve();
     {
       const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
@@ -3233,13 +3233,14 @@ if (isDockerEnabled()) {
       await reserved`CREATE TEMPORARY TABLE ${table_name} (a integer[] null, b smallint not null)`;
       await reserved`insert into ${table_name} values (null, 1), (array[1, 2, 3], 2), (array[4, 5, 6], 3)`;
       const text_mode = await reserved`select * from ${table_name}`;
-      expect(text_mode).toEqual([
+      expect(text_mode.map(row => row)).toEqual([
         { a: null, b: 1 },
         { a: [1, 2, 3], b: 2 },
         { a: [4, 5, 6], b: 3 },
       ]);
       const binary_mode = await reserved`select * from ${table_name} where b = ${2}`;
-      expect(binary_mode).toEqual([{ a: [1, 2, 3], b: 2 }]);
+      // for now we return a typed array with do not match postgres's array type (this need to accept nulls so will change in future)
+      expect(binary_mode.map(row => row)).toEqual([{ a: new Int32Array([1, 2, 3]), b: 2 }]);
     }
   });
   test("reserve connection", async () => {

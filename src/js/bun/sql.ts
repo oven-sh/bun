@@ -41,6 +41,7 @@ class SQLResultArray extends PublicArray {
 
   constructor() {
     super();
+    // match postgres's result array, in this way for in will not list the properties and .map will not return undefined command and count
     Object.defineProperties(this, {
       count: { value: null, writable: true },
       command: { value: null, writable: true },

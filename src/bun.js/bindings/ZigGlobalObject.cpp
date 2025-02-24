@@ -1733,7 +1733,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     if (!encodedString.is8Bit()) {
         std::span<LChar> ptr;
         unsigned length = encodedString.length();
-        auto dest = WTF::String::createUninitialized(length, ptr);
+        auto dest = WTF::String::tryCreateUninitialized(length, ptr);
         if (UNLIKELY(dest.isNull())) {
             throwOutOfMemoryError(globalObject, throwScope);
             return {};

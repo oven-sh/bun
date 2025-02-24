@@ -1835,12 +1835,28 @@ pub const PackCommand = struct {
                 dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0],
                 tarball_destination_dir.len,
             };
-        } else {
+        } else if (pack_destination.len > 0) {
             const tarball_name = std.fmt.bufPrint(dest_buf[0..], "{s}\x00", .{
                 pack_filename,
             }) catch {
                 Output.errGeneric("archive filename too long: \"{s}\"", .{
                     pack_filename,
+                });
+                Global.crash();
+            };
+
+            return .{
+                dest_buf[0 .. tarball_name.len - 1 :0],
+                0,
+            };
+        } else {
+            const tarball_name = std.fmt.bufPrint(dest_buf[0..], "{s}-{s}.tgz\x00", .{
+                package_name,
+                package_version,
+            }) catch {
+                Output.errGeneric("archive filename too long: \"{s}-{s}.tgz\"", .{
+                    package_name,
+                    package_version,
                 });
                 Global.crash();
             };

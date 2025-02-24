@@ -20,47 +20,11 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
+import type { BlockList as BlockListType } from "node:net";
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
+const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket, isIP, isIPv4, isIPv6 } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
-
-// IPv4 Segment
-const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
-const v4Str = `(?:${v4Seg}\\.){3}${v4Seg}`;
-var IPv4Reg;
-
-// IPv6 Segment
-const v6Seg = "(?:[0-9a-fA-F]{1,4})";
-var IPv6Reg;
-
-const DEFAULT_IPV4_ADDR = "0.0.0.0";
-const DEFAULT_IPV6_ADDR = "::";
-
-function isIPv4(s) {
-  return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
-}
-
-function isIPv6(s) {
-  return (IPv6Reg ??= new RegExp(
-    "^(?:" +
-      `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){5}(?::${v4Str}|(?::${v6Seg}){1,2}|:)|` +
-      `(?:${v6Seg}:){4}(?:(?::${v6Seg}){0,1}:${v4Str}|(?::${v6Seg}){1,3}|:)|` +
-      `(?:${v6Seg}:){3}(?:(?::${v6Seg}){0,2}:${v4Str}|(?::${v6Seg}){1,4}|:)|` +
-      `(?:${v6Seg}:){2}(?:(?::${v6Seg}){0,3}:${v4Str}|(?::${v6Seg}){1,5}|:)|` +
-      `(?:${v6Seg}:){1}(?:(?::${v6Seg}){0,4}:${v4Str}|(?::${v6Seg}){1,6}|:)|` +
-      `(?::(?:(?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-      ")(?:%[0-9a-zA-Z-.:]{1,})?$",
-  )).test(s);
-}
-
-function isIP(s) {
-  if (isIPv4(s)) return 4;
-  if (isIPv6(s)) return 6;
-  return 0;
-}
 
 const { connect: bunConnect } = Bun;
 var { setTimeout } = globalThis;
@@ -1594,16 +1558,7 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
-// TODO:
-class BlockList {
-  constructor() {}
-
-  addSubnet(net, prefix, type) {}
-
-  check(address, type) {
-    return false;
-  }
-}
+var BlockList: BlockListType | undefined;
 
 export default {
   createServer,
@@ -1622,7 +1577,9 @@ export default {
   getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),
   setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
 
-  BlockList,
+  get BlockList(): BlockListType {
+    return (BlockList ??= require("internal/net/blocklist").BlockList);
+  },
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
 };

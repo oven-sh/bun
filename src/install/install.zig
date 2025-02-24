@@ -7562,6 +7562,7 @@ pub const PackageManager = struct {
                 if (cli.no_save) {
                     this.do.save_lockfile = false;
                     this.do.write_package_json = false;
+                    this.enable.frozen_lockfile = true;
                 }
 
                 if (cli.dry_run) {
@@ -15254,6 +15255,8 @@ pub const PackageManager = struct {
 
         // It's unnecessary work to re-save the lockfile if there are no changes
         const should_save_lockfile =
+            // never save if frozen
+            !manager.options.enable.frozen_lockfile and
             (load_result == .ok and ((load_result.ok.format == .binary and save_format == .text) or
 
             // make sure old versions are updated

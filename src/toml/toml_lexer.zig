@@ -817,7 +817,7 @@ pub const Lexer = struct {
         }
     }
 
-    fn decodeEscapeSequences(lexer: *Lexer, start: usize, text: string, comptime allow_multiline: bool, comptime BufType: type, buf_: *BufType) !void {
+    pub fn decodeEscapeSequences(lexer: *Lexer, start: usize, text: string, comptime allow_multiline: bool, comptime BufType: type, buf_: *BufType) !void {
         var buf = buf_.*;
         defer buf_.* = buf;
 

@@ -2120,7 +2120,7 @@ pub const ModuleLoader = struct {
                             const input_fd: bun.StoredFileDescriptorType = brk: {
                                 // on macOS, we need a file descriptor to receive event notifications on it.
                                 // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
-                                if (comptime Environment.isMac) {
+                                if (bun.Watcher.requires_file_descriptors) {
                                     switch (bun.sys.open(
                                         &(std.posix.toPosixPath(path.text) catch break :auto_watch),
                                         bun.C.O_EVTONLY,

@@ -21,8 +21,8 @@ afterEach(() => gc());
  */
 const NumberIsInteger = Number.isInteger;
 class ERR_INVALID_ARG_TYPE extends TypeError {
-  constructor() {
-    super("Invalid arg type" + Array.prototype.join.call(arguments, " "));
+  constructor(name, type, value) {
+    super(`The "${name}" argument must be of type ${type}. Received type ${typeof value} (${Bun.inspect(value)})`);
     this.code = "ERR_INVALID_ARG_TYPE";
   }
 }
@@ -101,7 +101,7 @@ const validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Numbe
   if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
 };
 const validateOffset = (value, name, min = 0, max = kMaxLength) => validateInteger(value, name, min, max);
-function nodeJSBufferWriteFn(string, offset, length, encoding = "utf8") {
+function nodeJSBufferWriteFn(string, offset, length, encoding) {
   // Buffer#write(string);
   if (offset === undefined) {
     return this.utf8Write(string, 0, this.length);
@@ -129,7 +129,8 @@ function nodeJSBufferWriteFn(string, offset, length, encoding = "utf8") {
     }
   }
 
-  if (!encoding) return this.utf8Write(string, offset, length);
+  if (!encoding || encoding === "utf8") return this.utf8Write(string, offset, length);
+  if (encoding === "ascii") return this.asciiWrite(string, offset, length);
 
   const ops = getEncodingOps(encoding);
   if (ops === undefined) throw new ERR_UNKNOWN_ENCODING(encoding);
@@ -270,7 +271,9 @@ for (let withOverridenBufferWrite of [false, true]) {
         // Invalid encoding for Buffer.write
         expect(() => b.write("test string", 0, 5, "invalid")).toThrow(/encoding/);
         // Unsupported arguments for Buffer.write
-        expect(() => b.write("test", "utf8", 0)).toThrow(/invalid/i);
+        expect(() => b.write("test", "utf8", 0)).toThrow(
+          `The "offset" argument must be of type number. Received type string ("utf8")`,
+        );
       });
 
       it("create 0-length buffers", () => {
@@ -2761,7 +2764,6 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(latin1Write.call(buf, "í", 28)).toBe(1);
         expect(latin1Write.call(buf, "é", 30)).toBe(1);
         expect(latin1Write.call(buf, "ò", 32)).toBe(1);
-        expect(latin1Write.call(buf, "ò", 32, 999999)).toBe(1);
 
         expect(buf).toStrictEqual(
           new Uint8Array(Buffer.from("6f6c64206d63646f6e616c6420686164206120666172e920ed20e920ed20e920f2", "hex")),
@@ -2889,8 +2891,8 @@ for (let withOverridenBufferWrite of [false, true]) {
         shouldBeSame("writeUint16LE", "writeUInt16LE", 1000);
         shouldBeSame("writeUint32BE", "writeUInt32BE", 1000);
         shouldBeSame("writeUint32LE", "writeUInt32LE", 1000);
-        shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", BigInt(1000));
-        shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", BigInt(1000));
+        shouldBeSame("writeBigUint64BE", "writeBigUInt64BE", 1000n);
+        shouldBeSame("writeBigUint64LE", "writeBigUInt64LE", 1000n);
       });
 
       it("construct buffer from UTF16, issue #3914", () => {

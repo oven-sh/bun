@@ -135,6 +135,51 @@ async function cleanTestId(prisma: PrismaClient, testId: number) {
       );
     }
 
+    if (!isCI) {
+      test(
+        "does not leak",
+        async (prisma: PrismaClient, _: number) => {
+          // prisma leak was 8 bytes per query, so a million requests would manifest as an 8MB leak
+          const batchSize = 1000;
+          const warmupIters = 1_000_000 / batchSize;
+          const testIters = 4_000_000 / batchSize;
+          const gcPeriod = 10_000 / batchSize;
+          let totalIters = 0;
+
+          async function runQuery() {
+            totalIters++;
+            // GC occasionally to make memory usage more deterministic
+            if (totalIters % gcPeriod == gcPeriod - 1) {
+              Bun.gc(true);
+              const line = `${totalIters},${(process.memoryUsage.rss() / 1024 / 1024) | 0}`;
+              // console.log(line);
+              // await appendFile("rss.csv", line + "\n");
+            }
+            const queries = [];
+            for (let i = 0; i < batchSize; i++) {
+              queries.push(prisma.$queryRaw`SELECT 1`);
+            }
+            await Promise.all(queries);
+          }
+
+          // warmup first
+          for (let i = 0; i < warmupIters; i++) {
+            await runQuery();
+          }
+          // measure memory now
+          const before = process.memoryUsage.rss();
+          // run a bunch more iterations to see if memory usage increases
+          for (let i = 0; i < testIters; i++) {
+            await runQuery();
+          }
+          const after = process.memoryUsage.rss();
+          const deltaMB = (after - before) / 1024 / 1024;
+          expect(deltaMB).toBeLessThan(10);
+        },
+        120_000,
+      );
+    }
+
     test(
       "CRUD basics",
       async (prisma: PrismaClient, testId: number) => {

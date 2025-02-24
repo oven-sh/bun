@@ -2146,7 +2146,6 @@ class ServerHttp2Stream extends Http2Stream {
     }
     this.headersSent = true;
     this[bunHTTP2Headers] = headers;
-
     return;
   }
 }
@@ -2270,7 +2269,7 @@ function initOriginSet(session: Http2Session) {
       }
     }
     let originString = `https://${hostName}`;
-    if (socket.remotePort != null) originString += `:${socket.remotePort}`;
+    if (socket.remotePort != null && socket.remotePort != 443) originString += `:${socket.remotePort}`;
     originSet.add(originString);
   }
   return originSet;
@@ -2689,7 +2688,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
-    return this.#parser?.setLocalWindowSize(windowSize);
+    return this.#parser?.setLocalWindowSize?.(windowSize);
   }
 
   settings(settings: Settings, callback) {
@@ -3095,7 +3094,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
-    return this.#parser?.setLocalWindowSize(windowSize);
+    return this.#parser?.setLocalWindowSize?.(windowSize);
   }
   get socket() {
     if (this.#socket_proxy) return this.#socket_proxy;

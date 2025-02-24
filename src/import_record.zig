@@ -162,6 +162,11 @@ pub const ImportRecord = struct {
     /// Used to prevent running resolve plugins multiple times for the same path
     print_namespace_in_path: bool = false,
 
+    /// If true, this import record represents a file from the `watchedFiles` array
+    /// returned by a plugin. It doesn't contribute to the actual module code but
+    /// ensures the file is tracked for HMR.
+    is_watched_file: bool = false,
+
     wrap_with_to_esm: bool = false,
     wrap_with_to_commonjs: bool = false,
 

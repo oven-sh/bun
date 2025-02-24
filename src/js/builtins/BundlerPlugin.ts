@@ -9,6 +9,7 @@ interface BundlerPlugin {
     internalID,
     sourceCode: string | Uint8Array | ArrayBuffer | DataView | null,
     loaderKey: number | null,
+    watchedFiles?: string[] | null,
   ): void;
   /** Binding to `JSBundlerPlugin__onResolveAsync` */
   onResolveAsync(internalID, a, b, c): void;
@@ -472,7 +473,7 @@ export function runOnLoadPlugins(
           continue;
         }
 
-        var { contents, loader = defaultLoader } = result as any;
+        var { contents, loader = defaultLoader, watchedFiles } = result as any;
         if ((loader as any) === "object") {
           if (!("exports" in result)) {
             throw new TypeError('onLoad plugin returning loader: "object" must have "exports" property');
@@ -493,17 +494,30 @@ export function runOnLoadPlugins(
           throw new TypeError('onLoad plugins must return an object with "loader" as a string');
         }
 
+        // Validate watchedFiles if provided
+        if (watchedFiles !== undefined) {
+          if (!Array.isArray(watchedFiles)) {
+            throw new TypeError('onLoad plugins "watchedFiles" field must be an array of strings');
+          }
+          
+          for (let i = 0; i < watchedFiles.length; i++) {
+            if (typeof watchedFiles[i] !== 'string') {
+              throw new TypeError('onLoad plugins "watchedFiles" field must contain only strings');
+            }
+          }
+        }
+
         const chosenLoader = LOADERS_MAP[loader];
         if (chosenLoader === undefined) {
           throw new TypeError(`Loader ${loader} is not supported.`);
         }
 
-        this.onLoadAsync(internalID, contents as any, chosenLoader);
+        this.onLoadAsync(internalID, contents as any, chosenLoader, watchedFiles);
         return null;
       }
     }
 
-    this.onLoadAsync(internalID, null, null);
+    this.onLoadAsync(internalID, null, null, null);
     return null;
   })(internalID, path, namespace, isServerSide, loaderName, generateDefer);
 

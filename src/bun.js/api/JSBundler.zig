@@ -754,6 +754,13 @@ pub const JSBundler = struct {
             success: struct {
                 source_code: []const u8 = "",
                 loader: options.Loader = .file,
+                watched_files: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+
+                pub fn deinit(this: *const @This()) void {
+                    bun.default_allocator.free(this.source_code);
+                    var watched_files = this.watched_files;
+                    watched_files.deinit();
+                }
             },
             pending,
             no_match,
@@ -762,8 +769,8 @@ pub const JSBundler = struct {
 
             pub fn deinit(this: *Value) void {
                 switch (this.*) {
-                    .success => |success| {
-                        bun.default_allocator.free(success.source_code);
+                    .success => |*success| {
+                        success.deinit();
                     },
                     .err => |*err| {
                         err.deinit(bun.default_allocator);
@@ -842,6 +849,7 @@ pub const JSBundler = struct {
             _: *anyopaque,
             source_code_value: JSValue,
             loader_as_int: JSValue,
+            watched_files_value: JSValue,
         ) void {
             JSC.markBinding(@src());
             if (source_code_value.isEmptyOrUndefinedOrNull() or loader_as_int.isEmptyOrUndefinedOrNull()) {
@@ -858,10 +866,28 @@ pub const JSBundler = struct {
                 const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(this.bv2.plugins.?.globalObject(), source_code_value, bun.default_allocator) catch
                 // TODO:
                     @panic("Unexpected: source_code is not a string");
+
+                var watched_files = bun.StringSet.init(bun.default_allocator);
+                if (!watched_files_value.isEmptyOrUndefinedOrNull()) {
+                    const globalObject = this.bv2.plugins.?.globalObject();
+                    if (watched_files_value.isArray() and watched_files_value.getLength(globalObject) > 0) {
+                        var iter = watched_files_value.arrayIterator(globalObject);
+                        while (iter.next()) |value| {
+                            // TODO: handle this error
+                            var str = value.toBunString2(globalObject) catch bun.outOfMemory();
+                            defer str.deref();
+                            const slice = str.toUTF8WithoutRef(bun.default_allocator);
+                            defer slice.deinit();
+                            watched_files.insert(slice.slice()) catch bun.outOfMemory();
+                        }
+                    }
+                }
+
                 this.value = .{
                     .success = .{
                         .loader = options.Loader.fromAPI(loader),
                         .source_code = source_code,
+                        .watched_files = watched_files,
                     },
                 };
             }

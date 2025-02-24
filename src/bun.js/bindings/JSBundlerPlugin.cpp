@@ -45,7 +45,7 @@ extern "C" void OnBeforeParseResult__reset(OnBeforeParseResult* result);
 
 /// These are callbacks defined in Zig and to be run after their associated JS version is run
 extern "C" void JSBundlerPlugin__addError(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
-extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue);
+extern "C" void JSBundlerPlugin__onLoadAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onResolveAsync(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" void JSBundlerPlugin__onVirtualModulePlugin(void*, void*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);
 extern "C" JSC::EncodedJSValue JSBundlerPlugin__onDefer(void*, JSC::JSGlobalObject*);
@@ -419,7 +419,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBundlerPluginFunction_onLoadAsync, (JSC::JSGlobalObje
             UNWRAP_BUNDLER_PLUGIN(callFrame),
             thisObject->plugin.config,
             JSValue::encode(callFrame->argument(1)),
-            JSValue::encode(callFrame->argument(2)));
+            JSValue::encode(callFrame->argument(2)),
+            JSValue::encode(callFrame->argument(3)));
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

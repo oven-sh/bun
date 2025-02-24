@@ -2161,6 +2161,9 @@ pub const BundleV2 = struct {
                 this.decrementScanCounter();
             },
             .success => |code| {
+                var watched_files = code.watched_files;
+                defer watched_files.deinit();
+
                 const should_copy_for_bundling = load.parse_task.defer_copy_for_bundling and code.loader.shouldCopyForBundling();
                 if (should_copy_for_bundling) {
                     const source_index = load.source_index;
@@ -2181,7 +2184,47 @@ pub const BundleV2 = struct {
                 this.graph.pool.schedule(parse_task);
 
                 if (this.bun_watcher) |watcher| add_watchers: {
-                    // TODO: support explicit watchFiles array
+                    // Check if we have watched files specified
+                    // First, register watched files as import records in the AST
+                    // This ensures they'll be part of the dependency graph for HMR
+                    var import_records = &this.graph.ast.items(.import_records)[load.source_index.get()];
+
+                    for (watched_files.keys()) |watched_file| {
+                        // Add an import record for each watched file
+                        import_records.push(this.graph.allocator, .{
+                            .source_index = load.source_index,
+                            .path = Fs.Path.init(this.graph.allocator.dupeZ(u8, watched_file) catch bun.outOfMemory()),
+                            .kind = .stmt,
+                            .is_dynamic_import = false,
+                            .is_watched_file = true, // Mark this as a special watched file
+                        }) catch bun.outOfMemory();
+
+                        debug("Added watched file as import: {s}", .{watched_file});
+
+                        // Watch the file
+                        const wfd = if (bun.Watcher.requires_file_descriptors)
+                            switch (bun.sys.open(
+                                &(std.posix.toPosixPath(watched_file) catch continue),
+                                bun.C.O_EVTONLY,
+                                0,
+                            )) {
+                                .result => |wfd| wfd,
+                                .err => continue,
+                            }
+                        else
+                            bun.invalid_fd;
+                        _ = watcher.appendFile(
+                            wfd,
+                            watched_file,
+                            bun.Watcher.getHash(watched_file),
+                            code.loader,
+                            bun.invalid_fd,
+                            null,
+                            true,
+                        );
+                    }
+
+                    // Always watch the primary file
                     const fd = if (bun.Watcher.requires_file_descriptors)
                         switch (bun.sys.open(
                             &(std.posix.toPosixPath(load.path) catch break :add_watchers),

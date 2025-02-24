@@ -1487,7 +1487,6 @@ fn NewLexer_(
                                         else => {
                                             if (strings.indexOfNewlineOrNonASCIICheckStart(lexer.source.contents[lexer.current..], 0, false)) |i| {
                                                 lexer.current += i;
-                                                continue :singleLineComment;
                                             }
                                         },
                                     }
@@ -1527,10 +1526,6 @@ fn NewLexer_(
                                             );
                                         },
                                         else => {
-                                            if (strings.indexOfNewlineOrNonASCIICheckStart(lexer.source.contents[lexer.current..], 0, false)) |i| {
-                                                lexer.current += i;
-                                            }
-
                                             lexer.step();
                                         },
                                     }

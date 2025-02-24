@@ -2,8 +2,18 @@
 +++ tcc.h
 @@ -23,7 +23,9 @@
  
+ #ifdef __linux__
+ #ifndef _GNU_SOURCE
  #define _GNU_SOURCE
+ #endif
+ #endif
+ 
+ #ifdef __APPLE__
+ #ifndef _DARWIN_C_SOURCE
  #define _DARWIN_C_SOURCE
+ #endif
+ #endif
+
 +#if __has_include("config.h")
  #include "config.h"
 +#endif

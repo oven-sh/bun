@@ -62,8 +62,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSErr
     bun.Output.flush();
 
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
-    var stdin = std.io.getStdIn();
-    var reader = stdin.reader();
+    var reader = bun.Output.buffered_stdin.reader();
     while (true) {
         const byte = reader.readByte() catch break;
         if (byte == '\n') break;
@@ -110,10 +109,7 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     bun.Output.flush();
 
     // 6. Pause until the user responds either positively or negatively.
-    var stdin = std.io.getStdIn();
-    const unbuffered_reader = stdin.reader();
-    var buffered = std.io.bufferedReader(unbuffered_reader);
-    var reader = buffered.reader();
+    var reader = bun.Output.buffered_stdin.reader();
 
     const first_byte = reader.readByte() catch {
         return .false;

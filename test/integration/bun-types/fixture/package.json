@@ -7,9 +7,5 @@
   "scripts": {
     "check": "tsc --noEmit"
   },
-  "type": "module",
-  "dependencies": {
-    "@types/bun": "types-bun-1.2.3.tgz",
-    "@types/node": "latest"
-  }
+  "type": "module"
 }

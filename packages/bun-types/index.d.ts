@@ -3,11 +3,11 @@
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
 
 /// <reference lib="esnext" />
-/// <reference types="node" />
 /// <reference types="ws" />
+/// <reference types="node" />
 
 // contributors: uncomment this to detect conflicts with lib.dom.d.ts
-//// <reference lib="dom" />
+// /// <reference lib="dom" />
 
 /// <reference path="./bun.d.ts" />
 /// <reference path="./globals.d.ts" />

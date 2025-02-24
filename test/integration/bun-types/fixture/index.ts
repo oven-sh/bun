@@ -36,22 +36,34 @@ r.method;
 r.body;
 r.headers.get("content-type");
 
-const body = await fetch(
-  new Request("", {
-    body: "",
-  }),
-);
+await r.json();
+await r.text();
+
+declare const headers: Headers;
+headers.toJSON();
+
+const req1 = new Request("", {
+  body: "",
+});
+
+req1.headers;
+
+req1.headers.toJSON();
+
+const body = await fetch(req1);
 
 await body.text();
 
-Bun.S3Client;
+fetch.preconnect(new URL(""));
+
+URL.canParse;
+URL.createObjectURL;
+URL.revokeObjectURL;
 
 Bun.fetch("", {
   proxy: "",
   s3: {},
 });
-
-new TextEncoder();
 
 Bun.serve({
   fetch(req) {

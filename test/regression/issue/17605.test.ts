@@ -19,18 +19,18 @@ test("empty and invalid JSON import do not crash", async () => {
   ]);
 
   expect(async () => {
-    await import(join(testDir, "empty.json"));
+    await import(join(testDir, "empty.json") + "?0");
   }).toThrow("JSON Parse error: Unexpected EOF");
 
   expect(async () => {
-    await import(join(testDir, "invalid.json"));
+    await import(join(testDir, "invalid.json") + "?1");
   }).toThrow("JSON Parse error: Expected '}'");
 
-  expect(async () => {
+  expect(() => {
     const json = require(join(testDir, "empty.json"));
   }).toThrow("JSON Parse error: Unexpected EOF");
 
-  expect(async () => {
+  expect(() => {
     const json = require(join(testDir, "invalid.json"));
   }).toThrow("JSON Parse error: Expected '}'");
 });

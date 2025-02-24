@@ -309,13 +309,19 @@ pub const ThreadPool = struct {
             debug("Worker.create()", .{});
 
             if (Environment.isLinux) {
-                if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_CPU_AFFINITY")) {
+                if (!bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_CPU_AFFINITY") and bun.getThreadCount() > 2) {
                     const Affinity = struct {
                         var cpu_index: std.atomic.Value(usize) = std.atomic.Value(usize).init(0);
                         var affinity_lock: bun.Mutex = .{};
                         var shared_cpu_mask: std.os.linux.cpu_set_t = undefined;
                         var is_initialized: bool = false;
+                        var core_to_ccx: [MAX_CPUS]u32 = undefined;
+                        var unique_ccx_count: u32 = 0;
                         threadlocal var has_set_affinity_on_thread: bool = false;
+
+                        const MAX_CPUS = std.os.linux.CPU_SETSIZE;
+                        const CORE_GROUP_SIZE = 2;
+                        const DEFAULT_CORES_PER_CCX = 6;
 
                         pub fn CPU_SET(cpu: usize, set: *std.os.linux.cpu_set_t) void {
                             const word_index = cpu / @bitSizeOf(usize);
@@ -336,41 +342,85 @@ pub const ThreadPool = struct {
                                 affinity_lock.lock();
                                 defer affinity_lock.unlock();
 
-                                // Initialize shared mask on first use
                                 if (!is_initialized) {
                                     shared_cpu_mask = std.mem.zeroes(std.os.linux.cpu_set_t);
                                     if (std.os.linux.sched_getaffinity(0, @sizeOf(std.os.linux.cpu_set_t), &shared_cpu_mask) != 0) {
                                         Output.debugWarn("Failed to get CPU affinity mask", .{});
                                         return;
                                     }
+
+                                    // Count available CPUs first
+                                    var available_cpus: u32 = 0;
+                                    for (0..MAX_CPUS) |cpu| {
+                                        if (CPU_ISSET(cpu, &shared_cpu_mask)) {
+                                            available_cpus += 1;
+                                        }
+                                    }
+
+                                    // Simple division of CPUs into CCX groups
+                                    unique_ccx_count = (available_cpus + DEFAULT_CORES_PER_CCX - 1) / DEFAULT_CORES_PER_CCX;
+                                    if (unique_ccx_count == 0) unique_ccx_count = 1;
+
+                                    // Map CPUs to CCX groups
+                                    var ccx_index: u32 = 0;
+                                    var cpus_in_current_ccx: u32 = 0;
+                                    for (0..MAX_CPUS) |cpu| {
+                                        if (CPU_ISSET(cpu, &shared_cpu_mask)) {
+                                            core_to_ccx[cpu] = ccx_index;
+                                            cpus_in_current_ccx += 1;
+                                            if (cpus_in_current_ccx >= DEFAULT_CORES_PER_CCX) {
+                                                ccx_index = (ccx_index + 1) % unique_ccx_count;
+                                                cpus_in_current_ccx = 0;
+                                            }
+                                        } else {
+                                            core_to_ccx[cpu] = std.math.maxInt(u32);
+                                        }
+                                    }
+
                                     is_initialized = true;
                                 }
 
-                                // Find the first available CPU in the shared mask
-                                var target_cpu: ?usize = null;
-                                for (0..std.os.linux.CPU_SETSIZE) |i| {
-                                    if (CPU_ISSET(i, &shared_cpu_mask)) {
-                                        target_cpu = i;
-                                        break;
+                                var thread_mask = std.mem.zeroes(std.os.linux.cpu_set_t);
+                                const current_index = cpu_index.fetchAdd(1, .seq_cst);
+                                const target_ccx = current_index % unique_ccx_count;
+
+                                // Find all available CPUs in this CCX
+                                var ccx_cpus = std.ArrayList(usize).init(bun.default_allocator);
+                                defer ccx_cpus.deinit();
+
+                                for (0..MAX_CPUS) |cpu| {
+                                    if (CPU_ISSET(cpu, &shared_cpu_mask) and core_to_ccx[cpu] == target_ccx) {
+                                        ccx_cpus.append(cpu) catch break;
                                     }
                                 }
 
-                                if (target_cpu) |cpu| {
-                                    var new_set = std.mem.zeroes(std.os.linux.cpu_set_t);
-                                    CPU_SET(cpu, &new_set);
+                                if (ccx_cpus.items.len > 0) {
+                                    const target_cpu = ccx_cpus.items[current_index % ccx_cpus.items.len];
 
-                                    // Clear this CPU from the shared mask so next thread won't use it
-                                    shared_cpu_mask[cpu / @bitSizeOf(usize)] &= ~(@as(usize, 1) << @as(u6, @intCast(cpu % @bitSizeOf(usize))));
+                                    // Add the target CPU and its closest neighbors within the CCX
+                                    for (ccx_cpus.items) |cpu| {
+                                        const distance = if (cpu >= target_cpu)
+                                            cpu - target_cpu
+                                        else
+                                            target_cpu - cpu;
 
-                                    std.os.linux.sched_setaffinity(0, &new_set) catch |err| {
+                                        if (distance <= CORE_GROUP_SIZE) {
+                                            CPU_SET(cpu, &thread_mask);
+                                        }
+                                    }
+
+                                    std.os.linux.sched_setaffinity(0, &thread_mask) catch |err| {
                                         Output.debugWarn("Failed to set affinity for worker thread: {s}", .{@errorName(err)});
                                         return;
                                     };
 
-                                    const available = std.os.linux.CPU_COUNT(shared_cpu_mask);
-                                    debug("Pinned worker thread to CPU {d} ({d} CPUs remaining available)", .{ cpu, available });
+                                    debug("Pinned thread {d} to CCX {d} ({d} CPUs)", .{ current_index, target_ccx, ccx_cpus.items.len });
                                 } else {
-                                    debug("Out of CPUs", .{});
+                                    std.os.linux.sched_setaffinity(0, &shared_cpu_mask) catch |err| {
+                                        Output.debugWarn("Failed to set affinity for worker thread: {s}", .{@errorName(err)});
+                                        return;
+                                    };
+                                    debug("Thread {d} using full CPU mask (no CCX CPUs available)", .{current_index});
                                 }
                             }
                         }

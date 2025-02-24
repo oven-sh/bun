@@ -1035,12 +1035,12 @@ pub const FieldDescription = struct {
         // If the field can be identified as a column of a specific table, the attribute number of the column; otherwise zero.
         const column_index = try reader.short();
 
-        // Data type OID (4 bytes) The data type size (see pg_type.typlen). Note that negative values denote variable-width types.
+        // Data type OID (4 bytes)
         // The object ID of the field's data type. The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
         const type_oid = try reader.int4();
 
-        // Data type size (2 bytes)
-        // Type modifier (4 bytes)
+        // Data type size (2 bytes) The data type size (see pg_type.typlen). Note that negative values denote variable-width types.
+        // Type modifier (4 bytes) The type modifier (see pg_attribute.atttypmod). The meaning of the modifier is type-specific.
         try reader.skip(6);
 
         // Format code (2 bytes)

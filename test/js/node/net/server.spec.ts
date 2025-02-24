@@ -101,3 +101,47 @@ describe("new net.Server()", () => {
     });
   }); // </the server instance>
 }); // </new net.Server()>
+
+describe("server.address()", () => {
+  let server: net.Server;
+
+  beforeEach(() => {
+    server = net.createServer(() => {});
+  });
+  afterEach(() => {
+    server.close();
+  });
+
+  it("returns null when the server is not listening", () => {
+    expect(server.address()).toBeNull();
+  });
+
+  describe("when the server listens to an unspecified port", () => {
+    beforeEach(async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      server.listen(resolve);
+      await promise;
+    });
+    it("address defaults to ipv6 any address", () => {
+      const address = server.address();
+      expect(address.address).toBe("::");
+      expect(address.family).toBe("IPv6");
+    });
+
+    it("picks a random, valid port", () => {
+      const port = server.address().port;
+      expect(port).toBeTypeOf("number");
+      expect(port).not.toBeNaN();
+      expect(port).toBeGreaterThan(0);
+      expect(port).toBeLessThanOrEqual(65_535);
+    });
+  });
+
+  it("when listening on a specified port, returns an AddressInfo object with the same port", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    server.listen(6543, resolve);
+    await promise;
+    const address = server.address();
+    expect(address).toEqual({ address: "::", port: 6543, family: "IPv6" });
+  });
+}); // </server.address()>

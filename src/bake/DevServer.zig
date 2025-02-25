@@ -38,7 +38,8 @@ pub const Options = struct {
 
 /// Used for all server-wide allocations. In debug, is is backed by a scope. Thread-safe.
 allocator: Allocator,
-allocation_scope: if (AllocationScope.enabled) AllocationScope else void,
+/// All methods are no-op in release builds.
+allocation_scope: AllocationScope,
 /// Absolute path to project root directory. For the HMR
 /// runtime, its module IDs are strings relative to this.
 root: []const u8,
@@ -371,7 +372,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     const dev = bun.new(DevServer, .{
         .allocator = undefined,
-        .allocation_scope = if (AllocationScope.enabled) AllocationScope.init(unchecked_allocator),
+        // 'init' is a no-op in release
+        .allocation_scope = AllocationScope.init(unchecked_allocator),
 
         .root = options.root,
         .vm = options.vm,
@@ -428,7 +430,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .deferred_request_pool = undefined,
     });
     errdefer bun.destroy(dev);
-    const allocator = if (AllocationScope.enabled) dev.allocation_scope.allocator() else unchecked_allocator;
+    const allocator = dev.allocation_scope.allocator();
     dev.allocator = allocator;
     dev.log = .init(allocator);
     dev.deferred_request_pool = .init(allocator);

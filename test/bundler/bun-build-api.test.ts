@@ -1,5 +1,5 @@
 import type { BunPlugin } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, beforeAll, afterAll, expect, test } from "bun:test";
 import { readFileSync, writeFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
@@ -670,6 +670,7 @@ describe("Bun.build", () => {
       expect(async () => {
         await Bun.build({
           entrypoints: [index],
+          // @ts-expect-error
           plugins: [async () => coffeePlugin()],
         });
       }).toThrow(/does not support async plugin/);

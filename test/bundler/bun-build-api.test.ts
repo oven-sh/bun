@@ -1,5 +1,6 @@
+import type { BunPlugin } from "bun";
 import { describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, writeFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";
 import assert from "assert";
@@ -610,6 +611,69 @@ describe("Bun.build", () => {
     // Verify our plugin modified the HTML
     const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
     expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
+  });
+
+  describe("plugin options", () => {
+    let fixture: string;
+    let index: string;
+
+    function coffeePlugin(): BunPlugin {
+      return {
+        name: "coffee",
+        setup(build) {
+          build.onLoad({ filter: /\.coffee$/ }, () => {
+            return {
+              contents: "module.exports = 'world'",
+              loader: "js",
+            };
+          });
+        },
+      };
+    }
+
+    beforeAll(() => {
+      fixture = tempDirWithFiles("build-plugins-factory", {
+        "index.ts": `
+        import foo from "./foo.coffee";
+        console.log(foo)
+      `,
+        "foo.coffee": `
+        module.exports = "hello"
+      `,
+      });
+
+      index = join(fixture, "index.ts");
+    });
+
+    afterAll(() => {
+      rmSync(fixture, { recursive: true, force: true });
+    });
+
+    it("can be a BunPlugin object", async () => {
+      const build = await Bun.build({
+        entrypoints: [index],
+        plugins: [coffeePlugin()],
+      });
+
+      expect(build.success).toBeTrue();
+    });
+
+    it("can be a function that returns a BunPlugin object", async () => {
+      const build = await Bun.build({
+        entrypoints: [index],
+        plugins: [coffeePlugin],
+      });
+      expect(build.success).toBeTrue();
+    });
+
+    it("cannot be async (for now)", async () => {
+      expect(async () => {
+        await Bun.build({
+          entrypoints: [index],
+          plugins: [async () => coffeePlugin()],
+        });
+      }).toThrow(/does not support async plugin/);
+    });
   });
 });
 

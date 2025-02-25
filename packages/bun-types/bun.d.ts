@@ -2633,7 +2633,7 @@ declare module "bun" {
         }; // | string;
     root?: string; // project root
     splitting?: boolean; // default true, enable code splitting
-    plugins?: BunPlugin[];
+    plugins?: BunPluginFactory[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
     packages?: "bundle" | "external";
@@ -5371,6 +5371,8 @@ declare module "bun" {
   /** https://bun.sh/docs/bundler/loaders */
   type Loader = "js" | "jsx" | "ts" | "tsx" | "json" | "toml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 
+  type MaybePromise<T> = T | Promise<T>;
+
   interface PluginConstraints {
     /**
      * Only apply the plugin when the import specifier matches this regular expression
@@ -5466,8 +5468,8 @@ declare module "bun" {
   }
 
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
-  type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
-  type OnStartCallback = () => void | Promise<void>;
+  type OnLoadCallback = (args: OnLoadArgs) => MaybePromise<OnLoadResult>;
+  type OnStartCallback = () => MaybePromise<void>;
 
   interface OnResolveArgs {
     /**
@@ -5511,9 +5513,7 @@ declare module "bun" {
     external?: boolean;
   }
 
-  type OnResolveCallback = (
-    args: OnResolveArgs,
-  ) => OnResolveResult | Promise<OnResolveResult | undefined | null> | undefined | null;
+  type OnResolveCallback = (args: OnResolveArgs) => MaybePromise<OnResolveResult | undefined | null>;
 
   type FFIFunctionCallable = Function & {
     // Making a nominally typed function so that the user must get it from dlopen
@@ -5613,7 +5613,7 @@ declare module "bun" {
      *
      * @returns `this` for method chaining
      */
-    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): this;
+    module(specifier: string, callback: () => MaybePromise<OnLoadResult>): this;
   }
 
   interface BunPlugin {
@@ -5655,6 +5655,8 @@ declare module "bun" {
     ): void | Promise<void>;
   }
 
+  type BunPluginFactory<P extends BunPlugin = BunPlugin> = P | (() => P);
+
   /**
    * Extend Bun's module resolution and loading behavior
    *
@@ -5694,7 +5696,7 @@ declare module "bun" {
    * ```
    */
   interface BunRegisterPlugin {
-    <T extends BunPlugin>(options: T): ReturnType<T["setup"]>;
+    <T extends BunPlugin>(options: BunPluginFactory<T>): ReturnType<T["setup"]>;
 
     /**
      * Deactivate all plugins

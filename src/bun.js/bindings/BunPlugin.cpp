@@ -260,31 +260,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalO
     return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBrowser);
 }
 
-/// `Bun.plugin()`
-static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+/// `Bun.plugin(options)`
+static inline JSC::JSValue setupBunPlugin(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* options, BunPluginTarget target)
 {
-    auto& vm = JSC::getVM(globalObject);
+    ASSERT(options);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callframe->argumentCount() < 1) {
-        JSC::throwTypeError(globalObject, throwScope, "plugin needs at least one argument (an object)"_s);
-        return {};
+
+    if (options->isCallable()) {
+        JSC::MarkedArgumentBuffer argList;
+        auto callData = getCallData(options);
+        JSC::JSValue ret = JSC::call(globalObject, JSValue(options), callData, JSValue(globalObject), argList);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        options = ret.getObject();
+        if (!options) {
+            JSC::throwTypeError(globalObject, throwScope, "plugin needs an object as first argument"_s);
+            return {};
+        }
     }
 
-    JSC::JSObject* obj = callframe->uncheckedArgument(0).getObject();
-    if (!obj) {
-        JSC::throwTypeError(globalObject, throwScope, "plugin needs an object as first argument"_s);
-        return {};
-    }
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    JSC::JSValue setupFunctionValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "setup"_s));
+    JSC::JSValue setupFunctionValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "setup"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!setupFunctionValue || setupFunctionValue.isUndefinedOrNull() || !setupFunctionValue.isCell() || !setupFunctionValue.isCallable()) {
         JSC::throwTypeError(globalObject, throwScope, "plugin needs a setup() function"_s);
         return {};
     }
 
-    if (JSValue targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s))) {
+    if (JSValue targetValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s))) {
         if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
             String targetString = targetJSString->value(globalObject);
             if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
@@ -336,10 +337,37 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     RETURN_IF_EXCEPTION(throwScope, {});
 
     if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(result)) {
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
+        RELEASE_AND_RETURN(throwScope, promise);
     }
 
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
+    RELEASE_AND_RETURN(throwScope, jsUndefined());
+}
+
+/// `Bun.plugin(optionsFactory)`
+static inline JSC::JSValue setupBunPlugin(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSFunction* makeOptions, BunPluginTarget target)
+{
+    ASSERT(makeOptions);
+
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer argList;
+
+    auto callData = getCallData(makeOptions);
+    JSC::JSValue ret = JSC::call(globalObject, JSValue(makeOptions), callData, JSValue(globalObject), argList);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSC::JSObject* options = ret.getObject();
+    if (!options) {
+        JSC::throwTypeError(globalObject, throwScope, "plugin factory must return an object."_s);
+        return {};
+    }
+
+    // TODO: support async plugin factories. Emit a better error message than
+    // just "setup() function is missing".
+    if (auto* promise = JSC::jsDynamicCast<JSC::JSPromise*>(options)) {
+        JSC::throwTypeError(globalObject, throwScope, "plugin() does not support async plugin factories yet."_s);
+        return {};
+    }
+    RELEASE_AND_RETURN(throwScope, Bun::setupBunPlugin(vm, globalObject, options, target));
 }
 
 void BunPlugin::Group::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* func)
@@ -941,7 +969,35 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+/// `Bun.plugin(options: BunPlugin | () => BunPlugin)`
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return Bun::setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    if (callframe->argumentCount() < 1) {
+        JSC::throwTypeError(globalObject, throwScope, "plugin needs at least one argument (an object)"_s);
+        return {};
+    }
+
+    JSC::JSObject* obj = callframe->uncheckedArgument(0).getObject();
+    if (!obj) {
+        JSC::throwTypeError(globalObject, throwScope, "plugin needs an object or function as first argument"_s);
+        return {};
+    }
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSC::JSValue result;
+
+    if (auto* function = JSC::jsDynamicCast<JSC::JSFunction*>(obj)) {
+        if (function->isConstructor() || !function->isCallable()) {
+            JSC::throwTypeError(globalObject, throwScope, "plugin factories cannot be classes. Please use an arrow or named function instead."_s);
+            return {};
+        }
+        result = Bun::setupBunPlugin(vm, globalObject, jsCast<JSC::JSFunction*>(obj), BunPluginTargetBun);
+    } else {
+        result = Bun::setupBunPlugin(vm, globalObject, obj, BunPluginTargetBun);
+    }
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }

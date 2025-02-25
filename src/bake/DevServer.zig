@@ -6927,6 +6927,10 @@ const ErrorReportRequest = struct {
     }
 
     fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !void {
+        // .finalize has to be called last, but only in the non-error path.
+        var should_finalize_self = false;
+        defer if (should_finalize_self) ctx.finalize();
+
         var s = std.io.fixedBufferStream(body);
         const reader = s.reader();
 
@@ -7152,7 +7156,7 @@ const ErrorReportRequest = struct {
             .mime_type = &.other,
             .server = ctx.dev.server.?,
         });
-        ctx.finalize();
+        should_finalize_self = true;
     }
 
     fn parseId(source_url: []const u8, browser_url: []const u8) ?u64 {

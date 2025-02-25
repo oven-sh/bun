@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,

@@ -1472,19 +1472,28 @@ pub const ServerConfig = struct {
                             .framework = framework,
                             .bundler_options = bun.bake.SplitBundlerOptions.empty,
                         };
+                        const bake = &args.bake.?;
 
-                        switch (vm.transpiler.options.transform_options.serve_env_behavior) {
+                        const o = vm.transpiler.options.transform_options;
+
+                        switch (o.serve_env_behavior) {
                             .prefix => {
-                                args.bake.?.bundler_options.client.env_prefix = vm.transpiler.options.transform_options.serve_env_prefix;
-                                args.bake.?.bundler_options.client.env = .prefix;
+                                bake.bundler_options.client.env_prefix = vm.transpiler.options.transform_options.serve_env_prefix;
+                                bake.bundler_options.client.env = .prefix;
                             },
                             .load_all => {
-                                args.bake.?.bundler_options.client.env = .load_all;
+                                bake.bundler_options.client.env = .load_all;
                             },
                             .disable => {
-                                args.bake.?.bundler_options.client.env = .disable;
+                                bake.bundler_options.client.env = .disable;
                             },
                             else => {},
+                        }
+
+                        if (o.serve_define) |define| {
+                            bake.bundler_options.client.define = define;
+                            bake.bundler_options.server.define = define;
+                            bake.bundler_options.ssr.define = define;
                         }
                     } else {
                         if (init_ctx.framework_router_list.items.len > 0) {

@@ -93,14 +93,12 @@ pub const StringRefList = struct {
 
 pub const SplitBundlerOptions = struct {
     plugin: ?*Plugin = null,
-    all: BuildConfigSubset = .{},
     client: BuildConfigSubset = .{},
     server: BuildConfigSubset = .{},
     ssr: BuildConfigSubset = .{},
 
     pub const empty: SplitBundlerOptions = .{
         .plugin = null,
-        .all = .{},
         .client = .{},
         .server = .{},
         .ssr = .{},
@@ -156,12 +154,7 @@ const BuildConfigSubset = struct {
     drop: bun.StringArrayHashMapUnmanaged(void) = .{},
     env: bun.Schema.Api.DotEnvBehavior = ._none,
     env_prefix: ?[]const u8 = null,
-
-    pub fn loadFromJs(config: *BuildConfigSubset, value: JSValue, arena: Allocator) !void {
-        _ = config; // autofix
-        _ = value; // autofix
-        _ = arena; // autofix
-    }
+    define: bun.Schema.Api.StringMap = .{ .keys = &.{}, .values = &.{} },
 };
 
 /// A "Framework" in our eyes is simply set of bundler options that a framework
@@ -642,6 +635,9 @@ pub const Framework = struct {
             // Support `esm-env` package using this condition.
             try out.options.conditions.appendSlice(&.{"development"});
         }
+        if (bundler_options.conditions.count() > 0) {
+            try out.options.conditions.appendSlice(bundler_options.conditions.keys());
+        }
 
         out.options.production = mode != .development;
         out.options.tree_shaking = mode != .development;
@@ -650,10 +646,13 @@ pub const Framework = struct {
         out.options.minify_whitespace = mode != .development;
         out.options.css_chunking = true;
         out.options.framework = framework;
+        if (bundler_options.ignoreDCEAnnotations) |ignore|
+            out.options.ignore_dce_annotations = ignore;
 
         out.options.source_map = switch (mode) {
-            // Source maps must always be linked, as DevServer special cases the
-            // linking and part of the generation of these.
+            // Source maps must always be external, as DevServer special cases
+            // the linking and part of the generation of these. It also relies
+            // on source maps always being enabled.
             .development => .external,
             // TODO: follow user configuration
             else => .none,
@@ -673,6 +672,20 @@ pub const Framework = struct {
             .client => .client,
             .server, .ssr => .server,
         });
+
+        if ((bundler_options.define.keys.len + bundler_options.drop.count()) > 0) {
+            for (bundler_options.define.keys, bundler_options.define.values) |k, v| {
+                const parsed = try bun.options.Define.Data.parse(k, v, false, false, log, arena);
+                try out.options.define.insert(arena, k, parsed);
+            }
+
+            for (bundler_options.drop.keys()) |drop_item| {
+                if (drop_item.len > 0) {
+                    const parsed = try bun.options.Define.Data.parse(drop_item, "", true, true, log, arena);
+                    try out.options.define.insert(arena, drop_item, parsed);
+                }
+            }
+        }
 
         if (mode != .development) {
             // Hide information about the source repository, at the cost of debugging quality.

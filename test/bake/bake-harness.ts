@@ -228,6 +228,7 @@ export class Dev {
   panicked = false;
   connectedClients: Set<Client> = new Set();
   options: { files: Record<string, string> };
+  nodeEnv: "development" | "production";
 
   // These properties are not owned by this class
   devProcess: Subprocess<"pipe", "pipe", "pipe">;
@@ -238,6 +239,7 @@ export class Dev {
     port: number,
     process: Subprocess<"pipe", "pipe", "pipe">,
     stream: OutputLineStream,
+    nodeEnv: "development" | "production",
     options: DevServerTest,
   ) {
     this.rootDir = realpathSync(root);
@@ -249,6 +251,7 @@ export class Dev {
     this.output.on("panic", () => {
       this.panicked = true;
     });
+    this.nodeEnv = nodeEnv;
   }
 
   fetch(url: string, init?: RequestInit) {
@@ -272,7 +275,8 @@ export class Dev {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
-      const wait = this.waitForHotReload();
+      const isDev = this.nodeEnv === "development";
+      const wait = isDev && this.waitForHotReload();
       await Bun.write(
         this.join(file),
         ((typeof contents === "string" && options.dedent) ?? true) ? dedent(contents) : contents,
@@ -280,7 +284,7 @@ export class Dev {
       await wait;
 
       let errors = options.errors;
-      if (errors !== null) {
+      if (isDev && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
           await client.expectErrorOverlay(errors, null);
@@ -338,6 +342,7 @@ export class Dev {
   }
 
   async waitForHotReload() {
+    if (this.nodeEnv !== "development") return Promise.resolve();
     const err = this.output.waitForLine(/error/i);
     const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i);
     await Promise.race([
@@ -362,26 +367,23 @@ export class Dev {
     await maybeWaitInteractive("open client " + url);
     const client = new Client(new URL(url, this.baseUrl).href, {
       storeHotChunks: options.storeHotChunks,
+      hmr: this.nodeEnv === "development",
     });
-    try {
-      await client.output.waitForLine(hmrClientInitRegex);
-    } catch (e) {
-      client[Symbol.asyncDispose]();
-      throw e;
+    if (this.nodeEnv === "development") {
+      try {
+        await client.output.waitForLine(hmrClientInitRegex);
+      } catch (e) {
+        client[Symbol.asyncDispose]();
+        throw e;
+      }
+      await client.expectErrorOverlay(options.errors ?? []);
     }
-    await client.expectErrorOverlay(options.errors ?? []);
     this.connectedClients.add(client);
     client.on("exit", () => {
       this.connectedClients.delete(client);
     });
     return client;
   }
-}
-
-export interface Step {
-  run: StepFn;
-  caller: string;
-  name?: string;
 }
 
 class DevFetchPromise extends Promise<Response> {
@@ -541,8 +543,9 @@ export class Client extends EventEmitter {
   #hmrChunk: string | null = null;
   suppressInteractivePrompt: boolean = false;
   expectingReload = false;
+  hmr = false;
 
-  constructor(url: string, options: { storeHotChunks?: boolean } = {}) {
+  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean }) {
     super();
     activeClient = this;
     const proc = Bun.spawn({
@@ -584,6 +587,7 @@ export class Client extends EventEmitter {
       this.#hmrChunk = chunk;
     });
     this.#proc = proc;
+    this.hmr = options.hmr;
     // @ts-expect-error
     this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
   }
@@ -1007,7 +1011,7 @@ function snapshotCallerLocation(): string {
   let i = 1;
   for (; i < lines.length; i++) {
     const line = lines[i].replaceAll("\\", "/");
-    if (line.includes(import.meta.dir.replaceAll("\\", "/")) && !line.includes("dev-server-harness.ts")) {
+    if (line.includes(import.meta.dir.replaceAll("\\", "/")) && !line.includes(import.meta.file)) {
       return line;
     }
   }
@@ -1091,6 +1095,7 @@ function cleanTestDir(dir: string) {
 }
 
 const devTestRoot = path.join(import.meta.dir, "dev").replaceAll("\\", "/");
+const prodTestRoot = path.join(import.meta.dir, "dev").replaceAll("\\", "/");
 const counts: Record<string, number> = {};
 
 console.log("Dev server testing directory:", tempDir);
@@ -1254,14 +1259,16 @@ export function indexHtmlScript(htmlFiles: string[]) {
   ].join("\n");
 }
 
-export function devTest<T extends DevServerTest>(description: string, options: T): T {
+function testImpl<T extends DevServerTest>(
+  description: string,
+  options: T,
+  NODE_ENV: "development" | "production",
+  caller: string,
+): T {
   if (interactive) return options;
 
-  // Capture the caller name as part of the test tempdir
-  const callerLocation = snapshotCallerLocation();
-  const caller = stackTraceFileName(callerLocation);
   const jest = (Bun as any).jest(caller);
-  assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev, not " + caller);
+
   const basename = path.basename(caller, ".test" + path.extname(caller));
   const count = (counts[basename] = (counts[basename] ?? 0) + 1);
 
@@ -1345,6 +1352,14 @@ export function devTest<T extends DevServerTest>(description: string, options: T
       `,
     );
 
+    using _ = {
+      [Symbol.dispose]: () => {
+        for (const proc of danglingProcesses) {
+          proc.kill("SIGKILL");
+        }
+      },
+    };
+
     await using devProcess = Bun.spawn({
       cwd: root,
       cmd: [process.execPath, "./harness_start.ts"],
@@ -1354,6 +1369,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
           FORCE_COLOR: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
+          NODE_ENV,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1369,7 +1385,7 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     // @ts-expect-error
-    const dev = new Dev(root, port, devProcess, stream, options);
+    const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
 
     await maybeWaitInteractive("start");
 
@@ -1397,7 +1413,15 @@ export function devTest<T extends DevServerTest>(description: string, options: T
     }
   }
 
-  const name = `DevServer > ${basename}-${count}: ${description}`;
+  const name = `${
+    NODE_ENV === "development" //
+      ? Bun.enableANSIColors
+        ? "\x1b[35mDEV\x1b[0m"
+        : "DEV"
+      : Bun.enableANSIColors
+        ? "\x1b[36mPROD\x1b[0m"
+        : "PROD"
+  }:${basename}-${count}: ${description}`;
   try {
     // TODO: resolve ci flakiness.
     if (isCI && isWindows) {
@@ -1448,3 +1472,33 @@ process.on("exit", () => {
     proc.kill("SIGKILL");
   }
 });
+
+export function devTest<T extends DevServerTest>(description: string, options: T): T {
+  // Capture the caller name as part of the test tempdir
+  const callerLocation = snapshotCallerLocation();
+  const caller = stackTraceFileName(callerLocation);
+  assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev, not " + caller);
+
+  return testImpl(description, options, "development", caller);
+}
+
+export function prodTest<T extends DevServerTest>(description: string, options: T): T {
+  const callerLocation = snapshotCallerLocation();
+  const caller = stackTraceFileName(callerLocation);
+  assert(caller.startsWith(prodTestRoot), "dev server tests must be in test/bake/prod, not " + caller);
+
+  return testImpl(description, options, "production", caller);
+}
+
+export function devAndProductionTest(description: string, options: DevServerTest) {
+  const callerLocation = snapshotCallerLocation();
+  const caller = stackTraceFileName(callerLocation);
+  assert(
+    caller.includes("dev-and-prod"),
+    'dev+prod tests should be in "test/bake/dev-and-prod.test.ts", not ' + caller,
+  );
+
+  testImpl(description, options, "development", caller);
+  testImpl(description, options, "production", caller);
+  return options;
+}

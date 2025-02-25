@@ -14,5 +14,6 @@
   "std.StringHashMapUnmanaged(": "bun.StringHashMapUnmanaged has a faster `eql`",
   "std.StringHashMap(": "bun.StringHashMaphas a faster `eql`",
   "std.enums.tagName(": "Use bun.tagName instead",
+  "= undefined,": "Do not set a field's default value to `undefined`",
   "": ""
 }

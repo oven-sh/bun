@@ -32,6 +32,8 @@ const r = new Request("", {
   body: "",
 });
 
+await fetch(r);
+
 r.method;
 r.body;
 r.headers.get("content-type");

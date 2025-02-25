@@ -1,5 +1,3 @@
-// type _Headers = import("undici-types").Headers;
-// interface Headers extends _Headers {
 interface Headers {
   /**
    * Convert {@link Headers} to a plain JavaScript object.
@@ -34,6 +32,7 @@ interface Headers {
    */
   getAll(name: "set-cookie" | "Set-Cookie"): string[];
 }
+
 var Headers: {
   prototype: Headers;
   new (init?: Bun.HeadersInit): Headers;
@@ -101,7 +100,7 @@ var Response: {
   error(): Response;
 };
 
-interface Fetch {
+var fetch: {
   /**
    * Send a HTTP(s) request
    *
@@ -134,6 +133,4 @@ interface Fetch {
    * This is a bun-specific API and is not part of the Fetch API specification.
    */
   preconnect(url: string | URL): void;
-}
-
-var fetch: Fetch;
+};

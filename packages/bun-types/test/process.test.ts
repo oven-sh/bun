@@ -2,15 +2,15 @@ process.memoryUsage();
 process.cpuUsage().system;
 process.cpuUsage().user;
 process.on("SIGINT", () => {
-	console.log("Interrupt from keyboard");
+  console.log("Interrupt from keyboard");
 });
 
-process.on("beforeExit", (code) => {
-	console.log("Event loop is empty and no work is left to schedule.", code);
+process.on("beforeExit", code => {
+  console.log("Event loop is empty and no work is left to schedule.", code);
 });
 
-process.on("exit", (code) => {
-	console.log("Exiting with code:", code);
+process.on("exit", code => {
+  console.log("Exiting with code:", code);
 });
 process.kill(123, "SIGTERM");
 
@@ -21,7 +21,7 @@ process.getgroups!();
 process.getuid!();
 
 process.once("SIGINT", () => {
-	console.log("Interrupt from keyboard");
+  console.log("Interrupt from keyboard");
 });
 
 // commented methods are not yet implemented

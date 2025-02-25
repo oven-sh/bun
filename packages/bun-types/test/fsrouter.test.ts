@@ -2,8 +2,8 @@ import { FileSystemRouter } from "bun";
 import { expectType } from "./utilities.test";
 
 const router = new FileSystemRouter({
-	dir: "/pages",
-	style: "nextjs",
+  dir: "/pages",
+  style: "nextjs",
 });
 
 const match = router.match("/");

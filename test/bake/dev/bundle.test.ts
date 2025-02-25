@@ -460,7 +460,6 @@ devTest("missing head end tag works fine", {
         <head>
           <title>Dashboard</title>
           <link rel="stylesheet" href="../src/app/styles.css"></link>
-          
         <body>
           <div id="root" />
           <script type="module" src="../src/app/index.tsx"></script>
@@ -501,6 +500,7 @@ devTest("missing head tag works fine", {
     `,
   },
   async test(dev) {
+    await dev.fetch("/").expect.toInclude("root");
     await using c = await dev.client("/");
     await c.expectMessage("hello");
     await c.style("body").backgroundColor.expect.toBe("red");

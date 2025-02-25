@@ -1781,7 +1781,7 @@ pub const Subprocess = struct {
         argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
         while (cmds_array.next()) |value| {
-            const arg = try value.toBunString2(globalThis);
+            const arg = try value.toBunString(globalThis);
             defer arg.deref();
 
             argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));

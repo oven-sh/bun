@@ -8383,7 +8383,7 @@ pub const Macro = struct {
                         return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                     },
                     .String => {
-                        var bun_str = value.toBunString(this.global);
+                        var bun_str = try value.toBunString(this.global);
                         defer bun_str.deref();
 
                         // encode into utf16 so the printer escapes the string correctly

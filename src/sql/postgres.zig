@@ -652,7 +652,7 @@ pub const PostgresSQLQuery = struct {
         this_value.ensureStillAlive();
 
         ptr.* = .{
-            .query = try query.toBunString2(globalThis),
+            .query = try query.toBunString(globalThis),
             .thisValue = JSRef.initWeak(this_value),
             .flags = .{
                 .bigint = bigint,
@@ -1829,15 +1829,15 @@ pub const PostgresSQLConnection = struct {
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments_old(14).slice();
-        const hostname_str = try arguments[0].toBunString2(globalObject);
+        const hostname_str = try arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);
 
-        const username_str = try arguments[2].toBunString2(globalObject);
+        const username_str = try arguments[2].toBunString(globalObject);
         defer username_str.deref();
-        const password_str = try arguments[3].toBunString2(globalObject);
+        const password_str = try arguments[3].toBunString(globalObject);
         defer password_str.deref();
-        const database_str = try arguments[4].toBunString2(globalObject);
+        const database_str = try arguments[4].toBunString(globalObject);
         defer database_str.deref();
         const ssl_mode: SSLMode = switch (arguments[5].toInt32()) {
             0 => .disable,
@@ -1898,7 +1898,7 @@ pub const PostgresSQLConnection = struct {
         var database: []const u8 = "";
         var options: []const u8 = "";
 
-        const options_str = try arguments[7].toBunString2(globalObject);
+        const options_str = try arguments[7].toBunString(globalObject);
         defer options_str.deref();
 
         const options_buf: []u8 = brk: {

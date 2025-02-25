@@ -3379,7 +3379,7 @@ pub const Resolver = struct {
             return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
         }
 
-        const in_str = try argument.toBunString2(globalThis);
+        const in_str = try argument.toBunString(globalThis);
         defer in_str.deref();
         const r = &globalThis.bunVM().transpiler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);

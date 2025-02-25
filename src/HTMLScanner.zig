@@ -79,7 +79,7 @@ pub fn scan(this: *HTMLScanner, input: []const u8) !void {
     try processor.run(this, input);
 }
 
-pub fn HTMLProcessor(comptime T: type, comptime visit_head_and_body: bool) type {
+pub fn HTMLProcessor(comptime T: type, comptime visit_head: bool) type {
     return struct {
         const TagHandler = struct {
             /// CSS selector to match elements
@@ -231,7 +231,7 @@ pub fn HTMLProcessor(comptime T: type, comptime visit_head_and_body: bool) type 
             var builder = lol.HTMLRewriter.Builder.init();
             defer builder.deinit();
 
-            var selectors: std.BoundedArray(*lol.HTMLSelector, tag_handlers.len + if (visit_head_and_body) 2 else 0) = .{};
+            var selectors: std.BoundedArray(*lol.HTMLSelector, tag_handlers.len + if (visit_head) 1 else 0) = .{};
             defer for (selectors.slice()) |selector| {
                 selector.deinit();
             };
@@ -254,28 +254,13 @@ pub fn HTMLProcessor(comptime T: type, comptime visit_head_and_body: bool) type 
                 );
             }
 
-            if (visit_head_and_body) {
+            if (visit_head) {
                 const head_selector = try lol.HTMLSelector.parse("head");
                 selectors.appendAssumeCapacity(head_selector);
                 try builder.addElementContentHandlers(
                     head_selector,
                     T,
                     T.onHeadTag,
-                    this,
-                    void,
-                    null,
-                    null,
-                    void,
-                    null,
-                    null,
-                );
-
-                const body_selector = try lol.HTMLSelector.parse("body");
-                selectors.appendAssumeCapacity(body_selector);
-                try builder.addElementContentHandlers(
-                    body_selector,
-                    T,
-                    T.onBodyTag,
                     this,
                     void,
                     null,

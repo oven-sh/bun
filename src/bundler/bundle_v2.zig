@@ -10612,7 +10612,6 @@ pub const LinkerContext = struct {
             minify_whitespace: bool,
             output: std.ArrayList(u8),
             head_end_tag_index: u32 = 0,
-            body_end_tag_index: u32 = 0,
 
             pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
                 this.output.appendSlice(bytes) catch bun.outOfMemory();
@@ -10696,22 +10695,9 @@ pub const LinkerContext = struct {
                 return false;
             }
 
-            pub fn onBodyTag(this: *@This(), element: *lol.Element) bool {
-                if (this.linker.dev_server != null) {
-                    element.onEndTag(endBodyTagHandler, this) catch return true;
-                }
-                return false;
-            }
-
             fn endHeadTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
                 const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
                 this.head_end_tag_index = @intCast(this.output.items.len);
-                return .@"continue";
-            }
-
-            fn endBodyTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
-                const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
-                this.body_end_tag_index = @intCast(this.output.items.len);
                 return .@"continue";
             }
         };
@@ -10738,13 +10724,24 @@ pub const LinkerContext = struct {
             sources[chunk.entry_point.source_index].contents,
         ) catch bun.outOfMemory();
 
+        // There are some cases where invalid HTML will make it so </head> is
+        // never emitted, even if the literal text DOES appear. These cases are
+        // along the lines of having a self-closing tag for a non-self closing
+        // element. In this case, head_end_tag_index will be 0, and a simple
+        // search through the page is done to find the "</head>"
+        // See https://github.com/oven-sh/bun/issues/17554
+        if (html_loader.head_end_tag_index == 0) {
+            html_loader.head_end_tag_index = @intCast(bun.strings.indexOf(html_loader.output.items, "</head>") orelse
+                // inject script tags and things at the end of the file.
+                html_loader.output.items.len);
+        }
+
         return .{
             .html = .{
                 .code = html_loader.output.items,
                 .source_index = chunk.entry_point.source_index,
                 .offsets = .{
                     .head_end_tag = html_loader.head_end_tag_index,
-                    .body_end_tag = html_loader.body_end_tag_index,
                 },
             },
         };
@@ -16672,8 +16669,6 @@ pub const CompileResult = union(enum) {
         offsets: struct {
             /// The index of the "<" byte of "</head>"
             head_end_tag: u32,
-            /// The index of the "<" byte of "</body>"
-            body_end_tag: u32,
         },
     },
 

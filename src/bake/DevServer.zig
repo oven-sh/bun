@@ -1422,11 +1422,10 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     assert(html.html_bundle.dev_server_id.unwrap() == route_bundle_index);
     assert(html.cached_response == null);
     const head_end_tag_index = (html.head_end_tag_index.unwrap() orelse unreachable).get();
-    const body_end_tag_index = (html.body_end_tag_index.unwrap() orelse unreachable).get();
     const bundled_html = html.bundled_html_text orelse unreachable;
 
-    // The bundler records two offsets in development mode, splitting the HTML
-    // file into three chunks. DevServer is able to insert style/script tags
+    // The bundler records an offsets in development mode, splitting the HTML
+    // file into two chunks. DevServer is able to insert style/script tags
     // using the information available in IncrementalGraph. This approach
     // allows downstream files to update without re-bundling the HTML file.
     //
@@ -1437,11 +1436,10 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     // {head_end_tag_index}</head>
     // <body>
     //   <div id="root"></div>
-    // {body_end_tag_index}</body>
+    // </body>
     // </html>
     const before_head_end = bundled_html[0..head_end_tag_index];
-    const before_body_end = bundled_html[head_end_tag_index..body_end_tag_index];
-    const after_body_end = bundled_html[body_end_tag_index..];
+    const after_head_end = bundled_html[head_end_tag_index..];
 
     var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.html_bundle.path), ".html");
     // TODO: function for URL safe chars
@@ -1487,9 +1485,8 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&route_bundle.client_script_generation), .lower));
     array.appendSliceAssumeCapacity(".js\"></script>");
 
-    array.appendSliceAssumeCapacity(before_body_end);
     // DevServer used to put the script tag before the body end, but to match the regular bundler it does not do this.
-    array.appendSliceAssumeCapacity(after_body_end);
+    array.appendSliceAssumeCapacity(after_head_end);
     assert(array.items.len == array.capacity); // incorrect memory allocation size
     return array.items;
 }
@@ -2198,7 +2195,6 @@ pub fn finalizeBundle(
         html.bundled_html_text = compile_result.code;
 
         html.head_end_tag_index = .init(compile_result.offsets.head_end_tag);
-        html.body_end_tag_index = .init(compile_result.offsets.body_end_tag);
 
         chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
     }

@@ -369,6 +369,8 @@ export class Dev {
       storeHotChunks: options.storeHotChunks,
       hmr: this.nodeEnv === "development",
     });
+    const onPanic = () => client.output.emit("panic");
+    this.output.on("panic", onPanic);
     if (this.nodeEnv === "development") {
       try {
         await client.output.waitForLine(hmrClientInitRegex);
@@ -380,6 +382,7 @@ export class Dev {
     }
     this.connectedClients.add(client);
     client.on("exit", () => {
+      this.output.off("panic", onPanic);
       this.connectedClients.delete(client);
     });
     return client;

@@ -1224,10 +1224,7 @@ const ParseError = OOM || error{
     UnexpectedResolution,
 };
 
-const PkgMapEntry = struct {
-    pkg_id: PackageID,
-    bundled: bool,
-};
+const PkgPathSet = PkgMap(void);
 
 fn PkgMap(comptime T: type) type {
     return struct {
@@ -1549,6 +1546,9 @@ pub fn parseIntoBinaryLockfile(
     var optional_peers_buf: std.AutoHashMapUnmanaged(u64, void) = .{};
     defer optional_peers_buf.deinit(allocator);
 
+    var bundled_pkgs = PkgPathSet.init(allocator);
+    defer bundled_pkgs.deinit();
+
     const root_pkg_exr = maybe_root_pkg orelse {
         try log.addError(source, workspaces_obj.loc, "Expected root package");
         return error.InvalidWorkspaceObject;
@@ -1560,7 +1560,7 @@ pub fn parseIntoBinaryLockfile(
             return error.InvalidWorkspaceObject;
         } else null;
 
-        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg_exr, &string_buf, log, source, &optional_peers_buf);
+        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg_exr, &string_buf, log, source, &optional_peers_buf, false, {}, {});
 
         var root_pkg: BinaryLockfile.Package = .{};
 
@@ -1606,7 +1606,7 @@ pub fn parseIntoBinaryLockfile(
         try lockfile.getOrPutID(0, root_pkg.name_hash);
     }
 
-    var pkg_map = PkgMap(PkgMapEntry).init(allocator);
+    var pkg_map = PkgMap(PackageID).init(allocator);
     defer pkg_map.deinit();
 
     const workspace_pkgs_off: u32 = 1;
@@ -1634,7 +1634,7 @@ pub fn parseIntoBinaryLockfile(
                 pkg.name = try string_buf.appendWithHash(name, name_hash);
                 pkg.name_hash = name_hash;
 
-                const off, const len = try parseAppendDependencies(lockfile, allocator, &value, &string_buf, log, source, &optional_peers_buf);
+                const off, const len = try parseAppendDependencies(lockfile, allocator, &value, &string_buf, log, source, &optional_peers_buf, false, {}, {});
 
                 pkg.dependencies = .{ .off = off, .len = len };
                 pkg.resolutions = .{ .off = off, .len = len };
@@ -1646,8 +1646,7 @@ pub fn parseIntoBinaryLockfile(
                 }
 
                 // there should be no duplicates
-                const bundled = false;
-                const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items, bundled);
+                const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
                 const entry = try pkg_map.getOrPut(name);
                 if (entry.found_existing) {
@@ -1655,12 +1654,7 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidWorkspaceObject;
                 }
 
-                entry.value_ptr.* = .{
-                    .pkg_id = pkg_id,
-
-                    // direct dependencies of workspaces are never bundled
-                    .bundled = false,
-                };
+                entry.value_ptr.* = pkg_id;
 
                 workspace_pkgs_len += 1;
                 continue :workspaces;
@@ -1681,9 +1675,6 @@ pub fn parseIntoBinaryLockfile(
             try log.addError(source, pkgs_expr.loc, "Expected an object");
             return error.InvalidPackagesObject;
         }
-
-        var bundle_roots = PkgMap(void).init(allocator);
-        defer bundle_roots.deinit();
 
         // find the bundle roots.
         for (pkgs_expr.data.e_object.properties.slice()) |prop| {
@@ -1706,8 +1697,7 @@ pub fn parseIntoBinaryLockfile(
             const bundled_expr = maybe_info_obj.get("bundled") orelse continue;
             const bundled = bundled_expr.asBool() orelse continue;
             if (!bundled) continue;
-            const parent_pkg_path = PkgPath.parent(pkg_path) orelse continue;
-            try bundle_roots.put(parent_pkg_path, {});
+            try bundled_pkgs.put(pkg_path, {});
         }
 
         for (pkgs_expr.data.e_object.properties.slice()) |prop| {
@@ -1807,10 +1797,7 @@ pub fn parseIntoBinaryLockfile(
                             if (comptime Environment.isDebug) {
                                 bun.assertWithLocation(!strings.eqlLong(pkg_path, pkg_names[workspace_pkg_id].slice(string_buf.bytes.items), true), @src());
                             }
-                            entry.value_ptr.* = .{
-                                .pkg_id = workspace_pkg_id,
-                                .bundled = false,
-                            };
+                            entry.value_ptr.* = workspace_pkg_id;
                         }
                     }
 
@@ -1820,7 +1807,6 @@ pub fn parseIntoBinaryLockfile(
             }
 
             var pkg: BinaryLockfile.Package = .{};
-            var bundled = false;
 
             // dependencies, os, cpu, libc
             switch (res.tag) {
@@ -1841,16 +1827,18 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     }
 
-                    if (deps_os_cpu_libc_bin_bundle_obj.get("bundled")) |bundled_expr| {
-                        if (!bundled_expr.isBoolean()) {
-                            try log.addError(source, bundled_expr.loc, "Expected a boolean");
-                            return error.InvalidPackageInfo;
-                        }
-
-                        bundled = bundled_expr.data.e_boolean.value;
-                    }
-
-                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_bin_bundle_obj, &string_buf, log, source, &optional_peers_buf);
+                    const off, const len = try parseAppendDependencies(
+                        lockfile,
+                        allocator,
+                        deps_os_cpu_libc_bin_bundle_obj,
+                        &string_buf,
+                        log,
+                        source,
+                        &optional_peers_buf,
+                        true,
+                        pkg_path,
+                        &bundled_pkgs,
+                    );
 
                     pkg.dependencies = .{ .off = off, .len = len };
                     pkg.resolutions = .{ .off = off, .len = len };
@@ -1935,11 +1923,7 @@ pub fn parseIntoBinaryLockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
-            const pkg_id = try lockfile.appendPackageDedupe(
-                &pkg,
-                string_buf.bytes.items,
-                bundled or bundle_roots.containsParentOf(pkg_path),
-            );
+            const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
             const entry = try pkg_map.getOrPut(pkg_path);
             if (entry.found_existing) {
@@ -1947,10 +1931,7 @@ pub fn parseIntoBinaryLockfile(
                 return error.InvalidPackageKey;
             }
 
-            entry.value_ptr.* = .{
-                .pkg_id = pkg_id,
-                .bundled = bundled,
-            };
+            entry.value_ptr.* = pkg_id;
         }
 
         try lockfile.buffers.resolutions.ensureTotalCapacityPrecise(allocator, lockfile.buffers.dependencies.items.len);
@@ -1972,7 +1953,7 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
 
-                const entry = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
+                const res_id = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
                     if (dep.behavior.optional) {
                         continue;
                     }
@@ -1980,7 +1961,7 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
-                mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
+                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
             }
         }
 
@@ -2003,7 +1984,7 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     };
 
-                    const entry = pkg_map.get(workspace_node_modules) orelse pkg_map.get(dep_name) orelse {
+                    const res_id = pkg_map.get(workspace_node_modules) orelse pkg_map.get(dep_name) orelse {
                         if (dep.behavior.optional) {
                             continue;
                         }
@@ -2011,7 +1992,7 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     };
 
-                    mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
+                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
                 }
             }
         }
@@ -2022,9 +2003,9 @@ pub fn parseIntoBinaryLockfile(
 
             const pkg_path = key.asString(allocator).?;
 
-            const pkg_id = (pkg_map.get(pkg_path) orelse {
+            const pkg_id = pkg_map.get(pkg_path) orelse {
                 return error.InvalidPackagesObject;
-            }).pkg_id;
+            };
 
             // find resolutions. iterate up to root through the pkg path.
             const deps = pkg_deps[pkg_id];
@@ -2032,7 +2013,7 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
 
-                const entry = pkg_map.findResolution(pkg_path, dep, lockfile.buffers.string_bytes.items, &path_buf) catch |err| switch (err) {
+                const res_id = pkg_map.findResolution(pkg_path, dep, lockfile.buffers.string_bytes.items, &path_buf) catch |err| switch (err) {
                     error.InvalidPackageKey => {
                         try log.addError(source, key.loc, "Invalid package path");
                         return error.InvalidPackageKey;
@@ -2046,7 +2027,7 @@ pub fn parseIntoBinaryLockfile(
                     },
                 };
 
-                mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
+                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
             }
         }
 
@@ -2061,10 +2042,8 @@ pub fn parseIntoBinaryLockfile(
     }
 }
 
-fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_map_entry: *const PkgMapEntry, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution) void {
-    const pkg_id = pkg_map_entry.pkg_id;
+fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution) void {
     lockfile.buffers.resolutions.items[dep_id] = pkg_id;
-    dep.behavior.bundled = pkg_map_entry.bundled;
 
     if (lockfile.text_lockfile_version != .v0) {
         const res = &pkg_resolutions[pkg_id];
@@ -2112,6 +2091,9 @@ fn parseAppendDependencies(
     log: *logger.Log,
     source: *const logger.Source,
     optional_peers_buf: *std.AutoHashMapUnmanaged(u64, void),
+    comptime check_for_bundled: bool,
+    pkg_path: if (check_for_bundled) string else void,
+    bundled_pkgs: if (check_for_bundled) *const PkgPathSet else void,
 ) ParseError!struct { u32, u32 } {
     defer optional_peers_buf.clearRetainingCapacity();
 
@@ -2130,6 +2112,8 @@ fn parseAppendDependencies(
             try optional_peers_buf.put(allocator, name_hash, {});
         }
     }
+
+    var path_buf: if (check_for_bundled) bun.PathBuffer else void = undefined;
 
     const off = lockfile.buffers.dependencies.items.len;
     inline for (workspace_dependency_groups) |dependency_group| {
@@ -2160,7 +2144,7 @@ fn parseAppendDependencies(
                 const version = try buf.append(version_str);
                 const version_sliced = version.sliced(buf.bytes.items);
 
-                const dep: Dependency = .{
+                var dep: Dependency = .{
                     .name = name.value,
                     .name_hash = name.hash,
                     .behavior = if (group_behavior.peer and optional_peers_buf.contains(name.hash))
@@ -2180,6 +2164,18 @@ fn parseAppendDependencies(
                         return error.InvalidDependencyVersion;
                     },
                 };
+
+                if (comptime check_for_bundled) {
+                    @memcpy(path_buf[0..pkg_path.len], pkg_path);
+                    var remain = path_buf[pkg_path.len..];
+                    remain[0] = '/';
+                    remain = remain[1..];
+                    @memcpy(remain[0..name_str.len], name_str);
+                    const bundled_location = path_buf[0 .. pkg_path.len + 1 + name_str.len];
+                    if (bundled_pkgs.contains(bundled_location)) {
+                        dep.behavior.bundled = true;
+                    }
+                }
 
                 try lockfile.buffers.dependencies.append(allocator, dep);
             }

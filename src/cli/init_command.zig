@@ -822,14 +822,12 @@ pub const InitCommand = struct {
                 }
 
                 if (fields.entry_point.len > 0 and !did_load_package_json) {
-                    Output.pretty("\nTo get started, run:\n\n\t", .{});
-                    if (strings.containsAny(
-                        " \"'",
-                        fields.entry_point,
-                    )) {
-                        Output.prettyln("<cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                    Output.pretty("\nTo get started, run:\n\n    ", .{});
+
+                    if (strings.containsAny(" \"'", fields.entry_point)) {
+                        Output.pretty("<cyan>bun run {any}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
                     } else {
-                        Output.prettyln("<cyan>bun run {s}<r>", .{fields.entry_point});
+                        Output.pretty("<cyan>bun run {s}<r>\n\n", .{fields.entry_point});
                     }
                 }
 

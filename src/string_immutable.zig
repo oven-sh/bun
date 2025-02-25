@@ -6546,12 +6546,12 @@ pub const unicode = struct {
                         0b1110_0000...0b1110_1111 => 3,
                         0b1111_0000...0b1111_0111 => 4,
                         else => {
-                            if (encoding.isAssert()) unreachable;
+                            if (comptime encoding.isAssert()) unreachable;
                             break :failure;
                         },
                     };
                     if (len > slice.len) {
-                        if (encoding.isAssert()) unreachable;
+                        if (comptime encoding.isAssert()) unreachable;
                         // this means (0b11110)(0b10)(0b10)(0b0) will read as (?)(?)(?)(ascii)
                         // alternatively, here we could read the actual number of trail bytes like TextDecoder does
                         // to convert to (?)(ascii), two fewer 0xFFFD bytes
@@ -6562,13 +6562,13 @@ pub const unicode = struct {
 
                     const s1 = slice[1];
                     if ((s1 & 0xC0) != 0x80) {
-                        if (encoding.isAssert()) unreachable;
+                        if (comptime encoding.isAssert()) unreachable;
                         break :failure;
                     }
                     if (len == 2) {
                         const cp = @as(T, s0 & 0x1F) << 6 | @as(T, s1 & 0x3F);
                         if (cp < 0x80) {
-                            if (encoding.isAssert()) unreachable;
+                            if (comptime encoding.isAssert()) unreachable;
                             break :failure;
                         }
                         return .{ .codepoint = cp, .advance = 2 };
@@ -6576,18 +6576,18 @@ pub const unicode = struct {
 
                     const s2 = slice[2];
                     if ((s2 & 0xC0) != 0x80) {
-                        if (encoding.isAssert()) unreachable;
+                        if (comptime encoding.isAssert()) unreachable;
                         break :failure;
                     }
                     if (len == 3) {
                         const cp = (@as(T, s0 & 0x0F) << 12) | (@as(T, s1 & 0x3F) << 6) | (@as(T, s2 & 0x3F));
                         if (cp < 0x800) {
-                            if (encoding.isAssert()) unreachable;
+                            if (comptime encoding.isAssert()) unreachable;
                             break :failure;
                         }
                         if (!encoding.isWtf8()) {
                             if (cp >= first_high_surrogate and cp <= last_high_surrogate or cp >= first_low_surrogate and cp <= last_low_surrogate) {
-                                if (encoding.isAssert()) unreachable;
+                                if (comptime encoding.isAssert()) unreachable;
                                 break :failure;
                             }
                         }
@@ -6596,13 +6596,13 @@ pub const unicode = struct {
 
                     const s3 = slice[3];
                     if ((s3 & 0xC0) != 0x80) {
-                        if (encoding.isAssert()) unreachable;
+                        if (comptime encoding.isAssert()) unreachable;
                         break :failure;
                     }
                     {
                         const cp = (@as(T, s0 & 0x07) << 18) | (@as(T, s1 & 0x3F) << 12) | (@as(T, s2 & 0x3F) << 6) | (@as(T, s3 & 0x3F));
                         if (cp < 0x10000 or cp > 0x10FFFF) {
-                            if (encoding.isAssert()) unreachable;
+                            if (comptime encoding.isAssert()) unreachable;
                             break :failure;
                         }
                         return .{ .codepoint = cp, .advance = 4 };

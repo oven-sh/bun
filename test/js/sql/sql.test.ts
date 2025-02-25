@@ -3230,6 +3230,55 @@ if (isDockerEnabled()) {
     }
     {
       const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a numeric NOT NULL,
+        b numeric NOT NULL,
+        c numeric NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values (1, 23, 256)`;
+      const binary_mode = await reserved`select * from ${table_name} where a = ${1}`;
+      expect(binary_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+    }
+
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a bigint NOT NULL,
+        b bigint NOT NULL,
+        c bigint NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values (1, 23, 256)`;
+      const binary_mode = await reserved`select * from ${table_name} where a = ${1}`;
+      expect(binary_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+    }
+
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a date NOT NULL,
+        b date NOT NULL,
+        c date NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values ('2025-01-01', '2025-01-02', '2025-01-03')`;
+      const binary_mode = await reserved`select * from ${table_name} where a >= ${"2025-01-01"}`;
+      expect(binary_mode).toEqual([
+        { a: new Date("2025-01-01"), b: new Date("2025-01-02"), c: new Date("2025-01-03") },
+      ]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: new Date("2025-01-01"), b: new Date("2025-01-02"), c: new Date("2025-01-03") }]);
+    }
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
       await reserved`CREATE TEMPORARY TABLE ${table_name} (a integer[] null, b smallint not null)`;
       await reserved`insert into ${table_name} values (null, 1), (array[1, 2, 3], 2), (array[4, 5, 6], 3)`;
       const text_mode = await reserved`select * from ${table_name}`;

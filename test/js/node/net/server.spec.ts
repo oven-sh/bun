@@ -1,6 +1,7 @@
 import net from "node:net";
 import type { SocketConnectOpts } from "node:net";
 import EventEmitter from "node:events";
+import { isWindows } from "harness";
 
 describe("net.createServer(connectionListener)", () => {
   const onListen = jest.fn((socket: net.Socket) => {
@@ -113,7 +114,8 @@ describe("new net.Server()", () => {
       expect(server.keepAlive).toBe(false);
       expect(server.keepAliveInitialDelay).toBe(0);
     });
-    it("has a high water mark of 65,536", () => expect(server.highWaterMark).toBe(65_536));
+    it.skipIf(isWindows)("has a high water mark of 65,536 on posix", () =>    expect(server.highWaterMark).toBe(65_536));
+    it.skipIf(!isWindows)("has a high water mark of 16,384 on Windows", () => expect(server.highWaterMark).toBe(16_384));
     it("has no event listeners", () => {
       expect(server._eventsCount).toBe(0);
       expect(server._events).toEqual({});

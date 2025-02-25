@@ -39,228 +39,6 @@ const DependencyIDSlice = BinaryLockfile.DependencyIDSlice;
 const Bin = Install.Bin;
 const ExternalString = Semver.ExternalString;
 
-/// A property key in the `packages` field of the lockfile
-pub const PkgPath = struct {
-    raw: string,
-    depth: u8,
-
-    /// raw must be valid
-    /// fills buf with the path to dependency in node_modules.
-    /// e.g. loose-envify/js-tokens@4.0.0 -> node_modules/loose-envify/node_modules/js-tokens
-    pub fn path(this: PkgPath, path_buf: []u8, comptime sep: u8) stringZ {
-        var buf = path_buf;
-        var remain = this.raw;
-
-        const end = loop: while (true) {
-            @memcpy(buf[0.."node_modules/".len], "node_modules" ++ [1]u8{sep});
-            buf = buf["node_modules/".len..];
-
-            var at = strings.indexOfChar(remain, '@') orelse unreachable;
-            var slash = strings.indexOfChar(remain, '/') orelse break :loop at;
-
-            if (at == 0) {
-                // scoped package, find next '@' and '/'
-                at += 1 + (strings.indexOfChar(remain[1..], '@') orelse unreachable);
-                slash += 1 + (strings.indexOfChar(remain[slash + 1 ..], '/') orelse {
-                    break :loop at;
-                });
-            }
-
-            if (at < slash) {
-                // slash is in the version
-                break :loop at;
-            }
-
-            @memcpy(buf[0..slash], remain[0..slash]);
-            buf[slash] = sep;
-            buf = buf[slash + 1 ..];
-            remain = remain[slash + 1 ..];
-        };
-
-        @memcpy(buf[0..end], remain[0..end]);
-        buf = buf[end..];
-        buf[0] = 0;
-        return path_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(path_buf.ptr) :0];
-    }
-
-    pub fn reverseIterator(input: string) Iterator {
-        return .{
-            .input = input,
-            .i = @intCast(input.len),
-        };
-    }
-
-    pub const ReverseIterator = struct {
-        input: string,
-        i: u32,
-
-        pub fn next(this: *ReverseIterator) error{InvalidPackageKey}!?string {
-            if (this.i == 0) return null;
-
-            const remain = this.input[0..this.i];
-            if (remain.len == 0) return error.InvalidPackageKey;
-
-            const slash = strings.indexOfCharNeg(remain, '/') orelse {
-                // the end
-                const name = remain;
-                this.i = 0;
-                return name;
-            };
-
-            // if this is the second component of a scoped package an '@'
-            // will begin the next
-            const at = strings.indexOfCharNeg(remain, '@') orelse {
-                const name = this.input[slash + 1 .. this.i];
-                this.i = slash;
-                return name;
-            };
-
-            if (at < slash) {
-                return error.InvalidPackageKey;
-            }
-
-            const next_slash = strings.indexOfCharNeg(remain[0..slash]) orelse {
-                // if `@` exists there must be another slash unless the first package
-                // is a scoped package
-                if (at != 0) {
-                    return error.InvalidPackageKey;
-                }
-
-                const name = remain;
-                this.i = 0;
-                return name;
-            };
-
-            if (next_slash + 1 != at) {
-                return error.InvalidPackageKey;
-            }
-
-            const name = this.input[next_slash + 1 .. this.i];
-            this.i = next_slash;
-            return name;
-        }
-
-        pub fn first(this: *ReverseIterator) error{InvalidPackageKey}!string {
-            bun.debugAssert(this.i == this.input.len);
-
-            return this.next() orelse return error.InvalidPackageKey;
-        }
-    };
-
-    // does not validate, just returns null for invalid paths
-    pub fn parent(input: string) ?string {
-        if (input.len == 0) {
-            return null;
-        }
-
-        const slash = strings.lastIndexOfChar(input, '/') orelse {
-            // top level key
-            // "jquery"
-            return null;
-        };
-
-        const at = strings.lastIndexOfChar(input, '@') orelse {
-            // no scoped packages in key
-            // "one/two/three/jquery/four"
-            return input[0..slash];
-        };
-
-        const next_slash = strings.lastIndexOfChar(input[0..slash], '/') orelse {
-            // there's a slash and @. it's either:
-            // "@types/bun"
-            // or invalid:
-            // "blah@hello/world"
-            return null;
-        };
-
-        if (next_slash > at) {
-            // the @ is before the next slash, meaning current
-            // name is not scoped
-            // "foo/@types/bun/jquery"
-            return input[0..slash];
-        }
-
-        if (next_slash + 1 != at) {
-            // invalid scoped package name
-            // "foo/hi@blah/bar"
-            return null;
-        }
-
-        // valid scoped package name
-        // "foo/hi/@blah/bar"
-        return input[0..next_slash];
-    }
-
-    pub fn iterator(input: string) Iterator {
-        return .{
-            .input = input,
-            .i = 0,
-        };
-    }
-
-    pub const Iterator = struct {
-        input: string,
-        i: u32,
-        version_offset: ?u32 = null,
-
-        pub fn next(this: *Iterator) error{InvalidPackageKey}!?string {
-            if (this.i == this.input.len) return null;
-
-            var remain = this.input[this.i..];
-
-            var maybe_at = strings.indexOfChar(remain, '@');
-            var slash = strings.indexOfChar(remain, '/') orelse {
-                // no slashes left, it's the last dependency name.
-                // '@' will only exist if '/' exists (scoped package)
-                if (maybe_at != null) return error.InvalidPackageKey;
-                this.i = @intCast(this.input.len);
-                return remain;
-            };
-
-            if (maybe_at == null) {
-                if (slash + 1 == this.input.len) return error.InvalidPackageKey;
-                this.i += slash + 1;
-                return remain[0..slash];
-            }
-
-            if (maybe_at.? == 0) {
-                // scoped package, find next '/' and '@' if it exists
-                maybe_at = strings.indexOfChar(remain[1..], '@');
-                slash += 1 + (strings.indexOfChar(remain[slash + 1 ..], '/') orelse {
-                    if (maybe_at != null) return error.InvalidPackageKey;
-                    this.i = @intCast(this.input.len);
-                    return remain;
-                });
-            }
-
-            if (maybe_at) |at| {
-                if (at + 1 < slash) {
-                    // both '@' and '/' exist and it's not a scoped package, so
-                    // '@' must be greater than '/'
-                    return error.InvalidPackageKey;
-                }
-            }
-
-            this.i += slash + 1;
-            return remain[0..slash];
-        }
-
-        /// There will always be at least one component to this path. Return
-        /// an error if none is found (empty string)
-        pub fn first(this: *Iterator) error{InvalidPackageKey}!string {
-            bun.assertWithLocation(this.i == 0, @src());
-            return try this.next() orelse error.InvalidPackageKey;
-        }
-    };
-
-    pub fn fromLockfile(input: string) PkgPath {
-        return .{
-            .raw = input,
-            .depth = 0,
-        };
-    }
-};
-
 pub const Version = enum(u32) {
     v0 = 0,
 
@@ -1228,13 +1006,13 @@ const PkgPathSet = PkgMap(void);
 
 fn PkgMap(comptime T: type) type {
     return struct {
-        map: bun.StringArrayHashMap(T),
+        map: bun.StringHashMap(T),
 
         pub const Entry = T;
 
         pub fn init(allocator: std.mem.Allocator) @This() {
             return .{
-                .map = bun.StringArrayHashMap(T).init(allocator),
+                .map = bun.StringHashMap(T).init(allocator),
             };
         }
 
@@ -1261,19 +1039,6 @@ fn PkgMap(comptime T: type) type {
 
         pub fn contains(this: *const @This(), path: string) bool {
             return this.map.contains(path);
-        }
-
-        // if pkg_path is invalid false is returned
-        pub fn containsParentOf(this: *const @This(), pkg_path: string) bool {
-            var remain = pkg_path;
-            while (PkgPath.parent(remain)) |parent_pkg_path| {
-                if (this.contains(parent_pkg_path)) {
-                    return true;
-                }
-                remain = parent_pkg_path;
-            }
-
-            return false;
         }
 
         pub fn findResolution(this: *const @This(), pkg_path: string, dep: *const Dependency, string_buf: string, path_buf: []u8) ResolveError!T {
@@ -1677,6 +1442,17 @@ pub fn parseIntoBinaryLockfile(
         }
 
         // find the bundle roots.
+        //
+        // Resolving bundled dependencies:
+        // bun.lock marks package keys with { bundled: true } if they originate
+        // from a bundled dependency. Transitive dependencies of bundled dependencies
+        // will not have a bundled property, and `bun install` expects them to not
+        // have bundled behavior set. In order to resolve these dependencies correctly,
+        // first loop through each key here and add the key to a map if it's bundled.
+        // Then when parsing the dependencies, lookup the package key + dep name from
+        // the bundled map, and mark the dependency bundled if it exists. This works
+        // because package's direct bundled dependencies can only exist at the top
+        // level of it's node_modules.
         for (pkgs_expr.data.e_object.properties.slice()) |prop| {
             const key = prop.key.?;
             const value = prop.value.?;

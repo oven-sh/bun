@@ -2837,11 +2837,11 @@ pub const PostgresSQLConnection = struct {
             return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
         }
 
-        pub fn fromBytes(binary: bool, request_is_binary: bool, bigint: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
-            switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
+        pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
+            switch (oid) {
                 // TODO: .int2_array, .float8_array
                 inline .int4_array, .float4_array => |tag| {
-                    if (binary or request_is_binary) {
+                    if (binary) {
                         if (bytes.len < 16) {
                             return error.InvalidBinaryData;
                         }
@@ -3296,8 +3296,9 @@ pub const PostgresSQLConnection = struct {
                 if (is_raw) {
                     cell.* = DataCell.raw(optional_bytes);
                 } else {
+                    const tag = @as(types.Tag, @enumFromInt(@as(short, @intCast(oid))));
                     cell.* = if (optional_bytes) |data|
-                        try DataCell.fromBytes(field.binary, this.binary, this.bigint, oid, data.slice(), this.globalObject)
+                        try DataCell.fromBytes((field.binary or this.binary) and tag.isBinaryFormatSupported(), this.bigint, tag, data.slice(), this.globalObject)
                     else
                         DataCell{
                             .tag = .null,

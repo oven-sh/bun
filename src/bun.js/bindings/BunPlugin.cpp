@@ -266,18 +266,6 @@ static inline JSC::JSValue setupBunPlugin(JSC::VM& vm, JSC::JSGlobalObject* glob
     ASSERT(options);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    if (options->isCallable()) {
-        JSC::MarkedArgumentBuffer argList;
-        auto callData = getCallData(options);
-        JSC::JSValue ret = JSC::call(globalObject, JSValue(options), callData, JSValue(globalObject), argList);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        options = ret.getObject();
-        if (!options) {
-            JSC::throwTypeError(globalObject, throwScope, "plugin needs an object as first argument"_s);
-            return {};
-        }
-    }
-
     JSC::JSValue setupFunctionValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "setup"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (!setupFunctionValue || setupFunctionValue.isUndefinedOrNull() || !setupFunctionValue.isCell() || !setupFunctionValue.isCallable()) {

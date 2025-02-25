@@ -3239,7 +3239,7 @@ CREATE TABLE ${table_name} (
         expect(e.message || e).toBe("rollback");
       });
   });
-  test("binary detection of unspported types", async () => {
+  test("binary detection of unsupported types", async () => {
     using reserved = await sql.reserve();
     // this test should return the same result in text and binary mode, using text mode for this types
     {

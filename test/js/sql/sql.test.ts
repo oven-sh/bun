@@ -3211,8 +3211,9 @@ if (isDockerEnabled()) {
   //   return ['12233445566778', xs.sort().join('')]
   // })
 
-  test("binary detection", async () => {
+  test("binary detection of unspported types", async () => {
     using reserved = await sql.reserve();
+    // this test should return the same result in text and binary mode, using text mode for this types
     {
       const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
 
@@ -3277,6 +3278,7 @@ if (isDockerEnabled()) {
       const text_mode = await reserved`select * from ${table_name}`;
       expect(text_mode).toEqual([{ a: new Date("2025-01-01"), b: new Date("2025-01-02"), c: new Date("2025-01-03") }]);
     }
+    // this is supported in binary mode and also in text mode
     {
       const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
       await reserved`CREATE TEMPORARY TABLE ${table_name} (a integer[] null, b smallint not null)`;

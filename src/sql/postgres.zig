@@ -2840,7 +2840,8 @@ pub const PostgresSQLConnection = struct {
         }
 
         pub fn fromBytes(binary: bool, bigint: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
-            switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
+            const oid_tag = if (std.math.maxInt(short) < oid) @as(types.Tag, @enumFromInt(@as(short, @intCast(oid)))) else .text;
+            switch (oid_tag) {
                 // TODO: .int2_array, .float8_array
                 inline .int4_array, .float4_array => |tag| {
                     if (binary) {

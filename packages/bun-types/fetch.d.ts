@@ -39,8 +39,6 @@ var Headers: {
   new (init?: Bun.HeadersInit): Headers;
 };
 
-// type _Request = import("undici-types").Request;
-// interface Request extends _Request {
 interface Request {
   headers: Headers;
 }
@@ -52,9 +50,6 @@ var Request: {
   new (requestInfo: Request, requestInit?: RequestInit): Request;
 };
 
-// type _Response = import("undici-types").Response;
-// interface Response extends _Response {}
-interface Response {}
 var Response: {
   new (body?: Bun.BodyInit | null | undefined, init?: Bun.ResponseInit | undefined): Response;
   /**
@@ -81,6 +76,7 @@ var Response: {
    * @link https://github.com/whatwg/fetch/issues/1389
    */
   json(body?: any, options?: Bun.ResponseInit | number): Response;
+
   /**
    * Create a new {@link Response} that redirects to url
    *
@@ -89,6 +85,7 @@ var Response: {
    */
   // tslint:disable-next-line:unified-signatures
   redirect(url: string, status?: number): Response;
+
   /**
    * Create a new {@link Response} that redirects to url
    *
@@ -97,6 +94,7 @@ var Response: {
    */
   // tslint:disable-next-line:unified-signatures
   redirect(url: string, options?: Bun.ResponseInit): Response;
+
   /**
    * Create a new {@link Response} that has a network error
    */

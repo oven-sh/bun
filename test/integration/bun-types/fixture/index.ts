@@ -46,11 +46,19 @@ const req1 = new Request("", {
   body: "",
 });
 
-new ReadableStream({});
+req1.body;
+req1.json();
+req1.formData();
+req1.arrayBuffer();
+req1.blob();
+req1.text();
+req1.arrayBuffer();
+req1.blob();
 
 req1.headers;
-
 req1.headers.toJSON();
+
+new ReadableStream({});
 
 const body = await fetch(req1);
 
@@ -61,6 +69,23 @@ fetch.preconnect(new URL(""));
 URL.canParse;
 URL.createObjectURL;
 URL.revokeObjectURL;
+
+Response.json();
+Response.redirect("bun.sh", 300);
+Response.error();
+Response.redirect("bun.sh", {
+  status: 200,
+  headers: new Headers(
+    (() => {
+      const h = new Headers();
+      h.set("key", "value");
+      h.toJSON();
+      return h;
+    })(),
+  ),
+});
+
+Bun.fetch.preconnect;
 
 Bun.fetch("", {
   proxy: "",

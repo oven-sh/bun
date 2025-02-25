@@ -125,6 +125,7 @@ interface CodePreview {
 
 interface RemappedFrame extends Frame {}
 
+declare const OVERLAY_CSS: string;
 /**
  * Initial mount is done lazily. The modal starts invisible, controlled
  * by `setModalVisible`.
@@ -144,7 +145,7 @@ function mountModal() {
   });
   const shadow = domShadowRoot.attachShadow({ mode: "open" });
   const sheet = new CSSStyleSheet();
-  sheet.replace(css("client/overlay.css", IS_BUN_DEVELOPMENT));
+  sheet.replace(OVERLAY_CSS);
   shadow.adoptedStyleSheets = [sheet];
 
   const root = elem("div", { class: "root" }, [

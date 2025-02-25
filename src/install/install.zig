@@ -4599,7 +4599,8 @@ pub const PackageManager = struct {
             if (this.lockfile.package_index.get(name_hash)) |index| {
                 const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
                 switch (index) {
-                    .id => |existing_id| {
+                    .one => |one| {
+                        const existing_id = one.id;
                         if (existing_id < resolutions.len) {
                             const existing_resolution = resolutions[existing_id];
                             if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
@@ -4632,8 +4633,9 @@ pub const PackageManager = struct {
                             }
                         }
                     },
-                    .ids => |list| {
-                        for (list.items) |existing_id| {
+                    .multiple => |list| {
+                        for (list.items) |existing| {
+                            const existing_id = existing.id;
                             if (existing_id < resolutions.len) {
                                 const existing_resolution = resolutions[existing_id];
                                 if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
@@ -4645,11 +4647,11 @@ pub const PackageManager = struct {
                             }
                         }
 
-                        if (list.items[0] < resolutions.len) {
-                            const res_tag = resolutions[list.items[0]].tag;
+                        if (list.items[0].id < resolutions.len) {
+                            const res_tag = resolutions[list.items[0].id].tag;
                             const ver_tag = version.tag;
                             if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
-                                const existing_package_id = list.items[0];
+                                const existing_package_id = list.items[0].id;
                                 const existing_package = this.lockfile.packages.get(existing_package_id);
                                 this.log.addWarningFmt(
                                     null,
@@ -4661,7 +4663,7 @@ pub const PackageManager = struct {
                                         existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
                                     },
                                 ) catch unreachable;
-                                successFn(this, dependency_id, list.items[0]);
+                                successFn(this, dependency_id, list.items[0].id);
                                 return .{
                                     // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
                                     .package = this.lockfile.packages.get(existing_package_id),
@@ -4972,8 +4974,8 @@ pub const PackageManager = struct {
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
                 const dep = dependency;
                 const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                    .id => |p| p,
-                    .ids => |ps| ps.items[0], // TODO is this correct
+                    .one => |one| one.id,
+                    .multiple => |multiple| multiple.items[0].id, // TODO is this correct
                 };
                 const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
                 const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
@@ -5027,8 +5029,8 @@ pub const PackageManager = struct {
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
                 const dep = this.lockfile.buffers.dependencies.items[dependency_id];
                 const pkg_id = switch (this.lockfile.package_index.get(dep.name_hash) orelse @panic("Package not found")) {
-                    .id => |p| p,
-                    .ids => |ps| ps.items[0], // TODO is this correct
+                    .one => |one| one.id,
+                    .multiple => |multiple| multiple.items[0].id, // TODO is this correct
                 };
                 const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
                 const pt = PatchTask.newApplyPatchHash(this, pkg_id, patch_hash, h);
@@ -11502,9 +11504,10 @@ pub const PackageManager = struct {
                     );
                     Global.crash();
                 }) {
-                    .id => |id| lockfile.packages.get(id),
-                    .ids => |ids| id: {
-                        for (ids.items) |id| {
+                    .one => |one| lockfile.packages.get(one.id),
+                    .multiple => |multiple| id: {
+                        for (multiple.items) |item| {
+                            const id = item.id;
                             const pkg = lockfile.packages.get(id);
                             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                             if (std.mem.eql(u8, resolution_label, version)) {
@@ -11913,10 +11916,10 @@ pub const PackageManager = struct {
                     );
                     Global.crash();
                 }) {
-                    .id => |id| lockfile.packages.get(id),
-                    .ids => |ids| brk: {
-                        for (ids.items) |id| {
-                            const pkg = lockfile.packages.get(id);
+                    .one => |one| lockfile.packages.get(one.id),
+                    .multiple => |multiple| brk: {
+                        for (multiple.items) |one| {
+                            const pkg = lockfile.packages.get(one.id);
                             const resolution_label = std.fmt.bufPrint(&resolution_buf, "{}", .{pkg.resolution.fmt(lockfile.buffers.string_bytes.items, .posix)}) catch unreachable;
                             if (std.mem.eql(u8, resolution_label, version)) {
                                 break :brk pkg;

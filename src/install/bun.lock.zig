@@ -147,6 +147,50 @@ pub const PkgPath = struct {
         }
     };
 
+    // does not validate, just returns null for invalid paths
+    pub fn parent(input: string) ?string {
+        if (input.len == 0) {
+            return null;
+        }
+
+        const slash = strings.lastIndexOfChar(input, '/') orelse {
+            // top level key
+            // "jquery"
+            return null;
+        };
+
+        const at = strings.lastIndexOfChar(input, '@') orelse {
+            // no scoped packages in key
+            // "one/two/three/jquery/four"
+            return input[0..slash];
+        };
+
+        const next_slash = strings.lastIndexOfChar(input[0..slash], '/') orelse {
+            // there's a slash and @. it's either:
+            // "@types/bun"
+            // or invalid:
+            // "blah@hello/world"
+            return null;
+        };
+
+        if (next_slash > at) {
+            // the @ is before the next slash, meaning current
+            // name is not scoped
+            // "foo/@types/bun/jquery"
+            return input[0..slash];
+        }
+
+        if (next_slash + 1 != at) {
+            // invalid scoped package name
+            // "foo/hi@blah/bar"
+            return null;
+        }
+
+        // valid scoped package name
+        // "foo/hi/@blah/bar"
+        return input[0..next_slash];
+    }
+
     pub fn iterator(input: string) Iterator {
         return .{
             .input = input,
@@ -1218,6 +1262,23 @@ fn PkgMap(comptime T: type) type {
             return this.map.get(name);
         }
 
+        pub fn contains(this: *const @This(), path: string) bool {
+            return this.map.contains(path);
+        }
+
+        // if pkg_path is invalid false is returned
+        pub fn containsParentOf(this: *const @This(), pkg_path: string) bool {
+            var remain = pkg_path;
+            while (PkgPath.parent(remain)) |parent_pkg_path| {
+                if (this.contains(parent_pkg_path)) {
+                    return true;
+                }
+                remain = parent_pkg_path;
+            }
+
+            return false;
+        }
+
         pub fn findResolution(this: *const @This(), pkg_path: string, dep: *const Dependency, string_buf: string, path_buf: []u8) ResolveError!T {
             const dep_name = dep.name.slice(string_buf);
 
@@ -1585,7 +1646,8 @@ pub fn parseIntoBinaryLockfile(
                 }
 
                 // there should be no duplicates
-                const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
+                const bundled = false;
+                const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items, bundled);
 
                 const entry = try pkg_map.getOrPut(name);
                 if (entry.found_existing) {
@@ -1618,6 +1680,34 @@ pub fn parseIntoBinaryLockfile(
         if (!pkgs_expr.isObject()) {
             try log.addError(source, pkgs_expr.loc, "Expected an object");
             return error.InvalidPackagesObject;
+        }
+
+        var bundle_roots = PkgMap(void).init(allocator);
+        defer bundle_roots.deinit();
+
+        // find the bundle roots.
+        for (pkgs_expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            const value = prop.value.?;
+
+            const pkg_path = key.asString(allocator) orelse {
+                try log.addError(source, key.loc, "Expected a string");
+                return error.InvalidPackageKey;
+            };
+
+            if (!value.isArray()) {
+                try log.addError(source, value.loc, "Expected an array");
+                return error.InvalidPackageInfo;
+            }
+
+            const pkg_info = value.data.e_array.items;
+            if (pkg_info.len < 3) continue;
+            const maybe_info_obj = pkg_info.at(2);
+            const bundled_expr = maybe_info_obj.get("bundled") orelse continue;
+            const bundled = bundled_expr.asBool() orelse continue;
+            if (!bundled) continue;
+            const parent_pkg_path = PkgPath.parent(pkg_path) orelse continue;
+            try bundle_roots.put(parent_pkg_path, {});
         }
 
         for (pkgs_expr.data.e_object.properties.slice()) |prop| {
@@ -1845,7 +1935,11 @@ pub fn parseIntoBinaryLockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
-            const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
+            const pkg_id = try lockfile.appendPackageDedupe(
+                &pkg,
+                string_buf.bytes.items,
+                bundled or bundle_roots.containsParentOf(pkg_path),
+            );
 
             const entry = try pkg_map.getOrPut(pkg_path);
             if (entry.found_existing) {

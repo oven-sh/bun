@@ -2658,7 +2658,8 @@ pub fn getPackageID(
     const buf = this.buffers.string_bytes.items;
 
     switch (entry) {
-        .id => |id| {
+        .one => |one| {
+            const id = one.id;
             if (comptime Environment.allow_assert) assert(id < resolutions.len);
 
             if (resolutions[id].eql(resolution, buf, buf)) {
@@ -2669,8 +2670,9 @@ pub fn getPackageID(
                 if (npm_version.?.satisfies(resolutions[id].value.npm.version, buf, buf)) return id;
             }
         },
-        .ids => |ids| {
-            for (ids.items) |id| {
+        .multiple => |multiple| {
+            for (multiple.items) |one| {
+                const id = one.id;
                 if (comptime Environment.allow_assert) assert(id < resolutions.len);
 
                 if (resolutions[id].eql(resolution, buf, buf)) {
@@ -2688,24 +2690,27 @@ pub fn getPackageID(
 }
 
 /// Appends `pkg` to `this.packages`, and adds to `this.package_index`
-pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
+pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string, is_bundled: bool) OOM!PackageID {
     const entry = try this.package_index.getOrPut(pkg.name_hash);
 
     if (!entry.found_existing) {
         const new_id: PackageID = @intCast(this.packages.len);
         pkg.meta.id = new_id;
         try this.packages.append(this.allocator, pkg.*);
-        entry.value_ptr.* = .{ .id = new_id };
+        const new: PackageIndex.One = .{ .id = new_id, .is_bundled = is_bundled };
+        entry.value_ptr.* = new;
         return new_id;
     }
 
     var resolutions = this.packages.items(.resolution);
 
     return switch (entry.value_ptr.*) {
-        .id => |existing_id| {
-            if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
-                pkg.meta.id = existing_id;
-                return existing_id;
+        .one => |existing| {
+            if (is_bundled == existing.is_bundled) {
+                if (pkg.resolution.eql(&resolutions[existing.id], buf, buf)) {
+                    pkg.meta.id = existing.id;
+                    return existing.id;
+                }
             }
 
             const new_id: PackageID = @intCast(this.packages.len);
@@ -2714,25 +2719,28 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
 
             resolutions = this.packages.items(.resolution);
 
-            var ids = try PackageIDList.initCapacity(this.allocator, 8);
-            ids.items.len = 2;
+            var list = try std.ArrayListUnmanaged(PackageIndex.One).initCapacity(this.allocator, 8);
+            list.items.len = 2;
 
-            ids.items[0..2].* = if (pkg.resolution.order(&resolutions[existing_id], buf, buf) == .gt)
-                .{ new_id, existing_id }
+            const new: PackageIndex.One = .{ .id = new_id, .is_bundled = is_bundled };
+            list.items[0..2].* = if (pkg.resolution.order(&resolutions[existing.id], buf, buf) == .gt)
+                .{ new, existing }
             else
-                .{ existing_id, new_id };
+                .{ existing, new };
 
             entry.value_ptr.* = .{
-                .ids = ids,
+                .multiple = list,
             };
 
             return new_id;
         },
-        .ids => |*existing_ids| {
-            for (existing_ids.items) |existing_id| {
-                if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
-                    pkg.meta.id = existing_id;
-                    return existing_id;
+        .multiple => |*multiple| {
+            for (multiple.items) |existing| {
+                if (is_bundled == existing.is_bundled) {
+                    if (pkg.resolution.eql(&resolutions[existing.id], buf, buf)) {
+                        pkg.meta.id = existing.id;
+                        return existing.id;
+                    }
                 }
             }
 
@@ -2742,14 +2750,14 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
 
             resolutions = this.packages.items(.resolution);
 
-            for (existing_ids.items, 0..) |existing_id, i| {
-                if (pkg.resolution.order(&resolutions[existing_id], buf, buf) == .gt) {
-                    try existing_ids.insert(this.allocator, i, new_id);
+            for (multiple.items, 0..) |existing, i| {
+                if (pkg.resolution.order(&resolutions[existing.id], buf, buf) == .gt) {
+                    try multiple.insert(this.allocator, i, .{ .id = new_id, .is_bundled = is_bundled });
                     return new_id;
                 }
             }
 
-            try existing_ids.append(this.allocator, new_id);
+            try multiple.append(this.allocator, .{ .id = new_id, .is_bundled = is_bundled });
 
             return new_id;
         },
@@ -2759,43 +2767,44 @@ pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pack
 pub fn getOrPutID(this: *Lockfile, id: PackageID, name_hash: PackageNameHash) OOM!void {
     const gpe = try this.package_index.getOrPut(name_hash);
 
+    const new: PackageIndex.One = .{ .id = id, .is_bundled = false };
     if (gpe.found_existing) {
         const index: *PackageIndex.Entry = gpe.value_ptr;
 
         switch (index.*) {
-            .id => |existing_id| {
-                var ids = try PackageIDList.initCapacity(this.allocator, 8);
-                ids.items.len = 2;
+            .one => |existing| {
+                var list = try std.ArrayListUnmanaged(PackageIndex.One).initCapacity(this.allocator, 8);
+                list.items.len = 2;
 
                 const resolutions = this.packages.items(.resolution);
                 const buf = this.buffers.string_bytes.items;
 
-                ids.items[0..2].* = if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt)
-                    .{ id, existing_id }
+                list.items[0..2].* = if (resolutions[id].order(&resolutions[existing.id], buf, buf) == .gt)
+                    .{ new, existing }
                 else
-                    .{ existing_id, id };
+                    .{ existing, new };
 
                 index.* = .{
-                    .ids = ids,
+                    .multiple = list,
                 };
             },
-            .ids => |*existing_ids| {
+            .multiple => |*multiple| {
                 const resolutions = this.packages.items(.resolution);
                 const buf = this.buffers.string_bytes.items;
 
-                for (existing_ids.items, 0..) |existing_id, i| {
-                    if (resolutions[id].order(&resolutions[existing_id], buf, buf) == .gt) {
-                        try existing_ids.insert(this.allocator, i, id);
+                for (multiple.items, 0..) |existing, i| {
+                    if (resolutions[id].order(&resolutions[existing.id], buf, buf) == .gt) {
+                        try multiple.insert(this.allocator, i, new);
                         return;
                     }
                 }
 
                 // append to end because it's the smallest or equal to the smallest
-                try existing_ids.append(this.allocator, id);
+                try multiple.append(this.allocator, new);
             },
         }
     } else {
-        gpe.value_ptr.* = .{ .id = id };
+        gpe.value_ptr.* = .{ .one = new };
     }
 }
 
@@ -2981,15 +2990,11 @@ pub const StringBuilder = struct {
 };
 
 pub const PackageIndex = struct {
+    const One = struct { id: PackageID, is_bundled: bool };
     pub const Map = std.HashMap(PackageNameHash, PackageIndex.Entry, IdentityContext(PackageNameHash), 80);
-    pub const Entry = union(Tag) {
-        id: PackageID,
-        ids: PackageIDList,
-
-        pub const Tag = enum(u8) {
-            id = 0,
-            ids = 1,
-        };
+    pub const Entry = union(enum) {
+        one: One,
+        multiple: std.ArrayListUnmanaged(One),
     };
 };
 
@@ -7307,7 +7312,8 @@ pub fn resolvePackageFromNameAndVersion(this: *Lockfile, package_name: []const u
 
     switch (version.tag) {
         .npm => switch (entry) {
-            .id => |id| {
+            .one => |one| {
+                const id = one.id;
                 const resolutions = this.packages.items(.resolution);
 
                 if (comptime Environment.allow_assert) assert(id < resolutions.len);
@@ -7315,10 +7321,11 @@ pub fn resolvePackageFromNameAndVersion(this: *Lockfile, package_name: []const u
                     return id;
                 }
             },
-            .ids => |ids| {
+            .multiple => |multiple| {
                 const resolutions = this.packages.items(.resolution);
 
-                for (ids.items) |id| {
+                for (multiple.items) |one| {
+                    const id = one.id;
                     if (comptime Environment.allow_assert) assert(id < resolutions.len);
                     if (version.value.npm.version.satisfies(resolutions[id].value.npm.version, buf, buf)) {
                         return id;
@@ -7545,17 +7552,17 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         while (iter.next()) |it| {
             const entry: PackageIndex.Entry = it.value_ptr.*;
             const first_id = switch (entry) {
-                .id => |id| id,
-                .ids => |ids| ids.items[0],
+                .one => |one| one.id,
+                .multiple => |multiple| multiple.items[0].id,
             };
             const name = this.packages.items(.name)[first_id].slice(sb);
             try w.objectField(name);
             switch (entry) {
-                .id => |id| try w.write(id),
-                .ids => |ids| {
+                .one => |one| try w.write(one.id),
+                .multiple => |multiple| {
                     try w.beginArray();
-                    for (ids.items) |id| {
-                        try w.write(id);
+                    for (multiple.items) |one| {
+                        try w.write(one.id);
                     }
                     try w.endArray();
                 },

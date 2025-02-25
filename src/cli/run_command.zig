@@ -295,7 +295,7 @@ pub const RunCommand = struct {
         log("Script: \"{s}\"", .{copy_script.items});
 
         if (!silent) {
-            Output.prettyErrorln("<r><d><magenta>$<r> <d><b>{s}<r>", .{copy_script.items});
+            Output.command(copy_script.items);
             Output.flush();
         }
 
@@ -1440,6 +1440,11 @@ pub const RunCommand = struct {
             const cwd = try std.posix.getcwd(&entry_point_buf);
             @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
             const entry_path = entry_point_buf[0 .. cwd.len + trigger.len];
+
+            var passthrough_list = try std.ArrayList(string).initCapacity(ctx.allocator, ctx.passthrough.len + 1);
+            passthrough_list.appendAssumeCapacity("-");
+            passthrough_list.appendSliceAssumeCapacity(ctx.passthrough);
+            ctx.passthrough = passthrough_list.items;
 
             Run.boot(ctx, ctx.allocator.dupe(u8, entry_path) catch return false, null) catch |err| {
                 ctx.log.print(Output.errorWriter()) catch {};

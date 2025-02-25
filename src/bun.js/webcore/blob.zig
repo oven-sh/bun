@@ -705,7 +705,7 @@ pub const Blob = struct {
             const store = this.store.?;
             switch (store.data) {
                 .s3 => |*s3| {
-                    try S3File.writeFormat(s3, Formatter, formatter, writer, enable_ansi_colors);
+                    try S3File.writeFormat(s3, Formatter, formatter, writer, enable_ansi_colors, this.content_type, this.offset);
                 },
                 .file => |file| {
                     try writer.writeAll(comptime Output.prettyFmt("<r>FileRef<r>", enable_ansi_colors));
@@ -752,7 +752,7 @@ pub const Blob = struct {
         }
 
         const show_name = (this.is_jsdom_file and this.getNameString() != null) or (!this.name.isEmpty() and this.store != null and this.store.?.data == .bytes);
-        if (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0) {
+        if (!this.isS3() and (this.content_type.len > 0 or this.offset > 0 or show_name or this.last_modified != 0.0)) {
             try writer.writeAll(" {\n");
             {
                 formatter.indent += 1;
@@ -1205,7 +1205,7 @@ pub const Blob = struct {
                     const len = data.getLength(globalThis);
 
                     if (len < 256 * 1024) {
-                        const str = data.toBunString(globalThis);
+                        const str = try data.toBunString2(globalThis);
                         defer str.deref();
 
                         const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
@@ -2060,7 +2060,7 @@ pub const Blob = struct {
                     .bytes = ByteStore.init(bytes, allocator),
                 },
                 .allocator = allocator,
-                .ref_count = std.atomic.Value(u32).init(1),
+                .ref_count = .init(1),
             });
             return store;
         }
@@ -4576,7 +4576,7 @@ pub const Blob = struct {
         if (args_iter.nextEat()) |content_type_| {
             inner: {
                 if (content_type_.isString()) {
-                    var zig_str = content_type_.getZigString(globalThis);
+                    var zig_str = try content_type_.getZigString(globalThis);
                     var slicer = zig_str.toSlice(bun.default_allocator);
                     defer slicer.deinit();
                     const slice = slicer.slice();
@@ -5528,7 +5528,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
                     if (!fail_if_top_value_is_not_typed_array_like) {
-                        var str = top_value.toBunString(global);
+                        var str = try top_value.toBunString2(global);
                         defer str.deref();
                         const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
                         return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);
@@ -5739,9 +5739,16 @@ pub const Blob = struct {
 
 pub const AnyBlob = union(enum) {
     Blob: Blob,
-    // InlineBlob: InlineBlob,
     InternalBlob: InternalBlob,
     WTFStringImpl: bun.WTF.StringImpl,
+
+    pub fn fromOwnedSlice(allocator: std.mem.Allocator, bytes: []u8) AnyBlob {
+        return .{ .InternalBlob = .{ .bytes = .fromOwnedSlice(allocator, bytes) } };
+    }
+
+    pub fn fromArrayList(list: std.ArrayList(u8)) AnyBlob {
+        return .{ .InternalBlob = .{ .bytes = list } };
+    }
 
     /// Assumed that AnyBlob itself is covered by the caller.
     pub fn memoryCost(this: *const AnyBlob) usize {
@@ -5771,8 +5778,16 @@ pub const AnyBlob = union(enum) {
     pub inline fn fastSize(this: *const AnyBlob) Blob.SizeType {
         return switch (this.*) {
             .Blob => this.Blob.size,
-            .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.byteLength())),
-            else => @as(Blob.SizeType, @truncate(this.slice().len)),
+            .WTFStringImpl => @truncate(this.WTFStringImpl.byteLength()),
+            .InternalBlob => @truncate(this.slice().len),
+        };
+    }
+
+    pub inline fn size(this: *const AnyBlob) Blob.SizeType {
+        return switch (this.*) {
+            .Blob => this.Blob.size,
+            .WTFStringImpl => @truncate(this.WTFStringImpl.utf8ByteLength()),
+            else => @truncate(this.slice().len),
         };
     }
 
@@ -6006,22 +6021,6 @@ pub const AnyBlob = union(enum) {
         }
     }
 
-    pub inline fn size(this: *const AnyBlob) Blob.SizeType {
-        return switch (this.*) {
-            .Blob => this.Blob.size,
-            .WTFStringImpl => @as(Blob.SizeType, @truncate(this.WTFStringImpl.utf8ByteLength())),
-            else => @as(Blob.SizeType, @truncate(this.slice().len)),
-        };
-    }
-
-    pub fn from(this: *AnyBlob, list: std.ArrayList(u8)) void {
-        this.* = .{
-            .InternalBlob = InternalBlob{
-                .bytes = list,
-            },
-        };
-    }
-
     pub fn isDetached(this: *const AnyBlob) bool {
         return switch (this.*) {
             .Blob => |blob| blob.isDetached(),
@@ -6092,15 +6091,11 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 self.InternalBlob.bytes.clearAndFree();
-                self.* = .{
-                    .Blob = .{},
-                };
+                self.* = .{ .Blob = .{} };
             },
             .WTFStringImpl => {
                 self.WTFStringImpl.deref();
-                self.* = .{
-                    .Blob = .{},
-                };
+                self.* = .{ .Blob = .{} };
             },
         };
     }

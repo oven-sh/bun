@@ -2509,19 +2509,6 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
     }
 }
 
-JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
-{
-    JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
-
-    JSC::JSValue result = JSC::JSONParse(arg1, jsValue.toWTFString(arg1));
-
-    if (!result) {
-        result = JSC::JSValue(JSC::createSyntaxError(arg1->globalObject(), "Failed to parse JSON"_s));
-    }
-
-    return JSC::JSValue::encode(result);
-}
-
 JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* globalObject, const ZigString* arg1)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2766,7 +2753,10 @@ unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 
 void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
-    *arg2 = Zig::toZigString(arg0->value(arg1));
+    auto value = arg0->value(arg1);
+    *arg2 = Zig::toZigString(value.data.impl());
+
+    // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
 bool JSC__JSString__eql(const JSC__JSString* arg0, JSC__JSGlobalObject* obj, JSC__JSString* arg2)
@@ -5279,13 +5269,6 @@ void JSC__JSString__iterator(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, voi
     jsstring_iterator* iter = (jsstring_iterator*)arg2;
     arg0->value(iter);
 }
-void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
-{
-    JSC::GCDeferralContext deferralContext(reinterpret_cast<JSC__VM&>(vm));
-    JSC::DisallowGC disallowGC;
-
-    callback(ctx);
-}
 
 void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
 {
@@ -6443,7 +6426,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();

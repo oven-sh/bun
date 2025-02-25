@@ -49,6 +49,7 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/JSBasePrivate.h"
 #include "JavaScriptCore/ScriptExecutable.h"
 #include "JavaScriptCore/ScriptFetchParameters.h"
 #include "JavaScriptCore/SourceOrigin.h"
@@ -113,7 +114,7 @@
 #include "JSReadableStreamDefaultController.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSSink.h"
-#include "JSSocketAddress.h"
+#include "JSSocketAddressDTO.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -162,7 +163,11 @@
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
-#include <JavaScriptCore/JSBasePrivate.h>
+#include "NodeValidator.h"
+#include "ProcessBindingFs.h"
+
+#include "JSBunRequest.h"
+#include "ServerRouteList.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -239,22 +244,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         return;
     has_loaded_jsc = true;
     JSC::Config::enableRestrictedOptions();
-#if OS(LINUX)
-    {
-        // By default, JavaScriptCore's garbage collector sends SIGUSR1 to the JS thread to suspend
-        // and resume it in order to scan its stack memory. Whatever signal it uses can't be
-        // reliably intercepted by JS code, and several npm packages use SIGUSR1 for various
-        // features. We tell it to use SIGPWR instead, which we assume is unlikely to be reliable
-        // for its stated purpose. Mono's garbage collector also uses SIGPWR:
-        // https://www.mono-project.com/docs/advanced/embedding/#signal-handling
-        //
-        // This call needs to be before most of the other JSC initialization, as we can't
-        // reconfigure which signal is used once the signal handler has already been registered.
-        bool configure_signal_success = JSConfigureSignalForGC(SIGPWR);
-        ASSERT(configure_signal_success);
-        ASSERT(g_wtfConfig.sigThreadSuspendResume == SIGPWR);
-    }
-#endif
 
     std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
     WTF::initializeMainThread();
@@ -266,22 +255,16 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useConcurrentJIT() = true;
         // JSC::Options::useSigillCrashAnalyzer() = true;
         JSC::Options::useWasm() = true;
-        // remove when we have landed https://github.com/WebKit/WebKit/pull/39029 or WebKit no
-        // longer disables IPInt by default
-        JSC::Options::useWasmIPInt() = false;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
         JSC::Options::exposeInternalModuleLoader() = true;
         JSC::Options::useSharedArrayBuffer() = true;
         JSC::Options::useJIT() = true;
         JSC::Options::useBBQJIT() = true;
-        JSC::Options::useUint8ArrayBase64Methods() = true;
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useV8DateParser() = true;
         JSC::Options::evalMode() = evalMode;
-        JSC::Options::usePromiseTryMethod() = true;
-        JSC::Options::useRegExpEscape() = true;
         JSC::Options::useIteratorHelpers() = true;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
@@ -449,6 +432,13 @@ WTF::String Bun::formatStackTrace(
     size_t framesCount = stackTrace.size();
 
     bool hasSet = false;
+    void* bunVM = nullptr;
+    const auto getBunVM = [&]() -> void* {
+        if (!bunVM) {
+            bunVM = clientData(vm)->bunVM;
+        }
+        return bunVM;
+    };
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(errorInstance)) {
@@ -472,9 +462,8 @@ WTF::String Bun::formatStackTrace(
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-
                         // This ensures the lifetime of the sourceURL is accounted for correctly
-                        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                        Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
                         sourceURLForFrame = remappedFrame.source_url.toWTFString();
                     }
@@ -495,14 +484,14 @@ WTF::String Bun::formatStackTrace(
                 }
 
                 if (remappedFrame.remapped) {
-                    sb.append(":"_s);
+                    sb.append(':');
                     sb.append(remappedFrame.position.line().oneBasedInt());
                 } else {
-                    sb.append(":"_s);
+                    sb.append(':');
                     sb.append(originalLine.oneBasedInt());
                 }
 
-                sb.append(")"_s);
+                sb.append(')');
             }
         }
     }
@@ -558,7 +547,7 @@ WTF::String Bun::formatStackTrace(
                     remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
 
                     // This ensures the lifetime of the sourceURL is accounted for correctly
-                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                    Bun__remapStackFramePositions(getBunVM(), &remappedFrame, 1);
 
                     sourceURLForFrame = remappedFrame.source_url.toWTFString();
                 }
@@ -608,18 +597,18 @@ WTF::String Bun::formatStackTrace(
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
             if (displayLine.zeroBasedInt() > 0) {
-                sb.append(":"_s);
+                sb.append(':');
                 sb.append(displayLine.oneBasedInt());
 
                 if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(":"_s);
+                    sb.append(':');
                     sb.append(displayColumn.oneBasedInt());
                 }
             }
         }
 
         if (!functionName.isEmpty()) {
-            sb.append(")"_s);
+            sb.append(')');
         }
 
         if (i != framesCount - 1) {
@@ -707,7 +696,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
                 frame.source_url = Bun::toStringRef(sourceURLForFrame);
 
                 // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject, &frame, 1);
+                Bun__remapStackFramePositions(globalObject->bunVM(), &frame, 1);
 
                 sourceURLForFrame = frame.source_url.toWTFString();
             }
@@ -898,6 +887,9 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     JSC::JSLockHolder locker(vm);
 
     vm.heap.disableStopIfNecessaryTimer();
+
+    // Every JS VM's RunLoop should use Bun's RunLoop implementation
+    ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
@@ -1741,12 +1733,12 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     if (!encodedString.is8Bit()) {
         std::span<LChar> ptr;
         unsigned length = encodedString.length();
-        auto dest = WTF::String::createUninitialized(length, ptr);
+        auto dest = WTF::String::tryCreateUninitialized(length, ptr);
         if (UNLIKELY(dest.isNull())) {
             throwOutOfMemoryError(globalObject, throwScope);
             return {};
         }
-        WTF::StringImpl::copyCharacters(ptr.data(), encodedString.span16());
+        WTF::StringImpl::copyCharacters(ptr, encodedString.span16());
         encodedString = WTFMove(dest);
     }
 
@@ -1873,10 +1865,8 @@ extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* global
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(
-        globalObject,
-        isBuffer ? reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure() : globalObject->typedArrayStructure(TypeUint8, false),
-        len);
+    auto* subclassStructure = isBuffer ? reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure() : globalObject->typedArrayStructureWithTypedArrayType<TypeUint8>();
+    JSC::JSUint8Array* array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, len);
 
     if (UNLIKELY(!array)) {
         JSC::throwOutOfMemoryError(globalObject, scope);
@@ -2889,6 +2879,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createCommonJSModuleStructure(reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
+    m_JSSocketAddressDTOStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
+        });
+
     m_JSSQLStatementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
@@ -2920,11 +2915,6 @@ void GlobalObject::finishCreation(VM& vm)
                     init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
-    m_JSSocketAddressStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(JSSocketAddress::createStructure(init.vm, init.owner));
-        });
-
     m_errorConstructorPrepareStackTraceInternalValue.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
@@ -2946,8 +2936,14 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSBufferSubclassStructure.initLater(
         [](const Initializer<Structure>& init) {
             auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
-
-            auto* baseStructure = globalObject->typedArrayStructure(JSC::TypeUint8, false);
+            auto* baseStructure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
+            JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
+            init.set(subclassStructure);
+        });
+    m_JSResizableOrGrowableSharedBufferSubclassStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(init.owner);
+            auto* baseStructure = globalObject->resizableOrGrowableSharedTypedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
             JSC::Structure* subclassStructure = JSC::InternalFunction::createSubclassStructure(globalObject, globalObject->JSBufferConstructor(), baseStructure);
             init.set(subclassStructure);
         });
@@ -3080,6 +3076,21 @@ void GlobalObject::finishCreation(VM& vm)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
                 Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    m_ServerRouteListStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::createServerRouteListStructure(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_JSBunRequestParamsPrototype.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSObject>::Initializer& init) {
+            init.set(Bun::createJSBunRequestParamsPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
+        });
+
+    m_JSBunRequestStructure.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
+            init.set(Bun::createJSBunRequestStructure(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
     m_NapiHandleScopeImplStructure.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
@@ -3242,6 +3253,14 @@ void GlobalObject::finishCreation(VM& vm)
                     ProcessBindingConstants::createStructure(init.vm, init.owner)));
         });
 
+    m_processBindingFs.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingFs::create(
+                    init.vm,
+                    ProcessBindingFs::createStructure(init.vm, init.owner)));
+        });
+
     m_importMetaObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
@@ -3294,7 +3313,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSBufferClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            auto prototype = WebCore::createBufferPrototype(init.vm, init.global);
+            auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
             auto* structure = WebCore::createBufferStructure(init.vm, init.global, JSValue(prototype));
             auto* constructor = WebCore::createBufferConstructor(init.vm, init.global, jsCast<JSObject*>(prototype));
             init.setPrototype(prototype);
@@ -3366,6 +3385,19 @@ void GlobalObject::finishCreation(VM& vm)
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
+
+    m_statValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
+        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
+    });
+    m_bigintStatValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
+        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
+    });
+    m_statFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
+        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
+    m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
+        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
 
     configureNodeVM(vm, this);
 
@@ -3545,6 +3577,37 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto bufVal = callFrame->argument(0);
+    auto offsetVal = callFrame->argument(1);
+    auto byteLengthVal = callFrame->argument(2);
+
+    ssize_t offset;
+    Bun::V::validateInteger(scope, globalObject, offsetVal, "offset"_s, jsUndefined(), jsUndefined(), &offset);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!bufVal.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buf"_s, "Buffer"_s, bufVal);
+    auto* buf = jsDynamicCast<JSC::JSArrayBufferView*>(bufVal.asCell());
+    if (!buf) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buf"_s, "Buffer"_s, bufVal);
+    size_t byteLength = byteLengthVal.asNumber();
+    ssize_t type = ((ssize_t)buf->length()) - byteLength;
+
+    if (!(offset >= 0 && offset <= type)) {
+        if (std::floor(offset) != offset) {
+            Bun::V::validateNumber(scope, globalObject, offsetVal, jsUndefined(), jsUndefined(), jsUndefined());
+            RETURN_IF_EXCEPTION(scope, {});
+            return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, "an integer"_s, offsetVal);
+        }
+        if (type < 0) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, globalObject, ""_s);
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, makeString(">= 0 and <= "_s, type), offsetVal);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
     auto& vm = this->vm();
@@ -3648,6 +3711,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.toClassPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionToClass, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.inheritsPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionInherits, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.makeAbortErrorPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionMakeAbortError, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.checkBufferReadPrivateName(), JSFunction::create(vm, this, 1, String(), jsFunctionCheckBufferRead, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
     };
     addStaticGlobals(staticGlobals, std::size(staticGlobals));
 
@@ -3792,6 +3856,21 @@ extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalO
     return JSValue::encode(JSValue::JSUndefined);
 }
 
+#define IMPL_GET_COMMON_STRING(name)                                                                         \
+    extern "C" EncodedJSValue JSC__JSGlobalObject__commonStrings__get##name(Zig::GlobalObject* globalObject) \
+    {                                                                                                        \
+        JSC::JSString* value = globalObject->commonStrings().name##String(globalObject);                     \
+        ASSERT(value != nullptr);                                                                            \
+        return JSValue::encode(value);                                                                       \
+    }
+
+IMPL_GET_COMMON_STRING(IPv4)
+IMPL_GET_COMMON_STRING(IPv6)
+IMPL_GET_COMMON_STRING(IN4Loopback)
+IMPL_GET_COMMON_STRING(IN6Any)
+
+#undef IMPL_GET_COMMON_STRING
+
 template<typename Visitor>
 void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -3841,16 +3920,21 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_JSSocketAddressDTOStructure.visit(visitor);
     thisObject->m_cryptoObject.visit(visitor);
     thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
     thisObject->m_esmRegistryMap.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_internalModuleRegistry.visit(visitor);
+    thisObject->m_processBindingBuffer.visit(visitor);
+    thisObject->m_processBindingConstants.visit(visitor);
+    thisObject->m_processBindingFs.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSResizableOrGrowableSharedBufferSubclassStructure.visit(visitor);
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
     thisObject->m_JSDOMFileConstructor.visit(visitor);
@@ -3865,7 +3949,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSNetworkSinkClassStructure.visit(visitor);
     thisObject->m_JSFetchTaskletChunkedRequestControllerPrototype.visit(visitor);
-    thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_V8GlobalInternals.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
@@ -3911,8 +3994,14 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
-
+    thisObject->m_ServerRouteListStructure.visit(visitor);
+    thisObject->m_JSBunRequestStructure.visit(visitor);
+    thisObject->m_JSBunRequestParamsPrototype.visit(visitor);
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
+    thisObject->m_statValues.visit(visitor);
+    thisObject->m_bigintStatValues.visit(visitor);
+    thisObject->m_statFsValues.visit(visitor);
+    thisObject->m_bigintStatFsValues.visit(visitor);
 
     thisObject->m_nodeErrorCache.visit(visitor);
 

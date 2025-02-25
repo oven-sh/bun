@@ -454,7 +454,7 @@ pub const Response = struct {
             var url_string = ZigString.init("");
 
             if (@intFromEnum(url_string_value) != 0) {
-                url_string = url_string_value.getZigString(globalThis);
+                url_string = try url_string_value.getZigString(globalThis);
             }
             url_string_slice = url_string.toSlice(getAllocator(globalThis));
             var did_succeed = false;
@@ -2738,7 +2738,7 @@ pub const Fetch = struct {
                 if (objects_to_try[i] != .zero) {
                     if (try objects_to_try[i].get(globalThis, "verbose")) |verb| {
                         if (verb.isString()) {
-                            if (verb.getZigString(globalThis).eqlComptime("curl")) {
+                            if ((try verb.getZigString(globalThis)).eqlComptime("curl")) {
                                 break :extract_verbose .curl;
                             }
                         } else if (verb.isBoolean()) {
@@ -3248,7 +3248,7 @@ pub const Fetch = struct {
                     },
                     .result => |result| {
                         body.detach();
-                        body.AnyBlob.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
+                        body = .{ .AnyBlob = .fromOwnedSlice(allocator, @constCast(result.slice())) };
                         http_body = .{ .AnyBlob = body.AnyBlob };
                     },
                 }
@@ -3483,10 +3483,17 @@ pub const Fetch = struct {
     }
 };
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Headers
+/// https://developer.mozilla.org/en-US/docs/Web/API/Headers
+// TODO: move to http.zig. this has nothing to do with JSC or WebCore
 pub const Headers = struct {
-    pub usingnamespace http.Headers;
-    entries: Headers.Entries = .{},
+    pub const Entry = struct {
+        name: Api.StringPointer,
+        value: Api.StringPointer,
+
+        pub const List = bun.MultiArrayList(Entry);
+    };
+
+    entries: Entry.List = .{},
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
 

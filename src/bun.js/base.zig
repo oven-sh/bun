@@ -245,6 +245,7 @@ pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
 /// Print a JSValue to stdout; this is only meant for debugging purposes
 pub fn dump(value: JSC.WebCore.JSValue, globalObject: *JSC.JSGlobalObject) !void {
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject };
+    defer formatter.deinit();
     try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
     Output.flush();
 }
@@ -1092,7 +1093,7 @@ pub fn wrapInstanceMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = string_value.getZigString(globalThis);
+                        args[i] = try string_value.getZigString(globalThis);
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -1245,7 +1246,7 @@ pub fn wrapStaticMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = string_value.getZigString(globalThis);
+                        args[i] = try string_value.getZigString(globalThis);
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {

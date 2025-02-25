@@ -784,7 +784,6 @@ pub const FormatOptions = struct {
             if (try arg1.getBooleanLoose(globalThis, "sorted")) |opt| {
                 formatOptions.ordered_properties = opt;
             }
-
             if (try arg1.getBooleanLoose(globalThis, "compact")) |opt| {
                 formatOptions.single_line = opt;
             }
@@ -986,11 +985,12 @@ const CustomFormattedObject = struct {
 };
 
 pub const Formatter = struct {
+    globalThis: *JSGlobalObject,
+
     remaining_values: []const JSValue = &[_]JSValue{},
     map: Visited.Map = undefined,
     map_node: ?*Visited.Pool.Node = null,
     hide_native: bool = false,
-    globalThis: *JSGlobalObject,
     indent: u32 = 0,
     depth: u16 = 0,
     max_depth: u16 = 8,
@@ -1296,10 +1296,16 @@ pub const Formatter = struct {
             // Is this a react element?
             if (js_type.isObject() and js_type != .ProxyObject) {
                 if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
-                    var reactElement = ZigString.init("react.element");
+                    // React 18 and below
+                    var react_element_legacy = ZigString.init("react.element");
+                    // For React 19 - https://github.com/oven-sh/bun/issues/17223
+                    var react_element_transitional = ZigString.init("react.transitional.element");
                     var react_fragment = ZigString.init("react.fragment");
 
-                    if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
+                    if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_element_legacy), globalThis) or
+                        JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_element_transitional), globalThis) or
+                        JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis))
+                    {
                         return .{ .tag = .{ .JSX = {} }, .cell = js_type };
                     }
                 }
@@ -1541,7 +1547,7 @@ pub const Formatter = struct {
                                     1;
                                 this.addForNewLine(digits);
                             } else {
-                                this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                                this.addForNewLine(std.fmt.count("{d}", .{int}));
                             }
                             writer.print("{d}", .{int});
                         },
@@ -1576,7 +1582,7 @@ pub const Formatter = struct {
 
                             const abs = @abs(converted);
                             if (abs < max_before_e_notation and abs >= min_before_e_notation) {
-                                this.addForNewLine(bun.fmt.count("{d}", .{converted}));
+                                this.addForNewLine(std.fmt.count("{d}", .{converted}));
                                 writer.print("{d}", .{converted});
                             } else if (std.math.isNan(converted)) {
                                 this.addForNewLine("NaN".len);
@@ -2165,12 +2171,12 @@ pub const Formatter = struct {
                         1;
                     this.addForNewLine(digits);
                 } else {
-                    this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                    this.addForNewLine(std.fmt.count("{d}", .{int}));
                 }
                 writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
             },
             .BigInt => {
-                const out_str = value.getZigString(this.globalThis).slice();
+                const out_str = (try value.getZigString(this.globalThis)).slice();
                 this.addForNewLine(out_str.len);
 
                 writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
@@ -2181,7 +2187,7 @@ pub const Formatter = struct {
                     value.getClassName(this.globalThis, &number_name);
 
                     var number_value = ZigString.Empty;
-                    value.toZigString(&number_value, this.globalThis);
+                    try value.toZigString(&number_value, this.globalThis);
 
                     if (!strings.eqlComptime(number_name.slice(), "Number")) {
                         this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
@@ -2535,7 +2541,7 @@ pub const Formatter = struct {
                     response.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.WebCore.Request)) |request| {
-                    request.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    request.writeFormat(value, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.API.BuildArtifact)) |build| {
                     build.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
@@ -2646,7 +2652,7 @@ pub const Formatter = struct {
                     var bool_name = ZigString.Empty;
                     value.getClassName(this.globalThis, &bool_name);
                     var bool_value = ZigString.Empty;
-                    value.toZigString(&bool_value, this.globalThis);
+                    try value.toZigString(&bool_value, this.globalThis);
 
                     if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
                         this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
@@ -3004,7 +3010,7 @@ pub const Formatter = struct {
                     });
 
                     if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                        type_value.toZigString(&tag_name_str, this.globalThis);
+                        try type_value.toZigString(&tag_name_str, this.globalThis);
                         is_tag_kind_primitive = true;
                     } else if (_tag.cell.isObject() or type_value.isCallable(this.globalThis.vm())) {
                         type_value.getNameProperty(this.globalThis, &tag_name_str);
@@ -3012,7 +3018,7 @@ pub const Formatter = struct {
                             tag_name_str = ZigString.init("NoName");
                         }
                     } else {
-                        type_value.toZigString(&tag_name_str, this.globalThis);
+                        try type_value.toZigString(&tag_name_str, this.globalThis);
                     }
 
                     tag_name_slice = tag_name_str.toSlice(default_allocator);
@@ -3134,7 +3140,7 @@ pub const Formatter = struct {
                                 print_children: {
                                     switch (tag.tag) {
                                         .String => {
-                                            const children_string = children.getZigString(this.globalThis);
+                                            const children_string = try children.getZigString(this.globalThis);
                                             if (children_string.len == 0) break :print_children;
                                             if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 

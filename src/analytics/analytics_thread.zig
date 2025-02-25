@@ -95,6 +95,10 @@ pub const Features = struct {
     pub var fetch: usize = 0;
     pub var git_dependencies: usize = 0;
     pub var html_rewriter: usize = 0;
+    /// TCP server from `Bun.listen`
+    pub var tcp_server: usize = 0;
+    /// TLS server from `Bun.listen`
+    pub var tls_server: usize = 0;
     pub var http_server: usize = 0;
     pub var https_server: usize = 0;
     /// Set right before JSC::initialize is called

@@ -72,7 +72,7 @@ const CHAR_STR_BACKWARD_SLASH = "\\";
 const CHAR_STR_FORWARD_SLASH = "/";
 const CHAR_STR_DOT = ".";
 
-const StringBuilder = @import("../../string_builder.zig");
+const StringBuilder = bun.StringBuilder;
 
 const toJSString = JSC.JSValue.toJSString;
 
@@ -457,7 +457,7 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -468,7 +468,7 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
 
     var suffixZSlice: ?JSC.ZigString.Slice = null;
     if (suffix_ptr) |_suffix_ptr| {
-        const suffixZStr = _suffix_ptr.getZigString(globalObject);
+        const suffixZStr = _suffix_ptr.getZigString(globalObject) catch return .zero;
         if (suffixZStr.len > 0 and suffixZStr.len <= pathZStr.len) {
             suffixZSlice = suffixZStr.toSlice(allocator);
         }
@@ -653,7 +653,7 @@ pub fn dirname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return toJSString(globalObject, CHAR_STR_DOT);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -852,7 +852,7 @@ pub fn extname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return path_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -1059,7 +1059,7 @@ pub fn isAbsolute(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: 
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return JSC.JSValue.jsBoolean(false);
     if (isWindows) return JSC.JSValue.jsBoolean(isAbsoluteWindowsZigString(pathZStr));
     return JSC.JSValue.jsBoolean(isAbsolutePosixZigString(pathZStr));
@@ -1283,7 +1283,7 @@ pub fn join(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC
             // Returning .zero translates to a nullprt JSC.JSValue.
             return .zero;
         };
-        const pathZStr = path_ptr.getZigString(globalObject);
+        const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
         paths[i] = if (pathZStr.len > 0) pathZStr.toSlice(allocator).slice() else "";
     }
     return joinJS_T(u8, globalObject, allocator, isWindows, paths);
@@ -1682,7 +1682,7 @@ pub fn normalize(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [
         // Returning .zero translates to a nullprt JSC.JSValue.
         return .zero;
     };
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     const len = pathZStr.len;
     if (len == 0) return toJSString(globalObject, CHAR_STR_DOT);
 
@@ -2006,7 +2006,7 @@ pub fn parse(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JS
         return .zero;
     };
 
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     if (pathZStr.len == 0) return (PathParsed(u8){}).toJSObject(globalObject);
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -2372,8 +2372,8 @@ pub fn relative(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
         return .zero;
     };
 
-    const fromZigStr = from_ptr.getZigString(globalObject);
-    const toZigStr = to_ptr.getZigString(globalObject);
+    const fromZigStr = from_ptr.getZigString(globalObject) catch return .zero;
+    const toZigStr = to_ptr.getZigString(globalObject) catch return .zero;
     if ((fromZigStr.len + toZigStr.len) == 0) return from_ptr;
 
     var stack_fallback = std.heap.stackFallback(stack_fallback_size_small, JSC.getAllocator(globalObject));
@@ -2833,7 +2833,7 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]
             // Returning .zero translates to a nullprt JSC.JSValue.
             return .zero;
         };
-        const pathZStr = path_ptr.getZigString(globalObject);
+        const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
         if (pathZStr.len > 0) {
             paths[path_count] = pathZStr.toSlice(allocator).slice();
             path_count += 1;
@@ -2961,7 +2961,7 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
     //
     // Act as an identity function for non-string values and non-Windows platforms.
     if (!isWindows or !path_ptr.isString()) return path_ptr;
-    const pathZStr = path_ptr.getZigString(globalObject);
+    const pathZStr = path_ptr.getZigString(globalObject) catch return .zero;
     const len = pathZStr.len;
     if (len == 0) return path_ptr;
 

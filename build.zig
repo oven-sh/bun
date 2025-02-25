@@ -82,10 +82,7 @@ const BunBuildOptions = struct {
 
         var opts = b.addOptions();
         opts.addOption([]const u8, "base_path", b.pathFromRoot("."));
-        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{
-            b.build_root.path.?,
-            this.codegen_path,
-        }) catch @panic("OOM"));
+        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{ b.build_root.path.?, this.codegen_path }) catch @panic("OOM"));
 
         opts.addOption(bool, "codegen_embed", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
@@ -429,7 +426,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
         .root_source_file = switch (opts.os) {
             .wasm => b.path("root_wasm.zig"),
-            else => b.path("root.zig"),
+            else => b.path("src/main.zig"),
             // else => b.path("root_css.zig"),
         },
         .target = opts.target,
@@ -519,16 +516,6 @@ fn exists(path: []const u8) bool {
 fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     const os = opts.os;
 
-    const io_path = switch (os) {
-        .mac => "src/io/io_darwin.zig",
-        .linux => "src/io/io_linux.zig",
-        .windows => "src/io/io_windows.zig",
-        else => "src/io/io_stub.zig",
-    };
-    obj.root_module.addAnonymousImport("async_io", .{
-        .root_source_file = b.path(io_path),
-    });
-
     const zlib_internal_path = switch (os) {
         .windows => "src/deps/zlib.win32.zig",
         .linux, .mac => "src/deps/zlib.posix.zig",
@@ -561,6 +548,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .file = "bun-error/index.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "bun-error/bun-error.css", .enable = opts.shouldEmbedCode() },
         .{ .file = "fallback-decoder.js", .enable = opts.shouldEmbedCode() },
+        .{ .file = "node-fallbacks/react-refresh.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/assert.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/buffer.js", .enable = opts.shouldEmbedCode() },
         .{ .file = "node-fallbacks/console.js", .enable = opts.shouldEmbedCode() },
@@ -596,6 +584,15 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
                 .root_source_file = .{ .cwd_relative = path },
             });
         }
+    }
+    inline for (.{
+        .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },
+        .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
+        .{ .import = "completions-fish", .file = b.path("completions/bun.fish") },
+    }) |entry| {
+        obj.root_module.addAnonymousImport(entry.import, .{
+            .root_source_file = entry.file,
+        });
     }
 
     if (os == .windows) {

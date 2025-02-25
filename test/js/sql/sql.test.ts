@@ -1,8 +1,8 @@
-import { sql, SQL, randomUUIDv7 } from "bun";
+import { sql, SQL, randomUUIDv7, password } from "bun";
 const postgres = (...args) => new sql(...args);
 import { expect, test, mock, beforeAll, afterAll, describe } from "bun:test";
 import { $ } from "bun";
-import { bunExe, isCI, withoutAggressiveGC, isLinux } from "harness";
+import { bunExe, isCI, withoutAggressiveGC, isLinux, tempDirWithFiles } from "harness";
 import path from "path";
 
 import { exec, execSync } from "child_process";
@@ -12,6 +12,14 @@ const execAsync = promisify(exec);
 import net from "net";
 const dockerCLI = Bun.which("docker") as string;
 
+const dir = tempDirWithFiles("sql-test", {
+  "select-param.sql": `select $1 as x`,
+  "select.sql": `select 1 as x`,
+});
+
+function rel(filename: string) {
+  return path.join(dir, filename);
+}
 async function findRandomPort() {
   return new Promise((resolve, reject) => {
     // Create a server to listen on a random port
@@ -172,6 +180,27 @@ if (isDockerEnabled()) {
     const result = (await sql`select 1 as x`)[0].x;
     sql.close();
     expect(result).toBe(1);
+  });
+
+  describe("should work with more than the max inline capacity", () => {
+    for (let size of [50, 60, 62, 64, 70, 100]) {
+      for (let duplicated of [true, false]) {
+        test(`${size} ${duplicated ? "+ duplicated" : "unique"} fields`, async () => {
+          const longQuery = `select ${Array.from({ length: size }, (_, i) => {
+            if (duplicated) {
+              return i % 2 === 0 ? `${i + 1} as f${i}, ${i} as f${i}` : `${i} as f${i}`;
+            }
+            return `${i} as f${i}`;
+          }).join(",\n")}`;
+          const result = await sql.unsafe(longQuery);
+          let value = 0;
+          for (const column of Object.values(result[0])) {
+            expect(column).toBe(value);
+            value++;
+          }
+        });
+      }
+    }
   });
 
   test("Connection timeout works", async () => {
@@ -699,7 +728,6 @@ if (isDockerEnabled()) {
       await sql.beginDistributed("tx1", async sql => {
         await sql`insert into test values(1)`;
       });
-
       await sql.commitDistributed("tx1");
       expect((await sql`select count(1) from test`)[0].count).toBe("1");
     } finally {
@@ -870,6 +898,56 @@ if (isDockerEnabled()) {
     }),
   ]);
 
+  test("should work with fragments", async () => {
+    await using sql = postgres({ ...options, max: 1 });
+    const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+    await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+    // single escaped identifier
+    {
+      const results = await sql`SELECT * FROM ${random_name}`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+    // multiple escaped identifiers
+    {
+      const results = await sql`SELECT ${random_name}.* FROM ${random_name}`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+    // even more complex fragment
+    {
+      const results =
+        await sql`SELECT ${random_name}.* FROM ${random_name} WHERE ${random_name}.hotel_id = ${1} ORDER BY ${random_name}.created_at DESC`;
+      expect(results).toEqual([{ id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") }]);
+    }
+  });
+  test("should handle nested fragments", async () => {
+    await using sql = postgres({ ...options, max: 1 });
+    const random_name = sql("test_" + randomUUIDv7("hex").replaceAll("-", ""));
+
+    await sql`CREATE TEMPORARY TABLE IF NOT EXISTS ${random_name} (id int, hotel_id int, created_at timestamp)`;
+    await sql`INSERT INTO ${random_name} VALUES (1, 1, '2024-01-01 10:00:00')`;
+    await sql`INSERT INTO ${random_name} VALUES (2, 1, '2024-01-02 10:00:00')`;
+    await sql`INSERT INTO ${random_name} VALUES (3, 2, '2024-01-03 10:00:00')`;
+
+    // fragment containing another scape fragment for the field name
+    const orderBy = (field_name: string) => sql`ORDER BY ${sql(field_name)} DESC`;
+
+    // dynamic information
+    const sortBy = { should_sort: true, field: "created_at" };
+    const user = { hotel_id: 1 };
+
+    // query containing the fragments
+    const results = await sql`
+    SELECT ${random_name}.*
+    FROM ${random_name}
+    WHERE ${random_name}.hotel_id = ${user.hotel_id} 
+    ${sortBy.should_sort ? orderBy(sortBy.field) : sql``}`;
+    expect(results).toEqual([
+      { id: 2, hotel_id: 1, created_at: new Date("2024-01-02T10:00:00.000Z") },
+      { id: 1, hotel_id: 1, created_at: new Date("2024-01-01T10:00:00.000Z") },
+    ]);
+  });
+
   // t('Options from uri with special characters in user and pass', async() => {
   //   const opt = postgres({ user: 'öla', pass: 'pass^word' }).options
   //   return [[opt.user, opt.pass].toString(), 'öla,pass^word']
@@ -975,21 +1053,65 @@ if (isDockerEnabled()) {
     ];
   });
 
-  // t('Support dynamic password function', async() => {
-  //   return [true, (await postgres({
-  //     ...options,
-  //     ...login_scram,
-  //     pass: () => 'bun_sql_test_scram'
-  //   })`select true as x`)[0].x]
-  // })
+  test("Support dynamic password function", async () => {
+    await using sql = postgres({ ...options, ...login_scram, password: () => "bun_sql_test_scram", max: 1 });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
 
-  // t('Support dynamic async password function', async() => {
-  //   return [true, (await postgres({
-  //     ...options,
-  //     ...login_scram,
-  //     pass: () => Promise.resolve('bun_sql_test_scram')
-  //   })`select true as x`)[0].x]
-  // })
+  test("Support dynamic async resolved password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      password: () => Promise.resolve("bun_sql_test_scram"),
+      max: 1,
+    });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+
+  test("Support dynamic async password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      max: 1,
+      password: async () => {
+        await Bun.sleep(10);
+        return "bun_sql_test_scram";
+      },
+    });
+    return expect((await sql`select true as x`)[0].x).toBe(true);
+  });
+  test("Support dynamic async rejected password function", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      password: () => Promise.reject(new Error("password error")),
+      max: 1,
+    });
+    try {
+      await sql`select true as x`;
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.message).toBe("password error");
+    }
+  });
+  test("Support dynamic async password function that throws", async () => {
+    await using sql = postgres({
+      ...options,
+      ...login_scram,
+      max: 1,
+      password: async () => {
+        await Bun.sleep(10);
+        throw new Error("password error");
+      },
+    });
+    try {
+      await sql`select true as x`;
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e).toBeInstanceOf(Error);
+      expect(e.message).toBe("password error");
+    }
+  });
 
   // t('Point type', async() => {
   //   const sql = postgres({
@@ -1027,37 +1149,34 @@ if (isDockerEnabled()) {
   //   return [30, (await sql`select x from test`)[0].x[1][1], await sql`drop table test`]
   // })
 
-  // t('sql file', async() =>
-  //   [1, (await sql.file(rel('select.sql')))[0].x]
-  // )
+  test("sql file", async () => {
+    await using sql = postgres(options);
+    expect((await sql.file(rel("select.sql")))[0].x).toBe(1);
+  });
 
-  // t('sql file has forEach', async() => {
-  //   let result
-  //   await sql
-  //     .file(rel('select.sql'), { cache: false })
-  //     .forEach(({ x }) => result = x)
+  test("sql file throws", async () => {
+    await using sql = postgres(options);
+    expect(await sql.file(rel("selectomondo.sql")).catch(x => x.code)).toBe("ENOENT");
+  });
+  test("Parameters in file", async () => {
+    const result = await sql.file(rel("select-param.sql"), ["hello"]);
+    return expect(result[0].x).toBe("hello");
+  });
 
-  //   return [1, result]
-  // })
+  // this test passes but it's not clear where cached is implemented in postgres.js and this also doesn't seem to be a valid test
+  // test("sql file cached", async () => {
+  //   await sql.file(rel("select.sql"));
+  //   await delay(20);
 
-  // t('sql file throws', async() =>
-  //   ['ENOENT', (await sql.file(rel('selectomondo.sql')).catch(x => x.code))]
-  // )
+  //   return [1, (await sql.file(rel("select.sql")))[0].x];
+  // });
+  // we dont have .forEach yet
+  // test("sql file has forEach", async () => {
+  //   let result;
+  //   await sql.file(rel("select.sql"), { cache: false }).forEach(({ x }) => (result = x));
 
-  // t('sql file cached', async() => {
-  //   await sql.file(rel('select.sql'))
-  //   await delay(20)
-
-  //   return [1, (await sql.file(rel('select.sql')))[0].x]
-  // })
-
-  // t('Parameters in file', async() => {
-  //   const result = await sql.file(
-  //     rel('select-param.sql'),
-  //     ['hello']
-  //   )
-  //   return ['hello', result[0].x]
-  // })
+  //   return expect(result).toBe(1);
+  // });
 
   test("Connection ended promise", async () => {
     const sql = postgres(options);
@@ -1238,6 +1357,14 @@ if (isDockerEnabled()) {
     expect(await sql.unsafe("select 1 as x")).toEqual([{ x: 1 }]);
   });
 
+  test("simple query with multiple statements", async () => {
+    const result = await sql`select 1 as x;select 2 as x`.simple();
+    expect(result).toBeDefined();
+    expect(result.length).toEqual(2);
+    expect(result[0][0].x).toEqual(1);
+    expect(result[1][0].x).toEqual(2);
+  });
+
   // t('unsafe simple includes columns', async() => {
   //   return ['x', (await sql.unsafe('select 1 as x').values()).columns[0].name]
   // })
@@ -1254,21 +1381,13 @@ if (isDockerEnabled()) {
   //   ]
   // })
 
-  test.todo("simple query using unsafe with multiple statements", async () => {
-    // bun always uses prepared statements, so this is not supported
-    //     PostgresError: cannot insert multiple commands into a prepared statement
-    //  errno: "42601",
-    //   code: "ERR_POSTGRES_SYNTAX_ERROR"
-    expect(await sql.unsafe("select 1 as x;select 2 as x")).toEqual([{ x: 1 }, { x: 2 }]);
-    // return ["1,2", (await sql.unsafe("select 1 as x;select 2 as x")).map(x => x[0].x).join()];
+  test("simple query using unsafe with multiple statements", async () => {
+    const result = await sql.unsafe("select 1 as x;select 2 as x");
+    expect(result).toBeDefined();
+    expect(result.length).toEqual(2);
+    expect(result[0][0].x).toEqual(1);
+    expect(result[1][0].x).toEqual(2);
   });
-
-  // t('simple query using simple() with multiple statements', async() => {
-  //   return [
-  //     '1,2',
-  //     (await sql`select 1 as x;select 2 as x`.simple()).map(x => x[0].x).join()
-  //   ]
-  // })
 
   // t('listen and notify', async() => {
   //   const sql = postgres(options)
@@ -1506,45 +1625,47 @@ if (isDockerEnabled()) {
     expect(await sql`select 1; select 2`.catch(e => e.errno)).toBe("42601");
   });
 
-  // t('await sql() throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     await sql('select 1')
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("await sql() throws not tagged error", async () => {
+    try {
+      await sql("select 1");
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().then throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     sql('select 1').then(() => { /* noop */ })
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().then throws not tagged error", async () => {
+    try {
+      await sql("select 1").then(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().catch throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     await sql('select 1')
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().catch throws not tagged error", async () => {
+    try {
+      sql("select 1").catch(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
-  // t('sql().finally throws not tagged error', async() => {
-  //   let error
-  //   try {
-  //     sql('select 1').finally(() => { /* noop */ })
-  //   } catch (e) {
-  //     error = e.code
-  //   }
-  //   return ['NOT_TAGGED_CALL', error]
-  // })
+  test("sql().finally throws not tagged error", async () => {
+    try {
+      sql("select 1").finally(() => {
+        /* noop */
+      });
+      expect.unreachable();
+    } catch (e: any) {
+      expect(e.code).toBe("ERR_POSTGRES_NOT_TAGGED_CALL");
+    }
+  });
 
   test("little bobby tables", async () => {
     const name = "Robert'); DROP TABLE students;--";
@@ -3090,6 +3211,117 @@ if (isDockerEnabled()) {
   //   return ['12233445566778', xs.sort().join('')]
   // })
 
+  test("limits of types", async () => {
+    await sql
+      .transaction(async reserved => {
+        const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+        // we need a lot of types
+        for (let i = 0; i < 1000; i++) {
+          const type_name = sql(`${table_name}${i}`);
+          // create a lot of custom types
+          await reserved`CREATE TYPE "public".${type_name} AS ENUM('active', 'inactive', 'deleted');`;
+        }
+        await reserved`
+CREATE TABLE ${table_name} (
+"id" serial PRIMARY KEY NOT NULL,
+"status" ${sql(`${table_name}999`)} DEFAULT 'active' NOT NULL
+);`.simple();
+        await reserved`insert into ${table_name} values (1, 'active'), (2, 'inactive'), (3, 'deleted')`;
+        const result = await reserved`select * from ${table_name}`;
+        expect(result).toBeDefined();
+        expect(result.length).toBe(3);
+        expect(result[0].status).toBe("active");
+        expect(result[1].status).toBe("inactive");
+        expect(result[2].status).toBe("deleted");
+        throw new Error("rollback"); // no need to commit all this
+      })
+      .catch(e => {
+        expect(e.message || e).toBe("rollback");
+      });
+  });
+  test("binary detection of unsupported types", async () => {
+    using reserved = await sql.reserve();
+    // this test should return the same result in text and binary mode, using text mode for this types
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a smallint NOT NULL,
+        b smallint NOT NULL,
+        c smallint NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values (1, 23, 256)`;
+      const binary_mode = await reserved`select * from ${table_name} where a = ${1}`;
+      expect(binary_mode).toEqual([{ a: 1, b: 23, c: 256 }]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: 1, b: 23, c: 256 }]);
+    }
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a numeric NOT NULL,
+        b numeric NOT NULL,
+        c numeric NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values (1, 23, 256)`;
+      const binary_mode = await reserved`select * from ${table_name} where a = ${1}`;
+      expect(binary_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+    }
+
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a bigint NOT NULL,
+        b bigint NOT NULL,
+        c bigint NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values (1, 23, 256)`;
+      const binary_mode = await reserved`select * from ${table_name} where a = ${1}`;
+      expect(binary_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+    }
+
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a date NOT NULL,
+        b date NOT NULL,
+        c date NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values ('2025-01-01', '2025-01-02', '2025-01-03')`;
+      const binary_mode = await reserved`select * from ${table_name} where a >= ${"2025-01-01"}`;
+      expect(binary_mode).toEqual([
+        { a: new Date("2025-01-01"), b: new Date("2025-01-02"), c: new Date("2025-01-03") },
+      ]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: new Date("2025-01-01"), b: new Date("2025-01-02"), c: new Date("2025-01-03") }]);
+    }
+    // this is supported in binary mode and also in text mode
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+      await reserved`CREATE TEMPORARY TABLE ${table_name} (a integer[] null, b smallint not null)`;
+      await reserved`insert into ${table_name} values (null, 1), (array[1, 2, 3], 2), (array[4, 5, 6], 3)`;
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode.map(row => row)).toEqual([
+        { a: null, b: 1 },
+        { a: [1, 2, 3], b: 2 },
+        { a: [4, 5, 6], b: 3 },
+      ]);
+      const binary_mode = await reserved`select * from ${table_name} where b = ${2}`;
+      // for now we return a typed array with do not match postgres's array type (this need to accept nulls so will change in future)
+      expect(binary_mode.map(row => row)).toEqual([{ a: new Int32Array([1, 2, 3]), b: 2 }]);
+    }
+  });
   test("reserve connection", async () => {
     const sql = postgres({ ...options, max: 1 });
     const reserved = await sql.reserve();
@@ -10575,6 +10807,211 @@ if (isDockerEnabled()) {
       await using sql = postgres({ ...options, max: 1 });
       const result = await sql`SELECT NULL::aclitem[] as null_array`;
       expect(result[0].null_array).toBeNull();
+    });
+  });
+
+  describe("numeric", () => {
+    test("handles standard decimal numbers", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+
+      const body = [
+        { area: "D", price: "0.00001" }, // should collapse to 0
+        { area: "D", price: "0.0001" },
+        { area: "D", price: "0.0010" },
+        { area: "D", price: "0.0100" },
+        { area: "D", price: "0.1000" },
+        { area: "D", price: "1.0000" },
+        { area: "D", price: "10.0000" },
+        { area: "D", price: "100.0000" },
+        { area: "D", price: "1000.0000" },
+        { area: "D", price: "10000.0000" },
+        { area: "D", price: "100000.0000" },
+
+        { area: "D", price: "1.1234" },
+        { area: "D", price: "10.1234" },
+        { area: "D", price: "100.1234" },
+        { area: "D", price: "1000.1234" },
+        { area: "D", price: "10000.1234" },
+        { area: "D", price: "100000.1234" },
+
+        { area: "D", price: "1.1234" },
+        { area: "D", price: "10.1234" },
+        { area: "D", price: "101.1234" },
+        { area: "D", price: "1010.1234" },
+        { area: "D", price: "10100.1234" },
+        { area: "D", price: "101000.1234" },
+
+        { area: "D", price: "999999.9999" }, // limit of NUMERIC(10,4)
+
+        // negative numbers
+        { area: "D", price: "-0.00001" }, // should collapse to 0
+        { area: "D", price: "-0.0001" },
+        { area: "D", price: "-0.0010" },
+        { area: "D", price: "-0.0100" },
+        { area: "D", price: "-0.1000" },
+        { area: "D", price: "-1.0000" },
+        { area: "D", price: "-10.0000" },
+        { area: "D", price: "-100.0000" },
+        { area: "D", price: "-1000.0000" },
+        { area: "D", price: "-10000.0000" },
+        { area: "D", price: "-100000.0000" },
+
+        { area: "D", price: "-1.1234" },
+        { area: "D", price: "-10.1234" },
+        { area: "D", price: "-100.1234" },
+        { area: "D", price: "-1000.1234" },
+        { area: "D", price: "-10000.1234" },
+        { area: "D", price: "-100000.1234" },
+
+        { area: "D", price: "-1.1234" },
+        { area: "D", price: "-10.1234" },
+        { area: "D", price: "-101.1234" },
+        { area: "D", price: "-1010.1234" },
+        { area: "D", price: "-10100.1234" },
+        { area: "D", price: "-101000.1234" },
+
+        { area: "D", price: "-999999.9999" }, // limit of NUMERIC(10,4)
+
+        // NaN
+        { area: "D", price: "NaN" },
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toEqual("0");
+      expect(results[1].price).toEqual("0.0001");
+      expect(results[2].price).toEqual("0.0010");
+      expect(results[3].price).toEqual("0.0100");
+      expect(results[4].price).toEqual("0.1000");
+      expect(results[5].price).toEqual("1.0000");
+      expect(results[6].price).toEqual("10.0000");
+      expect(results[7].price).toEqual("100.0000");
+      expect(results[8].price).toEqual("1000.0000");
+      expect(results[9].price).toEqual("10000.0000");
+      expect(results[10].price).toEqual("100000.0000");
+
+      expect(results[11].price).toEqual("1.1234");
+      expect(results[12].price).toEqual("10.1234");
+      expect(results[13].price).toEqual("100.1234");
+      expect(results[14].price).toEqual("1000.1234");
+      expect(results[15].price).toEqual("10000.1234");
+      expect(results[16].price).toEqual("100000.1234");
+
+      expect(results[17].price).toEqual("1.1234");
+      expect(results[18].price).toEqual("10.1234");
+      expect(results[19].price).toEqual("101.1234");
+      expect(results[20].price).toEqual("1010.1234");
+      expect(results[21].price).toEqual("10100.1234");
+      expect(results[22].price).toEqual("101000.1234");
+
+      expect(results[23].price).toEqual("999999.9999");
+
+      // negative numbers
+      expect(results[24].price).toEqual("0");
+      expect(results[25].price).toEqual("-0.0001");
+      expect(results[26].price).toEqual("-0.0010");
+      expect(results[27].price).toEqual("-0.0100");
+      expect(results[28].price).toEqual("-0.1000");
+      expect(results[29].price).toEqual("-1.0000");
+      expect(results[30].price).toEqual("-10.0000");
+      expect(results[31].price).toEqual("-100.0000");
+      expect(results[32].price).toEqual("-1000.0000");
+      expect(results[33].price).toEqual("-10000.0000");
+      expect(results[34].price).toEqual("-100000.0000");
+
+      expect(results[35].price).toEqual("-1.1234");
+      expect(results[36].price).toEqual("-10.1234");
+      expect(results[37].price).toEqual("-100.1234");
+      expect(results[38].price).toEqual("-1000.1234");
+      expect(results[39].price).toEqual("-10000.1234");
+      expect(results[40].price).toEqual("-100000.1234");
+
+      expect(results[41].price).toEqual("-1.1234");
+      expect(results[42].price).toEqual("-10.1234");
+      expect(results[43].price).toEqual("-101.1234");
+      expect(results[44].price).toEqual("-1010.1234");
+      expect(results[45].price).toEqual("-10100.1234");
+      expect(results[46].price).toEqual("-101000.1234");
+
+      expect(results[47].price).toEqual("-999999.9999");
+
+      expect(results[48].price).toEqual("NaN");
+    });
+    test("handle different scales", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(20,10))`;
+      const body = [{ area: "D", price: "1010001010.1234" }];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toEqual("1010001010.1234000000");
+    });
+    test("handles leading zeros", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "A", price: "00001.00045" }, // should collapse to 1.0005
+        { area: "B", price: "0000.12345" }, // should collapse to 0.1235
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toBe("1.0005");
+      expect(results[1].price).toBe("0.1235");
+    });
+
+    test("handles numbers at scale boundaries", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "C", price: "999999.9999" }, // Max for NUMERIC(10,4)
+        { area: "D", price: "0.0001" }, // Min positive for 4 decimals
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toBe("999999.9999");
+      expect(results[1].price).toBe("0.0001");
+    });
+
+    test("handles zero values", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "E", price: "0" },
+        { area: "F", price: "0.0000" },
+        { area: "G", price: "00000.0000" },
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      results.forEach(row => {
+        expect(row.price).toBe("0");
+      });
+    });
+
+    test("handles negative numbers", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "H", price: "-1.2345" },
+        { area: "I", price: "-0.0001" },
+        { area: "J", price: "-9999.9999" },
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toBe("-1.2345");
+      expect(results[1].price).toBe("-0.0001");
+      expect(results[2].price).toBe("-9999.9999");
+    });
+
+    test("handles scientific notation", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (area text, price NUMERIC(10,4))`;
+      const body = [
+        { area: "O", price: "1.2345e1" }, // 12.345
+        { area: "P", price: "1.2345e-2" }, // 0.012345
+      ];
+      const results = await sql`INSERT INTO ${sql(random_name)} ${sql(body)} RETURNING *`;
+      expect(results[0].price).toBe("12.3450");
+      expect(results[1].price).toBe("0.0123");
     });
   });
 }

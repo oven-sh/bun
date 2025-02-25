@@ -147,9 +147,9 @@ extern "C" {
 ** [sqlite3_libversion_number()], [sqlite3_sourceid()],
 ** [sqlite_version()] and [sqlite_source_id()].
 */
-#define SQLITE_VERSION        "3.48.0"
-#define SQLITE_VERSION_NUMBER 3048000
-#define SQLITE_SOURCE_ID      "2025-01-14 11:05:00 d2fe6b05f38d9d7cd78c5d252e99ac59f1aea071d669830c1ffe4e8966e84010"
+#define SQLITE_VERSION        "3.49.1"
+#define SQLITE_VERSION_NUMBER 3049001
+#define SQLITE_SOURCE_ID      "2025-02-18 13:38:58 873d4e274b4988d260ba8354a9718324a1c26187a4ab4c1cc0227c03d0f10e70"
 
 /*
 ** CAPI3REF: Run-Time Library Version Numbers
@@ -2212,7 +2212,15 @@ struct sqlite3_mem_methods {
 ** CAPI3REF: Database Connection Configuration Options
 **
 ** These constants are the available integer configuration options that
-** can be passed as the second argument to the [sqlite3_db_config()] interface.
+** can be passed as the second parameter to the [sqlite3_db_config()] interface.
+**
+** The [sqlite3_db_config()] interface is a var-args functions.  It takes a
+** variable number of parameters, though always at least two.  The number of
+** parameters passed into sqlite3_db_config() depends on which of these
+** constants is given as the second parameter.  This documentation page
+** refers to parameters beyond the second as "arguments".  Thus, when this
+** page says "the N-th argument" it means "the N-th parameter past the
+** configuration option" or "the (N+2)-th parameter to sqlite3_db_config()".
 **
 ** New configuration options may be added in future releases of SQLite.
 ** Existing configuration options might be discontinued.  Applications
@@ -2224,8 +2232,14 @@ struct sqlite3_mem_methods {
 ** <dl>
 ** [[SQLITE_DBCONFIG_LOOKASIDE]]
 ** <dt>SQLITE_DBCONFIG_LOOKASIDE</dt>
-** <dd> ^This option takes three additional arguments that determine the
-** [lookaside memory allocator] configuration for the [database connection].
+** <dd> The SQLITE_DBCONFIG_LOOKASIDE option is used to adjust the
+** configuration of the lookaside memory allocator within a database
+** connection.
+** The arguments to the SQLITE_DBCONFIG_LOOKASIDE option are <i>not</i>
+** in the [DBCONFIG arguments|usual format].
+** The SQLITE_DBCONFIG_LOOKASIDE option takes three arguments, not two,
+** so that a call to [sqlite3_db_config()] that uses SQLITE_DBCONFIG_LOOKASIDE
+** should have a total of five parameters.
 ** ^The first argument (the third parameter to [sqlite3_db_config()] is a
 ** pointer to a memory buffer to use for lookaside memory.
 ** ^The first argument after the SQLITE_DBCONFIG_LOOKASIDE verb
@@ -2248,7 +2262,8 @@ struct sqlite3_mem_methods {
 ** [[SQLITE_DBCONFIG_ENABLE_FKEY]]
 ** <dt>SQLITE_DBCONFIG_ENABLE_FKEY</dt>
 ** <dd> ^This option is used to enable or disable the enforcement of
-** [foreign key constraints].  There should be two additional arguments.
+** [foreign key constraints].  This is the same setting that is
+** enabled or disabled by the [PRAGMA foreign_keys] statement.
 ** The first argument is an integer which is 0 to disable FK enforcement,
 ** positive to enable FK enforcement or negative to leave FK enforcement
 ** unchanged.  The second parameter is a pointer to an integer into which
@@ -2270,13 +2285,13 @@ struct sqlite3_mem_methods {
 ** <p>Originally this option disabled all triggers.  ^(However, since
 ** SQLite version 3.35.0, TEMP triggers are still allowed even if
 ** this option is off.  So, in other words, this option now only disables
-** triggers in the main database schema or in the schemas of ATTACH-ed
+** triggers in the main database schema or in the schemas of [ATTACH]-ed
 ** databases.)^ </dd>
 **
 ** [[SQLITE_DBCONFIG_ENABLE_VIEW]]
 ** <dt>SQLITE_DBCONFIG_ENABLE_VIEW</dt>
 ** <dd> ^This option is used to enable or disable [CREATE VIEW | views].
-** There should be two additional arguments.
+** There must be two additional arguments.
 ** The first argument is an integer which is 0 to disable views,
 ** positive to enable views or negative to leave the setting unchanged.
 ** The second parameter is a pointer to an integer into which
@@ -2295,7 +2310,7 @@ struct sqlite3_mem_methods {
 ** <dd> ^This option is used to enable or disable the
 ** [fts3_tokenizer()] function which is part of the
 ** [FTS3] full-text search engine extension.
-** There should be two additional arguments.
+** There must be two additional arguments.
 ** The first argument is an integer which is 0 to disable fts3_tokenizer() or
 ** positive to enable fts3_tokenizer() or negative to leave the setting
 ** unchanged.
@@ -2310,7 +2325,7 @@ struct sqlite3_mem_methods {
 ** interface independently of the [load_extension()] SQL function.
 ** The [sqlite3_enable_load_extension()] API enables or disables both the
 ** C-API [sqlite3_load_extension()] and the SQL function [load_extension()].
-** There should be two additional arguments.
+** There must be two additional arguments.
 ** When the first argument to this interface is 1, then only the C-API is
 ** enabled and the SQL function remains disabled.  If the first argument to
 ** this interface is 0, then both the C-API and the SQL function are disabled.
@@ -2324,23 +2339,30 @@ struct sqlite3_mem_methods {
 **
 ** [[SQLITE_DBCONFIG_MAINDBNAME]] <dt>SQLITE_DBCONFIG_MAINDBNAME</dt>
 ** <dd> ^This option is used to change the name of the "main" database
-** schema.  ^The sole argument is a pointer to a constant UTF8 string
-** which will become the new schema name in place of "main".  ^SQLite
-** does not make a copy of the new main schema name string, so the application
-** must ensure that the argument passed into this DBCONFIG option is unchanged
-** until after the database connection closes.
+** schema.  This option does not follow the
+** [DBCONFIG arguments|usual SQLITE_DBCONFIG argument format].
+** This option takes exactly one additional argument so that the
+** [sqlite3_db_config()] call has a total of three parameters.  The
+** extra argument must be a pointer to a constant UTF8 string which
+** will become the new schema name in place of "main".  ^SQLite does
+** not make a copy of the new main schema name string, so the application
+** must ensure that the argument passed into SQLITE_DBCONFIG MAINDBNAME
+** is unchanged until after the database connection closes.
 ** </dd>
 **
 ** [[SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE]]
 ** <dt>SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE</dt>
-** <dd> Usually, when a database in wal mode is closed or detached from a
-** database handle, SQLite checks if this will mean that there are now no
-** connections at all to the database. If so, it performs a checkpoint
-** operation before closing the connection. This option may be used to
-** override this behavior. The first parameter passed to this operation
-** is an integer - positive to disable checkpoints-on-close, or zero (the
-** default) to enable them, and negative to leave the setting unchanged.
-** The second parameter is a pointer to an integer
+** <dd> Usually, when a database in [WAL mode] is closed or detached from a
+** database handle, SQLite checks if if there are other connections to the
+** same database, and if there are no other database connection (if the
+** connection being closed is the last open connection to the database),
+** then SQLite performs a [checkpoint] before closing the connection and
+** deletes the WAL file.  The SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE option can
+** be used to override that behavior. The first argument passed to this
+** operation (the third parameter to [sqlite3_db_config()]) is an integer
+** which is positive to disable checkpoints-on-close, or zero (the default)
+** to enable them, and negative to leave the setting unchanged.
+** The second argument (the fourth parameter) is a pointer to an integer
 ** into which is written 0 or 1 to indicate whether checkpoints-on-close
 ** have been disabled - 0 if they are not disabled, 1 if they are.
 ** </dd>
@@ -2501,7 +2523,7 @@ struct sqlite3_mem_methods {
 ** statistics. For statistics to be collected, the flag must be set on
 ** the database handle both when the SQL statement is prepared and when it
 ** is stepped. The flag is set (collection of statistics is enabled)
-** by default.  This option takes two arguments: an integer and a pointer to
+** by default. <p>This option takes two arguments: an integer and a pointer to
 ** an integer..  The first argument is 1, 0, or -1 to enable, disable, or
 ** leave unchanged the statement scanstatus option.  If the second argument
 ** is not NULL, then the value of the statement scanstatus setting after
@@ -2515,7 +2537,7 @@ struct sqlite3_mem_methods {
 ** in which tables and indexes are scanned so that the scans start at the end
 ** and work toward the beginning rather than starting at the beginning and
 ** working toward the end. Setting SQLITE_DBCONFIG_REVERSE_SCANORDER is the
-** same as setting [PRAGMA reverse_unordered_selects].  This option takes
+** same as setting [PRAGMA reverse_unordered_selects]. <p>This option takes
 ** two arguments which are an integer and a pointer to an integer.  The first
 ** argument is 1, 0, or -1 to enable, disable, or leave unchanged the
 ** reverse scan order flag, respectively.  If the second argument is not NULL,
@@ -2524,7 +2546,76 @@ struct sqlite3_mem_methods {
 ** first argument.
 ** </dd>
 **
+** [[SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE]]
+** <dt>SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE</dt>
+** <dd>The SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE option enables or disables
+** the ability of the [ATTACH DATABASE] SQL command to create a new database
+** file if the database filed named in the ATTACH command does not already
+** exist.  This ability of ATTACH to create a new database is enabled by
+** default.  Applications can disable or reenable the ability for ATTACH to
+** create new database files using this DBCONFIG option.<p>
+** This option takes two arguments which are an integer and a pointer
+** to an integer.  The first argument is 1, 0, or -1 to enable, disable, or
+** leave unchanged the attach-create flag, respectively.  If the second
+** argument is not NULL, then 0 or 1 is written into the integer that the
+** second argument points to depending on if the attach-create flag is set
+** after processing the first argument.
+** </dd>
+**
+** [[SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE]]
+** <dt>SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE</dt>
+** <dd>The SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE option enables or disables the
+** ability of the [ATTACH DATABASE] SQL command to open a database for writing.
+** This capability is enabled by default.  Applications can disable or
+** reenable this capability using the current DBCONFIG option.  If the
+** the this capability is disabled, the [ATTACH] command will still work,
+** but the database will be opened read-only.  If this option is disabled,
+** then the ability to create a new database using [ATTACH] is also disabled,
+** regardless of the value of the [SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE]
+** option.<p>
+** This option takes two arguments which are an integer and a pointer
+** to an integer.  The first argument is 1, 0, or -1 to enable, disable, or
+** leave unchanged the ability to ATTACH another database for writing,
+** respectively.  If the second argument is not NULL, then 0 or 1 is written
+** into the integer to which the second argument points, depending on whether
+** the ability to ATTACH a read/write database is enabled or disabled
+** after processing the first argument.
+** </dd>
+**
+** [[SQLITE_DBCONFIG_ENABLE_COMMENTS]]
+** <dt>SQLITE_DBCONFIG_ENABLE_COMMENTS</dt>
+** <dd>The SQLITE_DBCONFIG_ENABLE_COMMENTS option enables or disables the
+** ability to include comments in SQL text.  Comments are enabled by default.
+** An application can disable or reenable comments in SQL text using this
+** DBCONFIG option.<p>
+** This option takes two arguments which are an integer and a pointer
+** to an integer.  The first argument is 1, 0, or -1 to enable, disable, or
+** leave unchanged the ability to use comments in SQL text,
+** respectively.  If the second argument is not NULL, then 0 or 1 is written
+** into the integer that the second argument points to depending on if
+** comments are allowed in SQL text after processing the first argument.
+** </dd>
+**
 ** </dl>
+**
+** [[DBCONFIG arguments]] <h3>Arguments To SQLITE_DBCONFIG Options</h3>
+**
+** <p>Most of the SQLITE_DBCONFIG options take two arguments, so that the
+** overall call to [sqlite3_db_config()] has a total of four parameters.
+** The first argument (the third parameter to sqlite3_db_config()) is a integer.
+** The second argument is a pointer to an integer.  If the first argument is 1,
+** then the option becomes enabled.  If the first integer argument is 0, then the
+** option is disabled.  If the first argument is -1, then the option setting
+** is unchanged.  The second argument, the pointer to an integer, may be NULL.
+** If the second argument is not NULL, then a value of 0 or 1 is written into
+** the integer to which the second argument points, depending on whether the
+** setting is disabled or enabled after applying any changes specified by
+** the first argument.
+**
+** <p>While most SQLITE_DBCONFIG options use the argument format
+** described in the previous paragraph, the [SQLITE_DBCONFIG_MAINDBNAME]
+** and [SQLITE_DBCONFIG_LOOKASIDE] options are different.  See the
+** documentation of those exceptional options for details.
 */
 #define SQLITE_DBCONFIG_MAINDBNAME            1000 /* const char* */
 #define SQLITE_DBCONFIG_LOOKASIDE             1001 /* void* int int */
@@ -2546,7 +2637,10 @@ struct sqlite3_mem_methods {
 #define SQLITE_DBCONFIG_TRUSTED_SCHEMA        1017 /* int int* */
 #define SQLITE_DBCONFIG_STMT_SCANSTATUS       1018 /* int int* */
 #define SQLITE_DBCONFIG_REVERSE_SCANORDER     1019 /* int int* */
-#define SQLITE_DBCONFIG_MAX                   1019 /* Largest DBCONFIG */
+#define SQLITE_DBCONFIG_ENABLE_ATTACH_CREATE  1020 /* int int* */
+#define SQLITE_DBCONFIG_ENABLE_ATTACH_WRITE   1021 /* int int* */
+#define SQLITE_DBCONFIG_ENABLE_COMMENTS       1022 /* int int* */
+#define SQLITE_DBCONFIG_MAX                   1022 /* Largest DBCONFIG */
 
 /*
 ** CAPI3REF: Enable Or Disable Extended Result Codes
@@ -10749,8 +10843,9 @@ SQLITE_API SQLITE_EXPERIMENTAL int sqlite3_snapshot_recover(sqlite3 *db, const c
 /*
 ** CAPI3REF: Serialize a database
 **
-** The sqlite3_serialize(D,S,P,F) interface returns a pointer to memory
-** that is a serialization of the S database on [database connection] D.
+** The sqlite3_serialize(D,S,P,F) interface returns a pointer to
+** memory that is a serialization of the S database on
+** [database connection] D.  If S is a NULL pointer, the main database is used.
 ** If P is not a NULL pointer, then the size of the database in bytes
 ** is written into *P.
 **

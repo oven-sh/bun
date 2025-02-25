@@ -62,7 +62,7 @@
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/HashSet.h>
 #include <wtf/HexNumber.h>
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
 // #include <wtf/RunLoop.h>
 #include <wtf/StdLibExtras.h>
@@ -77,7 +77,7 @@
 // #endif
 
 namespace WebCore {
-WTF_MAKE_ISO_ALLOCATED_IMPL(WebSocket);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSocket);
 extern "C" int Bun__getTLSRejectUnauthorizedValue();
 
 static size_t getFramingOverhead(size_t payloadSize)
@@ -1141,12 +1141,8 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
             context->postTask([name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 size_t length = buffer->byteLength();
                 auto* globalObject = context.jsGlobalObject();
-                JSUint8Array* uint8array = JSUint8Array::create(
-                    globalObject,
-                    reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure(),
-                    buffer.copyRef(),
-                    0,
-                    length);
+                auto* subclassStructure = reinterpret_cast<Zig::GlobalObject*>(globalObject)->JSBufferSubclassStructure();
+                JSUint8Array* uint8array = JSUint8Array::create(globalObject, subclassStructure, buffer.copyRef(), 0, length);
                 JSC::EnsureStillAliveScope ensureStillAlive(uint8array);
                 MessageEvent::Init init;
                 init.data = uint8array;

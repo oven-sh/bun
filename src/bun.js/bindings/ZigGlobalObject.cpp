@@ -60,7 +60,6 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunObject.h"
-#include "BunObject+exports.h"
 #include "GeneratedBunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"

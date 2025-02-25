@@ -789,10 +789,6 @@ pub const ZigString = extern struct {
         return out;
     }
 
-    pub fn from(slice_: JSC.C.JSValueRef, ctx: JSC.C.JSContextRef) ZigString {
-        return JSC.JSValue.fromRef(slice_).getZigString(ctx.ptr());
-    }
-
     pub fn from16Slice(slice_: []const u16) ZigString {
         return from16(slice_.ptr, slice_.len);
     }
@@ -1830,7 +1826,7 @@ pub const SystemError = extern struct {
     };
 };
 
-pub const Sizes = @import("../bindings/sizes.zig");
+pub const Sizes = @import("./sizes.zig");
 
 pub const JSUint8Array = opaque {
     pub const name = "Uint8Array_alias";
@@ -1931,7 +1927,7 @@ pub const JSString = extern struct {
 
     pub const view = getZigString;
 
-    // doesn't always allocate
+    /// doesn't always allocate
     pub fn toSlice(
         this: *JSString,
         global: *JSGlobalObject,
@@ -2891,6 +2887,7 @@ pub const JSGlobalObject = opaque {
         };
     }
 
+    /// "Expected {field} to be a {typename} for '{name}'."
     pub fn createInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2904,6 +2901,7 @@ pub const JSGlobalObject = opaque {
         return JSC.toJS(this, @TypeOf(value), value, lifetime);
     }
 
+    /// "Expected {field} to be a {typename} for '{name}'."
     pub fn throwInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2913,6 +2911,7 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    /// "The {argname} argument is invalid. Received {value}"
     pub fn throwInvalidArgumentValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -2921,6 +2920,25 @@ pub const JSGlobalObject = opaque {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
         return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+    }
+
+    /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
+    /// Message depends on whether `expected` is present.
+    /// - "The property "{argname}" is invalid. Received {value}"
+    /// - "The property "{argname}" is invalid. Expected {expected}, received {value}"
+    pub fn throwInvalidArgumentPropertyValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        comptime expected: ?[]const u8,
+        value: JSValue,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        if (comptime expected) |_expected| {
+            return this.ERR_INVALID_ARG_VALUE("The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
+        } else {
+            return this.ERR_INVALID_ARG_VALUE("The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
+        }
     }
 
     extern "c" fn Bun__ErrorCode__determineSpecificType(*JSGlobalObject, JSValue) String;
@@ -2934,7 +2952,7 @@ pub const JSGlobalObject = opaque {
         return str;
     }
 
-    /// "The <argname> argument must be of type <typename>. Received <value>"
+    /// "The {argname} argument must be of type {typename}. Received {value}"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3097,17 +3115,22 @@ pub const JSGlobalObject = opaque {
         return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(this, fmt, args);
     }
 
-    pub fn createError(
-        this: *JSGlobalObject,
+    pub const SysErrOptions = struct {
         code: JSC.Node.ErrorCode,
-        error_name: string,
-        comptime message: string,
+        errno: ?i32 = null,
+        name: ?string = null,
+    };
+    pub fn throwSysError(
+        this: *JSGlobalObject,
+        opts: SysErrOptions,
+        comptime message: bun.stringZ,
         args: anytype,
-    ) JSValue {
+    ) JSError {
         const err = createErrorInstance(this, message, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
-        err.put(this, ZigString.static("name"), ZigString.init(error_name).toJS(this));
-        return err;
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
+        if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), JSC.toJS(this, i32, errno, .temporary));
+        return this.throwValue(err);
     }
 
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
@@ -3422,6 +3445,12 @@ pub const JSGlobalObject = opaque {
         return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false, null);
     }
 
+    /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.
+    pub inline fn commonStrings(this: *JSC.JSGlobalObject) CommonStrings {
+        JSC.markBinding(@src());
+        return .{ .globalObject = this };
+    }
+
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
 
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
@@ -3433,6 +3462,46 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
+};
+
+/// Common strings from `BunCommonStrings.h`.
+///
+/// All getters return a `JSC::JSString`;
+pub const CommonStrings = struct {
+    globalObject: *JSC.JSGlobalObject,
+
+    pub inline fn IPv4(this: CommonStrings) JSValue {
+        return this.getString("IPv4");
+    }
+    pub inline fn IPv6(this: CommonStrings) JSValue {
+        return this.getString("IPv6");
+    }
+    pub inline fn @"127.0.0.1"(this: CommonStrings) JSValue {
+        return this.getString("IN4Loopback");
+    }
+    pub inline fn @"::"(this: CommonStrings) JSValue {
+        return this.getString("IN6Any");
+    }
+
+    inline fn getString(this: CommonStrings, comptime name: anytype) JSValue {
+        JSC.markMemberBinding("CommonStrings", @src());
+        const str: JSC.JSValue = @call(
+            .auto,
+            @field(CommonStrings, "JSC__JSGlobalObject__commonStrings__get" ++ name),
+            .{this.globalObject},
+        );
+        bun.assert(str != .zero);
+        if (comptime bun.Environment.isDebug) {
+            bun.assertWithLocation(str != .zero, @src());
+            bun.assertWithLocation(str.isStringLiteral(), @src());
+        }
+        return str;
+    }
+
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIPv4(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIPv6(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIN4Loopback(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIN6Any(global: *JSC.JSGlobalObject) JSC.JSValue;
 };
 
 pub const JSNativeFn = JSHostZigFunction;
@@ -3997,7 +4066,6 @@ pub const JSValue = enum(i64) {
 
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
-            ZigString => this.getZigString(globalThis),
             bool => this.toBoolean(),
             f64 => {
                 if (this.isDouble()) {
@@ -4308,11 +4376,25 @@ pub const JSValue = enum(i64) {
         return this.jsType() == .JSDate;
     }
 
+    /// Protects a JSValue from garbage collection.
+    ///
+    /// This is useful when you want to store a JSValue in a global or on the
+    /// heap, where the garbage collector will not be able to discover your
+    /// reference to it.
+    ///
+    /// A value may be protected multiple times and must be unprotected an
+    /// equal number of times before becoming eligible for garbage collection.
     pub fn protect(this: JSValue) void {
         if (!this.isCell()) return;
         JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 
+    /// Unprotects a JSValue from garbage collection.
+    ///
+    /// A value may be protected multiple times and must be unprotected an
+    /// equal number of times before becoming eligible for garbage collection.
+    ///
+    /// This is the inverse of `protect`.
     pub fn unprotect(this: JSValue) void {
         if (!this.isCell()) return;
         JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
@@ -4716,6 +4798,14 @@ pub const JSValue = enum(i64) {
         return this.isNumber() and !this.isInt32();
     }
 
+    /// [21.1.2.2 Number.isFinite](https://tc39.es/ecma262/#sec-number.isfinite)
+    ///
+    /// Returns `false` for non-numbers, `NaN`, `Infinity`, and `-Infinity`
+    pub fn isFinite(this: JSValue) bool {
+        if (!this.isNumber()) return false;
+        return std.math.isFinite(this.asNumber());
+    }
+
     pub fn isError(this: JSValue) bool {
         if (!this.isCell())
             return false;
@@ -4873,8 +4963,10 @@ pub const JSValue = enum(i64) {
         return cppFn("toZigException", .{ this, global, exception });
     }
 
-    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) void {
-        return cppFn("toZigString", .{ this, out, global });
+    pub fn toZigString(this: JSValue, out: *ZigString, global: *JSGlobalObject) error{JSError}!void {
+        const str = cppFn("toZigString", .{ this, out, global });
+        if (global.hasException()) return error.JSError;
+        return str;
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
@@ -4941,9 +5033,9 @@ pub const JSValue = enum(i64) {
     }
 
     /// Deprecated: replace with 'toBunString2'
-    pub inline fn getZigString(this: JSValue, global: *JSGlobalObject) ZigString {
+    pub fn getZigString(this: JSValue, global: *JSGlobalObject) bun.JSError!ZigString {
         var str = ZigString.init("");
-        this.toZigString(&str, global);
+        try this.toZigString(&str, global);
         return str;
     }
 
@@ -5617,6 +5709,13 @@ pub const JSValue = enum(i64) {
         return .none;
     }
 
+    /// Static cast a value into a `JSC::JSString`. Casting a non-string results
+    /// in safety-protected undefined behavior.
+    ///
+    /// - `this` is re-interpreted, so runtime casting does not occur (e.g. `this.toString()`)
+    /// - Does not allocate
+    /// - Does not increment ref count
+    /// - Make sure `this` stays on the stack. If you're method chaining, you may need to call `this.ensureStillAlive()`.
     pub fn asString(this: JSValue) *JSString {
         return cppFn("asString", .{
             this,
@@ -5871,13 +5970,6 @@ pub const JSValue = enum(i64) {
 
     pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) bool {
         return cppFn("isIterable", .{
-            this,
-            globalObject,
-        });
-    }
-
-    pub fn parseJSON(this: JSValue, globalObject: *JSGlobalObject) JSValue {
-        return cppFn("parseJSON", .{
             this,
             globalObject,
         });
@@ -6797,7 +6889,7 @@ pub const URL = opaque {
     extern fn URL__search(*URL) String;
     extern fn URL__host(*URL) String;
     extern fn URL__hostname(*URL) String;
-    extern fn URL__port(*URL) String;
+    extern fn URL__port(*URL) u32;
     extern fn URL__deinit(*URL) void;
     extern fn URL__pathname(*URL) String;
     extern fn URL__getHrefFromJS(JSValue, *JSC.JSGlobalObject) String;
@@ -6883,7 +6975,9 @@ pub const URL = opaque {
         JSC.markBinding(@src());
         return URL__hostname(url);
     }
-    pub fn port(url: *URL) String {
+    /// Returns `std.math.maxInt(u32)` if the port is not set. Otherwise, `port`
+    /// is guaranteed to be within the `u16` range.
+    pub fn port(url: *URL) u32 {
         JSC.markBinding(@src());
         return URL__port(url);
     }
@@ -7047,5 +7141,3 @@ pub const DeferredError = struct {
         return err;
     }
 };
-
-pub const JSSocketAddress = @import("./JSSocketAddress.zig").JSSocketAddress;

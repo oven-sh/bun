@@ -89,6 +89,8 @@ const Async = bun.Async;
 const httplog = Output.scoped(.Server, false);
 const ctxLog = Output.scoped(.RequestContext, false);
 const S3 = bun.S3;
+const SocketAddress = @import("bun/socket.zig").SocketAddress;
+
 const BlobFileContentResult = struct {
     data: [:0]const u8,
 
@@ -1210,6 +1212,19 @@ pub const ServerConfig = struct {
         }
     };
 
+    fn getRoutesObject(global: *JSC.JSGlobalObject, arg: JSC.JSValue) bun.JSError!?JSC.JSValue {
+        inline for (.{ "routes", "static" }) |key| {
+            if (try arg.get(global, key)) |routes| {
+                // https://github.com/oven-sh/bun/issues/17568
+                if (routes.isArray()) {
+                    return null;
+                }
+                return routes;
+            }
+        }
+        return null;
+    }
+
     pub const FromJSOptions = struct {
         allow_bake_config: bool = true,
         is_fetch_required: bool = true,
@@ -1309,7 +1324,7 @@ pub const ServerConfig = struct {
             }
             if (global.hasException()) return error.JSError;
 
-            if ((try arg.get(global, "routes")) orelse (try arg.get(global, "static"))) |static| {
+            if (try getRoutesObject(global, arg)) |static| {
                 if (!static.isObject()) {
                     return global.throwInvalidArguments(
                         \\Bun.serve() expects 'routes' to be an object shaped like:
@@ -4747,7 +4762,7 @@ pub const WebSocketServer = struct {
                     if (compression.isBoolean()) {
                         server.compression |= if (compression.toBoolean()) uws.SHARED_COMPRESSOR else 0;
                     } else if (compression.isString()) {
-                        server.compression |= CompressTable.getWithEql(compression.getZigString(globalObject), ZigString.eqlComptime) orelse {
+                        server.compression |= CompressTable.getWithEql(try compression.getZigString(globalObject), ZigString.eqlComptime) orelse {
                             return globalObject.throwInvalidArguments("WebSocketServer expects a valid compress option, either disable \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\"", .{});
                         };
                     } else {
@@ -4759,7 +4774,7 @@ pub const WebSocketServer = struct {
                     if (compression.isBoolean()) {
                         server.compression |= if (compression.toBoolean()) uws.SHARED_DECOMPRESSOR else 0;
                     } else if (compression.isString()) {
-                        server.compression |= DecompressTable.getWithEql(compression.getZigString(globalObject), ZigString.eqlComptime) orelse {
+                        server.compression |= DecompressTable.getWithEql(try compression.getZigString(globalObject), ZigString.eqlComptime) orelse {
                             return globalObject.throwInvalidArguments("websocket expects a valid decompress option, either \"disable\" \"shared\" \"dedicated\" \"3KB\" \"4KB\" \"8KB\" \"16KB\" \"32KB\" \"64KB\" \"128KB\" or \"256KB\"", .{});
                         };
                     } else {
@@ -6454,10 +6469,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
-            if (this.config.address == .unix) {
-                return JSValue.jsNull();
-            }
-            return request.getRemoteSocketInfo(this.globalThis) orelse .null;
+            if (this.config.address == .unix) return JSValue.jsNull();
+            const info = request.request_context.getRemoteSocketInfo() orelse return JSValue.jsNull();
+            return SocketAddress.createDTO(this.globalThis, info.ip, @intCast(info.port), info.is_ipv6);
         }
 
         pub fn memoryCost(this: *ThisServer) usize {
@@ -7008,16 +7022,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         port = @intCast(listener.getLocalPort());
 
                         var buf: [64]u8 = [_]u8{0} ** 64;
-                        var is_ipv6: bool = false;
-
-                        if (listener.socket().localAddressText(&buf, &is_ipv6)) |slice| {
-                            return JSC.JSSocketAddress.create(
-                                this.globalThis,
-                                slice,
-                                port,
-                                is_ipv6,
-                            );
-                        }
+                        const address_bytes = listener.socket().localAddress(&buf) orelse return JSValue.jsNull();
+                        var addr = SocketAddress.init(address_bytes, port) catch {
+                            @branchHint(.unlikely);
+                            return JSValue.jsNull();
+                        };
+                        return addr.intoDTO(this.globalThis);
                     }
                     return JSValue.jsNull();
                 },

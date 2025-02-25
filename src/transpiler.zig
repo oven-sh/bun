@@ -1340,7 +1340,7 @@ pub const Transpiler = struct {
                 parts[0] = js_ast.Part{ .stmts = stmts };
 
                 return ParseResult{
-                    .ast = js_ast.Ast.fromParts(parts),
+                    .ast = js_ast.Ast.initTest(parts),
                     .source = source,
                     .loader = loader,
                     .input_fd = input_fd,

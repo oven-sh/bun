@@ -18963,67 +18963,6 @@ fn NewParser_(
                     for (data.items) |*item| {
                         try p.recordDeclaredSymbol(item.name.ref.?);
                     }
-
-                    // we are importing something from a barrel file
-                    if (p.options.features.barrel_files) |barrel_files| {
-                        if (barrel_files.contains(p.import_records.items[data.import_record_index].path.text)) {
-                            const existing_import_record_idx = stmt.data.s_import.import_record_index;
-                            const existing_import_record = &p.import_records.items[existing_import_record_idx];
-                            // mark it so we can recognize it later in onParseTaskComplete
-                            existing_import_record.tag = .barrel;
-
-                            // if we import more than one thing in this statement, break up each
-                            // individual import into its own statement so we can rewrite each path:
-                            //
-                            // ```ts
-                            // /* before */
-                            // import { Ooga, Booga } from 'dictionary'
-                            //
-                            // /* after */
-                            // import { Ooga } from 'dictionary/words/Ooga.js'
-                            // import { Booga } from 'dictionary/words/Booga.js'
-                            // ```
-                            //
-                            // I don't want to make N allocations of arrays that each have 1 item each,
-                            // that is dumb. So we're just going to slice the array. This is fine because
-                            // everything here is arena allocated.
-                            if (data.items.len >= 1) {
-                                const old_items = data.items;
-                                data.items = &.{};
-                                for (old_items, 0..) |*item, i| {
-                                    const new_items = p.allocator.dupe(js_ast.ClauseItem, item[0..1]) catch unreachable;
-                                    p.symbols.items[new_items[0].name.ref.?.inner_index].namespace_alias = null;
-                                    if (i == 0) {
-                                        // data.items = old_items[0..1];
-                                        data.items = new_items;
-                                        try stmts.append(stmt.*);
-                                    } else {
-                                        const new_import_record_idx = p.import_records.items.len;
-                                        try p.import_records.append(existing_import_record.*);
-                                        const name = p.loadNameFromRef(data.namespace_ref);
-                                        const namespace_ref = try p.newSymbol(.other, name);
-
-                                        try stmts.append(p.s(
-                                            S.Import{
-                                                // .items = item[0..1],
-                                                .items = new_items,
-                                                .import_record_index = @truncate(new_import_record_idx),
-                                                .namespace_ref = namespace_ref,
-                                                // TODO(zack): support this later
-                                                .default_name = null,
-                                                .is_single_line = true,
-                                                // TODO(zack): support this later
-                                                .star_name_loc = null,
-                                            },
-                                            item.alias_loc,
-                                        ));
-                                    }
-                                }
-                            }
-
-                            return;
-                        }
-                    }
                 }
 
                 try stmts.append(stmt.*);
@@ -19226,6 +19165,33 @@ fn NewParser_(
                             data.default_name = createDefaultName(p, data.value.expr.loc) catch unreachable;
                         }
 
+                        if (p.options.features.react_fast_refresh and switch (data.value.expr.data) {
+                            .e_arrow => true,
+                            .e_call => |call| switch (call.target.data) {
+                                .e_identifier => |id| id.ref == p.react_refresh.latest_signature_ref,
+                                else => false,
+                            },
+                            else => false,
+                        }) {
+                            // declare a temporary ref for this
+                            const temp_id = p.generateTempRef("default_export");
+                            try p.current_scope.generated.push(p.allocator, temp_id);
+
+                            try stmts.append(Stmt.alloc(S.Local, .{
+                                .kind = .k_const,
+                                .decls = try G.Decl.List.fromSlice(p.allocator, &.{
+                                    .{
+                                        .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                        .value = data.value.expr,
+                                    },
+                                }),
+                            }, stmt.loc));
+
+                            data.value = .{ .expr = .initIdentifier(temp_id, stmt.loc) };
+
+                            try p.emitReactRefreshRegister(stmts, "default", temp_id, .default);
+                        }
+
                         if (p.options.features.server_components.wrapsExports()) {
                             data.value.expr = p.wrapValueForServerComponentReference(data.value.expr, "default");
                         }
@@ -19264,119 +19230,150 @@ fn NewParser_(
                         }
                     },
 
-                    .stmt => |s2| {
-                        switch (s2.data) {
-                            .s_function => |func| {
-                                var name: string = "";
-                                if (func.func.name) |func_loc| {
-                                    name = p.loadNameFromRef(func_loc.ref.?);
+                    .stmt => |s2| switch (s2.data) {
+                        .s_function => |func| {
+                            const name = if (func.func.name) |func_loc|
+                                p.loadNameFromRef(func_loc.ref.?)
+                            else name: {
+                                func.func.name = data.default_name;
+                                break :name js_ast.ClauseItem.default_alias;
+                            };
+
+                            var react_hook_data: ?ReactRefresh.HookContext = null;
+                            const prev = p.react_refresh.hook_ctx_storage;
+                            defer p.react_refresh.hook_ctx_storage = prev;
+                            p.react_refresh.hook_ctx_storage = &react_hook_data;
+
+                            func.func = p.visitFunc(func.func, func.func.open_parens_loc);
+
+                            if (p.is_control_flow_dead) {
+                                return;
+                            }
+
+                            if (data.default_name.ref.?.isSourceContentsSlice()) {
+                                data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
+                            }
+
+                            if (react_hook_data) |*hook| {
+                                stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
+
+                                data.value = .{
+                                    .expr = p.getReactRefreshHookSignalInit(hook, p.newExpr(
+                                        E.Function{ .func = func.func },
+                                        stmt.loc,
+                                    )),
+                                };
+                            }
+
+                            if (mark_for_replace) {
+                                const entry = p.options.features.replace_exports.getPtr("default").?;
+                                if (entry.* == .replace) {
+                                    data.value = .{ .expr = entry.replace };
                                 } else {
-                                    func.func.name = data.default_name;
-                                    name = js_ast.ClauseItem.default_alias;
-                                }
-
-                                var react_hook_data: ?ReactRefresh.HookContext = null;
-                                const prev = p.react_refresh.hook_ctx_storage;
-                                defer p.react_refresh.hook_ctx_storage = prev;
-                                p.react_refresh.hook_ctx_storage = &react_hook_data;
-
-                                func.func = p.visitFunc(func.func, func.func.open_parens_loc);
-
-                                if (react_hook_data) |*hook| {
-                                    stmts.append(p.getReactRefreshHookSignalDecl(hook.signature_cb)) catch bun.outOfMemory();
-
-                                    data.value = .{
-                                        .expr = p.getReactRefreshHookSignalInit(hook, p.newExpr(
-                                            E.Function{ .func = func.func },
-                                            stmt.loc,
-                                        )),
-                                    };
-                                }
-
-                                if (p.is_control_flow_dead) {
+                                    _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
                                     return;
                                 }
+                            }
 
-                                if (mark_for_replace) {
-                                    const entry = p.options.features.replace_exports.getPtr("default").?;
-                                    if (entry.* == .replace) {
-                                        data.value = .{ .expr = entry.replace };
-                                    } else {
-                                        _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
-                                        return;
-                                    }
+                            if (p.options.features.react_fast_refresh and
+                                (ReactRefresh.isComponentishName(name) or bun.strings.eqlComptime(name, "default")))
+                            {
+                                // If server components or react refresh had wrapped the value (convert to .expr)
+                                // then a temporary variable must be emitted.
+                                //
+                                // > export default _s(function App() { ... }, "...")
+                                // > $RefreshReg(App, "App.tsx:default")
+                                //
+                                // > const default_export = _s(function App() { ... }, "...")
+                                // > export default default_export;
+                                // > $RefreshReg(default_export, "App.tsx:default")
+                                const ref = if (data.value == .expr) emit_temp_var: {
+                                    const temp_id = p.generateTempRef("default_export");
+                                    try p.current_scope.generated.push(p.allocator, temp_id);
+
+                                    stmts.append(Stmt.alloc(S.Local, .{
+                                        .kind = .k_const,
+                                        .decls = try G.Decl.List.fromSlice(p.allocator, &.{
+                                            .{
+                                                .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                                .value = data.value.expr,
+                                            },
+                                        }),
+                                    }, stmt.loc)) catch bun.outOfMemory();
+
+                                    data.value = .{ .expr = .initIdentifier(temp_id, stmt.loc) };
+
+                                    break :emit_temp_var temp_id;
+                                } else data.default_name.ref.?;
+
+                                if (p.options.features.server_components.wrapsExports()) {
+                                    data.value = .{ .expr = p.wrapValueForServerComponentReference(if (data.value == .expr) data.value.expr else p.newExpr(E.Function{ .func = func.func }, stmt.loc), "default") };
                                 }
 
-                                if (data.default_name.ref.?.isSourceContentsSlice()) {
-                                    data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
-                                }
-
-                                if (p.options.features.react_fast_refresh) {
-                                    try p.handleReactRefreshRegister(stmts, name, data.default_name.ref.?, .default);
-                                }
-
+                                try stmts.append(stmt.*);
+                                try p.emitReactRefreshRegister(stmts, name, ref, .default);
+                            } else {
                                 if (p.options.features.server_components.wrapsExports()) {
                                     data.value = .{ .expr = p.wrapValueForServerComponentReference(p.newExpr(E.Function{ .func = func.func }, stmt.loc), "default") };
                                 }
 
-                                stmts.append(stmt.*) catch unreachable;
+                                try stmts.append(stmt.*);
+                            }
 
-                                // if (func.func.name != null and func.func.name.?.ref != null) {
-                                //     stmts.append(p.keepStmtSymbolName(func.func.name.?.loc, func.func.name.?.ref.?, name)) catch unreachable;
-                                // }
-                                // prevent doubling export default function name
+                            // if (func.func.name != null and func.func.name.?.ref != null) {
+                            //     stmts.append(p.keepStmtSymbolName(func.func.name.?.loc, func.func.name.?.ref.?, name)) catch unreachable;
+                            // }
+                            return;
+                        },
+                        .s_class => |class| {
+                            _ = p.visitClass(s2.loc, &class.class, data.default_name.ref.?);
+
+                            if (p.is_control_flow_dead)
                                 return;
-                            },
-                            .s_class => |class| {
-                                _ = p.visitClass(s2.loc, &class.class, data.default_name.ref.?);
 
-                                if (p.is_control_flow_dead)
-                                    return;
-
-                                if (mark_for_replace) {
-                                    const entry = p.options.features.replace_exports.getPtr("default").?;
-                                    if (entry.* == .replace) {
-                                        data.value = .{ .expr = entry.replace };
-                                    } else {
-                                        _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
-                                        return;
-                                    }
-                                }
-
-                                if (data.default_name.ref.?.isSourceContentsSlice()) {
-                                    data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
-                                }
-
-                                // We only inject a name into classes when there is a decorator
-                                if (class.class.has_decorators) {
-                                    if (class.class.class_name == null or
-                                        class.class.class_name.?.ref == null)
-                                    {
-                                        class.class.class_name = data.default_name;
-                                    }
-                                }
-
-                                // This is to handle TS decorators, mostly.
-                                var class_stmts = p.lowerClass(.{ .stmt = s2 });
-                                bun.assert(class_stmts[0].data == .s_class);
-
-                                if (class_stmts.len > 1) {
-                                    data.value.stmt = class_stmts[0];
-                                    stmts.append(stmt.*) catch {};
-                                    stmts.appendSlice(class_stmts[1..]) catch {};
+                            if (mark_for_replace) {
+                                const entry = p.options.features.replace_exports.getPtr("default").?;
+                                if (entry.* == .replace) {
+                                    data.value = .{ .expr = entry.replace };
                                 } else {
-                                    data.value.stmt = class_stmts[0];
-                                    stmts.append(stmt.*) catch {};
+                                    _ = p.injectReplacementExport(stmts, Ref.None, logger.Loc.Empty, entry);
+                                    return;
                                 }
+                            }
 
-                                if (p.options.features.server_components.wrapsExports()) {
-                                    data.value = .{ .expr = p.wrapValueForServerComponentReference(p.newExpr(class.class, stmt.loc), "default") };
+                            if (data.default_name.ref.?.isSourceContentsSlice()) {
+                                data.default_name = createDefaultName(p, stmt.loc) catch unreachable;
+                            }
+
+                            // We only inject a name into classes when there is a decorator
+                            if (class.class.has_decorators) {
+                                if (class.class.class_name == null or
+                                    class.class.class_name.?.ref == null)
+                                {
+                                    class.class.class_name = data.default_name;
                                 }
+                            }
 
-                                return;
-                            },
-                            else => {},
-                        }
+                            // This is to handle TS decorators, mostly.
+                            var class_stmts = p.lowerClass(.{ .stmt = s2 });
+                            bun.assert(class_stmts[0].data == .s_class);
+
+                            if (class_stmts.len > 1) {
+                                data.value.stmt = class_stmts[0];
+                                stmts.append(stmt.*) catch {};
+                                stmts.appendSlice(class_stmts[1..]) catch {};
+                            } else {
+                                data.value.stmt = class_stmts[0];
+                                stmts.append(stmt.*) catch {};
+                            }
+
+                            if (p.options.features.server_components.wrapsExports()) {
+                                data.value = .{ .expr = p.wrapValueForServerComponentReference(p.newExpr(class.class, stmt.loc), "default") };
+                            }
+
+                            return;
+                        },
+                        else => {},
                     },
                 }
 
@@ -19660,27 +19657,19 @@ fn NewParser_(
                 data.kind = kind;
                 try stmts.append(stmt.*);
 
-                if (data.is_export and p.options.features.server_components.wrapsExports()) {
-                    for (data.decls.slice()) |*decl| try_annotate: {
-                        const val = decl.value orelse break :try_annotate;
-                        switch (val.data) {
-                            .e_arrow, .e_function => {},
-                            else => break :try_annotate,
-                        }
-                        const id = switch (decl.binding.data) {
-                            .b_identifier => |id| id.ref,
-                            else => break :try_annotate,
-                        };
-                        const original_name = p.symbols.items[id.innerIndex()].original_name;
-                        decl.value = p.wrapValueForServerComponentReference(val, original_name);
-                    }
-                }
-
                 if (p.options.features.react_fast_refresh and p.current_scope == p.module_scope) {
                     for (data.decls.slice()) |decl| try_register: {
                         const val = decl.value orelse break :try_register;
                         switch (val.data) {
+                            // Assigning a component to a local.
                             .e_arrow, .e_function => {},
+
+                            // A wrapped component.
+                            .e_call => |call| switch (call.target.data) {
+                                .e_identifier => |id| if (id.ref != p.react_refresh.latest_signature_ref)
+                                    break :try_register,
+                                else => break :try_register,
+                            },
                             else => break :try_register,
                         }
                         const id = switch (decl.binding.data) {
@@ -19689,6 +19678,18 @@ fn NewParser_(
                         };
                         const original_name = p.symbols.items[id.innerIndex()].original_name;
                         try p.handleReactRefreshRegister(stmts, original_name, id, .named);
+                    }
+                }
+
+                if (data.is_export and p.options.features.server_components.wrapsExports()) {
+                    for (data.decls.slice()) |*decl| try_annotate: {
+                        const val = decl.value orelse break :try_annotate;
+                        const id = switch (decl.binding.data) {
+                            .b_identifier => |id| id.ref,
+                            else => break :try_annotate,
+                        };
+                        const original_name = p.symbols.items[id.innerIndex()].original_name;
+                        decl.value = p.wrapValueForServerComponentReference(val, original_name);
                     }
                 }
 
@@ -23217,33 +23218,42 @@ fn NewParser_(
             }
         };
 
-        pub fn handleReactRefreshRegister(p: *P, stmts: *ListManaged(Stmt), original_name: []const u8, ref: Ref, export_kind: enum { named, default }) !void {
+        const ReactRefreshExportKind = enum { named, default };
+
+        pub fn handleReactRefreshRegister(p: *P, stmts: *ListManaged(Stmt), original_name: []const u8, ref: Ref, export_kind: ReactRefreshExportKind) !void {
             bun.assert(p.options.features.react_fast_refresh);
             bun.assert(p.current_scope == p.module_scope);
 
             if (ReactRefresh.isComponentishName(original_name)) {
-                // $RefreshReg$(component, "file.ts:Original Name")
-                const loc = logger.Loc.Empty;
-                try stmts.append(p.s(S.SExpr{ .value = p.newExpr(E.Call{
-                    .target = Expr.initIdentifier(p.react_refresh.register_ref, loc),
-                    .args = try ExprNodeList.fromSlice(p.allocator, &.{
-                        Expr.initIdentifier(ref, loc),
-                        p.newExpr(E.String{
-                            .data = try bun.strings.concat(p.allocator, &.{
-                                p.source.path.pretty,
-                                ":",
-                                switch (export_kind) {
-                                    .named => original_name,
-                                    .default => "default",
-                                },
-                            }),
-                        }, loc),
-                    }),
-                }, loc) }, loc));
-
-                p.recordUsage(ref);
-                p.react_refresh.register_used = true;
+                try p.emitReactRefreshRegister(stmts, original_name, ref, export_kind);
             }
+        }
+
+        pub fn emitReactRefreshRegister(p: *P, stmts: *ListManaged(Stmt), original_name: []const u8, ref: Ref, export_kind: ReactRefreshExportKind) !void {
+            bun.assert(p.options.features.react_fast_refresh);
+            bun.assert(p.current_scope == p.module_scope);
+
+            // $RefreshReg$(component, "file.ts:Original Name")
+            const loc = logger.Loc.Empty;
+            try stmts.append(p.s(S.SExpr{ .value = p.newExpr(E.Call{
+                .target = Expr.initIdentifier(p.react_refresh.register_ref, loc),
+                .args = try ExprNodeList.fromSlice(p.allocator, &.{
+                    Expr.initIdentifier(ref, loc),
+                    p.newExpr(E.String{
+                        .data = try bun.strings.concat(p.allocator, &.{
+                            p.source.path.pretty,
+                            ":",
+                            switch (export_kind) {
+                                .named => original_name,
+                                .default => "default",
+                            },
+                        }),
+                    }, loc),
+                }),
+            }, loc) }, loc));
+
+            p.recordUsage(ref);
+            p.react_refresh.register_used = true;
         }
 
         pub fn wrapValueForServerComponentReference(p: *P, val: Expr, original_name: []const u8) Expr {
@@ -23359,6 +23369,7 @@ fn NewParser_(
 
         pub fn getReactRefreshHookSignalDecl(p: *P, signal_cb_ref: Ref) Stmt {
             const loc = logger.Loc.Empty;
+            p.react_refresh.latest_signature_ref = signal_cb_ref;
             // var s_ = $RefreshSig$();
             return p.s(S.Local{ .decls = G.Decl.List.fromSlice(p.allocator, &.{.{
                 .binding = p.b(B.Identifier{ .ref = signal_cb_ref }, loc),
@@ -24061,6 +24072,12 @@ const ReactRefresh = struct {
     /// the start of the function, and then add the call to `_s(func, ...)`.
     hook_ctx_storage: ?*?HookContext = null,
 
+    /// This is the most recently generated `_s` call. This is used to compare
+    /// against seen calls to plain identifiers when in "export default" and in
+    /// "const Component =" to know if an expression had been wrapped in a hook
+    /// signature function.
+    latest_signature_ref: Ref = Ref.None,
+
     pub const HookContext = struct {
         hasher: std.hash.Wyhash,
         signature_cb: Ref,
@@ -24196,7 +24213,25 @@ pub const ConvertESMExportsForHmr = struct {
                 }
 
                 // Try to move the export default expression to the end.
-                if (st.canBeMoved()) {
+                // TODO: make a function
+                const can_be_moved_to_inner_scope = switch (st.value) {
+                    .stmt => |s| switch (s.data) {
+                        .s_class => |c| c.class.canBeMoved() and (if (c.class.class_name) |name|
+                            p.symbols.items[name.ref.?.inner_index].use_count_estimate == 0
+                        else
+                            true),
+                        .s_function => |f| if (f.func.name) |name|
+                            p.symbols.items[name.ref.?.inner_index].use_count_estimate == 0
+                        else
+                            true,
+                        else => unreachable,
+                    },
+                    .expr => |e| switch (e.data) {
+                        .e_identifier => true,
+                        else => e.canBeMoved(),
+                    },
+                };
+                if (can_be_moved_to_inner_scope) {
                     try ctx.export_props.append(p.allocator, .{
                         .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
                         .value = st.value.toExpr(),
@@ -24205,26 +24240,41 @@ pub const ConvertESMExportsForHmr = struct {
                     return;
                 }
 
-                // Otherwise, a new symbol is needed
-                const temp_id = p.generateTempRef("default_export");
-                try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = temp_id, .is_top_level = true });
-                try ctx.last_part.symbol_uses.putNoClobber(p.allocator, temp_id, .{ .count_estimate = 1 });
-                try p.current_scope.generated.push(p.allocator, temp_id);
+                // Otherwise, an identifier must be exported
+                switch (st.value) {
+                    .expr => {
+                        const temp_id = p.generateTempRef("default_export");
+                        try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = temp_id, .is_top_level = true });
+                        try ctx.last_part.symbol_uses.putNoClobber(p.allocator, temp_id, .{ .count_estimate = 1 });
+                        try p.current_scope.generated.push(p.allocator, temp_id);
 
-                try ctx.export_props.append(p.allocator, .{
-                    .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
-                    .value = Expr.initIdentifier(temp_id, stmt.loc),
-                });
+                        try ctx.export_props.append(p.allocator, .{
+                            .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                            .value = Expr.initIdentifier(temp_id, stmt.loc),
+                        });
 
-                break :stmt Stmt.alloc(S.Local, .{
-                    .kind = .k_const,
-                    .decls = try G.Decl.List.fromSlice(p.allocator, &.{
-                        .{
-                            .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
-                            .value = st.value.toExpr(),
-                        },
-                    }),
-                }, stmt.loc);
+                        break :stmt Stmt.alloc(S.Local, .{
+                            .kind = .k_const,
+                            .decls = try G.Decl.List.fromSlice(p.allocator, &.{
+                                .{
+                                    .binding = Binding.alloc(p.allocator, B.Identifier{ .ref = temp_id }, stmt.loc),
+                                    .value = st.value.toExpr(),
+                                },
+                            }),
+                        }, stmt.loc);
+                    },
+                    .stmt => |s| {
+                        try ctx.export_props.append(p.allocator, .{
+                            .key = Expr.init(E.String, .{ .data = "default" }, stmt.loc),
+                            .value = Expr.initIdentifier(switch (s.data) {
+                                .s_class => |class| class.class.class_name.?.ref.?,
+                                .s_function => |func| func.func.name.?.ref.?,
+                                else => unreachable,
+                            }, stmt.loc),
+                        });
+                        break :stmt s;
+                    },
+                }
             },
             .s_class => |st| stmt: {
                 // Strip the "export" keyword
@@ -24267,10 +24317,6 @@ pub const ConvertESMExportsForHmr = struct {
                 return; // do not emit a statement here
             },
             .s_export_from => |st| {
-                if (p.import_records.items[st.import_record_index].tag == .barrel) {
-                    return;
-                }
-
                 const namespace_ref = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,
@@ -24304,13 +24350,6 @@ pub const ConvertESMExportsForHmr = struct {
                 return;
             },
             .s_export_star => |st| {
-                // we split out barrel imports into separate statements
-                // ... we don't want to deduplicate them back into a single statement
-                // here lol
-                if (p.import_records.items[st.import_record_index].tag == .barrel) {
-                    return;
-                }
-
                 const namespace_ref = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,
@@ -24330,14 +24369,6 @@ pub const ConvertESMExportsForHmr = struct {
             // named/default imports here as we always rewrite them as
             // full qualified property accesses (needed for live-bindings)
             .s_import => |st| {
-                // we split out barrel imports into separate statements
-                // ... we don't want to deduplicate them back into a single statement
-                // here lol
-                if (p.import_records.items[st.import_record_index].tag == .barrel) {
-                    try ctx.stmts.append(p.allocator, stmt);
-                    return;
-                }
-
                 _ = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,

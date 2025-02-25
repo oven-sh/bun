@@ -1459,7 +1459,7 @@ pub const H2FrameParser = struct {
     pub fn _genericFlush(this: *H2FrameParser, comptime T: type, socket: T) usize {
         const buffer = this.writeBuffer.slice()[this.writeBufferOffset..];
         if (buffer.len > 0) {
-            const result: i32 = socket.writeMaybeCorked(buffer, false);
+            const result: i32 = socket.writeMaybeCorked(buffer);
             const written: u32 = if (result < 0) 0 else @intCast(result);
 
             if (written < buffer.len) {
@@ -1490,7 +1490,7 @@ pub const H2FrameParser = struct {
         const buffer = this.writeBuffer.slice()[this.writeBufferOffset..];
         if (buffer.len > 0) {
             {
-                const result: i32 = socket.writeMaybeCorked(buffer, false);
+                const result: i32 = socket.writeMaybeCorked(buffer);
                 const written: u32 = if (result < 0) 0 else @intCast(result);
                 if (written < buffer.len) {
                     this.writeBufferOffset += written;
@@ -1507,7 +1507,7 @@ pub const H2FrameParser = struct {
             this.writeBufferOffset = 0;
             this.writeBuffer.len = 0;
             {
-                const result: i32 = socket.writeMaybeCorked(bytes, false);
+                const result: i32 = socket.writeMaybeCorked(bytes);
                 const written: u32 = if (result < 0) 0 else @intCast(result);
                 if (written < bytes.len) {
                     const pending = bytes[written..];
@@ -1527,7 +1527,7 @@ pub const H2FrameParser = struct {
             }
             return true;
         }
-        const result: i32 = socket.writeMaybeCorked(bytes, false);
+        const result: i32 = socket.writeMaybeCorked(bytes);
         const written: u32 = if (result < 0) 0 else @intCast(result);
         if (written < bytes.len) {
             const pending = bytes[written..];

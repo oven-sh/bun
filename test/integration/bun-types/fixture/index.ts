@@ -1,3 +1,6 @@
+import svgpath from "cool.svg";
+svgpath satisfies `${string}.svg`;
+
 // just some APIs
 new Request("url");
 new Response();

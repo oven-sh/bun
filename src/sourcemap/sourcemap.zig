@@ -583,15 +583,13 @@ pub const Mapping = struct {
                 .generated = generated,
                 .original = original,
                 .source_index = source_index,
-            }) catch unreachable;
+            }) catch bun.outOfMemory();
         }
 
-        return ParseResult{
-            .success = .{
-                .mappings = mapping,
-                .input_line_count = input_line_count,
-            },
-        };
+        return .{ .success = .{
+            .mappings = mapping,
+            .input_line_count = input_line_count,
+        } };
     }
 };
 

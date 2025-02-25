@@ -1572,7 +1572,7 @@ fn NewSocket(comptime ssl: bool) type {
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
             _ = callback.call(globalObject, this_value, &.{this_value}) catch |err| {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(err) });
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(err) });
             };
         }
         pub fn onTimeout(
@@ -1598,7 +1598,7 @@ fn NewSocket(comptime ssl: bool) type {
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
             _ = callback.call(globalObject, this_value, &.{this_value}) catch |err| {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(err) });
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(err) });
             };
         }
 
@@ -1843,7 +1843,7 @@ fn NewSocket(comptime ssl: bool) type {
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
             _ = callback.call(globalObject, this_value, &.{this_value}) catch |err| {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(err) });
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(err) });
             };
         }
 
@@ -1956,7 +1956,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
                 js_error,
             }) catch |e| {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(e) });
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(e) });
             };
         }
 
@@ -1988,7 +1988,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this_value,
                 output_value,
             }) catch |err| {
-                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException(err) });
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeError(err) });
             };
         }
 

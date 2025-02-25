@@ -12,6 +12,7 @@ const Syscall = bun.sys;
 const SourceMap = bun.sourcemap;
 const StringPointer = bun.StringPointer;
 
+const macho = bun.macho;
 const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
@@ -111,6 +112,23 @@ pub const StandaloneModuleGraph = struct {
         none = 0,
         esm = 1,
         cjs = 2,
+    };
+
+    const Macho = struct {
+        pub extern "C" fn Bun__getStandaloneModuleGraphMachoLength() ?*align(1) u32;
+
+        pub fn getData() ?[]const u8 {
+            if (Bun__getStandaloneModuleGraphMachoLength()) |length| {
+                if (length.* < 8) {
+                    return null;
+                }
+
+                const slice_ptr: [*]const u8 = @ptrCast(length);
+                return slice_ptr[4..][0..length.*];
+            }
+
+            return null;
+        }
     };
 
     pub const File = struct {
@@ -458,7 +476,7 @@ pub const StandaloneModuleGraph = struct {
         windows_hide_console: bool = false,
     };
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions) bun.FileDescriptor {
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -597,71 +615,127 @@ pub const StandaloneModuleGraph = struct {
             break :brk fd;
         };
 
-        var total_byte_count: usize = undefined;
+        switch (target.os) {
+            .mac => {
+                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                if (input_result.err) |err| {
+                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                }
+                var macho_file = bun.macho.MachoFile.init(bun.default_allocator, input_result.bytes.items, bytes.len) catch |err| {
+                    Output.prettyErrorln("Error initializing standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                defer macho_file.deinit();
+                macho_file.writeSection(bytes) catch |err| {
+                    Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                input_result.bytes.deinit();
 
-        if (Environment.isWindows) {
-            total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(cloned_executable_fd).unwrap() catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}", .{err});
-                cleanup(zname, cloned_executable_fd);
-                Global.exit(1);
-            });
-        } else {
-            const seek_position = @as(u64, @intCast(brk: {
-                const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
-                    .result => |res| res,
+                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                     .err => |err| {
-                        Output.prettyErrorln("{}", .{err});
+                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
                         cleanup(zname, cloned_executable_fd);
                         Global.exit(1);
                     },
+                    else => {},
+                }
+
+                var file = bun.sys.File{ .handle = cloned_executable_fd };
+                const writer = file.writer();
+                const BufferedWriter = std.io.BufferedWriter(512 * 1024, @TypeOf(writer));
+                var buffered_writer = bun.default_allocator.create(BufferedWriter) catch bun.outOfMemory();
+                buffered_writer.* = .{
+                    .unbuffered_writer = writer,
                 };
+                macho_file.buildAndSign(buffered_writer.writer()) catch |err| {
+                    Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                buffered_writer.flush() catch |err| {
+                    Output.prettyErrorln("Error flushing standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                if (comptime !Environment.isWindows) {
+                    _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+                }
+                return cloned_executable_fd;
+            },
+            else => {
+                var total_byte_count: usize = undefined;
+                if (Environment.isWindows) {
+                    total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(cloned_executable_fd).unwrap() catch |err| {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    });
+                } else {
+                    const seek_position = @as(u64, @intCast(brk: {
+                        const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
+                            .result => |res| res,
+                            .err => |err| {
+                                Output.prettyErrorln("{}", .{err});
+                                cleanup(zname, cloned_executable_fd);
+                                Global.exit(1);
+                            },
+                        };
 
-                break :brk @max(fstat.size, 0);
-            }));
+                        break :brk @max(fstat.size, 0);
+                    }));
 
-            total_byte_count = seek_position + bytes.len + 8;
+                    total_byte_count = seek_position + bytes.len + 8;
 
-            // From https://man7.org/linux/man-pages/man2/lseek.2.html
-            //
-            //  lseek() allows the file offset to be set beyond the end of the
-            //  file (but this does not change the size of the file).  If data is
-            //  later written at this point, subsequent reads of the data in the
-            //  gap (a "hole") return null bytes ('\0') until data is actually
-            //  written into the gap.
-            //
-            switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
-                .err => |err| {
-                    Output.prettyErrorln(
-                        "{}\nwhile seeking to end of temporary file (pos: {d})",
-                        .{
-                            err,
-                            seek_position,
+                    // From https://man7.org/linux/man-pages/man2/lseek.2.html
+                    //
+                    //  lseek() allows the file offset to be set beyond the end of the
+                    //  file (but this does not change the size of the file).  If data is
+                    //  later written at this point, subsequent reads of the data in the
+                    //  gap (a "hole") return null bytes ('\0') until data is actually
+                    //  written into the gap.
+                    //
+                    switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
+                        .err => |err| {
+                            Output.prettyErrorln(
+                                "{}\nwhile seeking to end of temporary file (pos: {d})",
+                                .{
+                                    err,
+                                    seek_position,
+                                },
+                            );
+                            cleanup(zname, cloned_executable_fd);
+                            Global.exit(1);
                         },
-                    );
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
-                },
-                else => {},
-            }
-        }
+                        else => {},
+                    }
+                }
 
-        var remain = bytes;
-        while (remain.len > 0) {
-            switch (Syscall.write(cloned_executable_fd, bytes)) {
-                .result => |written| remain = remain[written..],
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
-                    cleanup(zname, cloned_executable_fd);
+                var remain = bytes;
+                while (remain.len > 0) {
+                    switch (Syscall.write(cloned_executable_fd, bytes)) {
+                        .result => |written| remain = remain[written..],
+                        .err => |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
+                            cleanup(zname, cloned_executable_fd);
 
-                    Global.exit(1);
-                },
-            }
-        }
+                            Global.exit(1);
+                        },
+                    }
+                }
 
-        // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
-        _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
-        if (comptime !Environment.isWindows) {
-            _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+                // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
+                _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
+                if (comptime !Environment.isWindows) {
+                    _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+                }
+
+                return cloned_executable_fd;
+            },
         }
 
         if (Environment.isWindows and inject_options.windows_hide_console) {
@@ -719,6 +793,7 @@ pub const StandaloneModuleGraph = struct {
                     Global.exit(1);
                 },
             .{ .windows_hide_console = windows_hide_console },
+            target,
         );
         fd.assertKind(.system);
 
@@ -761,29 +836,6 @@ pub const StandaloneModuleGraph = struct {
             Global.exit(1);
         };
 
-        if (comptime Environment.isMac) {
-            if (target.os == .mac) {
-                var signer = std.process.Child.init(
-                    &.{
-                        "codesign",
-                        "--remove-signature",
-                        temp_location,
-                    },
-                    bun.default_allocator,
-                );
-                if (bun.logger.Log.default_log_level.atLeast(.verbose)) {
-                    signer.stdout_behavior = .Inherit;
-                    signer.stderr_behavior = .Inherit;
-                    signer.stdin_behavior = .Inherit;
-                } else {
-                    signer.stdout_behavior = .Ignore;
-                    signer.stderr_behavior = .Ignore;
-                    signer.stdin_behavior = .Ignore;
-                }
-                _ = signer.spawnAndWait() catch {};
-            }
-        }
-
         bun.C.moveFileZWithHandle(
             fd,
             bun.FD.cwd(),
@@ -805,6 +857,22 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
+        if (comptime Environment.isMac) {
+            const macho_bytes = Macho.getData() orelse return null;
+            if (macho_bytes.len < @sizeOf(Offsets) + trailer.len) {
+                Output.debugWarn("bun standalone module graph is too small to be valid", .{});
+                return null;
+            }
+            const macho_bytes_slice = macho_bytes[macho_bytes.len - @sizeOf(Offsets) - trailer.len ..];
+            const trailer_bytes = macho_bytes[macho_bytes.len - trailer.len ..][0..trailer.len];
+            if (!bun.strings.eqlComptime(trailer_bytes, trailer)) {
+                Output.debugWarn("bun standalone module graph has invalid trailer", .{});
+                return null;
+            }
+            const offsets = std.mem.bytesAsValue(Offsets, macho_bytes_slice).*;
+            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
+        }
+
         // Do not invoke libuv here.
         const self_exe = openSelf() catch return null;
         defer _ = Syscall.close(self_exe);

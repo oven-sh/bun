@@ -649,8 +649,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
             ZigString str = Zig::toZigString(view);
 
             if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
-                throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);
-                return {};
+                return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
             }
         } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
             if (UNLIKELY(view->isDetached())) {
@@ -660,8 +659,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
 
             size_t length = view->byteLength();
             if (UNLIKELY(length == 0)) {
-                throwTypeError(lexicalGlobalObject, scope, "Buffer cannot be empty"_s);
-                return {};
+                return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
             }
 
             auto* start = uint8Array->typedVector();

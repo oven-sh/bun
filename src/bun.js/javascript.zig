@@ -1372,7 +1372,7 @@ pub const VirtualMachine = struct {
 
     pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
         if (this.module_loader.eval_source) |eval_source| {
-            var specifier_str = specifier.toBunString(this.global);
+            var specifier_str = specifier.toBunString(this.global) catch @panic("unexpected exception");
             defer specifier_str.deref();
             return specifier_str.eqlUTF8(eval_source.path.text);
         }
@@ -3940,7 +3940,7 @@ pub const VirtualMachine = struct {
         const code: ?[]const u8 = if (is_error_instance) code: {
             if (error_instance.uncheckedPtrCast(JSC.JSObject).getCodePropertyVMInquiry(this.global)) |code_value| {
                 if (code_value.isString()) {
-                    const code_string = code_value.toBunString2(this.global) catch {
+                    const code_string = code_value.toBunString(this.global) catch {
                         // JSC::JSString to WTF::String can only fail on out of memory.
                         bun.outOfMemory();
                     };

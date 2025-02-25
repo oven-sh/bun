@@ -2381,7 +2381,7 @@ pub const bindings = struct {
             return global.throw("expected tarball path string argument", .{});
         }
 
-        const tarball_path_str = args[0].toBunString(global);
+        const tarball_path_str = try args[0].toBunString(global);
         defer tarball_path_str.deref();
 
         const tarball_path = tarball_path_str.toUTF8(bun.default_allocator);

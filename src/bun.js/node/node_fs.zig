@@ -1916,7 +1916,7 @@ pub const Arguments = struct {
                     }
                     if (next_val.isString()) {
                         arguments.eat();
-                        var str = try next_val.toBunString2(ctx);
+                        var str = try next_val.toBunString(ctx);
                         defer str.deref();
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;

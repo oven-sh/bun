@@ -81,21 +81,21 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 
-  var shouldUnref = false;
+  var shouldDisown = false;
   let needsInternalReadRefresh = false;
 
-  function ref() {
+  function own() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
     source.updateRef(true);
-    shouldUnref = false;
+    shouldDisown = false;
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
       internalRead(stream);
     }
   }
 
-  function unref() {
+  function disown() {
     $debug("unref();");
 
     if (reader) {
@@ -134,7 +134,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
     // Therefore the following hack is only specific to `process.stdin`
     // and does not apply to the underlying Stream implementation.
     if (event === "readable") {
-      ref();
+      own();
     }
     return originalOn.$call(this, event, listener);
   };
@@ -145,12 +145,12 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
   if (isTTY || fdType !== BunProcessStdinFdType.file) {
     stream.ref = function () {
-      ref();
+      own();
       return this;
     };
 
     stream.unref = function () {
-      unref();
+      disown();
       return this;
     };
   }
@@ -159,14 +159,14 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   stream.pause = function () {
     $debug("pause();");
     let r = originalPause.$call(this);
-    unref();
+    disown();
     return r;
   };
 
   const originalResume = stream.resume;
   stream.resume = function () {
     $debug("resume();");
-    ref();
+    own();
     return originalResume.$call(this);
   };
 
@@ -179,7 +179,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
       if (value) {
         stream.push(value);
 
-        if (shouldUnref) unref();
+        if (shouldDisown) disown();
       } else {
         if (!stream_endEmitted) {
           stream_endEmitted = true;
@@ -188,7 +188,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
         if (!stream_destroyed) {
           stream_destroyed = true;
           stream.destroy();
-          unref();
+          disown();
         }
       }
     } catch (err) {
@@ -206,7 +206,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   function triggerRead(size) {
     $debug("_read();", reader);
 
-    if (reader && !shouldUnref) {
+    if (reader && !shouldDisown) {
       internalRead(this);
     } else {
       // The stream has not been ref()ed yet. If it is ever ref()ed,
@@ -219,7 +219,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
-    ref();
+    own();
     stream._undestroy();
     stream_destroyed = false;
   });
@@ -239,7 +239,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
       stream_destroyed = true;
       process.nextTick(() => {
         stream.destroy();
-        unref();
+        disown();
       });
     }
   });

@@ -83,11 +83,13 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
   var shouldDisown = false;
   let needsInternalReadRefresh = false;
+  // if true, while the stream is own()ed it will not
+  let forceUnref = false;
 
   function own() {
     $debug("ref();", reader ? "already has reader" : "getting reader");
     reader ??= native.getReader();
-    source.updateRef(true);
+    source.updateRef(forceUnref ? false : true);
     shouldDisown = false;
     if (needsInternalReadRefresh) {
       needsInternalReadRefresh = false;
@@ -146,12 +148,14 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
   if (isTTY || fdType !== BunProcessStdinFdType.file) {
     stream.ref = function () {
+      forceUnref = false;
       own();
       return this;
     };
 
     stream.unref = function () {
-      disown();
+      forceUnref = true;
+      source?.updateRef?.(false);
       return this;
     };
   }

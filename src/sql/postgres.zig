@@ -3296,7 +3296,7 @@ pub const PostgresSQLConnection = struct {
                 if (is_raw) {
                     cell.* = DataCell.raw(optional_bytes);
                 } else {
-                    const tag = @as(types.Tag, @enumFromInt(@as(short, @intCast(oid))));
+                    const tag = if (std.math.max(short) < oid) .text else @as(types.Tag, @enumFromInt(@as(short, @intCast(oid))));
                     cell.* = if (optional_bytes) |data|
                         try DataCell.fromBytes((field.binary or this.binary) and tag.isBinaryFormatSupported(), this.bigint, tag, data.slice(), this.globalObject)
                     else

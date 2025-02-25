@@ -986,7 +986,7 @@ pub const PathLike = union(enum) {
             .StringObject,
             .DerivedStringObject,
             => {
-                var str = try arg.toBunString2(ctx);
+                var str = try arg.toBunString(ctx);
                 defer str.deref();
 
                 arguments.eat();

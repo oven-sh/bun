@@ -5543,16 +5543,14 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onStart(callback: OnStartCallback): void;
+    onStart(callback: OnStartCallback): this;
     onBeforeParse(
       constraints: PluginConstraints,
-      callback: {
-        napiModule: unknown;
-        symbol: string;
-        external?: unknown | undefined;
-      },
-    ): void;
+      callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
+    ): this;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -5567,8 +5565,10 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): void;
+    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): this;
     /**
      * Register a callback to resolve imports matching a filter and/or namespace
      * @param constraints The constraints to apply the plugin to
@@ -5583,8 +5583,10 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
+    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): this;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
@@ -5615,8 +5617,10 @@ declare module "bun" {
      * const { foo } = require("hello:world");
      * console.log(foo); // "bar"
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): void;
+    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): this;
   }
 
   interface BunPlugin {

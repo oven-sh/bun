@@ -3216,7 +3216,7 @@ fn nonVectorIndexOfInterestingCharacterInString(text: []const u8, comptime quote
 }
 pub fn indexOfInterestingCharacterInString(text_: []const u8, comptime quote: u8, comptime utf8_is_interesting: bool) ?usize {
     var text = text_;
-    if (Environment.isNative and text.len > 128) {
+    if (Environment.isNative) {
         const vec_quote: strings.AsciiVector = @splat(quote);
         const vec_backslash: strings.AsciiVector = @splat('\\');
         const vec_dollars: strings.AsciiVector = @splat('$');

@@ -41,7 +41,7 @@ pub const InitCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+            bun.win32.updateStdioModeFlags(0, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -122,9 +122,6 @@ pub const InitCommand = struct {
             }
             initial_draw = false;
 
-            // Clear from cursor to end of screen
-            Output.clearToEnd();
-
             // Print options vertically
             inline for (choices, 0..) |option, i| {
                 if (i == @intFromEnum(selected)) {
@@ -134,14 +131,15 @@ pub const InitCommand = struct {
                         Output.pretty("<r><cyan>><r>   ", .{});
                     }
                     if (colors) {
-                        Output.print("\x1B[4m{s}\x1B[24m\n", .{option});
+                        Output.print("\x1B[4m{s}\x1B[24m\x1B[0K\n", .{option});
                     } else {
-                        Output.print("    {s}\n", .{option});
+                        Output.print("    {s}\x1B[0K\n", .{option});
                     }
                 } else {
-                    Output.print("    {s}\n", .{option});
+                    Output.print("    {s}\x1B[0K\n", .{option});
                 }
             }
+            Output.clearToEnd();
 
             Output.flush();
 
@@ -208,7 +206,12 @@ pub const InitCommand = struct {
 
         // Set raw mode to read single characters without echo
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+            bun.win32.updateStdioModeFlags(0, .{
+                // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
+                .set = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT | bun.windows.ENABLE_PROCESSED_INPUT,
+                // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
+                .unset = bun.windows.ENABLE_LINE_INPUT | bun.windows.ENABLE_ECHO_INPUT,
+            }) catch null;
 
         if (Environment.isPosix)
             _ = Bun__ttySetMode(0, 1);

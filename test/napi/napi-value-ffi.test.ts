@@ -17,10 +17,7 @@ const symbols = {
   },
 };
 
-const { symbols: cc1 } = cc({ source, symbols });
-const { symbols: cc2 } = cc({ source, symbols });
-
-let addon1, addon2;
+let addon1, addon2, cc1, cc2;
 
 beforeAll(() => {
   // build gyp
@@ -37,6 +34,16 @@ beforeAll(() => {
   }
   addon1 = dlopen(join(__dirname, `napi-app/build/Debug/ffi_addon_1.node`), symbols).symbols;
   addon2 = dlopen(join(__dirname, `napi-app/build/Debug/ffi_addon_2.node`), symbols).symbols;
+  cc1 = cc({
+    source,
+    symbols,
+    flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
+  }).symbols;
+  cc2 = cc({
+    source,
+    symbols,
+    flags: `-I${join(__dirname, "napi-app/node_modules/node-api-headers/include")}`,
+  }).symbols;
 });
 
 describe("ffi napi integration", () => {

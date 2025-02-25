@@ -21,3 +21,4 @@
 /// <reference path="./wasm.d.ts" />
 /// <reference path="./deprecated.d.ts" />
 /// <reference path="./ambient.d.ts" />
+/// <reference path="./devserver.d.ts" />

@@ -315,6 +315,20 @@ it("should not deduplicate bundled packages with un-bundled packages", async () 
   expect(out4).toEqual(out3);
 
   expect(out4).toMatchSnapshot();
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  // --frozen-lockfile is successful
+  ({ exited, stdout } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+  await checkModules();
 });
 
 it("should not change formatting unexpectedly", async () => {

@@ -1,5 +1,5 @@
 // ESM tests are about various esm features in development mode.
-import { devTest, minimalFramework } from "../dev-server-harness";
+import { devTest, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
   framework: minimalFramework,

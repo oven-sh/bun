@@ -6,8 +6,9 @@ pub const enabled = bun.Environment.isDebug;
 
 parent: Allocator,
 state: if (enabled) struct {
+    mutex: bun.Mutex,
     total_memory_allocated: usize,
-    allocations: std.AutoHashMapUnmanaged([*]u8, Entry),
+    allocations: std.AutoHashMapUnmanaged([*]const u8, Entry),
 } else void,
 
 pub const Entry = struct {
@@ -22,6 +23,7 @@ pub fn init(parent: Allocator) AllocationScope {
             .state = .{
                 .total_memory_allocated = 0,
                 .allocations = .empty,
+                .mutex = .{},
             },
         }
     else
@@ -30,15 +32,24 @@ pub fn init(parent: Allocator) AllocationScope {
 
 pub fn deinit(scope: *AllocationScope) void {
     if (enabled) {
+        scope.state.mutex.lock();
         defer scope.state.allocations.deinit(scope.parent);
         const count = scope.state.allocations.count();
         if (count == 0) return;
-        const Output = bun.Output;
-        Output.debugWarn("Allocation scope leaked {d} allocations ({d} bytes)", .{ count, scope.state.total_memory_allocated });
+        Output.debugWarn("Allocation scope leaked {d} allocations ({})", .{
+            count,
+            bun.fmt.size(scope.state.total_memory_allocated, .{}),
+        });
         var it = scope.state.allocations.iterator();
+        var n: usize = 0;
         while (it.next()) |entry| {
             Output.debugWarn("- {any}, len {d}, at:", .{ entry.key_ptr.*, entry.value_ptr.len });
             bun.crash_handler.dumpStackTrace(entry.value_ptr.allocated_at.trace());
+            n += 1;
+            if (n >= 8) {
+                Output.debugWarn("(only showing first 10 leaks)", .{});
+                break;
+            }
         }
     }
 }
@@ -55,6 +66,8 @@ const vtable: Allocator.VTable = .{
 
 fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
     const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
+    scope.state.mutex.lock();
+    defer scope.state.mutex.unlock();
     scope.state.allocations.ensureUnusedCapacity(scope.parent, 1) catch
         return null;
     const result = scope.parent.vtable.alloc(scope.parent.ptr, len, ptr_align, ret_addr) orelse
@@ -75,6 +88,8 @@ fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: u
 
 fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
     const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
+    scope.state.mutex.lock();
+    defer scope.state.mutex.unlock();
     if (scope.state.allocations.fetchRemove(buf.ptr)) |entry| {
         scope.state.total_memory_allocated -= entry.value.len;
     } else {
@@ -86,7 +101,42 @@ fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
     return scope.parent.vtable.free(scope.parent.ptr, buf, buf_align, ret_addr);
 }
 
+pub fn assertOwned(scope: *AllocationScope, ptr: anytype) void {
+    if (!enabled) return;
+    const cast_ptr: [*]const u8 = @ptrCast(switch (@typeInfo(@TypeOf(ptr)).pointer.size) {
+        .c, .one, .many => ptr,
+        .slice => if (ptr.len > 0) ptr.ptr else return,
+    });
+    scope.state.mutex.lock();
+    defer scope.state.mutex.unlock();
+    _ = scope.state.allocations.getPtr(cast_ptr) orelse
+        @panic("this pointer was not owned by the allocation scope");
+}
+
+pub fn assertUnowned(scope: *AllocationScope, ptr: anytype) void {
+    if (!enabled) return;
+    const cast_ptr: [*]const u8 = @ptrCast(switch (@typeInfo(@TypeOf(ptr)).pointer.size) {
+        .c, .one, .many => ptr,
+        .slice => if (ptr.len > 0) ptr.ptr else return,
+    });
+    scope.state.mutex.lock();
+    defer scope.state.mutex.unlock();
+    if (scope.state.allocations.getPtr(cast_ptr)) |owned| {
+        Output.debugWarn("Pointer allocated here:");
+        bun.crash_handler.dumpStackTrace(owned.allocated_at.trace());
+    }
+    @panic("this pointer was owned by the allocation scope when it was not supposed to be");
+}
+
+pub inline fn downcast(a: Allocator) ?*AllocationScope {
+    return if (enabled and a.vtable == &vtable)
+        @ptrCast(@alignCast(a.ptr))
+    else
+        null;
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const bun = @import("root").bun;
+const Output = bun.Output;
 const StoredTrace = bun.crash_handler.StoredTrace;

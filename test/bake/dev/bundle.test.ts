@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -387,5 +387,38 @@ devTest("default export same-scope handling", {
     await dev.writeNoChanges("fixture7.ts");
     const chunk = await c.getMostRecentHmrChunk();
     expect(chunk).toMatch(/default:\s*function/);
+  },
+});
+devTest("directory cache bust case #17576", {
+  files: {
+    ...reactRefreshStub,
+    "web/index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts", "react-refresh/runtime"],
+    }),
+    "web/index.ts": `
+      console.log(123);
+    `,
+  },
+  mainDir: "server",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write(
+        "web/Test.ts",
+        `
+        export const abc = 456;
+      `,
+      );
+    });
+    await dev.write(
+      "web/index.ts",
+      `
+        import { abc } from "./Test.ts";
+        console.log(abc);
+      `,
+    );
+    await c.expectMessage(456);
   },
 });

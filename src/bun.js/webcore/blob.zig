@@ -6091,15 +6091,11 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 self.InternalBlob.bytes.clearAndFree();
-                self.* = .{
-                    .Blob = .{},
-                };
+                self.* = .{ .Blob = .{} };
             },
             .WTFStringImpl => {
                 self.WTFStringImpl.deref();
-                self.* = .{
-                    .Blob = .{},
-                };
+                self.* = .{ .Blob = .{} };
             },
         };
     }

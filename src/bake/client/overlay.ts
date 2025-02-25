@@ -314,7 +314,6 @@ export async function onRuntimeError(err: any, fatal = false, async = false) {
         async,
         code,
       });
-      console.log(code);
     } catch (e) {
       console.error("Failed to remap error", e);
       runtimeErrors.push({

@@ -38,6 +38,7 @@
     "fast-glob": "3.3.1",
     "filenamify": "6.0.0",
     "happy-dom": "17.0.3",
+    "hono": "4.7.2",
     "http2-wrapper": "2.2.1",
     "https-proxy-agent": "7.0.5",
     "iconv-lite": "0.6.3",

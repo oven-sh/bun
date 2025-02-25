@@ -6654,7 +6654,7 @@ pub const unicode = struct {
             const Iterator = @This();
             str: []const encoding.Unit(),
             i: usize,
-            width: u3,
+            width: u32,
             c: i32,
 
             pub fn next(self: *Iterator) bool {

@@ -17,6 +17,8 @@ new AbortController();
 
 fetch("url");
 
+new Bun.$.ShellError();
+
 new Promise(resolve => {
   resolve(1);
 });

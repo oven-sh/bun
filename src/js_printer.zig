@@ -163,12 +163,6 @@ fn ws(comptime str: []const u8) Whitespacer {
     return .{ .normal = Static.with, .minify = Static.without };
 }
 
-pub fn estimateLengthForUTF8(input: []const u8, comptime ascii_only: bool, comptime quote_char: u8) usize {
-    _ = ascii_only;
-    _ = quote_char;
-    return input.len + 10;
-}
-
 pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_only: bool) !MutableString {
     var bytes = output_;
     try quoteForJSONBuffer(text, &bytes, ascii_only);
@@ -319,7 +313,7 @@ pub fn writePreQuotedString(comptime encoding: strings.unicode.Encoding, text: [
 pub fn quoteForJSONBuffer(text: []const u8, bytes: *MutableString, comptime ascii_only: bool) !void {
     const writer = bytes.writer();
 
-    try bytes.growIfNeeded(estimateLengthForUTF8(text, ascii_only, '"'));
+    try bytes.growIfNeeded(text.len + 2);
     try bytes.appendChar('"');
     try writePreQuotedString(.wtf8_replace_invalid, text, @TypeOf(writer), writer, '"', ascii_only, true);
     bytes.appendChar('"') catch unreachable;

@@ -2356,25 +2356,12 @@ pub const win32 = struct {
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
 
-    /// Returns the original mode
-    pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
-        const fd = stdio(i);
-        var original_mode: w.DWORD = 0;
-        if (windows.kernel32.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.kernel32.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
-                return windows.getLastError();
-            }
-        } else return windows.getLastError();
-
-        return original_mode;
-    }
-
-    /// Returns the original mode
-    pub fn setStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+    /// Returns the original mode, or null on failure
+    pub fn updateStdioModeFlags(i: anytype, opts: struct { set: w.DWORD = 0, unset: w.DWORD = 0 }) !w.DWORD {
         const fd = stdio(i);
         var original_mode: w.DWORD = 0;
         if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.SetConsoleMode(fd.cast(), original_mode | flags) == 0) {
+            if (windows.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
                 return windows.getLastError();
             }
         } else return windows.getLastError();

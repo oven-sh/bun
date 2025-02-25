@@ -3387,31 +3387,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
-    // m_BunShell.initLater(
-    //     [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
-    //         JSFunction* createParsedShellScript = JSFunction::create(init.vm, init.owner, 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
-    //         JSFunction* createShellInterpreterFunction = JSFunction::create(init.vm, init.owner, 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
-    //         JSC::JSFunction* createShellFn = JSC::JSFunction::create(init.vm, init.owner, shellCreateBunShellTemplateFunctionCodeGenerator(init.vm), init.owner);
-
-    //         auto scope = DECLARE_THROW_SCOPE(init.vm);
-    //         auto args = JSC::MarkedArgumentBuffer();
-    //         args.append(createShellInterpreterFunction);
-    //         args.append(createParsedShellScript);
-    //         JSC::JSValue shell = JSC::call(init.owner, createShellFn, args, "BunShell"_s);
-    //         RETURN_IF_EXCEPTION(scope, (void)0);
-
-    //         if (UNLIKELY(!shell.isObject())) {
-    //             throwTypeError(init.owner, scope, "Internal error: BunShell constructor did not return an object"_s);
-    //             return (void)0;
-    //         }
-    //         auto* bunShell = shell.getObject();
-
-    //         bunShell->putDirectNativeFunction(init.vm, init.owner, Identifier::fromString(init.vm, "braces"_s), 1, Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
-    //         bunShell->putDirectNativeFunction(init.vm, init.owner, Identifier::fromString(init.vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
-
-    //         init.set(bunShell);
-    //     });
-
     m_statValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
         init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
     });
@@ -3966,7 +3941,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSDOMFileConstructor.visit(visitor);
     thisObject->m_JSS3FileStructure.visit(visitor);
     thisObject->m_S3ErrorStructure.visit(visitor);
-    // thisObject->m_BunShell.visit(visitor);
     thisObject->m_JSFFIFunctionStructure.visit(visitor);
     thisObject->m_JSFileSinkClassStructure.visit(visitor);
     thisObject->m_JSFileSinkControllerPrototype.visit(visitor);

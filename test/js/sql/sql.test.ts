@@ -3211,6 +3211,34 @@ if (isDockerEnabled()) {
   //   return ['12233445566778', xs.sort().join('')]
   // })
 
+  test("limits of types", async () => {
+    await sql
+      .transaction(async reserved => {
+        const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+        // we need a lot of types
+        for (let i = 0; i < 1000; i++) {
+          const type_name = sql(`${table_name}${i}`);
+          // create a lot of custom types
+          await reserved`CREATE TYPE "public".${type_name} AS ENUM('active', 'inactive', 'deleted');`;
+        }
+        await reserved`
+CREATE TABLE ${table_name} (
+"id" serial PRIMARY KEY NOT NULL,
+"status" ${sql(`${table_name}999`)} DEFAULT 'active' NOT NULL
+);`.simple();
+        await reserved`insert into ${table_name} values (1, 'active'), (2, 'inactive'), (3, 'deleted')`;
+        const result = await reserved`select * from ${table_name}`;
+        expect(result).toBeDefined();
+        expect(result.length).toBe(3);
+        expect(result[0].status).toBe("active");
+        expect(result[1].status).toBe("inactive");
+        expect(result[2].status).toBe("deleted");
+        throw new Error("rollback"); // no need to commit all this
+      })
+      .catch(e => {
+        expect(e.message || e).toBe("rollback");
+      });
+  });
   test("binary detection of unspported types", async () => {
     using reserved = await sql.reserve();
     // this test should return the same result in text and binary mode, using text mode for this types

@@ -916,9 +916,11 @@ pub const PostgresRequest = struct {
 
         var iter = QueryBindingIterator.init(values_array, columns_value, globalObject);
         for (0..len) |i| {
-            const tag: types.Tag = @enumFromInt(@as(short, @intCast(parameter_fields[i])));
+            const parameter_field = parameter_fields[i];
+            const is_custom_type = std.math.maxInt(short) < parameter_field;
+            const tag: types.Tag = if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
 
-            const force_text = tag.isBinaryFormatSupported() and brk: {
+            const force_text = is_custom_type or (tag.isBinaryFormatSupported() and brk: {
                 iter.to(@truncate(i));
                 if (iter.next()) |value| {
                     break :brk value.isString();
@@ -927,7 +929,7 @@ pub const PostgresRequest = struct {
                     return error.InvalidQueryBinding;
                 }
                 break :brk false;
-            };
+            });
 
             if (force_text) {
                 // If they pass a value as a string, let's avoid attempting to
@@ -952,7 +954,9 @@ pub const PostgresRequest = struct {
         iter.to(0);
         var i: usize = 0;
         while (iter.next()) |value| : (i += 1) {
-            const tag: types.Tag = @enumFromInt(@as(short, @intCast(parameter_fields[i])));
+            const parameter_field = parameter_fields[i];
+            const is_custom_type = std.math.maxInt(short) < parameter_field;
+            const tag: types.Tag = if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
             if (value.isEmptyOrUndefinedOrNull()) {
                 debug("  -> NULL", .{});
                 //  As a special case, -1 indicates a

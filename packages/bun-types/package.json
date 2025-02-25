@@ -15,6 +15,7 @@
   ],
   "homepage": "https://bun.sh",
   "dependencies": {
+    "@types/node": "^22.13.5",
     "@types/ws": "~8.5.10"
   },
   "devDependencies": {

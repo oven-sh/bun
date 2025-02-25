@@ -12,7 +12,7 @@
     },
   },
   "packages": {
-    "@types/bun": ["@types/bun@types-bun-1.2.3.tgz", { "dependencies": { "@types/ws": "~8.5.10" } }],
+    "@types/bun": ["@types/bun@types-bun-1.2.3.tgz", { "dependencies": { "@types/node": "^22.13.5", "@types/ws": "~8.5.10" } }],
 
     "@types/node": ["@types/node@22.13.5", "", { "dependencies": { "undici-types": "~6.20.0" } }, "sha512-+lTU0PxZXn0Dr1NBtC7Y8cR21AJr87dLLU953CWA6pMxxv/UDc7jYAY90upcrie1nRcD6XNG5HOYEDtgW5TxAg=="],
 

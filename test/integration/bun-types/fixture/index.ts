@@ -108,6 +108,8 @@ Bun.serve({
   },
 });
 
+import.meta.hot.data;
+
 import { serve } from "bun";
 
 new Worker("").on("message", (e: MessageEvent<string>) => {

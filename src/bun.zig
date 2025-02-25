@@ -4351,3 +4351,4 @@ pub fn CowSlice(T: type) type {
 const Allocator = std.mem.Allocator;
 
 pub const server = @import("./bun.js/api/server.zig");
+pub const macho = @import("./macho.zig");

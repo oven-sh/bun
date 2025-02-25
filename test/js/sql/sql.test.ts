@@ -3211,6 +3211,117 @@ if (isDockerEnabled()) {
   //   return ['12233445566778', xs.sort().join('')]
   // })
 
+  test("limits of types", async () => {
+    await sql
+      .transaction(async reserved => {
+        const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+        // we need a lot of types
+        for (let i = 0; i < 1000; i++) {
+          const type_name = sql(`${table_name}${i}`);
+          // create a lot of custom types
+          await reserved`CREATE TYPE "public".${type_name} AS ENUM('active', 'inactive', 'deleted');`;
+        }
+        await reserved`
+CREATE TABLE ${table_name} (
+"id" serial PRIMARY KEY NOT NULL,
+"status" ${sql(`${table_name}999`)} DEFAULT 'active' NOT NULL
+);`.simple();
+        await reserved`insert into ${table_name} values (1, 'active'), (2, 'inactive'), (3, 'deleted')`;
+        const result = await reserved`select * from ${table_name}`;
+        expect(result).toBeDefined();
+        expect(result.length).toBe(3);
+        expect(result[0].status).toBe("active");
+        expect(result[1].status).toBe("inactive");
+        expect(result[2].status).toBe("deleted");
+        throw new Error("rollback"); // no need to commit all this
+      })
+      .catch(e => {
+        expect(e.message || e).toBe("rollback");
+      });
+  });
+  test("binary detection of unsupported types", async () => {
+    using reserved = await sql.reserve();
+    // this test should return the same result in text and binary mode, using text mode for this types
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a smallint NOT NULL,
+        b smallint NOT NULL,
+        c smallint NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values (1, 23, 256)`;
+      const binary_mode = await reserved`select * from ${table_name} where a = ${1}`;
+      expect(binary_mode).toEqual([{ a: 1, b: 23, c: 256 }]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: 1, b: 23, c: 256 }]);
+    }
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a numeric NOT NULL,
+        b numeric NOT NULL,
+        c numeric NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values (1, 23, 256)`;
+      const binary_mode = await reserved`select * from ${table_name} where a = ${1}`;
+      expect(binary_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+    }
+
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a bigint NOT NULL,
+        b bigint NOT NULL,
+        c bigint NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values (1, 23, 256)`;
+      const binary_mode = await reserved`select * from ${table_name} where a = ${1}`;
+      expect(binary_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: "1", b: "23", c: "256" }]);
+    }
+
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+
+      await reserved`
+    CREATE TEMPORARY TABLE ${table_name} (
+        a date NOT NULL,
+        b date NOT NULL,
+        c date NOT NULL
+    )`;
+      await reserved`insert into ${table_name} values ('2025-01-01', '2025-01-02', '2025-01-03')`;
+      const binary_mode = await reserved`select * from ${table_name} where a >= ${"2025-01-01"}`;
+      expect(binary_mode).toEqual([
+        { a: new Date("2025-01-01"), b: new Date("2025-01-02"), c: new Date("2025-01-03") },
+      ]);
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode).toEqual([{ a: new Date("2025-01-01"), b: new Date("2025-01-02"), c: new Date("2025-01-03") }]);
+    }
+    // this is supported in binary mode and also in text mode
+    {
+      const table_name = sql(Bun.randomUUIDv7("hex").replaceAll("-", "_"));
+      await reserved`CREATE TEMPORARY TABLE ${table_name} (a integer[] null, b smallint not null)`;
+      await reserved`insert into ${table_name} values (null, 1), (array[1, 2, 3], 2), (array[4, 5, 6], 3)`;
+      const text_mode = await reserved`select * from ${table_name}`;
+      expect(text_mode.map(row => row)).toEqual([
+        { a: null, b: 1 },
+        { a: [1, 2, 3], b: 2 },
+        { a: [4, 5, 6], b: 3 },
+      ]);
+      const binary_mode = await reserved`select * from ${table_name} where b = ${2}`;
+      // for now we return a typed array with do not match postgres's array type (this need to accept nulls so will change in future)
+      expect(binary_mode.map(row => row)).toEqual([{ a: new Int32Array([1, 2, 3]), b: 2 }]);
+    }
+  });
   test("reserve connection", async () => {
     const sql = postgres({ ...options, max: 1 });
     const reserved = await sql.reserve();

@@ -109,6 +109,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
 
         // Releasing the lock is not possible as there are active reads
         // we will instead pretend we are unref'd, and release the lock once the reads are finished.
+        shouldDisown = true;
         source?.updateRef?.(false);
       }
     } else if (source) {

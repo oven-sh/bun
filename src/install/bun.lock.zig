@@ -1585,7 +1585,7 @@ pub fn parseIntoBinaryLockfile(
                 }
 
                 // there should be no duplicates
-                const pkg_id = try lockfile.appendPackageNoDedupe(&pkg, string_buf.bytes.items);
+                const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
                 const entry = try pkg_map.getOrPut(name);
                 if (entry.found_existing) {
@@ -1845,7 +1845,7 @@ pub fn parseIntoBinaryLockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
-            const pkg_id = try lockfile.appendPackageNoDedupe(&pkg, string_buf.bytes.items);
+            const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
             const entry = try pkg_map.getOrPut(pkg_path);
             if (entry.found_existing) {

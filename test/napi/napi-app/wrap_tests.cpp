@@ -15,6 +15,7 @@ static void delete_the_ref(napi_env env, void *_data, void *_hint) {
   assert(ref_to_wrapped_object);
   napi_delete_reference(env, ref_to_wrapped_object);
   ref_to_wrapped_object = nullptr;
+  wrap_finalize_called = true;
 }
 
 static void finalize_for_create_wrap(napi_env env, void *opaque_data,
@@ -25,9 +26,11 @@ static void finalize_for_create_wrap(napi_env env, void *opaque_data,
   delete data;
   delete hint;
   if (ref_to_wrapped_object) {
+    // don't set wrap_finalize_called, wait for it to be set in delete_the_ref
     node_api_post_finalizer(env, delete_the_ref, nullptr, nullptr);
+  } else {
+    wrap_finalize_called = true;
   }
-  wrap_finalize_called = true;
 }
 
 // create_wrap(js_object: object, ask_for_ref: boolean, strong: boolean): object

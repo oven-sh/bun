@@ -332,16 +332,38 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
     return fetchFn;
 }
 
-static JSValue BunObject_getter_wrap_BunShell(VM& vm, JSObject* bunObject)
+static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 {
-    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
-    return globalObject->m_BunShell.getInitializedOnMainThread(globalObject);
-}
+auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    JSFunction* createParsedShellScript = JSFunction::create(vm, bunObject->globalObject(), 2, "createParsedShellScript"_s, BunObject_callback_createParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
+    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, bunObject->globalObject(), 1, "createShellInterpreter"_s, BunObject_callback_createShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
+    JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
 
-static JSValue BunObject_getter_wrap_ShellError(VM& vm, JSObject* bunObject)
-{
-    auto* globalObject = defaultGlobalObject(bunObject->globalObject());
-    return globalObject->m_BunShell.getInitializedOnMainThread(globalObject)->get(globalObject, JSC::Identifier::fromString(vm, "ShellError"_s));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto args = JSC::MarkedArgumentBuffer();
+    args.append(createShellInterpreterFunction);
+    args.append(createParsedShellScript);
+    JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (UNLIKELY(!shell.isObject())) {
+        throwTypeError(globalObject, scope, "Internal error: BunShell constructor did not return an object"_s);
+        return {};
+    }
+
+    auto* bunShell = shell.getObject();
+
+    auto ShellError = bunShell->get(globalObject, JSC::Identifier::fromString(vm, "ShellError"_s));
+    if (UNLIKELY(!ShellError.isObject())) {
+        throwTypeError(globalObject, scope, "Internal error: BunShell.ShellError is not an object"_s);
+        return {};
+    }
+
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirect(vm, JSC::Identifier::fromString(vm, "ShellError"_s), ShellError.getObject(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+
+    return bunShell;
 }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
@@ -670,8 +692,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 
 /* Source for BunObject.lut.h
 @begin bunObjectTable
-    $                                              BunObject_getter_wrap_BunShell                                      DontDelete|PropertyCallback
-    ShellError                                     BunObject_getter_wrap_ShellError                                    DontDelete|PropertyCallback
+    $                                              constructBunShell                                                   DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
     FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback

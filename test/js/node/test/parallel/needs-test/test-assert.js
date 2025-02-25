@@ -1044,8 +1044,7 @@ test('Additional asserts', () => {
     {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message: 'The "error" argument must be of type function or ' +
-              'an instance of Error, RegExp, or Object. Received type string ' +
+      message: 'The "error" argument must be of type function, Error, RegExp, or Object. Received type string ' +
               "('Error message')"
     }
   );
@@ -1056,8 +1055,7 @@ test('Additional asserts', () => {
       () => assert.throws(() => {}, input),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "error" argument must be of type function or ' +
-                'an instance of Error, RegExp, or Object.' +
+        message: 'The "error" argument must be of type function, Error, RegExp, or Object.' +
                 invalidArgTypeHelper(input)
       }
     );
@@ -1137,8 +1135,7 @@ test('Throws accepts objects', () => {
     {
       name: 'TypeError',
       code: 'ERR_INVALID_ARG_TYPE',
-      message: 'The "expected" argument must be of type function or an ' +
-               'instance of RegExp. Received an instance of Object'
+      message: 'The "expected" argument must be of type function or RegExp. Received an instance of Object'
     }
   );
 
@@ -1490,7 +1487,7 @@ test('Additional assert', () => {
       () => assert.match(/abc/, 'string'),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "regexp" argument must be an instance of RegExp. ' +
+        message: 'The "regexp" argument must be of type RegExp. ' +
                 "Received type string ('string')"
       }
     );
@@ -1540,7 +1537,7 @@ test('Additional assert', () => {
       () => assert.doesNotMatch(/abc/, 'string'),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "regexp" argument must be an instance of RegExp. ' +
+        message: 'The "regexp" argument must be of type RegExp. ' +
                 "Received type string ('string')"
       }
     );

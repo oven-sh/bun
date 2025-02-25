@@ -497,12 +497,24 @@ void addList(WTF::StringBuilder& result, WTF::Vector<WTF::String>& types)
     }
 }
 
+void addParameter(WTF::StringBuilder& result, const StringView& arg_name)
+{
+    if (arg_name.endsWith(" argument"_s)) {
+        result.append(arg_name);
+    } else {
+        result.append("\""_s);
+        result.append(arg_name);
+        result.append("\" "_s);
+        result.append(arg_name.contains('.') ? "property"_s : "argument"_s);
+    }
+}
+
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const StringView& expected_type, JSValue actual_value)
 {
     WTF::StringBuilder result;
-    result.append("The \""_s);
-    result.append(arg_name);
-    result.append("\" argument must be of type "_s);
+    result.append("The "_s);
+    addParameter(result, arg_name);
+    result.append(" must be of type "_s);
     result.append(expected_type);
     result.append(". Received "_s);
     determineSpecificType(JSC::getVM(globalObject), globalObject, result, actual_value);
@@ -515,16 +527,9 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     WTF::StringBuilder result;
 
     result.append("The "_s);
-
-    if (arg_name.endsWith(" argument"_s)) {
-        result.append(arg_name);
-    } else {
-        result.append("\""_s);
-        result.append(arg_name);
-        result.append("\" "_s);
-        result.append(arg_name.contains('.') ? "property"_s : "argument"_s);
-    }
+    addParameter(result, arg_name);
     result.append(" must be "_s);
+    result.append("of type "_s);
 
     unsigned length = expected_types.size();
     if (length == 1) {
@@ -616,24 +621,8 @@ namespace ERR {
 
 JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
 {
-    WTF::StringBuilder builder;
-    auto arg_kind = arg_name.contains('.') ? "property"_s : "argument"_s;
-    auto ty_first_char = expected_type[0];
-    auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
-
-    builder.append("The \""_s);
-    builder.append(arg_name);
-    builder.append("\" "_s);
-    builder.append(arg_kind);
-    builder.append(" must be "_s);
-    builder.append(ty_kind);
-    builder.append(" "_s);
-    builder.append(expected_type);
-    builder.append(". Received "_s);
-    determineSpecificType(globalObject->vm(), globalObject, builder, val_actual_value);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
+    auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     return {};
 }
 
@@ -643,25 +632,8 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     RETURN_IF_EXCEPTION(throwScope, {});
     auto arg_name = jsString->view(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-
-    WTF::StringBuilder builder;
-    auto arg_kind = arg_name->contains('.') ? "property"_s : "argument"_s;
-    auto ty_first_char = expected_type[0];
-    auto ty_kind = ty_first_char >= 'A' && ty_first_char <= 'Z' ? "an instance of"_s : "of type"_s;
-
-    builder.append("The \""_s);
-    builder.append(arg_name);
-    builder.append("\" "_s);
-    builder.append(arg_kind);
-    builder.append(" must be "_s);
-    builder.append(ty_kind);
-    builder.append(" "_s);
-    builder.append(expected_type);
-    builder.append(". Received "_s);
-    determineSpecificType(globalObject->vm(), globalObject, builder, val_actual_value);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
+    auto message = Message::ERR_INVALID_ARG_TYPE(throwScope, globalObject, arg_name, expected_type, val_actual_value);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, message));
     return {};
 }
 

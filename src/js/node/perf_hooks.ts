@@ -169,10 +169,12 @@ export default {
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   monitorEventLoopDelay() {
-    throwNotImplemented("perf_hooks.monitorEventLoopDelay");
+    // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
+    // throwNotImplemented("perf_hooks.monitorEventLoopDelay");
   },
   createHistogram() {
-    throwNotImplemented("perf_hooks.createHistogram");
+    // TODO: node:perf_hooks.createHistogram -- https://github.com/oven-sh/bun/issues/8815
+    // throwNotImplemented("perf_hooks.createHistogram");
   },
   PerformanceResourceTiming,
 };

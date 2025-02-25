@@ -3247,7 +3247,20 @@ pub const JSGlobalObject = opaque {
         }
 
         return this.tryTakeException() orelse {
-            @panic("A JavaScript exception was thrown, however it was cleared before it could be read.");
+            @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+        };
+    }
+
+    pub fn takeError(this: *JSGlobalObject, proof: bun.JSError) JSValue {
+        switch (proof) {
+            error.JSError => {},
+            error.OutOfMemory => this.throwOutOfMemory() catch {},
+        }
+
+        return (this.tryTakeException() orelse {
+            @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+        }).toError() orelse {
+            @panic("Couldn't convert a JavaScript exception to an Error instance.");
         };
     }
 

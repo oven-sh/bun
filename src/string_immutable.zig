@@ -6540,7 +6540,7 @@ pub const unicode = struct {
                 },
                 .utf8_assert_no_invalid, .utf8_replace_invalid, .wtf8_assert_no_invalid, .wtf8_replace_invalid => {
                     const T = i32;
-                    const len: u3 = switch (s0) {
+                    const len: u32 = switch (s0) {
                         0b0000_0000...0b0111_1111 => return .{ .codepoint = s0, .advance = 1 },
                         0b1100_0000...0b1101_1111 => 2,
                         0b1110_0000...0b1110_1111 => 3,

@@ -792,6 +792,7 @@ pub const EventLoopTimer = struct {
         WTFTimer,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
+        SubprocessTimeout,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -805,6 +806,7 @@ pub const EventLoopTimer = struct {
                 .WTFTimer => WTFTimer,
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
+                .SubprocessTimeout => JSC.Subprocess,
             };
         }
     } else enum {
@@ -817,6 +819,7 @@ pub const EventLoopTimer = struct {
         DNSResolver,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
+        SubprocessTimeout,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -829,6 +832,7 @@ pub const EventLoopTimer = struct {
                 .DNSResolver => DNSResolver,
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
+                .SubprocessTimeout => JSC.Subprocess,
             };
         }
     };
@@ -912,6 +916,10 @@ pub const EventLoopTimer = struct {
 
                 if (comptime t.Type() == DNSResolver) {
                     return container.checkTimeouts(now, vm);
+                }
+
+                if (comptime t.Type() == JSC.Subprocess) {
+                    return container.timeoutCallback();
                 }
 
                 return container.callback(container);

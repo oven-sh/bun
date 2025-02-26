@@ -253,10 +253,7 @@ pub const RouteBundle = struct {
         bundled_file: IncrementalGraph(.client).FileIndex,
         /// Invalidated when the HTML file is modified, but not it's imports.
         /// The style tag is injected here.
-        head_end_tag_index: ByteOffset.Optional,
-        /// Invalidated when the HTML file is modified, but not it's imports.
-        /// The script tag is injected here.
-        body_end_tag_index: ByteOffset.Optional,
+        script_injection_offset: ByteOffset.Optional,
         /// The HTML file bundled, from the bundler.
         bundled_html_text: ?[]const u8,
         /// Derived from `bundled_html_text` + `client_script_generation`
@@ -1421,12 +1418,11 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     assert(route_bundle.server_state == .loaded); // if not loaded, following values wont be initialized
     assert(html.html_bundle.dev_server_id.unwrap() == route_bundle_index);
     assert(html.cached_response == null);
-    const head_end_tag_index = (html.head_end_tag_index.unwrap() orelse unreachable).get();
-    const body_end_tag_index = (html.body_end_tag_index.unwrap() orelse unreachable).get();
+    const script_injection_offset = (html.script_injection_offset.unwrap() orelse unreachable).get();
     const bundled_html = html.bundled_html_text orelse unreachable;
 
-    // The bundler records two offsets in development mode, splitting the HTML
-    // file into three chunks. DevServer is able to insert style/script tags
+    // The bundler records an offsets in development mode, splitting the HTML
+    // file into two chunks. DevServer is able to insert style/script tags
     // using the information available in IncrementalGraph. This approach
     // allows downstream files to update without re-bundling the HTML file.
     //
@@ -1434,14 +1430,13 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     // <html>
     // <head>
     //   <title>Single Page Web App</title>
-    // {head_end_tag_index}</head>
+    // {script_injection_offset}</head>
     // <body>
     //   <div id="root"></div>
-    // {body_end_tag_index}</body>
+    // </body>
     // </html>
-    const before_head_end = bundled_html[0..head_end_tag_index];
-    const before_body_end = bundled_html[head_end_tag_index..body_end_tag_index];
-    const after_body_end = bundled_html[body_end_tag_index..];
+    const before_head_end = bundled_html[0..script_injection_offset];
+    const after_head_end = bundled_html[script_injection_offset..];
 
     var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.html_bundle.path), ".html");
     // TODO: function for URL safe chars
@@ -1487,9 +1482,8 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&route_bundle.client_script_generation), .lower));
     array.appendSliceAssumeCapacity(".js\"></script>");
 
-    array.appendSliceAssumeCapacity(before_body_end);
     // DevServer used to put the script tag before the body end, but to match the regular bundler it does not do this.
-    array.appendSliceAssumeCapacity(after_body_end);
+    array.appendSliceAssumeCapacity(after_head_end);
     assert(array.items.len == array.capacity); // incorrect memory allocation size
     return array.items;
 }
@@ -2197,8 +2191,7 @@ pub fn finalizeBundle(
         dev.allocation_scope.assertOwned(compile_result.code);
         html.bundled_html_text = compile_result.code;
 
-        html.head_end_tag_index = .init(compile_result.offsets.head_end_tag);
-        html.body_end_tag_index = .init(compile_result.offsets.body_end_tag);
+        html.script_injection_offset = .init(compile_result.script_injection_offset);
 
         chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
     }
@@ -2802,8 +2795,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 break :brk .{ .html = .{
                     .html_bundle = html,
                     .bundled_file = incremental_graph_index,
-                    .head_end_tag_index = .none,
-                    .body_end_tag_index = .none,
+                    .script_injection_offset = .none,
                     .cached_response = null,
                     .bundled_html_text = null,
                 } };
@@ -4660,6 +4652,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
                 j.pushStatic(",");
                 const quoted_slice = map.quotedContents();
+                if (quoted_slice.len == 0) {
+                    bun.debugAssert(false); // vlq without source contents!
+                    const ptr: bun.StringPointer = .{
+                        .offset = @intCast(j.len + ",\"".len),
+                        .length = 0,
+                    };
+                    j.pushStatic(",\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
+                    file_paths.appendAssumeCapacity(paths[file_index.get()]);
+                    source_contents.appendAssumeCapacity(ptr);
+                    continue;
+                }
                 // Store the location of the source file. Since it is going
                 // to be stored regardless for use by the served source map.
                 // These 8 bytes per file allow remapping sources without

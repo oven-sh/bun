@@ -1,5 +1,5 @@
 // ESM tests are about various esm features in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const liveBindingTest = devTest("live bindings with `var`", {
   framework: minimalFramework,
@@ -203,5 +203,31 @@ devTest("export { default as y }", {
       replace: "2",
     });
     await dev.fetch("/").equals("Value: 2");
+  },
+});
+devTest("export * as namespace", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { ns as renamed } from './module';
+      if (typeof renamed !== 'object') throw new Error('renamed should be an object');
+      if (renamed.x !== 1) throw new Error('renamed.x should be 1');
+      if (renamed.y !== 2) throw new Error('renamed.y should be 2');
+      console.log('PASS');
+    `,
+    "module.ts": `
+      export * as ns from './module2';
+    `,
+    "module2.ts": `
+      export const x = 1;
+      export const y = 2;
+      export const ns = "FAIL";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
   },
 });

@@ -38,6 +38,7 @@ const reactAndRefreshStub = {
       const { calls, hash, name } = entry;
       fn();
       if (calls === entry.calls) throw new Error("Hook " + (name ?? fn.name) + " was not called");
+      return hash;
     }
     exports.expectHookComponent = function(fn, filename, exportId) {
       exports.expectComponent(fn, filename, exportId);
@@ -51,19 +52,20 @@ const reactAndRefreshStub = {
       if (typeof name !== "string") throw new Error("name must be a string");
       if (typeof fn !== "function") throw new Error("fn must be a function");
       if (components.has(name)) throw new Error("Component already registered: " + name + ". Read its hash from test harness first");
-      const entry = functionToComponent.get(fn) ?? { fn, calls: 0, hash: undefined, name: undefined };
+      const entry = functionToComponent.get(fn) ?? { fn, calls: 0, hash: undefined, name: undefined, customHooks: undefined };
       entry.name = name;
       components.set(name, entry);
       functionToComponent.set(fn, entry);
     }
     exports.createSignatureFunctionForTransform = function(fn) {
       let entry = null;
-      return function(fn, hash) {
+      return function(fn, hash, force, customHooks) {
         if (fn !== undefined) {
-          entry = functionToComponent.get(fn) ?? { fn, calls: 0, hash: undefined, name: undefined };
+          entry = functionToComponent.get(fn) ?? { fn, calls: 0, hash: undefined, name: undefined, customHooks: undefined };
           functionToComponent.set(fn, entry);
           entry.hash = hash;
           entry.calls = 0;
+          entry.customHooks = customHooks;
           return fn;
         } else {
           if (!entry) throw new Error("Function not registered");
@@ -71,6 +73,12 @@ const reactAndRefreshStub = {
           return entry.fn;
         }
       }
+    }
+    exports.getCustomHooks = function(fn) {
+      const entry = functionToComponent.get(fn);
+      if (!entry) throw new Error("Function not registered");
+      if (!entry.customHooks) throw new Error("Function has no custom hooks");
+      return entry.customHooks();
     }
   `,
   "node_modules/react/jsx-dev-runtime.js": /* js */ `
@@ -341,6 +349,75 @@ devTest("two functions with hooks should be independently tracked", {
       expectHook(method3);
 
       console.log("PASS");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    await c.expectMessage("PASS");
+  },
+});
+devTest("custom hook tracking", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import { useCustom1, useCustom2 } from "./custom-hook";
+      import { expectHook, getCustomHooks } from 'bun-devserver-react-mock';
+
+      function method1() {
+        const _ = useCustom1();
+      }
+      function method2() {
+        const _ = useCustom1();
+      }
+      function method3() {
+        const _ = useCustom2();
+      }
+      function method4() {
+        const a = useCustom1();
+        const b = useCustom2();
+      }
+
+      const hash1 = expectHook(method1);
+      const hash2 = expectHook(method2);
+      const hash3 = expectHook(method3);
+      const hash4 = expectHook(method4);
+
+      if (hash1 !== hash2) throw new Error("hash1 and hash2 should be the same: " + hash1 + " " + hash2);
+      if (hash1 === hash3) throw new Error("hash1 and hash3 should be different: " + hash1 + " " + hash3);
+      if (hash1 === hash4) throw new Error("hash1 and hash4 should be different: " + hash1 + " " + hash4);
+      if (hash3 === hash4) throw new Error("hash3 and hash4 should be different: " + hash3 + " " + hash4);
+
+      const customHooks1 = getCustomHooks(method1);
+      const customHooks2 = getCustomHooks(method2);
+      const customHooks3 = getCustomHooks(method3);
+
+      function assertCustomHooks(method, expected) {
+        const customHooks = getCustomHooks(method);
+        if (customHooks.length !== expected.length) throw new Error("customHooks should have " + expected.length + " hooks: " + customHooks.length);
+        for (let i = 0; i < expected.length; i++) {
+          if (customHooks[i] !== expected[i]) throw new Error(\`customHooks[\${i}] should be \${expected[i]} but got \${customHooks[i]}\`);
+        }
+      }
+
+      assertCustomHooks(method1, [useCustom1]);
+      assertCustomHooks(method2, [useCustom1]);
+      assertCustomHooks(method3, [useCustom2]);
+      assertCustomHooks(method4, [useCustom1, useCustom2]);
+
+      console.log("PASS");
+    `,
+    "custom-hook.ts": `
+      export function useCustom1() {
+        return 1;
+      }
+      export function useCustom2() {
+        return 2;
+      }
     `,
   },
   async test(dev) {

@@ -1060,6 +1060,8 @@ class OutputLineStream extends EventEmitter {
   constructor(name: string, readable1: ReadableStream, readable2: ReadableStream) {
     super();
 
+    this.setMaxListeners(10000); // TODO
+
     this.name = name;
 
     // @ts-ignore TODO: fix broken type definitions in @types/bun

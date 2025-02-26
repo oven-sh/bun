@@ -30,7 +30,7 @@ $ security find-identity -v -p codesigning
 
 Optional, but recommended: create an `entitlements.plist` file with the necessary permissions for the JavaScript engine to work correctly.
 
-```xml
+```xml#entitlements.plist
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -48,6 +48,8 @@ Optional, but recommended: create an `entitlements.plist` file with the necessar
 </dict>
 </plist>
 ```
+
+---
 
 Sign your executable using the `codesign` command:
 

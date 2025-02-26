@@ -81,7 +81,7 @@ devAndProductionTest("missing head end tag works fine", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
-devTest("missing head tag works fine", {
+devAndProductionTest("missing all meta tags works fine", {
   files: {
     "public/index.html": `
       <title>Dashboard</title>
@@ -103,6 +103,29 @@ devTest("missing head tag works fine", {
     await dev.fetch("/").expect.toInclude("root");
     await using c = await dev.client("/");
     await c.expectMessage("hello");
+    await c.style("body").backgroundColor.expect.toBe("red");
+  },
+});
+devAndProductionTest("inline script and styles appear", {
+  files: {
+    "public/index.html": `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Dashboard</title>
+          <style> body { background-color: red; } </style>
+        </head>
+        <body>
+          <script> console.log("hello " + (1 + 2)); </script>
+        </body>
+      </html>
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("hello");
+    await dev.fetch("/").expect.not.toInclude("3"); // TODO:
+    await using c = await dev.client("/");
+    await c.expectMessage("hello 3");
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });

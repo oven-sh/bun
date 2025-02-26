@@ -50,8 +50,8 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
   const shouldMinify = Boolean(minify);
   const {
     whitespace: minifyWhitespace,
-    syntax: minifySyntax,
-    identifiers: minifyIdentifiers,
+    syntax: _minifySyntax,
+    identifiers: _minifyIdentifiers,
   } = typeof minify === "object"
     ? minify
     : {
@@ -75,13 +75,10 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
   }
 
   return {
-    // TODO: css: "external". Requires enhancement to bun build allowing multiple OnLoadResults
     css: "external",
-    // css: "injected",
     generate: forceSide,
     preserveWhitespace: !minifyWhitespace,
     preserveComments: !shouldMinify,
-    // modernAst: true,
     // TODO: pass hmr flag via builder
     hmr: true,
     dev: development,

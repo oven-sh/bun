@@ -79,7 +79,11 @@ pub fn scan(this: *HTMLScanner, input: []const u8) !void {
     try processor.run(this, input);
 }
 
-pub fn HTMLProcessor(comptime T: type, comptime visit_head: bool) type {
+pub fn HTMLProcessor(
+    comptime T: type,
+    /// If the visitor should visit html, head, body
+    comptime visit_document_tags: bool,
+) type {
     return struct {
         const TagHandler = struct {
             /// CSS selector to match elements
@@ -231,7 +235,7 @@ pub fn HTMLProcessor(comptime T: type, comptime visit_head: bool) type {
             var builder = lol.HTMLRewriter.Builder.init();
             defer builder.deinit();
 
-            var selectors: std.BoundedArray(*lol.HTMLSelector, tag_handlers.len + if (visit_head) 1 else 0) = .{};
+            var selectors: std.BoundedArray(*lol.HTMLSelector, tag_handlers.len + if (visit_document_tags) 3 else 0) = .{};
             defer for (selectors.slice()) |selector| {
                 selector.deinit();
             };
@@ -254,21 +258,23 @@ pub fn HTMLProcessor(comptime T: type, comptime visit_head: bool) type {
                 );
             }
 
-            if (visit_head) {
-                const head_selector = try lol.HTMLSelector.parse("head");
-                selectors.appendAssumeCapacity(head_selector);
-                try builder.addElementContentHandlers(
-                    head_selector,
-                    T,
-                    T.onHeadTag,
-                    this,
-                    void,
-                    null,
-                    null,
-                    void,
-                    null,
-                    null,
-                );
+            if (visit_document_tags) {
+                inline for (.{ "body", "head", "html" }, &.{ T.onBodyTag, T.onHeadTag, T.onHtmlTag }) |tag, cb| {
+                    const head_selector = try lol.HTMLSelector.parse(tag);
+                    selectors.appendAssumeCapacity(head_selector);
+                    try builder.addElementContentHandlers(
+                        head_selector,
+                        T,
+                        cb,
+                        this,
+                        void,
+                        null,
+                        null,
+                        void,
+                        null,
+                        null,
+                    );
+                }
             }
 
             const memory_settings = lol.MemorySettings{

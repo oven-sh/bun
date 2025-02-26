@@ -253,10 +253,7 @@ pub const RouteBundle = struct {
         bundled_file: IncrementalGraph(.client).FileIndex,
         /// Invalidated when the HTML file is modified, but not it's imports.
         /// The style tag is injected here.
-        head_end_tag_index: ByteOffset.Optional,
-        /// Invalidated when the HTML file is modified, but not it's imports.
-        /// The script tag is injected here.
-        body_end_tag_index: ByteOffset.Optional,
+        script_injection_offset: ByteOffset.Optional,
         /// The HTML file bundled, from the bundler.
         bundled_html_text: ?[]const u8,
         /// Derived from `bundled_html_text` + `client_script_generation`
@@ -1421,7 +1418,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     assert(route_bundle.server_state == .loaded); // if not loaded, following values wont be initialized
     assert(html.html_bundle.dev_server_id.unwrap() == route_bundle_index);
     assert(html.cached_response == null);
-    const head_end_tag_index = (html.head_end_tag_index.unwrap() orelse unreachable).get();
+    const script_injection_offset = (html.script_injection_offset.unwrap() orelse unreachable).get();
     const bundled_html = html.bundled_html_text orelse unreachable;
 
     // The bundler records an offsets in development mode, splitting the HTML
@@ -1433,13 +1430,13 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     // <html>
     // <head>
     //   <title>Single Page Web App</title>
-    // {head_end_tag_index}</head>
+    // {script_injection_offset}</head>
     // <body>
     //   <div id="root"></div>
     // </body>
     // </html>
-    const before_head_end = bundled_html[0..head_end_tag_index];
-    const after_head_end = bundled_html[head_end_tag_index..];
+    const before_head_end = bundled_html[0..script_injection_offset];
+    const after_head_end = bundled_html[script_injection_offset..];
 
     var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.html_bundle.path), ".html");
     // TODO: function for URL safe chars
@@ -2194,7 +2191,7 @@ pub fn finalizeBundle(
         dev.allocation_scope.assertOwned(compile_result.code);
         html.bundled_html_text = compile_result.code;
 
-        html.head_end_tag_index = .init(compile_result.offsets.head_end_tag);
+        html.script_injection_offset = .init(compile_result.script_injection_offset);
 
         chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
     }
@@ -2798,8 +2795,7 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 break :brk .{ .html = .{
                     .html_bundle = html,
                     .bundled_file = incremental_graph_index,
-                    .head_end_tag_index = .none,
-                    .body_end_tag_index = .none,
+                    .script_injection_offset = .none,
                     .cached_response = null,
                     .bundled_html_text = null,
                 } };

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack } from "harness";
 import { join } from "path";
+import fs from "node:fs/promises";
 
 var packageDir: string;
 
@@ -286,17 +287,29 @@ describe("flags", () => {
 
   const filenameTests = [
     {
-      "filename": "test.tgz",
+      filename: "test.tgz",
+      error: false,
     },
     {
-      "filename": "no-extension",
+      filename: "no-extension",
+      error: false
     },
     {
-      "filename": "no-extension.tar",
+      filename: "no-extension.tar",
+      error: false,
     },
+    {
+      filename: "out/foo.tgz",
+      error: true
+    },
+    {
+      filename: "out/foo.tar",
+      mkdir: "out",
+      error: false
+    }
   ];
 
-  for (const { filename } of filenameTests) {
+  for (const { filename, error, mkdir } of filenameTests) {
     test(`--filename="${filename}"`, async () => {
       await Promise.all([
         write(
@@ -310,10 +323,16 @@ describe("flags", () => {
       ]);
 
       const dest = join(packageDir, filename);
-      await pack(packageDir, bunEnv, `--filename=${filename}`);
+      if (mkdir) await fs.mkdir(join(packageDir, mkdir));
 
-      const tarball = readTarball(dest);
-      expect(tarball.entries).toHaveLength(2);
+      try {
+        await pack(packageDir, bunEnv, `--filename=${filename}`);
+
+        const tarball = readTarball(dest);
+        expect(tarball.entries).toHaveLength(2);
+      } catch (packError) {
+        if (!error) expect(packError).toBeNil();
+      }
     });
   }
 

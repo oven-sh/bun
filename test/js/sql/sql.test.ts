@@ -11100,13 +11100,24 @@ CREATE TABLE ${table_name} (
       await sql`INSERT INTO ${sql(random_name)} ${sql(users)}`;
 
       const result =
-        await sql`SELECT * FROM ${sql(random_name)} WHERE id IN ${sql(users, "id")} and not IN ${sql([3, 4, 5])}`;
+        await sql`SELECT * FROM ${sql(random_name)} WHERE id IN ${sql(users, "id")} and id NOT IN ${sql([3, 4, 5])}`;
       expect(result[0].id).toBe(1);
       expect(result[0].name).toBe("John");
       expect(result[0].age).toBe(30);
       expect(result[1].id).toBe(2);
       expect(result[1].name).toBe("Jane");
       expect(result[1].age).toBe(25);
+    });
+
+    test("syntax error", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      const users = [
+        { id: 1, name: "John", age: 30 },
+        { id: 2, name: "Jane", age: 25 },
+      ];
+
+      expect(() => sql`DELETE FROM ${sql(random_name)} ${sql(users, "id")}`.execute()).toThrow(SyntaxError);
     });
   });
 }

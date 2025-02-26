@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const JSValue = JSC.JSValue;
+const JSError = bun.JSError;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Debugger = JSC.Debugger;
 const Environment = bun.Environment;
@@ -519,7 +520,7 @@ pub const All = struct {
         } else return null;
     }
 
-    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, kind: Kind) void {
+    pub fn clearTimer(timer_id_value: JSValue, globalThis: *JSGlobalObject, kind: Kind) !void {
         JSC.markBinding(@src());
 
         const vm = globalThis.bunVM();
@@ -529,7 +530,7 @@ pub const All = struct {
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
                 break :brk &(vm.timer.removeTimerById(timer_id_value.asInt32()) orelse return).internals;
             } else if (timer_id_value.isStringLiteral()) {
-                const string = timer_id_value.toBunString2(globalThis) catch return;
+                const string = try timer_id_value.toBunString(globalThis);
                 defer string.deref();
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
@@ -582,25 +583,25 @@ pub const All = struct {
     pub fn clearImmediate(
         globalThis: *JSGlobalObject,
         id: JSValue,
-    ) callconv(.C) JSValue {
+    ) callconv(.C) JSError!JSValue {
         JSC.markBinding(@src());
-        clearTimer(id, globalThis, .setImmediate);
+        try clearTimer(id, globalThis, .setImmediate);
         return JSValue.jsUndefined();
     }
     pub fn clearTimeout(
         globalThis: *JSGlobalObject,
         id: JSValue,
-    ) callconv(.C) JSValue {
+    ) callconv(.C) JSError!JSValue {
         JSC.markBinding(@src());
-        clearTimer(id, globalThis, .setTimeout);
+        try clearTimer(id, globalThis, .setTimeout);
         return JSValue.jsUndefined();
     }
     pub fn clearInterval(
         globalThis: *JSGlobalObject,
         id: JSValue,
-    ) callconv(.C) JSValue {
+    ) callconv(.C) JSError!JSValue {
         JSC.markBinding(@src());
-        clearTimer(id, globalThis, .setInterval);
+        try clearTimer(id, globalThis, .setInterval);
         return JSValue.jsUndefined();
     }
 

@@ -1278,24 +1278,24 @@ X509View X509View::From(const SSLCtxPointer& ctx)
 std::optional<WTF::String> X509View::getFingerprint(
     const EVP_MD* method) const
 {
-    // TODO(dylan-conway)
-    // unsigned int md_size;
-    // unsigned char md[EVP_MAX_MD_SIZE];
-    // static constexpr char hex[] = "0123456789ABCDEF";
+    unsigned int md_size;
+    unsigned char md[EVP_MAX_MD_SIZE];
+    static constexpr char hex[] = "0123456789ABCDEF";
 
-    // if (X509_digest(get(), method, md, &md_size)) {
-    //     if (md_size == 0) return std::nullopt;
-    //     std::string fingerprint((md_size * 3) - 1, 0);
-    //     for (unsigned int i = 0; i < md_size; i++) {
-    //         auto idx = 3 * i;
-    //         fingerprint[idx] = hex[(md[i] & 0xf0) >> 4];
-    //         fingerprint[idx + 1] = hex[(md[i] & 0x0f)];
-    //         if (i == md_size - 1) break;
-    //         fingerprint[idx + 2] = ':';
-    //     }
+    if (X509_digest(get(), method, md, &md_size)) {
+        if (md_size == 0) return std::nullopt;
+        std::span<LChar> chars;
+        WTF::String fingerprint = WTF::String::createUninitialized((md_size * 3) - 1, chars);
+        for (unsigned int i = 0; i < md_size; i++) {
+            auto idx = 3 * i;
+            chars[idx] = hex[(md[i] & 0xf0) >> 4];
+            chars[idx + 1] = hex[(md[i] & 0x0f)];
+            if (i == md_size - 1) break;
+            chars[idx + 2] = ':';
+        }
 
-    //     return fingerprint;
-    // }
+        return fingerprint;
+    }
 
     return std::nullopt;
 }

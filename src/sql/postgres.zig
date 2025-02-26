@@ -853,6 +853,7 @@ pub const PostgresSQLQuery = struct {
                     connection.prepared_statement_id += 1;
                     stmt.* = .{ .signature = signature, .ref_count = 2, .status = if (can_execute) .parsing else .pending };
                     this.statement = stmt;
+
                     entry_value.* = stmt;
                 } else {
                     stmt.* = .{ .signature = signature, .ref_count = 1, .status = if (can_execute) .parsing else .pending };
@@ -956,9 +957,21 @@ pub const PostgresRequest = struct {
         iter.to(0);
         var i: usize = 0;
         while (iter.next()) |value| : (i += 1) {
-            const parameter_field = parameter_fields[i];
-            const is_custom_type = std.math.maxInt(short) < parameter_field;
-            const tag: types.Tag = if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
+            const tag: types.Tag = brk: {
+                if (i >= len) {
+                    // parameter in array but not in parameter_fields
+                    // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
+                    // with will describe better the error saying exactly how many parameters are missing and are expected
+                    // Example:
+                    // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
+                    // errno: "08P01",
+                    // code: "ERR_POSTGRES_SERVER_ERROR"
+                    break :brk .text;
+                }
+                const parameter_field = parameter_fields[i];
+                const is_custom_type = std.math.maxInt(short) < parameter_field;
+                break :brk if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
+            };
             if (value.isEmptyOrUndefinedOrNull()) {
                 debug("  -> NULL", .{});
                 //  As a special case, -1 indicates a
@@ -3598,7 +3611,8 @@ pub const PostgresSQLConnection = struct {
                 try reader.eatMessage(protocol.ParseComplete);
                 const request = this.current() orelse return error.ExpectedRequest;
                 if (request.statement) |statement| {
-                    if (statement.status == .parsing) {
+                    // if we have params wait for row description
+                    if (statement.status == .parsing and statement.signature.fields.len == 0) {
                         statement.status = .prepared;
                     }
                 }
@@ -3609,6 +3623,9 @@ pub const PostgresSQLConnection = struct {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 statement.parameters = description.parameters;
+                if (statement.status == .parsing) {
+                    statement.status = .prepared;
+                }
             },
             .RowDescription => {
                 var description: protocol.RowDescription = undefined;

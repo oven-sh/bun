@@ -1984,9 +1984,9 @@ declare module "bun" {
     /** Database user for authentication (alias for username) */
     user?: string;
     /** Database password for authentication */
-    password?: string;
+    password?: string | (() => Promise<string>);
     /** Database password for authentication (alias for password) */
-    pass?: string;
+    pass?: string | (() => Promise<string>);
     /** Name of the database to connect to */
     database?: string;
     /** Name of the database to connect to (alias for database) */
@@ -2263,6 +2263,13 @@ declare module "bun" {
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      */
     unsafe(string: string, values?: any[]): SQLQuery;
+    /**
+     * Reads a file and uses the contents as a query.
+     * Optional parameters can be used if the file includes $1, $2, etc
+     * @example
+     * const result = await sql.file("query.sql", [1, 2, 3]);
+     */
+    file(filename: string, values?: any[]): SQLQuery;
 
     /** Current client options */
     options: SQLOptions;
@@ -5529,12 +5536,14 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onStart(callback: OnStartCallback): void;
+    onStart(callback: OnStartCallback): this;
     onBeforeParse(
       constraints: PluginConstraints,
       callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
-    ): void;
+    ): this;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -5549,8 +5558,10 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): void;
+    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): this;
     /**
      * Register a callback to resolve imports matching a filter and/or namespace
      * @param constraints The constraints to apply the plugin to
@@ -5565,8 +5576,10 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
+    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): this;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
@@ -5597,8 +5610,10 @@ declare module "bun" {
      * const { foo } = require("hello:world");
      * console.log(foo); // "bar"
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): void;
+    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): this;
   }
 
   interface BunPlugin {

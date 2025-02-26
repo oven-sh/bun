@@ -1085,13 +1085,13 @@ pub const TestingAPIs = struct {
         const old_folder_jsval = arguments.nextEat() orelse {
             return globalThis.throw("expected 2 strings", .{});
         };
-        const old_folder_bunstr = old_folder_jsval.toBunString(globalThis);
+        const old_folder_bunstr = try old_folder_jsval.toBunString(globalThis);
         defer old_folder_bunstr.deref();
 
         const new_folder_jsval = arguments.nextEat() orelse {
             return globalThis.throw("expected 2 strings", .{});
         };
-        const new_folder_bunstr = new_folder_jsval.toBunString(globalThis);
+        const new_folder_bunstr = try new_folder_jsval.toBunString(globalThis);
         defer new_folder_bunstr.deref();
 
         const old_folder = old_folder_bunstr.toUTF8(bun.default_allocator);
@@ -1147,7 +1147,7 @@ pub const TestingAPIs = struct {
         const patchfile_src_js = arguments.nextEat() orelse {
             return globalThis.throw("TestingAPIs.parse: expected at least 1 argument, got 0", .{});
         };
-        const patchfile_src_bunstr = patchfile_src_js.toBunString(globalThis);
+        const patchfile_src_bunstr = try patchfile_src_js.toBunString(globalThis);
         const patchfile_src = patchfile_src_bunstr.toUTF8(bun.default_allocator);
 
         var patchfile = parsePatchFile(patchfile_src.slice()) catch |e| {
@@ -1174,7 +1174,7 @@ pub const TestingAPIs = struct {
         };
 
         const dir_fd = if (arguments.nextEat()) |dir_js| brk: {
-            var bunstr = dir_js.toBunString(globalThis);
+            var bunstr = dir_js.toBunString(globalThis) catch return .initErr(.undefined);
             defer bunstr.deref();
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
             defer bun.default_allocator.free(path);
@@ -1188,7 +1188,7 @@ pub const TestingAPIs = struct {
             };
         } else bun.FileDescriptor.cwd();
 
-        const patchfile_bunstr = patchfile_js.toBunString(globalThis);
+        const patchfile_bunstr = patchfile_js.toBunString(globalThis) catch return .initErr(.undefined);
         defer patchfile_bunstr.deref();
         const patchfile_src = patchfile_bunstr.toUTF8(bun.default_allocator);
 

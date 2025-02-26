@@ -97,7 +97,11 @@ values;`,
         {
           name: "xXx123_foo_counter_321xXx",
           setup(build) {
-            build.onBeforeParse({ filter: /\.ts/ }, { napiModule, symbol: "plugin_impl", external });
+            const chainedThis = build.onBeforeParse(
+              { filter: /\.ts/ },
+              { napiModule, symbol: "plugin_impl", external },
+            );
+            expect(chainedThis).toBe(build);
 
             build.onLoad({ filter: /lmao\.json/ }, async ({ defer }) => {
               await defer();

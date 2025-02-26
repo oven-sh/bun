@@ -34,7 +34,21 @@ interface DepEntry {
   _expectedImports: string[] | undefined;
 }
 
-let dynamicImportWithOpts: any;
+/** See `runtime.js`'s `__toCommonJS`. This omits the cache. */
+export var toCommonJSUncached = /* @__PURE__ */ from => {
+  var desc,
+    entry = Object.defineProperty({}, "__esModule", { value: true });
+  if ((from && typeof from === "object") || typeof from === "function")
+    Object.getOwnPropertyNames(from).map(
+      key =>
+        !Object.prototype.hasOwnProperty.call(entry, key) &&
+        Object.defineProperty(entry, key, {
+          get: () => from[key],
+          enumerable: !(desc = Object.getOwnPropertyDescriptor(from, key)) || desc.enumerable,
+        }),
+    );
+  return entry;
+};
 
 /**
  * The expression `import(a,b)` is not supported in all browsers, most notably
@@ -42,6 +56,8 @@ let dynamicImportWithOpts: any;
  * upon first usage.
  */
 let lazyDynamicImportWithOptions;
+
+const kDebugModule = /* @__PURE__ */ Symbol("HotModule");
 
 /**
  * This object is passed as the CommonJS "module", but has a bunch of
@@ -54,31 +70,39 @@ export class HotModule<E = any> {
   exports: E = {} as E;
 
   _state = State.Loading;
+  /** for MJS <-> CJS interop. this stores the other module exports */
   _ext_exports = undefined;
-  __esModule = false;
+  _esm = false;
   _import_meta: ImportMeta | undefined = undefined;
   _cached_failure: any = undefined;
-  // modules that import THIS module
+  /** modules that import THIS module */
   _deps: Map<HotModule, DepEntry | undefined> = new Map();
+  /** from `import.meta.hot.dispose` */
   _onDispose: HotDisposeFunction[] | undefined = undefined;
 
   constructor(id: Id) {
     this.id = id;
+
+    if (IS_BUN_DEVELOPMENT) {
+      Object.defineProperty(this.exports, kDebugModule, {
+        value: this,
+        enumerable: false,
+      });
+    }
   }
 
   require(id: Id, onReload?: ExportsCallbackFunction) {
     const mod = loadModule(id, LoadModuleType.SyncUserDynamic) as HotModule;
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: undefined } : undefined);
-    return mod.exports;
+    const { exports, _esm } = mod;
+    return _esm ? (mod._ext_exports ??= runtimeHelpers.__toCommonJS(exports)) : exports;
   }
 
   async importStmt(id: Id, onReload?: ExportsCallbackFunction, expectedImports?: string[]) {
     const mod = await (loadModule(id, LoadModuleType.AsyncAssertPresent) as Promise<HotModule>);
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
-    const { exports, __esModule } = mod;
-    const object = __esModule
-      ? exports
-      : (mod._ext_exports ??= { ...(typeof exports === "object" && exports), default: exports });
+    const { exports, _esm } = mod;
+    const object = _esm ? exports : (mod._ext_exports ??= runtimeHelpers.__toESM(exports));
 
     // if (expectedImports && mod._state === State.Ready) {
     //   for (const key of expectedImports) {
@@ -109,8 +133,8 @@ export class HotModule<E = any> {
     const mod = await (loadModule(specifier, LoadModuleType.AsyncUserDynamic) as Promise<HotModule>);
     // insert into the map if not present
     mod._deps.set(this, mod._deps.get(this));
-    const { exports, __esModule } = mod;
-    return __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+    const { exports, _esm } = mod;
+    return _esm ? exports : (mod._ext_exports ??= { ...exports, default: exports });
   }
 
   importMeta() {
@@ -357,7 +381,7 @@ export async function replaceModules(modules: any) {
 {
   const runtime = new HotModule("bun:wrap");
   runtime.exports = runtimeHelpers;
-  runtime.__esModule = true;
+  runtime._esm = true;
   registry.set("bun:wrap", runtime);
 }
 
@@ -368,7 +392,7 @@ export let onServerSideReload: (() => Promise<void>) | null = null;
 
 if (side === "server") {
   const server_module = new HotModule("bun:bake/server");
-  server_module.__esModule = true;
+  server_module._esm = true;
   server_module.exports = { serverManifest, ssrManifest, actionManifest: null };
   registry.set(server_module.id, server_module);
 }
@@ -381,7 +405,7 @@ if (side === "client") {
   }
 
   const server_module = new HotModule("bun:bake/client");
-  server_module.__esModule = true;
+  server_module._esm = true;
   server_module.exports = {
     onServerSideReload: async cb => {
       onServerSideReload = cb;

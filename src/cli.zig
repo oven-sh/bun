@@ -281,7 +281,7 @@ pub const Arguments = struct {
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
         clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
-        clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
+        clap.parseParam("--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\".") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
@@ -1330,7 +1330,7 @@ pub const HelpCommand = struct {
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
-        \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
+        \\  <b><cyan>init<r>                           Start an empty Bun project from a built-in template
         \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
@@ -2196,6 +2196,7 @@ pub const Command = struct {
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
                     const cwd = try std.posix.getcwd(&entry_point_buf);
                     @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+                    ctx.passthrough = try std.mem.concat(ctx.allocator, []const u8, &.{ ctx.positionals, ctx.passthrough });
                     try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
                     return;
                 }

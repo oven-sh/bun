@@ -1453,7 +1453,7 @@ fn report(url: []const u8) void {
                 },
             }
         },
-        else => @compileError("NOT IMPLEMENTED"),
+        else => @compileError("Not implemented"),
     }
 }
 

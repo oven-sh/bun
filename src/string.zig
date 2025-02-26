@@ -1046,7 +1046,7 @@ pub const String = extern struct {
     extern fn JSC__createTypeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
     extern fn JSC__createRangeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
 
-    fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) !String {
+    fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) std.mem.Allocator.Error!String {
         var num_16bit: usize = 0;
         inline for (strings) |str| {
             if (!str.is8Bit()) num_16bit += 1;
@@ -1083,7 +1083,7 @@ pub const String = extern struct {
     /// Creates a new String from a given tuple (of comptime-known size) of String.
     ///
     /// Note: the callee owns the resulting string and must call `.deref()` on it once done
-    pub inline fn createFromConcat(allocator: std.mem.Allocator, strings: anytype) !String {
+    pub inline fn createFromConcat(allocator: std.mem.Allocator, strings: anytype) std.mem.Allocator.Error!String {
         return try concat(strings.len, allocator, strings);
     }
 
@@ -1094,7 +1094,7 @@ pub const String = extern struct {
             return JSC.jsNumber(@as(i32, 0));
         }
 
-        const str = args[0].toBunString(globalObject);
+        const str = try args[0].toBunString(globalObject);
         defer str.deref();
 
         if (str.isEmpty()) {
@@ -1103,6 +1103,15 @@ pub const String = extern struct {
 
         const width = str.visibleWidth(false);
         return JSC.jsNumber(width);
+    }
+
+    /// Reports owned allocation size, not the actual size of the string.
+    pub fn estimatedSize(this: *const String) usize {
+        return switch (this.tag) {
+            .Dead, .Empty, .StaticZigString => 0,
+            .ZigString => this.value.ZigString.len,
+            .WTFStringImpl => this.value.WTFStringImpl.byteLength(),
+        };
     }
 
     // TODO: move ZigString.Slice here

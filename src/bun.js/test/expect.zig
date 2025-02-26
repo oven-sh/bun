@@ -363,7 +363,7 @@ pub const Expect = struct {
         var custom_label = bun.String.empty;
         if (arguments.len > 1) {
             if (arguments[1].isString() or arguments[1].implementsToString(globalThis)) {
-                const label = arguments[1].toBunString(globalThis);
+                const label = try arguments[1].toBunString(globalThis);
                 if (globalThis.hasException()) return .zero;
                 custom_label = label;
             }
@@ -429,7 +429,7 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("pass", "message", "string");
             }
 
-            value.toZigString(&_msg, globalThis);
+            try value.toZigString(&_msg, globalThis);
         } else {
             _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
@@ -474,7 +474,7 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("fail", "message", "string");
             }
 
-            value.toZigString(&_msg, globalThis);
+            try value.toZigString(&_msg, globalThis);
         } else {
             _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
@@ -1693,7 +1693,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         var path_string = ZigString.Empty;
-        expected_property_path.toZigString(&path_string, globalThis);
+        try expected_property_path.toZigString(&path_string, globalThis);
 
         var pass = !value.isUndefinedOrNull();
         var received_property: JSValue = .zero;
@@ -2571,7 +2571,7 @@ pub const Expect = struct {
             0 => {},
             1 => {
                 if (arguments[0].isString()) {
-                    arguments[0].toZigString(&hint_string, globalThis);
+                    try arguments[0].toZigString(&hint_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
                 }
@@ -2622,7 +2622,7 @@ pub const Expect = struct {
             1 => {
                 if (arguments[0].isString()) {
                     has_expected = true;
-                    arguments[0].toZigString(&expected_string, globalThis);
+                    try arguments[0].toZigString(&expected_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
                 }
@@ -2664,7 +2664,7 @@ pub const Expect = struct {
             1 => {
                 if (arguments[0].isString()) {
                     has_expected = true;
-                    arguments[0].toZigString(&expected_string, globalThis);
+                    try arguments[0].toZigString(&expected_string, globalThis);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
                 } else {
@@ -2681,7 +2681,7 @@ pub const Expect = struct {
 
                 if (arguments[1].isString()) {
                     has_expected = true;
-                    arguments[1].toZigString(&expected_string, globalThis);
+                    try arguments[1].toZigString(&expected_string, globalThis);
                 }
             },
         }
@@ -2887,7 +2887,7 @@ pub const Expect = struct {
             0 => {},
             1 => {
                 if (arguments[0].isString()) {
-                    arguments[0].toZigString(&hint_string, globalThis);
+                    try arguments[0].toZigString(&hint_string, globalThis);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
                 } else {
@@ -2903,7 +2903,7 @@ pub const Expect = struct {
                 property_matchers = arguments[0];
 
                 if (arguments[1].isString()) {
-                    arguments[1].toZigString(&hint_string, globalThis);
+                    try arguments[1].toZigString(&hint_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected second argument to be a string\n", .{});
                 }
@@ -3223,7 +3223,7 @@ pub const Expect = struct {
             return globalThis.throwInvalidArguments("toBeTypeOf() requires a string argument", .{});
         }
 
-        const expected_type = expected.toBunString(globalThis);
+        const expected_type = try expected.toBunString(globalThis);
         defer expected_type.deref();
         incrementExpectCallCounter();
 
@@ -4851,7 +4851,7 @@ pub const Expect = struct {
         if (message.isUndefined()) {
             message_text = bun.String.static("No message was specified for this matcher.");
         } else if (message.isString()) {
-            message_text = message.toBunString(globalThis);
+            message_text = try message.toBunString(globalThis);
         } else {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable(globalThis.vm())); // checked above
@@ -4994,7 +4994,7 @@ pub const Expect = struct {
         }
 
         if (arg.isString()) {
-            const error_value = arg.toBunString(globalThis).toErrorInstance(globalThis);
+            const error_value = (try arg.toBunString(globalThis)).toErrorInstance(globalThis);
             error_value.put(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
@@ -5469,7 +5469,13 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                     }
                     return err;
                 };
-                try writer.print("{}", .{result.toBunString(globalThis)});
+                try writer.print("{}", .{result.toBunString(globalThis) catch {
+                    if (dontThrow) {
+                        globalThis.clearException();
+                        return false;
+                    }
+                    return error.JSError;
+                }});
             }
         }
         return false;
@@ -5608,7 +5614,7 @@ pub const ExpectMatcherUtils = struct {
         if (arguments.len == 0 or !arguments[0].isString()) {
             return globalThis.throw("matcherHint: the first argument (matcher name) must be a string", .{});
         }
-        const matcher_name = arguments[0].toBunString(globalThis);
+        const matcher_name = try arguments[0].toBunString(globalThis);
         defer matcher_name.deref();
 
         const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJS(globalThis);

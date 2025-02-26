@@ -10676,36 +10676,22 @@ pub const LinkerContext = struct {
             }
 
             pub fn onHeadTag(this: *@This(), element: *lol.Element) bool {
-                if (this.linker.dev_server == null) {
-                    this.addHeadTags(element);
-                } else {
-                    element.onEndTag(endHeadTagHandler, this) catch return true;
-                }
-
+                element.onEndTag(endHeadTagHandler, this) catch return true;
                 return false;
             }
 
             pub fn onHtmlTag(this: *@This(), element: *lol.Element) bool {
-                if (this.linker.dev_server == null) {
-                    this.addHeadTags(element);
-                } else {
-                    element.onEndTag(endHtmlTagHandler, this) catch return true;
-                }
-
+                element.onEndTag(endHtmlTagHandler, this) catch return true;
                 return false;
             }
 
             pub fn onBodyTag(this: *@This(), element: *lol.Element) bool {
-                if (this.linker.dev_server == null) {
-                    this.addHeadTags(element);
-                } else {
-                    element.onEndTag(endBodyTagHandler, this) catch return true;
-                }
-
+                element.onEndTag(endBodyTagHandler, this) catch return true;
                 return false;
             }
 
-            fn addHeadTags(this: *@This(), element: *lol.Element) void {
+            /// This is called for head, body, and html; whichever ends up coming first.
+            fn addHeadTags(this: *@This(), element: *lol.EndTag) void {
                 if (this.added_head_tags) return;
                 this.added_head_tags = true;
 
@@ -10716,32 +10702,44 @@ pub const LinkerContext = struct {
                 if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
                     const link_tag = std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
                     defer allocator.free(link_tag);
-                    element.append(link_tag, true) catch bun.outOfMemory();
+                    element.before(link_tag, true) catch bun.outOfMemory();
                 }
 
                 if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
                     // type="module" scripts do not block rendering, so it is okay to put them in head
                     const script = std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
                     defer allocator.free(script);
-                    element.append(script, true) catch bun.outOfMemory();
+                    element.before(script, true) catch bun.outOfMemory();
                 }
             }
 
-            fn endHeadTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+            fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
                 const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
-                this.end_tag_indices.head = @intCast(this.output.items.len);
+                if (this.linker.dev_server == null) {
+                    this.addHeadTags(end);
+                } else {
+                    this.end_tag_indices.head = @intCast(this.output.items.len);
+                }
                 return .@"continue";
             }
 
-            fn endBodyTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+            fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
                 const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
-                this.end_tag_indices.body = @intCast(this.output.items.len);
+                if (this.linker.dev_server == null) {
+                    this.addHeadTags(end);
+                } else {
+                    this.end_tag_indices.body = @intCast(this.output.items.len);
+                }
                 return .@"continue";
             }
 
-            fn endHtmlTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+            fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
                 const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
-                this.end_tag_indices.html = @intCast(this.output.items.len);
+                if (this.linker.dev_server == null) {
+                    this.addHeadTags(end);
+                } else {
+                    this.end_tag_indices.html = @intCast(this.output.items.len);
+                }
                 return .@"continue";
             }
         };

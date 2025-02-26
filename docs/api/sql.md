@@ -87,7 +87,7 @@ await sql`INSERT INTO users ${sql(users)}`;
 
 ### Picking columns to insert
 
-You can use `sql(object, Array<string>)` to pick which columns to insert. Each of the columns must be defined on the object.
+You can use `sql(object, ...string)` to pick which columns to insert. Each of the columns must be defined on the object.
 
 ```ts
 const user = {
@@ -96,7 +96,7 @@ const user = {
   age: 25,
 };
 
-await sql`INSERT INTO users ${sql(user, ["name", "email"])}`;
+await sql`INSERT INTO users ${sql(user, "name", "email")}`;
 // Only inserts name and email columns, ignoring other fields
 ```
 
@@ -163,6 +163,31 @@ await sql`
   WHERE active = ${true}
   ${filterAge ? ageFilter : sql``}
 `;
+```
+
+### Dynamic columns in updates
+
+You can use `sql(object, ...string)` to pick which columns to update. Each of the columns must be defined on the object. If the columns are not informed all keys will be used to update the row.
+
+```ts
+await sql`UPDATE users SET ${sql(user, "name", "email")} WHERE id = ${user.id}`;
+// uses all keys from the object to update the row
+await sql`UPDATE users SET ${sql(user)} WHERE id = ${user.id}`;
+```
+
+### Dynamic values and `where in`
+
+Value lists can also be created dynamically, making where in queries simple too. Optionally you can pass a array of objects and inform what key to use to create the list.
+
+```ts
+await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+
+const users = [
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+  { id: 3, name: "Charlie" },
+];
+await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
 ```
 
 ## `sql``.simple()`

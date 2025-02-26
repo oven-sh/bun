@@ -2647,7 +2647,25 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
+    /**
+     * Specifies if and how to generate source maps.
+     * 
+     * - `"none"` - No source maps are generated
+     * - `"linked"` - A separate `*.ext.map` file is generated alongside each
+     *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
+     *   file to link the two. Requires `outdir` to be set.
+     * - `"inline"` - an inline source map is appended to the output file.
+     * - `"external"` - Generate a separate source map file for each input file.
+     *   No `//# sourceMappingURL` comment is added to the output file.
+     * 
+     * `true` and `false` are aliasees for `"inline"` and `"none"`, respectively.
+     * 
+     * @default "none"
+     * 
+     * @see {@link outdir} required for `"linked"` maps
+     * @see {@link publicPath} to customize the base url of linked source maps
+     */
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
     /**
      * package.json `exports` conditions used when resolving imports
      *

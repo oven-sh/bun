@@ -2,7 +2,7 @@
   let name = "World";
 </script>
 
-<main>
+<main class="app">
   <h1>Hello {name}!</h1>
 </main>
 
@@ -11,6 +11,9 @@
       color: #ff3e00;
       text-align: center;
       font-size: 2em;
-      font-weight: 100;
+    font-weight: 100;
+  }
+  .app {
+    box-sizing: border-box;
   }
 </style>

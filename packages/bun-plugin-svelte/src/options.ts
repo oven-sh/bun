@@ -14,13 +14,23 @@ export interface SvelteOptions {
    * it's used. For example, `"client"` code will be generated when used with {@link Bun.build}.
    */
   forceSide?: "client" | "server";
+
+  /**
+   * When `true`, this plugin will generate development-only checks and other
+   * niceties.
+   *
+   * When `false`, this plugin will generate production-ready code
+   *
+   * Defaults to `true` when run via Bun's dev server, `false` otherwise.
+   */
+  development?: boolean;
 }
 
 /**
  * @internal
  */
 export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Partial<BuildConfig>): CompileOptions {
-  let { forceSide } = pluginOptions;
+  let { forceSide, development = false } = pluginOptions;
   const { minify = false, target } = config;
 
   const shouldMinify = Boolean(minify);
@@ -59,7 +69,7 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
     // modernAst: true,
     // TODO: pass hmr flag via builder
     hmr: true,
-    dev: true,
+    dev: development,
     cssHash({ css }) {
       // same prime number seed used by svelte/compiler.
       // TODO: ensure this provides enough entropy

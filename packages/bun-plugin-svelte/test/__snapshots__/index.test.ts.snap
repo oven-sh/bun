@@ -5,8 +5,8 @@ exports[`Bun.plugin using { forceSide: 'server' } allows for imported components
 exports[`Bun.plugin using { forceSide: 'server' } allows for imported components to be SSR'd: foo.svelte - body 1`] = `
 "<!--[--><!---->
 
-<main>
-  <h1 class="svelte-36qjosi0opy4a">Hello World!</h1>
+<main class="app svelte-30r5b3lexyb64">
+  <h1 class="svelte-30r5b3lexyb64">Hello World!</h1>
 </main>
 
 <!--]-->"

@@ -42,7 +42,7 @@ jobs:
       - name: Lint
         run: |
           bunx oxlint@0.15 --format github --deny-warnings
-          bun prettier
+          bunx prettier prettier --config ../../.prettierrc --check .
         working-directory: ./packages/bun-plugin-svelte
 
       - name: Spellcheck

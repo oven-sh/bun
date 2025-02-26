@@ -41,7 +41,7 @@ jobs:
 
       - name: Lint
         run: |
-          bun lint --format github --deny-warnings
+          bunx oxlint@0.15 --format github --deny-warnings
           bun prettier
         working-directory: ./packages/bun-plugin-svelte
 

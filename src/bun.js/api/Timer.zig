@@ -585,25 +585,25 @@ pub const All = struct {
     pub fn clearImmediate(
         globalThis: *JSGlobalObject,
         id: JSValue,
-    ) callconv(.C) JSError!JSValue {
+    ) callconv(.c) JSValue {
         JSC.markBinding(@src());
-        try clearTimer(id, globalThis, .setImmediate);
+        clearTimer(id, globalThis, .setImmediate) catch {};
         return JSValue.jsUndefined();
     }
     pub fn clearTimeout(
         globalThis: *JSGlobalObject,
         id: JSValue,
-    ) callconv(.C) JSError!JSValue {
+    ) callconv(.c) JSValue {
         JSC.markBinding(@src());
-        try clearTimer(id, globalThis, .setTimeout);
+        clearTimer(id, globalThis, .setTimeout) catch {};
         return JSValue.jsUndefined();
     }
     pub fn clearInterval(
         globalThis: *JSGlobalObject,
         id: JSValue,
-    ) callconv(.C) JSError!JSValue {
+    ) callconv(.c) JSValue {
         JSC.markBinding(@src());
-        try clearTimer(id, globalThis, .setInterval);
+        clearTimer(id, globalThis, .setInterval) catch {};
         return JSValue.jsUndefined();
     }
 

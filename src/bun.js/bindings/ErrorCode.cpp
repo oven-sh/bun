@@ -790,11 +790,16 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 }
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
 {
-    auto value_string = JSValueToStringSafe(globalObject, value);
+    WTF::StringBuilder builder;
+    builder.append("The argument '"_s);
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("The argument '"_s, name, "' "_s, reason, ". Received "_s, value_string);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
     return {};
 }
 
@@ -929,11 +934,12 @@ JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::J
 
 JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected)
 {
-    auto receivedString = JSValueToStringSafe(globalObject, received);
+    WTF::StringBuilder builder;
+    builder.append("Invalid key object type "_s);
+    JSValueToStringSafe(globalObject, builder, received);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("Invalid key object type "_s, receivedString, ". Expected "_s, expected);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
     return {};
 }
 

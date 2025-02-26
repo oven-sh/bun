@@ -532,7 +532,7 @@ private:
 };
 
 class BignumPointer final {
-    WTF_MAKE_ISO_ALLOCATED(BignumPointer);
+    WTF_MAKE_TZONE_ALLOCATED(BignumPointer);
 
 public:
     BignumPointer() = default;
@@ -654,7 +654,7 @@ private:
 };
 
 class EVPKeyCtxPointer final {
-    WTF_MAKE_ISO_ALLOCATED(EVPKeyCtxPointer);
+    WTF_MAKE_TZONE_ALLOCATED(EVPKeyCtxPointer);
 
 public:
     EVPKeyCtxPointer();
@@ -1027,7 +1027,7 @@ private:
 };
 
 class X509Name final {
-    WTF_MAKE_ISO_ALLOCATED(X509Name);
+    WTF_MAKE_TZONE_ALLOCATED(X509Name);
 
 public:
     X509Name();
@@ -1299,7 +1299,7 @@ private:
 };
 
 class EVPMDCtxPointer final {
-    WTF_MAKE_ISO_ALLOCATED(EVPMDCtxPointer);
+    WTF_MAKE_TZONE_ALLOCATED(EVPMDCtxPointer);
 
 public:
     EVPMDCtxPointer();
@@ -1345,7 +1345,7 @@ private:
 };
 
 class HMACCtxPointer final {
-    WTF_MAKE_ISO_ALLOCATED(HMACCtxPointer);
+    WTF_MAKE_TZONE_ALLOCATED(HMACCtxPointer);
 
 public:
     HMACCtxPointer();

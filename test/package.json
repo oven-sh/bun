@@ -57,7 +57,7 @@
     "nodemailer": "6.9.3",
     "pg": "8.11.1",
     "pg-connection-string": "2.6.1",
-    "pg-gateway": "^0.3.0-beta.4",
+    "pg-gateway": "0.3.0-beta.4",
     "pino": "9.4.0",
     "pino-pretty": "11.2.2",
     "postgres": "3.3.5",

@@ -118,6 +118,7 @@ pub const PackageManagerCommand = struct {
             \\  <b><green>bun pm<r> <blue>pack<r>               create a tarball of the current workspace
             \\  <d>├<r> <cyan>--dry-run<r>               do everything except for writing the tarball to disk
             \\  <d>├<r> <cyan>--destination<r>           the directory the tarball will be saved in
+            \\  <d>├<r> <cyan>--filename<r>              the name of the tarball
             \\  <d>├<r> <cyan>--ignore-scripts<r>        don't run pre/postpack and prepare scripts
             \\  <d>└<r> <cyan>--gzip-level<r>            specify a custom compression level for gzip (0-9, default is 9)
             \\  <b><green>bun pm<r> <blue>bin<r>                print the path to bin folder

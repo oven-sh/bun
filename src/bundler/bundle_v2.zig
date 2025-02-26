@@ -10611,8 +10611,12 @@ pub const LinkerContext = struct {
             chunks: []Chunk,
             minify_whitespace: bool,
             output: std.ArrayList(u8),
-            head_end_tag_index: u32 = 0,
-            body_end_tag_index: u32 = 0,
+            end_tag_indices: struct {
+                head: ?u32 = 0,
+                body: ?u32 = 0,
+                html: ?u32 = 0,
+            },
+            added_head_tags: bool,
 
             pub fn onWriteHTML(this: *@This(), bytes: []const u8) void {
                 this.output.appendSlice(bytes) catch bun.outOfMemory();
@@ -10672,46 +10676,76 @@ pub const LinkerContext = struct {
             }
 
             pub fn onHeadTag(this: *@This(), element: *lol.Element) bool {
-                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
-                const allocator = html_appender.get();
+                element.onEndTag(endHeadTagHandler, this) catch return true;
+                return false;
+            }
 
-                if (this.linker.dev_server == null) {
-                    // Put CSS before JS to reduce changes of flash of unstyled content
-                    if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
-                        const link_tag = std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
-                        defer allocator.free(link_tag);
-                        element.append(link_tag, true) catch bun.outOfMemory();
-                    }
-
-                    if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
-                        // type="module" scripts do not block rendering, so it is okay to put them in head
-                        const script = std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
-                        defer allocator.free(script);
-                        element.append(script, true) catch bun.outOfMemory();
-                    }
-                } else {
-                    element.onEndTag(endHeadTagHandler, this) catch return true;
-                }
-
+            pub fn onHtmlTag(this: *@This(), element: *lol.Element) bool {
+                element.onEndTag(endHtmlTagHandler, this) catch return true;
                 return false;
             }
 
             pub fn onBodyTag(this: *@This(), element: *lol.Element) bool {
-                if (this.linker.dev_server != null) {
-                    element.onEndTag(endBodyTagHandler, this) catch return true;
-                }
+                element.onEndTag(endBodyTagHandler, this) catch return true;
                 return false;
             }
 
-            fn endHeadTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+            /// This is called for head, body, and html; whichever ends up coming first.
+            fn addHeadTags(this: *@This(), endTag: *lol.EndTag) !void {
+                if (this.added_head_tags) return;
+                this.added_head_tags = true;
+
+                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = html_appender.get();
+                const slices = this.getHeadTags(allocator);
+                defer for (slices.slice()) |slice|
+                    allocator.free(slice);
+                for (slices.slice()) |slice|
+                    try endTag.before(slice, true);
+            }
+
+            fn getHeadTags(this: *@This(), allocator: std.mem.Allocator) std.BoundedArray([]const u8, 2) {
+                var array: std.BoundedArray([]const u8, 2) = .{};
+                // Put CSS before JS to reduce changes of flash of unstyled content
+                if (this.chunk.getCSSChunkForHTML(this.chunks)) |css_chunk| {
+                    const link_tag = std.fmt.allocPrintZ(allocator, "<link rel=\"stylesheet\" crossorigin href=\"{s}\">", .{css_chunk.unique_key}) catch bun.outOfMemory();
+                    array.appendAssumeCapacity(link_tag);
+                }
+                if (this.chunk.getJSChunkForHTML(this.chunks)) |js_chunk| {
+                    // type="module" scripts do not block rendering, so it is okay to put them in head
+                    const script = std.fmt.allocPrintZ(allocator, "<script type=\"module\" crossorigin src=\"{s}\"></script>", .{js_chunk.unique_key}) catch bun.outOfMemory();
+                    array.appendAssumeCapacity(script);
+                }
+                return array;
+            }
+
+            fn endHeadTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
                 const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
-                this.head_end_tag_index = @intCast(this.output.items.len);
+                if (this.linker.dev_server == null) {
+                    this.addHeadTags(end) catch return .stop;
+                } else {
+                    this.end_tag_indices.head = @intCast(this.output.items.len);
+                }
                 return .@"continue";
             }
 
-            fn endBodyTagHandler(_: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+            fn endBodyTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
                 const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
-                this.body_end_tag_index = @intCast(this.output.items.len);
+                if (this.linker.dev_server == null) {
+                    this.addHeadTags(end) catch return .stop;
+                } else {
+                    this.end_tag_indices.body = @intCast(this.output.items.len);
+                }
+                return .@"continue";
+            }
+
+            fn endHtmlTagHandler(end: *lol.EndTag, opaque_this: ?*anyopaque) callconv(.C) lol.Directive {
+                const this: *@This() = @alignCast(@ptrCast(opaque_this.?));
+                if (this.linker.dev_server == null) {
+                    this.addHeadTags(end) catch return .stop;
+                } else {
+                    this.end_tag_indices.html = @intCast(this.output.items.len);
+                }
                 return .@"continue";
             }
         };
@@ -10731,6 +10765,12 @@ pub const LinkerContext = struct {
             .chunks = chunks,
             .output = std.ArrayList(u8).init(output_allocator),
             .current_import_record_index = 0,
+            .end_tag_indices = .{
+                .html = null,
+                .body = null,
+                .head = null,
+            },
+            .added_head_tags = false,
         };
 
         HTMLScanner.HTMLProcessor(HTMLLoader, true).run(
@@ -10738,16 +10778,41 @@ pub const LinkerContext = struct {
             sources[chunk.entry_point.source_index].contents,
         ) catch bun.outOfMemory();
 
-        return .{
-            .html = .{
-                .code = html_loader.output.items,
-                .source_index = chunk.entry_point.source_index,
-                .offsets = .{
-                    .head_end_tag = html_loader.head_end_tag_index,
-                    .body_end_tag = html_loader.body_end_tag_index,
-                },
-            },
+        // There are some cases where invalid HTML will make it so </head> is
+        // never emitted, even if the literal text DOES appear. These cases are
+        // along the lines of having a self-closing tag for a non-self closing
+        // element. In this case, head_end_tag_index will be 0, and a simple
+        // search through the page is done to find the "</head>"
+        // See https://github.com/oven-sh/bun/issues/17554
+        const script_injection_offset: u32 = if (c.dev_server != null) brk: {
+            if (html_loader.end_tag_indices.head) |head|
+                break :brk head;
+            if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head|
+                break :brk @intCast(head);
+            if (html_loader.end_tag_indices.body) |body|
+                break :brk body;
+            if (html_loader.end_tag_indices.html) |html|
+                break :brk html;
+            break :brk @intCast(html_loader.output.items.len); // inject at end of file.
+        } else brk: {
+            if (!html_loader.added_head_tags) {
+                @branchHint(.cold); // this is if the document is missing all head, body, and html elements.
+                var html_appender = std.heap.stackFallback(256, bun.default_allocator);
+                const allocator = html_appender.get();
+                const slices = html_loader.getHeadTags(allocator);
+                for (slices.slice()) |slice| {
+                    html_loader.output.appendSlice(slice) catch bun.outOfMemory();
+                    allocator.free(slice);
+                }
+            }
+            break :brk if (Environment.isDebug) undefined else 0; // value is ignored. fail loud if hit in debug
         };
+
+        return .{ .html = .{
+            .code = html_loader.output.items,
+            .source_index = chunk.entry_point.source_index,
+            .script_injection_offset = script_injection_offset,
+        } };
     }
 
     fn postProcessHTMLChunk(ctx: GenerateChunkCtx, worker: *ThreadPool.Worker, chunk: *Chunk) !void {
@@ -12987,8 +13052,12 @@ pub const LinkerContext = struct {
         // - export wrapping is already done.
         // - import wrapping needs to know resolved paths
         // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
-        if (c.options.output_format == .internal_bake_dev) {
-            bun.assert(!part_range.source_index.isRuntime()); // embedded in HMR runtime
+        if (c.options.output_format == .internal_bake_dev) brk: {
+            if (part_range.source_index.isRuntime()) {
+                @branchHint(.cold);
+                bun.debugAssert(c.dev_server == null);
+                break :brk; // this is from `bun build --format=internal_bake_dev`
+            }
 
             // add a marker for the client runtime to tell that this is an ES module
             if (ast.exports_kind == .esm) {
@@ -12996,7 +13065,7 @@ pub const LinkerContext = struct {
                     .value = Expr.assign(
                         Expr.init(E.Dot, .{
                             .target = Expr.initIdentifier(ast.module_ref, Loc.Empty),
-                            .name = "__esModule",
+                            .name = "_esm",
                             .name_loc = Loc.Empty,
                         }, Loc.Empty),
                         Expr.init(E.Boolean, .{ .value = true }, Loc.Empty),
@@ -16669,12 +16738,7 @@ pub const CompileResult = union(enum) {
         source_index: Index.Int,
         code: []const u8,
         /// Offsets are used for DevServer to inject resources without re-bundling
-        offsets: struct {
-            /// The index of the "<" byte of "</head>"
-            head_end_tag: u32,
-            /// The index of the "<" byte of "</body>"
-            body_end_tag: u32,
-        },
+        script_injection_offset: u32,
     },
 
     pub const empty = CompileResult{

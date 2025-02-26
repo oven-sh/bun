@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack } from "harness";
 import { join } from "path";
+import fs from "node:fs/promises";
 
 var packageDir: string;
 
@@ -283,6 +284,72 @@ describe("flags", () => {
       expect(tarball.entries).toHaveLength(2);
     });
   }
+
+  const filenameTests = [
+    {
+      filename: "test.tgz",
+      error: false,
+    },
+    {
+      filename: "no-extension",
+      error: false
+    },
+    {
+      filename: "no-extension.tar",
+      error: false,
+    },
+    {
+      filename: "out/foo.tgz",
+      error: true
+    },
+    {
+      filename: "out/foo.tar",
+      mkdir: "out",
+      error: false
+    }
+  ];
+
+  for (const { filename, error, mkdir } of filenameTests) {
+    test(`--filename="${filename}"`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-dest-test",
+            version: "1.1.1",
+          }),
+        ),
+        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      ]);
+
+      const dest = join(packageDir, filename);
+      if (mkdir) await fs.mkdir(join(packageDir, mkdir));
+
+      try {
+        await pack(packageDir, bunEnv, `--filename=${filename}`);
+
+        const tarball = readTarball(dest);
+        expect(tarball.entries).toHaveLength(2);
+      } catch (packError) {
+        if (!error) expect(packError).toBeNil();
+      }
+    });
+  }
+
+  test("--filename and --destination", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-dest-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    expect(async () => await pack(packageDir, bunEnv, "--filename=test.tgz", "--destination=packed")).toThrowError();
+  });
 
   test("--ignore-scripts", async () => {
     await Promise.all([

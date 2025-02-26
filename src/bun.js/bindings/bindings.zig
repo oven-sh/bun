@@ -5329,7 +5329,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getOwnTruthy(this: JSValue, global: *JSGlobalObject, property_name: anytype) ?JSValue {
         if (getOwn(this, global, property_name)) |prop| {
-            if (prop == .undefined) return null;
+            if (prop.isEmptyOrUndefinedOrNull()) return null;
             return prop;
         }
 

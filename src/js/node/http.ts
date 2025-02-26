@@ -2540,6 +2540,7 @@ function ClientRequest(input, options, cb) {
   const onAbort = (err?: Error) => {
     this[kClearTimeout]?.();
     socketCloseListener();
+    process.nextTick(emitAbortNextTick, this);
   };
 
   const send = () => {

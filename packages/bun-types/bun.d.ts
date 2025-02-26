@@ -5632,13 +5632,15 @@ declare module "bun" {
      *
      * If unspecified, it is assumed that the plugin is compatible with all targets.
      *
-     * This field is not read by Bun.plugin
+     * This field is not read by {@link Bun.plugin}
      */
     target?: Target;
     /**
      * A function that will be called when the plugin is loaded.
      *
-     * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
+     * This function may be called in the same tick that it is registered, or it
+     * may be called later. It could potentially be called multiple times for
+     * different targets.
      */
     setup(
       /**

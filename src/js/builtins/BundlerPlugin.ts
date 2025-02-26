@@ -61,6 +61,15 @@ export function loadAndResolvePluginsForServe(
     root: bunfig_folder,
   };
 
+  class InvalidBundlerPluginError extends TypeError {
+    pluginName: string;
+    constructor(name: string, reason: string) {
+      super(`"${name}" is not a valid bundler plugin: ${reason}`);
+      this.name = "InvalidBundlerPluginError";
+      this.pluginName = name;
+    }
+  }
+
   let bundlerPlugin = this;
   let promiseResult = (async (
     plugins: string[],
@@ -77,9 +86,9 @@ export function loadAndResolvePluginsForServe(
         throw new TypeError(`Expected "${plugins[i]}" to be a module which default exports a bundler plugin.`);
       }
       let pluginModule = pluginModuleRaw.default;
-      if (!pluginModule || pluginModule.name === undefined || pluginModule.setup === undefined) {
-        throw new TypeError(`"${plugins[i]}" is not a valid bundler plugin.`);
-      }
+      if (!pluginModule) throw new InvalidBundlerPluginError(plugins[i], "default export is missing");
+      if (pluginModule.name === undefined) throw new InvalidBundlerPluginError(plugins[i], "name is missing");
+      if (pluginModule.setup === undefined) throw new InvalidBundlerPluginError(plugins[i], "setup() is missing");
       onstart_promises_array = await runSetupFn.$apply(bundlerPlugin, [
         pluginModule.setup,
         config,

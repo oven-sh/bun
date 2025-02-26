@@ -1,0 +1,20 @@
+{
+  "name": "bun-plugin-svelte",
+  "version": "0.0.1",
+  "type": "module",
+  "module": "index.ts",
+  "index": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "svelte": "^5.20.4",
+    "svelte-hmr": "^0.16.0"
+  },
+  "devDependencies": {
+    "bun-types": "canary"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

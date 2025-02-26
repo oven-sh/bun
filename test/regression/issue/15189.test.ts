@@ -1,0 +1,200 @@
+import { $ } from "bun";
+import { tempDirWithFiles } from "harness";
+
+// consider porting bash tests: https://github.com/bminor/bash/tree/f3b6bd19457e260b65d11f2712ec3da56cef463f/tests
+// they're not too hard - add as .sh files, execute them with bun, and expect the results to be the same as the .right files
+
+// TODO benchmark:
+// before & after: ``await $`echo ${Array(10000).fill("a")}`;``
+
+describe("bun shell", () => {
+  it("does not segfault 1", async () => {
+    expect(await $`echo ${Array(1000000).fill("a")}`.text()).toBe(Array(1000000).fill("a").join(" ") + "\n");
+  });
+  it("does not segfault 2", async () => {
+    expect(await $({ raw: ["echo" + " a".repeat(1000000)] } as any).text()).toBe(
+      Array(1000000).fill("a").join(" ") + "\n",
+    );
+  });
+  it("does not segfault 3", async () => {
+    // slow
+    expect(await $({ raw: ["echo " + 'a"a"'.repeat(1000000)] } as any).text()).toBe("aa".repeat(1000000) + "\n");
+  });
+  it.todo("echo works 1", async () => expect(await $`echo -n`.text()).toBe(""));
+  it.todo("echo works 2", async () => expect(await $`echo -n abc`.text()).toBe("abc"));
+  it("echo works 3", async () => expect(await $`echo abc`.text()).toBe("abc\n"));
+  it("echo works 4", async () => expect(await $`echo`.text()).toBe("\n"));
+  it("echo works 5", async () => expect(await $`echo abc def`.text()).toBe("abc def\n"));
+  it.todo("echo works 6", async () => expect(await $`echo -s abc def`.text()).toBe("abcdef\n"));
+  it.todo("echo works 7", async () => expect(await $`echo -E abc def`.text()).toBe("abc def\n"));
+  it.todo("echo works 8", async () => expect(await $`echo abc\ndef`.text()).toBe("abc\\ndef\n"));
+  it.todo("echo works 9", async () => expect(await $`echo -e abc\ndef`.text()).toBe("abc\ndef\n"));
+  it.todo("passes correct number of arguments with empty string substitutions", async () => {
+    expect(await $`echo 1 ${""} 2`.text()).toBe("1  2\n");
+  });
+  it.todo("passes correct number of arguments with empty string substitutions 2", async () => {
+    expect(await $`echo 1 "${""}" 2`.text()).toBe("1  2\n");
+  });
+  it.todo("passes correct number of arguments with empty string substitutions 3", async () => {
+    expect(await $`echo 1 '${""}' 2`.text()).toBe("1  2\n");
+  });
+  it.todo("passes correct number of arguments with empty strings", async () => {
+    expect(await $`echo 1 $(echo -n) 2`.text()).toBe("1 2\n");
+  });
+  it.todo("passes correct number of arguments with empty strings 2", async () => {
+    expect(await $`echo 1 $(echo) 2`.text()).toBe("1  2\n");
+  });
+  it.todo("passes correct number of arguments with empty strings 3", async () => {
+    expect(await $`echo 1 $(echo -n 3) 2`.text()).toBe("1 3 2\n");
+  });
+  it("passes correct number of arguments with empty strings 4", async () => {
+    expect(await $`echo 1 $(echo 3) 2`.text()).toBe("1 3 2\n");
+  });
+  it.todo("passes correct number of arguments with empty double string quotes", async () => {
+    expect(await $`echo "1" "" "2"`.text()).toBe("1  2\n");
+  });
+  it.todo("passes correct number of arguments with empty single string quotes", async () => {
+    expect(await $`echo '1' '' '2'`.text()).toBe("1  2\n");
+  });
+  it("doesn't cause invalid js string ref error with a number after a string ref", async () => {
+    expect(await $`echo ${'"'}1`.text()).toBe('"1\n');
+  });
+  it("does not crash with an invalid string ref 1", async () => {
+    expect(() => $`echo __bunstr_123.`.text()).toThrowError("Invalid JS string ref (out of bounds)");
+  });
+  it("does not crash with an invalid string ref 2", async () => {
+    expect(() => $`echo __bunstr_123`.text()).toThrowError("Invalid JS string ref (missing '.' at end)");
+  });
+  it("does not crash with an invalid string ref 3", async () => {
+    expect(() => $`echo __bunstr_123456789012345678901234567890.`.text()).toThrowError(
+      "Invalid JS string ref (out of bounds)",
+    );
+  });
+  it("does not crash with an invalid string ref 4", async () => {
+    expect(() => $`echo __bunstr_123456789012345678901234567890123.`.text()).toThrowError(
+      "Invalid JS string ref (number too high)",
+    );
+  });
+  it("does not crash with an invalid string ref 5", async () => {
+    expect(() => $`echo __bunstr_123a`.text()).toThrowError("Invalid JS string ref (missing '.' at end)");
+  });
+  it("does not crash with an invalid string ref 6", async () => {
+    expect(await $`echo ${'"'} __bunstr_0.`.text()).toBe('" "\n');
+  });
+  it("doesn't parse string refs inside substitution", async () => {
+    expect(await $`echo ${"\x08__bunstr_123."}`.text()).toBe("\x08__bunstr_123.\n");
+  });
+  it("does not expand tilde in ${}", async () => {
+    expect(await $`echo ${"~"}`.text()).toBe("~\n");
+  });
+  it("does not expand tilde when escaped", async () => {
+    expect(await $`echo \~`.text()).toBe("~\n");
+  });
+  it("does not expand tilde when the slash is quoted", async () => {
+    expect(await $`echo ~"/"`.text()).toBe("~/\n");
+  });
+  it("does not expand tilde when there's an empty string between", async () => {
+    expect(await $`echo ~""/`.text()).toBe("~/\n");
+  });
+  it("expands tilde", async () => {
+    expect(await $`echo ~`.text()).toBe(process.env.HOME + "\n");
+  });
+  it("expands with slash", async () => {
+    expect(await $`echo ~/`.text()).toBe(process.env.HOME + "/\n");
+  });
+  it("does not expand after escaped space", async () => {
+    expect(await $`echo \ ~`.text()).toBe(" ~\n");
+  });
+  it("expands tilde as middle argument", async () => {
+    expect(await $`echo a ~ b`.text()).toBe("a " + process.env.HOME + " b\n");
+  });
+  it("expands tilde as middle argument 2", async () => {
+    expect(
+      await $`echo a ~\
+ b`.text(),
+    ).toBe("a " + process.env.HOME + " b\n");
+  });
+  it("expands as first argument", async () => {
+    expect((await $`~`.nothrow()).exitCode).not.toBe(0);
+  });
+  it("does not expand tilde with a non-slash after", async () => {
+    expect(await $`echo ~~`.text()).toBe("~~\n");
+  });
+  it("allow tilde expansion with backslash", async () => {
+    expect(await $`echo ~\\a`.text()).toBe(process.env.HOME + "\\a\n");
+  });
+  it("does not allow tilde expansion with non-backslash backslash", async () => {
+    expect(await $`echo ~\"a`.text()).toBe('~"a\n');
+  });
+  it("does not expand tilde with a non-slash after", async () => {
+    expect(await $`echo ~{a,b}`.text()).toBe("~a ~b\n");
+  });
+  it("does not expand tilde when the tilde is quoted", async () => {
+    expect(await $`echo "~"`.text()).toBe("~\n");
+  });
+  it("does not expand tilde after equals", async () => {
+    // expect(await $`echo --home=~`.text()).toBe("--home=" + process.env.HOME + "\n"); // bash feature, not in sh, zsh, csh, or fish
+    expect(await $`echo --home=~`.text()).toBe("--home=~\n"); // bash feature, not in sh
+  });
+  it("does not expand tilde after colon", async () => {
+    expect(await $`echo a:~`.text()).toBe("a:~\n");
+  });
+  it.todo("expands tilde in variable set", async () => {
+    expect(await $`MYVAR=~/abc && echo $MYVAR`.text()).toBe(process.env.HOME + "/abc\n");
+  });
+  it.todo("expands tilde in variable set list", async () => {
+    expect(await $`MYVAR=a:~:b && echo $MYVAR`.text()).toBe("a:" + process.env.HOME + ":b\n");
+  });
+  it("does not expand tilde in variable set list with non-split char", async () => {
+    expect(await $`MYVAR=a:~c:b && echo $MYVAR`.text()).toBe("a:~c:b\n");
+  });
+  it("does not expand tilde in variable set list with quotes", async () => {
+    expect(await $`MYVAR=a:"~":b && echo $MYVAR`.text()).toBe("a:~:b\n");
+  });
+  it("does not expand tilde second", async () => {
+    expect(await $`echo "a"~`.text()).toBe("a~\n");
+  });
+  it("handles backslashed newline", async () => {
+    expect(
+      await $`echo a\
+b`.text(),
+    ).toBe("ab\n");
+  });
+  it("handles backslashed newline in single quotes", async () => {
+    expect(
+      await $`echo 'a\
+b'`.text(),
+    ).toBe("a\\\nb\n");
+  });
+  it("handles backslashed newline in double quotes", async () => {
+    expect(
+      await $`echo "a\
+b"`.text(),
+    ).toBe("ab\n");
+  });
+  // TODO: handle username (`~user` -> getpwnam(user) eg /home/user if the accont exists. but only if all unquoted, ie `~user"a"` <- not allowed)
+
+  it("fails for bad surrogate pairs", async () => {
+    expect(() => $`echo ${"😊".substring(0, 1)}`.text()).toThrowError("Shell script string contains invalid UTF-16");
+    expect(() => $`echo ${"😊".substring(1, 2)}`.text()).toThrowError("Shell script string contains invalid UTF-16");
+    expect(await $`echo ${"😊".substring(0, 2)}`.text()).toBe("😊\n");
+  });
+
+  const this_filename = import.meta.dirname + "/15189.test.ts";
+  it("works with files", async () => {
+    expect(await $`cat ${this_filename} | cat | cat | cat`.text()).toBe(await Bun.file(this_filename).text());
+  });
+  it("works with files 2", async () => {
+    expect(await $`cat < ${Bun.file(this_filename)} | cat | cat | cat`.text()).toBe(
+      await Bun.file(this_filename).text(),
+    );
+  });
+  it("works with files 3", async () => {
+    expect(await $`cat < ${this_filename} | cat | cat | cat`.text()).toBe(await Bun.file(this_filename).text());
+  });
+  it("works with files 4", async () => {
+    const tmpdir = tempDirWithFiles("works-with-files", {});
+    await $`cat < ${this_filename} | cat | cat | cat > ${tmpdir}/outfile.txt`;
+    expect(await Bun.file(tmpdir + "/outfile.txt").text()).toBe(await Bun.file(this_filename).text());
+  });
+});

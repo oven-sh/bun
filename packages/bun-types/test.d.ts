@@ -170,6 +170,8 @@ declare module "bun:test" {
     readonly name: string;
   }
   export interface Describe {
+    (fn: () => void): void;
+
     (label: number | string | Function | FunctionLike, fn: () => void): void;
     /**
      * Skips all other tests, except this group of tests.

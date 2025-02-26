@@ -16,15 +16,14 @@
 namespace Bun {
 using namespace JSC;
 
-extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JSC::JSGlobalObject* globalObject)
+template<typename T>
+void callInternal(T* timeout, JSGlobalObject* globalObject)
 {
+    static_assert(std::is_same_v<T, WebCore::JSTimeout> || std::is_same_v<T, WebCore::JSImmediate>,
+        "wrong type passed to callInternal");
+
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (UNLIKELY(vm.hasPendingTerminationException())) {
-        return;
-    }
-
-    WebCore::JSTimeout* timeout = jsCast<WebCore::JSTimeout*>(JSC::JSValue::decode(encodedTimeoutValue));
 
     JSCell* callbackCell = timeout->m_callback.get().asCell();
     JSValue restoreAsyncContext {};
@@ -78,6 +77,23 @@ extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JS
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
+}
+
+extern "C" void Bun__JSTimeout__call(JSC::EncodedJSValue encodedTimeoutValue, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = globalObject->vm();
+    if (UNLIKELY(vm.hasPendingTerminationException())) {
+        return;
+    }
+
+    JSValue timeoutValue = JSValue::decode(encodedTimeoutValue);
+    if (auto* timeout = jsDynamicCast<WebCore::JSTimeout*>(timeoutValue)) {
+        return callInternal(timeout, globalObject);
+    } else if (auto* immediate = jsDynamicCast<WebCore::JSImmediate*>(timeoutValue)) {
+        return callInternal(immediate, globalObject);
+    }
+
+    ASSERT_NOT_REACHED_WITH_MESSAGE("Object passed to Bun__JSTimeout__call is not a JSTimeout or a JSImmediate");
 }
 
 }

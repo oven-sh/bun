@@ -442,7 +442,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     }
 
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Timer__setTimeout(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue), {});
+    Bun__Timer__setTimeout(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue), {}, Bun::CountdownOverflowBehavior::Clamp);
     return JSC::JSValue::encode(promise);
 }
 

@@ -1,7 +1,7 @@
 // these tests involve ensuring react (html loader + single page app) works
 // react is big and we do lots of stuff like fast refresh.
 import { expect } from "bun:test";
-import { devTest } from "../dev-server-harness";
+import { devTest } from "../bake-harness";
 
 devTest("react in html", {
   fixture: "react-spa-simple",

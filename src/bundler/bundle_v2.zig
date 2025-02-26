@@ -2699,7 +2699,7 @@ pub const BundleV2 = struct {
             };
         }
 
-        // Then all HTML files (TODO: what happens when JS imports HTML. probably ban that?)
+        // Then all HTML files
         for (html_files.keys(), chunks[1 + start.css_entry_points.count() ..]) |source_index, *chunk| {
             chunk.* = .{
                 .entry_point = .{
@@ -6232,8 +6232,8 @@ pub const LinkerContext = struct {
                 // was generated. This will be preserved so that remapping
                 // stack traces can show the source code, even after incremental
                 // rebuilds occur.
-                const allocator = if (worker.ctx.transpiler.options.dev_server != null)
-                    bun.default_allocator
+                const allocator = if (worker.ctx.transpiler.options.dev_server) |dev|
+                    dev.allocator
                 else
                     worker.allocator;
 
@@ -10270,13 +10270,16 @@ pub const LinkerContext = struct {
 
         // Client bundles for Bake must be globally allocated,
         // as it must outlive the bundle task.
-        const use_global_allocator = c.dev_server != null and
-            c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeGraph() == .client;
+        const allocator = if (c.dev_server) |dev|
+            if (c.parse_graph.ast.items(.target)[part_range.source_index.get()].bakeGraph() == .client)
+                dev.allocator
+            else
+                default_allocator
+        else
+            default_allocator;
 
         var arena = &worker.temporary_arena;
-        var buffer_writer = js_printer.BufferWriter.init(
-            if (use_global_allocator) default_allocator else worker.allocator,
-        ) catch bun.outOfMemory();
+        var buffer_writer = js_printer.BufferWriter.init(allocator) catch bun.outOfMemory();
         defer _ = arena.reset(.retain_capacity);
         worker.stmt_list.reset();
 
@@ -10713,9 +10716,9 @@ pub const LinkerContext = struct {
             }
         };
 
-        // HTML bundles for Bake must be globally allocated, as it must outlive
+        // HTML bundles for dev server must be allocated to it, as it must outlive
         // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
-        const output_allocator = if (c.dev_server != null) bun.default_allocator else worker.allocator;
+        const output_allocator = if (c.dev_server) |dev| dev.allocator else worker.allocator;
 
         var html_loader: HTMLLoader = .{
             .linker = c,

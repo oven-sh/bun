@@ -94,7 +94,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
     callback(ctx, globalObject);
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(callframe->thisValue());
 }
 
 static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
@@ -150,7 +150,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     global->requireMap()->remove(globalObject, moduleIdValue);
     global->esmRegistryMap()->remove(globalObject, moduleIdValue);
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(callframe->thisValue());
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin, void* ctx, OnAppendPluginCallback callback)
@@ -204,7 +204,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     plugin.append(vm, filter->regExp(), jsCast<JSObject*>(func), namespaceString);
     callback(ctx, globalObject);
 
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(callframe->thisValue());
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginGlobal(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
@@ -260,6 +260,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalO
     return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBrowser);
 }
 
+/// `Bun.plugin()`
 static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     auto& vm = JSC::getVM(globalObject);

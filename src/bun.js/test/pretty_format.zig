@@ -1107,7 +1107,7 @@ pub const JestPrettyFormat = struct {
                     defer message_string.deref();
 
                     if (value.fastGet(this.globalThis, .message)) |message_prop| {
-                        message_string = message_prop.toBunString(this.globalThis);
+                        message_string = try message_prop.toBunString(this.globalThis);
                     }
 
                     if (message_string.isEmpty()) {

@@ -3249,7 +3249,20 @@ pub const JSGlobalObject = opaque {
         }
 
         return this.tryTakeException() orelse {
-            @panic("A JavaScript exception was thrown, however it was cleared before it could be read.");
+            @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+        };
+    }
+
+    pub fn takeError(this: *JSGlobalObject, proof: bun.JSError) JSValue {
+        switch (proof) {
+            error.JSError => {},
+            error.OutOfMemory => this.throwOutOfMemory() catch {},
+        }
+
+        return (this.tryTakeException() orelse {
+            @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+        }).toError() orelse {
+            @panic("Couldn't convert a JavaScript exception to an Error instance.");
         };
     }
 
@@ -4980,13 +4993,7 @@ pub const JSValue = enum(i64) {
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
-    /// Returns String.Dead on error. Deprecated in favor of `toBunString2`
-    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
-        return bun.String.fromJS(this, globalObject);
-    }
-
-    /// Increments the reference count, you must call `.deref()` or it will leak memory.
-    pub fn toBunString2(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
+    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
         return bun.String.fromJS2(this, globalObject);
     }
 
@@ -5042,7 +5049,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    /// Deprecated: replace with 'toBunString2'
+    /// Deprecated: replace with 'toBunString'
     pub fn getZigString(this: JSValue, global: *JSGlobalObject) bun.JSError!ZigString {
         var str = ZigString.init("");
         try this.toZigString(&str, global);
@@ -5414,7 +5421,7 @@ pub const JSValue = enum(i64) {
             return global.throwInvalidPropertyTypeValue(property, "string", prop);
         }
 
-        const str = prop.toBunString(global);
+        const str = try prop.toBunString(global);
         if (global.hasException()) {
             str.deref();
             return error.JSError;
@@ -5751,7 +5758,7 @@ pub const JSValue = enum(i64) {
         globalObject: *JSC.JSGlobalObject,
 
         pub fn format(this: StringFormatter, comptime text: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            const str = this.value.toBunString(this.globalObject);
+            const str = try this.value.toBunString(this.globalObject);
             defer str.deref();
             try str.format(text, opts, writer);
         }

@@ -152,7 +152,7 @@ pub const UDPSocketConfig = struct {
                 if (!value.isString()) {
                     return globalThis.throwInvalidArguments("Expected \"hostname\" to be a string", .{});
                 }
-                const str = value.toBunString(globalThis);
+                const str = value.toBunString(globalThis) catch @panic("unreachable");
                 defer str.deref();
                 break :brk str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
             } else {
@@ -235,7 +235,7 @@ pub const UDPSocketConfig = struct {
             };
             const connect_port = connect_port_js.coerceToInt32(globalThis);
 
-            const str = connect_host_js.toBunString(globalThis);
+            const str = try connect_host_js.toBunString(globalThis);
             defer str.deref();
             const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
 
@@ -743,7 +743,7 @@ pub const UDPSocket = struct {
         const number = port_val.coerceToInt32(globalThis);
         const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
 
-        const str = address_val.toBunString(globalThis);
+        const str = address_val.toBunString(globalThis) catch @panic("unexpected exception");
         defer str.deref();
         const address_slice = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(address_slice);
@@ -927,7 +927,7 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Expected 2 arguments", .{});
         }
 
-        const str = args.ptr[0].toBunString(globalThis);
+        const str = try args.ptr[0].toBunString(globalThis);
         defer str.deref();
         const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(connect_host);

@@ -6227,9 +6227,6 @@ pub const JSValue = enum(i64) {
     }
 };
 
-extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
-extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
-
 pub const VM = extern struct {
     pub const shim = Shimmer("JSC", "VM", @This());
     bytes: shim.Bytes,

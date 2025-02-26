@@ -1,0 +1,182 @@
+const std = @import("std");
+const bun = @import("root").bun;
+const string = bun.string;
+const Output = bun.Output;
+const C_API = bun.JSC.C;
+const StringPointer = @import("../../api/schema.zig").Api.StringPointer;
+const Exports = @import("./exports.zig");
+const strings = bun.strings;
+const ErrorableZigString = Exports.ErrorableZigString;
+const ErrorableResolvedSource = Exports.ErrorableResolvedSource;
+const ZigException = Exports.ZigException;
+const ZigStackTrace = Exports.ZigStackTrace;
+const ArrayBuffer = @import("../base.zig").ArrayBuffer;
+const JSC = bun.JSC;
+const Shimmer = JSC.Shimmer;
+const FFI = @import("./FFI.zig");
+const NullableAllocator = bun.NullableAllocator;
+const MutableString = bun.MutableString;
+const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
+const String = bun.String;
+const ErrorableString = JSC.ErrorableString;
+const JSError = bun.JSError;
+const OOM = bun.OOM;
+
+const Api = @import("../../api/schema.zig").Api;
+
+const Bun = JSC.API.Bun;
+
+pub const JSGlobalObject = @import("./JSGlobalObject.zig").JSGlobalObject;
+pub const JSCell = @import("./JSCell.zig").JSCell;
+pub const ZigString = @import("./ZigString.zig").ZigString;
+pub const VM = @import("./VM.zig").VM;
+pub const CommonStrings = @import("./CommonStrings.zig").CommonStrings;
+pub const URL = @import("./URL.zig").URL;
+pub const WTF = @import("./WTF.zig").WTF;
+pub const JSString = @import("./JSString.zig").JSString;
+pub const JSObject = @import("./JSObject.zig").JSObject;
+pub const GetterSetter = @import("./GetterSetter.zig").GetterSetter;
+pub const CustomGetterSetter = @import("./CustomGetterSetter.zig").CustomGetterSetter;
+
+pub const JSObject = extern struct {
+    pub const shim = Shimmer("JSC", "JSObject", @This());
+    const cppFn = shim.cppFn;
+
+    pub fn toJS(obj: *JSObject) JSValue {
+        return JSValue.fromCell(obj);
+    }
+
+    /// Marshall a struct instance into a JSObject, copying its properties.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This method is equivalent to `Object.create(...)` + setting properties,
+    /// and is only intended for creating POJOs.
+    pub fn create(pojo: anytype, global: *JSGlobalObject) *JSObject {
+        return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, false);
+    }
+    /// Marshall a struct into a JSObject, copying its properties. It's
+    /// `__proto__` will be `null`.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This is roughly equivalent to creating an object with
+    /// `Object.create(null)` and adding properties to it.
+    pub fn createNullProto(pojo: anytype, global: *JSGlobalObject) *JSObject {
+        return createFromStructWithPrototype(@TypeOf(pojo), pojo, global, true);
+    }
+
+    /// Marshall a struct instance into a JSObject. `pojo` is borrowed.
+    ///
+    /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
+    /// `toJS` method will have it called to encode.
+    ///
+    /// This method is equivalent to `Object.create(...)` + setting properties,
+    /// and is only intended for creating POJOs.
+    ///
+    /// The object's prototype with either be `null` or `ObjectPrototype`
+    /// depending on whether `null_prototype` is set. Prefer using the object
+    /// prototype (`null_prototype = false`) unless you have a good reason not
+    /// to.
+    fn createFromStructWithPrototype(comptime T: type, pojo: T, global: *JSGlobalObject, comptime null_prototype: bool) *JSObject {
+        const info: std.builtin.Type.Struct = @typeInfo(T).@"struct";
+
+        const obj = obj: {
+            const val = if (comptime null_prototype)
+                JSValue.createEmptyObjectWithNullPrototype(global)
+            else
+                JSValue.createEmptyObject(global, comptime info.fields.len);
+            if (bun.Environment.isDebug)
+                bun.assert(val.isObject());
+            break :obj val.uncheckedPtrCast(JSObject);
+        };
+
+        const cell = toJS(obj);
+        inline for (info.fields) |field| {
+            const property = @field(pojo, field.name);
+            cell.put(
+                global,
+                field.name,
+                JSC.toJS(global, @TypeOf(property), property, .temporary),
+            );
+        }
+
+        return obj;
+    }
+
+    pub inline fn put(obj: *JSObject, global: *JSGlobalObject, key: anytype, value: JSValue) !void {
+        obj.toJS().put(global, key, value);
+    }
+
+    pub inline fn putAllFromStruct(obj: *JSObject, global: *JSGlobalObject, properties: anytype) !void {
+        inline for (comptime std.meta.fieldNames(@TypeOf(properties))) |field| {
+            try obj.put(global, field, @field(properties, field));
+        }
+    }
+
+    extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
+
+    pub const ExternColumnIdentifier = extern struct {
+        tag: u8 = 0,
+        value: extern union {
+            index: u32,
+            name: bun.String,
+        },
+
+        pub fn string(this: *ExternColumnIdentifier) ?*bun.String {
+            return switch (this.tag) {
+                2 => &this.value.name,
+                else => null,
+            };
+        }
+
+        pub fn deinit(this: *ExternColumnIdentifier) void {
+            if (this.string()) |str| {
+                str.deref();
+            }
+        }
+    };
+    pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
+        JSC.markBinding(@src());
+        return JSC__createStructure(global, owner.asCell(), length, names);
+    }
+
+    const InitializeCallback = *const fn (ctx: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void;
+    extern fn JSC__JSObject__create(global_object: *JSGlobalObject, length: usize, ctx: *anyopaque, initializer: InitializeCallback) JSValue;
+
+    pub fn Initializer(comptime Ctx: type, comptime func: fn (*Ctx, obj: *JSObject, global: *JSGlobalObject) void) type {
+        return struct {
+            pub fn call(this: *anyopaque, obj: *JSObject, global: *JSGlobalObject) callconv(.C) void {
+                @call(bun.callmod_inline, func, .{ @as(*Ctx, @ptrCast(@alignCast(this))), obj, global });
+            }
+        };
+    }
+
+    pub fn createWithInitializer(comptime Ctx: type, creator: *Ctx, global: *JSGlobalObject, length: usize) JSValue {
+        const Type = Initializer(Ctx, Ctx.create);
+        return JSC__JSObject__create(global, length, creator, Type.call);
+    }
+
+    pub fn getIndex(this: JSValue, globalThis: *JSGlobalObject, i: u32) JSValue {
+        return cppFn("getIndex", .{
+            this,
+            globalThis,
+            i,
+        });
+    }
+
+    pub fn putRecord(this: *JSObject, global: *JSGlobalObject, key: *ZigString, values: []ZigString) void {
+        return cppFn("putRecord", .{ this, global, key, values.ptr, values.len });
+    }
+
+    extern fn Bun__JSObject__getCodePropertyVMInquiry(*JSGlobalObject, *JSObject) JSValue;
+
+    /// This will not call getters or be observable from JavaScript.
+    pub fn getCodePropertyVMInquiry(obj: *JSObject, global: *JSGlobalObject) ?JSValue {
+        const v = Bun__JSObject__getCodePropertyVMInquiry(global, obj);
+        if (v == .zero) return null;
+        return v;
+    }
+};

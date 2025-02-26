@@ -25,6 +25,8 @@ const JSGlobalObject = bun.JSC.JSGlobalObject;
 const VM = bun.JSC.VM;
 const VirtualMachine = JSC.VirtualMachine;
 
+const napi = @import("../../napi/napi.zig");
+
 const TCC = @import("../../deps/tcc.zig");
 extern fn pthread_jit_write_protect_np(enable: c_int) void;
 
@@ -423,7 +425,7 @@ pub const FFI = struct {
 
             for (this.symbols.map.values()) |*symbol| {
                 if (symbol.needsNapiEnv()) {
-                    state.addSymbol("Bun__thisFFIModuleNapiEnv", globalThis) catch return error.DeferredErrors;
+                    state.addSymbol("Bun__thisFFIModuleNapiEnv", globalThis.makeNapiEnvForFFI()) catch return error.DeferredErrors;
                     break;
                 }
             }
@@ -745,12 +747,14 @@ pub const FFI = struct {
             // we are unable to free memory safely in certain cases here.
         }
 
+        const napi_env = makeNapiEnvIfNeeded(compile_c.symbols.map.values(), globalThis);
+
         var obj = JSC.JSValue.createEmptyObject(globalThis, compile_c.symbols.map.count());
         for (compile_c.symbols.map.values()) |*function| {
             const function_name = function.base_name.?;
             const allocator = bun.default_allocator;
 
-            function.compile(allocator, globalThis) catch |err| {
+            function.compile(allocator, napi_env) catch |err| {
                 if (!globalThis.hasException()) {
                     const ret = JSC.toInvalidArguments("{s} when translating symbol \"{s}\"", .{
                         @errorName(err),
@@ -1074,6 +1078,9 @@ pub const FFI = struct {
         var obj = JSC.JSValue.createEmptyObject(global, size);
         obj.protect();
         defer obj.unprotect();
+
+        const napi_env = makeNapiEnvIfNeeded(symbols.values(), global);
+
         for (symbols.values()) |*function| {
             const function_name = function.base_name.?;
 
@@ -1093,7 +1100,7 @@ pub const FFI = struct {
                 function.symbol_from_dynamic_library = resolved_symbol;
             }
 
-            function.compile(allocator, global) catch |err| {
+            function.compile(allocator, napi_env) catch |err| {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\" in \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
@@ -1186,6 +1193,9 @@ pub const FFI = struct {
         var obj = JSValue.createEmptyObject(global, symbols.count());
         obj.ensureStillAlive();
         defer obj.ensureStillAlive();
+
+        const napi_env = makeNapiEnvIfNeeded(symbols.values(), global);
+
         for (symbols.values()) |*function| {
             const function_name = function.base_name.?;
 
@@ -1199,7 +1209,7 @@ pub const FFI = struct {
                 return ret;
             }
 
-            function.compile(allocator, global) catch |err| {
+            function.compile(allocator, napi_env) catch |err| {
                 const ret = JSC.toInvalidArguments("{s} when compiling symbol \"{s}\"", .{
                     bun.asByteSlice(@errorName(err)),
                     bun.asByteSlice(function_name),
@@ -1513,11 +1523,7 @@ pub const FFI = struct {
 
         const tcc_options = "-std=c11 -nostdlib -Wl,--export-all-symbols" ++ if (Environment.isDebug) " -g" else "";
 
-        pub fn compile(
-            this: *Function,
-            allocator: std.mem.Allocator,
-            globalObject: *JSC.JSGlobalObject,
-        ) !void {
+        pub fn compile(this: *Function, allocator: std.mem.Allocator, napiEnv: ?*napi.NapiEnv) !void {
             var source_code = std.ArrayList(u8).init(allocator);
             var source_code_writer = source_code.writer();
             try this.printSourceCode(&source_code_writer);
@@ -1537,10 +1543,12 @@ pub const FFI = struct {
                 }
             }
 
-            _ = state.addSymbol("Bun__thisFFIModuleNapiEnv", globalObject) catch {
-                this.fail("Failed to add NAPI env symbol");
-                return;
-            };
+            if (napiEnv) |env| {
+                _ = state.addSymbol("Bun__thisFFIModuleNapiEnv", env) catch {
+                    this.fail("Failed to add NAPI env symbol");
+                    return;
+                };
+            }
 
             CompilerRT.define(state);
 
@@ -1628,10 +1636,12 @@ pub const FFI = struct {
                 }
             }
 
-            state.addSymbol("Bun__thisFFIModuleNapiEnv", js_context) catch {
-                this.fail("Failed to add NAPI env symbol");
-                return;
-            };
+            if (this.needsNapiEnv()) {
+                state.addSymbol("Bun__thisFFIModuleNapiEnv", js_context.makeNapiEnvForFFI()) catch {
+                    this.fail("Failed to add NAPI env symbol");
+                    return;
+                };
+            }
 
             CompilerRT.define(state);
 
@@ -2428,3 +2438,13 @@ const CompilerRT = struct {
 };
 
 pub const Bun__FFI__cc = FFI.Bun__FFI__cc;
+
+fn makeNapiEnvIfNeeded(functions: []const FFI.Function, globalThis: *JSGlobalObject) ?*napi.NapiEnv {
+    for (functions) |function| {
+        if (function.needsNapiEnv()) {
+            return globalThis.makeNapiEnvForFFI();
+        }
+    }
+
+    return null;
+}

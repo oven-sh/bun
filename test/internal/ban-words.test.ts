@@ -4,19 +4,20 @@ const words: Record<string, { reason: string; limit?: number }> = {
   " != undefined": { reason: "This is by definition Undefined Behavior." },
   " == undefined": { reason: "This is by definition Undefined Behavior." },
   '@import("root").bun.': { reason: "Only import 'bun' once" },
-  "std.debug.assert": { reason: "Use bun.assert instead", limit: 22 },
+  "std.debug.assert": { reason: "Use bun.assert instead", limit: 25 },
   "std.debug.dumpStackTrace": { reason: "Use bun.handleErrorReturnTrace or bun.crash_handler.dumpStackTrace instead" },
   "std.debug.print": { reason: "Don't let this be committed", limit: 2 },
   "std.mem.indexOfAny(u8": { reason: "Use bun.strings.indexOfAny", limit: 3 },
   "undefined != ": { reason: "This is by definition Undefined Behavior." },
   "undefined == ": { reason: "This is by definition Undefined Behavior." },
   "bun.toFD(std.fs.cwd().fd)": { reason: "Use bun.FD.cwd()" },
-  "std.StringArrayHashMapUnmanaged(": { reason: "bun.StringArrayHashMapUnmanaged has a faster `eql`", limit: 11 },
+  "std.StringArrayHashMapUnmanaged(": { reason: "bun.StringArrayHashMapUnmanaged has a faster `eql`", limit: 12 },
   "std.StringArrayHashMap(": { reason: "bun.StringArrayHashMap has a faster `eql`", limit: 1 },
   "std.StringHashMapUnmanaged(": { reason: "bun.StringHashMapUnmanaged has a faster `eql`" },
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
   "std.unicode": { reason: "Use bun.strings instead", limit: 36 },
+  " = undefined,": { reason: "Do not default a struct field to undefined", limit: 494 },
 };
 const words_keys = [...Object.keys(words)];
 

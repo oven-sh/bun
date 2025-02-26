@@ -788,18 +788,76 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
     return {};
 }
-JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
+
+// for validateOneOf
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::ASCIILiteral reason, JSC::JSArray* oneOf)
+{
+    WTF::StringBuilder builder;
+    builder.append("The argument '"_s);
+    auto& vm = JSC::getVM(globalObject);
+    determineSpecificType(vm, globalObject, builder, name);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    builder.append("' "_s);
+    builder.append(reason);
+    unsigned length = oneOf->length();
+    for (size_t i = 0; i < length; i++) {
+        JSValue index = oneOf->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (index.isString()) {
+            JSString* str = index.toString(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            builder.append('`');
+            builder.append(str->view(globalObject));
+            builder.append('`');
+        } else {
+            JSValueToStringSafe(globalObject, builder, index);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+
+        if (i < length - 1) {
+            builder.append(", "_s);
+        }
+    }
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const WTF::Vector<ASCIILiteral>& oneOf)
 {
     WTF::StringBuilder builder;
     builder.append("The argument '"_s);
     builder.append(name);
     builder.append("' "_s);
     builder.append(reason);
-    builder.append(". Received "_s);
-    JSValueToStringSafe(globalObject, builder, value, true);
-    RETURN_IF_EXCEPTION(throwScope, {});
+
+    bool first = true;
+    for (ASCIILiteral oneOfStr : oneOf) {
+        if (!first) {
+            builder.append(", "_s);
+        }
+        first = false;
+        builder.append('`');
+        builder.append(oneOfStr);
+        builder.append('`');
+    }
 
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
+{
+    WTF::StringBuilder builder;
+    JSValueToStringSafe(globalObject, builder, value);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    auto message = makeString("The argument '"_s, name, "' "_s, reason, ". Received "_s, builder.toString());
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
     return {};
 }
 
@@ -939,6 +997,8 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, 
     JSValueToStringSafe(globalObject, builder, received);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    builder.append(". Expected "_s);
+    builder.append(expected);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
     return {};
 }

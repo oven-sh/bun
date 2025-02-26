@@ -2,10 +2,54 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <openssl/err.h>
 #include "ErrorCode.h"
+#include "ncrypto.h"
+#include "BunString.h"
 
 namespace Bun {
 
 using namespace JSC;
+
+std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue input)
+{
+    if (input.isUndefinedOrNull()) {
+        return std::nullopt;
+    }
+
+    if (input.isString()) {
+        WTF::String passphraseStr = input.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        UTF8View utf8(passphraseStr);
+
+        auto span = utf8.span();
+        if (auto ptr = ncrypto::DataPointer::Alloc(span.size())) {
+            memcpy(ptr.get(), span.data(), span.size());
+            return WTFMove(ptr);
+        }
+
+        throwOutOfMemoryError(globalObject, scope);
+        return std::nullopt;
+    }
+
+    if (auto* array = jsDynamicCast<JSC::JSUint8Array*>(input)) {
+        if (array->isDetached()) {
+            throwTypeError(globalObject, scope, "passphrase must not be detached"_s);
+            return std::nullopt;
+        }
+
+        auto length = array->byteLength();
+        if (auto ptr = ncrypto::DataPointer::Alloc(length)) {
+            memcpy(ptr.get(), array->vector(), length);
+            return WTFMove(ptr);
+        }
+
+        throwOutOfMemoryError(globalObject, scope);
+        return std::nullopt;
+    }
+
+    throwTypeError(globalObject, scope, "passphrase must be a Buffer or string"_s);
+    return std::nullopt;
+}
 
 // Throws a crypto error with optional OpenSSL error details
 void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsigned long err, const char* message)
@@ -23,7 +67,7 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
     RETURN_IF_EXCEPTION(scope, void());
 
     // Create error object with the message
-    JSC::JSObject* errorObject = JSC::constructEmptyObject(globalObject);
+    JSC::JSObject* errorObject = createTypeError(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
     PutPropertySlot messageSlot(errorObject, false);
@@ -89,7 +133,6 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
     }
 
     // Throw the decorated error
-    Exception* exception = Exception::create(vm, errorObject);
-    scope.throwException(globalObject, exception);
+    throwException(globalObject, scope, errorObject);
 }
 }

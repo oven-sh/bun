@@ -568,6 +568,53 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = callFrame->argument(0);
+
+    JSValue arrayValue = callFrame->argument(2);
+
+    if (JSArray* array = jsDynamicCast<JSArray*>(arrayValue)) {
+        unsigned length = array->length();
+        for (size_t i = 0; i < length; i++) {
+            JSValue element = array->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+            if (JSC::sameValue(globalObject, value, element)) {
+                return JSValue::encode(jsUndefined());
+            }
+        }
+
+        JSValue name = callFrame->argument(1);
+
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, "must be one of: "_s, array);
+    }
+
+    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "values"_s, "Array"_s, arrayValue);
+}
+
+JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::Vector<ASCIILiteral>& oneOf)
+{
+    if (!value.isString()) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
+    }
+
+    JSC::JSString* valueStr = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    WTF::StringView valueView = valueStr->view(globalObject);
+
+    for (ASCIILiteral oneOfStr : oneOf) {
+
+        if (valueView == oneOfStr) {
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
+}
+
 //
 //
 
@@ -578,5 +625,4 @@ template JSC::EncodedJSValue V::validateInteger<uint32_t>(JSC::ThrowScope& scope
 template JSC::EncodedJSValue V::validateInteger<size_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, size_t* out);
 template JSC::EncodedJSValue V::validateInteger<ssize_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, ssize_t* out);
 template JSC::EncodedJSValue V::validateInteger<uint32_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, uint32_t* out);
-
 }

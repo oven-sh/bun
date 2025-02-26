@@ -294,6 +294,55 @@ These flags currently cannot be used when cross-compiling because they depend on
 
 {% /callout %}
 
+## Code signing on macOS
+
+To codesign a standalone executable on macOS (which fixes Gatekeeper warnings), use the `codesign` command.
+
+```sh
+$ codesign --deep --force -vvvv --sign "XXXXXXXXXX" ./myapp
+```
+
+We recommend including an `entitlements.plist` file with JIT permissions.
+
+```xml#entitlements.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <true/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+```
+
+To codesign with JIT support, pass the `--entitlements` flag to `codesign`.
+
+```sh
+$ codesign --deep --force -vvvv --sign "XXXXXXXXXX" --entitlements entitlements.plist ./myapp
+```
+
+After codesigning, verify the executable:
+
+```sh
+$ codesign -vvv --verify ./myapp
+./myapp: valid on disk
+./myapp: satisfies its Designated Requirement
+```
+
+{% callout %}
+
+Codesign support requires Bun v1.2.4 or newer.
+
+{% /callout %}
+
 ## Unsupported CLI arguments
 
 Currently, the `--compile` flag can only accept a single entrypoint at a time and does not support the following flags:

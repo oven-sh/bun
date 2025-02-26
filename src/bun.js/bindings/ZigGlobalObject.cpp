@@ -669,18 +669,22 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
     for (int i = 0; i < stackTrace.size(); i++) {
         ZigStackFrame frame = {};
-
-        String sourceURLForFrame = Zig::sourceURL(vm, stackFrames.at(i));
+        auto& stackFrame = stackFrames.at(i);
+        String sourceURLForFrame = Zig::sourceURL(vm, stackFrame);
 
         // When you use node:vm, the global object can be different on a
         // per-frame basis. We should sourcemap the frames which are in Bun's
         // global object, and not sourcemap the frames which are in a different
         // global object.
         JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
-        if (stackFrames.at(i).hasLineAndColumnInfo()) {
-            auto* callee = stackFrames.at(i).callee();
-            if (auto* object = callee->getObject()) {
-                globalObjectForFrame = object->globalObject();
+
+        if (stackFrame.hasLineAndColumnInfo()) {
+            auto* callee = stackFrame.callee();
+            // https://github.com/oven-sh/bun/issues/17698
+            if (callee) {
+                if (auto* object = callee->getObject()) {
+                    globalObjectForFrame = object->globalObject();
+                }
             }
         }
 

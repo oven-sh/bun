@@ -878,7 +878,7 @@ function expectProxy(text: Promise<string>, chain: string[], expect: any): any {
 const fetchExpectProxyHandler: ProxyHandler<any> = {
   get(target, prop, receiver) {
     if (Reflect.has(target.expect, prop)) {
-      return expectProxy(target.text, target.chain.concat(prop), Reflect.get(target.expect, prop, receiver));
+      return expectProxy(target.text, target.chain.concat(prop), Reflect.get(target.expect, prop, target.expect));
     }
     return undefined;
   },

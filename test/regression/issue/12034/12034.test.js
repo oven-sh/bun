@@ -3,6 +3,6 @@
 import "./12034.fixture";
 
 test("that an imported file can use Jest globals", () => {
-  // "toBeOne" is defined using `expect.extend` in the fixture file
   expect(1).toBeOne();
+  expect(2).not.toBeOne();
 });

@@ -40,3 +40,20 @@ EXPORT int CDECL get_instance_data(napi_env env) {
   NODE_API_CALL_CUSTOM_RETURN(env, napi_get_instance_data(env, &data), -1);
   return *(int *)data;
 }
+
+EXPORT const char *CDECL get_type(napi_env env, napi_value value) {
+  const char *names[] = {
+      [napi_undefined] = "undefined", [napi_null] = "null",
+      [napi_boolean] = "boolean",     [napi_number] = "number",
+      [napi_string] = "string",       [napi_symbol] = "symbol",
+      [napi_object] = "object",       [napi_function] = "function",
+      [napi_external] = "external",   [napi_bigint] = "bigint",
+  };
+  size_t len = sizeof names / sizeof names[0];
+  napi_valuetype type;
+  NODE_API_CALL_CUSTOM_RETURN(env, napi_typeof(env, value, &type), NULL);
+  if (type < 0 || type >= len) {
+    return "error";
+  }
+  return names[type];
+}

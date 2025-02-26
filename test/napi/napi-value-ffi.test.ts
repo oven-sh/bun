@@ -15,6 +15,10 @@ const symbols = {
     args: ["napi_env"],
     returns: "int",
   },
+  get_type: {
+    args: ["napi_env", "napi_value"],
+    returns: "cstring",
+  },
 };
 
 let addon1, addon2, cc1, cc2;
@@ -53,6 +57,13 @@ describe("ffi napi integration", () => {
     expect(addon1.get_instance_data()).toBe(5);
     expect(addon2.get_instance_data()).toBe(6);
   });
+
+  // broken
+  it.todo("passes values correctly", () => {
+    expect(addon1.get_type(undefined, 123).toString()).toBe("number");
+    expect(addon1.get_type(undefined, "hello").toString()).toBe("string");
+    expect(addon1.get_type(undefined, 190n).toString()).toBe("bigint");
+  });
 });
 
 describe("cc napi integration", () => {
@@ -61,5 +72,12 @@ describe("cc napi integration", () => {
     cc2.set_instance_data(undefined, 6);
     expect(cc1.get_instance_data()).toBe(5);
     expect(cc2.get_instance_data()).toBe(6);
+  });
+
+  // broken
+  it.todo("passes values correctly", () => {
+    expect(cc1.get_type(undefined, 123).toString()).toBe("number");
+    expect(cc1.get_type(undefined, "hello").toString()).toBe("string");
+    expect(cc1.get_type(undefined, 190n).toString()).toBe("bigint");
   });
 });

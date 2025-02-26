@@ -75,14 +75,16 @@ bun build --compile --target=bun-darwin-x64 ./path/to/my/app.ts --outfile myapp
 
 The order of the `--target` flag does not matter, as long as they're delimited by a `-`.
 
-| --target              | Operating System | Architecture | Modern | Baseline |
-| --------------------- | ---------------- | ------------ | ------ | -------- |
-| bun-linux-x64         | Linux            | x64          | ✅     | ✅       |
-| bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      |
-| bun-windows-x64       | Windows          | x64          | ✅     | ✅       |
-| ~~bun-windows-arm64~~ | Windows          | arm64        | ❌     | ❌       |
-| bun-darwin-x64        | macOS            | x64          | ✅     | ✅       |
-| bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      |
+| --target              | Operating System | Architecture | Modern | Baseline | Libc  |
+| --------------------- | ---------------- | ------------ | ------ | -------- | ----- |
+| bun-linux-x64         | Linux            | x64          | ✅     | ✅       | glibc |
+| bun-linux-arm64       | Linux            | arm64        | ✅     | N/A      | glibc |
+| bun-windows-x64       | Windows          | x64          | ✅     | ✅       | -     |
+| ~~bun-windows-arm64~~ | Windows          | arm64        | ❌     | ❌       | -     |
+| bun-darwin-x64        | macOS            | x64          | ✅     | ✅       | -     |
+| bun-darwin-arm64      | macOS            | arm64        | ✅     | N/A      | -     |
+| bun-linux-x64-musl    | Linux            | x64          | ✅     | ✅       | musl  |
+| bun-linux-arm64-musl  | Linux            | arm64        | ✅     | N/A      | musl  |
 
 On x64 platforms, Bun uses SIMD optimizations which require a modern CPU supporting AVX2 instructions. The `-baseline` build of Bun is for older CPUs that don't support these optimizations. Normally, when you install Bun we automatically detect which version to use but this can be harder to do when cross-compiling since you might not know the target CPU. You usually don't need to worry about it on Darwin x64, but it is relevant for Windows x64 and Linux x64. If you or your users see `"Illegal instruction"` errors, you might need to use the baseline version.
 

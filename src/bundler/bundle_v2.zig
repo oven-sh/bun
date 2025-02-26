@@ -12984,8 +12984,12 @@ pub const LinkerContext = struct {
         // - export wrapping is already done.
         // - import wrapping needs to know resolved paths
         // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
-        if (c.options.output_format == .internal_bake_dev) {
-            bun.assert(!part_range.source_index.isRuntime()); // embedded in HMR runtime
+        if (c.options.output_format == .internal_bake_dev) brk: {
+            if (part_range.source_index.isRuntime()) {
+                @branchHint(.cold);
+                bun.debugAssert(c.dev_server == null);
+                break :brk; // this is from `bun build --format=internal_bake_dev`
+            }
 
             // add a marker for the client runtime to tell that this is an ES module
             if (ast.exports_kind == .esm) {

@@ -23307,6 +23307,12 @@ fn NewParser_(
                     .user_hooks = .{},
                 };
 
+                // TODO: fix the renamer bug. this affects all usages of temp refs
+                p.declared_symbols.append(p.allocator, .{
+                    .is_top_level = true,
+                    .ref = ctx_storage.*.?.signature_cb,
+                }) catch bun.outOfMemory();
+
                 break :init &(ctx_storage.*.?);
             };
 

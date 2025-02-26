@@ -312,6 +312,26 @@ pub const Bunfig = struct {
                         this.ctx.test_options.coverage.reports_directory = try expr.data.e_string.string(allocator);
                     }
 
+                    if (test_.get("coverageInclude")) |expr| {
+                        try this.expect(expr, .e_array);
+                        const items = expr.data.e_array.items.slice();
+                        this.ctx.test_options.coverage.include = try allocator.alloc(string, items.len);
+                        for (items, 0..) |item, i| {
+                            try this.expectString(item);
+                            this.ctx.test_options.coverage.include[i] = try item.data.e_string.string(allocator);
+                        }
+                    }
+
+                    if (test_.get("coverageExclude")) |expr| {
+                        try this.expect(expr, .e_array);
+                        const items = expr.data.e_array.items.slice();
+                        this.ctx.test_options.coverage.exclude = try allocator.alloc(string, items.len);
+                        for (items, 0..) |item, i| {
+                            try this.expectString(item);
+                            this.ctx.test_options.coverage.exclude[i] = try item.data.e_string.string(allocator);
+                        }
+                    }
+
                     if (test_.get("coverageThreshold")) |expr| outer: {
                         if (expr.data == .e_number) {
                             this.ctx.test_options.coverage.fractions.functions = expr.data.e_number.value;

@@ -1,3 +1,74 @@
+declare class _ShellError extends Error implements ShellOutput {
+  readonly stdout: Buffer;
+  readonly stderr: Buffer;
+  readonly exitCode: number;
+
+  /**
+   * Read from stdout as a string
+   *
+   * @param encoding - The encoding to use when decoding the output
+   * @returns Stdout as a string with the given encoding
+   * @example
+   *
+   * ## Read as UTF-8 string
+   *
+   * ```ts
+   * const output = await $`echo hello`;
+   * console.log(output.text()); // "hello\n"
+   * ```
+   *
+   * ## Read as base64 string
+   *
+   * ```ts
+   * const output = await $`echo ${atob("hello")}`;
+   * console.log(output.text("base64")); // "hello\n"
+   * ```
+   *
+   */
+  text(encoding?: BufferEncoding): string;
+
+  /**
+   * Read from stdout as a JSON object
+   *
+   * @returns Stdout as a JSON object
+   * @example
+   *
+   * ```ts
+   * const output = await $`echo '{"hello": 123}'`;
+   * console.log(output.json()); // { hello: 123 }
+   * ```
+   *
+   */
+  json(): any;
+
+  /**
+   * Read from stdout as an ArrayBuffer
+   *
+   * @returns Stdout as an ArrayBuffer
+   * @example
+   *
+   * ```ts
+   * const output = await $`echo hello`;
+   * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
+   * ```
+   */
+  arrayBuffer(): ArrayBuffer;
+
+  /**
+   * Read from stdout as a Blob
+   *
+   * @returns Stdout as a blob
+   * @example
+   * ```ts
+   * const output = await $`echo hello`;
+   * console.log(output.blob()); // Blob { size: 6, type: "" }
+   * ```
+   */
+  blob(): Blob;
+
+  bytes(): Uint8Array;
+}
+
 /**
  * Bun.js runtime APIs
  *
@@ -16,9 +87,12 @@
 declare module "bun" {
   import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
-  import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
-  import type { Stats } from "node:fs";
   import type { X509Certificate } from "node:crypto";
+  import type { Stats } from "node:fs";
+  import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+
+  type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
+
   interface Env {
     NODE_ENV?: string;
     /**
@@ -109,77 +183,6 @@ declare module "bun" {
     | SpawnOptions.Readable
     | SpawnOptions.Writable
     | ReadableStream;
-
-  class ShellError extends Error implements ShellOutput {
-    readonly stdout: Buffer;
-    readonly stderr: Buffer;
-    readonly exitCode: number;
-
-    /**
-     * Read from stdout as a string
-     *
-     * @param encoding - The encoding to use when decoding the output
-     * @returns Stdout as a string with the given encoding
-     * @example
-     *
-     * ## Read as UTF-8 string
-     *
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.text()); // "hello\n"
-     * ```
-     *
-     * ## Read as base64 string
-     *
-     * ```ts
-     * const output = await $`echo ${atob("hello")}`;
-     * console.log(output.text("base64")); // "hello\n"
-     * ```
-     *
-     */
-    text(encoding?: BufferEncoding): string;
-
-    /**
-     * Read from stdout as a JSON object
-     *
-     * @returns Stdout as a JSON object
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo '{"hello": 123}'`;
-     * console.log(output.json()); // { hello: 123 }
-     * ```
-     *
-     */
-    json(): any;
-
-    /**
-     * Read from stdout as an ArrayBuffer
-     *
-     * @returns Stdout as an ArrayBuffer
-     * @example
-     *
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
-     * ```
-     */
-    arrayBuffer(): ArrayBuffer;
-
-    /**
-     * Read from stdout as a Blob
-     *
-     * @returns Stdout as a blob
-     * @example
-     * ```ts
-     * const output = await $`echo hello`;
-     * console.log(output.blob()); // Blob { size: 6, type: "" }
-     * ```
-     */
-    blob(): Blob;
-
-    bytes(): Uint8Array;
-  }
 
   class ShellPromise extends Promise<ShellOutput> {
     get stdin(): WritableStream;
@@ -300,8 +303,12 @@ declare module "bun" {
     new (): Shell;
   }
 
+  type ShellError = _ShellError;
+
   export interface Shell {
     (strings: TemplateStringsArray, ...expressions: ShellExpression[]): ShellPromise;
+
+    readonly ShellError: typeof _ShellError;
 
     /**
      * Perform bash-like brace expansion on the given pattern.
@@ -4918,7 +4925,7 @@ declare module "bun" {
    */
   function openInEditor(path: string, options?: EditorOptions): void;
 
-  const fetch: typeof globalThis.fetch & {
+  var fetch: typeof globalThis.fetch & {
     preconnect(url: string): void;
   };
 

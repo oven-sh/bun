@@ -1060,7 +1060,7 @@ declare module "bun:test" {
 
     /**
      * Asserts that an `object` contains all the provided keys.
-     * 
+     *
      * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);

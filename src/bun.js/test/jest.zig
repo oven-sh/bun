@@ -1725,7 +1725,9 @@ inline fn createScope(
     var function = if (args.len > 1) args[1] else .zero;
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (description.isEmptyOrUndefinedOrNull() or (description.isFunction() and description.getName(globalThis).isEmpty())) {
+    if (!description.isClass(globalThis) and
+        (description.isEmptyOrUndefinedOrNull() or (description.isFunction() and description.getName(globalThis).isEmpty())))
+    {
         function = description;
         description = .zero;
     }
@@ -1735,6 +1737,31 @@ inline fn createScope(
             return globalThis.throwPretty("{s} expects a function", .{signature});
         }
     }
+
+    const allocator = getAllocator(globalThis);
+
+    const parent = DescribeScope.active.?;
+    const label = brk: {
+        if (description == .zero) {
+            break :brk "";
+        }
+
+        if (description.isClass(globalThis)) {
+            const name_str = if (description.className(globalThis).toSlice(allocator).length() == 0)
+                description.getName(globalThis).toSlice(allocator).slice()
+            else
+                description.className(globalThis).toSlice(allocator).slice();
+            break :brk try allocator.dupe(u8, name_str);
+        }
+        if (description.isFunction()) {
+            var slice = description.getName(globalThis).toSlice(allocator);
+            defer slice.deinit();
+            break :brk try allocator.dupe(u8, slice.slice());
+        }
+        var slice = try description.toSlice(globalThis, allocator);
+        defer slice.deinit();
+        break :brk try allocator.dupe(u8, slice.slice());
+    };
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
@@ -1762,21 +1789,6 @@ inline fn createScope(
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
-    const parent = DescribeScope.active.?;
-    const allocator = getAllocator(globalThis);
-    const label = brk: {
-        if (description == .zero) {
-            break :brk "";
-        }
-        if (description.isFunction()) {
-            var slice = description.getName(globalThis).toSlice(allocator);
-            defer slice.deinit();
-            break :brk try allocator.dupe(u8, slice.slice());
-        }
-        var slice = try description.toSlice(globalThis, allocator);
-        defer slice.deinit();
-        break :brk try allocator.dupe(u8, slice.slice());
-    };
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {

@@ -1,72 +1,146 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, jest } from "bun:test";
 import { spawnSync } from "bun";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { rm, writeFile } from "fs/promises";
-import { join } from "path";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
-function add(a: number, b: number) {
-  return a + b;
-}
+describe("blocks should handle a number, string, anonymous class, named class, or function for the first arg", () => {
+  const numberMock = jest.fn();
+  const stringMock = jest.fn();
+  const anonymousClassMock = jest.fn();
+  const namedClassMock = jest.fn();
+  const functionMock = jest.fn();
 
-let functionBlockRan = false;
-let stringBlockRan = false;
+  describe(1, () => {
+    test("Should also pass", () => {
+      numberMock();
+    });
+  });
 
-describe("blocks should handle both a string or function for the first arg", () => {
+  describe("string arg", () => {
+    test("Should also pass", () => {
+      stringMock();
+    });
+  });
+
+  const MyClass = class {};
+
+  describe(MyClass, () => {
+    test("Should also pass", () => {
+      anonymousClassMock();
+    });
+  });
+
+  const MyRectangle = class Rectangle {};
+
+  describe(MyRectangle, () => {
+    test("Should also pass", () => {
+      namedClassMock();
+    });
+  });
+
+  function add(a: number, b: number) {
+    return a + b;
+  }
+
   describe(add, () => {
     test("should pass", () => {
-      functionBlockRan = true;
-      expect(true).toBeTrue();
+      functionMock();
     });
   });
 
-  describe("also here", () => {
-    test("Should also pass", () => {
-      stringBlockRan = true;
-      expect(true).toBeTrue();
-    });
-  });
-
-  test("both blocks should have run", () => {
-    expect(functionBlockRan).toBeTrue();
-    expect(stringBlockRan).toBeTrue();
+  test("All mocks should be called", () => {
+    expect(numberMock).toBeCalled();
+    expect(stringMock).toBeCalled();
+    expect(anonymousClassMock).toBeCalled();
+    expect(namedClassMock).toBeCalled();
+    expect(functionMock).toBeCalled();
   });
 });
 
-describe("shows function name correctly in test output", () => {
+describe("shows first arg name correctly in test output", () => {
   test("describe block shows function name correctly in test output", async () => {
-    const test_dir = tmpdirSync();
-    try {
-      await writeFile(
-        join(test_dir, "describe-test.test.js"),
-        `
+    const test_dir = tempDirWithFiles(".", {
+      "describe-test.test.js": `
       import { describe, test, expect } from "bun:test";
-  
+
       function add(a, b) {
         return a + b;
       }
-  
+
       describe(add, () => {
         test("should pass", () => {
           expect(true).toBe(true);
         });
       });
       `,
-      );
+    });
 
-      const { stdout, stderr } = spawnSync({
-        cmd: [bunExe(), "test", "describe-test.test.js"],
-        cwd: test_dir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: bunEnv,
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "describe-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = stdout.toString() + stderr.toString();
+
+    expect(fullOutput).toInclude("add > should pass");
+    expect(fullOutput).not.toInclude("[object Object] > should pass");
+  });
+  test("describe block shows named class correctly in test output", async () => {
+    const test_dir = tempDirWithFiles(".", {
+      "describe-test.test.js": `
+      import { describe, test, expect } from "bun:test";
+
+      const MyClass = class Rectangle {};
+
+      describe(MyClass, () => {
+        test("should pass", () => {
+          expect(true).toBe(true);
+        });
       });
+      `,
+    });
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "describe-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
 
-      const fullOutput = stdout.toString() + stderr.toString();
+    const fullOutput = stdout.toString() + stderr.toString();
 
-      expect(fullOutput).toInclude("add > should pass");
-      expect(fullOutput).not.toInclude("[object Object] > should pass");
-    } finally {
-      await rm(test_dir, { force: true, recursive: true });
-    }
+    expect(fullOutput).toInclude("Rectangle > should pass");
+    expect(fullOutput).not.toInclude("[object Object] > should pass");
+    expect(fullOutput).not.toInclude("MyClass > should pass");
+  });
+
+  test("describe block shows anonymous class correctly in test output", async () => {
+    const test_dir = tempDirWithFiles(".", {
+      "describe-test.test.js": `
+      import { describe, test, expect } from "bun:test";
+
+      const MyClass = class {};
+
+      describe(MyClass, () => {
+        test("should pass", () => {
+          expect(true).toBe(true);
+        });
+      });
+      `,
+    });
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "describe-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = stdout.toString() + stderr.toString();
+
+    expect(fullOutput).toInclude("MyClass > should pass");
+    expect(fullOutput).not.toInclude("[object Object] > should pass");
   });
 });

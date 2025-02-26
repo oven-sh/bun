@@ -165,8 +165,12 @@ declare module "bun:test" {
    * @param label the label for the tests
    * @param fn the function that defines the tests
    */
+
+  interface FunctionLike {
+    readonly name: string;
+  }
   export interface Describe {
-    (label: string | Function, fn?: () => void): void;
+    (label: number | string | Function | FunctionLike, fn: () => void): void;
     /**
      * Skips all other tests, except this group of tests.
      *

@@ -159,8 +159,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     }
     if (bunString.tag == BunStringTag::WTFStringImpl) {
 #if ASSERT_ENABLED
-        unsigned refCount = bunString.impl.wtf->refCount();
-        ASSERT(refCount > 0 && !bunString.impl.wtf->isEmpty());
+        ASSERT(bunString.impl.wtf->hasAtLeastOneRef() && !bunString.impl.wtf->isEmpty());
 #endif
 
         return JSValue(jsString(globalObject->vm(), String(bunString.impl.wtf)));
@@ -660,6 +659,17 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     }
 
     return WTF::String();
+}
+
+WTF::String BunString::toWTFString(NonNullTag) const
+{
+    WTF::String res = toWTFString(ZeroCopy);
+    if (res.isNull()) {
+        // TODO(dylan-conway): also use emptyString in toWTFString(ZeroCopy) and toWTFString. This will
+        // require reviewing each call site for isNull() checks and most likely changing them to isEmpty()
+        return WTF::emptyString();
+    }
+    return res;
 }
 
 WTF::String BunString::transferToWTFString()

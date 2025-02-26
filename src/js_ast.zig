@@ -2136,7 +2136,7 @@ pub const E = struct {
 
         /// Assumes each key in the property is a string
         pub fn alphabetizeProperties(this: *Object) void {
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.isDebug) {
                 for (this.properties.slice()) |prop| {
                     bun.assert(prop.key.?.data == .e_string);
                 }
@@ -6953,6 +6953,13 @@ pub const Ast = struct {
         };
     }
 
+    pub fn initTest(parts: []Part) Ast {
+        return Ast{
+            .parts = Part.List.init(parts),
+            .runtime_imports = .{},
+        };
+    }
+
     pub const empty = Ast{ .parts = Part.List{}, .runtime_imports = .{} };
 
     pub fn toJSON(self: *const Ast, _: std.mem.Allocator, stream: anytype) !void {
@@ -7395,10 +7402,6 @@ pub const ExportsKind = enum {
     // Like "esm_with_dynamic_fallback", but the module was originally a CommonJS
     // module.
     esm_with_dynamic_fallback_from_cjs,
-
-    /// This file is an optimized barrel file, and itself shouldn't be reachable,
-    /// as all importer's get their
-    esm_barrel_file,
 
     const dynamic = std.EnumSet(ExportsKind).init(.{
         .esm_with_dynamic_fallback = true,
@@ -8380,7 +8383,7 @@ pub const Macro = struct {
                         return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                     },
                     .String => {
-                        var bun_str = value.toBunString(this.global);
+                        var bun_str = try value.toBunString(this.global);
                         defer bun_str.deref();
 
                         // encode into utf16 so the printer escapes the string correctly

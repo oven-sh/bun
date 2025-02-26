@@ -747,7 +747,7 @@ pub const Loader = enum(u8) {
         }
 
         var zig_str = JSC.ZigString.init("");
-        loader.toZigString(&zig_str, global);
+        try loader.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
@@ -1605,9 +1605,6 @@ pub const BundleOptions = struct {
     force_node_env: ForceNodeEnv = .unspecified,
 
     ignore_module_resolution_errors: bool = false,
-
-    /// Enable barrel file optimization
-    barrel_files: ?*const bun.StringHashMap(void) = null,
 
     pub const ForceNodeEnv = enum {
         unspecified,

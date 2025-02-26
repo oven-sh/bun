@@ -2,7 +2,7 @@
 name: Debugging
 ---
 
-Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-types/jsc.d.ts), so you can debug your code with an interactive debugger. For demonstration purposes, consider the following simple web server.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts), so you can debug your code with an interactive debugger. For demonstration purposes, consider the following simple web server.
 
 ## Debugging JavaScript and TypeScript
 

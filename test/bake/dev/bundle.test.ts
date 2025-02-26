@@ -1,13 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import {
-  Client,
-  devTest,
-  emptyHtmlFile,
-  extractScriptSrc,
-  minimalFramework,
-  reactRefreshStub,
-} from "../dev-server-harness";
-import { dedent } from "bundler/expectBundled";
+import { expect } from "bun:test";
+import { devTest, emptyHtmlFile, minimalFramework, reactRefreshStub } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -95,7 +88,7 @@ devTest("importing a file before it is created", {
     `,
   },
   async test(dev) {
-    const c = await dev.client("/", {
+    await using c = await dev.client("/", {
       errors: [`index.ts:1:21: error: Could not resolve: "./second"`],
     });
 
@@ -106,7 +99,7 @@ devTest("importing a file before it is created", {
     await c.expectMessage("value: 456");
   },
 });
-devTest("barrel file optimization (lucide-react)", {
+devTest("default export same-scope handling", {
   files: {
     ...reactRefreshStub,
     "index.html": emptyHtmlFile({
@@ -114,115 +107,124 @@ devTest("barrel file optimization (lucide-react)", {
       scripts: ["index.ts", "react-refresh/runtime"],
     }),
     "index.ts": `
-      import { Icon1 } from 'lucide-react';
-      import { Icon2 } from 'lucide-react';
-      console.log(Icon1());
-      console.log(Icon2());
+      await import("./fixture1.ts"); 
+      console.log((new ((await import("./fixture2.ts")).default)).a); 
+      await import("./fixture3.ts"); 
+      console.log((new ((await import("./fixture4.ts")).default)).result); 
+      console.log((await import("./fixture5.ts")).default);
+      console.log((await import("./fixture6.ts")).default);
+      console.log((await import("./fixture7.ts")).default());
+      console.log((await import("./fixture8.ts")).default());
+      console.log((await import("./fixture9.ts")).default(false));
     `,
-    // Current BFO only handles some well-known package names, and only when the
-    // file is just re-exporting the icons.
-    "node_modules/lucide-react/index.js": `
-      export { default as Icon1 } from './icons/icon1';
-      export { default as Icon2 } from './icons/icon2';
-      export { default as Icon3 } from './icons/icon3';
-      export { default as Icon4 } from './icons/icon4';
+    "fixture1.ts": `
+      const sideEffect = () => "a";
+      export default class A {
+        [sideEffect()] = "ONE";
+      }
+      console.log(new A().a);
     `,
-    ...Object.fromEntries(
-      [1, 2, 3, 4].map(i => [
-        `node_modules/lucide-react/icons/icon${i}.ts`,
-        `export default function Icon${i}() { return "CAPTURE(${i})"; }`,
-      ]),
-    ),
+    "fixture2.ts": `
+      const sideEffect = () => "a";
+      export default class A {
+        [sideEffect()] = "TWO";
+      }
+    `,
+    "fixture3.ts": `
+      export default class A {
+        result = "THREE"
+      }
+      console.log(new A().result);
+    `,
+    "fixture4.ts": `
+      export default class MOVE {
+        result = "FOUR"
+      }
+    `,
+    "fixture5.ts": `
+      const default_export = "FIVE";
+      export default default_export;
+    `,
+    "fixture6.ts": `
+      const default_export = "S";
+      function sideEffect() {
+        return default_export + "EVEN";
+      }
+      export default sideEffect();
+      console.log(default_export + "IX");
+    `,
+    "fixture7.ts": `
+      export default function() { return "EIGHT" };
+    `,
+    "fixture8.ts": `
+      export default function MOVE() { return "NINE" };
+    `,
+    "fixture9.ts": `
+      export default function named(flag = true) { return flag ? "TEN" : "ELEVEN" };
+      console.log(named());
+    `,
   },
   async test(dev) {
-    function captureIconRefs(text: string) {
-      const refs = text.matchAll(/CAPTURE\((\d+)\)/g);
-      return Array.from(refs)
-        .map(ref => ref[1])
-        .sort();
-    }
-    async function fetchScriptSrc() {
-      const html = await dev.fetch("/").text();
-      const srcUrl = extractScriptSrc(html);
-      return await dev.fetch(srcUrl).text();
-    }
+    await using c = await dev.client("/", { storeHotChunks: true });
+    c.expectMessage(
+      //
+      "ONE",
+      "TWO",
+      "THREE",
+      "FOUR",
+      "FIVE",
+      "SIX",
+      "SEVEN",
+      "EIGHT",
+      "NINE",
+      "TEN",
+      "ELEVEN",
+    );
 
-    // Should only serve icons 1 and 2 since those were the only ones referenced.
-    const c = await dev.client("/", { storeHotChunks: true });
-    await c.expectMessage("CAPTURE(1)", "CAPTURE(2)");
-    {
-      const src = await fetchScriptSrc();
-      const refs = captureIconRefs(src);
-      expect(refs).toEqual(["1", "2"]);
-    }
-
-    // Saving index.ts should re-run itself but only serve 'index.ts'
-    {
-      await dev.writeNoChanges("index.ts");
-      await c.expectMessage("CAPTURE(1)", "CAPTURE(2)");
+    const filesExpectingMove = Object.entries(dev.options.files)
+      .filter(([, content]) => content.includes("MOVE"))
+      .map(([path]) => path);
+    for (const file of filesExpectingMove) {
+      await dev.writeNoChanges(file);
       const chunk = await c.getMostRecentHmrChunk();
-      const keys = eval(chunk);
-      expect(captureIconRefs(chunk)).toEqual([]);
-      expect(Object.keys(keys)).toEqual(["index.ts"]);
-
-      const src = await fetchScriptSrc();
-      expect(captureIconRefs(src)).toEqual(["1", "2"]);
+      expect(chunk).toMatch(/default:\s*(function|class)\s*MOVE/);
     }
 
-    // Changing the list of icons should
-    // 1. reload with the one new icon
-    // 2. rebuild will omit icon 2 (not really special DevServer behavior)
-    {
-      await dev.write(
-        "index.ts",
-        `
-        import { Icon1 } from 'lucide-react';
-        import { Icon3 } from 'lucide-react';
-        console.log(Icon1());
-        console.log(Icon3());
-      `,
-      );
-      // 1.
-      await c.expectMessage("CAPTURE(1)", "CAPTURE(3)");
-      const chunk = await c.getMostRecentHmrChunk();
-      expect(captureIconRefs(chunk)).toEqual(["3"]);
-
-      // 2.
-      const src = await fetchScriptSrc();
-      expect(captureIconRefs(src)).toEqual(["1", "3"]);
-    }
-
-    // Saving index.ts should re-run itself but only serve 'index.ts'
-    {
-      await dev.writeNoChanges("index.ts");
-      await c.expectMessage("CAPTURE(1)", "CAPTURE(3)");
-      const chunk = await c.getMostRecentHmrChunk();
-      const keys = eval(chunk);
-      expect(captureIconRefs(chunk)).toEqual([]);
-      expect(Object.keys(keys)).toEqual(["index.ts"]);
-
-      const src = await fetchScriptSrc();
-      expect(captureIconRefs(src)).toEqual(["1", "3"]);
-    }
+    await dev.writeNoChanges("fixture7.ts");
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).toMatch(/default:\s*function/);
   },
 });
-// devTest("react refresh - default export function", {
-//   framework: minimalFramework,
-//   files: {
-//     ...reactAndRefreshStub,
-//     "index.html": emptyHtmlFile({
-//       styles: [],
-//       scripts: ["index.tsx"],
-//     }),
-//     "index.tsx": `
-//       import { render } from 'bun-devserver-react-mock';
-//       render(<App />);
-//     `,
-//     "App.tsx": `
-//       export default function App() {
-//         return <div>Hello, world!</div>;
-//       }
-//     `,
-//   },
-//   async test(dev) {},
-// });
+devTest("directory cache bust case #17576", {
+  files: {
+    ...reactRefreshStub,
+    "web/index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts", "react-refresh/runtime"],
+    }),
+    "web/index.ts": `
+      console.log(123);
+    `,
+  },
+  mainDir: "server",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write(
+        "web/Test.ts",
+        `
+        export const abc = 456;
+      `,
+      );
+    });
+    await dev.write(
+      "web/index.ts",
+      `
+        import { abc } from "./Test.ts";
+        console.log(abc);
+      `,
+    );
+    await c.expectMessage(456);
+  },
+});

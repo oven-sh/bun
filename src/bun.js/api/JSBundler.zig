@@ -445,7 +445,7 @@ pub const JSBundler = struct {
                     }
 
                     var val = JSC.ZigString.init("");
-                    property_value.toZigString(&val, globalThis);
+                    try property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
                         val = JSC.ZigString.fromUTF8("\"\"");
                     }
@@ -849,7 +849,7 @@ pub const JSBundler = struct {
 
                 if (this.was_file) {
                     // Faster path: skip the extra threadpool dispatch
-                    this.bv2.graph.pool.pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
+                    this.bv2.graph.pool.worker_pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
                     this.deinit();
                     return;
                 }

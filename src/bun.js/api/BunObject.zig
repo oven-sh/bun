@@ -258,7 +258,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     }
 
     const jsval = arguments.ptr[0];
-    const bunstr = jsval.toBunString(globalThis);
+    const bunstr = try jsval.toBunString(globalThis);
     if (globalThis.hasException()) return .zero;
     defer bunstr.deref();
 
@@ -882,9 +882,9 @@ fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JS
         }
     }
 
-    const specifier_str = specifier.toBunString(globalThis);
+    const specifier_str = try specifier.toBunString(globalThis);
     defer specifier_str.deref();
-    const from_str = from.toBunString(globalThis);
+    const from_str = try from.toBunString(globalThis);
     defer from_str.deref();
     return doResolveWithArgs(
         globalThis,
@@ -960,10 +960,10 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
 }
 
 export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString2(global) catch return .zero;
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString2(global) catch return .zero;
+    const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch {
@@ -975,10 +975,10 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 }
 
 export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString2(global) catch return .zero;
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString2(global) catch return .zero;
+    const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
@@ -990,7 +990,7 @@ export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.S
 }
 
 export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString2(global) catch return .zero;
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true));
 }
@@ -1599,7 +1599,7 @@ pub const Crypto = struct {
                                 return globalObject.throwInvalidArgumentType("hash", "algorithm", "string");
                             }
 
-                            const algorithm_string = algorithm_value.getZigString(globalObject);
+                            const algorithm_string = try algorithm_value.getZigString(globalObject);
 
                             switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                                 return globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
@@ -1665,7 +1665,7 @@ pub const Crypto = struct {
                             return globalObject.throwInvalidArgumentType("hash", "options.algorithm", "string");
                         }
                     } else if (value.isString()) {
-                        const algorithm_string = value.getZigString(globalObject);
+                        const algorithm_string = try value.getZigString(globalObject);
 
                         switch (PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                             return globalObject.throwInvalidArgumentType("hash", "algorithm", unknown_password_algorithm_message);
@@ -2230,7 +2230,7 @@ pub const Crypto = struct {
                     return globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
                 }
 
-                const algorithm_string = arguments[2].getZigString(globalObject);
+                const algorithm_string = try arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                     if (!globalObject.hasException()) {
@@ -2280,7 +2280,7 @@ pub const Crypto = struct {
                     return globalObject.throwInvalidArgumentType("verify", "algorithm", "string");
                 }
 
-                const algorithm_string = arguments[2].getZigString(globalObject);
+                const algorithm_string = try arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
                     if (!globalObject.hasException()) {
@@ -2458,7 +2458,7 @@ pub const Crypto = struct {
                 return globalThis.throwInvalidArguments("algorithm must be a string", .{});
             }
 
-            const algorithm = algorithm_name.getZigString(globalThis);
+            const algorithm = try algorithm_name.getZigString(globalThis);
 
             if (algorithm.len == 0) {
                 return globalThis.throwInvalidArguments("Invalid algorithm name", .{});
@@ -2824,9 +2824,12 @@ pub const Crypto = struct {
         }
 
         fn final(self: *CryptoHasherZig, output_digest_slice: []u8) []u8 {
-            inline for (algo_map) |item| {
-                if (self.algorithm == @field(EVP.Algorithm, item[0])) {
-                    item[1].final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+            inline for (algo_map) |pair| {
+                const name, const T = pair;
+                if (self.algorithm == @field(EVP.Algorithm, name)) {
+                    T.final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
+                    const reset: *T = @ptrCast(@alignCast(self.state));
+                    reset.* = T.init(.{});
                     return output_digest_slice[0..self.digest_length];
                 }
             }

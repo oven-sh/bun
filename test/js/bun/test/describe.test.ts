@@ -58,12 +58,13 @@ describe("blocks should handle a number, string, anonymous class, named class, o
 
 describe("describe blocks should handle a class or function for the first value and a named function for the second", () => {
   const MyClass = class {};
-  const mockFn = jest.fn();
-  function secondArg() {
-    mockFn();
-  }
-  describe(MyClass, secondArg);
-  expect(mockFn).toBeCalled();
+  const mock = jest.fn();
+  describe(MyClass, function myFunc() {
+    test("should pass", () => {
+      mock();
+      expect(mock).toHaveBeenCalled();
+    });
+  });
 });
 
 describe("shows first arg name correctly in test output", () => {

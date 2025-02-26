@@ -10791,11 +10791,6 @@ pub const LinkerContext = struct {
                 break :brk html;
             break :brk @intCast(html_loader.output.items.len); // inject at end of file.
         };
-        // if (html_loader.head_end_tag_index == 0) {
-        //     html_loader.head_end_tag_index = @intCast( orelse
-        //         // inject script tags and things at the end of the file.
-        //         html_loader.output.items.len);
-        // }
 
         return .{ .html = .{
             .code = html_loader.output.items,

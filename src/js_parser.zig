@@ -23307,7 +23307,9 @@ fn NewParser_(
                     .user_hooks = .{},
                 };
 
-                // TODO: fix the renamer bug. this affects all usages of temp refs
+                // TODO(paperclover): fix the renamer bug. this bug
+                // theoretically affects all usages of temp refs, but i cannot
+                // find another example of it breaking (like with `using`)
                 p.declared_symbols.append(p.allocator, .{
                     .is_top_level = true,
                     .ref = ctx_storage.*.?.signature_cb,

@@ -336,6 +336,21 @@ describe("flags", () => {
     });
   }
 
+  test("--filename and --destination", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-dest-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    expect(async () => await pack(packageDir, bunEnv, "--filename=test.tgz", "--destination=packed")).toThrowError();
+  });
+
   test("--ignore-scripts", async () => {
     await Promise.all([
       write(

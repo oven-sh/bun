@@ -28,7 +28,9 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
 /// same millisecond, in the order they will fire.
 const TimerList = struct {
     const log = bun.Output.scoped(.TimerList, false);
-    // TODO: could we use a priority queue here? would avoid O(n) removal
+    // there might be a better data structure we could use here (the current one has some O(n) cases
+    // to remove and add new lists), but cursory testing showed similar performance to the old
+    // heap implementation
     lists: std.ArrayListUnmanaged(List),
 
     pub const empty: TimerList = .{ .lists = .empty };
@@ -45,7 +47,7 @@ const TimerList = struct {
         } else if (List.compare(&timer.data.next, self.lists.items[target_list_index]) != .eq) {
             // lowerBound did not find an exact match, so target_list_index is really the index of
             // the first list *after* the one we want to use.
-            // so we need to add a new list in the middle, before target_list_index
+            // so we need to add a new list in the middle, before the list currently at target_list_index
             log("new list in middle", .{});
             self.lists.insert(bun.default_allocator, target_list_index, .init(timer.data.next)) catch bun.outOfMemory();
             // now target_list_index points to the list we just inserted

@@ -744,7 +744,12 @@ function fork(modulePath, args = [], options) {
   if (options != null) {
     validateObject(options, "options");
   }
-  options = { __proto__: null, ...options, shell: false };
+  options = {
+    __proto__: null,
+    ...options,
+    shell: false,
+    env: { BUN_SKIP_STANDALONE_MODULE_GRAPH: "1", ...options?.env },
+  };
   options.execPath = options.execPath || process.execPath;
   validateArgumentNullCheck(options.execPath, "options.execPath");
 

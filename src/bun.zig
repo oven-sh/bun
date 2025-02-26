@@ -3356,6 +3356,7 @@ pub fn selfExePath() ![:0]u8 {
     return memo.load();
 }
 pub const exe_suffix = if (Environment.isWindows) ".exe" else "";
+pub var is_standalone: ?bool = null;
 
 pub const spawnSync = @This().spawn.sync.spawn;
 

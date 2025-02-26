@@ -21,13 +21,21 @@
 
 static int instance_data;
 
-void set_instance_data(napi_env env, int new_data) {
+#ifdef _WIN32
+#define EXPORT __declspec(dllexport)
+#define CDECL __cdecl
+#else
+#define EXPORT
+#define CDECL
+#endif
+
+EXPORT void CDECL set_instance_data(napi_env env, int new_data) {
   instance_data = new_data;
   NODE_API_CALL_CUSTOM_RETURN(
       env, napi_set_instance_data(env, (void *)&instance_data, NULL, NULL), );
 }
 
-int get_instance_data(napi_env env) {
+EXPORT int CDECL get_instance_data(napi_env env) {
   void *data;
   NODE_API_CALL_CUSTOM_RETURN(env, napi_get_instance_data(env, &data), -1);
   return *(int *)data;

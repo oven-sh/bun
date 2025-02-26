@@ -45,11 +45,6 @@ jobs:
           bunx prettier --config ../../.prettierrc --check .
         working-directory: ./packages/bun-plugin-svelte
 
-      - name: Spellcheck
-        uses: crate-ci/typos@v1.29.4
-        with:
-          files: ./packages/bun-plugin-svelte/**/*
-
       - name: Prettier
         run: bun prettier
         working-directory: ./packages/bun-plugin-svelte

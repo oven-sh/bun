@@ -534,7 +534,7 @@ pub const Response = struct {
                     const result = credentials.signRequest(.{
                         .path = blob.store.?.data.s3.path(),
                         .method = .GET,
-                    }, .{ .expires = 15 * 60 }) catch |sign_err| {
+                    }, false, .{ .expires = 15 * 60 }) catch |sign_err| {
                         return s3.throwSignError(sign_err, globalThis);
                     };
                     defer result.deinit();
@@ -3364,7 +3364,7 @@ pub const Fetch = struct {
             var result = credentialsWithOptions.credentials.signRequest(.{
                 .path = url.s3Path(),
                 .method = method,
-            }, null) catch |sign_err| {
+            }, false, null) catch |sign_err| {
                 is_error = true;
                 return JSPromise.rejectedPromiseValue(globalThis, s3.getJSSignError(sign_err, globalThis));
             };

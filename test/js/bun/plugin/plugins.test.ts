@@ -16,20 +16,22 @@ declare global {
 plugin({
   name: "url text file loader",
   setup(builder) {
-    builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
+    var chainedThis = builder.onResolve({ namespace: "http", filter: /.*/ }, ({ path }) => {
       return {
         path,
         namespace: "url",
       };
     });
+    expect(chainedThis).toBe(builder);
 
-    builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
+    chainedThis = builder.onLoad({ filter: /.*/, namespace: "url" }, async ({ path, namespace }) => {
       const res = await fetch("http://" + path);
       return {
         exports: { default: await res.text() },
         loader: "object",
       };
     });
+    expect(chainedThis).toBe(builder);
   },
 });
 

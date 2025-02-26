@@ -363,7 +363,7 @@ pub const Expect = struct {
         var custom_label = bun.String.empty;
         if (arguments.len > 1) {
             if (arguments[1].isString() or arguments[1].implementsToString(globalThis)) {
-                const label = arguments[1].toBunString(globalThis);
+                const label = try arguments[1].toBunString(globalThis);
                 if (globalThis.hasException()) return .zero;
                 custom_label = label;
             }
@@ -429,7 +429,7 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("pass", "message", "string");
             }
 
-            value.toZigString(&_msg, globalThis);
+            try value.toZigString(&_msg, globalThis);
         } else {
             _msg = ZigString.fromBytes("passes by .pass() assertion");
         }
@@ -474,7 +474,7 @@ pub const Expect = struct {
                 return globalThis.throwInvalidArgumentType("fail", "message", "string");
             }
 
-            value.toZigString(&_msg, globalThis);
+            try value.toZigString(&_msg, globalThis);
         } else {
             _msg = ZigString.fromBytes("fails by .fail() assertion");
         }
@@ -1693,7 +1693,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         var path_string = ZigString.Empty;
-        expected_property_path.toZigString(&path_string, globalThis);
+        try expected_property_path.toZigString(&path_string, globalThis);
 
         var pass = !value.isUndefinedOrNull();
         var received_property: JSValue = .zero;
@@ -2571,7 +2571,7 @@ pub const Expect = struct {
             0 => {},
             1 => {
                 if (arguments[0].isString()) {
-                    arguments[0].toZigString(&hint_string, globalThis);
+                    try arguments[0].toZigString(&hint_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
                 }
@@ -2622,7 +2622,7 @@ pub const Expect = struct {
             1 => {
                 if (arguments[0].isString()) {
                     has_expected = true;
-                    arguments[0].toZigString(&expected_string, globalThis);
+                    try arguments[0].toZigString(&expected_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected first argument to be a string\n", .{});
                 }
@@ -2664,7 +2664,7 @@ pub const Expect = struct {
             1 => {
                 if (arguments[0].isString()) {
                     has_expected = true;
-                    arguments[0].toZigString(&expected_string, globalThis);
+                    try arguments[0].toZigString(&expected_string, globalThis);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
                 } else {
@@ -2681,7 +2681,7 @@ pub const Expect = struct {
 
                 if (arguments[1].isString()) {
                     has_expected = true;
-                    arguments[1].toZigString(&expected_string, globalThis);
+                    try arguments[1].toZigString(&expected_string, globalThis);
                 }
             },
         }
@@ -2699,26 +2699,27 @@ pub const Expect = struct {
         std.debug.assert(trimmed_buf.len == str_in.len);
         var src = str_in;
         var dst = trimmed_buf[0..];
-        const give_up: TrimResult = .{ .trimmed = str_in, .start_indent = null, .end_indent = null };
+        const give_up_1: TrimResult = .{ .trimmed = str_in, .start_indent = null, .end_indent = null };
         // if the line is all whitespace, trim fully
         // the first line containing a character determines the max trim count
 
         // read first line (should be all-whitespace)
-        const first_newline = std.mem.indexOf(u8, src, "\n") orelse return give_up;
-        for (src[0..first_newline]) |char| if (char != ' ' and char != '\t') return give_up;
+        const first_newline = std.mem.indexOf(u8, src, "\n") orelse return give_up_1;
+        for (src[0..first_newline]) |char| if (char != ' ' and char != '\t') return give_up_1;
         src = src[first_newline + 1 ..];
 
         // read first real line and get indent
         const indent_len = for (src, 0..) |char, i| {
             if (char != ' ' and char != '\t') break i;
         } else src.len;
-        if (indent_len == 0) return give_up; // no indent to trim; save time
         const indent_str = src[0..indent_len];
+        const give_up_2: TrimResult = .{ .trimmed = str_in, .start_indent = indent_str, .end_indent = indent_str };
+        if (indent_len == 0) return give_up_2; // no indent to trim; save time
         // we're committed now
         dst[0] = '\n';
         dst = dst[1..];
         src = src[indent_len..];
-        const second_newline = (std.mem.indexOf(u8, src, "\n") orelse return give_up) + 1;
+        const second_newline = (std.mem.indexOf(u8, src, "\n") orelse return give_up_2) + 1;
         @memcpy(dst[0..second_newline], src[0..second_newline]);
         src = src[second_newline..];
         dst = dst[second_newline..];
@@ -2744,13 +2745,13 @@ pub const Expect = struct {
                     continue;
                 }
                 // this line had less indentation than the first line, but wasn't empty. give up.
-                return give_up;
+                return give_up_2;
             } else {
                 // this line has the same or more indentation than the first line. copy it.
                 const line_newline = (std.mem.indexOf(u8, src, "\n") orelse {
                     // this is the last line. if it's not all whitespace, give up
                     for (src) |char| {
-                        if (char != ' ' and char != '\t') return give_up;
+                        if (char != ' ' and char != '\t') return give_up_2;
                     }
                     break;
                 }) + 1;
@@ -2759,8 +2760,8 @@ pub const Expect = struct {
                 dst = dst[line_newline..];
             }
         }
-        const end_indent = if (std.mem.lastIndexOfScalar(u8, str_in, '\n')) |c| c + 1 else return give_up; // there has to have been at least a single newline to get here
-        for (str_in[end_indent..]) |c| if (c != ' ' and c != 't') return give_up; // we already checked, but the last line is not all whitespace again
+        const end_indent = if (std.mem.lastIndexOfScalar(u8, str_in, '\n')) |c| c + 1 else return give_up_2; // there has to have been at least a single newline to get here
+        for (str_in[end_indent..]) |c| if (c != ' ' and c != 't') return give_up_2; // we already checked, but the last line is not all whitespace again
 
         // done
         return .{ .trimmed = trimmed_buf[0 .. trimmed_buf.len - dst.len], .start_indent = indent_str, .end_indent = str_in[end_indent..] };
@@ -2886,7 +2887,7 @@ pub const Expect = struct {
             0 => {},
             1 => {
                 if (arguments[0].isString()) {
-                    arguments[0].toZigString(&hint_string, globalThis);
+                    try arguments[0].toZigString(&hint_string, globalThis);
                 } else if (arguments[0].isObject()) {
                     property_matchers = arguments[0];
                 } else {
@@ -2902,7 +2903,7 @@ pub const Expect = struct {
                 property_matchers = arguments[0];
 
                 if (arguments[1].isString()) {
-                    arguments[1].toZigString(&hint_string, globalThis);
+                    try arguments[1].toZigString(&hint_string, globalThis);
                 } else {
                     return this.throw(globalThis, "", "\n\nMatcher error: Expected second argument to be a string\n", .{});
                 }
@@ -3222,7 +3223,7 @@ pub const Expect = struct {
             return globalThis.throwInvalidArguments("toBeTypeOf() requires a string argument", .{});
         }
 
-        const expected_type = expected.toBunString(globalThis);
+        const expected_type = try expected.toBunString(globalThis);
         defer expected_type.deref();
         incrementExpectCallCounter();
 
@@ -4850,7 +4851,7 @@ pub const Expect = struct {
         if (message.isUndefined()) {
             message_text = bun.String.static("No message was specified for this matcher.");
         } else if (message.isString()) {
-            message_text = message.toBunString(globalThis);
+            message_text = try message.toBunString(globalThis);
         } else {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable(globalThis.vm())); // checked above
@@ -4993,7 +4994,7 @@ pub const Expect = struct {
         }
 
         if (arg.isString()) {
-            const error_value = arg.toBunString(globalThis).toErrorInstance(globalThis);
+            const error_value = (try arg.toBunString(globalThis)).toErrorInstance(globalThis);
             error_value.put(globalThis, ZigString.static("name"), bun.String.init("UnreachableError").toJS(globalThis));
             return globalThis.throwValue(error_value);
         }
@@ -5468,7 +5469,13 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                     }
                     return err;
                 };
-                try writer.print("{}", .{result.toBunString(globalThis)});
+                try writer.print("{}", .{result.toBunString(globalThis) catch {
+                    if (dontThrow) {
+                        globalThis.clearException();
+                        return false;
+                    }
+                    return error.JSError;
+                }});
             }
         }
         return false;
@@ -5607,7 +5614,7 @@ pub const ExpectMatcherUtils = struct {
         if (arguments.len == 0 or !arguments[0].isString()) {
             return globalThis.throw("matcherHint: the first argument (matcher name) must be a string", .{});
         }
-        const matcher_name = arguments[0].toBunString(globalThis);
+        const matcher_name = try arguments[0].toBunString(globalThis);
         defer matcher_name.deref();
 
         const received = if (arguments.len > 1) arguments[1] else bun.String.static("received").toJS(globalThis);

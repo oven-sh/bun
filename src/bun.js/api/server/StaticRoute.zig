@@ -17,8 +17,9 @@ ref_count: u32 = 1,
 pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
 pub const InitFromBytesOptions = struct {
-    server: AnyServer,
+    server: ?AnyServer,
     mime_type: ?*const bun.http.MimeType = null,
+    status_code: u16 = 200,
 };
 
 /// Ownership of `blob` is transferred to this function.
@@ -35,8 +36,15 @@ pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *Sta
         .has_content_disposition = false,
         .headers = headers,
         .server = options.server,
-        .status_code = 200,
+        .status_code = options.status_code,
     });
+}
+
+/// Create a static route to be used on a single response, freeing the bytes once sent.
+pub fn sendBlobThenDeinit(resp: AnyResponse, blob: *const AnyBlob, options: InitFromBytesOptions) void {
+    const temp_route = StaticRoute.initFromAnyBlob(blob, options);
+    defer temp_route.deref();
+    temp_route.on(resp);
 }
 
 fn deinit(this: *StaticRoute) void {

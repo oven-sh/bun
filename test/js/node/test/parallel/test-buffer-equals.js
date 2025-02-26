@@ -19,7 +19,7 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "otherBuffer" argument must be an instance of ' +
+    message: 'The "otherBuffer" argument must be of type ' +
              "Buffer or Uint8Array." + common.invalidArgTypeHelper('abc')
   }
 );

@@ -114,7 +114,7 @@
 #include "JSReadableStreamDefaultController.h"
 #include "JSReadableStreamDefaultReader.h"
 #include "JSSink.h"
-#include "JSSocketAddress.h"
+#include "JSSocketAddressDTO.h"
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
@@ -164,6 +164,7 @@
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
 #include "NodeValidator.h"
+#include "ProcessBindingFs.h"
 
 #include "JSBunRequest.h"
 #include "ServerRouteList.h"
@@ -254,22 +255,16 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useConcurrentJIT() = true;
         // JSC::Options::useSigillCrashAnalyzer() = true;
         JSC::Options::useWasm() = true;
-        // remove when we have landed https://github.com/WebKit/WebKit/pull/39029 or WebKit no
-        // longer disables IPInt by default
-        JSC::Options::useWasmIPInt() = false;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
         JSC::Options::exposeInternalModuleLoader() = true;
         JSC::Options::useSharedArrayBuffer() = true;
         JSC::Options::useJIT() = true;
         JSC::Options::useBBQJIT() = true;
-        JSC::Options::useUint8ArrayBase64Methods() = true;
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useV8DateParser() = true;
         JSC::Options::evalMode() = evalMode;
-        JSC::Options::usePromiseTryMethod() = true;
-        JSC::Options::useRegExpEscape() = true;
         JSC::Options::useIteratorHelpers() = true;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
@@ -1747,7 +1742,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     if (!encodedString.is8Bit()) {
         std::span<LChar> ptr;
         unsigned length = encodedString.length();
-        auto dest = WTF::String::createUninitialized(length, ptr);
+        auto dest = WTF::String::tryCreateUninitialized(length, ptr);
         if (UNLIKELY(dest.isNull())) {
             throwOutOfMemoryError(globalObject, throwScope);
             return {};
@@ -2893,6 +2888,11 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createCommonJSModuleStructure(reinterpret_cast<Zig::GlobalObject*>(init.owner)));
         });
 
+    m_JSSocketAddressDTOStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::JSSocketAddressDTO::createStructure(init.vm, init.owner));
+        });
+
     m_JSSQLStatementStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
@@ -2922,11 +2922,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(
                 createMemoryFootprintStructure(
                     init.vm, reinterpret_cast<Zig::GlobalObject*>(init.owner)));
-        });
-
-    m_JSSocketAddressStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(JSSocketAddress::createStructure(init.vm, init.owner));
         });
 
     m_errorConstructorPrepareStackTraceInternalValue.initLater(
@@ -3267,6 +3262,14 @@ void GlobalObject::finishCreation(VM& vm)
                     ProcessBindingConstants::createStructure(init.vm, init.owner)));
         });
 
+    m_processBindingFs.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
+            init.set(
+                ProcessBindingFs::create(
+                    init.vm,
+                    ProcessBindingFs::createStructure(init.vm, init.owner)));
+        });
+
     m_importMetaObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
             init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
@@ -3391,6 +3394,19 @@ void GlobalObject::finishCreation(VM& vm)
         [](LazyClassStructure::Initializer& init) {
             init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
+
+    m_statValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
+        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
+    });
+    m_bigintStatValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
+        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 36));
+    });
+    m_statFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFloat64Array>::Initializer& init) {
+        init.set(JSC::JSFloat64Array::create(init.owner, JSC::JSFloat64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
+    m_bigintStatFsValues.initLater([](const LazyProperty<JSC::JSGlobalObject, JSBigInt64Array>::Initializer& init) {
+        init.set(JSC::JSBigInt64Array::create(init.owner, JSC::JSBigInt64Array::createStructure(init.vm, init.owner, init.owner->objectPrototype()), 7));
+    });
 
     configureNodeVM(vm, this);
 
@@ -3849,6 +3865,21 @@ extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalO
     return JSValue::encode(JSValue::JSUndefined);
 }
 
+#define IMPL_GET_COMMON_STRING(name)                                                                         \
+    extern "C" EncodedJSValue JSC__JSGlobalObject__commonStrings__get##name(Zig::GlobalObject* globalObject) \
+    {                                                                                                        \
+        JSC::JSString* value = globalObject->commonStrings().name##String(globalObject);                     \
+        ASSERT(value != nullptr);                                                                            \
+        return JSValue::encode(value);                                                                       \
+    }
+
+IMPL_GET_COMMON_STRING(IPv4)
+IMPL_GET_COMMON_STRING(IPv6)
+IMPL_GET_COMMON_STRING(IN4Loopback)
+IMPL_GET_COMMON_STRING(IN6Any)
+
+#undef IMPL_GET_COMMON_STRING
+
 template<typename Visitor>
 void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -3898,11 +3929,15 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
+    thisObject->m_JSSocketAddressDTOStructure.visit(visitor);
     thisObject->m_cryptoObject.visit(visitor);
     thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
     thisObject->m_esmRegistryMap.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);
     thisObject->m_internalModuleRegistry.visit(visitor);
+    thisObject->m_processBindingBuffer.visit(visitor);
+    thisObject->m_processBindingConstants.visit(visitor);
+    thisObject->m_processBindingFs.visit(visitor);
     thisObject->m_JSArrayBufferControllerPrototype.visit(visitor);
     thisObject->m_JSArrayBufferSinkClassStructure.visit(visitor);
     thisObject->m_JSBufferClassStructure.visit(visitor);
@@ -3923,7 +3958,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSNetworkSinkClassStructure.visit(visitor);
     thisObject->m_JSFetchTaskletChunkedRequestControllerPrototype.visit(visitor);
-    thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);
     thisObject->m_V8GlobalInternals.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
@@ -3973,6 +4007,10 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBunRequestStructure.visit(visitor);
     thisObject->m_JSBunRequestParamsPrototype.visit(visitor);
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
+    thisObject->m_statValues.visit(visitor);
+    thisObject->m_bigintStatValues.visit(visitor);
+    thisObject->m_statFsValues.visit(visitor);
+    thisObject->m_bigintStatFsValues.visit(visitor);
 
     thisObject->m_nodeErrorCache.visit(visitor);
 

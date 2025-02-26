@@ -3859,7 +3859,7 @@ pub fn handleTemplateValue(
 
         if (template_value.isObject()) {
             if (template_value.getOwnTruthy(globalThis, "raw")) |maybe_str| {
-                const bunstr = maybe_str.toBunString(globalThis);
+                const bunstr = try maybe_str.toBunString(globalThis);
                 defer bunstr.deref();
                 if (!try builder.appendBunStr(bunstr, false)) {
                     return globalThis.throw("Shell script string contains invalid UTF-16", .{});
@@ -3906,8 +3906,8 @@ pub const ShellSrcBuilder = struct {
         };
     }
 
-    pub fn appendJSValueStr(this: *ShellSrcBuilder, jsval: JSValue, comptime allow_escape: bool) bun.OOM!bool {
-        const bunstr = jsval.toBunString(this.globalThis);
+    pub fn appendJSValueStr(this: *ShellSrcBuilder, jsval: JSValue, comptime allow_escape: bool) bun.JSError!bool {
+        const bunstr = try jsval.toBunString(this.globalThis);
         defer bunstr.deref();
 
         return try this.appendBunStr(bunstr, allow_escape);
@@ -4316,7 +4316,7 @@ pub const TestingAPIs = struct {
             return globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
         };
 
-        const bunstr = string.toBunString(globalThis);
+        const bunstr = try string.toBunString(globalThis);
         defer bunstr.deref();
         const utf8str = bunstr.toUTF8(bun.default_allocator);
         defer utf8str.deinit();

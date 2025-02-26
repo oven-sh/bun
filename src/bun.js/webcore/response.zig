@@ -454,7 +454,7 @@ pub const Response = struct {
             var url_string = ZigString.init("");
 
             if (@intFromEnum(url_string_value) != 0) {
-                url_string = url_string_value.getZigString(globalThis);
+                url_string = try url_string_value.getZigString(globalThis);
             }
             url_string_slice = url_string.toSlice(getAllocator(globalThis));
             var did_succeed = false;
@@ -2738,7 +2738,7 @@ pub const Fetch = struct {
                 if (objects_to_try[i] != .zero) {
                     if (try objects_to_try[i].get(globalThis, "verbose")) |verb| {
                         if (verb.isString()) {
-                            if (verb.getZigString(globalThis).eqlComptime("curl")) {
+                            if ((try verb.getZigString(globalThis)).eqlComptime("curl")) {
                                 break :extract_verbose .curl;
                             }
                         } else if (verb.isBoolean()) {

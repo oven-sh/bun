@@ -753,7 +753,8 @@ pub fn isHeapMemory(memory: anytype) bool {
     return false;
 }
 
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
+pub const Mimalloc = @import("allocators/mimalloc.zig");
+pub const AllocationScope = @import("allocators/AllocationScope.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -2355,25 +2356,12 @@ pub const win32 = struct {
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
 
-    /// Returns the original mode
-    pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
-        const fd = stdio(i);
-        var original_mode: w.DWORD = 0;
-        if (windows.kernel32.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.kernel32.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
-                return windows.getLastError();
-            }
-        } else return windows.getLastError();
-
-        return original_mode;
-    }
-
-    /// Returns the original mode
-    pub fn setStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+    /// Returns the original mode, or null on failure
+    pub fn updateStdioModeFlags(i: anytype, opts: struct { set: w.DWORD = 0, unset: w.DWORD = 0 }) !w.DWORD {
         const fd = stdio(i);
         var original_mode: w.DWORD = 0;
         if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.SetConsoleMode(fd.cast(), original_mode | flags) == 0) {
+            if (windows.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
                 return windows.getLastError();
             }
         } else return windows.getLastError();
@@ -3581,12 +3569,13 @@ pub const timespec = extern struct {
 
     // TODO: this is wrong!
     pub fn duration(this: *const timespec, other: *const timespec) timespec {
-        var sec_diff = this.sec - other.sec;
-        var nsec_diff = this.nsec - other.nsec;
+        // Mimick C wrapping behavior.
+        var sec_diff = this.sec -% other.sec;
+        var nsec_diff = this.nsec -% other.nsec;
 
         if (nsec_diff < 0) {
-            sec_diff -= 1;
-            nsec_diff += std.time.ns_per_s;
+            sec_diff -%= 1;
+            nsec_diff +%= std.time.ns_per_s;
         }
 
         return timespec{
@@ -3614,11 +3603,11 @@ pub const timespec = extern struct {
         assert(this.nsec >= 0);
         const s_ns = std.math.mul(
             u64,
-            @as(u64, @intCast(this.sec)),
+            @as(u64, @intCast(@max(this.sec, 0))),
             std.time.ns_per_s,
         ) catch return std.math.maxInt(u64);
 
-        return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
+        return std.math.add(u64, s_ns, @as(u64, @intCast(@max(this.nsec, 0)))) catch
             return std.math.maxInt(i64);
     }
 
@@ -3656,12 +3645,12 @@ pub const timespec = extern struct {
 
         var new_timespec = this.*;
 
-        new_timespec.sec += sec_inc;
-        new_timespec.nsec += nsec_inc;
+        new_timespec.sec +%= sec_inc;
+        new_timespec.nsec +%= nsec_inc;
 
         if (new_timespec.nsec >= std.time.ns_per_s) {
-            new_timespec.sec += 1;
-            new_timespec.nsec -= std.time.ns_per_s;
+            new_timespec.sec +%= 1;
+            new_timespec.nsec -%= std.time.ns_per_s;
         }
 
         return new_timespec;
@@ -4250,7 +4239,8 @@ pub const CowString = CowSlice(u8);
 ///
 /// CowSlice does not support slices longer than 2^(@bitSizeOf(usize)-1).
 pub fn CowSlice(T: type) type {
-    const DebugData = if (Environment.allow_assert) struct {
+    const cow_str_assertions = Environment.isDebug;
+    const DebugData = if (cow_str_assertions) struct {
         mutex: std.Thread.Mutex,
         allocator: Allocator,
         borrows: usize,
@@ -4264,13 +4254,14 @@ pub fn CowSlice(T: type) type {
             } }),
             is_owned: bool,
         },
-        debug: if (Environment.allow_assert) ?*DebugData else void,
-
-        const cow_str_assertions = Environment.isDebug;
+        debug: if (cow_str_assertions) ?*DebugData else void,
 
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
         pub fn initOwned(data: []const T, allocator: Allocator) @This() {
+            if (AllocationScope.downcast(allocator)) |scope|
+                scope.assertOwned(data);
+
             return .{
                 .ptr = data.ptr,
                 .flags = .{
@@ -4298,7 +4289,7 @@ pub fn CowSlice(T: type) type {
                     .is_owned = false,
                     .len = @intCast(data.len),
                 },
-                .debug = null,
+                .debug = if (cow_str_assertions) null,
             };
         }
 
@@ -4327,7 +4318,6 @@ pub fn CowSlice(T: type) type {
         pub fn deinit(str: @This(), allocator: Allocator) void {
             if (cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
-                defer debug.mutex.unlock();
                 bun.assert(
                     debug.allocator.ptr == allocator.ptr and
                         debug.allocator.vtable == allocator.vtable,
@@ -4343,9 +4333,22 @@ pub fn CowSlice(T: type) type {
                 allocator.free(str.slice());
             }
         }
+
+        /// Does not include debug safety checks.
+        pub fn initUnchecked(data: []const T, is_owned: bool) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = is_owned,
+                    .len = @intCast(data.len),
+                },
+                .debug = if (cow_str_assertions) null,
+            };
+        }
     };
 }
 
 const Allocator = std.mem.Allocator;
 
 pub const server = @import("./bun.js/api/server.zig");
+pub const macho = @import("./macho.zig");

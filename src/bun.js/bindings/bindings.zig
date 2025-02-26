@@ -3063,6 +3063,10 @@ pub const JSGlobalObject = opaque {
         }
     }
 
+    pub inline fn throwTypeError(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) bun.JSError {
+        return this.throwValue(this.createTypeErrorInstance(fmt, args));
+    }
+
     pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());

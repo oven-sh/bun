@@ -33,6 +33,7 @@ devTest("onResolve", {
     await dev.fetch("/").equals("value: 1");
   },
 });
+
 devTest("onLoad", {
   framework: minimalFramework,
   pluginFile: `
@@ -66,6 +67,7 @@ devTest("onLoad", {
     await dev.fetch("/").equals("value: 1");
   },
 });
+
 devTest("onResolve + onLoad virtual file", {
   framework: minimalFramework,
   pluginFile: `
@@ -109,6 +111,55 @@ devTest("onResolve + onLoad virtual file", {
       "file-on-disk",
     ]);
   },
+});
+
+describe("plugin options", () => {
+  const files = {
+    "trigger.ts": `
+      throw new Error('should not be loaded');
+    `,
+    "routes/index.ts": `
+      import { value } from '../trigger.ts';
+
+      export default function (req, meta) {
+        return new Response('value: ' + value);
+      }
+    `,
+  };
+
+  devTest("onLoad", {
+    framework: minimalFramework,
+    pluginFile: `
+    import * as path from 'path';
+    export default [
+      {
+        name: 'a',
+        setup(build) {
+          build.onLoad({ filter: /trigger/ }, (args) => {
+            return { contents: 'export const value = 1;', loader: 'ts' };
+          });
+        },
+      }
+    ];
+  `,
+    files: {
+      "trigger.ts": `
+      throw new Error('should not be loaded');
+    `,
+      "routes/index.ts": `
+      import { value } from '../trigger.ts';
+
+      export default function (req, meta) {
+        return new Response('value: ' + value);
+      }
+    `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals("value: 1");
+      await dev.fetch("/").equals("value: 1");
+      await dev.fetch("/").equals("value: 1");
+    },
+  });
 });
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,

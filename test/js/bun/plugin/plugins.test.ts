@@ -186,6 +186,21 @@ plugin({
   },
 });
 
+plugin(() => ({
+  name: "plugin created by function",
+  setup(builder) {
+    builder
+      .onResolve({ filter: /.*/, namespace: "factory-sync" }, ({ path }) => ({
+        namespace: "factory-sync",
+        path,
+      }))
+      .onLoad({ filter: /.*/, namespace: "factory-sync" }, ({ path }) => ({
+        contents: `// ${path}\n\nexport default 42;`,
+        loader: "js",
+      }));
+  },
+}));
+
 // This is to test that it works when imported from a separate file
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -509,4 +524,38 @@ it("import(...) with __esModule", async () => {
 it("import(...) without __esModule", async () => {
   const { default: mod } = await import("my-virtual-module-with-default");
   expect(mod).toBe("world");
+});
+
+describe("plugin factories", () => {
+  it("can be synchronous", async () => {
+    const result = await import("factory-sync:my-file");
+    expect(result.default).toBe(42);
+  });
+
+  it("must be callable", () => {
+    class Foo {
+      static setup() {}
+    }
+    expect(() => plugin(Foo)).toThrow(/factories cannot be classes/);
+  });
+
+  it("cannot be asynchronous (yet)", async () => {
+    expect(() => {
+      // @ts-expect-error
+      plugin(async () => ({
+        name: "plugin created by async function",
+        setup(builder) {
+          builder
+            .onResolve({ filter: /.*/, namespace: "factory-async" }, ({ path }) => ({
+              namespace: "factory-async",
+              path,
+            }))
+            .onLoad({ filter: /.*/, namespace: "factory-async" }, ({ path }) => ({
+              contents: `// ${path}\n\nexport default 42;`,
+              loader: "js",
+            }));
+        },
+      }));
+    }).toThrow(/does not support async plugin factories/);
+  });
 });

@@ -1,12 +1,8 @@
+import { strict as assert } from "node:assert";
 import type { BuildConfig } from "bun";
 import type { CompileOptions } from "svelte/compiler";
 
 export interface SvelteOptions {
-  /**
-   * By default, looks for a `svelte.config.js` in the root of your project
-   * (next to `bunfig.toml` or `package.json`).
-   */
-  configPath?: string;
   /**
    * Force client-side or server-side generation.
    *
@@ -24,6 +20,24 @@ export interface SvelteOptions {
    * Defaults to `true` when run via Bun's dev server, `false` otherwise.
    */
   development?: boolean;
+}
+
+/**
+ * @internal
+ */
+export function validateOptions(options: unknown): asserts options is SvelteOptions {
+  assert(options && typeof options === "object", new TypeError("bun-svelte-plugin: options must be an object"));
+  if ("forceSide" in options) {
+    switch (options.forceSide) {
+      case "client":
+      case "server":
+        break;
+      default:
+        throw new TypeError(
+          `bun-svelte-plugin: forceSide must be either 'client' or 'server', got ${options.forceSide}`,
+        );
+    }
+  }
 }
 
 /**
@@ -62,7 +76,8 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
 
   return {
     // TODO: css: "external". Requires enhancement to bun build allowing multiple OnLoadResults
-    css: "external",
+    // css: "external",
+    css: "injected",
     generate: forceSide,
     preserveWhitespace: !minifyWhitespace,
     preserveComments: !shouldMinify,

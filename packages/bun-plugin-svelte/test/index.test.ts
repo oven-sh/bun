@@ -1,4 +1,4 @@
-import { describe, beforeAll, test, expect, afterEach } from "bun:test";
+import { describe, beforeAll, test, expect, afterEach, afterAll } from "bun:test";
 import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
@@ -15,13 +15,13 @@ beforeAll(() => {
   outdir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 });
 
-// afterAll(() => {
-//   try {
-//     fs.rmSync(outdir, { recursive: true, force: true });
-//   } catch {
-//     // suppress
-//   }
-// });
+afterAll(() => {
+  try {
+    fs.rmSync(outdir, { recursive: true, force: true });
+  } catch {
+    // suppress
+  }
+});
 
 test("hello world component", async () => {
   const res = await Bun.build({
@@ -30,7 +30,6 @@ test("hello world component", async () => {
     plugins: [SveltePlugin()],
   });
   expect(res.success).toBeTrue();
-  console.log(res.outputs);
 });
 
 describe("Bun.plugin", () => {

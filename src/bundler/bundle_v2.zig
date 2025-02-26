@@ -10784,12 +10784,12 @@ pub const LinkerContext = struct {
             if (html_loader.end_tag_indices.head) |head|
                 break :brk head;
             if (bun.strings.indexOf(html_loader.output.items, "</head>")) |head|
-                break :brk head;
+                break :brk @intCast(head);
             if (html_loader.end_tag_indices.body) |body|
                 break :brk body;
             if (html_loader.end_tag_indices.html) |html|
                 break :brk html;
-            break :brk html_loader.output.items.len; // inject at end of file.
+            break :brk @intCast(html_loader.output.items.len); // inject at end of file.
         };
         // if (html_loader.head_end_tag_index == 0) {
         //     html_loader.head_end_tag_index = @intCast( orelse
@@ -16727,7 +16727,7 @@ pub const CompileResult = union(enum) {
         source_index: Index.Int,
         code: []const u8,
         /// Offsets are used for DevServer to inject resources without re-bundling
-        inject_script_offset: u32,
+        script_injection_offset: u32,
     },
 
     pub const empty = CompileResult{

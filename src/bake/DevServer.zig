@@ -4652,6 +4652,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
                 j.pushStatic(",");
                 const quoted_slice = map.quotedContents();
+                if (quoted_slice.len == 0) {
+                    bun.debugAssert(false); // vlq without source contents!
+                    const ptr: bun.StringPointer = .{
+                        .offset = @intCast(j.len + ",\"".len),
+                        .length = 0,
+                    };
+                    j.pushStatic(",\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
+                    file_paths.appendAssumeCapacity(paths[file_index.get()]);
+                    source_contents.appendAssumeCapacity(ptr);
+                    continue;
+                }
                 // Store the location of the source file. Since it is going
                 // to be stored regardless for use by the served source map.
                 // These 8 bytes per file allow remapping sources without

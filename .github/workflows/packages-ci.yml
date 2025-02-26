@@ -1,0 +1,63 @@
+name: Packages CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "packages/**"
+      - .prettierrc
+      - .prettierignore
+      - tsconfig.json
+      - oxlint.json
+      - "!**/*.md"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "packages/**"
+      - .prettierrc
+      - .prettierignore
+      - tsconfig.json
+      - oxlint.json
+      - "!**/*.md"
+
+env:
+  BUN_VERSION: "1.2.3"
+
+jobs:
+  bun-plugin-svelte:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: bun install
+        working-directory: ./packages/bun-plugin-svelte
+
+      - name: Lint
+        run: |
+          bun lint --format github --deny-warnings
+          bun prettier
+        working-directory: ./packages/bun-plugin-svelte
+
+      - name: Spellcheck
+        uses: crate-ci/typos@v1.29.4
+        with:
+          files: ./packages/bun-plugin-svelte/**/*
+
+      - name: Prettier
+        run: bun prettier
+        working-directory: ./packages/bun-plugin-svelte
+
+      - name: Check types
+        run: bun check:types
+        working-directory: ./packages/bun-plugin-svelte
+
+      - name: Test
+        run: bun test
+        working-directory: ./packages/bun-plugin-svelte

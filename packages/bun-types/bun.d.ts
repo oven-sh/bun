@@ -2595,9 +2595,15 @@ declare module "bun" {
     kind: ImportKind;
   }
 
+  /**
+   * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
+   */
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
+    /**
+     * @default "browser"
+     */
     target?: Target; // default: "browser"
     /**
      * Output module format. Top-level await is only supported for `"esm"`.
@@ -2670,6 +2676,14 @@ declare module "bun" {
      * ```
      */
     env?: "inline" | "disable" | `${string}*`;
+    /**
+     * Whether to enable minification.
+     * 
+     * Use `true`/`false` to enable/disable all minification options. Alternatively,
+     * you can pass an object for granular control over certain minifications.
+     * 
+     * @default false
+     */
     minify?:
       | boolean
       | {

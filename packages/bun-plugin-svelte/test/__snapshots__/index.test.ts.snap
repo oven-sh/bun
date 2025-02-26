@@ -1,0 +1,13 @@
+// Bun Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`Bun.plugin using { forceSide: 'server' } allows for imported components to be SSR'd: foo.svelte - head 1`] = `""`;
+
+exports[`Bun.plugin using { forceSide: 'server' } allows for imported components to be SSR'd: foo.svelte - body 1`] = `
+"<!--[--><!---->
+
+<main>
+  <h1 class="svelte-36qjosi0opy4a">Hello World!</h1>
+</main>
+
+<!--]-->"
+`;

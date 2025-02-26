@@ -2,10 +2,15 @@
   "name": "bun-plugin-svelte",
   "version": "0.0.1",
   "type": "module",
-  "module": "index.ts",
-  "index": "index.ts",
+  "module": "src/index.ts",
+  "index": "src/index.ts",
   "exports": {
-    ".": "./index.ts"
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "oxlint .",
+    "check:types": "tsc --noEmit",
+    "build:types": "tsc --emitDeclarationOnly --declaration --declarationDir ./dist"
   },
   "dependencies": {
     "svelte": "^5.20.4",
@@ -16,5 +21,12 @@
   },
   "peerDependencies": {
     "typescript": "^5"
-  }
+  },
+  "files": [
+    "README.md",
+    "bunfig.toml",
+    "dist",
+    "src",
+    "!src/**/*.spec.ts"
+  ]
 }

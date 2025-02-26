@@ -155,3 +155,62 @@ describe("shows first arg name correctly in test output", () => {
     expect(fullOutput).not.toInclude("[object Object] > should pass");
   });
 });
+
+describe("passing arrow function as args", () => {
+  test("passes if sole argument", () => {
+    const test_dir = tempDirWithFiles(".", {
+      "describe-test.test.js": `
+      import { describe, test, expect } from "bun:test";
+
+      describe(() => {
+        test("should pass", () => {
+          expect(true).toBe(true);
+        });
+      });
+      `,
+    });
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "describe-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = stdout.toString() + stderr.toString();
+
+    expect(fullOutput).toInclude("should pass");
+    expect(fullOutput).toInclude("1 pass");
+    expect(fullOutput).toInclude("0 fail");
+  });
+  test("throws an error if two arguments", () => {
+    const test_dir = tempDirWithFiles(".", {
+      "describe-test.test.js": `
+      import { describe, test, expect } from "bun:test";
+
+ 
+
+      describe(() => {}, () => {
+        test("should NOT pass", () => {
+          expect(true).toBe(true);
+        });
+      });
+      `,
+    });
+    const { stdout, stderr } = spawnSync({
+      cmd: [bunExe(), "test", "describe-test.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const fullOutput = stdout.toString() + stderr.toString();
+
+    expect(fullOutput).toInclude(
+      "error: describe() expects first argument to be a named class, named function, number, or string",
+    );
+    expect(fullOutput).toInclude("0 pass");
+    expect(fullOutput).toInclude("1 fail");
+  });
+});

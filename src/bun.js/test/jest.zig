@@ -1728,6 +1728,22 @@ inline fn createScope(
     if (args.len == 1 and description.isFunction()) {
         function = description;
         description = .zero;
+    } else {
+        const is_valid_description =
+            description.isClass(globalThis) or
+            (description.isFunction() and !description.getName(globalThis).isEmpty()) or
+            description.isNumber() or
+            description.isString();
+
+        if (!is_valid_description) {
+            return globalThis.throwPretty("{s} expects first argument to be a named class, named function, number, or string", .{signature});
+        }
+
+        if (!function.isFunction()) {
+            if (tag != .todo and tag != .skip) {
+                return globalThis.throwPretty("{s} expects second argument to be a function", .{signature});
+            }
+        }
     }
 
     if (function == .zero or !function.isFunction()) {

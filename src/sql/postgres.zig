@@ -3611,7 +3611,7 @@ pub const PostgresSQLConnection = struct {
                 try reader.eatMessage(protocol.ParseComplete);
                 const request = this.current() orelse return error.ExpectedRequest;
                 if (request.statement) |statement| {
-                    // if we have params wait for row description
+                    // if we have params wait for parameter description
                     if (statement.status == .parsing and statement.signature.fields.len == 0) {
                         statement.status = .prepared;
                     }

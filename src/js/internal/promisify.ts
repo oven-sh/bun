@@ -1,3 +1,7 @@
+const { validateFunction } = require("internal/validators");
+
+const ArrayPrototypePush = Array.prototype.push;
+
 const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
 
@@ -18,55 +22,74 @@ function defineCustomPromisifyArgs(target, args) {
   return args;
 }
 
-var promisify = function promisify(original) {
-  if (typeof original !== "function") throw new TypeError('The "original" argument must be of type Function');
-  const custom = original[kCustomPromisifiedSymbol];
-  if (custom) {
-    if (typeof custom !== "function") {
-      throw new TypeError('The "util.promisify.custom" argument must be of type Function');
-    }
-    // ensure that we don't create another promisified function wrapper
-    return defineCustomPromisify(custom, custom);
+function promisify(original) {
+  validateFunction(original, "original");
+
+  if (original[kCustomPromisifiedSymbol]) {
+    const fn = original[kCustomPromisifiedSymbol];
+
+    validateFunction(fn, "util.promisify.custom");
+
+    Object.defineProperty(fn, kCustomPromisifiedSymbol, {
+      __proto__: null,
+      value: fn,
+      enumerable: false,
+      writable: false,
+      configurable: true,
+    });
+    Object.defineProperty(fn, "name", { value: original.name });
+    return fn;
   }
 
-  const callbackArgs = original[kCustomPromisifyArgsSymbol];
-  function fn(...originalArgs) {
-    const { promise, resolve, reject } = Promise.withResolvers();
-    try {
-      original.$apply(this, [
-        ...originalArgs,
-        function (err, ...values) {
-          if (err) {
-            return reject(err);
-          }
+  // Names to create an object from in case the callback receives multiple
+  // arguments, e.g. ['bytesRead', 'buffer'] for fs.read.
+  const argumentNames = original[kCustomPromisifyArgsSymbol];
 
-          if (callbackArgs !== undefined) {
-            // if (!Array.isArray(callbackArgs)) {
-            //   throw new TypeError('The "customPromisifyArgs" argument must be of type Array');
-            // }
-            // if (callbackArgs.length !== values.length) {
-            //   throw new Error("Mismatched length in promisify callback args");
-            // }
-            const result = {};
-            for (let i = 0; i < callbackArgs.length; i++) {
-              result[callbackArgs[i]] = values[i];
-            }
-            resolve(result);
-          } else {
-            resolve(values[0]);
-          }
-        },
-      ]);
-    } catch (err) {
-      reject(err);
-    }
-
-    return promise;
+  function fn(...args) {
+    return new Promise((resolve, reject) => {
+      ArrayPrototypePush.$call(args, (err, ...values) => {
+        if (err) {
+          return reject(err);
+        }
+        if (argumentNames !== undefined && values.length > 1) {
+          const obj = {};
+          for (let i = 0; i < argumentNames.length; i++) obj[argumentNames[i]] = values[i];
+          resolve(obj);
+        } else {
+          resolve(values[0]);
+        }
+      });
+      if ($isPromise(original.$apply(this, args))) {
+        process.emitWarning(
+          "Calling promisify on a function that returns a Promise is likely a mistake.",
+          "DeprecationWarning",
+          "DEP0174",
+        );
+      }
+    });
   }
+
   Object.setPrototypeOf(fn, Object.getPrototypeOf(original));
-  defineCustomPromisify(fn, fn);
-  return Object.defineProperties(fn, Object.getOwnPropertyDescriptors(original));
-};
+
+  Object.defineProperty(fn, kCustomPromisifiedSymbol, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    writable: false,
+    configurable: true,
+  });
+
+  const descriptors = Object.getOwnPropertyDescriptors(original);
+  const propertiesValues = Object.values(descriptors);
+  for (let i = 0; i < propertiesValues.length; i++) {
+    // We want to use null-prototype objects to not rely on globally mutable
+    // %Object.prototype%.
+    Object.setPrototypeOf(propertiesValues[i], null);
+  }
+  Object.defineProperties(fn, descriptors);
+  Object.defineProperty(fn, "name", { value: original.name });
+  return fn;
+}
 promisify.custom = kCustomPromisifiedSymbol;
 
 // Lazily load node:timers/promises promisified functions onto the global timers.

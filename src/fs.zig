@@ -1747,7 +1747,24 @@ pub const Path = struct {
 
         const ext = this.name.ext;
 
-        return loaders.get(ext) orelse bun.options.Loader.fromString(ext);
+        const result = loaders.get(ext) orelse bun.options.Loader.fromString(ext);
+        if (result == null or result == .json) {
+            const str = this.name.filename;
+            if (strings.eqlComptime(str, "package.json") or strings.eqlComptime(str, "bun.lock")) {
+                return .jsonc;
+            }
+
+            if (strings.hasSuffixComptime(str, ".jsonc")) {
+                return .jsonc;
+            }
+
+            if (strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig.")) {
+                if (strings.hasSuffixComptime(str, ".json")) {
+                    return .jsonc;
+                }
+            }
+        }
+        return result;
     }
 
     pub fn isDataURL(this: *const Path) bool {
@@ -1760,24 +1777,6 @@ pub const Path = struct {
 
     pub fn isMacro(this: *const Path) bool {
         return strings.eqlComptime(this.namespace, "macro");
-    }
-
-    pub fn isJSONCFile(this: *const Path) bool {
-        const str = this.name.filename;
-
-        if (strings.eqlComptime(str, "package.json") or strings.eqlComptime(str, "bun.lock")) {
-            return true;
-        }
-
-        if (strings.hasSuffixComptime(str, ".jsonc")) {
-            return true;
-        }
-
-        if (strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig.")) {
-            return strings.hasSuffixComptime(str, ".json");
-        }
-
-        return false;
     }
 
     pub const PackageRelative = struct {

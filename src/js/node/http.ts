@@ -1715,7 +1715,7 @@ const OutgoingMessagePrototype = {
   },
 
   get writableNeedDrain() {
-    return !this.destroyed && !this[finishedSymbol];
+    return !this.destroyed && !this[finishedSymbol] && this[kBodyChunks] && this[kBodyChunks].length > 0;
   },
 
   get writableEnded() {

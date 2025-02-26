@@ -120,7 +120,7 @@ pub fn extractedSplitNewLinesFastPathStringsOnly(globalThis: *JSC.JSGlobalObject
     const value = callframe.argument(0);
     bun.assert(value.isString());
 
-    const str = try value.toBunString2(globalThis);
+    const str = try value.toBunString(globalThis);
     defer str.deref();
 
     return switch (str.encoding()) {

@@ -374,7 +374,7 @@ it("process.argv in testing", () => {
 describe("process.exitCode", () => {
   it("validates int", () => {
     expect(() => (process.exitCode = "potato")).toThrow(
-      `The "code" argument must be of type number. Received type string ('potato')`,
+      `The "code" argument must be of type number. Received type string ("potato")`,
     );
     expect(() => (process.exitCode = 1.2)).toThrow(
       `The value of \"code\" is out of range. It must be an integer. Received 1.2`,

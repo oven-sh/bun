@@ -669,7 +669,7 @@ JSValue fetchCommonJSModule(
     // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::ZeroCopy);
+        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
         JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -859,9 +859,13 @@ static JSValue fetchESMSourceCode(
     // When parsing tsconfig.*.json or jsconfig.*.json, we go through Bun's JSON
     // parser instead to support comments and trailing commas.
     if (res->result.value.tag == SyntheticModuleType::JSONForObjectLoader) {
-        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::ZeroCopy);
+        WTF::String jsonSource = res->result.value.source_code.toWTFString(BunString::NonNull);
         JSC::JSValue value = JSC::JSONParseWithException(globalObject, jsonSource);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (scope.exception()) {
+            auto* exception = scope.exception();
+            scope.clearException();
+            return reject(exception);
+        }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
         auto function = generateJSValueModuleSourceCode(

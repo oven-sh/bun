@@ -441,7 +441,7 @@ pub export fn napi_get_value_string_latin1(env: napi_env, value_: napi_value, bu
     defer value.ensureStillAlive();
     const buf_ptr = @as(?[*:0]u8, @ptrCast(buf_ptr_));
 
-    const str = value.toBunString(env.toJS());
+    const str = value.toBunString(env.toJS()) catch @panic("unexpected exception");
     defer str.deref();
 
     var buf = buf_ptr orelse {
@@ -497,7 +497,7 @@ pub export fn napi_get_value_string_utf16(env: napi_env, value_: napi_value, buf
     log("napi_get_value_string_utf16", .{});
     const value = value_.get();
     defer value.ensureStillAlive();
-    const str = value.toBunString(env.toJS());
+    const str = value.toBunString(env.toJS()) catch @panic("unexpected exception");
     defer str.deref();
 
     var buf = buf_ptr orelse {

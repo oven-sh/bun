@@ -1,5 +1,5 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest } from "../dev-server-harness";
+import { devTest } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {

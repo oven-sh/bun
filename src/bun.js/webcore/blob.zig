@@ -1205,7 +1205,7 @@ pub const Blob = struct {
                     const len = data.getLength(globalThis);
 
                     if (len < 256 * 1024) {
-                        const str = try data.toBunString2(globalThis);
+                        const str = try data.toBunString(globalThis);
                         defer str.deref();
 
                         const pathlike: JSC.Node.PathOrFileDescriptor = if (path_or_blob == .path)
@@ -4576,7 +4576,7 @@ pub const Blob = struct {
         if (args_iter.nextEat()) |content_type_| {
             inner: {
                 if (content_type_.isString()) {
-                    var zig_str = content_type_.getZigString(globalThis);
+                    var zig_str = try content_type_.getZigString(globalThis);
                     var slicer = zig_str.toSlice(bun.default_allocator);
                     defer slicer.deinit();
                     const slice = slicer.slice();
@@ -5528,7 +5528,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
                     if (!fail_if_top_value_is_not_typed_array_like) {
-                        var str = try top_value.toBunString2(global);
+                        var str = try top_value.toBunString(global);
                         defer str.deref();
                         const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
                         return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);
@@ -6091,15 +6091,11 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 self.InternalBlob.bytes.clearAndFree();
-                self.* = .{
-                    .Blob = .{},
-                };
+                self.* = .{ .Blob = .{} };
             },
             .WTFStringImpl => {
                 self.WTFStringImpl.deref();
-                self.* = .{
-                    .Blob = .{},
-                };
+                self.* = .{ .Blob = .{} };
             },
         };
     }

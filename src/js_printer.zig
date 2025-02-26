@@ -5874,7 +5874,7 @@ pub fn printJSON(
     } };
     var stmts = [_]js_ast.Stmt{stmt};
     var parts = [_]js_ast.Part{.{ .stmts = &stmts }};
-    const ast = Ast.fromParts(&parts);
+    const ast = Ast.initTest(&parts);
     const list = js_ast.Symbol.List.init(ast.symbols.slice());
     const nested_list = js_ast.Symbol.NestedList.init(&[_]js_ast.Symbol.List{list});
     var renamer = rename.NoOpRenamer.init(js_ast.Symbol.Map.initList(nested_list), source);
@@ -6001,7 +6001,7 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (opts.module_type == .internal_bake_dev) {
+    if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
         printer.indent();
         printer.printIndent();
         if (!ast.top_level_await_keyword.isEmpty()) {

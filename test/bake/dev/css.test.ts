@@ -1,6 +1,6 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, imageFixtures, reactRefreshStub } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, imageFixtures, reactRefreshStub } from "../bake-harness";
 import assert from "node:assert";
 
 devTest("css file with syntax error does not kill old styles", {

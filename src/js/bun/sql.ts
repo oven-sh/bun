@@ -1295,7 +1295,6 @@ function doCreateQuery(strings, values, allowUnsafeTransaction, poolSize, bigint
       }
     }
   }
-
   return createQuery(sqlString, final_values, new SQLResultArray(), undefined, !!bigint, !!simple);
 }
 

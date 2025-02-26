@@ -432,26 +432,6 @@ function normalizeQuery(strings, values, binding_idx = 1) {
 
   return [query, binding_values];
 }
-function debugQuery(query) {
-  // let columns;
-  const allowUnsafeTransaction = query[_flags] & SQLQueryFlags.allowUnsafeTransaction;
-  const poolSize = query[_poolSize];
-
-  const [sqlString, final_values] = normalizeQuery(query[_strings], query[_values]);
-  if (!allowUnsafeTransaction) {
-    if (poolSize !== 1) {
-      const upperCaseSqlString = sqlString.toUpperCase().trim();
-      if (upperCaseSqlString.startsWith("BEGIN") || upperCaseSqlString.startsWith("START TRANSACTION")) {
-        throw $ERR_POSTGRES_UNSAFE_TRANSACTION("Only use sql.begin, sql.reserved or max: 1");
-      }
-    }
-  }
-
-  return {
-    sqlString,
-    final_values,
-  };
-}
 class Query extends PublicPromise {
   [_resolve];
   [_reject];
@@ -522,9 +502,7 @@ class Query extends PublicPromise {
       this.reject(err);
     }
   }
-  debug() {
-    return debugQuery(this);
-  }
+
   get active() {
     return (this[_queryStatus] & QueryStatus.active) != 0;
   }

@@ -13049,7 +13049,7 @@ pub const LinkerContext = struct {
                     .value = Expr.assign(
                         Expr.init(E.Dot, .{
                             .target = Expr.initIdentifier(ast.module_ref, Loc.Empty),
-                            .name = "__esModule",
+                            .name = "_esm",
                             .name_loc = Loc.Empty,
                         }, Loc.Empty),
                         Expr.init(E.Boolean, .{ .value = true }, Loc.Empty),

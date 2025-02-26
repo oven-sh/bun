@@ -155,12 +155,6 @@ pub fn HTMLProcessor(
                 .url_attribute = "href",
                 .kind = .url,
             },
-            // Catch-all for other links with href
-            .{
-                .selector = "link:not([rel~='stylesheet']):not([rel~='modulepreload']):not([rel~='manifest']):not([rel~='icon']):not([rel~='apple-touch-icon'])[href]",
-                .url_attribute = "href",
-                .kind = .url,
-            },
             // Images with src
             .{
                 .selector = "img[src]",

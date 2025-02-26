@@ -231,3 +231,23 @@ devTest("export * as namespace", {
     await c.expectMessage("PASS");
   },
 });
+devTest("ESM <-> CJS", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      await import('./esm'); // TODO: implement sync ESM
+      const mod = require('./esm');
+      if (!mod.__esModule) throw new Error('mod.__esModule should be set');
+      console.log('PASS');
+    `,
+    "esm.ts": `
+      export const x = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});

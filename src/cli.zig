@@ -539,6 +539,9 @@ pub const Arguments = struct {
             }
 
             if (args.options("--coverage-reporter").len > 0) {
+                // Enable coverage automatically if a coverage reporter is specified
+                ctx.test_options.coverage.enabled = true;
+
                 ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
                 for (args.options("--coverage-reporter")) |reporter| {
                     if (bun.strings.eqlComptime(reporter, "text")) {

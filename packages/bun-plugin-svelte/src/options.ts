@@ -76,8 +76,8 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
 
   return {
     // TODO: css: "external". Requires enhancement to bun build allowing multiple OnLoadResults
-    // css: "external",
-    css: "injected",
+    css: "external",
+    // css: "injected",
     generate: forceSide,
     preserveWhitespace: !minifyWhitespace,
     preserveComments: !shouldMinify,
@@ -88,7 +88,9 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
     cssHash({ css }) {
       // same prime number seed used by svelte/compiler.
       // TODO: ensure this provides enough entropy
-      return `svelte-${Bun.hash(css, 5381).toString(36)}`;
+      return `svelte-${hash(css)}`;
     },
   };
 }
+
+export const hash = (content: string): string => Bun.hash(content, 5381).toString(36);

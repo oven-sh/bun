@@ -67,6 +67,15 @@ describe("describe blocks should handle a class or function for the first value 
   });
 });
 
+describe("a named function should work for the second arg", () => {
+  const huh = jest.fn();
+
+  test("should work", function test() {
+    huh();
+    expect(huh).toHaveBeenCalled(); // Move the expectation inside the test function
+  });
+});
+
 describe("shows first arg name correctly in test output", () => {
   test("describe block shows function name correctly in test output", async () => {
     const test_dir = tempDirWithFiles(".", {

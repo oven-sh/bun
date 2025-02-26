@@ -111,23 +111,9 @@ pub const SplitBundlerOptions = struct {
 
         var iter = plugin_array.arrayIterator(global);
         while (iter.next()) |plugin_config| {
-            if (!plugin_config.isObject()) {
-                return global.throwInvalidArguments("Expected plugin to be an object", .{});
-            }
-
-            if (try plugin_config.getOptional(global, "name", ZigString.Slice)) |slice| {
-                defer slice.deinit();
-                if (slice.len == 0) {
-                    return global.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
-                }
-            } else {
-                return global.throwInvalidArguments("Expected plugin to have a name", .{});
-            }
-
-            const function = try plugin_config.getFunction(global, "setup") orelse {
-                return global.throwInvalidArguments("Expected plugin to have a setup() function", .{});
-            };
-            const plugin_result = try plugin.addPlugin(function, empty_object, .null, false, true);
+            const jsplugin = try Plugin.JS.fromJS(global, plugin_config);
+            const plugin_obj = try jsplugin.toObject(global);
+            const plugin_result = try plugin.addPlugin(plugin_obj.setup, empty_object, .null, false, true);
             if (plugin_result.asAnyPromise()) |promise| {
                 promise.setHandled(global.vm());
                 // TODO: remove this call, replace with a promise list that must

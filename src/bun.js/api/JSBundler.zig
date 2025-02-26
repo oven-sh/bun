@@ -113,22 +113,9 @@ pub const JSBundler = struct {
                 var onstart_promise_array: JSValue = JSValue.undefined;
                 var i: usize = 0;
                 while (iter.next()) |plugin| : (i += 1) {
-                    if (!plugin.isObject()) {
-                        return globalThis.throwInvalidArguments("Expected plugin to be an object", .{});
-                    }
+                    const jsplugin = try (try Plugin.JS.fromJS(globalThis, plugin)).toObject(globalThis);
 
-                    if (try plugin.getOptional(globalThis, "name", ZigString.Slice)) |slice| {
-                        defer slice.deinit();
-                        if (slice.len == 0) {
-                            return globalThis.throwInvalidArguments("Expected plugin to have a non-empty name", .{});
-                        }
-                    } else {
-                        return globalThis.throwInvalidArguments("Expected plugin to have a name", .{});
-                    }
-
-                    const function = try plugin.getFunction(globalThis, "setup") orelse {
-                        return globalThis.throwInvalidArguments("Expected plugin to have a setup() function", .{});
-                    };
+                    const function = jsplugin.setup;
 
                     var bun_plugins: *Plugin = plugins.* orelse brk: {
                         plugins.* = Plugin.create(
@@ -875,6 +862,70 @@ pub const JSBundler = struct {
     };
 
     pub const Plugin = opaque {
+        pub const JS = union(enum) {
+            factory: JSC.JSValue,
+            object: Object,
+
+            pub const Object = struct {
+                name: JSC.JSValue,
+                setup: JSC.JSValue,
+
+                fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!Object {
+                    if (comptime bun.Environment.allow_assert) {
+                        bun.assertWithLocation(value.isObject(), @src());
+                    }
+
+                    // plugin.name is a non-empty string
+                    const name = try value.get(global, "name") orelse
+                        return global.throwInvalidArguments("Expected plugin to have a name", .{});
+                    if (!name.isString()) {
+                        const ty = name.jsTypeString(global);
+                        return global.throwInvalidArguments("Expected plugin name to be a string, got '{}'", .{ty});
+                    }
+                    if (name.getLength(global) == 0)
+                        return global.throwInvalidArguments("Expected plugin name to be a non-empty string", .{});
+
+                    // plugin.setup(builder)
+                    const setup = try value.getFunction(global, "setup") orelse {
+                        return global.throwInvalidArguments("Expected plugin to have a setup() function", .{});
+                    };
+
+                    return Plugin.JS.Object{
+                        .name = name,
+                        .setup = setup,
+                    };
+                }
+            };
+
+            pub fn fromJS(global: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!Plugin.JS {
+                return if (value.isObject())
+                    Plugin.JS{ .object = try Object.fromJS(global, value) }
+                else if (value.isFunction())
+                    Plugin.JS{ .factory = value }
+                else err: {
+                    const ty = value.jsTypeString(global);
+                    break :err global.throwInvalidArguments("Expected plugin to be an object or a function, got '{}'", .{ty});
+                };
+            }
+
+            pub fn toObject(this: *const JS, global: *JSC.JSGlobalObject) bun.JSError!Plugin.JS.Object {
+                switch (this.*) {
+                    .object => |obj| return obj,
+                    .factory => |factory| {
+                        const result = try factory.call(global, global.toJSValue(), &[_]JSValue{});
+                        if (!result.isObject()) {
+                            const ty = result.jsTypeString(global);
+                            return global.throwTypeError("Expected plugin factory to return an object, got '{}'", .{ty});
+                        }
+                        if (result.asPromise()) |_| {
+                            return global.throwTypeError("Plugin factories cannot be async yet. Please move async logic into the setup() function.", .{});
+                        }
+                        return Plugin.JS.Object.fromJS(global, result);
+                    },
+                }
+            }
+        };
+
         extern fn JSBundlerPlugin__create(*JSC.JSGlobalObject, JSC.JSGlobalObject.BunPluginTarget) *Plugin;
         pub fn create(global: *JSC.JSGlobalObject, target: JSC.JSGlobalObject.BunPluginTarget) *Plugin {
             JSC.markBinding(@src());

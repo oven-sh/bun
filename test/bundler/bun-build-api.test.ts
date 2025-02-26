@@ -1,5 +1,5 @@
 import type { BunPlugin } from "bun";
-import { describe, beforeAll, afterAll, expect, test } from "bun:test";
+import { describe, beforeAll, afterAll, expect, test, it } from "bun:test";
 import { readFileSync, writeFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path, { join } from "path";

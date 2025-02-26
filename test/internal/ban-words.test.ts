@@ -30,12 +30,12 @@ for (const file of files) {
     if (content.includes(word)) {
       counts[word] ??= [];
       const lines = content.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        const trim = lines[i].trim();
+      for (let line_i = 0; line_i < lines.length; line_i++) {
+        const trim = lines[line_i].trim();
         if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
-        const count = lines[i].split(word).length - 1;
-        for (let i = 0; i < count; i++) {
-          counts[word].push([i + 1, file.parentPath + "/" + file.name]);
+        const count = lines[line_i].split(word).length - 1;
+        for (let count_i = 0; count_i < count; count_i++) {
+          counts[word].push([line_i + 1, file.parentPath + "/" + file.name]);
         }
       }
     }

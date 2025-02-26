@@ -261,6 +261,17 @@ pub const Route = struct {
             config.minify.syntax = true;
         }
 
+        if (bun.CLI.Command.get().args.serve_define) |define| {
+            bun.assert(define.keys.len == define.values.len);
+            try config.define.map.ensureUnusedCapacity(define.keys.len);
+            config.define.map.unmanaged.entries.len = define.keys.len;
+            @memcpy(config.define.map.keys(), define.keys);
+            for (config.define.map.values(), define.values) |*to, from| {
+                to.* = config.define.map.allocator.dupe(u8, from) catch bun.outOfMemory();
+            }
+            try config.define.map.reIndex();
+        }
+
         if (!is_development) {
             config.define.put("process.env.NODE_ENV", "\"production\"") catch bun.outOfMemory();
             config.jsx.development = false;
@@ -344,7 +355,11 @@ pub const Route = struct {
                 for (output_files) |*output_file| {
                     const blob = JSC.WebCore.AnyBlob{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
                     var headers = JSC.WebCore.Headers{ .allocator = bun.default_allocator };
-                    headers.append("Content-Type", blob.Blob.contentTypeOrMimeType() orelse output_file.loader.toMimeType().value) catch bun.outOfMemory();
+                    const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {
+                        bun.debugAssert(false); // should be populated by `output_file.toBlob`
+                        break :brk output_file.loader.toMimeType(&.{}).value;
+                    };
+                    headers.append("Content-Type", content_type) catch bun.outOfMemory();
                     // Do not apply etags to html.
                     if (output_file.loader != .html and output_file.value == .buffer) {
                         var hashbuf: [64]u8 = undefined;

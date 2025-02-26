@@ -1,5 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest, emptyHtmlFile, minimalFramework } from "../dev-server-harness";
+import { expect } from "bun:test";
+import { devTest, emptyHtmlFile, minimalFramework, reactAndRefreshStub, reactRefreshStub } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -87,7 +88,7 @@ devTest("importing a file before it is created", {
     `,
   },
   async test(dev) {
-    const c = await dev.client("/", {
+    await using c = await dev.client("/", {
       errors: [`index.ts:1:21: error: Could not resolve: "./second"`],
     });
 
@@ -96,5 +97,328 @@ devTest("importing a file before it is created", {
     });
 
     await c.expectMessage("value: 456");
+  },
+});
+// https://github.com/oven-sh/bun/issues/17447
+devTest("react refresh should register and track hook state", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import { expectRegistered } from 'bun-devserver-react-mock';
+      import App from './App.tsx';
+      expectRegistered(App, "App.tsx", "default");
+    `,
+    "App.tsx": `
+      export default function App() {
+        let [a, b] = useState(1);
+        return <div>Hello, world!</div>;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {});
+    const firstHash = await c.reactRefreshComponentHash("App.tsx", "default");
+    expect(firstHash).toBeDefined();
+
+    // hash does not change when hooks stay same
+    await dev.write(
+      "App.tsx",
+      `
+      export default function App() {
+        let [a, b] = useState(1);
+        return <div>Hello, world! {a}</div>;
+      }
+    `,
+    );
+    const secondHash = await c.reactRefreshComponentHash("App.tsx", "default");
+    expect(secondHash).toEqual(firstHash);
+
+    // hash changes when hooks change
+    await dev.write(
+      "App.tsx",
+      `
+      export default function App() {
+        let [a, b] = useState(2);
+        return <div>Hello, world! {a}</div>;
+      }
+    `,
+    );
+    const thirdHash = await c.reactRefreshComponentHash("App.tsx", "default");
+    expect(thirdHash).not.toEqual(firstHash);
+  },
+});
+devTest("react refresh cases", {
+  framework: minimalFramework,
+  files: {
+    ...reactAndRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.tsx"],
+    }),
+    "index.tsx": `
+      import { expectRegistered } from 'bun-devserver-react-mock';
+
+      expectRegistered((await import("./default_unnamed")).default, "default_unnamed.tsx", "default");
+      expectRegistered((await import("./default_named")).default, "default_named.tsx", "default");
+      expectRegistered((await import("./default_arrow")).default, "default_arrow.tsx", "default");
+      expectRegistered((await import("./local_var")).LocalVar, "local_var.tsx", "LocalVar");
+      expectRegistered((await import("./local_const")).LocalConst, "local_const.tsx", "LocalConst");
+      await import("./non_exported");
+
+      expectRegistered((await import("./default_unnamed_hooks")).default, "default_unnamed_hooks.tsx", "default");
+      expectRegistered((await import("./default_named_hooks")).default, "default_named_hooks.tsx", "default");
+      expectRegistered((await import("./default_arrow_hooks")).default, "default_arrow_hooks.tsx", "default");
+      expectRegistered((await import("./local_var_hooks")).LocalVar, "local_var_hooks.tsx", "LocalVar");
+      expectRegistered((await import("./local_const_hooks")).LocalConst, "local_const_hooks.tsx", "LocalConst");
+      await import("./non_exported_hooks");
+    `,
+    "default_unnamed.tsx": `
+      export default function() {
+        return <div></div>;
+      }
+    `,
+    "default_named.tsx": `
+      export default function Hello() {
+        return <div></div>;
+      }
+    `,
+    "default_arrow.tsx": `
+      export default () => {
+        return <div></div>;
+      }
+    `,
+    "local_var.tsx": `
+      export var LocalVar = () => {
+        return <div></div>;
+      }
+    `,
+    "local_const.tsx": `
+      export const LocalConst = () => {
+        return <div></div>;
+      }
+    `,
+    "non_exported.tsx": `
+      import { expectRegistered } from 'bun-devserver-react-mock';
+
+      function NonExportedFunc() {
+        return <div></div>;
+      }
+
+      const NonExportedVar = () => {
+        return <div></div>;
+      }
+
+      // Anonymous function with name
+      const NonExportedAnon = (function MyNamedAnon() {
+        return <div></div>;
+      });
+
+      // Anonymous function without name
+      const NonExportedAnonUnnamed = (function() {
+        return <div></div>;
+      });
+
+      expectRegistered(NonExportedFunc, "non_exported.tsx", "NonExportedFunc");
+      expectRegistered(NonExportedVar, "non_exported.tsx", "NonExportedVar");
+      expectRegistered(NonExportedAnon, "non_exported.tsx", "NonExportedAnon");
+      expectRegistered(NonExportedAnonUnnamed, "non_exported.tsx", "NonExportedAnonUnnamed");
+    `,
+    "default_unnamed_hooks.tsx": `
+      export default function() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+    `,
+    "default_named_hooks.tsx": `
+      export default function Hello() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+    `,
+    "default_arrow_hooks.tsx": `
+      export default () => {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+    `,
+    "local_var_hooks.tsx": `
+      export var LocalVar = () => {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+    `,
+    "local_const_hooks.tsx": `
+      export const LocalConst = () => {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+    `,
+    "non_exported_hooks.tsx": `
+      import { expectRegistered } from 'bun-devserver-react-mock';
+
+      function NonExportedFunc() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+
+      const NonExportedVar = () => {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      }
+
+      // Anonymous function with name
+      const NonExportedAnon = (function MyNamedAnon() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      });
+
+      // Anonymous function without name
+      const NonExportedAnonUnnamed = (function() {
+        const [count, setCount] = useState(0);
+        return <div>{count}</div>;
+      });
+
+      expectRegistered(NonExportedFunc, "non_exported_hooks.tsx", "NonExportedFunc");
+      expectRegistered(NonExportedVar, "non_exported_hooks.tsx", "NonExportedVar");
+      expectRegistered(NonExportedAnon, "non_exported_hooks.tsx", "NonExportedAnon");
+      expectRegistered(NonExportedAnonUnnamed, "non_exported_hooks.tsx", "NonExportedAnonUnnamed");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+  },
+});
+devTest("default export same-scope handling", {
+  files: {
+    ...reactRefreshStub,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts", "react-refresh/runtime"],
+    }),
+    "index.ts": `
+      await import("./fixture1.ts"); 
+      console.log((new ((await import("./fixture2.ts")).default)).a); 
+      await import("./fixture3.ts"); 
+      console.log((new ((await import("./fixture4.ts")).default)).result); 
+      console.log((await import("./fixture5.ts")).default);
+      console.log((await import("./fixture6.ts")).default);
+      console.log((await import("./fixture7.ts")).default());
+      console.log((await import("./fixture8.ts")).default());
+      console.log((await import("./fixture9.ts")).default(false));
+    `,
+    "fixture1.ts": `
+      const sideEffect = () => "a";
+      export default class A {
+        [sideEffect()] = "ONE";
+      }
+      console.log(new A().a);
+    `,
+    "fixture2.ts": `
+      const sideEffect = () => "a";
+      export default class A {
+        [sideEffect()] = "TWO";
+      }
+    `,
+    "fixture3.ts": `
+      export default class A {
+        result = "THREE"
+      }
+      console.log(new A().result);
+    `,
+    "fixture4.ts": `
+      export default class MOVE {
+        result = "FOUR"
+      }
+    `,
+    "fixture5.ts": `
+      const default_export = "FIVE";
+      export default default_export;
+    `,
+    "fixture6.ts": `
+      const default_export = "S";
+      function sideEffect() {
+        return default_export + "EVEN";
+      }
+      export default sideEffect();
+      console.log(default_export + "IX");
+    `,
+    "fixture7.ts": `
+      export default function() { return "EIGHT" };
+    `,
+    "fixture8.ts": `
+      export default function MOVE() { return "NINE" };
+    `,
+    "fixture9.ts": `
+      export default function named(flag = true) { return flag ? "TEN" : "ELEVEN" };
+      console.log(named());
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    c.expectMessage(
+      //
+      "ONE",
+      "TWO",
+      "THREE",
+      "FOUR",
+      "FIVE",
+      "SIX",
+      "SEVEN",
+      "EIGHT",
+      "NINE",
+      "TEN",
+      "ELEVEN",
+    );
+
+    const filesExpectingMove = Object.entries(dev.options.files)
+      .filter(([, content]) => content.includes("MOVE"))
+      .map(([path]) => path);
+    for (const file of filesExpectingMove) {
+      await dev.writeNoChanges(file);
+      const chunk = await c.getMostRecentHmrChunk();
+      expect(chunk).toMatch(/default:\s*(function|class)\s*MOVE/);
+    }
+
+    await dev.writeNoChanges("fixture7.ts");
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).toMatch(/default:\s*function/);
+  },
+});
+devTest("directory cache bust case #17576", {
+  files: {
+    ...reactRefreshStub,
+    "web/index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts", "react-refresh/runtime"],
+    }),
+    "web/index.ts": `
+      console.log(123);
+    `,
+  },
+  mainDir: "server",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write(
+        "web/Test.ts",
+        `
+        export const abc = 456;
+      `,
+      );
+    });
+    await dev.write(
+      "web/index.ts",
+      `
+        import { abc } from "./Test.ts";
+        console.log(abc);
+      `,
+    );
+    await c.expectMessage(456);
   },
 });

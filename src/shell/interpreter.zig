@@ -688,7 +688,7 @@ pub const ParsedShellScript = struct {
             var value = object_iter.value;
             if (value == .undefined) continue;
 
-            const value_str = value.getZigString(globalThis);
+            const value_str = try value.getZigString(globalThis);
             const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();

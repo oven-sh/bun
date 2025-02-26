@@ -20,7 +20,6 @@
 
 #pragma once
 
-#include "JavaScriptCore/ArrayBuffer.h"
 #include "root.h"
 
 #include <JavaScriptCore/JSGlobalObject.h>

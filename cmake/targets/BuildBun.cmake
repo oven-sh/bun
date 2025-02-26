@@ -432,6 +432,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/BunProcess.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingBuffer.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingFs.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
@@ -444,6 +445,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/BunProcess.lut.h
   ${CODEGEN_PATH}/ProcessBindingBuffer.lut.h
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
+  ${CODEGEN_PATH}/ProcessBindingFs.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h

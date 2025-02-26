@@ -3,7 +3,7 @@
 // discovered, but it easy and still a reasonable idea to just test the library
 // entirely.
 import { expect } from "bun:test";
-import { devTest } from "../dev-server-harness";
+import { devTest } from "../bake-harness";
 
 // Bugs discovered thanks to Svelte:
 // - Circular import situations

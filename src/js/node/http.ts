@@ -2927,26 +2927,26 @@ function ClientRequest(input, options, cb) {
       }
     }
 
-    if (host && !this.getHeader("host") && setHost) {
-      let hostHeader = host;
+    // if (host && !this.getHeader("host") && setHost) {
+    //   let hostHeader = host;
 
-      // For the Host header, ensure that IPv6 addresses are enclosed
-      // in square brackets, as defined by URI formatting
-      // https://tools.ietf.org/html/rfc3986#section-3.2.2
-      const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
-      if (
-        posColon !== -1 &&
-        StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
-        StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
-      ) {
-        hostHeader = `[${hostHeader}]`;
-      }
+    //   // For the Host header, ensure that IPv6 addresses are enclosed
+    //   // in square brackets, as defined by URI formatting
+    //   // https://tools.ietf.org/html/rfc3986#section-3.2.2
+    //   const posColon = StringPrototypeIndexOf.$call(hostHeader, ":");
+    //   if (
+    //     posColon !== -1 &&
+    //     StringPrototypeIncludes.$call(hostHeader, ":", posColon + 1) &&
+    //     StringPrototypeCharCodeAt.$call(hostHeader, 0) !== 91 /* '[' */
+    //   ) {
+    //     hostHeader = `[${hostHeader}]`;
+    //   }
 
-      if (port && +port !== defaultPort) {
-        hostHeader += ":" + port;
-      }
-      this.setHeader("Host", hostHeader);
-    }
+    //   if (port && +port !== defaultPort) {
+    //     hostHeader += ":" + port;
+    //   }
+    //   this.setHeader("Host", hostHeader);
+    // }
 
     var auth = options.auth;
     if (auth && !this.getHeader("Authorization")) {

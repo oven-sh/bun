@@ -1407,7 +1407,7 @@ pub const PackCommand = struct {
                     Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
                 } else {
                     var dest_buf: PathBuffer = undefined;
-                    const abs_tarball_dest, _ = absTarballDestination(
+                    const abs_tarball_dest, _ = tarballDestination(
                         ctx.manager.options.pack_destination,
                         ctx.manager.options.pack_filename,
                         abs_workspace_path,
@@ -1445,7 +1445,7 @@ pub const PackCommand = struct {
 
             if (comptime for_publish) {
                 var dest_buf: bun.PathBuffer = undefined;
-                const abs_tarball_dest, _ = absTarballDestination(
+                const abs_tarball_dest, _ = tarballDestination(
                     ctx.manager.options.pack_destination,
                     ctx.manager.options.pack_filename,
                     abs_workspace_path,
@@ -1528,7 +1528,7 @@ pub const PackCommand = struct {
         }
 
         var dest_buf: PathBuffer = undefined;
-        const abs_tarball_dest, const abs_tarball_dest_dir_end = absTarballDestination(
+        const abs_tarball_dest, const abs_tarball_dest_dir_end = tarballDestination(
             ctx.manager.options.pack_destination,
             ctx.manager.options.pack_filename,
             abs_workspace_path,
@@ -1798,7 +1798,7 @@ pub const PackCommand = struct {
         }
     }
 
-    fn absTarballDestination(
+    fn tarballDestination(
         pack_destination: string,
         pack_filename: string,
         abs_workspace_path: string,

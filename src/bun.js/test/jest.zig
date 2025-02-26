@@ -1725,21 +1725,18 @@ inline fn createScope(
     var function = if (args.len > 1) args[1] else .zero;
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (!description.isClass(globalThis) and
-        (description.isEmptyOrUndefinedOrNull() or (description.isFunction() and description.getName(globalThis).isEmpty())))
-    {
+    if (args.len == 1 and description.isFunction()) {
         function = description;
         description = .zero;
     }
 
-    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+    if (function == .zero or !function.isFunction()) {
         if (tag != .todo and tag != .skip) {
             return globalThis.throwPretty("{s} expects a function", .{signature});
         }
     }
 
     const allocator = getAllocator(globalThis);
-
     const parent = DescribeScope.active.?;
     const label = brk: {
         if (description == .zero) {

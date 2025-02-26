@@ -256,12 +256,11 @@ function detectCommand(query: string): SQLCommand {
 
 function normalizeQuery(strings, values, binding_idx = 1) {
   if (typeof strings === "string") {
-    if (values.length === 0) {
-      return [strings, values];
-    }
-    throw new SyntaxError("Invalid query");
+    // identifier or unsafe query
+    return [strings, values || []];
   }
   if (!$isArray(strings)) {
+    // we should not hit this path
     throw new SyntaxError("Invalid query");
   }
   const str_len = strings.length;
@@ -426,7 +425,7 @@ function normalizeQuery(strings, values, binding_idx = 1) {
         }
       }
     } else {
-      throw new SyntaxError("Invalid query");
+      throw new SyntaxError(`Invalid query: ${query}`);
     }
   }
 

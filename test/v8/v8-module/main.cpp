@@ -13,6 +13,17 @@ using namespace v8;
 
 #define LOG_EXPR(e) std::cout << #e << " = " << (e) << std::endl
 
+#define LOG_MAYBE(m)                                                           \
+  do {                                                                         \
+    auto maybe__ = (m);                                                        \
+    std::cout << #m << " = ";                                                  \
+    if (maybe__.IsJust()) {                                                    \
+      std::cout << "Just(" << maybe__.FromJust() << ")" << std::endl;          \
+    } else {                                                                   \
+      std::cout << "Nothing" << std::endl;                                     \
+    }                                                                          \
+  } while (0)
+
 #define LOG_VALUE_KIND(v)                                                      \
   do {                                                                         \
     LOG_EXPR(v->IsUndefined());                                                \
@@ -24,6 +35,10 @@ using namespace v8;
     LOG_EXPR(v->IsString());                                                   \
     LOG_EXPR(v->IsObject());                                                   \
     LOG_EXPR(v->IsNumber());                                                   \
+    LOG_EXPR(v->IsUint32());                                                   \
+    LOG_EXPR(v->IsInt32());                                                    \
+    LOG_EXPR(v->IsArray());                                                    \
+    LOG_EXPR(v->IsFunction());                                                 \
   } while (0)
 
 namespace v8tests {
@@ -65,7 +80,9 @@ static std::string describe(Isolate *isolate, Local<Value> value) {
     result += "()";
     return result;
   } else if (value->IsObject()) {
-    return "[object Object]";
+    return "{object}";
+  } else if (value->IsArray()) {
+    return "[array]";
   } else if (value->IsNumber()) {
     return std::to_string(value.As<Number>()->Value());
   } else {
@@ -109,28 +126,81 @@ void test_v8_primitives(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
-static void perform_number_test(const FunctionCallbackInfo<Value> &info,
+static void
+perform_number_and_integer_test(const FunctionCallbackInfo<Value> &info,
                                 double number) {
   Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
 
   Local<Number> v8_number = Number::New(isolate, number);
   LOG_EXPR(v8_number->Value());
+  LOG_MAYBE(v8_number->Uint32Value(context));
   LOG_VALUE_KIND(v8_number);
+
+  // we need to check if number can be a uint32 or a int32 before running
+  // these tests. first, check if it has a fractional part
+  double _int_part;
+  if (modf(number, &_int_part) == 0.0) {
+    if (number >= 0 && number <= UINT32_MAX) {
+      Local<Integer> v8_uint = Integer::NewFromUnsigned(isolate, number);
+      LOG_EXPR(v8_uint->Value());
+      LOG_VALUE_KIND(v8_uint);
+    }
+    if (number >= INT32_MIN && number <= INT32_MAX) {
+      Local<Integer> v8_int = Integer::New(isolate, number);
+      LOG_EXPR(v8_int->Value());
+      LOG_VALUE_KIND(v8_int);
+    }
+  }
 
   return ok(info);
 }
 
 void test_v8_number_int(const FunctionCallbackInfo<Value> &info) {
-  perform_number_test(info, 123.0);
+  perform_number_and_integer_test(info, 123.0);
 }
 
 void test_v8_number_large_int(const FunctionCallbackInfo<Value> &info) {
-  // 2^33
-  perform_number_test(info, 8589934592.0);
+  // 2^31 (should fit as uint32 but not as int32)
+  perform_number_and_integer_test(info, 2147483648.0);
+  // 2^33 (should not fit as any 32-bit integer)
+  perform_number_and_integer_test(info, 8589934592.0);
 }
 
 void test_v8_number_fraction(const FunctionCallbackInfo<Value> &info) {
-  perform_number_test(info, 2.5);
+  perform_number_and_integer_test(info, 2.5);
+}
+
+void test_v8_value_uint32value_and_numbervalue(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Value> vals[] = {
+      String::NewFromUtf8(isolate, "53").ToLocalChecked(),
+      Boolean::New(isolate, true),
+      Number::New(isolate, -1.5),
+      Number::New(isolate, 8589934593.9),
+  };
+
+  for (int i = 0; i < 4; i++) {
+    // should not throw for any of the values we check here
+    Maybe<uint32_t> maybe_u32 = vals[i]->Uint32Value(context);
+    LOG_MAYBE(maybe_u32);
+    Maybe<double> maybe_double = vals[i]->NumberValue(context);
+    LOG_MAYBE(maybe_double);
+  }
+}
+
+void call_uint32value_on_arg_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  LOG_MAYBE(info[0]->Uint32Value(context));
+}
+
+void call_numbervalue_on_arg_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  LOG_MAYBE(info[0]->NumberValue(context));
 }
 
 static void perform_string_test(const FunctionCallbackInfo<Value> &info,
@@ -271,12 +341,19 @@ void test_v8_object(const FunctionCallbackInfo<Value> &info) {
   Local<Object> obj = Object::New(isolate);
   auto key = String::NewFromUtf8(isolate, "key").ToLocalChecked();
   auto val = Number::New(isolate, 5.0);
-  Maybe<bool> set_status = obj->Set(context, key, val);
-  LOG_EXPR(set_status.IsJust());
-  LOG_EXPR(set_status.FromJust());
+  LOG_MAYBE(obj->Set(context, key, val));
 
-  // Local<Value> retval = obj->Get(context, key).ToLocalChecked();
-  // LOG_EXPR(describe(isolate, retval));
+  return ok(info);
+}
+
+void set_field_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  LOG_EXPR(info[0]->IsObject());
+  Local<Object> obj = info[0].As<Object>();
+  Local<Value> key = info[1];
+  Local<Number> value = Number::New(isolate, 321.0);
+  LOG_MAYBE(obj->Set(context, key, value));
 
   return ok(info);
 }
@@ -348,6 +425,70 @@ void create_function_with_data(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(f);
 }
 
+void proto_method_callback(const FunctionCallbackInfo<Value> &info) {
+  printf("proto_method()\n");
+  info.GetReturnValue().Set(Number::New(info.GetIsolate(), 42.0));
+}
+
+void instance_accessor_getter(Local<Name> property,
+                              const PropertyCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  printf("get %s()\n", describe(isolate, property).c_str());
+  printf("data = %s\n", describe(isolate, info.Data()).c_str());
+  info.GetReturnValue().Set(Number::New(info.GetIsolate(), 43.0));
+}
+
+void instance_accessor_setter(Local<Name> property, Local<Value> value,
+                              const PropertyCallbackInfo<void> &info) {
+  Isolate *isolate = info.GetIsolate();
+  printf("set %s() to %s\n", describe(isolate, property).c_str(),
+         describe(isolate, value).c_str());
+  printf("data = %s\n", describe(isolate, info.Data()).c_str());
+}
+
+void create_object_from_template(const FunctionCallbackInfo<Value> &info) {
+  // https://v8.github.io/api/v12.4/classv8_1_1FunctionTemplate.html#details
+  Isolate *isolate = info.GetIsolate();
+  Local<FunctionTemplate> t = FunctionTemplate::New(isolate);
+  Local<String> func_property =
+      String::NewFromUtf8(isolate, "func_property").ToLocalChecked();
+  t->Set(func_property, Number::New(isolate, 1.0));
+
+  Local<ObjectTemplate> proto_t = t->PrototypeTemplate();
+
+  Local<String> proto_method =
+      String::NewFromUtf8(isolate, "proto_method").ToLocalChecked();
+  proto_t->Set(proto_method,
+               FunctionTemplate::New(isolate, proto_method_callback));
+
+  Local<String> proto_const =
+      String::NewFromUtf8(isolate, "proto_const").ToLocalChecked();
+  proto_t->Set(proto_const, Number::New(isolate, 2.0));
+
+  Local<ObjectTemplate> instance_t = t->InstanceTemplate();
+  // pass as Local<Name> instead of Local<String> to ensure we use the right
+  // overload
+  Local<Name> instance_accessor =
+      String::NewFromUtf8(isolate, "instance_accessor").ToLocalChecked();
+  instance_t->SetAccessor(instance_accessor, instance_accessor_getter,
+                          instance_accessor_setter,
+                          Number::New(isolate, 123.0));
+
+  // not trying to support handlers yet
+  // instance_t->SetHandler(
+  //     NamedPropertyHandlerConfiguration(PropertyHandlerCallback));
+
+  Local<String> instance_property =
+      String::NewFromUtf8(isolate, "instance_property").ToLocalChecked();
+  instance_t->Set(instance_property, Number::New(isolate, 3.0));
+
+  // actually construct the object
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Function> function = t->GetFunction(context).ToLocalChecked();
+  Local<Object> instance = function->NewInstance(context).ToLocalChecked();
+  info.GetReturnValue().Set(instance);
+}
+
 void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   printf("%d arguments\n", info.Length());
@@ -360,6 +501,34 @@ void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
 
 void return_this(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(info.This());
+}
+
+void run_function_from_js(const FunctionCallbackInfo<Value> &info) {
+  // extract function, this value, and arguments
+  Local<Context> context = info.GetIsolate()->GetCurrentContext();
+  Local<Value> function_generic = info[0];
+  LOG_VALUE_KIND(function_generic);
+  Local<Function> function = function_generic.As<Function>();
+  Local<Value> jsThis = info[1];
+  int num_args = info.Length() - 2;
+
+  std::vector<Local<Value>> args(num_args);
+  for (int i = 0; i < num_args; i++) {
+    args[i] = info[i + 2];
+  }
+
+  char buf[1024] = {0};
+  function->GetName().As<String>()->WriteUtf8(info.GetIsolate(), buf,
+                                              sizeof(buf) - 1);
+  printf("function name seen from native = %s\n", buf);
+
+  MaybeLocal<Value> result =
+      function->Call(context, jsThis, num_args, args.data());
+  if (result.IsEmpty()) {
+    printf("callback threw an exception\n");
+  } else {
+    info.GetReturnValue().Set(result.ToLocalChecked());
+  }
 }
 
 class GlobalTestWrapper {
@@ -490,60 +659,42 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
         setup_object_with_string_field(isolate, context, tmp, i, cpp_str);
   }
 
-  // allocate some massive strings
-  // this should cause GC to start looking for objects to free
-  // after each big string allocation, we try reading all of the strings we
-  // created above to ensure they are still alive
-  constexpr size_t num_strings = 50;
-  constexpr size_t string_size = 20 * 1000 * 1000;
+  // force GC
+  run_gc(info);
 
-  auto string_data = new char[string_size];
-  string_data[string_size - 1] = 0;
+  // try to use all mini strings
+  for (size_t j = 0; j < num_small_allocs; j++) {
+    char buf[16];
+    mini_strings[j]->WriteUtf8(isolate, buf);
+    assert(atoi(buf) == (int)j);
+  }
 
-  Local<String> huge_strings[num_strings];
-  for (size_t i = 0; i < num_strings; i++) {
-    printf("%zu\n", i);
-    memset(string_data, i + 1, string_size - 1);
-    huge_strings[i] =
-        String::NewFromUtf8(isolate, string_data).ToLocalChecked();
+  for (size_t j = 0; j < num_small_allocs; j++) {
+    examine_object_fields(isolate, objects[j], j + num_small_allocs,
+                          j + 2 * num_small_allocs);
+  }
 
-    // try to use all mini strings
-    for (size_t j = 0; j < num_small_allocs; j++) {
-      char buf[16];
-      mini_strings[j]->WriteUtf8(isolate, buf);
-      assert(atoi(buf) == (int)j);
-    }
-
-    for (size_t j = 0; j < num_small_allocs; j++) {
-      examine_object_fields(isolate, objects[j], j + num_small_allocs,
-                            j + 2 * num_small_allocs);
-    }
-
-    if (i == 1) {
-      // add more internal fields to the objects a long time after they were
-      // created, to ensure these can also be traced
-      // make a new handlescope here so that the new strings we allocate are
-      // only referenced by the objects
-      HandleScope inner_hs(isolate);
-      for (auto &o : objects) {
-        int i = &o - &objects[0];
-        auto cpp_str = std::to_string(i + 2 * num_small_allocs);
-        Local<String> field =
-            String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
-        o->SetInternalField(1, field);
-      }
+  // add more internal fields to the objects after the first collection, to
+  // ensure these can also be traced. we make a new handlescope here so that
+  // the new strings we allocate are only referenced by the objects
+  {
+    HandleScope inner_hs(isolate);
+    for (auto &o : objects) {
+      int i = &o - &objects[0];
+      auto cpp_str = std::to_string(i + 2 * num_small_allocs);
+      Local<String> field =
+          String::NewFromUtf8(isolate, cpp_str.c_str()).ToLocalChecked();
+      o->SetInternalField(1, field);
     }
   }
 
-  memset(string_data, 0, string_size);
-  for (size_t i = 0; i < num_strings; i++) {
-    huge_strings[i]->WriteUtf8(isolate, string_data);
-    for (size_t j = 0; j < string_size - 1; j++) {
-      assert(string_data[j] == (char)(i + 1));
-    }
-  }
+  run_gc(info);
 
-  delete[] string_data;
+  // make sure the new internal fields didn't get deleted
+  for (size_t j = 0; j < num_small_allocs; j++) {
+    examine_object_fields(isolate, objects[j], j + num_small_allocs,
+                          j + 2 * num_small_allocs);
+  }
 }
 
 Local<String> escape_object(Isolate *isolate) {
@@ -574,6 +725,10 @@ void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
   Local<Number> n = escape_smi(isolate);
   Local<Boolean> t = escape_true(isolate);
 
+  // we don't trigger GC here because Bun's handle scope eagerly overwrites
+  // all handles once it goes out of scope, so the original handles created in
+  // those functions are already invalidated.
+
   LOG_VALUE_KIND(s);
   LOG_VALUE_KIND(n);
   LOG_VALUE_KIND(t);
@@ -602,6 +757,16 @@ void test_uv_os_getppid(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+void call_value_to_string(const FunctionCallbackInfo<Value> &info) {
+  Local<Context> context = info.GetIsolate()->GetCurrentContext();
+  Local<Value> value = info[0];
+  MaybeLocal<String> str = value->ToString(context);
+  LOG_EXPR(str.IsEmpty());
+  if (!str.IsEmpty()) {
+    info.GetReturnValue().Set(str.ToLocalChecked());
+  }
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -610,6 +775,12 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_number_large_int",
                   test_v8_number_large_int);
   NODE_SET_METHOD(exports, "test_v8_number_fraction", test_v8_number_fraction);
+  NODE_SET_METHOD(exports, "test_v8_value_uint32value_and_numbervalue",
+                  test_v8_value_uint32value_and_numbervalue);
+  NODE_SET_METHOD(exports, "call_uint32value_on_arg_from_js",
+                  call_uint32value_on_arg_from_js);
+  NODE_SET_METHOD(exports, "call_numbervalue_on_arg_from_js",
+                  call_numbervalue_on_arg_from_js);
   NODE_SET_METHOD(exports, "test_v8_string_ascii", test_v8_string_ascii);
   NODE_SET_METHOD(exports, "test_v8_string_utf8", test_v8_string_utf8);
   NODE_SET_METHOD(exports, "test_v8_string_invalid_utf8",
@@ -619,12 +790,16 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_string_write_utf8);
   NODE_SET_METHOD(exports, "test_v8_external", test_v8_external);
   NODE_SET_METHOD(exports, "test_v8_object", test_v8_object);
+  NODE_SET_METHOD(exports, "set_field_from_js", set_field_from_js);
   NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);
   NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
   NODE_SET_METHOD(exports, "create_function_with_data",
                   create_function_with_data);
+  NODE_SET_METHOD(exports, "create_object_from_template",
+                  create_object_from_template);
   NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
   NODE_SET_METHOD(exports, "return_this", return_this);
+  NODE_SET_METHOD(exports, "run_function_from_js", run_function_from_js);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);
@@ -633,6 +808,7 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_escapable_handle_scope);
   NODE_SET_METHOD(exports, "test_uv_os_getpid", test_uv_os_getpid);
   NODE_SET_METHOD(exports, "test_uv_os_getppid", test_uv_os_getppid);
+  NODE_SET_METHOD(exports, "call_value_to_string", call_value_to_string);
 
   // without this, node hits a UAF deleting the Global
   node::AddEnvironmentCleanupHook(context->GetIsolate(),

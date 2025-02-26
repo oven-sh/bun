@@ -76,10 +76,17 @@ export function loadAndResolvePluginsForServe(
       if (!pluginModuleRaw || !pluginModuleRaw.default) {
         throw new TypeError(`Expected "${plugins[i]}" to be a module which default exports a bundler plugin.`);
       }
-      let pluginModule = pluginModuleRaw.default;
+      let pluginModule: BunPlugin | (() => BunPlugin) = pluginModuleRaw.default;
+      $assert(pluginModule); // checked above
+
+      if (typeof pluginModule === "function") {
+        pluginModule = pluginModule.$call(globalThis);
+      }
+
       if (!pluginModule || pluginModule.name === undefined || pluginModule.setup === undefined) {
         throw new TypeError(`"${plugins[i]}" is not a valid bundler plugin.`);
       }
+
       onstart_promises_array = await runSetupFn.$apply(bundlerPlugin, [
         pluginModule.setup,
         config,

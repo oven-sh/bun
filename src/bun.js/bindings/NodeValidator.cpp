@@ -213,6 +213,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObjec
     return JSValue::encode(number);
 }
 
+JSC::EncodedJSValue V::validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    if (JSC::getCallData(value).type == JSC::CallData::Type::None) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -377,6 +386,19 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
         return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, makeString("must be longer than "_s, minLength_num));
     }
     return JSValue::encode(jsUndefined());
+}
+
+JSC::EncodedJSValue V::validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value,
+    ASCIILiteral name)
+{
+    if (value.isCell()) {
+        auto type = value.asCell()->type();
+        if (type >= Int8ArrayType && type <= DataViewType) {
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

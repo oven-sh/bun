@@ -788,6 +788,20 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
     return {};
 }
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
+{
+    WTF::StringBuilder builder;
+    builder.append("The argument '"_s);
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    return {};
+}
 
 JSC::EncodedJSValue INVALID_URL_SCHEME(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& expectedScheme)
 {
@@ -908,6 +922,39 @@ JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JS
 {
     auto message = makeString("Unsupported JWK EC curve: "_s, curve);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "No key provided to sign"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_SIGN_KEY_REQUIRED, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid key object type "_s);
+    JSValueToStringSafe(globalObject, builder, received);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& digest)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid digest: "_s);
+    builder.append(digest);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_DIGEST, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue MISSING_PASSPHRASE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MISSING_PASSPHRASE, message));
     return {};
 }
 

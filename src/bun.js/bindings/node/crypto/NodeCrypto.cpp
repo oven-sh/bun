@@ -40,6 +40,7 @@
 #include "ncrypto.h"
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
+#include "JSSign.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -323,9 +324,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     // Get cipher from name or nid
     ncrypto::Cipher cipher;
     if (callFrame->argument(1).isString()) {
-        auto cipherName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
+        JSString* cipherName = callFrame->argument(1).toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        cipher = ncrypto::Cipher::FromName(cipherName.utf8().data());
+        cipher = ncrypto::Cipher::FromName(cipherName->view(lexicalGlobalObject));
     } else if (callFrame->argument(1).isInt32()) {
         int nid = callFrame->argument(1).asInt32();
         cipher = ncrypto::Cipher::FromNid(nid);
@@ -376,17 +377,17 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     }
 
     // Set mode if available
-    auto mode_label = cipher.getModeLabel();
-    if (!mode_label.empty()) {
+    WTF::ASCIILiteral mode_label = cipher.getModeLabel();
+    if (!mode_label.isEmpty()) {
         info->putDirect(vm, PropertyName(Identifier::fromString(vm, "mode"_s)),
-            jsString(vm, String::fromUTF8({ mode_label.data(), mode_label.length() })));
+            jsString(vm, String::fromUTF8(mode_label)));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     // Set name
-    auto name = cipher.getName();
+    WTF::String name = cipher.getName();
     info->putDirect(vm, vm.propertyNames->name,
-        jsString(vm, String::fromUTF8({ name.data(), name.length() })));
+        jsString(vm, name));
     RETURN_IF_EXCEPTION(scope, {});
 
     // Set nid
@@ -427,7 +428,7 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 3, "ecdhConvertKey"_s, jsECDHConvertKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certVerifySpkac"_s)),
-        JSFunction::create(vm, globalObject, 1, "verifySpkac"_s, jsCertVerifySpkac, ImplementationVisibility::Public, NoIntrinsic), 1);
+        JSFunction::create(vm, globalObject, 1, "verifySpkac"_s, jsCertVerifySpkac, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certExportPublicKey"_s)),
         JSFunction::create(vm, globalObject, 1, "certExportPublicKey"_s, jsCertExportPublicKey, ImplementationVisibility::Public, NoIntrinsic), 1);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certExportChallenge"_s)),
@@ -438,7 +439,12 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCiphers"_s)),
         JSFunction::create(vm, globalObject, 0, "getCiphers"_s, jsGetCiphers, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "_getCipherInfo"_s)),
-        JSFunction::create(vm, globalObject, 1, "_getCipherInfo"_s, jsGetCipherInfo, ImplementationVisibility::Public, NoIntrinsic), 4);
+        JSFunction::create(vm, globalObject, 1, "_getCipherInfo"_s, jsGetCipherInfo, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Sign"_s)),
+        globalObject->m_JSSignClassStructure.constructor(globalObject));
+    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "signOneShot"_s)),
+    //     JSFunction::create(vm, globalObject, 4, "signOneShot"_s, jsSignOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

@@ -1,15 +1,31 @@
 import * as http from "node:http";
 
-let server = http.createServer((req, res) => {
-  res.end("Hello, World!");
+const options = {
+  hostname: "www.example.com",
+  port: 80,
+  path: "/",
+  method: "GET",
+  headers: {},
+};
+
+const req = http.request(options, res => {
+  patchEmitter(res, "res");
+  console.log(`"STATUS: ${res.statusCode}"`);
+  res.setEncoding("utf8");
 });
-server.listen(0, "localhost", 0, () => {
-  const options = {
-    hostname: "localhost",
-    port: server.address().port,
-    path: "/",
-    method: "GET",
-    headers: {},
+patchEmitter(req, "req");
+
+req.end();
+
+function patchEmitter(emitter, prefix) {
+  var oldEmit = emitter.emit;
+
+  emitter.emit = function () {
+    if (typeof arguments[0] !== "symbol") {
+      console.log([prefix, arguments[0]]);
+    }
+
+    oldEmit.apply(emitter, arguments);
   };
 
   const req = http.request(options, res => {
@@ -33,4 +49,4 @@ server.listen(0, "localhost", 0, () => {
       oldEmit.apply(emitter, arguments);
     };
   }
-});
+}

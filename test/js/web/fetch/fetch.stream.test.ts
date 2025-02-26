@@ -219,7 +219,7 @@ describe("fetch() with streaming", () => {
 
         expect(true).toBe(true);
       } finally {
-        server?.close();
+        server?.closeAllConnections();
       }
     });
   }

@@ -606,6 +606,10 @@ public:
         return std::move(*this);
     }
 
+    void setOnClose(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
+        httpContext->getSocketContextData()->onSocketClosed = onClose;
+    }
+
     TemplatedApp &&run() {
         uWS::run();
         return std::move(*this);

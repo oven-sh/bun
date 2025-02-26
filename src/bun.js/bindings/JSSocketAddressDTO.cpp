@@ -1,5 +1,5 @@
 #include "JSSocketAddressDTO.h"
-#include "ZigGlobalObject.h"
+
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/JSCast.h"
@@ -12,6 +12,21 @@ namespace JSSocketAddressDTO {
 static constexpr PropertyOffset addressOffset = 0;
 static constexpr PropertyOffset familyOffset = 1;
 static constexpr PropertyOffset portOffset = 2;
+
+JSObject* create(Zig::GlobalObject* globalObject, JSString* value, int32_t port, bool isIPv6)
+{
+    static const NeverDestroyed<String> IPv4 = MAKE_STATIC_STRING_IMPL("IPv4");
+    static const NeverDestroyed<String> IPv6 = MAKE_STATIC_STRING_IMPL("IPv6");
+
+    VM& vm = globalObject->vm();
+
+    JSObject* thisObject = constructEmptyObject(vm, globalObject->JSSocketAddressStructure());
+    thisObject->putDirectOffset(vm, 0, value);
+    thisObject->putDirectOffset(vm, 1, isIPv6 ? jsString(vm, IPv6) : jsString(vm, IPv4));
+    thisObject->putDirectOffset(vm, 2, jsNumber(port));
+
+    return thisObject;
+}
 
 // Using a structure with inlined offsets should be more lightweight than a class.
 Structure* createStructure(VM& vm, JSGlobalObject* globalObject)

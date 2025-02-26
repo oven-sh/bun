@@ -1001,6 +1001,7 @@ pub const EventLoop = struct {
         }
 
         while (@field(this, queue_name).readItem()) |task| {
+            log("run {s}", .{@tagName(task.tag())});
             defer counter += 1;
             switch (task.tag()) {
                 @field(Task.Tag, @typeName(ShellAsync)) => {

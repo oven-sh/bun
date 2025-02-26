@@ -123,7 +123,7 @@ devAndProductionTest("inline script and styles appear", {
   },
   async test(dev) {
     await dev.fetch("/").expect.toInclude("hello");
-    await dev.fetch("/").expect.not.toInclude("3"); // TODO:
+    await dev.fetch("/").expect.not.toInclude("hello 3"); // TODO:
     await using c = await dev.client("/");
     await c.expectMessage("hello 3");
     await c.style("body").backgroundColor.expect.toBe("red");

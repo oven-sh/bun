@@ -562,6 +562,24 @@ export class DraculaSyntaxHighlighter {
     return this.buildHtmlElement("pre", { "class": classAttr }, result);
   }
 
+  public highlightLine() {
+    let lineContent = "";
+
+    for (const token of this.tokenize()) {
+      if (token.type === TokenType.Newline) {
+        continue;
+      }
+
+      if (token.tokenClass) {
+        lineContent += this.wrap(token.value, token.tokenClass);
+      } else {
+        lineContent += this.escapeHtml(token.value);
+      }
+    }
+
+    return lineContent;
+  }
+
   private escapeHtml(str: string): string {
     return str
       .replace(/&/g, "&amp;")
@@ -793,4 +811,8 @@ export class DraculaSyntaxHighlighter {
 
     return false;
   }
+}
+
+export function syntaxHighlight(code: string) {
+  return new DraculaSyntaxHighlighter(code).highlightLine();
 }

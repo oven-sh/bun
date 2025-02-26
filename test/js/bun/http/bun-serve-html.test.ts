@@ -737,7 +737,7 @@ test("serve html with JSX runtime in development mode", async () => {
   const response = await fetch(server.url);
   expect(response.status).toBe(200);
   const htmlText = await response.text();
-  const jsSrc = htmlText.match(/<script type="module" crossorigin async src="([^"]+)"/)?.[1]!;
+  const jsSrc = htmlText.match(/<script type="module" crossorigin src="([^"]+)"/)?.[1]!;
   const js = await (await fetch(new URL(jsSrc, server.url))).text();
 
   // Development mode should use jsxDEV

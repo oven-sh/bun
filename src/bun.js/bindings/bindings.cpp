@@ -2441,19 +2441,6 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
     }
 }
 
-JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
-{
-    JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
-
-    JSC::JSValue result = JSC::JSONParse(arg1, jsValue.toWTFString(arg1));
-
-    if (!result) {
-        result = JSC::JSValue(JSC::createSyntaxError(arg1->globalObject(), "Failed to parse JSON"_s));
-    }
-
-    return JSC::JSValue::encode(result);
-}
-
 JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* globalObject, const ZigString* arg1)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -5213,13 +5200,6 @@ void JSC__JSString__iterator(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, voi
 {
     jsstring_iterator* iter = (jsstring_iterator*)arg2;
     arg0->value(iter);
-}
-void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
-{
-    JSC::GCDeferralContext deferralContext(reinterpret_cast<JSC__VM&>(vm));
-    JSC::DisallowGC disallowGC;
-
-    callback(ctx);
 }
 
 void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)

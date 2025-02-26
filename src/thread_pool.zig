@@ -376,6 +376,24 @@ pub fn schedule(self: *ThreadPool, batch: Batch) void {
     forceSpawn(self);
 }
 
+pub fn scheduleInsideThreadPool(self: *ThreadPool, batch: Batch) void {
+    // Sanity check
+    if (batch.len == 0) {
+        return;
+    }
+
+    // Extract out the Node's from the Tasks
+    const list = Node.List{
+        .head = &batch.head.?.node,
+        .tail = &batch.tail.?.node,
+    };
+
+    // Push the task Nodes to the most appropriate queue
+    self.run_queue.push(list);
+
+    forceSpawn(self);
+}
+
 pub fn forceSpawn(self: *ThreadPool) void {
     // Try to notify a thread
     const is_waking = false;
@@ -646,6 +664,7 @@ pub const Thread = struct {
         self.idle_queue.push(list);
     }
     var counter: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+
     /// Thread entry point which runs a worker for the ThreadPool
     fn run(thread_pool: *ThreadPool) void {
         {

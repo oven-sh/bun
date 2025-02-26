@@ -222,7 +222,6 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
     if (vm.heap.size() == 0) {
         vm.heap.collectNow(Sync, CollectionScope::Full);
-        JSC::DisallowGC disallowGC;
     }
 
     const auto createdSortedTypeCounts =

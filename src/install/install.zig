@@ -5204,8 +5204,9 @@ pub const PackageManager = struct {
                 }
             }
 
-            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
-            if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
+            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
+            // if it's a workspaceOnly dependency
+            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides())) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
                     name, name_hash = switch (new.tag) {

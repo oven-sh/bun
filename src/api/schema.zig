@@ -1710,6 +1710,7 @@ pub const Api = struct {
         serve_splitting: bool = false,
         serve_public_path: ?[]const u8 = null,
         serve_hmr: ?bool = null,
+        serve_define: ?StringMap = null,
 
         bunfig_path: []const u8,
 

@@ -49,6 +49,7 @@ pub const API = struct {
     pub const TCPSocket = @import("./bun.js/api/bun/socket.zig").TCPSocket;
     pub const TLSSocket = @import("./bun.js/api/bun/socket.zig").TLSSocket;
     pub const UDPSocket = @import("./bun.js/api/bun/udp_socket.zig").UDPSocket;
+    pub const SocketAddress = @import("./bun.js/api/bun/socket.zig").SocketAddress;
     pub const Listener = @import("./bun.js/api/bun/socket.zig").Listener;
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
     pub const NativeZlib = @import("./bun.js/node/node_zlib_binding.zig").SNativeZlib;
@@ -83,6 +84,13 @@ pub const jsNumber = @This().JSValue.jsNumber;
 const __jsc_log = Output.scoped(.JSC, true);
 pub inline fn markBinding(src: std.builtin.SourceLocation) void {
     __jsc_log("{s} ({s}:{d})", .{ src.fn_name, src.file, src.line });
+}
+pub inline fn markMemberBinding(comptime class: anytype, src: std.builtin.SourceLocation) void {
+    const classname = switch (@typeInfo(@TypeOf(class))) {
+        .pointer => class, // assumed to be a static string
+        else => @typeName(class),
+    };
+    __jsc_log("{s}.{s} ({s}:{d})", .{ classname, src.fn_name, src.file, src.line });
 }
 pub const Subprocess = API.Bun.Subprocess;
 pub const ResourceUsage = API.Bun.ResourceUsage;

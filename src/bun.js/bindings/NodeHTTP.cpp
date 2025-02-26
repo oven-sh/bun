@@ -20,7 +20,7 @@
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include "JSSocketAddress.h"
+#include "JSSocketAddressDTO.h"
 
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
@@ -304,7 +304,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress, (JSC::JSGlob
         return JSValue::encode(JSC::jsNull());
     }
 
-    auto* object = JSSocketAddress::create(defaultGlobalObject(globalObject), jsString(vm, addressString), port, is_ipv6);
+    auto* object = JSSocketAddressDTO::create(defaultGlobalObject(globalObject), jsString(vm, addressString), port, is_ipv6);
     thisObject->m_remoteAddress.set(vm, thisObject, object);
     return JSValue::encode(object);
 }
@@ -780,7 +780,11 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         auto pair = *it;
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
         std::span<LChar> data;
-        auto value = String::createUninitialized(pair.second.length(), data);
+        auto value = String::tryCreateUninitialized(pair.second.length(), data);
+        if (UNLIKELY(value.isNull())) {
+            throwOutOfMemoryError(globalObject, scope);
+            return JSValue::encode({});
+        }
         if (pair.second.length() > 0)
             memcpy(data.data(), pair.second.data(), pair.second.length());
 

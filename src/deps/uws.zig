@@ -1773,7 +1773,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ///
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
-        pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
+        pub fn localAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             switch (this.socket) {
                 .connected => |socket| {
                     var length: i32 = @intCast(buf.len);
@@ -1791,39 +1791,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 },
                 .pipe, .upgradedDuplex, .connecting, .detached => return null,
             }
-        }
-
-        /// Get the local address of a socket in text format.
-        ///
-        /// # Arguments
-        /// - `buf`: A buffer to store the text address data.
-        /// - `is_ipv6`: A pointer to a boolean representing whether the address is IPv6.
-        ///
-        /// # Returns
-        /// This function returns a slice of the buffer on success, or null on failure.
-        pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
-            const addr_v4_len = @sizeOf(@FieldType(std.posix.sockaddr.in, "addr"));
-            const addr_v6_len = @sizeOf(@FieldType(std.posix.sockaddr.in6, "addr"));
-
-            var sa_buf: [addr_v6_len + 1]u8 = undefined;
-            const binary = this.localAddressBinary(&sa_buf) orelse return null;
-            const addr_len: usize = binary.len;
-            sa_buf[addr_len] = 0;
-
-            var ret: ?[*:0]const u8 = null;
-            if (addr_len == addr_v4_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.posix.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
-                is_ipv6.* = false;
-            } else if (addr_len == addr_v6_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.posix.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
-                is_ipv6.* = true;
-            }
-
-            if (ret) |_| {
-                const length: usize = @intCast(bun.len(bun.cast([*:0]u8, buf)));
-                return buf[0..length];
-            }
-            return null;
         }
 
         pub fn connect(
@@ -4614,6 +4581,7 @@ pub const udp = struct {
             return us_udp_socket_bind(this, hostname, port);
         }
 
+        /// Get the bound port in host byte order
         pub fn boundPort(this: *This) c_int {
             return us_udp_socket_bound_port(this);
         }
@@ -4713,4 +4681,78 @@ pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, 
 
 export fn BUN__warn__extra_ca_load_failed(filename: [*c]const u8, error_msg: [*c]const u8) void {
     bun.Output.warn("ignoring extra certs from {s}, load failed: {s}", .{ filename, error_msg });
+}
+
+/// Mixin to read an entire request body into memory and run a callback.
+/// Consumers should make sure a reference count is held on the server,
+/// and is unreferenced after one of the two callbacks are called.
+///
+/// See DevServer.zig's ErrorReportRequest for an example.
+pub fn BodyReaderMixin(
+    Wrap: type,
+    field: []const u8,
+    // `body` is freed after this function returns.
+    onBody: fn (*Wrap, body: []const u8, resp: AnyResponse) anyerror!void,
+    // Called on error or request abort
+    onError: fn (*Wrap) void,
+) type {
+    return struct {
+        body: std.ArrayList(u8),
+
+        pub fn init(allocator: std.mem.Allocator) @This() {
+            return .{ .body = .init(allocator) };
+        }
+
+        /// Memory is freed after the callback returns, or automatically on failure.
+        pub fn readBody(ctx: *@This(), resp: anytype) void {
+            const Mixin = @This();
+            const Response = @TypeOf(resp);
+            const handlers = struct {
+                fn onDataGeneric(mixin: *Mixin, r: Response, chunk: []const u8, last: bool) void {
+                    const any = AnyResponse.init(r);
+                    onData(mixin, any, chunk, last) catch |e| switch (e) {
+                        error.OutOfMemory => return mixin.onOOM(any),
+                        else => return mixin.onInvalid(any),
+                    };
+                }
+                fn onAborted(mixin: *Mixin, _: Response) void {
+                    mixin.body.deinit();
+                    onError(@fieldParentPtr(field, mixin));
+                }
+            };
+            resp.onData(*@This(), handlers.onDataGeneric, ctx);
+            resp.onAborted(*@This(), handlers.onAborted, ctx);
+        }
+
+        fn onData(ctx: *@This(), resp: AnyResponse, chunk: []const u8, last: bool) !void {
+            if (last) {
+                var body = ctx.body; // stack copy so onBody can free everything
+                resp.clearAborted();
+                resp.clearOnData();
+                if (body.items.len > 0) {
+                    try body.appendSlice(chunk);
+                    try onBody(@fieldParentPtr(field, ctx), ctx.body.items, resp);
+                } else {
+                    try onBody(@fieldParentPtr(field, ctx), chunk, resp);
+                }
+                body.deinit();
+            } else {
+                try ctx.body.appendSlice(chunk);
+            }
+        }
+
+        fn onOOM(ctx: *@This(), r: AnyResponse) void {
+            r.writeStatus("500 Internal Server Error");
+            r.endWithoutBody(false);
+            ctx.body.deinit();
+            onError(@fieldParentPtr(field, ctx));
+        }
+
+        fn onInvalid(ctx: *@This(), r: AnyResponse) void {
+            r.writeStatus("400 Bad Request");
+            r.endWithoutBody(false);
+            ctx.body.deinit();
+            onError(@fieldParentPtr(field, ctx));
+        }
+    };
 }

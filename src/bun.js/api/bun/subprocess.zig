@@ -121,7 +121,7 @@ pub const ResourceUsage = struct {
     }
 };
 
-pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) !void {
+pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
     var object_iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
 
@@ -133,7 +133,7 @@ pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, en
         var value = object_iter.value;
         if (value == .undefined) continue;
 
-        const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, value.getZigString(globalThis) });
+        const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, try value.getZigString(globalThis) });
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);
@@ -1781,13 +1781,9 @@ pub const Subprocess = struct {
         argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
         while (cmds_array.next()) |value| {
-            const arg = try value.toBunString2(globalThis);
+            const arg = try value.toBunString(globalThis);
             defer arg.deref();
 
-            // if the string is empty, ignore it, don't add it to the argv
-            if (arg.isEmpty()) {
-                continue;
-            }
             argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
         }
 
@@ -1876,7 +1872,7 @@ pub const Subprocess = struct {
 
             if (args.isObject()) {
                 if (try args.getTruthy(globalThis, "argv0")) |argv0_| {
-                    const argv0_str = argv0_.getZigString(globalThis);
+                    const argv0_str = try argv0_.getZigString(globalThis);
                     if (argv0_str.len > 0) {
                         argv0 = try argv0_str.toOwnedSliceZ(allocator);
                     }
@@ -1884,7 +1880,7 @@ pub const Subprocess = struct {
 
                 // need to update `cwd` before searching for executable with `Which.which`
                 if (try args.getTruthy(globalThis, "cwd")) |cwd_| {
-                    const cwd_str = cwd_.getZigString(globalThis);
+                    const cwd_str = try cwd_.getZigString(globalThis);
                     if (cwd_str.len > 0) {
                         cwd = try cwd_str.toOwnedSliceZ(allocator);
                     }

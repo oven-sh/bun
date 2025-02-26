@@ -217,6 +217,7 @@ export function getStdinStream(fd, isTTY: boolean, fdType: BunProcessStdinFdType
   stream._read = triggerRead;
 
   stream.on("resume", () => {
+    if (stream.isPaused()) return; // fake resume
     $debug('on("resume");');
     ref();
     stream._undestroy();

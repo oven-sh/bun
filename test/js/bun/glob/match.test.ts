@@ -25,6 +25,7 @@
 import { Glob } from "bun";
 import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
+import { join } from "path";
 
 describe("Glob.match", () => {
   test("WTF", () => {
@@ -95,7 +96,7 @@ describe("Glob.match", () => {
     expect(new Glob("**/*/c.js").match("a/b/c.js")).toBeTrue();
   });
 
-  test("braces", () => {
+  test("braces", async () => {
     let glob: Glob;
 
     glob = new Glob("index.{ts,tsx,js,jsx}");
@@ -109,6 +110,78 @@ describe("Glob.match", () => {
     expect(glob.match("foobar")).toBeTrue();
     expect(glob.match("foobuzz")).toBeTrue();
     expect(glob.match("foobarz")).toBeTrue();
+
+    glob = new Glob("{a}/{b}/");
+    expect(glob.match("a/b/")).toBeTrue();
+
+    glob = new Glob("{a,b}/c/{d,e}/**/*est.ts");
+    expect(glob.match("a/c/d/one/two/three.test.ts"));
+
+    glob = new Glob("{a,{d,e}b}/c");
+    expect(glob.match("a/c")).toBeTrue();
+
+    glob = new Glob("{**/a,**/b}");
+    expect(glob.match("b")).toBeTrue();
+
+    const fixtures = [
+      {
+        pattern: "{src,extensions}/**/test/**/{fixtures,browser,common}/**/*.{ts,js}",
+        expectedMatches: "matched-0.txt",
+      },
+      { pattern: "{extensions,src}/**/{media,images,icons}/**/*.{svg,png,gif,jpg}", expectedMatches: "matched-1.txt" },
+      {
+        pattern: "{.github,build,test}/**/{workflows,azure-pipelines,integration,smoke}/**/*.{yml,yaml,json}",
+        expectedMatches: "matched-2.txt",
+      },
+      {
+        pattern: "src/vs/{base,editor,platform,workbench}/test/{browser,common,node}/**/[a-z]*[tT]est.ts",
+        expectedMatches: "matched-3.txt",
+      },
+      {
+        pattern: "src/vs/workbench/{contrib,services}/**/*{Editor,Workspace,Terminal}*.ts",
+        expectedMatches: "matched-4.txt",
+      },
+      {
+        pattern: "{extensions,src}/**/{markdown,json,javascript,typescript}/**/*.{ts,json}",
+        expectedMatches: "matched-5.txt",
+      },
+      {
+        pattern: "**/{electron-sandbox,electron-main,browser,node}/**/{*[sS]ervice*,*[cC]ontroller*}.ts",
+        expectedMatches: "matched-6.txt",
+      },
+      {
+        pattern: "{src,extensions}/**/{common,browser,electron-sandbox}/**/*{[cC]ontribution,[sS]ervice}.ts",
+        expectedMatches: "matched-7.txt",
+      },
+      {
+        pattern: "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts",
+        expectedMatches: "matched-8.txt",
+      },
+      {
+        pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts",
+        expectedMatches: "matched-9.txt",
+      },
+    ];
+
+    const allFilePaths = (
+      await Bun.file(join(import.meta.dir, "..", "..", "..", "fixtures", "glob", "filelist.txt")).text()
+    ).split("\n");
+
+    for (const { pattern, expectedMatches } of fixtures) {
+      const shouldMatch = (
+        await Bun.file(join(import.meta.dir, "..", "..", "..", "fixtures", "glob", `${expectedMatches}`)).text()
+      ).split("\n");
+
+      glob = new Glob(pattern);
+      let matched: string[] = [];
+      for (const filepath of allFilePaths) {
+        if (glob.match(filepath)) {
+          matched.push(filepath);
+        }
+      }
+
+      expect(matched).toEqual(shouldMatch);
+    }
   });
 
   test("nested braces", () => {

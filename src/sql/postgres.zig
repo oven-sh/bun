@@ -45,6 +45,7 @@ pub const AnyPostgresError = error{
     UnsupportedIntegerSize,
     UnsupportedArrayFormat,
     UnsupportedNumericFormat,
+    UnknownFormatCode,
 };
 
 pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8, err: AnyPostgresError) JSValue {
@@ -77,6 +78,7 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
         error.UnsupportedArrayFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_ARRAY_FORMAT,
         error.UnsupportedIntegerSize => JSC.Error.ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE,
         error.UnsupportedNumericFormat => JSC.Error.ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT,
+        error.UnknownFormatCode => JSC.Error.ERR_POSTGRES_UNKNOWN_FORMAT_CODE,
         error.JSError => {
             return globalObject.takeException(error.JSError);
         },
@@ -652,7 +654,7 @@ pub const PostgresSQLQuery = struct {
         this_value.ensureStillAlive();
 
         ptr.* = .{
-            .query = query.toBunString(globalThis),
+            .query = try query.toBunString(globalThis),
             .thisValue = JSRef.initWeak(this_value),
             .flags = .{
                 .bigint = bigint,
@@ -916,9 +918,11 @@ pub const PostgresRequest = struct {
 
         var iter = QueryBindingIterator.init(values_array, columns_value, globalObject);
         for (0..len) |i| {
-            const tag: types.Tag = @enumFromInt(@as(short, @intCast(parameter_fields[i])));
+            const parameter_field = parameter_fields[i];
+            const is_custom_type = std.math.maxInt(short) < parameter_field;
+            const tag: types.Tag = if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
 
-            const force_text = tag.isBinaryFormatSupported() and brk: {
+            const force_text = is_custom_type or (tag.isBinaryFormatSupported() and brk: {
                 iter.to(@truncate(i));
                 if (iter.next()) |value| {
                     break :brk value.isString();
@@ -927,7 +931,7 @@ pub const PostgresRequest = struct {
                     return error.InvalidQueryBinding;
                 }
                 break :brk false;
-            };
+            });
 
             if (force_text) {
                 // If they pass a value as a string, let's avoid attempting to
@@ -952,7 +956,9 @@ pub const PostgresRequest = struct {
         iter.to(0);
         var i: usize = 0;
         while (iter.next()) |value| : (i += 1) {
-            const tag: types.Tag = @enumFromInt(@as(short, @intCast(parameter_fields[i])));
+            const parameter_field = parameter_fields[i];
+            const is_custom_type = std.math.maxInt(short) < parameter_field;
+            const tag: types.Tag = if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
             if (value.isEmptyOrUndefinedOrNull()) {
                 debug("  -> NULL", .{});
                 //  As a special case, -1 indicates a
@@ -1829,15 +1835,15 @@ pub const PostgresSQLConnection = struct {
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments_old(14).slice();
-        const hostname_str = arguments[0].toBunString(globalObject);
+        const hostname_str = try arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);
 
-        const username_str = arguments[2].toBunString(globalObject);
+        const username_str = try arguments[2].toBunString(globalObject);
         defer username_str.deref();
-        const password_str = arguments[3].toBunString(globalObject);
+        const password_str = try arguments[3].toBunString(globalObject);
         defer password_str.deref();
-        const database_str = arguments[4].toBunString(globalObject);
+        const database_str = try arguments[4].toBunString(globalObject);
         defer database_str.deref();
         const ssl_mode: SSLMode = switch (arguments[5].toInt32()) {
             0 => .disable,
@@ -1898,7 +1904,7 @@ pub const PostgresSQLConnection = struct {
         var database: []const u8 = "";
         var options: []const u8 = "";
 
-        const options_str = arguments[7].toBunString(globalObject);
+        const options_str = try arguments[7].toBunString(globalObject);
         defer options_str.deref();
 
         const options_buf: []u8 = brk: {
@@ -2835,8 +2841,8 @@ pub const PostgresSQLConnection = struct {
             return DataCell{ .tag = .array, .value = .{ .array = .{ .ptr = array.items.ptr, .len = @truncate(array.items.len), .cap = @truncate(array.capacity) } } };
         }
 
-        pub fn fromBytes(binary: bool, bigint: bool, oid: int4, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
-            switch (@as(types.Tag, @enumFromInt(@as(short, @intCast(oid))))) {
+        pub fn fromBytes(binary: bool, bigint: bool, oid: types.Tag, bytes: []const u8, globalObject: *JSC.JSGlobalObject) !DataCell {
+            switch (oid) {
                 // TODO: .int2_array, .float8_array
                 inline .int4_array, .float4_array => |tag| {
                     if (binary) {
@@ -3259,10 +3265,31 @@ pub const PostgresSQLConnection = struct {
                 u32,
                 Flags,
                 u8, // result_mode
+                ?[*]JSC.JSObject.ExternColumnIdentifier, // names
+                u32, // names count
             ) JSValue;
 
-            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode) JSValue {
-                return JSC__constructObjectFromDataCell(globalObject, array, structure, this.list.ptr, @truncate(this.fields.len), flags, @intFromEnum(result_mode));
+            pub fn toJS(this: *Putter, globalObject: *JSC.JSGlobalObject, array: JSValue, structure: JSValue, flags: Flags, result_mode: PostgresSQLQueryResultMode, cached_structure: ?PostgresCachedStructure) JSValue {
+                var names: ?[*]JSC.JSObject.ExternColumnIdentifier = null;
+                var names_count: u32 = 0;
+                if (cached_structure) |c| {
+                    if (c.fields) |f| {
+                        names = f.ptr;
+                        names_count = @truncate(f.len);
+                    }
+                }
+
+                return JSC__constructObjectFromDataCell(
+                    globalObject,
+                    array,
+                    structure,
+                    this.list.ptr,
+                    @truncate(this.fields.len),
+                    flags,
+                    @intFromEnum(result_mode),
+                    names,
+                    names_count,
+                );
             }
 
             fn putImpl(this: *Putter, index: u32, optional_bytes: ?*Data, comptime is_raw: bool) !bool {
@@ -3273,8 +3300,9 @@ pub const PostgresSQLConnection = struct {
                 if (is_raw) {
                     cell.* = DataCell.raw(optional_bytes);
                 } else {
+                    const tag = if (std.math.maxInt(short) < oid) .text else @as(types.Tag, @enumFromInt(@as(short, @intCast(oid))));
                     cell.* = if (optional_bytes) |data|
-                        try DataCell.fromBytes(this.binary, this.bigint, oid, data.slice(), this.globalObject)
+                        try DataCell.fromBytes((field.binary or this.binary) and tag.isBinaryFormatSupported(), this.bigint, tag, data.slice(), this.globalObject)
                     else
                         DataCell{
                             .tag = .null,
@@ -3446,12 +3474,12 @@ pub const PostgresSQLConnection = struct {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 var structure: JSValue = .undefined;
+                var cached_structure: ?PostgresCachedStructure = null;
                 // explict use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 switch (request.flags.result_mode) {
                     .objects => {
-                        // check for duplicate fields
-                        statement.checkForDuplicateFields();
-                        structure = statement.structure(this.js_value, this.globalObject);
+                        cached_structure = statement.structure(this.js_value, this.globalObject);
+                        structure = cached_structure.?.jsValue() orelse .undefined;
                     },
                     .raw, .values => {
                         // no need to check for duplicate fields or structure
@@ -3466,17 +3494,17 @@ pub const PostgresSQLConnection = struct {
                     .globalObject = this.globalObject,
                 };
 
-                var stack_buf: [64]DataCell = undefined;
-                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, stack_buf.len)];
+                var stack_buf: [70]DataCell = undefined;
+                var cells: []DataCell = stack_buf[0..@min(statement.fields.len, JSC.JSC__JSObject__maxInlineCapacity)];
+                var free_cells = false;
                 defer {
                     for (cells[0..putter.count]) |*cell| {
                         cell.deinit();
                     }
+                    if (free_cells) bun.default_allocator.free(cells);
                 }
 
-                var free_cells = false;
-                defer if (free_cells) bun.default_allocator.free(cells);
-                if (statement.fields.len >= 64) {
+                if (statement.fields.len >= JSC.JSC__JSObject__maxInlineCapacity) {
                     cells = try bun.default_allocator.alloc(DataCell, statement.fields.len);
                     free_cells = true;
                 }
@@ -3503,7 +3531,7 @@ pub const PostgresSQLConnection = struct {
                 bun.assert(thisValue != .zero);
                 const pending_value = PostgresSQLQuery.pendingValueGetCached(thisValue) orelse .zero;
                 pending_value.ensureStillAlive();
-                const result = putter.toJS(this.globalObject, pending_value, structure, statement.fields_flags, request.flags.result_mode);
+                const result = putter.toJS(this.globalObject, pending_value, structure, statement.fields_flags, request.flags.result_mode, cached_structure);
 
                 if (pending_value == .zero) {
                     PostgresSQLQuery.pendingValueSetCached(thisValue, this.globalObject, result);
@@ -3906,8 +3934,39 @@ pub const PostgresSQLConnection = struct {
     }
 };
 
+pub const PostgresCachedStructure = struct {
+    structure: JSC.Strong = .{},
+    // only populated if more than JSC.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
+    fields: ?[]JSC.JSObject.ExternColumnIdentifier = null,
+
+    pub fn has(this: *@This()) bool {
+        return this.structure.has() or this.fields != null;
+    }
+
+    pub fn jsValue(this: *const @This()) ?JSC.JSValue {
+        return this.structure.get();
+    }
+
+    pub fn set(this: *@This(), globalObject: *JSC.JSGlobalObject, value: ?JSC.JSValue, fields: ?[]JSC.JSObject.ExternColumnIdentifier) void {
+        if (value) |v| {
+            this.structure.set(globalObject, v);
+        }
+        this.fields = fields;
+    }
+
+    pub fn deinit(this: *@This()) void {
+        this.structure.deinit();
+        if (this.fields) |fields| {
+            this.fields = null;
+            for (fields) |*name| {
+                name.deinit();
+            }
+            bun.default_allocator.free(fields);
+        }
+    }
+};
 pub const PostgresSQLStatement = struct {
-    cached_structure: JSC.Strong = .{},
+    cached_structure: PostgresCachedStructure = .{},
     ref_count: u32 = 1,
     fields: []protocol.FieldDescription = &[_]protocol.FieldDescription{},
     parameters: []const int4 = &[_]int4{},
@@ -4024,43 +4083,57 @@ pub const PostgresSQLStatement = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC.JSGlobalObject) JSValue {
-        return this.cached_structure.get() orelse {
-            const ids = bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, this.fields.len) catch return .undefined;
-            this.checkForDuplicateFields();
-            defer {
-                for (ids) |*name| {
-                    name.deinit();
-                }
-                bun.default_allocator.free(ids);
-            }
+    pub fn structure(this: *PostgresSQLStatement, owner: JSValue, globalObject: *JSC.JSGlobalObject) PostgresCachedStructure {
+        if (this.cached_structure.has()) {
+            return this.cached_structure;
+        }
+        this.checkForDuplicateFields();
 
-            for (this.fields, ids) |*field, *id| {
-                id.tag = switch (field.name_or_index) {
-                    .name => 2,
-                    .index => 1,
-                    .duplicate => 0,
-                };
-                switch (field.name_or_index) {
-                    .name => |name| {
-                        id.value.name = String.createUTF8(name.slice());
-                    },
-                    .index => |index| {
-                        id.value.index = index;
-                    },
-                    .duplicate => {},
-                }
+        // lets avoid most allocations
+        var stack_ids: [70]JSC.JSObject.ExternColumnIdentifier = undefined;
+        // lets de duplicate the fields early
+        var nonDuplicatedCount = this.fields.len;
+        for (this.fields) |*field| {
+            if (field.name_or_index == .duplicate) {
+                nonDuplicatedCount -= 1;
             }
-            const structure_ = JSC.JSObject.createStructure(
+        }
+        const ids = if (nonDuplicatedCount <= JSC.JSC__JSObject__maxInlineCapacity) stack_ids[0..nonDuplicatedCount] else bun.default_allocator.alloc(JSC.JSObject.ExternColumnIdentifier, nonDuplicatedCount) catch bun.outOfMemory();
+
+        var i: usize = 0;
+        for (this.fields) |*field| {
+            if (field.name_or_index == .duplicate) continue;
+
+            var id: *JSC.JSObject.ExternColumnIdentifier = &ids[i];
+            switch (field.name_or_index) {
+                .name => |name| {
+                    id.value.name = String.createAtomIfPossible(name.slice());
+                },
+                .index => |index| {
+                    id.value.index = index;
+                },
+                .duplicate => unreachable,
+            }
+            id.tag = switch (field.name_or_index) {
+                .name => 2,
+                .index => 1,
+                .duplicate => 0,
+            };
+            i += 1;
+        }
+
+        if (nonDuplicatedCount > JSC.JSC__JSObject__maxInlineCapacity) {
+            this.cached_structure.set(globalObject, null, ids);
+        } else {
+            this.cached_structure.set(globalObject, JSC.JSObject.createStructure(
                 globalObject,
                 owner,
                 @truncate(ids.len),
                 ids.ptr,
-                @bitCast(this.fields_flags),
-            );
-            this.cached_structure.set(globalObject, structure_);
-            return structure_;
-        };
+            ), null);
+        }
+
+        return this.cached_structure;
     }
 };
 

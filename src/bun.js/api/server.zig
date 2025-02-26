@@ -3550,17 +3550,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                         return;
                     }
-                    if (!this.flags.has_written_status)
-                        this.flags.needs_content_range = true;
 
-                    // this is used by content-range
-                    this.sendfile = .{
-                        .fd = bun.invalid_fd,
-                        .remain = @as(Blob.SizeType, @truncate(result.result.buf.len)),
-                        .offset = if (this.blob == .Blob) this.blob.Blob.offset else 0,
-                        .auto_close = false,
-                        .socket_fd = bun.invalid_fd,
-                    };
                     this.renderMetadata();
 
                     blob.resolveSize();

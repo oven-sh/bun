@@ -37,6 +37,8 @@ const S = JSAst.S;
 
 const debug = Output.scoped(.migrate, false);
 
+const migration_pnpm = @import("./migration.pnpm.zig");
+
 pub fn detectAndLoadOtherLockfile(
     this: *Lockfile,
     dir: bun.FD,
@@ -44,7 +46,7 @@ pub fn detectAndLoadOtherLockfile(
     allocator: Allocator,
     log: *logger.Log,
 ) LoadResult {
-    // check for package-lock.json, yarn.lock, etc...
+    // check for package-lock.json, pnpm-lock.yaml, etc...
     // if it exists, do an in-memory migration
 
     npm: {
@@ -83,6 +85,44 @@ pub fn detectAndLoadOtherLockfile(
             Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
             Output.prettyError(" ", .{});
             Output.prettyErrorln("<d>migrated lockfile from <r><green>package-lock.json<r>", .{});
+            Output.flush();
+        }
+
+        return migrate_result;
+    }
+
+    pnpm: {
+        var timer = std.time.Timer.start() catch unreachable;
+        const lockfile = File.openat(dir, "pnpm-lock.yaml", bun.O.RDONLY, 0).unwrap() catch break :pnpm;
+        defer lockfile.close();
+        var lockfile_path_buf: bun.PathBuffer = undefined;
+        const lockfile_path = bun.getFdPathZ(lockfile.handle, &lockfile_path_buf) catch break :pnpm;
+        const data = lockfile.readToEnd(allocator).unwrap() catch break :pnpm;
+        const migrate_result = migration_pnpm.migratePNPMLockfile(this, manager, allocator, log, data, lockfile_path) catch |err| {
+            if (err == error.UnsupportedPNPMLockfileVersion) {
+                log.print(Output.errorWriter()) catch {};
+                Global.exit(1);
+            }
+            if (Environment.isDebug) {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
+                Output.prettyErrorln("Error: {s}", .{@errorName(err)});
+                log.print(Output.errorWriter()) catch {};
+                Output.prettyErrorln("Invalid PNPM pnpm-lock.yaml\nIn a release build, this would ignore and do a fresh install.\nAborting", .{});
+                Global.exit(1);
+            }
+            return LoadResult{ .err = .{
+                .step = .migrating,
+                .value = err,
+                .lockfile_path = "pnpm-lock.yaml",
+                .format = .binary,
+            } };
+        };
+
+        if (migrate_result == .ok) {
+            Output.printElapsed(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms);
+            Output.prettyError(" ", .{});
+            Output.prettyErrorln("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>", .{});
             Output.flush();
         }
 

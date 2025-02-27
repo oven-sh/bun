@@ -1192,7 +1192,7 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
     }
 
     inline for (&vlqs) |item| {
-        @memcpy(writable, item.slice());
+        @memcpy(writable[0..item.len], item.slice());
         writable = writable[item.len..];
     }
 

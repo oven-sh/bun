@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import path from "path";
 
 test("bun init works", () => {
@@ -88,6 +88,47 @@ test("bun init in folder", () => {
   expect(out.exitCode).toBe(0);
   expect(readdirSync(temp).sort()).toEqual(["mydir"]);
   expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
+    [
+      ".gitignore",
+      "README.md",
+      "bun.lock",
+      "index.ts",
+      "node_modules",
+      "package.json",
+      "tsconfig.json",
+    ]
+  `);
+});
+
+test("bun init error rather than overwriting file", async () => {
+  const temp = tempDirWithFiles("mytmp", {
+    "mydir": "don't delete me!!!",
+  });
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y", "mydir"],
+    cwd: temp,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(out.stdout.toString()).toBe("");
+  expect(out.stderr.toString()).toBe("Failed to create directory mydir: NotDir\n");
+  expect(out.exitCode).not.toBe(0);
+  expect(readdirSync(temp).sort()).toEqual(["mydir"]);
+  expect(await Bun.file(path.join(temp, "mydir")).text()).toBe("don't delete me!!!");
+});
+
+test("bun init utf-8", async () => {
+  const temp = tempDirWithFiles("mytmp", {});
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y", "u t f ∞™/subpath"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
+  });
+  expect(out.exitCode).toBe(0);
+  expect(readdirSync(temp).sort()).toEqual(["u t f ∞™"]);
+  expect(readdirSync(path.join(temp, "u t f ∞™")).sort()).toEqual(["subpath"]);
+  expect(readdirSync(path.join(temp, "u t f ∞™/subpath")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
       "README.md",

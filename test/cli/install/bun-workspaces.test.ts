@@ -1627,7 +1627,7 @@ describe("install --filter", () => {
   });
 });
 
-test.only("can override npm package with workspace package under a different name", async () => {
+test("can override npm package with workspace package under a different name", async () => {
   await Promise.all([
     write(
       packageJson,

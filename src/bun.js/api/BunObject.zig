@@ -1971,7 +1971,7 @@ pub const Crypto = struct {
 
             pub fn deinit(this: *HashJob) void {
                 this.promise.deinit();
-                bun.default_allocator.free(this.password);
+                bun.freeSensitive(bun.default_allocator, this.password);
                 this.destroy();
             }
 
@@ -2184,8 +2184,10 @@ pub const Crypto = struct {
 
             pub fn deinit(this: *VerifyJob) void {
                 this.promise.deinit();
-                bun.default_allocator.free(this.password);
-                bun.default_allocator.free(this.prev_hash);
+
+                bun.freeSensitive(bun.default_allocator, this.password);
+                bun.freeSensitive(bun.default_allocator, this.prev_hash);
+
                 this.destroy();
             }
 

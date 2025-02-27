@@ -1134,7 +1134,7 @@ class ChildProcess extends EventEmitter {
             return require("internal/fs/streams").writableFromFileSink(stdin);
           }
           case "inherit":
-            return process.stdin || null;
+            return null;
           case "destroyed":
             return new ShimmedStdin();
           default:

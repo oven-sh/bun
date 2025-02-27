@@ -19,6 +19,7 @@ const FetchTasklet = Fetch.FetchTasklet;
 const S3 = bun.S3;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
+const NapiFinalizerTask = bun.JSC.napi.NapiFinalizerTask;
 
 const Waker = bun.Async.Waker;
 
@@ -496,6 +497,7 @@ pub const Task = TaggedPointerUnion(.{
     Mkdir,
     Mkdtemp,
     napi_async_work,
+    NapiFinalizerTask,
     NativeBrotli,
     NativeZlib,
     Open,
@@ -1349,6 +1351,9 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, @typeName(PosixSignalTask)) => {
                     PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global);
+                },
+                @field(Task.Tag, @typeName(NapiFinalizerTask)) => {
+                    task.get(NapiFinalizerTask).?.runOnJSThread();
                 },
                 @field(Task.Tag, @typeName(StatFS)) => {
                     var any: *StatFS = task.get(StatFS).?;

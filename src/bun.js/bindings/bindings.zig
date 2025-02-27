@@ -21,6 +21,8 @@ const String = bun.String;
 const ErrorableString = JSC.ErrorableString;
 const JSError = bun.JSError;
 const OOM = bun.OOM;
+const napi = @import("../../napi/napi.zig");
+
 pub extern const JSC__JSObject__maxInlineCapacity: c_uint;
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -513,8 +515,7 @@ pub const ZigString = extern struct {
         else
             try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
 
-        try list.append(0);
-        return list.items[0 .. list.items.len - 1 :0];
+        return list.toOwnedSliceSentinel(0);
     }
 
     pub fn trunc(this: ZigString, len: usize) ZigString {
@@ -3351,6 +3352,12 @@ pub const JSGlobalObject = opaque {
         return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
     }
 
+    extern fn ZigGlobalObject__makeNapiEnvForFFI(*JSGlobalObject) *napi.NapiEnv;
+
+    pub fn makeNapiEnvForFFI(this: *JSGlobalObject) *napi.NapiEnv {
+        return ZigGlobalObject__makeNapiEnvForFFI(this);
+    }
+
     pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
         if (bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
@@ -3858,6 +3865,8 @@ pub const JSValue = enum(i64) {
                 .Float32Array => .kJSTypedArrayTypeFloat32Array,
                 .Float64Array => .kJSTypedArrayTypeFloat64Array,
                 .ArrayBuffer => .kJSTypedArrayTypeArrayBuffer,
+                .BigInt64Array => .kJSTypedArrayTypeBigInt64Array,
+                .BigUint64Array => .kJSTypedArrayTypeBigUint64Array,
                 // .DataView => .kJSTypedArrayTypeDataView,
                 else => .kJSTypedArrayTypeNone,
             };

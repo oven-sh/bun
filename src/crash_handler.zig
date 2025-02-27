@@ -22,6 +22,7 @@ const bun = @import("root").bun;
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
+const VLQ = SourceMap.VLQ;
 const windows = std.os.windows;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -1226,7 +1227,7 @@ const TraceString = struct {
         encodeTraceString(self, writer) catch return;
     }
 };
-const vlq = bun.sourcemap.vlq;
+
 fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     try writer.writeAll(reportBaseUrl());
     try writer.writeAll(
@@ -1249,7 +1250,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
         try StackLine.writeEncoded(line, writer);
     }
 
-    try writer.writeAll(vlq.VLQ.zero.slice());
+    try writer.writeAll(VLQ.zero.slice());
 
     // The following switch must be kept in sync with `bun.report`'s decoder implementation.
     switch (opts.reason) {

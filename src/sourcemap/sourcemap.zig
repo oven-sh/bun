@@ -1580,9 +1580,8 @@ pub const DebugIDFormatter = struct {
 const assert = bun.assert;
 
 pub const coverage = @import("./CodeCoverage.zig");
-pub const vlq = @import("./vlq.zig");
+pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
 
-const decodeVLQAssumeValid = vlq.decodeAssumeValid;
-const VLQ = vlq.VLQ;
-const decodeVLQ = vlq.decode;
+const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
+const decodeVLQ = VLQ.decode;

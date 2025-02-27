@@ -1,3 +1,24 @@
+//! Variable-length quantity encoding, limited to i32 as per source map spec.
+//! https://en.wikipedia.org/wiki/Variable-length_quantity
+//! https://sourcemaps.info/spec.html
+const VLQ = @This();
+
+/// Encoding min and max ints are "//////D" and "+/////D", respectively.
+/// These are 7 bytes long. This makes the `VLQ` struct 8 bytes.
+bytes: [vlq_max_in_bytes]u8,
+/// This is a u8 and not a u4 because non^2 integers are really slow in Zig.
+len: u8 = 0,
+
+pub inline fn slice(self: *const VLQ) []const u8 {
+    return self.bytes[0..self.len];
+}
+
+pub fn writeTo(self: VLQ, writer: anytype) !void {
+    try writer.writeAll(self.bytes[0..self.len]);
+}
+
+pub const zero = vlq_lookup_table[0];
+
 const vlq_lookup_table: [256]VLQ = brk: {
     var entries: [256]VLQ = undefined;
     var i: usize = 0;
@@ -9,27 +30,7 @@ const vlq_lookup_table: [256]VLQ = brk: {
     break :brk entries;
 };
 
-/// Source map VLQ values are limited to i32
-/// Encoding min and max ints are "//////D" and "+/////D", respectively.
-/// These are 7 bytes long. This makes the `VLQ` struct 8 bytes.
 const vlq_max_in_bytes = 7;
-pub const VLQ = struct {
-    bytes: [vlq_max_in_bytes]u8,
-    /// This is a u8 and not a u4 because non^2 integers are really slow in Zig.
-    len: fast_u4 = 0,
-
-    const fast_u4 = u8;
-
-    pub inline fn slice(self: *const VLQ) []const u8 {
-        return self.bytes[0..self.len];
-    }
-
-    pub fn writeTo(self: VLQ, writer: anytype) !void {
-        try writer.writeAll(self.bytes[0..self.len]);
-    }
-
-    pub const zero = vlq_lookup_table[0];
-};
 
 pub fn encode(value: i32) VLQ {
     return if (value >= 0 and value <= 255)
@@ -159,7 +160,7 @@ pub fn decodeAssumeValid(encoded: []const u8, start: usize) VLQResult {
         }
     }
 
-    return VLQResult{ .start = start + encoded_.len, .value = 0 };
+    return .{ .start = start + encoded_.len, .value = 0 };
 }
 
 const std = @import("std");

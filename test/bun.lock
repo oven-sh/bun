@@ -6,7 +6,7 @@
       "dependencies": {
         "@azure/service-bus": "7.9.4",
         "@duckdb/node-api": "1.1.3-alpha.7",
-        "@electric-sql/pglite": "0.2.16",
+        "@electric-sql/pglite": "0.2.17",
         "@grpc/grpc-js": "1.12.0",
         "@grpc/proto-loader": "0.7.10",
         "@happy-dom/global-registrator": "17.0.3",
@@ -52,6 +52,7 @@
         "nodemailer": "6.9.3",
         "pg": "8.11.1",
         "pg-connection-string": "2.6.1",
+        "pg-gateway": "^0.3.0-beta.4",
         "pino": "9.4.0",
         "pino-pretty": "11.2.2",
         "postgres": "3.3.5",
@@ -171,7 +172,7 @@
 
     "@duckdb/node-bindings-win32-x64": ["@duckdb/node-bindings-win32-x64@1.1.3-alpha.7", "", { "os": "win32", "cpu": "x64" }, "sha512-5OqjpYRFdQATbniL0o8gF8Z92bBuINlXOve0o+qgM6W+nlIRp/cUHk6vWwYySZnF0AIHZ5JG7mngzJOLmA/kPQ=="],
 
-    "@electric-sql/pglite": ["@electric-sql/pglite@0.2.16", "", {}, "sha512-dCSHpoOKuTxecaYhWDRp2yFTN3XWcMPMrBVl5yOR8VZEUprz4+R3iuU7BipmlsqBnBDO/6l9H/C2ZwJdunkWyw=="],
+    "@electric-sql/pglite": ["@electric-sql/pglite@0.2.17", "", {}, "sha512-qEpKRT2oUaWDH6tjRxLHjdzMqRUGYDnGZlKrnL4dJ77JVMcP2Hpo3NYnOSPKdZdeec57B6QPprCUFg0picx5Pw=="],
 
     "@emnapi/runtime": ["@emnapi/runtime@0.44.0", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-ZX/etZEZw8DR7zAB1eVQT40lNo0jeqpb6dCgOvctB6FIQ5PoXfMuNY8+ayQfu8tNQbAB8gQWSSJupR8NxeiZXw=="],
 
@@ -1664,6 +1665,8 @@
     "pg-cloudflare": ["pg-cloudflare@1.1.1", "", {}, "sha512-xWPagP/4B6BgFO+EKz3JONXv3YDgvkbVrGw2mTo3D6tVDQRh1e7cqVGvyR3BE+eQgAvx1XhW/iEASj4/jCWl3Q=="],
 
     "pg-connection-string": ["pg-connection-string@2.6.1", "", {}, "sha512-w6ZzNu6oMmIzEAYVw+RLK0+nqHPt8K3ZnknKi+g48Ak2pr3dtljJW3o+D/n2zzCG07Zoe9VOX3aiKpj+BN0pjg=="],
+
+    "pg-gateway": ["pg-gateway@0.3.0-beta.4", "", {}, "sha512-CTjsM7Z+0Nx2/dyZ6r8zRsc3f9FScoD5UAOlfUx1Fdv/JOIWvRbF7gou6l6vP+uypXQVoYPgw8xZDXgMGvBa4Q=="],
 
     "pg-int8": ["pg-int8@1.0.1", "", {}, "sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw=="],
 

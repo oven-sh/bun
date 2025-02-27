@@ -100,6 +100,34 @@ var Response: {
   error(): Response;
 };
 
+/**
+ * BunFetchRequestInit represents additional options that Bun supports in `fetch()` only.
+ *
+ * Bun extends the `fetch` API with some additional options, except
+ * this interface is not quite a `RequestInit`, because they won't work
+ * if passed to `new Request()`. This is why it's a separate type.
+ */
+interface BunFetchRequestInit extends RequestInit {
+  /**
+   * Override the default TLS options
+   */
+  tls?: {
+    /**
+     * Whether to reject unauthorized certificates
+     * @default true
+     */
+    rejectUnauthorized?: boolean | undefined;
+
+    /**
+     * Custom function to check the server identity
+     * @param hostname - The hostname of the server
+     * @param cert - The certificate of the server
+     * @returns An error if the server is unauthorized, otherwise undefined
+     */
+    checkServerIdentity?: (hostname: string, cert: { subject: { CN: string } }) => Error | undefined | void;
+  };
+}
+
 var fetch: {
   /**
    * Send a HTTP(s) request
@@ -109,7 +137,7 @@ var fetch: {
    *
    * @returns A promise that resolves to {@link Response} object.
    */
-  (request: Request, init?: RequestInit): Promise<Response>;
+  (request: Request, init?: BunFetchRequestInit): Promise<Response>;
 
   /**
    * Send a HTTP(s) request
@@ -119,9 +147,9 @@ var fetch: {
    *
    * @returns A promise that resolves to {@link Response} object.
    */
-  (url: string | URL | Request, init?: RequestInit): Promise<Response>;
+  (url: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
-  (input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response>;
+  (input: string | URL | globalThis.Request, init?: BunFetchRequestInit): Promise<Response>;
 
   /**
    * Start the DNS resolution, TCP connection, and TLS handshake for a request

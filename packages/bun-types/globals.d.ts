@@ -684,14 +684,6 @@ declare global {
     proxy?: string;
 
     /**
-     * Override the default TLS options
-     */
-    tls?: {
-      rejectUnauthorized?: boolean | undefined; // Defaults to true
-      checkServerIdentity?: any; // TODO: change `any` to `checkServerIdentity`
-    };
-
-    /**
      * Override the default S3 options
      */
     s3?: import("bun").S3Options;

@@ -38,6 +38,11 @@ const r = new Request("", {
 });
 
 await fetch(r);
+await fetch("", {
+  tls: {
+    rejectUnauthorized: false,
+  },
+});
 
 r.method;
 r.body;
@@ -51,6 +56,15 @@ headers.toJSON();
 
 const req1 = new Request("", {
   body: "",
+});
+
+fetch("", {
+  tls: {
+    rejectUnauthorized: false,
+    checkServerIdentity: () => {
+      return;
+    },
+  },
 });
 
 req1.body;
@@ -72,6 +86,19 @@ const body = await fetch(req1);
 await body.text();
 
 fetch.preconnect(new URL(""));
+
+Bun.serve({
+  port: 3000,
+  fetch: () => new Response("ok"),
+
+  key: Bun.file(""),
+  cert: Bun.file(""),
+
+  tls: {
+    key: Bun.file(""),
+    cert: Bun.file(""),
+  },
+});
 
 URL.canParse;
 URL.createObjectURL;
@@ -143,3 +170,16 @@ serve({
 import { s3 } from "bun";
 
 s3.file("");
+
+declare const key: string;
+declare const cert: string;
+
+Bun.serve({
+  fetch: () => new Response("ok"),
+  key,
+  cert,
+  tls: {
+    key,
+    cert,
+  },
+});

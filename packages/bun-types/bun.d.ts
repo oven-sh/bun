@@ -91,6 +91,7 @@ declare module "bun" {
   import type { Stats } from "node:fs";
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
 
+  type DistributedOmit<T, K extends keyof T> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
 
   interface Env {
@@ -4040,11 +4041,129 @@ declare module "bun" {
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
   }
 
-  interface TLSServeOptions extends ServeOptions, TLSOptions {
+  // Note for contributors: TLSOptionsAsDeprecated should be considered immutable
+  // and new TLS option keys should only be supported on the `.tls` property (which comes
+  // from the TLSOptions interface above).
+  /**
+   * This exists because Bun.serve() extends the TLSOptions object, but
+   * they're now considered deprecated. You should be passing the
+   * options on `.tls` instead.
+   *
+   * @example
+   * ```ts
+   * //// OLD ////
+   * Bun.serve({
+   *   fetch: () => new Response("Hello World"),
+   *   passphrase: "secret",
+   * });
+   *
+   * //// NEW ////
+   * Bun.serve({
+   *   fetch: () => new Response("Hello World"),
+   *   tls: {
+   *     passphrase: "secret",
+   *   },
+   * });
+   * ```
+   */
+  interface TLSOptionsAsDeprecated {
+    /**
+     * Passphrase for the TLS key
+     *
+     * @deprecated Use `.tls.passphrase` instead
+     */
+    passphrase?: string;
+
+    /**
+     * File path to a .pem file custom Diffie Helman parameters
+     *
+     * @deprecated Use `.tls.dhParamsFile` instead
+     */
+    dhParamsFile?: string;
+
+    /**
+     * Explicitly set a server name
+     *
+     * @deprecated Use `.tls.serverName` instead
+     */
+    serverName?: string;
+
+    /**
+     * This sets `OPENSSL_RELEASE_BUFFERS` to 1.
+     * It reduces overall performance but saves some memory.
+     * @default false
+     *
+     * @deprecated Use `.tls.lowMemoryMode` instead
+     */
+    lowMemoryMode?: boolean;
+
+    /**
+     * If set to `false`, any certificate is accepted.
+     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     *
+     * @deprecated Use `.tls.rejectUnauthorized` instead
+     */
+    rejectUnauthorized?: boolean;
+
+    /**
+     * If set to `true`, the server will request a client certificate.
+     *
+     * Default is `false`.
+     *
+     * @deprecated Use `.tls.requestCert` instead
+     */
+    requestCert?: boolean;
+
+    /**
+     * Optionally override the trusted CA certificates. Default is to trust
+     * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
+     * replaced when CAs are explicitly specified using this option.
+     *
+     * @deprecated Use `.tls.ca` instead
+     */
+    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     *  Cert chains in PEM format. One cert chain should be provided per
+     *  private key. Each cert chain should consist of the PEM formatted
+     *  certificate for a provided private key, followed by the PEM
+     *  formatted intermediate certificates (if any), in order, and not
+     *  including the root CA (the root CA must be pre-known to the peer,
+     *  see ca). When providing multiple cert chains, they do not have to
+     *  be in the same order as their private keys in key. If the
+     *  intermediate certificates are not provided, the peer will not be
+     *  able to validate the certificate, and the handshake will fail.
+     *
+     * @deprecated Use `.tls.cert` instead
+     */
+    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     * Private keys in PEM format. PEM allows the option of private keys
+     * being encrypted. Encrypted keys will be decrypted with
+     * options.passphrase. Multiple keys using different algorithms can be
+     * provided either as an array of unencrypted key strings or buffers,
+     * or an array of objects in the form {pem: <string|buffer>[,
+     * passphrase: <string>]}. The object form can only occur in an array.
+     * object.passphrase is optional. Encrypted keys will be decrypted with
+     * object.passphrase if provided, or options.passphrase if it is not.
+     *
+     * @deprecated Use `.tls.key` instead
+     */
+    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     * Optionally affect the OpenSSL protocol behavior, which is not
+     * usually necessary. This should be used carefully if at all! Value is
+     * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
+     *
+     * @deprecated `Use .tls.secureOptions` instead
+     */
+    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+  }
+
+  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
     tls?: TLSOptions | TLSOptions[];
   }
 
-  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
+  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
     tls?: TLSOptions | TLSOptions[];
   }
 
@@ -4501,18 +4620,18 @@ declare module "bun" {
     */
   function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
     options: (
-      | (Omit<ServeOptions, "fetch"> & {
+      | (DistributedOmit<Serve, "fetch"> & {
           routes: R;
           fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
         })
-      | (Omit<ServeOptions, "routes"> & {
+      | (DistributedOmit<Serve, "routes"> & {
           routes?: never;
           fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
         })
       | WebSocketServeOptions<T>
     ) & {
       /**
-       * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
+       * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
        */
       static?: R;
     },
@@ -5549,7 +5668,11 @@ declare module "bun" {
     onStart(callback: OnStartCallback): this;
     onBeforeParse(
       constraints: PluginConstraints,
-      callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
+      callback: {
+        napiModule: unknown;
+        symbol: string;
+        external?: unknown | undefined;
+      },
     ): this;
     /**
      * Register a callback to load imports with a specific import specifier

@@ -28,7 +28,7 @@
     "packages/bun-types": {
       "name": "bun-types",
       "dependencies": {
-        "@types/node": "^22.13.5",
+        "@types/node": "*",
         "@types/ws": "~8.5.10",
       },
       "devDependencies": {

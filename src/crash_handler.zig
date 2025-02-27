@@ -1185,12 +1185,12 @@ const StackLine = struct {
         };
 
         if (known.object) |object| {
-            try SourceMap.encodeVLQ(1).writeTo(writer);
-            try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
+            try vlq.encode(1).writeTo(writer);
+            try vlq.encode(@intCast(object.len)).writeTo(writer);
             try writer.writeAll(object);
         }
 
-        try SourceMap.encodeVLQ(known.address).writeTo(writer);
+        try vlq.encode(known.address).writeTo(writer);
     }
 
     pub fn format(line: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -1226,7 +1226,7 @@ const TraceString = struct {
         encodeTraceString(self, writer) catch return;
     }
 };
-
+const vlq = bun.sourcemap.vlq;
 fn encodeTraceString(opts: TraceString, writer: anytype) !void {
     try writer.writeAll(reportBaseUrl());
     try writer.writeAll(
@@ -1249,10 +1249,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
         try StackLine.writeEncoded(line, writer);
     }
 
-    try writer.writeAll(comptime zero_vlq: {
-        const vlq = SourceMap.encodeVLQ(0);
-        break :zero_vlq vlq.bytes[0..vlq.len];
-    });
+    try writer.writeAll(vlq.VLQ.zero.slice());
 
     // The following switch must be kept in sync with `bun.report`'s decoder implementation.
     switch (opts.reason) {
@@ -1320,8 +1317,8 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 }
 
 fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
-    const first = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
-    const second = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
+    const first = vlq.encode(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
+    const second = vlq.encode(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
     try first.writeTo(writer);
     try second.writeTo(writer);
 }

@@ -43,8 +43,6 @@ else if (Environment.isDebug)
     std.fmt.comptimePrint(version_string ++ "-debug+{s}", .{Environment.git_sha_short})
 else if (Environment.is_canary)
     std.fmt.comptimePrint(version_string ++ "-canary.{d}+{s}", .{ Environment.canary_revision, Environment.git_sha_short })
-else if (Environment.isTest)
-    std.fmt.comptimePrint(version_string ++ "-test+{s}", .{Environment.git_sha_short})
 else
     std.fmt.comptimePrint(version_string ++ "+{s}", .{Environment.git_sha_short});
 
@@ -68,7 +66,6 @@ else
     "unknown";
 
 pub inline fn getStartTime() i128 {
-    if (Environment.isTest) return 0;
     return bun.start_time;
 }
 
@@ -92,6 +89,10 @@ export fn Bun__atexit(function: ExitFn) void {
     if (std.mem.indexOfScalar(ExitFn, on_exit_callbacks.items, function) == null) {
         on_exit_callbacks.append(bun.default_allocator, function) catch {};
     }
+}
+
+pub fn addExitCallback(function: ExitFn) void {
+    Bun__atexit(function);
 }
 
 pub fn runExitCallbacks() void {
@@ -130,7 +131,20 @@ pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     Output.flush();
     Output.Source.Stdio.restore();
 
+    // clear segfault handler
     bun.crash_handler.resetSegfaultHandler();
+
+    // clear signal handler
+    if (bun.Environment.os != .windows) {
+        var sa: std.c.Sigaction = .{
+            .handler = .{ .handler = std.posix.SIG.DFL },
+            .mask = std.posix.empty_sigset,
+            .flags = std.posix.SA.RESETHAND,
+        };
+        _ = std.c.sigaction(@intFromEnum(sig), &sa, null);
+    }
+
+    // kill self
     _ = std.c.raise(@intFromEnum(sig));
     std.c.abort();
 }
@@ -160,13 +174,13 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
 }
 
 pub fn notimpl() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover
 pub fn crash() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Global.exit(1);
 }
 

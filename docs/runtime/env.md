@@ -15,9 +15,39 @@ BAR=world
 
 Variables can also be set via the command line.
 
-```sh
+{% codetabs %}
+
+```sh#Linux/macOS
 $ FOO=helloworld bun run dev
 ```
+
+```sh#Windows
+# Using CMD
+$ set FOO=helloworld && bun run dev
+
+# Using PowerShell
+$ $env:FOO="helloworld"; bun run dev
+```
+
+{% /codetabs %}
+
+{% details summary="Cross-platform solution with Windows" %}
+
+For a cross-platform solution, you can use [bun shell](https://bun.sh/docs/runtime/shell). For example, the `bun exec` command.
+
+```sh
+$ bun exec 'FOO=helloworld bun run dev'
+```
+
+On Windows, `package.json` scripts called with `bun run` will automatically use the **bun shell**, making the following also cross-platform.
+
+```json#package.json
+"scripts": {
+  "dev": "NODE_ENV=development bun --watch app.ts",
+},
+```
+
+{% /details %}
 
 Or programmatically by assigning a property to `process.env`.
 
@@ -30,9 +60,9 @@ process.env.FOO = "hello";
 Bun supports `--env-file` to override which specific `.env` file to load. You can use `--env-file` when running scripts in bun's runtime, or when running package.json scripts.
 
 ```sh
-bun --env-file=.env.1 src/index.ts
+$ bun --env-file=.env.1 src/index.ts
 
-bun --env-file=.env.abc --env-file=.env.def run build
+$ bun --env-file=.env.abc --env-file=.env.def run build
 ```
 
 ### Quotation marks

@@ -50,9 +50,12 @@ test("error gc test #3", () => {
 // - The test failure message gets a non-sensical error
 test("error gc test #4", () => {
   const tmp = tmpdirSync();
-  for (let i = 0; i < 1000; i++) {
+  const base = Buffer.from(join(tmp, "does", "not", "exist").repeat(10));
+
+  function iterate() {
     // Use a long-enough string for it to be obvious if we leak memory
-    let path = join(tmp, join("does", "not", "exist").repeat(10));
+    // Use .toString() on the Buffer to ensure we clone the string every time.
+    let path = base.toString();
     try {
       readFileSync(path);
       throw new Error("unreachable");
@@ -61,8 +64,14 @@ test("error gc test #4", () => {
         throw e;
       }
 
-      const inspected = Bun.inspect(e);
+      path = path.replaceAll("\\", "/");
+      if (e.path) {
+        e.path = e.path.replaceAll("\\", "/");
+      }
+
+      let inspected = Bun.inspect(e);
       Bun.gc(true);
+      inspected = inspected.replaceAll("\\", "/");
 
       // Deliberately avoid using .toContain() directly to avoid
       // BunString shenanigins.
@@ -79,5 +88,9 @@ test("error gc test #4", () => {
     } finally {
       Bun.gc(true);
     }
+  }
+
+  for (let i = 0; i < 1000; i++) {
+    iterate();
   }
 });

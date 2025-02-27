@@ -16,7 +16,7 @@
   ],
   "homepage": "https://bun.sh",
   "dependencies": {
-    "@types/node": "~20.12.8",
+    "@types/node": "*",
     "@types/ws": "~8.5.10"
   },
   "devDependencies": {
@@ -27,7 +27,7 @@
   },
   "scripts": {
     "prebuild": "echo $(pwd)",
-    "copy-docs": "rm -rf docs && cp -r ../../docs/ ./docs",
+    "copy-docs": "rm -rf docs && cp -rL ../../docs/ ./docs && find ./docs -type f -name '*.md' -exec sed -i 's/\\$BUN_LATEST_VERSION/'\"${BUN_VERSION#bun-v:-1.0.0}\"'/g' {} +",
     "build": "bun run copy-docs && bun scripts/build.ts && bun run fmt",
     "test": "tsc",
     "fmt": "echo $(which biome) && biome format --write ."

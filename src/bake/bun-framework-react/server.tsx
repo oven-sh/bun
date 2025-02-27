@@ -13,11 +13,11 @@ function assertReactComponent(Component: any) {
 
 // This function converts the route information into a React component tree.
 function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
-  let route = component(meta.pageModule);
+  let route = component(meta.pageModule, meta.params);
   for (const layout of meta.layouts) {
     const Layout = layout.default;
     if (import.meta.env.DEV) assertReactComponent(Layout);
-    route = <Layout>{route}</Layout>;
+    route = <Layout params={meta.params}>{route}</Layout>;
   }
 
   return (
@@ -35,7 +35,7 @@ function getPage(meta: Bake.RouteMetadata, styles: readonly string[]) {
   );
 }
 
-function component(mod: any) {
+function component(mod: any, params: Record<string, string> | null) {
   const Page = mod.default;
   let props = {};
   if (import.meta.env.DEV) assertReactComponent(Page);
@@ -49,7 +49,7 @@ function component(mod: any) {
     props = method();
   }
 
-  return <Page {...props} />;
+  return <Page params={params} {...props} />;
 }
 
 // `server.tsx` exports a function to be used for handling user routes. It takes
@@ -92,8 +92,8 @@ export async function render(request: Request, meta: Bake.RouteMetadata): Promis
     filterStackFrame: () => false,
   }));
   pipe(rscPayload);
- 
-  rscPayload.on('error', err => {
+
+  rscPayload.on("error", err => {
     if (signal.aborted) return;
     console.error(err);
   });
@@ -151,6 +151,28 @@ export async function prerender(meta: Bake.RouteMetadata) {
     // pre-rendered page instead of a fully rendered route. Bun might also
     // expose caching options here.
   };
+}
+
+export async function getParams(meta: Bake.ParamsMetadata): Promise<Bake.GetParamIterator> {
+  const getStaticPaths = meta.pageModule.getStaticPaths;
+  if (getStaticPaths == null) {
+    if (import.meta.env.STATIC) {
+      throw new Error(
+        "In files with dynamic params, a `getStaticPaths` function must be exported to tell Bun what files to render.",
+      );
+    } else {
+      return { pages: [], exhaustive: false };
+    }
+  }
+  const result = await meta.pageModule.getStaticPaths();
+  // Remap the Next.js pagess paradigm to Bun's format
+  if (result.paths) {
+    return {
+      pages: result.paths.map(path => path.params),
+    };
+  }
+  // Allow returning the array directly
+  return result;
 }
 
 // When a dynamic build uses static assets, Bun can map content types in the

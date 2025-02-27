@@ -62,7 +62,9 @@ private:
 
     // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
     JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
-    bool m_isWasmFrame;
+    bool m_isWasmFrame = false;
+
+    bool m_isFunctionOrEval = false;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -85,6 +87,8 @@ public:
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
     JSC::JSString* typeName();
+
+    bool isFunctionOrEval() const { return m_isFunctionOrEval; }
 
     bool hasBytecodeIndex() const { return (m_bytecodeIndex.offset() != UINT_MAX) && !m_isWasmFrame; }
     JSC::BytecodeIndex bytecodeIndex() const
@@ -213,4 +217,28 @@ private:
 
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
+
+String sourceURL(const JSC::SourceOrigin& origin);
+String sourceURL(JSC::SourceProvider* sourceProvider);
+String sourceURL(const JSC::SourceCode& sourceCode);
+String sourceURL(JSC::CodeBlock* codeBlock);
+String sourceURL(JSC::CodeBlock& codeBlock);
+String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
+String sourceURL(JSC::StackVisitor& visitor);
+String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
+
+class FunctionNameFlags {
+public:
+    static constexpr unsigned None = 0;
+    static constexpr unsigned Eval = 1 << 0;
+    static constexpr unsigned Constructor = 1 << 1;
+    static constexpr unsigned Builtin = 1 << 2;
+    static constexpr unsigned Function = 1 << 3;
+    static constexpr unsigned AddNewKeyword = 1 << 4;
+};
+
+String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
+String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, bool isInFinalizer, unsigned int* flags);
+
 }

@@ -17,6 +17,14 @@ export default [
         fn: "ping",
         length: 0,
       },
+      altsvc: {
+        fn: "altsvc",
+        length: 3,
+      },
+      origin: {
+        fn: "origin",
+        length: 1,
+      },
       goaway: {
         fn: "goaway",
         length: 3,

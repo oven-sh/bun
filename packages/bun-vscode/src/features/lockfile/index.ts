@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import * as vscode from "vscode";
 import { styleLockfile } from "./lockfile.style";
+import { getConfig } from "../../extension";
 
 export type BunLockfile = vscode.CustomDocument & {
   readonly preview: string;
@@ -36,6 +37,11 @@ export class BunLockfileEditorProvider implements vscode.CustomReadonlyEditorPro
 }
 
 function renderLockfile({ webview }: vscode.WebviewPanel, preview: string, extensionUri: vscode.Uri): void {
+  if (!getConfig("bunlockb.enabled")) {
+    webview.html = "<code>bun.bunlockb</code> config option is disabled."
+    return 
+  }
+
   const styleVSCodeUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, "assets", "vscode.css"));
   const lockfileContent = styleLockfile(preview);
 

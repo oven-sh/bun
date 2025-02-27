@@ -49,7 +49,7 @@ Next, add these preload scripts to your `bunfig.toml` (you can also have everyth
 
 ```toml#bunfig.toml
 [test]
-preload = ["happydom.ts", "testing-library.ts"]
+preload = ["./happydom.ts", "./testing-library.ts"]
 ```
 ---
 

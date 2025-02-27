@@ -57,7 +57,10 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
     std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
-
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSX509Certificate;
 #include "ZigGeneratedClasses+DOMIsoSubspaces.h"
     /*-- BUN --*/
 
@@ -920,6 +923,8 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
+    std::unique_ptr<IsoSubspace> m_subspaceForServerRouteList;
+    std::unique_ptr<IsoSubspace> m_subspaceForBunRequest;
 };
 } // namespace WebCore
 

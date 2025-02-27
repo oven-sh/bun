@@ -113,7 +113,7 @@ using JSWorkerDOMConstructor = JSDOMConstructor<JSWorker>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSWorkerDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -140,12 +140,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
         if (auto miniModeValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "smol"_s))) {
             options.bun.mini = miniModeValue.toBoolean(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         if (auto ref = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "ref"_s))) {
             options.bun.unref = !ref.toBoolean(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         if (auto preloadModulesValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "preload"_s))) {
@@ -382,7 +380,7 @@ JSValue JSWorker::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 
 JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSWorkerPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

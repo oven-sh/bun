@@ -3,6 +3,7 @@ import { define } from "../../codegen/class-definitions";
 function generate(name) {
   return define({
     name,
+    memoryCost: true,
     proto: {
       fetch: {
         fn: "doFetch",
@@ -82,6 +83,7 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
+    values: ["routeList"],
   });
 }
 export default [
@@ -93,6 +95,7 @@ export default [
   define({
     name: "ServerWebSocket",
     JSType: "0b11101110",
+    memoryCost: true,
     proto: {
       send: {
         fn: "send",
@@ -202,6 +205,19 @@ export default [
     },
     finalize: true,
     construct: true,
+    klass: {},
+  }),
+
+  define({
+    name: "HTMLBundle",
+    noConstructor: true,
+    finalize: true,
+    proto: {
+      index: {
+        getter: "getIndex",
+        cache: true,
+      },
+    },
     klass: {},
   }),
 ];

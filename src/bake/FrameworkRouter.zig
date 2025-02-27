@@ -133,7 +133,17 @@ pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !Framewo
 
 pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
     fr.routes.deinit(allocator);
+    fr.static_routes.deinit(allocator);
+    fr.dynamic_routes.deinit(allocator);
     allocator.free(fr.types);
+}
+
+pub fn memoryCost(fr: *FrameworkRouter) usize {
+    var cost: usize = @sizeOf(FrameworkRouter);
+    cost += fr.routes.capacity * @sizeOf(Route);
+    cost += StaticRouteMap.DataList.capacityInBytes(fr.static_routes.entries.capacity);
+    cost += DynamicRouteMap.DataList.capacityInBytes(fr.dynamic_routes.entries.capacity);
+    return cost;
 }
 
 pub fn scanAll(fr: *FrameworkRouter, allocator: Allocator, r: *Resolver, ctx: anytype) !void {
@@ -331,7 +341,7 @@ pub const Part = union(enum(u3)) {
     group: []const u8,
 
     const SerializedHeader = packed struct(u32) {
-        tag: @typeInfo(Part).Union.tag_type.?,
+        tag: @typeInfo(Part).@"union".tag_type.?,
         len: u29,
     };
 
@@ -413,7 +423,7 @@ pub const Style = union(enum) {
 
     pub fn fromJS(value: JSValue, global: *JSC.JSGlobalObject) !Style {
         if (value.isString()) {
-            const bun_string = try value.toBunString2(global);
+            const bun_string = try value.toBunString(global);
             var sfa = std.heap.stackFallback(4096, bun.default_allocator);
             const utf8 = bun_string.toUTF8(sfa.get());
             defer utf8.deinit();
@@ -691,7 +701,7 @@ pub fn insert(
                 .type = ty,
                 .parent = route_index.toOptional(),
                 .first_child = .none,
-                .prev_sibling = Route.Index.Optional.init(next),
+                .prev_sibling = .init(next),
                 .next_sibling = .none,
             });
 
@@ -709,7 +719,7 @@ pub fn insert(
                     .type = ty,
                     .parent = new_route_index.toOptional(),
                     .first_child = .none,
-                    .prev_sibling = Route.Index.Optional.init(next),
+                    .prev_sibling = .init(next),
                     .next_sibling = .none,
                 });
                 fr.routePtr(new_route_index).first_child = newer_route_index.toOptional();
@@ -1071,7 +1081,8 @@ fn scanInner(
 /// creation. A production-grade JS api would be able to re-use objects.
 pub const JSFrameworkRouter = struct {
     pub const codegen = JSC.Codegen.JSFrameworkFileSystemRouter;
-    pub usingnamespace codegen;
+    pub const toJS = codegen.toJS;
+    pub const fromJS = codegen.fromJS;
 
     files: std.ArrayListUnmanaged(bun.String),
     router: FrameworkRouter,
@@ -1084,10 +1095,10 @@ pub const JSFrameworkRouter = struct {
     const validators = bun.JSC.Node.validators;
 
     pub fn getBindings(global: *JSC.JSGlobalObject) JSC.JSValue {
-        return global.createObjectFromStruct(.{
+        return JSC.JSObject.create(.{
             .parseRoutePattern = global.createHostFunction("parseRoutePattern", parseRoutePattern, 1),
             .FrameworkRouter = codegen.getConstructor(global),
-        }).toJS();
+        }, global).toJS();
     }
 
     pub fn constructor(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) !*JSFrameworkRouter {
@@ -1129,7 +1140,7 @@ pub const JSFrameworkRouter = struct {
         try jsfr.router.scan(
             bun.default_allocator,
             Type.Index.init(0),
-            &global.bunVM().bundler.resolver,
+            &global.bunVM().transpiler.resolver,
             InsertionContext.wrap(JSFrameworkRouter, jsfr),
         );
         if (jsfr.stored_parse_errors.items.len > 0) {
@@ -1144,7 +1155,7 @@ pub const JSFrameworkRouter = struct {
                     }),
                 );
             }
-            return global.throwValue2(global.createAggregateErrorWithArray(
+            return global.throwValue(global.createAggregateErrorWithArray(
                 bun.String.static("Errors scanning routes"),
                 arr,
             ));
@@ -1155,7 +1166,7 @@ pub const JSFrameworkRouter = struct {
 
     pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const path_js = callframe.argumentsAsArray(1)[0];
-        const path_str = try path_js.toBunString2(global);
+        const path_str = try path_js.toBunString(global);
         defer path_str.deref();
         const path_slice = path_str.toSlice(bun.default_allocator);
         defer path_slice.deinit();
@@ -1165,7 +1176,7 @@ pub const JSFrameworkRouter = struct {
             var sfb = std.heap.stackFallback(4096, bun.default_allocator);
             const alloc = sfb.get();
 
-            return global.createObjectFromStruct(.{
+            return JSC.JSObject.create(.{
                 .params = if (params_out.params.len > 0) params: {
                     const obj = JSValue.createEmptyObject(global, params_out.params.len);
                     for (params_out.params.slice()) |param| {
@@ -1176,7 +1187,7 @@ pub const JSFrameworkRouter = struct {
                     break :params obj;
                 } else .null,
                 .route = try jsfr.routeToJsonInverse(global, index, alloc),
-            }).toJS();
+            }, global).toJS();
         }
 
         return .null;
@@ -1193,7 +1204,7 @@ pub const JSFrameworkRouter = struct {
 
     fn routeToJson(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, route_index: Route.Index, allocator: Allocator) !JSValue {
         const route = jsfr.router.routePtr(route_index);
-        return global.createObjectFromStruct(.{
+        return JSC.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
             .page = jsfr.fileIdToJS(global, route.file_page),
             .layout = jsfr.fileIdToJS(global, route.file_layout),
@@ -1212,12 +1223,12 @@ pub const JSFrameworkRouter = struct {
                 }
                 break :brk arr;
             },
-        }).toJS();
+        }, global).toJS();
     }
 
     fn routeToJsonInverse(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, route_index: Route.Index, allocator: Allocator) !JSValue {
         const route = jsfr.router.routePtr(route_index);
-        return global.createObjectFromStruct(.{
+        return JSC.JSObject.create(.{
             .part = try partToJS(global, route.part, allocator),
             .page = jsfr.fileIdToJS(global, route.file_page),
             .layout = jsfr.fileIdToJS(global, route.file_layout),
@@ -1226,13 +1237,12 @@ pub const JSFrameworkRouter = struct {
                 try routeToJsonInverse(jsfr, global, parent, allocator)
             else
                 .null,
-        }).toJS();
+        }, global).toJS();
     }
 
     pub fn finalize(this: *JSFrameworkRouter) void {
         this.files.deinit(bun.default_allocator);
         this.router.deinit(bun.default_allocator);
-        bun.default_allocator.free(this.router.types);
         for (this.stored_parse_errors.items) |i| bun.default_allocator.free(i.rel_path);
         this.stored_parse_errors.deinit(bun.default_allocator);
         bun.destroy(this);
@@ -1247,7 +1257,7 @@ pub const JSFrameworkRouter = struct {
             return global.throwInvalidArguments("parseRoutePattern takes two arguments", .{});
 
         const style_js, const filepath_js = frame.argumentsAsArray(2);
-        const filepath = try filepath_js.toSlice2(global, alloc);
+        const filepath = try filepath_js.toSlice(global, alloc);
         defer filepath.deinit();
         var style = try Style.fromJS(style_js, global);
         errdefer style.deinit();
@@ -1255,8 +1265,7 @@ pub const JSFrameworkRouter = struct {
         var log = TinyLog.empty;
         const parsed = style.parse(filepath.slice(), std.fs.path.extension(filepath.slice()), &log, true, alloc) catch |err| switch (err) {
             error.InvalidRoutePattern => {
-                global.throw("{s} ({d}:{d})", .{ log.msg.slice(), log.cursor_at, log.cursor_len });
-                return error.JSError;
+                return global.throw("{s} ({d}:{d})", .{ log.msg.slice(), log.cursor_at, log.cursor_len });
             },
             else => |e| return e,
         } orelse

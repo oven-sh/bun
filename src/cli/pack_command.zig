@@ -15,7 +15,7 @@ const stringZ = bun.stringZ;
 const libarchive = @import("../libarchive/libarchive.zig").lib;
 const Archive = libarchive.Archive;
 const Expr = bun.js_parser.Expr;
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 const File = bun.sys.File;
 const FD = bun.FD;
 const strings = bun.strings;
@@ -71,7 +71,7 @@ pub const PackCommand = struct {
             if (log_level != .silent) {
                 Output.prettyln("\n<r><b><blue>Total files<r>: {d}", .{stats.total_files});
                 if (maybe_shasum) |shasum| {
-                    Output.prettyln("<b><blue>Shasum<r>: {s}", .{bun.fmt.bytesToHex(shasum, .lower)});
+                    Output.prettyln("<b><blue>Shasum<r>: {s}", .{std.fmt.bytesToHex(shasum, .lower)});
                 }
                 if (maybe_integrity) |integrity| {
                     Output.prettyln("<b><blue>Integrity<r>: {}", .{bun.fmt.integrity(integrity, .short)});
@@ -102,11 +102,10 @@ pub const PackCommand = struct {
         Output.flush();
 
         var lockfile: Lockfile = undefined;
-        const load_from_disk_result = lockfile.loadFromDisk(
+        const load_from_disk_result = lockfile.loadFromCwd(
             manager,
             manager.allocator,
             manager.log,
-            manager.options.lockfile_path,
             false,
         );
 
@@ -219,7 +218,7 @@ pub const PackCommand = struct {
 
     const package_prefix = "package/";
 
-    const root_default_ignore_patterns = [_][]const u32{
+    const root_default_ignore_patterns = [_][]const u8{
         &.{ 112, 97, 99, 107, 97, 103, 101, 45, 108, 111, 99, 107, 46, 106, 115, 111, 110 }, // package-lock.json
         &.{ 121, 97, 114, 110, 46, 108, 111, 99, 107 }, // yarn.lock
         &.{ 112, 110, 112, 109, 45, 108, 111, 99, 107, 46, 121, 97, 109, 108 }, // pnpm-lock.yaml
@@ -228,7 +227,7 @@ pub const PackCommand = struct {
     };
 
     // pattern, can override
-    const default_ignore_patterns = [_]struct { []const u32, bool }{
+    const default_ignore_patterns = [_]struct { []const u8, bool }{
         .{ &.{ '.', '*', '.', 's', 'w', 'p' }, true },
         .{ &.{ 46, 95, 42 }, true }, // "._*",
         .{ &.{ 46, 68, 83, 95, 83, 116, 111, 114, 101 }, true }, // ".DS_Store",
@@ -336,7 +335,7 @@ pub const PackCommand = struct {
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
                         const match_path = if (include.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.matchImpl(include.glob, match_path)) {
+                        switch (glob.walk.matchImpl(allocator, include.glob, match_path)) {
                             .match => included = true,
                             .negate_no_match => included = false,
 
@@ -433,9 +432,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -509,10 +508,10 @@ pub const PackCommand = struct {
         var bundled_pack_queue = PackQueue.init(ctx.allocator, {});
         if (ctx.bundled_deps.items.len == 0) return bundled_pack_queue;
 
-        const dir = root_dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
+        var dir = root_dir.openDirZ("node_modules", .{ .iterate = true }) catch |err| {
             switch (err) {
-                // ignore node_modules if it isn't a directory
-                error.NotDir => return bundled_pack_queue,
+                // ignore node_modules if it isn't a directory, or doesn't exist
+                error.NotDir, error.FileNotFound => return bundled_pack_queue,
 
                 else => {
                     Output.err(err, "failed to open \"node_modules\" to pack bundled dependencies", .{});
@@ -520,6 +519,7 @@ pub const PackCommand = struct {
                 },
             }
         };
+        defer dir.close();
 
         // A set of bundled dependency locations
         // - node_modules/is-even
@@ -536,34 +536,77 @@ pub const PackCommand = struct {
         while (iter.next().unwrap() catch null) |entry| {
             if (entry.kind != .directory) continue;
 
-            const entry_name = entry.name.slice();
+            const _entry_name = entry.name.slice();
 
-            for (ctx.bundled_deps.items) |*dep| {
-                bun.assertWithLocation(dep.from_root_package_json, @src());
-                if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+            if (strings.startsWithChar(_entry_name, '@')) {
+                const concat = try entrySubpath(ctx.allocator, "node_modules", _entry_name);
 
-                const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+                var scoped_dir = root_dir.openDirZ(concat, .{ .iterate = true }) catch {
+                    continue;
+                };
+                defer scoped_dir.close();
 
-                const dedupe_entry = try dedupe.getOrPut(entry_subpath);
-                if (dedupe_entry.found_existing) {
-                    // already got to it in `addBundledDep` below
+                var scoped_iter = DirIterator.iterate(scoped_dir, .u8);
+                while (scoped_iter.next().unwrap() catch null) |sub_entry| {
+                    const entry_name = try entrySubpath(ctx.allocator, _entry_name, sub_entry.name.slice());
+
+                    for (ctx.bundled_deps.items) |*dep| {
+                        bun.assertWithLocation(dep.from_root_package_json, @src());
+                        if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+
+                        const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+
+                        const dedupe_entry = try dedupe.getOrPut(entry_subpath);
+                        if (dedupe_entry.found_existing) {
+                            // already got to it in `addBundledDep` below
+                            dep.was_packed = true;
+                            break;
+                        }
+
+                        const subdir = openSubdir(dir, entry_name, entry_subpath);
+                        dep.was_packed = true;
+                        try addBundledDep(
+                            ctx,
+                            root_dir,
+                            .{ subdir, entry_subpath, 2 },
+                            &bundled_pack_queue,
+                            &dedupe,
+                            &additional_bundled_deps,
+                            log_level,
+                        );
+
+                        break;
+                    }
+                }
+            } else {
+                const entry_name = _entry_name;
+                for (ctx.bundled_deps.items) |*dep| {
+                    bun.assertWithLocation(dep.from_root_package_json, @src());
+                    if (!strings.eqlLong(entry_name, dep.name, true)) continue;
+
+                    const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
+
+                    const dedupe_entry = try dedupe.getOrPut(entry_subpath);
+                    if (dedupe_entry.found_existing) {
+                        // already got to it in `addBundledDep` below
+                        dep.was_packed = true;
+                        break;
+                    }
+
+                    const subdir = openSubdir(dir, entry_name, entry_subpath);
                     dep.was_packed = true;
+                    try addBundledDep(
+                        ctx,
+                        root_dir,
+                        .{ subdir, entry_subpath, 2 },
+                        &bundled_pack_queue,
+                        &dedupe,
+                        &additional_bundled_deps,
+                        log_level,
+                    );
+
                     break;
                 }
-
-                const subdir = openSubdir(dir, entry_name, entry_subpath);
-                dep.was_packed = true;
-                try addBundledDep(
-                    ctx,
-                    root_dir,
-                    .{ subdir, entry_subpath, 2 },
-                    &bundled_pack_queue,
-                    &dedupe,
-                    &additional_bundled_deps,
-                    log_level,
-                );
-
-                break;
             }
         }
 
@@ -696,9 +739,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, &.{})) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -794,9 +837,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -836,22 +879,47 @@ pub const PackCommand = struct {
         const bundled_deps = json.get(field) orelse return null;
 
         invalid_field: {
-            var iter = bundled_deps.asArray() orelse switch (bundled_deps.data) {
-                .e_array => return .{},
+            switch (bundled_deps.data) {
+                .e_array => {
+                    var iter = bundled_deps.asArray() orelse return .{};
+
+                    while (iter.next()) |bundled_dep_item| {
+                        const bundled_dep = try bundled_dep_item.asStringCloned(allocator) orelse break :invalid_field;
+                        try deps.append(allocator, .{
+                            .name = bundled_dep,
+                            .from_root_package_json = true,
+                        });
+                    }
+                },
+                .e_boolean => {
+                    const b = bundled_deps.asBool() orelse return .{};
+                    if (!b == true) return .{};
+
+                    if (json.get("dependencies")) |dependencies_expr| {
+                        switch (dependencies_expr.data) {
+                            .e_object => |dependencies| {
+                                for (dependencies.properties.slice()) |*dependency| {
+                                    if (dependency.key == null) continue;
+                                    if (dependency.value == null) continue;
+
+                                    const bundled_dep = try dependency.key.?.asStringCloned(allocator) orelse break :invalid_field;
+                                    try deps.append(allocator, .{
+                                        .name = bundled_dep,
+                                        .from_root_package_json = true,
+                                    });
+                                }
+                            },
+                            else => {},
+                        }
+                    }
+                },
                 else => break :invalid_field,
-            };
-            while (iter.next()) |bundled_dep_item| {
-                const bundled_dep = try bundled_dep_item.asStringCloned(allocator) orelse break :invalid_field;
-                try deps.append(allocator, .{
-                    .name = bundled_dep,
-                    .from_root_package_json = true,
-                });
             }
 
             return deps;
         }
 
-        Output.errGeneric("expected `{s}` to be an array of strings", .{field});
+        Output.errGeneric("expected `{s}` to be a boolean or an array of strings", .{field});
         Global.crash();
     }
 
@@ -953,7 +1021,7 @@ pub const PackCommand = struct {
         entry_subpath: stringZ,
         dir_depth: usize,
         ignores: []const IgnorePatterns,
-    ) ?struct { []const u32, IgnorePatterns.Kind } {
+    ) ?struct { []const u8, IgnorePatterns.Kind } {
         const entry_name = entry.name.slice();
 
         if (dir_depth == 1) {
@@ -977,7 +1045,7 @@ pub const PackCommand = struct {
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
-                switch (glob.matchImpl(pattern, entry_name)) {
+                switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
                     .match => {
                         // cannot be reversed
                         return .{
@@ -995,7 +1063,7 @@ pub const PackCommand = struct {
             }
         }
 
-        var ignore_pattern: []const u32 = &.{};
+        var ignore_pattern: []const u8 = &.{};
         var ignore_kind: IgnorePatterns.Kind = .@".npmignore";
 
         // then check default ignore list. None of the defaults contain slashes
@@ -1004,7 +1072,7 @@ pub const PackCommand = struct {
 
         for (default_ignore_patterns) |pattern_info| {
             const pattern, const can_override = pattern_info;
-            switch (glob.matchImpl(pattern, entry_name)) {
+            switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
                 .match => {
                     if (can_override) {
                         ignored = true;
@@ -1046,7 +1114,7 @@ pub const PackCommand = struct {
                 if (pattern.dirs_only and entry.kind != .directory) continue;
 
                 const match_path = if (pattern.rel_path) rel else entry_name;
-                switch (glob.matchImpl(pattern.glob, match_path)) {
+                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob, match_path)) {
                     .match => {
                         ignored = true;
                         ignore_pattern = pattern.glob;
@@ -1141,11 +1209,11 @@ pub const PackCommand = struct {
 
         const edited_package_json = try editRootPackageJSON(ctx.allocator, ctx.lockfile, json);
 
-        var this_bundler: bun.bundler.Bundler = undefined;
+        var this_transpiler: bun.transpiler.Transpiler = undefined;
 
         _ = RunCommand.configureEnvForRun(
             ctx.command_ctx,
-            &this_bundler,
+            &this_transpiler,
             manager.env,
             manager.options.log_level != .silent,
             false,
@@ -1178,7 +1246,7 @@ pub const PackCommand = struct {
                             prepublish_only,
                             "prepublishOnly",
                             abs_workspace_path,
-                            this_bundler.env,
+                            this_transpiler.env,
                             &.{},
                             manager.options.log_level == .silent,
                             ctx.command_ctx.debug.use_system_shell,
@@ -1203,7 +1271,7 @@ pub const PackCommand = struct {
                         prepack_script_str,
                         "prepack",
                         abs_workspace_path,
-                        this_bundler.env,
+                        this_transpiler.env,
                         &.{},
                         manager.options.log_level == .silent,
                         ctx.command_ctx.debug.use_system_shell,
@@ -1227,7 +1295,7 @@ pub const PackCommand = struct {
                         prepare_script_str,
                         "prepare",
                         abs_workspace_path,
-                        this_bundler.env,
+                        this_transpiler.env,
                         &.{},
                         manager.options.log_level == .silent,
                         ctx.command_ctx.debug.use_system_shell,
@@ -1288,10 +1356,12 @@ pub const PackCommand = struct {
                         var includes: std.ArrayListUnmanaged(Pattern) = .{};
                         defer includes.deinit(ctx.allocator);
 
+                        var path_buf: PathBuffer = undefined;
                         var files_array = _files_array;
                         while (files_array.next()) |files_entry| {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
-                                const parsed = try Pattern.fromUTF8(ctx.allocator, file_entry_str) orelse continue;
+                                const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
+                                const parsed = try Pattern.fromUTF8(ctx.allocator, normalized) orelse continue;
                                 try includes.append(ctx.allocator, parsed);
                                 continue;
                             }
@@ -1333,12 +1403,13 @@ pub const PackCommand = struct {
             printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, 0);
 
             if (comptime !for_publish) {
-                if (manager.options.pack_destination.len == 0) {
-                    Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
+                if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
+                    Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
                 } else {
                     var dest_buf: PathBuffer = undefined;
-                    const abs_tarball_dest, _ = absTarballDestination(
+                    const abs_tarball_dest, _ = tarballDestination(
                         ctx.manager.options.pack_destination,
+                        ctx.manager.options.pack_filename,
                         abs_workspace_path,
                         package_name,
                         package_version,
@@ -1374,8 +1445,9 @@ pub const PackCommand = struct {
 
             if (comptime for_publish) {
                 var dest_buf: bun.PathBuffer = undefined;
-                const abs_tarball_dest, _ = absTarballDestination(
+                const abs_tarball_dest, _ = tarballDestination(
                     ctx.manager.options.pack_destination,
+                    ctx.manager.options.pack_filename,
                     abs_workspace_path,
                     package_name,
                     package_version,
@@ -1394,7 +1466,7 @@ pub const PackCommand = struct {
                     .uses_workspaces = false,
                     .publish_script = publish_script,
                     .postpublish_script = postpublish_script,
-                    .script_env = this_bundler.env,
+                    .script_env = this_transpiler.env,
                     .normalized_pkg_info = "",
                 };
             }
@@ -1456,8 +1528,9 @@ pub const PackCommand = struct {
         }
 
         var dest_buf: PathBuffer = undefined;
-        const abs_tarball_dest, const abs_tarball_dest_dir_end = absTarballDestination(
+        const abs_tarball_dest, const abs_tarball_dest_dir_end = tarballDestination(
             ctx.manager.options.pack_destination,
+            ctx.manager.options.pack_filename,
             abs_workspace_path,
             package_name,
             package_version,
@@ -1658,7 +1731,6 @@ pub const PackCommand = struct {
                 json.source,
                 shasum,
                 integrity,
-                abs_tarball_dest,
             );
 
         printArchivedFilesAndPackages(
@@ -1670,8 +1742,8 @@ pub const PackCommand = struct {
         );
 
         if (comptime !for_publish) {
-            if (manager.options.pack_destination.len == 0) {
-                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version)});
+            if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
+                Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
             } else {
                 Output.pretty("\n{s}\n", .{abs_tarball_dest});
             }
@@ -1720,54 +1792,89 @@ pub const PackCommand = struct {
                 .uses_workspaces = false,
                 .publish_script = publish_script,
                 .postpublish_script = postpublish_script,
-                .script_env = this_bundler.env,
+                .script_env = this_transpiler.env,
                 .normalized_pkg_info = normalized_pkg_info,
             };
         }
     }
 
-    fn absTarballDestination(
+    fn tarballDestination(
         pack_destination: string,
+        pack_filename: string,
         abs_workspace_path: string,
         package_name: string,
         package_version: string,
         dest_buf: []u8,
     ) struct { stringZ, usize } {
-        const tarball_destination_dir = bun.path.joinAbsStringBuf(
-            abs_workspace_path,
-            dest_buf,
-            &.{pack_destination},
-            .auto,
-        );
-
-        const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
-            fmtTarballFilename(package_name, package_version),
-        }) catch {
-            Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
-                strings.withoutTrailingSlash(tarball_destination_dir),
-                fmtTarballFilename(package_name, package_version),
+        if (pack_filename.len > 0 and pack_destination.len > 0) {
+            Output.errGeneric("cannot use both filename and destination at the same time with tarball: filename \"{s}\" and destination \"{s}\"", .{
+                strings.withoutTrailingSlash(pack_filename),
+                strings.withoutTrailingSlash(pack_destination),
             });
             Global.crash();
-        };
+        }
+        if (pack_filename.len > 0) {
+            const tarball_name = std.fmt.bufPrint(dest_buf[0..], "{s}\x00", .{
+                pack_filename,
+            }) catch {
+                Output.errGeneric("archive filename too long: \"{s}\"", .{
+                    pack_filename,
+                });
+                Global.crash();
+            };
 
-        return .{
-            dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0],
-            tarball_destination_dir.len,
-        };
+            return .{
+                dest_buf[0 .. tarball_name.len - 1 :0],
+                0,
+            };
+        } else {
+            const tarball_destination_dir = bun.path.joinAbsStringBuf(
+                abs_workspace_path,
+                dest_buf,
+                &.{pack_destination},
+                .auto,
+            );
+
+            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
+                fmtTarballFilename(package_name, package_version, .normalize),
+            }) catch {
+                Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
+                    strings.withoutTrailingSlash(tarball_destination_dir),
+                    fmtTarballFilename(package_name, package_version, .normalize),
+                });
+                Global.crash();
+            };
+
+            return .{
+                dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0],
+                tarball_destination_dir.len,
+            };
+        }
     }
 
-    fn fmtTarballFilename(package_name: string, package_version: string) TarballNameFormatter {
+    pub fn fmtTarballFilename(package_name: string, package_version: string, style: TarballNameFormatter.Style) TarballNameFormatter {
         return .{
             .package_name = package_name,
             .package_version = package_version,
+            .style = style,
         };
     }
 
     const TarballNameFormatter = struct {
         package_name: string,
         package_version: string,
+        style: Style,
+
+        pub const Style = enum {
+            normalize,
+            raw,
+        };
 
         pub fn format(this: TarballNameFormatter, comptime _: string, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (this.style == .raw) {
+                return writer.print("{s}-{s}.tgz", .{ this.package_name, this.package_version });
+            }
+
             if (this.package_name[0] == '@') {
                 if (this.package_name.len > 1) {
                     if (strings.indexOfChar(this.package_name, '/')) |slash| {
@@ -2023,7 +2130,7 @@ pub const PackCommand = struct {
     /// from .npmignore, .gitignore, or `files`
     /// in package.json
     const Pattern = struct {
-        glob: []const u32,
+        glob: []const u8,
         /// beginning or middle slash (leading slash was trimmed)
         rel_path: bool,
         // can only match directories (had an ending slash, also trimmed)
@@ -2073,20 +2180,17 @@ pub const PackCommand = struct {
                 break :check_slashes .{ leading_or_middle_slash, trailing_slash, skipped_negate };
             };
 
-            const length = bun.simdutf.length.utf32.from.utf8.le(remain) + @intFromBool(add_negate);
-            const buf = try allocator.alloc(u32, length);
-            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(remain, buf[@intFromBool(add_negate)..]);
-            if (!result.isSuccessful()) {
-                allocator.free(buf);
-                return null;
-            }
-
+            const length = remain.len + @intFromBool(add_negate);
+            const buf = try allocator.alloc(u8, length);
+            const start_index = @intFromBool(add_negate);
+            const end = start_index + remain.len;
+            @memcpy(buf[start_index..end], remain);
             if (add_negate) {
                 buf[0] = '!';
             }
 
             return .{
-                .glob = buf[0 .. result.count + @intFromBool(add_negate)],
+                .glob = buf[0..end],
                 .rel_path = has_leading_or_middle_slash,
                 .@"leading **/" = @"has leading **/, (could start with '!')",
                 .dirs_only = has_trailing_slash,
@@ -2301,25 +2405,22 @@ pub const bindings = struct {
     pub fn jsReadTarball(global: *JSGlobalObject, callFrame: *CallFrame) bun.JSError!JSValue {
         const args = callFrame.arguments_old(1).slice();
         if (args.len < 1 or !args[0].isString()) {
-            global.throw("expected tarball path string argument", .{});
-            return .zero;
+            return global.throw("expected tarball path string argument", .{});
         }
 
-        const tarball_path_str = args[0].toBunString(global);
+        const tarball_path_str = try args[0].toBunString(global);
         defer tarball_path_str.deref();
 
         const tarball_path = tarball_path_str.toUTF8(bun.default_allocator);
         defer tarball_path.deinit();
 
         const tarball_file = File.from(std.fs.openFileAbsolute(tarball_path.slice(), .{}) catch |err| {
-            global.throw("failed to open tarball file \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
-            return .zero;
+            return global.throw("failed to open tarball file \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         });
         defer tarball_file.close();
 
         const tarball = tarball_file.readToEnd(bun.default_allocator).unwrap() catch |err| {
-            global.throw("failed to read tarball contents \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
-            return .zero;
+            return global.throw("failed to read tarball contents \"{s}\": {s}", .{ tarball_path.slice(), @errorName(err) });
         };
         defer bun.default_allocator.free(tarball);
 
@@ -2328,7 +2429,7 @@ pub const bindings = struct {
         defer sha1.deinit();
         sha1.update(tarball);
         sha1.final(&sha1_digest);
-        const shasum_str = String.createFormat("{s}", .{bun.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
+        const shasum_str = String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
 
         var sha512_digest: sha.SHA512.Digest = undefined;
         var sha512 = sha.SHA512.init();
@@ -2353,38 +2454,33 @@ pub const bindings = struct {
 
         switch (archive.readSupportFormatTar()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support tar: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support tar: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readSupportFormatGnutar()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support gnutar: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support gnutar: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readSupportFilterGzip()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to support gzip compression: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to support gzip compression: {s}", .{archive.errorString()});
             },
             else => {},
         }
 
         switch (archive.readSetOptions("read_concatenated_archives")) {
             .failed, .fatal, .warn => {
-                global.throw("failed to set read_concatenated_archives option: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to set read_concatenated_archives option: {s}", .{archive.errorString()});
             },
             else => {},
         }
 
         switch (archive.readOpenMemory(tarball)) {
             .failed, .fatal, .warn => {
-                global.throw("failed to open archive in memory: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to open archive in memory: {s}", .{archive.errorString()});
             },
             else => {},
         }
@@ -2400,8 +2496,7 @@ pub const bindings = struct {
                 .eof => unreachable,
                 .retry => continue,
                 .failed, .fatal => {
-                    global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
-                    return .zero;
+                    return global.throw("failed to read archive header: {s}", .{Archive.errorString(@ptrCast(archive))});
                 },
                 else => {
                     const pathname = archive_entry.pathname();
@@ -2421,11 +2516,10 @@ pub const bindings = struct {
 
                         const read = archive.readData(read_buf.items);
                         if (read < 0) {
-                            global.throw("failed to read archive entry \"{}\": {s}", .{
+                            return global.throw("failed to read archive entry \"{}\": {s}", .{
                                 bun.fmt.fmtPath(u8, pathname, .{}),
                                 Archive.errorString(@ptrCast(archive)),
                             });
-                            return .zero;
                         }
                         read_buf.items.len = @intCast(read);
                         entry_info.contents = String.createUTF8(read_buf.items);
@@ -2438,15 +2532,13 @@ pub const bindings = struct {
 
         switch (archive.readClose()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to close read archive: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to close read archive: {s}", .{archive.errorString()});
             },
             else => {},
         }
         switch (archive.readFree()) {
             .failed, .fatal, .warn => {
-                global.throw("failed to close read archive: {s}", .{archive.errorString()});
-                return .zero;
+                return global.throw("failed to close read archive: {s}", .{archive.errorString()});
             },
             else => {},
         }

@@ -45,7 +45,6 @@ const CallFrame = JSC.CallFrame;
 
 const VirtualMachine = JSC.VirtualMachine;
 const Fs = bun.fs;
-const is_bindgen: bool = false;
 
 const ArrayIdentityContext = bun.ArrayIdentityContext;
 
@@ -84,10 +83,10 @@ pub const TestRunner = struct {
     // from `setDefaultTimeout() or jest.setTimeout()`
     default_timeout_override: u32 = std.math.maxInt(u32),
 
-    event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
+    event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer.Node = .{ .data = .{
         .next = .{},
         .tag = .TestRunner,
-    },
+    } },
     active_test_for_timeout: ?TestRunner.Test.ID = null,
     test_options: *const bun.CLI.Command.TestOptions = undefined,
 
@@ -108,7 +107,7 @@ pub const TestRunner = struct {
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
         _ = vm; // autofix
-        this.event_loop_timer.state = .FIRED;
+        this.event_loop_timer.data.state = .FIRED;
 
         if (this.pending_test) |pending_test| {
             if (!pending_test.reported and (this.active_test_for_timeout orelse return) == pending_test.test_id) {
@@ -132,12 +131,13 @@ pub const TestRunner = struct {
     pub fn scheduleTimeout(this: *TestRunner, milliseconds: u32) void {
         const then = bun.timespec.msFromNow(@intCast(milliseconds));
         const vm = JSC.VirtualMachine.get();
-        if (this.event_loop_timer.state == .ACTIVE) {
+
+        this.event_loop_timer.data.tag = .TestRunner;
+        if (this.event_loop_timer.data.state == .ACTIVE) {
             vm.timer.remove(&this.event_loop_timer);
         }
 
-        this.event_loop_timer.next = then;
-        this.event_loop_timer.tag = .TestRunner;
+        this.event_loop_timer.data.next = then;
         vm.timer.insert(&this.event_loop_timer);
     }
 
@@ -281,7 +281,7 @@ pub const Jest = struct {
         return struct {
             pub fn appendGlobalFunctionCallback(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
                 const the_runner = runner orelse {
-                    return globalThis.throw2("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
+                    return globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
                 };
 
                 const arguments = callframe.arguments_old(2);
@@ -291,12 +291,11 @@ pub const Jest = struct {
 
                 const function = arguments.ptr[0];
                 if (function.isEmptyOrUndefinedOrNull() or !function.isCallable(globalThis.vm())) {
-                    globalThis.throwInvalidArgumentType(name, "callback", "function");
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentType(name, "callback", "function");
                 }
 
                 if (function.getLength(globalThis) > 0) {
-                    return globalThis.throw2("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
+                    return globalThis.throw("done() callback is not implemented in global hooks yet. Please make your function take no arguments", .{});
                 }
 
                 function.protect();
@@ -527,16 +526,14 @@ pub const Jest = struct {
         const arguments = callframe.arguments_old(2).slice();
 
         if (arguments.len < 1 or !arguments[0].isString()) {
-            globalObject.throw("Bun.jest() expects a string filename", .{});
-            return .zero;
+            return globalObject.throw("Bun.jest() expects a string filename", .{});
         }
-        var str = arguments[0].toSlice(globalObject, bun.default_allocator);
+        var str = try arguments[0].toSlice(globalObject, bun.default_allocator);
         defer str.deinit();
         const slice = str.slice();
 
         if (!std.fs.path.isAbsolute(slice)) {
-            globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
-            return .zero;
+            return globalObject.throw("Bun.jest() expects an absolute file path, got '{s}'", .{slice});
         }
 
         const filepath = Fs.FileSystem.instance.filename_store.append([]const u8, slice) catch unreachable;
@@ -549,8 +546,7 @@ pub const Jest = struct {
     fn jsSetDefaultTimeout(globalObject: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         const arguments = callframe.arguments_old(1).slice();
         if (arguments.len < 1 or !arguments[0].isNumber()) {
-            globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
-            return .zero;
+            return globalObject.throw("setTimeout() expects a number (milliseconds)", .{});
         }
 
         const timeout_ms: u32 = @intCast(@max(arguments[0].coerce(i32, globalObject), 0));
@@ -563,10 +559,8 @@ pub const Jest = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
-            @export(Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
-        }
+        @export(&Bun__Jest__createTestModuleObject, .{ .name = "Bun__Jest__createTestModuleObject" });
+        @export(&Bun__Jest__createTestPreloadObject, .{ .name = "Bun__Jest__createTestPreloadObject" });
     }
 };
 
@@ -595,6 +589,14 @@ pub const TestScope = struct {
         expected: u32 = 0,
         actual: u32 = 0,
     };
+
+    pub fn deinit(this: *TestScope, globalThis: *JSGlobalObject) void {
+        if (this.label.len > 0) {
+            const label = this.label;
+            this.label = "";
+            getAllocator(globalThis).free(label);
+        }
+    }
 
     pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
         return createScope(globalThis, callframe, "test()", true, .pass);
@@ -685,8 +687,6 @@ pub const TestScope = struct {
         this: *TestScope,
         task: *TestRunnerTask,
     ) Result {
-        if (comptime is_bindgen) return undefined;
-
         var vm = VirtualMachine.get();
         const func = this.func;
         defer {
@@ -808,10 +808,10 @@ pub const TestScope = struct {
     pub const name = "TestScope";
     pub const shim = JSC.Shimmer("Bun", name, @This());
     comptime {
-        @export(jsOnResolve, .{
+        @export(&jsOnResolve, .{
             .name = shim.symbolName("onResolve"),
         });
-        @export(jsOnReject, .{
+        @export(&jsOnReject, .{
             .name = shim.symbolName("onReject"),
         });
     }
@@ -820,10 +820,10 @@ pub const TestScope = struct {
 pub const DescribeScope = struct {
     label: string = "",
     parent: ?*DescribeScope = null,
-    beforeAll: std.ArrayListUnmanaged(JSValue) = .{},
-    beforeEach: std.ArrayListUnmanaged(JSValue) = .{},
-    afterEach: std.ArrayListUnmanaged(JSValue) = .{},
-    afterAll: std.ArrayListUnmanaged(JSValue) = .{},
+    beforeAlls: std.ArrayListUnmanaged(JSValue) = .{},
+    beforeEachs: std.ArrayListUnmanaged(JSValue) = .{},
+    afterEachs: std.ArrayListUnmanaged(JSValue) = .{},
+    afterAlls: std.ArrayListUnmanaged(JSValue) = .{},
     test_id_start: TestRunner.Test.ID = 0,
     test_id_len: TestRunner.Test.ID = 0,
     tests: std.ArrayListUnmanaged(TestScope) = .{},
@@ -862,7 +862,6 @@ pub const DescribeScope = struct {
     }
 
     pub fn push(new: *DescribeScope) void {
-        if (comptime is_bindgen) return;
         if (new.parent) |scope| {
             if (comptime Environment.allow_assert) {
                 assert(DescribeScope.active != new);
@@ -876,7 +875,6 @@ pub const DescribeScope = struct {
     }
 
     pub fn pop(this: *DescribeScope) void {
-        if (comptime is_bindgen) return;
         if (comptime Environment.allow_assert) assert(DescribeScope.active == this);
         DescribeScope.active = this.parent;
     }
@@ -902,12 +900,11 @@ pub const DescribeScope = struct {
 
                 const cb = arguments.ptr[0];
                 if (!cb.isObject() or !cb.isCallable(globalThis.vm())) {
-                    globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
-                    return error.JSError;
+                    return globalThis.throwInvalidArgumentType(@tagName(hook), "callback", "function");
                 }
 
                 cb.protect();
-                @field(DescribeScope.active.?, @tagName(hook)).append(getAllocator(globalThis), cb) catch unreachable;
+                @field(DescribeScope.active.?, @tagName(hook) ++ "s").append(getAllocator(globalThis), cb) catch unreachable;
                 return JSValue.jsBoolean(true);
             }
         }.run;
@@ -942,7 +939,7 @@ pub const DescribeScope = struct {
     pub const beforeEach = createCallback(.beforeEach);
 
     pub fn execCallback(this: *DescribeScope, globalObject: *JSGlobalObject, comptime hook: LifecycleHook) ?JSValue {
-        var hooks = &@field(this, @tagName(hook));
+        var hooks = &@field(this, @tagName(hook) ++ "s");
         defer {
             if (comptime hook == .beforeAll or hook == .afterAll) {
                 hooks.clearAndFree(getAllocator(globalObject));
@@ -1103,7 +1100,6 @@ pub const DescribeScope = struct {
     }
 
     pub fn run(this: *DescribeScope, globalObject: *JSGlobalObject, callback: JSValue, args: []const JSValue) JSValue {
-        if (comptime is_bindgen) return undefined;
         callback.protect();
         defer callback.unprotect();
         this.push();
@@ -1162,8 +1158,7 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
-                this.tests.clearAndFree(allocator);
-                this.pending_tests.deinit(allocator);
+                this.deinit(globalObject);
                 return;
             }
             if (end == 0) {
@@ -1222,9 +1217,23 @@ pub const DescribeScope = struct {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
+        this.deinit(globalThis);
+    }
 
-        this.pending_tests.deinit(getAllocator(globalThis));
-        this.tests.clearAndFree(getAllocator(globalThis));
+    pub fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
+        const allocator = getAllocator(globalThis);
+
+        if (this.label.len > 0) {
+            const label = this.label;
+            this.label = "";
+            allocator.free(label);
+        }
+
+        this.pending_tests.deinit(allocator);
+        for (this.tests.items) |*t| {
+            t.deinit(globalThis);
+        }
+        this.tests.clearAndFree(allocator);
     }
 
     const ScopeStack = ObjectPool(std.ArrayListUnmanaged(*DescribeScope), null, true, 16);
@@ -1234,12 +1243,10 @@ pub fn wrapTestFunction(comptime name: []const u8, comptime func: JSC.JSHostZigF
     return struct {
         pub fn wrapped(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSValue {
             if (Jest.runner == null) {
-                globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
-                return .zero;
+                return globalThis.throw("Cannot use " ++ name ++ "() outside of the test runner. Run \"bun test\" to run tests.", .{});
             }
             if (globalThis.bunVM().is_in_preload) {
-                globalThis.throw("Cannot use " ++ name ++ "() outside of a test file.", .{});
-                return .zero;
+                return globalThis.throw("Cannot use " ++ name ++ "() outside of a test file.", .{});
             }
             return @call(bun.callmod_inline, func, .{ globalThis, callframe });
         }
@@ -1435,7 +1442,7 @@ pub const TestRunnerTask = struct {
         const elapsed = now.duration(&this.started_at).ms();
         this.ref.unref(this.globalThis.bunVM());
         this.globalThis.throwTerminationException();
-        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = elapsed });
+        this.handleResult(.{ .fail = expect.active_test_expectation_counter.actual }, .{ .timeout = @intCast(@max(elapsed, 0)) });
     }
 
     const ResultType = union(enum) {
@@ -1757,11 +1764,15 @@ inline fn createScope(
 
     const parent = DescribeScope.active.?;
     const allocator = getAllocator(globalThis);
-    const label = if (description == .zero)
-        ""
-    else
-        (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
-
+    const label = brk: {
+        if (description == .zero) {
+            break :brk "";
+        } else {
+            var slice = try description.toSlice(globalThis, allocator);
+            defer slice.deinit();
+            break :brk try allocator.dupe(u8, slice.slice());
+        }
+    };
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {
@@ -1933,12 +1944,10 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     args_idx += 1;
                 },
                 'p' => {
-                    var formatter = JSC.ConsoleObject.Formatter{
-                        .globalThis = globalThis,
-                        .quote_strings = true,
-                    };
+                    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
+                    defer formatter.deinit();
                     const value_fmt = current_arg.toFmt(&formatter);
-                    const test_index_str = std.fmt.allocPrint(allocator, "{any}", .{value_fmt}) catch bun.outOfMemory();
+                    const test_index_str = std.fmt.allocPrint(allocator, "{}", .{value_fmt}) catch bun.outOfMemory();
                     defer allocator.free(test_index_str);
                     list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
                     idx += 1;
@@ -2064,11 +2073,17 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
                 item.protect();
                 function_args[0] = item;
             }
-
-            const label = if (description.isEmptyOrUndefinedOrNull())
-                ""
-            else
-                (description.toSlice(globalThis, allocator).cloneIfNeeded(allocator) catch unreachable).slice();
+            var _label: ?JSC.ZigString.Slice = null;
+            defer if (_label) |slice| slice.deinit();
+            const label = brk: {
+                if (description.isEmptyOrUndefinedOrNull()) {
+                    break :brk "";
+                } else {
+                    _label = try description.toSlice(globalThis, allocator);
+                    break :brk _label.?.slice();
+                }
+            };
+            // this returns a owned slice
             const formattedLabel = try formatLabel(globalThis, label, function_args, test_idx);
 
             const tag = parent.tag;
@@ -2093,6 +2108,8 @@ fn eachBind(globalThis: *JSGlobalObject, callframe: *CallFrame) bun.JSError!JSVa
             if (is_skip) {
                 parent.skip_count += 1;
                 function.unprotect();
+                // lets free the formatted label
+                allocator.free(formattedLabel);
             } else if (each_data.is_test) {
                 if (Jest.runner.?.only and tag != .only) {
                     return .undefined;

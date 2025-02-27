@@ -462,9 +462,9 @@ pub const TokenList = struct {
                     }
                     continue;
                 },
-                .hash, .idhash => {
+                .unrestrictedhash, .idhash => {
                     const h = switch (tok.*) {
-                        .hash => |h| h,
+                        .unrestrictedhash => |h| h,
                         .idhash => |h| h,
                         else => unreachable,
                     };
@@ -472,7 +472,7 @@ pub const TokenList = struct {
                         const r, const g, const b, const a = css.color.parseHashColor(h) orelse {
                             tokens.append(
                                 input.allocator(),
-                                .{ .token = .{ .hash = h } },
+                                .{ .token = .{ .unrestrictedhash = h } },
                             ) catch unreachable;
                             break :brk;
                         };
@@ -604,6 +604,7 @@ pub const TokenList = struct {
     pub fn getFallback(this: *const TokenList, allocator: Allocator, kind: ColorFallbackKind) @This() {
         var tokens = TokenList{};
         tokens.v.ensureTotalCapacity(allocator, this.v.items.len) catch bun.outOfMemory();
+        tokens.v.items.len = this.v.items.len;
         for (this.v.items, tokens.v.items[0..this.v.items.len]) |*old, *new| {
             new.* = switch (old.*) {
                 .color => |*color| TokenOrValue{ .color = color.getFallback(allocator, kind) },
@@ -858,13 +859,12 @@ pub const UnresolvedColor = union(enum) {
                 const dark: *const TokenList = &ld.dark;
 
                 if (!dest.targets.isCompatible(.light_dark)) {
-                    // TODO(zack): lightningcss -> buncss
-                    try dest.writeStr("var(--lightningcss-light)");
+                    try dest.writeStr("var(--buncss-light");
                     try dest.delim(',', false);
                     try light.toCss(W, dest, is_custom_property);
                     try dest.writeChar(')');
                     try dest.whitespace();
-                    try dest.writeStr("var(--lightningcss-dark");
+                    try dest.writeStr("var(--buncss-dark");
                     try dest.delim(',', false);
                     try dark.toCss(W, dest, is_custom_property);
                     return dest.writeChar(')');
@@ -1425,6 +1425,13 @@ pub const UnparsedProperty = struct {
         return .{ .result = .{ .property_id = property_id, .value = value } };
     }
 
+    pub fn getPrefixed(this: *const @This(), allocator: Allocator, targets: css.Targets, feature: css.prefixes.Feature) UnparsedProperty {
+        var clone = this.deepClone(allocator);
+        const prefix = this.property_id.prefix();
+        clone.property_id = clone.property_id.withPrefix(targets.prefixes(prefix.orNone(), feature));
+        return clone;
+    }
+
     /// Returns a new UnparsedProperty with the same value and the given property id.
     pub fn withPropertyId(this: *const @This(), allocator: Allocator, property_id: css.PropertyId) UnparsedProperty {
         return UnparsedProperty{ .property_id = property_id, .value = this.value.deepClone(allocator) };
@@ -1432,6 +1439,10 @@ pub const UnparsedProperty = struct {
 
     pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 

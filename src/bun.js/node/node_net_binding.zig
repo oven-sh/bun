@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const C = bun.C.translated;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
@@ -26,7 +27,7 @@ pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(1);
             if (arguments.len < 1) {
-                return globalThis.throw2("missing argument", .{});
+                return globalThis.throw("missing argument", .{});
             }
             const arg = arguments.slice()[0];
             if (!arg.isBoolean()) {
@@ -59,7 +60,7 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             const arguments = callframe.arguments_old(1);
             if (arguments.len < 1) {
-                return globalThis.throw2("missing argument", .{});
+                return globalThis.throw("missing argument", .{});
             }
             const arg = arguments.slice()[0];
             if (!arg.isInt32AsAnyInt()) {
@@ -70,4 +71,13 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
             return JSC.jsNumber(value);
         }
     }).setter, 1, .{});
+}
+
+pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
+    const net = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
+
+    net.put(global, "SocketAddress", SocketAddress.getConstructor(global));
+
+    return net;
 }

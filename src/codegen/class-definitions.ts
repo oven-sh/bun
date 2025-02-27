@@ -9,6 +9,22 @@ interface PropertyAttribute {
   privateSymbol?: string;
 }
 
+/**
+ * Specifies what happens when a method is called with `this` set to a value that is not an instance
+ * of the class.
+ */
+export enum InvalidThisBehavior {
+  /**
+   * Default. Throws a `TypeError`.
+   */
+  Throw,
+  /**
+   * Do not call the native implementation; return `undefined`. Some Node.js methods are supposed to
+   * work like this.
+   */
+  NoOp,
+}
+
 export type Field =
   | ({
       getter: string;
@@ -28,8 +44,14 @@ export type Field =
     } & PropertyAttribute)
   | ({
       fn: string;
+      /**
+       * Number of parameters accepted by the function.
+       *
+       * Sets [`function.length`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/length).
+       */
       length?: number;
       passThis?: boolean;
+      invalidThisBehavior?: InvalidThisBehavior;
       DOMJIT?: {
         returns: string;
         args?: [string, string] | [string, string, string] | [string] | [];
@@ -44,22 +66,102 @@ export type Field =
        * function: `camelCase(fileName + functionName + "CodeGenerator"`)
        */
       builtin: string;
+      /**
+       * Number of parameters accepted by the function.
+       *
+       * Sets [`function.length`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function/length).
+       */
       length?: number;
     };
 
-export interface ClassDefinition {
+export class ClassDefinition {
+  /**
+   * Class name.
+   *
+   * Used to find the proper struct and as the `.name` of the JS constructor
+   * function.
+   */
   name: string;
+  /**
+   * Class constructor is newable.
+   */
   construct?: boolean;
+  /**
+   * Class constructor is callable. In JS, ES6 class constructors are not
+   * callable.
+   */
   call?: boolean;
+  /**
+   * ## IMPORTANT
+   * You _must_ free the pointer to your native class!
+   * ```zig
+   * pub const NativeClass = struct {
+   *   pub usingnamespace bun.New(NativeClass);
+   *
+   *   fn constructor(global: *JSC.JSGlobalObject, frame: *JSC.CallFrame) bun.JSError!*SocketAddress {
+   *     // do stuff
+   *     return NativeClass.new(.{
+   *       // ...
+   *     });
+   *   }
+   *
+   *   fn finalize(this: *NativeClass) void {
+   *     // free allocations owned by this class, then free the struct itself.
+   *     this.destroy();
+   *   }
+   * };
+   * ```
+   * @todo remove this and require all classes to implement `finalize`.
+   */
   finalize?: boolean;
   overridesToJS?: boolean;
+  /**
+   * Static properties and methods.
+   */
   klass: Record<string, Field>;
+  /**
+   * properties and methods on the prototype.
+   */
   proto: Record<string, Field>;
+  /**
+   * Properties and methods attached to the instance itself.
+   */
+  own: Record<string, string>;
   values?: string[];
+  /**
+   * Set this to `"0b11101110"`.
+   */
   JSType?: string;
   noConstructor?: boolean;
-  wantsThis?: boolean;
+
+  final?: boolean;
+
+  // Do not try to track the `this` value in the constructor automatically.
+  // That is a memory leak.
+  wantsThis?: never;
+
+  /**
+   * Class has an `estimatedSize` function that reports external allocations to GC.
+   * Called from any thread.
+   *
+   * When `true`, classes should have a method with this signature:
+   * ```zig
+   * pub fn estimatedSize(this: *@This()) usize;
+   * ```
+   *
+   * Report `@sizeOf(@this())` as well as any external allocations.
+   */
   estimatedSize?: boolean;
+  /**
+   * Used in heap snapshots.
+   *
+   * If true, the class will have a `memoryCost` method that returns the size of the object in bytes.
+   *
+   * Unlike estimatedSize, this is always called on the main thread and not used for GC.
+   *
+   * If none is provided, we use the struct size.
+   */
+  memoryCost?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
   supportsObjectCreate?: boolean;
@@ -73,6 +175,23 @@ export interface ClassDefinition {
   structuredClone?: boolean | { transferable: boolean; tag: number };
 
   callbacks?: Record<string, string>;
+
+  constructor(options: Partial<ClassDefinition>) {
+    this.name = options.name ?? "";
+    this.klass = options.klass ?? {};
+    this.proto = options.proto ?? {};
+    this.own = options.own ?? {};
+
+    Object.assign(this, options);
+  }
+
+  hasOwnProperties() {
+    for (const key in this.own) {
+      return true;
+    }
+
+    return false;
+  }
 }
 
 export interface CustomField {
@@ -82,10 +201,15 @@ export interface CustomField {
   type?: string;
 }
 
+/**
+ * Define a native class written in ZIg. Bun's codegen step will create CPP wrappers
+ * for interacting with JSC.
+ */
 export function define(
   {
     klass = {},
     proto = {},
+    own = {},
     values = [],
     overridesToJS = false,
     estimatedSize = false,
@@ -93,9 +217,9 @@ export function define(
     construct = false,
     structuredClone = false,
     ...rest
-  } = {} as ClassDefinition,
-): ClassDefinition {
-  return {
+  } = {} as Partial<ClassDefinition>,
+): Partial<ClassDefinition> {
+  return new ClassDefinition({
     ...rest,
     call,
     overridesToJS,
@@ -103,6 +227,7 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
+    own: own || {},
     klass: Object.fromEntries(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))
@@ -119,5 +244,5 @@ export function define(
           return [k, v];
         }),
     ),
-  };
+  });
 }

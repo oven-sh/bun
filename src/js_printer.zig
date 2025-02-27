@@ -6,7 +6,7 @@ const js_ast = bun.JSAst;
 const options = @import("options.zig");
 const rename = @import("renamer.zig");
 const runtime = @import("runtime.zig");
-const Lock = @import("./lock.zig").Lock;
+const Lock = bun.Mutex;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
 const bun = @import("root").bun;
@@ -207,6 +207,7 @@ pub fn quoteForJSON(text: []const u8, output_: MutableString, comptime ascii_onl
 
 pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: Writer, comptime quote_char: u8, comptime ascii_only: bool, comptime json: bool, comptime encoding: strings.Encoding) !void {
     const text = if (comptime encoding == .utf16) @as([]const u16, @alignCast(std.mem.bytesAsSlice(u16, text_in))) else text_in;
+    if (comptime json and quote_char != '"') @compileError("for json, quote_char must be '\"'");
     var i: usize = 0;
     const n: usize = text.len;
     while (i < n) {
@@ -345,7 +346,11 @@ pub fn writePreQuotedString(text_in: []const u8, comptime Writer: type, writer: 
             },
 
             '\t' => {
-                try writer.writeAll("\\t");
+                if (quote_char == '`') {
+                    try writer.writeAll("\t");
+                } else {
+                    try writer.writeAll("\\t");
+                }
                 i += 1;
             },
 
@@ -434,6 +439,7 @@ pub const SourceMapHandler = struct {
 };
 
 pub const Options = struct {
+    bundling: bool = false,
     transform_imports: bool = true,
     to_commonjs_ref: Ref = Ref.None,
     to_esm_ref: Ref = Ref.None,
@@ -444,6 +450,7 @@ pub const Options = struct {
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
     allocator: std.mem.Allocator = default_allocator,
+    source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
@@ -474,22 +481,6 @@ pub const Options = struct {
     // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
     ts_enums: Ast.TsEnumsMap = .{},
-
-    // TODO: remove this
-    // The reason for this is:
-    // 1. You're bundling a React component
-    // 2. jsx auto imports are prepended to the list of parts
-    // 3. The AST modification for bundling only applies to the final part
-    // 4. This means that it will try to add a toplevel part which is not wrapped in the arrow function, which is an error
-    //     TypeError: $30851277 is not a function. (In '$30851277()', '$30851277' is undefined)
-    //        at (anonymous) (0/node_modules.server.e1b5ffcd183e9551.jsb:1463:21)
-    //        at #init_react/jsx-dev-runtime.js (0/node_modules.server.e1b5ffcd183e9551.jsb:1309:8)
-    //        at (esm) (0/node_modules.server.e1b5ffcd183e9551.jsb:1480:30)
-
-    // The temporary fix here is to tag a stmts ptr as the one we want to prepend to
-    // Then, when we're JUST about to print it, we print the body of prepend_part_value first
-    prepend_part_key: ?*anyopaque = null,
-    prepend_part_value: ?*js_ast.Part = null,
 
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
@@ -576,7 +567,7 @@ pub const PrintResult = union(enum) {
 // do not make this a packed struct
 // stage1 compiler bug:
 // > /optional-chain-with-function.js: Evaluation failed: TypeError: (intermediate value) is not a function
-// this test failure was caused by the packed structi mplementation
+// this test failure was caused by the packed struct implementation
 const ExprFlag = enum {
     forbid_call,
     forbid_in,
@@ -1836,9 +1827,7 @@ fn NewPrinter(
                     p.print("(");
                 }
 
-                if (module_type == .esm and is_bun_platform) {
-                    p.print("import.meta.require");
-                } else if (p.options.require_ref) |ref| {
+                if (p.options.require_ref) |ref| {
                     p.printSymbol(ref);
                 } else {
                     p.print("require");
@@ -1868,16 +1857,19 @@ fn NewPrinter(
             p.printSpaceBeforeIdentifier();
 
             // Allow it to fail at runtime, if it should
-            p.print("import(");
-            p.printImportRecordPath(record);
+            if (module_type != .internal_bake_dev) {
+                p.print("import(");
+                p.printImportRecordPath(record);
+            } else {
+                p.printSymbol(p.options.commonjs_module_ref);
+                p.print(".dynamicImport(");
+                const path = record.path;
+                p.printStringLiteralUTF8(path.pretty, false);
+            }
 
             if (!import_options.isMissing()) {
-                // since we previously stripped type, it is a breaking change to
-                // enable this for non-bun platforms
-                if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
-                    p.printWhitespacer(ws(", "));
-                    p.printExpr(import_options, .comma, .{});
-                }
+                p.printWhitespacer(ws(", "));
+                p.printExpr(import_options, .comma, .{});
             }
 
             p.print(")");
@@ -1923,7 +1915,7 @@ fn NewPrinter(
             return printClauseItemAs(p, item, .@"export");
         }
 
-        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.EnumLiteral)) void {
+        fn printClauseItemAs(p: *Printer, item: js_ast.ClauseItem, comptime as: @Type(.enum_literal)) void {
             const name = p.renamer.nameForSymbol(item.name.ref.?);
 
             if (comptime as == .import) {
@@ -2030,6 +2022,7 @@ fn NewPrinter(
             switch (expr.data) {
                 .e_missing => {},
                 .e_undefined => {
+                    p.addSourceMapping(expr.loc);
                     p.printUndefined(expr.loc, level);
                 },
                 .e_super => {
@@ -2072,7 +2065,9 @@ fn NewPrinter(
                         //
                         // This is currently only used in Bun's runtime for CommonJS modules
                         // referencing import.meta
-                        if (comptime Environment.allow_assert)
+                        //
+                        // TODO: This assertion trips when using `import.meta` with `--format=cjs`
+                        if (comptime Environment.isDebug)
                             bun.assert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);
@@ -2277,9 +2272,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.main");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".main");
                     } else {
@@ -2290,9 +2283,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                     } else {
                         p.print("require");
@@ -2302,9 +2293,7 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.resolve");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
                     } else {
@@ -2331,9 +2320,7 @@ fn NewPrinter(
 
                     p.printSpaceBeforeIdentifier();
 
-                    if (p.options.module_type == .esm and is_bun_platform) {
-                        p.print("import.meta.require.resolve");
-                    } else if (p.options.require_ref) |require_ref| {
+                    if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
                     } else {
@@ -2376,12 +2363,8 @@ fn NewPrinter(
                         p.printExpr(e.expr, .comma, ExprFlag.None());
 
                         if (!e.options.isMissing()) {
-                            // since we previously stripped type, it is a breaking change to
-                            // enable this for non-bun platforms
-                            if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
-                                p.printWhitespacer(ws(", "));
-                                p.printExpr(e.options, .comma, .{});
-                            }
+                            p.printWhitespacer(ws(", "));
+                            p.printExpr(e.options, .comma, .{});
                         }
 
                         // TODO:
@@ -2550,15 +2533,6 @@ fn NewPrinter(
                     p.printWhitespacer(ws(" => "));
 
                     var wasPrinted = false;
-
-                    // This is more efficient than creating a new Part just for the JSX auto imports when bundling
-                    if (comptime rewrite_esm_to_cjs) {
-                        if (@intFromPtr(p.options.prepend_part_key) > 0 and @intFromPtr(e.body.stmts.ptr) == @intFromPtr(p.options.prepend_part_key)) {
-                            p.printTwoBlocksInOne(e.body.loc, e.body.stmts, p.options.prepend_part_value.?.stmts);
-                            wasPrinted = true;
-                        }
-                    }
-
                     if (e.body.stmts.len == 1 and e.prefer_expr) {
                         switch (e.body.stmts[0].data) {
                             .s_return => {
@@ -2589,8 +2563,8 @@ fn NewPrinter(
                     }
 
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
                     if (e.func.flags.contains(.is_async)) {
-                        p.addSourceMapping(expr.loc);
                         p.print("async ");
                     }
                     p.print("function");
@@ -2921,7 +2895,6 @@ fn NewPrinter(
                     // }
 
                     if (!didPrint) {
-                        // assert(p.options.module_type != .internal_bake_dev);
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.printSymbol(e.ref);
@@ -2981,6 +2954,7 @@ fn NewPrinter(
 
                     if (entry.is_keyword) {
                         p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
                         p.print(entry.text);
                         p.printSpace();
                     } else {
@@ -3655,7 +3629,6 @@ fn NewPrinter(
                 p.prev_stmt_tag = std.meta.activeTag(stmt.data);
             }
 
-            p.addSourceMapping(stmt.loc);
             switch (stmt.data) {
                 .s_comment => |s| {
                     p.printIndentedComment(s.text);
@@ -3663,6 +3636,7 @@ fn NewPrinter(
                 .s_function => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     const name = s.func.name orelse Output.panic("Internal error: expected func to have a name ref\n{any}", .{s});
                     const nameRef = name.ref orelse Output.panic("Internal error: expected func to have a name\n{any}", .{s});
 
@@ -3678,9 +3652,10 @@ fn NewPrinter(
                     if (s.func.flags.contains(.is_generator)) {
                         p.print("*");
                         p.printSpace();
+                    } else {
+                        p.printSpaceBeforeIdentifier();
                     }
 
-                    p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(name.loc);
                     p.printSymbol(nameRef);
                     p.printFunc(s.func);
@@ -3710,6 +3685,7 @@ fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     const nameRef = s.class.class_name.?.ref.?;
                     if (s.is_export) {
                         if (!rewrite_esm_to_cjs) {
@@ -3740,12 +3716,14 @@ fn NewPrinter(
                     if (p.prev_stmt_tag == .s_empty and p.options.indent.count == 0) return;
 
                     p.printIndent();
+                    p.addSourceMapping(stmt.loc);
                     p.print(";");
                     p.printNewline();
                 },
                 .s_export_default => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("export default ");
 
                     switch (s.value) {
@@ -3812,6 +3790,7 @@ fn NewPrinter(
                     }
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
 
                     if (s.alias != null)
                         p.printWhitespacer(comptime ws("export *").append(" as "))
@@ -3831,6 +3810,7 @@ fn NewPrinter(
                     if (rewrite_esm_to_cjs) {
                         p.printIndent();
                         p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(stmt.loc);
 
                         switch (s.items.len) {
                             0 => {},
@@ -3891,6 +3871,7 @@ fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("export");
                     p.printSpace();
 
@@ -3990,6 +3971,7 @@ fn NewPrinter(
                 .s_export_from => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
 
                     const import_record = p.importRecord(s.import_record_index);
 
@@ -4029,6 +4011,9 @@ fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_local => |s| {
+                    p.printIndent();
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     switch (s.kind) {
                         .k_const => {
                             p.printDeclStmt(s.is_export, "const", s.decls.slice());
@@ -4049,11 +4034,12 @@ fn NewPrinter(
                 },
                 .s_if => |s| {
                     p.printIndent();
-                    p.printIf(s);
+                    p.printIf(s, stmt.loc);
                 },
                 .s_do_while => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("do");
                     switch (s.body.data) {
                         .s_block => {
@@ -4081,6 +4067,7 @@ fn NewPrinter(
                 .s_for_in => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("for");
                     p.printSpace();
                     p.print("(");
@@ -4096,6 +4083,7 @@ fn NewPrinter(
                 .s_for_of => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("for");
                     if (s.is_await) {
                         p.print(" await");
@@ -4115,6 +4103,7 @@ fn NewPrinter(
                 .s_while => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("while");
                     p.printSpace();
                     p.print("(");
@@ -4125,6 +4114,7 @@ fn NewPrinter(
                 .s_with => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("with");
                     p.printSpace();
                     p.print("(");
@@ -4134,10 +4124,10 @@ fn NewPrinter(
                 },
                 .s_label => |s| {
                     if (!p.options.minify_whitespace and p.options.indent.count > 0) {
-                        p.addSourceMapping(stmt.loc);
                         p.printIndent();
                     }
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.printSymbol(s.name.ref orelse Output.panic("Internal error: expected label to have a name {any}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);
@@ -4145,12 +4135,14 @@ fn NewPrinter(
                 .s_try => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("try");
                     p.printSpace();
                     p.printBlock(s.body_loc, s.body, null);
 
                     if (s.catch_) |catch_| {
                         p.printSpace();
+                        p.addSourceMapping(catch_.loc);
                         p.print("catch");
                         if (catch_.binding) |binding| {
                             p.printSpace();
@@ -4159,7 +4151,7 @@ fn NewPrinter(
                             p.print(")");
                         }
                         p.printSpace();
-                        p.printBlock(catch_.loc, catch_.body, null);
+                        p.printBlock(catch_.body_loc, catch_.body, null);
                     }
 
                     if (s.finally) |finally| {
@@ -4174,6 +4166,7 @@ fn NewPrinter(
                 .s_for => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("for");
                     p.printSpace();
                     p.print("(");
@@ -4201,6 +4194,7 @@ fn NewPrinter(
                 .s_switch => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("switch");
                     p.printSpace();
                     p.print("(");
@@ -4263,7 +4257,7 @@ fn NewPrinter(
                         .css => {
                             switch (p.options.css_import_behavior) {
                                 .facade => {
-
+                                    p.addSourceMapping(stmt.loc);
                                     // This comment exists to let tooling authors know which files CSS originated from
                                     // To parse this, you just look for a line that starts with //@import url("
                                     p.print("//@import url(\"");
@@ -4283,6 +4277,7 @@ fn NewPrinter(
                                 },
 
                                 .auto_onimportcss, .facade_onimportcss => {
+                                    p.addSourceMapping(stmt.loc);
                                     p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: ");
                                     p.printStringLiteralUTF8(record.path.text, false);
                                     p.print("}));\n");
@@ -4299,6 +4294,7 @@ fn NewPrinter(
                             return;
                         },
                         .import_path => {
+                            p.addSourceMapping(stmt.loc);
                             if (s.default_name) |name| {
                                 p.print("var ");
                                 p.printSymbol(name.ref.?);
@@ -4320,6 +4316,8 @@ fn NewPrinter(
                         .napi_module => {
                             if (comptime is_bun_platform) {
                                 p.printIndent();
+                                p.printSpaceBeforeIdentifier();
+                                p.addSourceMapping(stmt.loc);
                                 p.print("var ");
                                 p.printSymbol(s.namespace_ref);
                                 p.@"print = "();
@@ -4336,6 +4334,7 @@ fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
 
                     if (comptime is_bun_platform) {
                         switch (record.tag) {
@@ -4527,6 +4526,7 @@ fn NewPrinter(
                 .s_debugger => {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("debugger");
                     p.printSemicolonAfterStatement();
                 },
@@ -4536,12 +4536,14 @@ fn NewPrinter(
 
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.printStringLiteralUTF8(s.value, false);
                     p.printSemicolonAfterStatement();
                 },
                 .s_break => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("break");
                     if (s.label) |label| {
                         p.print(" ");
@@ -4553,6 +4555,7 @@ fn NewPrinter(
                 .s_continue => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("continue");
 
                     if (s.label) |label| {
@@ -4564,6 +4567,7 @@ fn NewPrinter(
                 .s_return => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("return");
 
                     if (s.value) |value| {
@@ -4575,6 +4579,7 @@ fn NewPrinter(
                 .s_throw => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(stmt.loc);
                     p.print("throw");
                     p.printSpace();
                     p.printExpr(s.value, .lowest, ExprFlag.None());
@@ -4582,7 +4587,6 @@ fn NewPrinter(
                 },
                 .s_expr => |s| {
                     if (!p.options.minify_whitespace and p.options.indent.count > 0) {
-                        p.addSourceMapping(stmt.loc);
                         p.printIndent();
                     }
 
@@ -4815,8 +4819,9 @@ fn NewPrinter(
                 },
             }
         }
-        pub fn printIf(p: *Printer, s: *const S.If) void {
+        pub fn printIf(p: *Printer, s: *const S.If, loc: logger.Loc) void {
             p.printSpaceBeforeIdentifier();
+            p.addSourceMapping(loc);
             p.print("if");
             p.printSpace();
             p.print("(");
@@ -4869,6 +4874,7 @@ fn NewPrinter(
             if (s.no) |no_block| {
                 p.printSemicolonIfNeeded();
                 p.printSpaceBeforeIdentifier();
+                p.addSourceMapping(no_block.loc);
                 p.print("else");
 
                 switch (no_block.data) {
@@ -4878,7 +4884,7 @@ fn NewPrinter(
                         p.printNewline();
                     },
                     .s_if => {
-                        p.printIf(no_block.data.s_if);
+                        p.printIf(no_block.data.s_if, no_block.loc);
                     },
                     else => {
                         p.printNewline();
@@ -4965,9 +4971,6 @@ fn NewPrinter(
         }
 
         pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
-            p.printIndent();
-            p.printSpaceBeforeIdentifier();
-
             if (!rewrite_esm_to_cjs and is_export) {
                 p.print("export ");
             }
@@ -5668,8 +5671,8 @@ pub fn getSourceMapBuilder(
         return undefined;
 
     return .{
-        .source_map = SourceMap.Chunk.Builder.SourceMapper.init(
-            opts.allocator,
+        .source_map = .init(
+            opts.source_map_allocator orelse opts.allocator,
             is_bun_platform and generate_source_map == .lazy,
         ),
         .cover_lines_without_mappings = true,
@@ -5677,15 +5680,14 @@ pub fn getSourceMapBuilder(
         .prepend_count = is_bun_platform and generate_source_map == .lazy,
         .line_offset_tables = opts.line_offset_tables orelse brk: {
             if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(
-                opts.allocator,
+                opts.source_map_allocator orelse opts.allocator,
                 source.contents,
                 @as(
                     i32,
                     @intCast(tree.approximate_newline_count),
                 ),
             );
-
-            break :brk SourceMap.LineOffsetTable.List{};
+            break :brk .empty;
         },
     };
 }
@@ -5803,14 +5805,24 @@ pub fn printAst(
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }
-    if (tree.prepend_part) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-            printer.printSemicolonIfNeeded();
-        }
+
+    if (!opts.bundling and
+        tree.uses_require_ref and
+        tree.exports_kind == .esm and
+        opts.target == .bun)
+    {
+        // Hoist the `var {require}=import.meta;` declaration. Previously,
+        // `import.meta.require` was inlined into transpiled files, which
+        // meant calling `func.toString()` on a function with `require`
+        // would observe `import.meta.require` inside of the source code.
+        // Normally, Bun doesn't guarantee `Function.prototype.toString`
+        // will match the untranspiled source code, but in this case the new
+        // code is not valid outside of an ES module (eg, in `new Function`)
+        // https://github.com/oven-sh/bun/issues/15738#issuecomment-2574283514
+        //
+        // This is never a symbol collision because `uses_require_ref` means
+        // `require` must be an unbound variable.
+        printer.print("var {require}=import.meta;");
     }
 
     for (tree.parts.slice()) |part| {
@@ -5920,7 +5932,7 @@ pub fn print(
 
 pub fn printWithWriter(
     comptime Writer: type,
-    _writer: Writer,
+    writer: Writer,
     target: options.Target,
     ast: Ast,
     source: *const logger.Source,
@@ -5933,7 +5945,7 @@ pub fn printWithWriter(
     return switch (target.isBun()) {
         inline else => |is_bun| printWithWriterAndPlatform(
             Writer,
-            _writer,
+            writer,
             is_bun,
             ast,
             source,
@@ -5949,7 +5961,7 @@ pub fn printWithWriter(
 /// The real one
 pub fn printWithWriterAndPlatform(
     comptime Writer: type,
-    _writer: Writer,
+    writer: Writer,
     comptime is_bun_platform: bool,
     ast: Ast,
     source: *const logger.Source,
@@ -5972,7 +5984,6 @@ pub fn printWithWriterAndPlatform(
         false,
         generate_source_maps,
     );
-    const writer = _writer;
     var printer = PrinterType.init(
         writer,
         import_records,
@@ -5985,33 +5996,40 @@ pub fn printWithWriterAndPlatform(
     defer printer.binary_expression_stack.clearAndFree();
 
     defer printer.temporary_bindings.deinit(bun.default_allocator);
-    defer _writer.* = printer.writer.*;
+    defer writer.* = printer.writer.*;
     defer {
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (opts.module_type == .internal_bake_dev) {
+    if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
         printer.indent();
         printer.printIndent();
+        if (!ast.top_level_await_keyword.isEmpty()) {
+            printer.print("async ");
+        }
         printer.printStringLiteralUTF8(source.path.pretty, false);
         const func = parts[0].stmts[0].data.s_expr.value.data.e_function.func;
         if (!(func.body.stmts.len == 1 and func.body.stmts[0].data == .s_lazy_export)) {
             printer.printFunc(func);
         } else {
             // Special-case lazy-export AST
-            // @branchHint(.unlikely)
+            @branchHint(.unlikely);
             printer.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
             printer.printSpace();
             printer.print("{\n");
-            printer.indent();
-            printer.printSymbol(printer.options.commonjs_module_ref);
-            printer.print(".exports = ");
-            printer.printExpr(.{
-                .data = func.body.stmts[0].data.s_lazy_export,
-                .loc = func.body.stmts[0].loc,
-            }, .comma, .{});
-            printer.print("; // bun .s_lazy_export\n");
-            printer.indent();
+            if (func.body.stmts[0].data.s_lazy_export.* != .e_undefined) {
+                printer.indent();
+                printer.printIndent();
+                printer.printSymbol(printer.options.commonjs_module_ref);
+                printer.print(".exports = ");
+                printer.printExpr(.{
+                    .data = func.body.stmts[0].data.s_lazy_export.*,
+                    .loc = func.body.stmts[0].loc,
+                }, .comma, .{});
+                printer.print("; // bun .s_lazy_export\n");
+                printer.unindent();
+            }
+            printer.printIndent();
             printer.print("}");
         }
         printer.print(",\n");
@@ -6085,15 +6103,6 @@ pub fn printCommonJS(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (tree.prepend_part) |part| {
-        for (part.stmts) |stmt| {
-            try printer.printStmt(stmt);
-            if (printer.writer.getError()) {} else |err| {
-                return err;
-            }
-            printer.printSemicolonIfNeeded();
-        }
-    }
     for (tree.parts.slice()) |part| {
         for (part.stmts) |stmt| {
             try printer.printStmt(stmt);

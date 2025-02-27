@@ -35,7 +35,6 @@ const Run = @import("../bun_js.zig").Run;
 var path_buf: bun.PathBuffer = undefined;
 var path_buf2: bun.PathBuffer = undefined;
 const PathString = bun.PathString;
-const is_bindgen = false;
 const HTTPThread = bun.http.HTTPThread;
 
 const JSC = bun.JSC;
@@ -43,7 +42,8 @@ const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
-const CodeCoverageReport = bun.sourcemap.CodeCoverageReport;
+const coverage = bun.sourcemap.coverage;
+const CodeCoverageReport = coverage.Report;
 const uws = bun.uws;
 
 fn escapeXml(str: string, writer: anytype) !void {
@@ -84,7 +84,7 @@ fn escapeXml(str: string, writer: anytype) !void {
         try writer.writeAll(str[last..]);
     }
 }
-fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
+fn fmtStatusTextLine(comptime status: @Type(.enum_literal), comptime emoji_or_color: bool) []const u8 {
     comptime {
         // emoji and color might be split into two different options in the future
         // some terminals support color, but not emoji.
@@ -108,7 +108,7 @@ fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_col
     }
 }
 
-fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) void {
+fn writeTestStatusLine(comptime status: @Type(.enum_literal), writer: anytype) void {
     if (Output.enable_ansi_colors_stderr)
         writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
     else
@@ -272,9 +272,7 @@ pub const JunitReporter = struct {
                 \\
             );
 
-            try this.contents.appendSlice(bun.default_allocator,
-                \\<testsuites name="bun test" 
-            );
+            try this.contents.appendSlice(bun.default_allocator, "<testsuites name=\"bun test\" ");
             this.offset_of_testsuites_value = this.contents.items.len;
             try this.contents.appendSlice(bun.default_allocator, ">\n");
         }
@@ -724,9 +722,9 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        var map = bun.sourcemap.ByteRangeMapping.map orelse return;
+        var map = coverage.ByteRangeMapping.map orelse return;
         var iter = map.valueIterator();
-        var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
+        var byte_ranges = try std.ArrayList(bun.sourcemap.coverage.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
 
         while (iter.next()) |entry| {
             byte_ranges.appendAssumeCapacity(entry.*);
@@ -736,13 +734,24 @@ pub const CommandLineReporter = struct {
             return;
         }
 
-        std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
+        std.sort.pdq(
+            bun.sourcemap.coverage.ByteRangeMapping,
+            byte_ranges.items,
+            {},
+            bun.sourcemap.coverage.ByteRangeMapping.isLessThan,
+        );
 
         try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
     }
 
-    pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, byte_ranges: []bun.sourcemap.ByteRangeMapping, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
-        _ = this; // autofix
+    pub fn printCodeCoverage(
+        _: *CommandLineReporter,
+        vm: *JSC.VirtualMachine,
+        opts: *TestCommand.CodeCoverageOptions,
+        byte_ranges: []bun.sourcemap.coverage.ByteRangeMapping,
+        comptime reporters: TestCommand.Reporters,
+        comptime enable_ansi_colors: bool,
+    ) !void {
         const trace = bun.tracy.traceNamed(@src(), comptime brk: {
             if (reporters.text and reporters.lcov) {
                 break :brk "TestCommand.printCodeCoverageLCovAndText";
@@ -764,7 +773,7 @@ pub const CommandLineReporter = struct {
             @compileError("No reporters enabled");
         }
 
-        const relative_dir = vm.bundler.fs.top_level_dir;
+        const relative_dir = vm.transpiler.fs.top_level_dir;
 
         // --- Text ---
         const max_filepath_length: usize = if (reporters.text) brk: {
@@ -798,7 +807,7 @@ pub const CommandLineReporter = struct {
         var console_buffer_buffer = console_buffer.bufferedWriter();
         var console_writer = console_buffer_buffer.writer();
 
-        var avg = bun.sourcemap.CoverageFraction{
+        var avg = bun.sourcemap.coverage.Fraction{
             .functions = 0.0,
             .lines = 0.0,
             .stmts = 0.0,
@@ -820,14 +829,13 @@ pub const CommandLineReporter = struct {
                     },
                     .always_return_none = true,
                 },
-                .sync,
             );
 
             // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
             var base64_bytes: [8]u8 = undefined;
             var shortname_buf: [512]u8 = undefined;
             bun.rand(&base64_bytes);
-            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
             const path = bun.path.joinAbsStringBufZ(relative_dir, &lcov_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
             const file = bun.sys.File.openat(
                 std.fs.cwd(),
@@ -1051,7 +1059,7 @@ const Scanner = struct {
         }
 
         const ext = std.fs.path.extension(slice);
-        const loader_by_ext = JSC.VirtualMachine.get().bundler.options.loader(ext);
+        const loader_by_ext = JSC.VirtualMachine.get().transpiler.options.loader(ext);
 
         // allow file loader just incase they use a custom loader with a non-standard extension
         if (!(loader_by_ext.isJavaScriptLike() or loader_by_ext == .file)) {
@@ -1159,7 +1167,7 @@ pub const TestCommand = struct {
         skip_test_files: bool = !Environment.allow_assert,
         reporters: Reporters = .{ .text = true, .lcov = false },
         reports_directory: string = "coverage",
-        fractions: bun.sourcemap.CoverageFraction = .{},
+        fractions: bun.sourcemap.coverage.Fraction = .{},
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
@@ -1178,8 +1186,6 @@ pub const TestCommand = struct {
     };
 
     pub fn exec(ctx: Command.Context) !void {
-        if (comptime is_bindgen) unreachable;
-
         Output.is_github_action = Output.isGithubAction();
 
         // print the version so you know its doing stuff if it takes a sec
@@ -1200,6 +1206,7 @@ pub const TestCommand = struct {
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
         var snapshot_counts = bun.StringHashMap(usize).init(ctx.allocator);
+        var inline_snapshots_to_write = std.AutoArrayHashMap(TestRunner.File.ID, std.ArrayList(Snapshots.InlineSnapshotToWrite)).init(ctx.allocator);
         JSC.isBunTest = true;
 
         var reporter = try ctx.allocator.create(CommandLineReporter);
@@ -1220,6 +1227,7 @@ pub const TestCommand = struct {
                     .file_buf = &snapshot_file_buf,
                     .values = &snapshot_values,
                     .counts = &snapshot_counts,
+                    .inline_snapshots_to_write = &inline_snapshots_to_write,
                 },
             },
             .callback = undefined,
@@ -1259,12 +1267,13 @@ pub const TestCommand = struct {
                 .store_fd = true,
                 .smol = ctx.runtime_options.smol,
                 .debugger = ctx.runtime_options.debugger,
+                .is_main_thread = true,
             },
         );
         vm.argv = ctx.passthrough;
         vm.preload = ctx.preloads;
-        vm.bundler.options.rewrite_jest_for_tests = true;
-        vm.bundler.options.env.behavior = .load_all_without_inlining;
+        vm.transpiler.options.rewrite_jest_for_tests = true;
+        vm.transpiler.options.env.behavior = .load_all_without_inlining;
 
         const node_env_entry = try env_loader.map.getOrPutWithoutValue("NODE_ENV");
         if (!node_env_entry.found_existing) {
@@ -1275,18 +1284,18 @@ pub const TestCommand = struct {
             };
         }
 
-        try vm.bundler.configureDefines();
+        try vm.transpiler.configureDefines();
 
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
         if (ctx.test_options.coverage.enabled) {
-            vm.bundler.options.code_coverage = true;
-            vm.bundler.options.minify_syntax = false;
-            vm.bundler.options.minify_identifiers = false;
-            vm.bundler.options.minify_whitespace = false;
-            vm.bundler.options.dead_code_elimination = false;
+            vm.transpiler.options.code_coverage = true;
+            vm.transpiler.options.minify_syntax = false;
+            vm.transpiler.options.minify_identifiers = false;
+            vm.transpiler.options.minify_whitespace = false;
+            vm.transpiler.options.dead_code_elimination = false;
             vm.global.vm().setControlFlowProfiler(true);
         }
 
@@ -1296,7 +1305,7 @@ pub const TestCommand = struct {
             // We use the string "Etc/UTC" instead of "UTC" so there is no normalization difference.
             "Etc/UTC";
 
-        if (vm.bundler.env.get("TZ")) |tz| {
+        if (vm.transpiler.env.get("TZ")) |tz| {
             TZ_NAME = tz;
         }
 
@@ -1349,8 +1358,8 @@ pub const TestCommand = struct {
 
             var scanner = Scanner{
                 .dirs_to_scan = Scanner.Fifo.init(ctx.allocator),
-                .options = &vm.bundler.options,
-                .fs = vm.bundler.fs,
+                .options = &vm.transpiler.options,
+                .fs = vm.transpiler.fs,
                 .filter_names = filter_names_normalized,
                 .results = &results,
             };
@@ -1377,13 +1386,13 @@ pub const TestCommand = struct {
                 else => {},
             }
 
-            // vm.bundler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
+            // vm.transpiler.fs.fs.readDirectory(_dir: string, _handle: ?std.fs.Dir)
             runAllTests(reporter, vm, test_files, ctx.allocator);
         }
 
+        const write_snapshots_success = try jest.Jest.runner.?.snapshots.writeInlineSnapshots();
         try jest.Jest.runner.?.snapshots.writeSnapshotFile();
-        var coverage = ctx.test_options.coverage;
-
+        var coverage_options = ctx.test_options.coverage;
         if (reporter.summary.pass > 20) {
             if (reporter.summary.skip > 0) {
                 Output.prettyError("\n<r><d>{d} tests skipped:<r>\n", .{reporter.summary.skip});
@@ -1468,12 +1477,12 @@ pub const TestCommand = struct {
         } else {
             Output.prettyError("\n", .{});
 
-            if (coverage.enabled) {
+            if (coverage_options.enabled) {
                 switch (Output.enable_ansi_colors_stderr) {
-                    inline else => |colors| switch (coverage.reporters.text) {
-                        inline else => |console| switch (coverage.reporters.lcov) {
+                    inline else => |colors| switch (coverage_options.reporters.text) {
+                        inline else => |console| switch (coverage_options.reporters.lcov) {
                             inline else => |lcov| {
-                                try reporter.generateCodeCoverage(vm, &coverage, .{ .text = console, .lcov = lcov }, colors);
+                                try reporter.generateCodeCoverage(vm, &coverage_options, .{ .text = console, .lcov = lcov }, colors);
                             },
                         },
                     },
@@ -1567,22 +1576,26 @@ pub const TestCommand = struct {
         }
 
         if (vm.hot_reload == .watch) {
-            vm.eventLoop().tickPossiblyForever();
-
-            while (true) {
-                while (vm.isEventLoopAlive()) {
-                    vm.tick();
-                    vm.eventLoop().autoTickActive();
-                }
-
-                vm.eventLoop().tickPossiblyForever();
-            }
+            vm.runWithAPILock(JSC.VirtualMachine, vm, runEventLoopForWatch);
         }
 
-        if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
+        if (reporter.summary.fail > 0 or (coverage_options.enabled and coverage_options.fractions.failing and coverage_options.fail_on_low_coverage) or !write_snapshots_success) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
             Global.exit(reporter.jest.unhandled_errors_between_tests);
+        }
+    }
+
+    fn runEventLoopForWatch(vm: *JSC.VirtualMachine) void {
+        vm.eventLoop().tickPossiblyForever();
+
+        while (true) {
+            while (vm.isEventLoopAlive()) {
+                vm.tick();
+                vm.eventLoop().autoTickActive();
+            }
+
+            vm.eventLoop().tickPossiblyForever();
         }
     }
 
@@ -1651,7 +1664,7 @@ pub const TestCommand = struct {
         defer reporter.jest.only = prev_only;
 
         const file_start = reporter.jest.files.len;
-        const resolution = try vm.bundler.resolveEntryPoint(file_name);
+        const resolution = try vm.transpiler.resolveEntryPoint(file_name);
         vm.clearEntryPoint();
 
         const file_path = resolution.path_pair.primary.text;

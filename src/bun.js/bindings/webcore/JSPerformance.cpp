@@ -130,7 +130,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
@@ -255,6 +255,12 @@ JSPerformance::JSPerformance(Structure* structure, JSDOMGlobalObject& globalObje
 {
 }
 
+size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
+{
+    JSPerformance* thisObject = jsCast<JSPerformance*>(cell);
+    return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
+}
+
 // static_assert(!std::is_base_of<ActiveDOMObject, Performance>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
 void JSPerformance::finishCreation(VM& vm)
@@ -301,7 +307,7 @@ JSValue JSPerformance::getConstructor(VM& vm, const JSGlobalObject* globalObject
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSPerformancePrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

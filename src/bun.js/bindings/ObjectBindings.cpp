@@ -1,4 +1,4 @@
-#include "root.h"
+#include "ObjectBindings.h"
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/PropertySlot.h>
@@ -8,11 +8,18 @@ namespace Bun {
 
 using namespace JSC;
 
+// this function does prototype lookups but stops at the object prototype,
+// preventing a class of vulnerabilities where a badly written parser
+// mutates `globalThis.Object.prototype`.
+//
+// TODO: this function sometimes returns false positives.
+// see test cases in test-fs-rm.js where the `force` argument needs to throw
+// when it is `undefined`, but implementing that code makes cases where `force`
+// is omitted will make it think it is defined.
 static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     // This method only supports non-index PropertyNames.
     ASSERT(!parseIndex(propertyName));
-
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* objectPrototype = nullptr;
     while (true) {
@@ -54,7 +61,7 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
 
 // Returns empty for exception, returns deleted if not found.
 // Be careful when handling the return value.
-JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name)
+JSC::JSValue getIfPropertyExistsPrototypePollutionMitigationUnsafe(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto propertySlot = PropertySlot(object, PropertySlot::InternalMethodType::Get);
@@ -70,9 +77,20 @@ JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::J
     return value;
 }
 
-JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name)
+JSC::JSValue getIfPropertyExistsPrototypePollutionMitigation(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* object, const JSC::PropertyName& name)
 {
-    return getIfPropertyExistsPrototypePollutionMitigation(JSC::getVM(globalObject), globalObject, object, name);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto propertySlot = PropertySlot(object, PropertySlot::InternalMethodType::Get);
+    auto isDefined = getNonIndexPropertySlotPrototypePollutionMitigation(vm, object, globalObject, name, propertySlot);
+
+    if (!isDefined) {
+        return JSC::jsUndefined();
+    }
+
+    scope.assertNoException();
+    JSValue value = propertySlot.getValue(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    return value;
 }
 
 }

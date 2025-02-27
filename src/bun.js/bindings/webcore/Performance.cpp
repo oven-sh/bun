@@ -51,12 +51,12 @@
 #include "PerformanceUserTiming.h"
 // #include "ResourceResponse.h"
 #include "ScriptExecutionContext.h"
-#include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(Performance);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Performance);
 
 constexpr Seconds highTimePrecision { 20_us };
 static Seconds timePrecision { 1_ms };
@@ -187,6 +187,16 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
 
     std::sort(entries.begin(), entries.end(), PerformanceEntry::startTimeCompareLessThan);
     return entries;
+}
+
+size_t Performance::memoryCost() const
+{
+    size_t size = sizeof(Performance);
+    size += m_resourceTimingBuffer.size() * sizeof(PerformanceResourceTiming);
+    if (m_userTiming) {
+        size += m_userTiming->memoryCost();
+    }
+    return size;
 }
 
 Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByName(const String& name, const String& entryType) const

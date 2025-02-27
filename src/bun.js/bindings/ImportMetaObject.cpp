@@ -23,6 +23,7 @@
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/CallData.h>
 
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
@@ -54,7 +55,7 @@ using namespace WebCore;
 
 static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const WTF::String& fromStr)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (callFrame->argumentCount()) {
@@ -182,7 +183,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireResolve, (JSC::JSGlobalObject * global
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     JSValue thisValue = callFrame->thisValue();
@@ -204,7 +205,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             JSC::JSValue isESMValue = callFrame->argument(2);
             if (isESMValue.isBoolean()) {
                 isESM = isESMValue.toBoolean(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 
@@ -222,7 +222,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
 
         } else if (fromValue.isBoolean()) {
             isESM = fromValue.toBoolean(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
             fromValue = JSC::jsUndefined();
         }
 
@@ -276,7 +275,7 @@ extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
@@ -325,7 +324,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     auto bunStr = Bun::toString(parentIdStr);
                     args.append(jsBoolean(Bun__isBunMain(lexicalGlobalObject, &bunStr)));
 
-                    return JSValue::encode(JSC::call(lexicalGlobalObject, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
+                    return JSValue::encode(JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), parentModuleObject, args));
                 }
             }
         }
@@ -347,7 +346,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     auto thisValue = callFrame->thisValue();

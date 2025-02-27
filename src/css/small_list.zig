@@ -80,11 +80,80 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             }
         }
 
+        /// NOTE: This will deinit the list
+        pub fn fromList(allocator: Allocator, list: std.ArrayListUnmanaged(T)) @This() {
+            if (list.cap > N) {
+                return .{
+                    .capacity = list.cap,
+                    .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
+                };
+            }
+            defer list.deinit(allocator);
+            var this: @This() = .{
+                .capacity = list.len,
+                .data = .{ .inlined = undefined },
+            };
+            @memcpy(this.data.inlined[0..list.len], list.items[0..list.len]);
+            return this;
+        }
+
+        pub fn fromListNoDeinit(list: std.ArrayListUnmanaged(T)) @This() {
+            if (list.cap > N) {
+                return .{
+                    .capacity = list.cap,
+                    .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
+                };
+            }
+            var this: @This() = .{
+                .capacity = list.len,
+                .data = .{ .inlined = undefined },
+            };
+            @memcpy(this.data.inlined[0..list.len], list.items[0..list.len]);
+            return this;
+        }
+
+        /// NOTE: This will deinit the list
+        pub fn fromBabyList(allocator: Allocator, list: bun.BabyList(T)) @This() {
+            if (list.cap > N) {
+                return .{
+                    .capacity = list.cap,
+                    .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
+                };
+            }
+            defer list.deinitWithAllocator(allocator);
+            var this: @This() = .{
+                .capacity = list.len,
+                .data = .{ .inlined = undefined },
+            };
+            @memcpy(this.data.inlined[0..list.len], list.items[0..list.len]);
+            return this;
+        }
+
+        pub fn fromBabyListNoDeinit(list: bun.BabyList(T)) @This() {
+            if (list.cap > N) {
+                return .{
+                    .capacity = list.cap,
+                    .data = .{ .heap = .{ .len = list.len, .ptr = list.ptr } },
+                };
+            }
+            var this: @This() = .{
+                .capacity = list.len,
+                .data = .{ .inlined = undefined },
+            };
+            @memcpy(this.data.inlined[0..list.len], list.ptr[0..list.len]);
+            return this;
+        }
+
         pub fn withOne(val: T) @This() {
             var ret = This{};
             ret.capacity = 1;
             ret.data.inlined[0] = val;
             return ret;
+        }
+
+        pub inline fn getLastUnchecked(this: *const @This()) T {
+            if (this.spilled()) return this.data.heap.ptr[this.data.heap.len - 1];
+            return this.data.inlined[this.capacity - 1];
         }
 
         pub inline fn at(this: *const @This(), idx: u32) *const T {
@@ -173,6 +242,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                     pub inline fn helper(comptime prefix: []const u8, pfs: *css.VendorPrefix, pfi: *const SmallList(T, 1), r: *bun.BabyList(This), alloc: Allocator) void {
                         if (pfs.contains(css.VendorPrefix.fromName(prefix))) {
                             var images = SmallList(T, 1).initCapacity(alloc, pfi.len());
+                            images.setLen(pfi.len());
                             for (images.slice_mut(), pfi.slice()) |*out, *in| {
                                 const image = in.getImage().getPrefixed(alloc, css.VendorPrefix.fromName(prefix));
                                 out.* = in.withImage(alloc, image);
@@ -334,10 +404,10 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
 
         pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
-            var ret: @This() = .{};
-            ret.appendSlice(allocator, this.slice());
-            for (ret.slice_mut()) |*item| {
-                item.* = generic.deepClone(T, item, allocator);
+            var ret: @This() = initCapacity(allocator, this.len());
+            ret.setLen(this.len());
+            for (this.slice(), ret.slice_mut()) |*in, *out| {
+                out.* = generic.deepClone(T, in, allocator);
             }
             return ret;
         }
@@ -431,6 +501,14 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             len_ptr.* += 1;
         }
 
+        pub fn pop(this: *@This()) ?T {
+            const ptr, const len_ptr, _ = this.tripleMut();
+            if (len_ptr.* == 0) return null;
+            const last_index = len_ptr.* - 1;
+            len_ptr.* = last_index;
+            return ptr[last_index];
+        }
+
         pub fn append(this: *@This(), allocator: Allocator, item: T) void {
             var ptr, var len_ptr, const capp = this.tripleMut();
             if (len_ptr.* == capp) {
@@ -447,9 +525,17 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
             this.insertSlice(allocator, this.len(), items);
         }
 
-        pub fn insertSlice(this: *@This(), allocator: Allocator, index: u32, items: []const T) void {
-            this.reserve(allocator, @intCast(items.len));
+        pub fn appendSliceAssumeCapacity(this: *@This(), items: []const T) void {
+            bun.assert(this.len() + items.len <= this.capacity);
+            this.insertSliceAssumeCapacity(this.len(), items);
+        }
 
+        pub inline fn insertSlice(this: *@This(), allocator: Allocator, index: u32, items: []const T) void {
+            this.reserve(allocator, @intCast(items.len));
+            this.insertSliceAssumeCapacity(index, items);
+        }
+
+        pub inline fn insertSliceAssumeCapacity(this: *@This(), index: u32, items: []const T) void {
             const length = this.len();
             bun.assert(index <= length);
             const ptr: [*]T = this.as_ptr()[index..];
@@ -489,7 +575,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
 
         fn reserveOneUnchecked(this: *@This(), allocator: Allocator) void {
-            @setCold(true);
+            @branchHint(.cold);
             bun.assert(this.len() == this.capacity);
             const new_cap = growCapacity(this.capacity, this.len() + 1);
             this.tryGrow(allocator, new_cap);

@@ -19,7 +19,7 @@ pub const ResolveMessage = struct {
     pub usingnamespace JSC.Codegen.JSResolveMessage;
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ResolveMessage {
-        return globalThis.throw2("ResolveMessage is not constructable", .{});
+        return globalThis.throw("ResolveMessage is not constructable", .{});
     }
 
     pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -88,8 +88,7 @@ pub const ResolveMessage = struct {
 
     pub fn toStringFn(this: *ResolveMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const text = std.fmt.allocPrint(default_allocator, "ResolveMessage: {s}", .{this.msg.data.text}) catch {
-            globalThis.throwOutOfMemory();
-            return .zero;
+            return globalThis.throwOutOfMemoryValue();
         };
         var str = ZigString.init(text);
         str.setOutputEncoding();
@@ -123,7 +122,7 @@ pub const ResolveMessage = struct {
                 return JSC.JSValue.jsNull();
             }
 
-            const str = args[0].getZigString(globalThis);
+            const str = try args[0].getZigString(globalThis);
             if (str.eqlComptime("default") or str.eqlComptime("string")) {
                 return this.toStringFn(globalThis);
             }

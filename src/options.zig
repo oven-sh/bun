@@ -644,6 +644,14 @@ pub const Loader = enum(u8) {
     bunsh,
     sqlite,
     sqlite_embedded,
+    html,
+
+    pub fn disableHTML(this: Loader) Loader {
+        return switch (this) {
+            .html => .file,
+            else => this,
+        };
+    }
 
     pub inline fn isSQLite(this: Loader) bool {
         return switch (this) {
@@ -652,39 +660,43 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn shouldCopyForBundling(this: Loader, experimental_css: bool) bool {
-        if (experimental_css) {
-            return switch (this) {
-                .file,
-                .napi,
-                .sqlite,
-                .sqlite_embedded,
-                // TODO: loader for reading bytes and creating module or instance
-                .wasm,
-                => true,
-                else => false,
-            };
-        }
+    pub fn shouldCopyForBundling(this: Loader) bool {
         return switch (this) {
             .file,
-            .css,
             .napi,
             .sqlite,
             .sqlite_embedded,
             // TODO: loader for reading bytes and creating module or instance
             .wasm,
             => true,
+            .css => false,
+            .html => false,
             else => false,
         };
     }
 
-    pub fn toMimeType(this: Loader) bun.http.MimeType {
+    pub fn toMimeType(this: Loader, paths: []const []const u8) bun.http.MimeType {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
             .toml, .json => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
-            else => bun.http.MimeType.other,
+            .html => bun.http.MimeType.html,
+            else => {
+                for (paths) |path| {
+                    var extname = std.fs.path.extension(path);
+                    if (strings.startsWithChar(extname, '.')) {
+                        extname = extname[1..];
+                    }
+                    if (extname.len > 0) {
+                        if (bun.http.MimeType.byExtensionNoDefault(extname)) |mime| {
+                            return mime;
+                        }
+                    }
+                }
+
+                return bun.http.MimeType.other;
+            },
         };
     }
 
@@ -699,7 +711,7 @@ pub const Loader = enum(u8) {
 
     pub fn canBeRunByBun(this: Loader) bool {
         return switch (this) {
-            .jsx, .js, .ts, .tsx, .json, .wasm, .bunsh => true,
+            .jsx, .js, .ts, .tsx, .wasm, .bunsh => true,
             else => false,
         };
     }
@@ -719,6 +731,7 @@ pub const Loader = enum(u8) {
         map.set(.napi, "input.node");
         map.set(.text, "input.txt");
         map.set(.bunsh, "input.sh");
+        map.set(.html, "input.html");
         break :brk map;
     };
 
@@ -734,7 +747,7 @@ pub const Loader = enum(u8) {
         }
 
         var zig_str = JSC.ZigString.init("");
-        loader.toZigString(&zig_str, global);
+        try loader.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {
@@ -754,6 +767,7 @@ pub const Loader = enum(u8) {
         .{ "css", .css },
         .{ "file", .file },
         .{ "json", .json },
+        .{ "jsonc", .json },
         .{ "toml", .toml },
         .{ "wasm", .wasm },
         .{ "node", .napi },
@@ -764,6 +778,7 @@ pub const Loader = enum(u8) {
         .{ "sh", .bunsh },
         .{ "sqlite", .sqlite },
         .{ "sqlite_embedded", .sqlite_embedded },
+        .{ "html", .html },
     });
 
     pub const api_names = bun.ComptimeStringMap(Api.Loader, .{
@@ -778,6 +793,7 @@ pub const Loader = enum(u8) {
         .{ "css", .css },
         .{ "file", .file },
         .{ "json", .json },
+        .{ "jsonc", .json },
         .{ "toml", .toml },
         .{ "wasm", .wasm },
         .{ "node", .napi },
@@ -787,6 +803,7 @@ pub const Loader = enum(u8) {
         .{ "text", .text },
         .{ "sh", .file },
         .{ "sqlite", .sqlite },
+        .{ "html", .html },
     });
 
     pub fn fromString(slice_: string) ?Loader {
@@ -812,6 +829,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .html => .html,
             .file, .bunsh => .file,
             .json => .json,
             .toml => .toml,
@@ -840,6 +858,7 @@ pub const Loader = enum(u8) {
             .base64 => .base64,
             .dataurl => .dataurl,
             .text => .text,
+            .html => .html,
             .sqlite => .sqlite,
             _ => .file,
         };
@@ -899,6 +918,8 @@ const default_loaders_posix = .{
     .{ ".node", .napi },
     .{ ".txt", .text },
     .{ ".text", .text },
+    .{ ".html", .html },
+    .{ ".jsonc", .json },
 };
 const default_loaders_win32 = default_loaders_posix ++ .{
     .{ ".sh", .bunsh },
@@ -909,37 +930,62 @@ pub const defaultLoaders = bun.ComptimeStringMap(Loader, default_loaders);
 
 // https://webpack.js.org/guides/package-exports/#reference-syntax
 pub const ESMConditions = struct {
-    default: ConditionsMap = undefined,
-    import: ConditionsMap = undefined,
-    require: ConditionsMap = undefined,
+    default: ConditionsMap,
+    import: ConditionsMap,
+    require: ConditionsMap,
+    style: ConditionsMap,
 
     pub fn init(allocator: std.mem.Allocator, defaults: []const string) !ESMConditions {
         var default_condition_amp = ConditionsMap.init(allocator);
 
         var import_condition_map = ConditionsMap.init(allocator);
         var require_condition_map = ConditionsMap.init(allocator);
+        var style_condition_map = ConditionsMap.init(allocator);
 
         try default_condition_amp.ensureTotalCapacity(defaults.len + 2);
         try import_condition_map.ensureTotalCapacity(defaults.len + 2);
         try require_condition_map.ensureTotalCapacity(defaults.len + 2);
+        try style_condition_map.ensureTotalCapacity(defaults.len + 2);
 
         import_condition_map.putAssumeCapacity("import", {});
         require_condition_map.putAssumeCapacity("require", {});
+        style_condition_map.putAssumeCapacity("style", {});
 
         for (defaults) |default| {
             default_condition_amp.putAssumeCapacityNoClobber(default, {});
             import_condition_map.putAssumeCapacityNoClobber(default, {});
             require_condition_map.putAssumeCapacityNoClobber(default, {});
+            style_condition_map.putAssumeCapacityNoClobber(default, {});
         }
 
         default_condition_amp.putAssumeCapacity("default", {});
         import_condition_map.putAssumeCapacity("default", {});
         require_condition_map.putAssumeCapacity("default", {});
+        style_condition_map.putAssumeCapacity("default", {});
 
-        return ESMConditions{
+        return .{
             .default = default_condition_amp,
             .import = import_condition_map,
             .require = require_condition_map,
+            .style = style_condition_map,
+        };
+    }
+
+    pub fn clone(self: *const ESMConditions) !ESMConditions {
+        var default = try self.default.clone();
+        errdefer default.deinit();
+        var import = try self.import.clone();
+        errdefer import.deinit();
+        var require = try self.require.clone();
+        errdefer require.deinit();
+        var style = try self.style.clone();
+        errdefer style.deinit();
+
+        return .{
+            .default = default,
+            .import = import,
+            .require = require,
+            .style = style,
         };
     }
 
@@ -947,23 +993,30 @@ pub const ESMConditions = struct {
         try self.default.ensureUnusedCapacity(conditions.len);
         try self.import.ensureUnusedCapacity(conditions.len);
         try self.require.ensureUnusedCapacity(conditions.len);
+        try self.style.ensureUnusedCapacity(conditions.len);
 
         for (conditions) |condition| {
-            self.default.putAssumeCapacityNoClobber(condition, {});
-            self.import.putAssumeCapacityNoClobber(condition, {});
-            self.require.putAssumeCapacityNoClobber(condition, {});
+            self.default.putAssumeCapacity(condition, {});
+            self.import.putAssumeCapacity(condition, {});
+            self.require.putAssumeCapacity(condition, {});
+            self.style.putAssumeCapacity(condition, {});
         }
     }
 };
 
 pub const JSX = struct {
-    pub const RuntimeMap = bun.ComptimeStringMap(JSX.Runtime, .{
-        .{ "classic", .classic },
-        .{ "automatic", .automatic },
-        .{ "react", .classic },
-        .{ "react-jsx", .automatic },
-        .{ "react-jsxdev", .automatic },
-        .{ "solid", .solid },
+    const RuntimeDevelopmentPair = struct {
+        runtime: JSX.Runtime,
+        development: ?bool,
+    };
+
+    pub const RuntimeMap = bun.ComptimeStringMap(RuntimeDevelopmentPair, .{
+        .{ "classic", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
+        .{ "automatic", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "react", RuntimeDevelopmentPair{ .runtime = .classic, .development = null } },
+        .{ "react-jsx", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "react-jsxdev", RuntimeDevelopmentPair{ .runtime = .automatic, .development = true } },
+        .{ "solid", RuntimeDevelopmentPair{ .runtime = .solid, .development = null } },
     });
 
     pub const Pragma = struct {
@@ -979,6 +1032,10 @@ pub const JSX = struct {
         classic_import_source: string = "react",
         package_name: []const u8 = "react",
 
+        /// Configuration Priority:
+        /// - `--define=process.env.NODE_ENV=...`
+        /// - `NODE_ENV=...`
+        /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
         development: bool = true,
         parse: bool = true,
 
@@ -1072,7 +1129,7 @@ pub const JSX = struct {
         // ...unless new is "React.createElement" and original is ["React", "createElement"]
         // saves an allocation for the majority case
         pub fn memberListToComponentsIfDifferent(allocator: std.mem.Allocator, original: []const string, new: string) ![]const string {
-            var splitter = std.mem.split(u8, new, ".");
+            var splitter = std.mem.splitScalar(u8, new, '.');
             const count = strings.countChar(new, '.') + 1;
 
             var needs_alloc = false;
@@ -1097,7 +1154,7 @@ pub const JSX = struct {
 
             var out = try allocator.alloc(string, count);
 
-            splitter = std.mem.split(u8, new, ".");
+            splitter = std.mem.splitScalar(u8, new, '.');
             var i: usize = 0;
             while (splitter.next()) |str| {
                 if (str.len == 0) continue;
@@ -1260,18 +1317,25 @@ pub fn definesFromTransformOptions(
     );
 }
 
-const default_loader_ext_bun = [_]string{".node"};
+const default_loader_ext_bun = [_]string{ ".node", ".html" };
 const default_loader_ext = [_]string{
-    ".jsx",  ".json",
-    ".js",   ".mjs",
-    ".cjs",  ".css",
+    ".jsx",   ".json",
+    ".js",    ".mjs",
+    ".cjs",   ".css",
 
     // https://devblogs.microsoft.com/typescript/announcing-typescript-4-5-beta/#new-file-extensions
-    ".ts",   ".tsx",
-    ".mts",  ".cts",
+    ".ts",    ".tsx",
+    ".mts",   ".cts",
 
-    ".toml", ".wasm",
-    ".txt",  ".text",
+    ".toml",  ".wasm",
+    ".txt",   ".text",
+
+    ".jsonc",
+};
+
+// Only set it for browsers by default.
+const default_loader_ext_browser = [_]string{
+    ".html",
 };
 
 const node_modules_default_loader_ext_bun = [_]string{".node"};
@@ -1285,11 +1349,13 @@ const node_modules_default_loader_ext = [_]string{
     ".toml",
     ".txt",
     ".json",
+    ".jsonc",
     ".css",
     ".tsx",
     ".cts",
     ".wasm",
     ".text",
+    ".html",
 };
 
 pub const ResolveFileExtensions = struct {
@@ -1308,7 +1374,7 @@ pub const ResolveFileExtensions = struct {
 
     pub fn kind(this: *const ResolveFileExtensions, kind_: bun.ImportKind, is_node_modules: bool) []const string {
         return switch (kind_) {
-            .stmt, .entry_point, .dynamic => this.group(is_node_modules).esm,
+            .stmt, .entry_point_build, .entry_point_run, .dynamic => this.group(is_node_modules).esm,
             else => this.group(is_node_modules).default,
         };
     }
@@ -1340,6 +1406,12 @@ pub fn loadersFromTransformOptions(allocator: std.mem.Allocator, _loaders: ?Api.
 
     if (target.isBun()) {
         inline for (default_loader_ext_bun) |ext| {
+            _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
+        }
+    }
+
+    if (target == .browser) {
+        inline for (default_loader_ext_browser) |ext| {
             _ = try loaders.getOrPutValue(ext, defaultLoaders.get(ext).?);
         }
     }
@@ -1497,8 +1569,6 @@ pub const BundleOptions = struct {
     minify_syntax: bool = false,
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
-
-    experimental_css: bool,
     css_chunking: bool,
 
     ignore_dce_annotations: bool = false,
@@ -1515,6 +1585,9 @@ pub const BundleOptions = struct {
     /// Set when Bake is bundling. Affects module resolution.
     framework: ?*bun.bake.Framework = null,
 
+    serve_plugins: ?[]const []const u8 = null,
+    bunfig_path: string = "",
+
     /// This is a list of packages which even when require() is used, we will
     /// instead convert to ESM import statements.
     ///
@@ -1525,13 +1598,29 @@ pub const BundleOptions = struct {
 
     supports_multiple_outputs: bool = true,
 
+    /// This is set by the process environment, which is used to override the
+    /// JSX configuration. When this is unspecified, the tsconfig.json is used
+    /// to determine if a development jsx-runtime is used (by going between
+    /// "react-jsx" or "react-jsx-dev-runtime")
+    force_node_env: ForceNodeEnv = .unspecified,
+
+    ignore_module_resolution_errors: bool = false,
+
+    pub const ForceNodeEnv = enum {
+        unspecified,
+        development,
+        production,
+    };
+
     pub fn isTest(this: *const BundleOptions) bool {
         return this.rewrite_jest_for_tests;
     }
 
     pub fn setProduction(this: *BundleOptions, value: bool) void {
-        this.production = value;
-        this.jsx.development = !value;
+        if (this.force_node_env == .unspecified) {
+            this.production = value;
+            this.jsx.development = !value;
+        }
     }
 
     pub const default_unwrap_commonjs_packages = [_]string{
@@ -1683,13 +1772,15 @@ pub const BundleOptions = struct {
             .out_extensions = undefined,
             .env = Env.init(allocator),
             .transform_options = transform,
-            .experimental_css = false,
             .css_chunking = false,
             .drop = transform.drop,
         };
 
         Analytics.Features.define += @as(usize, @intFromBool(transform.define != null));
         Analytics.Features.loaders += @as(usize, @intFromBool(transform.loaders != null));
+
+        opts.serve_plugins = transform.serve_plugins;
+        opts.bunfig_path = transform.bunfig_path;
 
         if (transform.env_files.len > 0) {
             opts.env.files = transform.env_files;
@@ -1837,419 +1928,7 @@ pub const TransformOptions = struct {
     }
 };
 
-// Instead of keeping files in-memory, we:
-// 1. Write directly to disk
-// 2. (Optional) move the file to the destination
-// This saves us from allocating a buffer
-pub const OutputFile = struct {
-    loader: Loader,
-    input_loader: Loader = .js,
-    src_path: Fs.Path,
-    value: Value,
-    size: usize = 0,
-    size_without_sourcemap: usize = 0,
-    hash: u64 = 0,
-    is_executable: bool = false,
-    source_map_index: u32 = std.math.maxInt(u32),
-    bytecode_index: u32 = std.math.maxInt(u32),
-    output_kind: JSC.API.BuildArtifact.OutputKind,
-    /// Relative
-    dest_path: []const u8 = "",
-    side: ?bun.bake.Side,
-    /// This is only set for the JS bundle, and not files associated with an
-    /// entrypoint like sourcemaps and bytecode
-    entry_point_index: ?u32,
-    referenced_css_files: []const Index = &.{},
-
-    pub const Index = bun.GenericIndex(u32, OutputFile);
-
-    // Depending on:
-    // - The target
-    // - The number of open file handles
-    // - Whether or not a file of the same name exists
-    // We may use a different system call
-    pub const FileOperation = struct {
-        pathname: string,
-        fd: FileDescriptorType = bun.invalid_fd,
-        dir: FileDescriptorType = bun.invalid_fd,
-        is_tmpdir: bool = false,
-        is_outdir: bool = false,
-        close_handle_on_complete: bool = false,
-        autowatch: bool = true,
-
-        pub fn fromFile(fd: anytype, pathname: string) FileOperation {
-            return .{
-                .pathname = pathname,
-                .fd = bun.toFD(fd),
-            };
-        }
-
-        pub fn getPathname(file: *const FileOperation) string {
-            if (file.is_tmpdir) {
-                return resolve_path.joinAbs(@TypeOf(Fs.FileSystem.instance.fs).tmpdir_path, .auto, file.pathname);
-            } else {
-                return file.pathname;
-            }
-        }
-    };
-
-    pub const Value = union(Kind) {
-        move: FileOperation,
-        copy: FileOperation,
-        noop: u0,
-        buffer: struct {
-            allocator: std.mem.Allocator,
-            bytes: []const u8,
-        },
-        pending: resolver.Result,
-        saved: SavedFile,
-
-        pub fn toBunString(v: Value) bun.String {
-            return switch (v) {
-                .noop => bun.String.empty,
-                .buffer => |buf| {
-                    // Use ExternalStringImpl to avoid cloning the string, at
-                    // the cost of allocating space to remember the allocator.
-                    const FreeContext = struct {
-                        allocator: std.mem.Allocator,
-
-                        fn onFree(uncast_ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void {
-                            const ctx: *@This() = @alignCast(@ptrCast(uncast_ctx));
-                            ctx.allocator.free(@as([*]u8, @ptrCast(buffer))[0..len]);
-                            bun.destroy(ctx);
-                        }
-                    };
-                    return bun.String.createExternal(
-                        buf.bytes,
-                        true,
-                        bun.new(FreeContext, .{ .allocator = buf.allocator }),
-                        FreeContext.onFree,
-                    );
-                },
-                .pending => unreachable,
-                else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)}),
-            };
-        }
-    };
-
-    pub const SavedFile = struct {
-        pub fn toJS(
-            globalThis: *JSC.JSGlobalObject,
-            path: []const u8,
-            byte_size: usize,
-        ) JSC.JSValue {
-            const mime_type = globalThis.bunVM().mimeType(path);
-            const store = JSC.WebCore.Blob.Store.initFile(
-                JSC.Node.PathOrFileDescriptor{
-                    .path = JSC.Node.PathLike{
-                        .string = JSC.PathString.init(path),
-                    },
-                },
-                mime_type,
-                bun.default_allocator,
-            ) catch unreachable;
-
-            var blob = bun.default_allocator.create(JSC.WebCore.Blob) catch unreachable;
-            blob.* = JSC.WebCore.Blob.initWithStore(store, globalThis);
-            if (mime_type) |mime| {
-                blob.content_type = mime.value;
-            }
-            blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(byte_size));
-            blob.allocator = bun.default_allocator;
-            return blob.toJS(globalThis);
-        }
-    };
-
-    pub const Kind = enum { move, copy, noop, buffer, pending, saved };
-
-    pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
-        return .{
-            .loader = loader,
-            .src_path = pending.pathConst().?.*,
-            .size = 0,
-            .value = .{ .pending = pending },
-        };
-    }
-
-    pub fn initFile(file: std.fs.File, pathname: string, size: usize) OutputFile {
-        return .{
-            .loader = .file,
-            .src_path = Fs.Path.init(pathname),
-            .size = size,
-            .value = .{ .copy = FileOperation.fromFile(file.handle, pathname) },
-        };
-    }
-
-    pub fn initFileWithDir(file: std.fs.File, pathname: string, size: usize, dir: std.fs.Dir) OutputFile {
-        var res = initFile(file, pathname, size);
-        res.value.copy.dir_handle = bun.toFD(dir.fd);
-        return res;
-    }
-
-    pub const Options = struct {
-        loader: Loader,
-        input_loader: Loader,
-        hash: ?u64 = null,
-        source_map_index: ?u32 = null,
-        bytecode_index: ?u32 = null,
-        output_path: string,
-        size: ?usize = null,
-        input_path: []const u8 = "",
-        display_size: u32 = 0,
-        output_kind: JSC.API.BuildArtifact.OutputKind,
-        is_executable: bool,
-        data: union(enum) {
-            buffer: struct {
-                allocator: std.mem.Allocator,
-                data: []const u8,
-            },
-            file: struct {
-                file: std.fs.File,
-                size: usize,
-                dir: std.fs.Dir,
-            },
-            saved: usize,
-        },
-        side: ?bun.bake.Side,
-        entry_point_index: ?u32,
-        referenced_css_files: []const Index = &.{},
-    };
-
-    pub fn init(options: Options) OutputFile {
-        return .{
-            .loader = options.loader,
-            .input_loader = options.input_loader,
-            .src_path = Fs.Path.init(options.input_path),
-            .dest_path = options.output_path,
-            .size = options.size orelse switch (options.data) {
-                .buffer => |buf| buf.data.len,
-                .file => |file| file.size,
-                .saved => 0,
-            },
-            .size_without_sourcemap = options.display_size,
-            .hash = options.hash orelse 0,
-            .output_kind = options.output_kind,
-            .bytecode_index = options.bytecode_index orelse std.math.maxInt(u32),
-            .source_map_index = options.source_map_index orelse std.math.maxInt(u32),
-            .is_executable = options.is_executable,
-            .value = switch (options.data) {
-                .buffer => |buffer| Value{ .buffer = .{ .allocator = buffer.allocator, .bytes = buffer.data } },
-                .file => |file| Value{
-                    .copy = brk: {
-                        var op = FileOperation.fromFile(file.file.handle, options.output_path);
-                        op.dir = bun.toFD(file.dir.fd);
-                        break :brk op;
-                    },
-                },
-                .saved => Value{ .saved = .{} },
-            },
-            .side = options.side,
-            .entry_point_index = options.entry_point_index,
-            .referenced_css_files = options.referenced_css_files,
-        };
-    }
-
-    pub fn initBuf(buf: []const u8, allocator: std.mem.Allocator, pathname: string, loader: Loader, hash: ?u64, source_map_index: ?u32) OutputFile {
-        return .{
-            .loader = loader,
-            .src_path = Fs.Path.init(pathname),
-            .size = buf.len,
-            .hash = hash orelse 0,
-            .source_map_index = source_map_index orelse std.math.maxInt(u32),
-            .value = .{
-                .buffer = .{
-                    .bytes = buf,
-                    .allocator = allocator,
-                },
-            },
-        };
-    }
-
-    /// Given the `--outdir` as root_dir, this will return the relative path to display in terminal
-    pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) ![]const u8 {
-        switch (f.value) {
-            .saved => {
-                var rel_path = f.dest_path;
-                if (f.dest_path.len > root_dir_path.len) {
-                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
-                }
-                return rel_path;
-            },
-            .buffer => |value| {
-                var rel_path = f.dest_path;
-                if (f.dest_path.len > root_dir_path.len) {
-                    rel_path = resolve_path.relative(root_dir_path, f.dest_path);
-                    if (std.fs.path.dirname(rel_path)) |parent| {
-                        if (parent.len > root_dir_path.len) {
-                            try root_dir.makePath(parent);
-                        }
-                    }
-                }
-
-                var path_buf: bun.PathBuffer = undefined;
-                _ = try JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
-                    .data = .{ .buffer = .{
-                        .buffer = .{
-                            .ptr = @constCast(value.bytes.ptr),
-                            .len = value.bytes.len,
-                            .byte_len = value.bytes.len,
-                        },
-                    } },
-                    .encoding = .buffer,
-                    .mode = if (f.is_executable) 0o755 else 0o644,
-                    .dirfd = bun.toFD(root_dir.fd),
-                    .file = .{ .path = .{
-                        .string = JSC.PathString.init(rel_path),
-                    } },
-                }).unwrap();
-
-                return rel_path;
-            },
-            .move => |value| {
-                _ = value;
-                // var filepath_buf: bun.PathBuffer = undefined;
-                // filepath_buf[0] = '.';
-                // filepath_buf[1] = '/';
-                // const primary = f.dest_path[root_dir_path.len..];
-                // bun.copy(u8, filepath_buf[2..], primary);
-                // var rel_path: []const u8 = filepath_buf[0 .. primary.len + 2];
-                // rel_path = value.pathname;
-
-                // try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                {
-                    @panic("TODO: Regressed behavior");
-                }
-
-                // return primary;
-            },
-            .copy => |value| {
-                _ = value;
-                // rel_path = value.pathname;
-
-                // try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-                {
-                    @panic("TODO: Regressed behavior");
-                }
-            },
-            .noop => {
-                return f.dest_path;
-            },
-            .pending => unreachable,
-        }
-    }
-
-    pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        try bun.C.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.posix.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.posix.toPosixPath(rel_path)), 0));
-    }
-
-    pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
-        const file_out = (try dir.asDir().createFile(rel_path, .{}));
-
-        const fd_out = file_out.handle;
-        var do_close = false;
-        const fd_in = (try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only })).handle;
-
-        if (Environment.isWindows) {
-            Fs.FileSystem.setMaxFd(fd_out);
-            Fs.FileSystem.setMaxFd(fd_in);
-            do_close = Fs.FileSystem.instance.fs.needToCloseFiles();
-
-            // use paths instead of bun.getFdPathW()
-            @panic("TODO windows");
-        }
-
-        defer {
-            if (do_close) {
-                _ = bun.sys.close(bun.toFD(fd_out));
-                _ = bun.sys.close(bun.toFD(fd_in));
-            }
-        }
-
-        try bun.copyFile(fd_in, fd_out).unwrap();
-    }
-
-    pub fn toJS(
-        this: *OutputFile,
-        owned_pathname: ?[]const u8,
-        globalObject: *JSC.JSGlobalObject,
-    ) bun.JSC.JSValue {
-        return switch (this.value) {
-            .move, .pending => @panic("Unexpected pending output file"),
-            .noop => JSC.JSValue.undefined,
-            .copy => |copy| brk: {
-                const file_blob = JSC.WebCore.Blob.Store.initFile(
-                    if (copy.fd != .zero)
-                        JSC.Node.PathOrFileDescriptor{
-                            .fd = copy.fd,
-                        }
-                    else
-                        JSC.Node.PathOrFileDescriptor{
-                            .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, copy.pathname) catch unreachable) },
-                        },
-                    this.loader.toMimeType(),
-                    globalObject.allocator(),
-                ) catch |err| {
-                    Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
-                };
-
-                var build_output = bun.new(JSC.API.BuildArtifact, .{
-                    .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
-                    .hash = this.hash,
-                    .loader = this.input_loader,
-                    .output_kind = this.output_kind,
-                    .path = bun.default_allocator.dupe(u8, copy.pathname) catch @panic("Failed to allocate path"),
-                });
-
-                break :brk build_output.toJS(globalObject);
-            },
-            .saved => brk: {
-                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
-                const path_to_use = owned_pathname orelse this.src_path.text;
-
-                const file_blob = JSC.WebCore.Blob.Store.initFile(
-                    JSC.Node.PathOrFileDescriptor{
-                        .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
-                    },
-                    this.loader.toMimeType(),
-                    globalObject.allocator(),
-                ) catch |err| {
-                    Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
-                };
-
-                build_output.* = JSC.API.BuildArtifact{
-                    .blob = JSC.WebCore.Blob.initWithStore(file_blob, globalObject),
-                    .hash = this.hash,
-                    .loader = this.input_loader,
-                    .output_kind = this.output_kind,
-                    .path = bun.default_allocator.dupe(u8, path_to_use) catch @panic("Failed to allocate path"),
-                };
-
-                break :brk build_output.toJS(globalObject);
-            },
-            .buffer => |buffer| brk: {
-                var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
-                if (blob.store) |store| {
-                    store.mime_type = this.loader.toMimeType();
-                    blob.content_type = store.mime_type.value;
-                } else {
-                    blob.content_type = this.loader.toMimeType().value;
-                }
-
-                blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
-
-                var build_output = bun.default_allocator.create(JSC.API.BuildArtifact) catch @panic("Unable to allocate Artifact");
-                build_output.* = JSC.API.BuildArtifact{
-                    .blob = blob,
-                    .hash = this.hash,
-                    .loader = this.input_loader,
-                    .output_kind = this.output_kind,
-                    .path = owned_pathname orelse bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable,
-                };
-                break :brk build_output.toJS(globalObject);
-            },
-        };
-    }
-};
+pub const OutputFile = @import("./OutputFile.zig");
 
 pub const TransformResult = struct {
     errors: []logger.Msg = &([_]logger.Msg{}),

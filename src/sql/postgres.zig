@@ -2122,7 +2122,9 @@ pub const PostgresSQLConnection = struct {
         this.write_buffer.deinit(bun.default_allocator);
         this.read_buffer.deinit(bun.default_allocator);
         this.backend_parameters.deinit();
-        bun.default_allocator.free(this.options_buf);
+
+        bun.freeSensitive(bun.default_allocator, this.options_buf);
+
         this.tls_config.deinit();
         bun.default_allocator.destroy(this);
     }

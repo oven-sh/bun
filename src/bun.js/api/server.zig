@@ -769,7 +769,7 @@ pub const ServerConfig = struct {
                 if (@field(this, field)) |slice_ptr| {
                     const slice = std.mem.span(slice_ptr);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.freeSensitive(bun.default_allocator, slice);
                     }
                     @field(this, field) = "";
                 }
@@ -779,7 +779,7 @@ pub const ServerConfig = struct {
                 for (0..this.cert_count) |i| {
                     const slice = std.mem.span(cert[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.freeSensitive(bun.default_allocator, slice);
                     }
                 }
 
@@ -791,7 +791,7 @@ pub const ServerConfig = struct {
                 for (0..this.key_count) |i| {
                     const slice = std.mem.span(key[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.freeSensitive(bun.default_allocator, slice);
                     }
                 }
 
@@ -803,7 +803,7 @@ pub const ServerConfig = struct {
                 for (0..this.ca_count) |i| {
                     const slice = std.mem.span(ca[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.freeSensitive(bun.default_allocator, slice);
                     }
                 }
 

@@ -167,7 +167,7 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
       let command = customScript;
 
       if (filePath.length !== 0) {
-        command += ` ${filePath}`;
+        command += ` "${filePath}"`;
       }
 
       if (testName && testName.length) {

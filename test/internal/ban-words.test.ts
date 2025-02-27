@@ -1,6 +1,7 @@
 import { readdir } from "fs/promises";
 
-const words: Record<string, { reason: string; limit?: number }> = {
+// prettier-ignore
+const words: Record<string, { reason: string; limit?: number; regex?: boolean }> = {
   " != undefined": { reason: "This is by definition Undefined Behavior." },
   " == undefined": { reason: "This is by definition Undefined Behavior." },
   '@import("root").bun.': { reason: "Only import 'bun' once" },
@@ -17,7 +18,7 @@ const words: Record<string, { reason: string; limit?: number }> = {
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
   "std.unicode": { reason: "Use bun.strings instead", limit: 36 },
-  " = undefined,": { reason: "Do not default a struct field to undefined", limit: 494 },
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 251, regex: true },
 };
 const words_keys = [...Object.keys(words)];
 
@@ -26,15 +27,19 @@ const files = await readdir("src", { recursive: true, withFileTypes: true });
 for (const file of files) {
   if (file.isDirectory()) continue;
   if (!file.name.endsWith(".zig")) continue;
+  if (file.parentPath.startsWith("src/deps")) continue;
   const content = await Bun.file(file.parentPath + "/" + file.name).text();
   for (const word of words_keys) {
-    if (content.includes(word)) {
+    let regex = words[word].regex ? new RegExp(word, "g") : undefined;
+    const did_match = regex ? regex.test(content) : content.includes(word);
+    if (regex) regex.lastIndex = 0;
+    if (did_match) {
       counts[word] ??= [];
       const lines = content.split("\n");
       for (let line_i = 0; line_i < lines.length; line_i++) {
         const trim = lines[line_i].trim();
         if (trim.startsWith("//") || trim.startsWith("\\\\")) continue;
-        const count = lines[line_i].split(word).length - 1;
+        const count = regex ? [...lines[line_i].matchAll(regex)].length : lines[line_i].split(word).length - 1;
         for (let count_i = 0; count_i < count; count_i++) {
           counts[word].push([line_i + 1, file.parentPath + "/" + file.name]);
         }
@@ -57,7 +62,7 @@ describe("banned words", () => {
         );
       } else if (count.length < limit) {
         throw new Error(
-          `Instances of banned word ${JSON.stringify(word)} reduced from ${limit} to ${count.length}\nUpdate limit in scripts/ban-words.ts:${i + 4}\n`,
+          `Instances of banned word ${JSON.stringify(word)} reduced from ${limit} to ${count.length}\nUpdate limit in scripts/ban-words.ts:${i + 5}\n`,
         );
       }
     });

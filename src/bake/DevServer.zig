@@ -5529,8 +5529,8 @@ noinline fn dumpBundleForChunk(dev: *DevServer, dump_dir: std.fs.Dir, side: bake
     var a: bun.PathBuffer = undefined;
     var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     const rel_path = bun.path.relativeBufZ(&a, cwd, key);
-    const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
-    _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
+    const size = std.mem.replacementSize(u8, rel_path, ".." ++ std.fs.path.sep_str, "_.._" ++ std.fs.path.sep_str);
+    _ = std.mem.replace(u8, rel_path, ".." ++ std.fs.path.sep_str, "_.._" ++ std.fs.path.sep_str, &b);
     const rel_path_escaped = b[0..size];
     dumpBundle(dump_dir, switch (side) {
         .client => .client,

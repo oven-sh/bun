@@ -41,6 +41,7 @@
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
 #include "JSSign.h"
+// #include "JSVerify.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -242,7 +243,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    bool result = ncrypto::VerifySpkac(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::Buffer<const char> buf {
+        .data = reinterpret_cast<const char*>(buffer.data()),
+        .len = buffer.size()
+    };
+
+    bool result = ncrypto::VerifySpkac(buf);
     return JSValue::encode(JSC::jsBoolean(result));
 }
 
@@ -261,7 +267,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto bio = ncrypto::ExportPublicKey(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::Buffer<const char> buf {
+        .data = reinterpret_cast<const char*>(buffer.data()),
+        .len = buffer.size()
+    };
+
+    auto bio = ncrypto::ExportPublicKey(buf);
     if (!bio) {
         return JSValue::encode(jsEmptyString(vm));
     }
@@ -290,17 +301,22 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto cert = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-    if (!cert.data || cert.len == 0) {
+    ncrypto::Buffer<const char> buf {
+        .data = reinterpret_cast<const char*>(buffer.data()),
+        .len = buffer.size()
+    };
+
+    auto cert = ncrypto::ExportChallenge(buf);
+    if (!cert || cert.size() == 0) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.data), cert.len });
+    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.get()), cert.size() });
     if (!result) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(result), 0, cert.len);
+    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(result), 0, cert.size());
 
     return JSValue::encode(bufferResult);
 }
@@ -443,6 +459,8 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Sign"_s)),
         globalObject->m_JSSignClassStructure.constructor(globalObject));
+    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Verify"_s)),
+    //     globalObject->m_JSVerifyClassStructure.constructor(globalObject));
     // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "signOneShot"_s)),
     //     JSFunction::create(vm, globalObject, 4, "signOneShot"_s, jsSignOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
 

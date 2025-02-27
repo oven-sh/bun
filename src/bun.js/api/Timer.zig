@@ -27,7 +27,7 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
 /// Array of linked lists of EventLoopTimers. Each list holds all the timers that will fire in the
 /// same millisecond, in the order they will fire.
 const TimerList = struct {
-    const log = bun.Output.scoped(.TimerList, false);
+    const log = bun.Output.scoped(.TimerList, true);
     // there might be a better data structure we could use here (the current one has some O(n) cases
     // to remove and add new lists), but cursory testing showed similar performance to the old
     // heap implementation

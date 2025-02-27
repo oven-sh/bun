@@ -713,4 +713,7 @@ inline void* bunVM(Zig::GlobalObject* globalObject)
     return globalObject->bunVM();
 }
 
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplemented);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined);
+
 #endif

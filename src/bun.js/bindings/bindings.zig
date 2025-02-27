@@ -3173,6 +3173,12 @@ pub const JSGlobalObject = opaque {
         );
     }
 
+    extern fn Bun__Process__emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) void;
+    pub fn emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) JSError!void {
+        Bun__Process__emitWarning(globalObject, warning, @"type", code, ctor);
+        if (globalObject.hasException()) return error.JSError;
+    }
+
     extern fn JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject__ptr: *JSGlobalObject, JSValue, JSValue, JSValue) void;
     pub fn queueMicrotaskJob(this: *JSGlobalObject, function: JSValue, first: JSValue, second: JSValue) void {
         JSC__JSGlobalObject__queueMicrotaskJob(this, function, first, second);

@@ -140,3 +140,79 @@ test("bun init utf-8", async () => {
     ]
   `);
 });
+
+test("bun init twice", async () => {
+  const temp = tempDirWithFiles("mytmp", {});
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y", "mydir"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
+  });
+  expect(out.exitCode).toBe(0);
+  expect(readdirSync(temp).sort()).toEqual(["mydir"]);
+  expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
+    [
+      ".gitignore",
+      "README.md",
+      "bun.lock",
+      "index.ts",
+      "node_modules",
+      "package.json",
+      "tsconfig.json",
+    ]
+  `);
+  await Bun.write(path.join(temp, "mydir/index.ts"), "my edited index.ts");
+  await Bun.write(path.join(temp, "mydir/README.md"), "my edited README.md");
+  await Bun.write(path.join(temp, "mydir/.gitignore"), "my edited .gitignore");
+  await Bun.write(
+    path.join(temp, "mydir/package.json"),
+    JSON.stringify({
+      ...(await Bun.file(path.join(temp, "mydir/package.json")).json()),
+      name: "my edited package.json",
+    }),
+  );
+  await Bun.write(path.join(temp, "mydir/tsconfig.json"), `my edited tsconfig.json`);
+  const out2 = Bun.spawnSync({
+    cmd: [bunExe(), "init", "mydir"],
+    cwd: temp,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  });
+  expect(out2.stdout.toString()).toMatchInlineSnapshot(`""`);
+  expect(out2.stderr.toString()).toMatchInlineSnapshot(`
+    "note: package.json already exists, configuring existing project
+    "
+  `);
+  expect(out2.exitCode).toBe(0);
+  expect(readdirSync(temp).sort()).toEqual(["mydir"]);
+  expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
+    [
+      ".gitignore",
+      "README.md",
+      "bun.lock",
+      "index.ts",
+      "node_modules",
+      "package.json",
+      "tsconfig.json",
+    ]
+  `);
+  expect(await Bun.file(path.join(temp, "mydir/index.ts")).text()).toMatchInlineSnapshot(`"my edited index.ts"`);
+  expect(await Bun.file(path.join(temp, "mydir/README.md")).text()).toMatchInlineSnapshot(`"my edited README.md"`);
+  expect(await Bun.file(path.join(temp, "mydir/.gitignore")).text()).toMatchInlineSnapshot(`"my edited .gitignore"`);
+  expect(await Bun.file(path.join(temp, "mydir/package.json")).json()).toMatchInlineSnapshot(`
+    {
+      "devDependencies": {
+        "@types/bun": "latest",
+      },
+      "module": "index.ts",
+      "name": "my edited package.json",
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+      "private": true,
+      "type": "module",
+    }
+  `);
+  expect(await Bun.file(path.join(temp, "mydir/tsconfig.json")).text()).toMatchInlineSnapshot(`"my edited tsconfig.json"`);
+});

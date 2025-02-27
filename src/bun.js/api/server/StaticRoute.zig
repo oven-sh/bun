@@ -241,11 +241,9 @@ fn onResponseComplete(this: *StaticRoute, resp: AnyResponse) void {
     resp.clearAborted();
     resp.clearOnWritable();
     resp.clearTimeout();
-
     if (this.server) |server| {
         server.onStaticRequestComplete();
     }
-
     this.deref();
 }
 
@@ -273,7 +271,6 @@ fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     }
 
     if (!this.onWritableBytes(write_offset, resp)) {
-        this.toAsync(resp);
         return false;
     }
 
@@ -285,17 +282,9 @@ fn onWritableBytes(this: *StaticRoute, write_offset: u64, resp: AnyResponse) boo
     const blob = this.blob;
     const all_bytes = blob.slice();
 
-    const bytes = all_bytes[@min(all_bytes.len, @as(usize, @truncate(write_offset)))..];
+    const bytes = all_bytes[@min(all_bytes.len, write_offset)..];
 
-    if (!resp.tryEnd(
-        bytes,
-        all_bytes.len,
-        resp.shouldCloseConnection(),
-    )) {
-        return false;
-    }
-
-    return true;
+    return resp.tryEnd(bytes, all_bytes.len, resp.shouldCloseConnection());
 }
 
 fn doWriteStatus(_: *StaticRoute, status: u16, resp: AnyResponse) void {

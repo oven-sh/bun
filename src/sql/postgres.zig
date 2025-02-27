@@ -2123,9 +2123,7 @@ pub const PostgresSQLConnection = struct {
         this.read_buffer.deinit(bun.default_allocator);
         this.backend_parameters.deinit();
 
-        // Avoid sensitive information kept in the heap longer than necessary.
-        @memset(@constCast(this.options_buf), 0);
-        bun.default_allocator.free(this.options_buf);
+        bun.freeSensitive(bun.default_allocator, this.options_buf);
 
         this.tls_config.deinit();
         bun.default_allocator.destroy(this);

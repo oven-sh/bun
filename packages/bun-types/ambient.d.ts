@@ -23,3 +23,9 @@ declare module "*.html" {
   var contents: any;
   export = contents;
 }
+
+declare module "*.svg" {
+  // Bun 1.2.3 added support for frontend dev server
+  var contents: `${string}.svg`;
+  export = contents;
+}

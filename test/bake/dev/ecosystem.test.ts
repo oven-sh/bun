@@ -12,7 +12,6 @@ import { devTest } from "../bake-harness";
 devTest("svelte component islands example", {
   fixture: "svelte-component-islands",
   timeoutMultiplier: 2,
-  deinitTesting: false, // TODO: scoped out because server-components are not officially supported
   async test(dev) {
     const html = await dev.fetch("/").text();
     if (html.includes("Bun__renderFallbackError")) throw new Error("failed");
@@ -28,16 +27,16 @@ devTest("svelte component islands example", {
     await Bun.sleep(500); // TODO: de-flake event ordering.
     expect(await c.elemText("button")).toBe("Clicked 6 times");
 
-    // await dev.patch("pages/index.svelte", {
-    //   find: "non-interactive",
-    //   replace: "awesome",
-    // });
+    await dev.patch("pages/index.svelte", {
+      find: "non-interactive",
+      replace: "awesome",
+    });
 
-    // const html2 = await dev.fetch("/").text();
-    // if (html2.includes("Bun__renderFallbackError")) throw new Error("failed");
+    const html2 = await dev.fetch("/").text();
+    if (html2.includes("Bun__renderFallbackError")) throw new Error("failed");
 
-    // // Expect SSR
-    // expect(html2).toContain(`<p>This is my svelte server component (awesome)</p> <p>Bun v${Bun.version}</p>`);
-    // expect(html2).toContain(`>This is a client component (interactive island)</p>`);
+    // Expect SSR
+    expect(html2).toContain(`<p>This is my svelte server component (awesome)</p> <p>Bun v${Bun.version}</p>`);
+    expect(html2).toContain(`>This is a client component (interactive island)</p>`);
   },
 });

@@ -1406,11 +1406,11 @@ function testImpl<T extends DevServerTest>(
     if (interactive) {
       console.log("\x1b[32mPASS\x1b[0m");
       await maybeWaitInteractive("exit");
-      if (options.deinitTesting !== false) await dev.gracefulExit();
+      await dev.gracefulExit();
       process.exit(0);
     }
 
-    if (options.deinitTesting !== false) await dev.gracefulExit();
+    await dev.gracefulExit();
   }
 
   const name = `${

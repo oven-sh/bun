@@ -222,7 +222,6 @@ const json = struct {
                 bun.String.createExternal(json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB)
             else
                 bun.String.fromUTF8(json_data);
-            bun.assert(str.tag != .Dead);
 
             defer {
                 str.deref();

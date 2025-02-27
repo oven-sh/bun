@@ -1,3 +1,6 @@
+import path from "node:path";
+import { statSync } from "node:fs";
+import { expect } from "bun:test";
 import * as harness from "./harness";
 
 // We make Bun.env read-only
@@ -17,3 +20,11 @@ for (let key in harness.bunEnv) {
 }
 
 if (Bun.$?.env) Bun.$.env(process.env);
+
+const pluginDir = path.resolve(import.meta.dirname, "..", "packages", "bun-plugin-svelte");
+expect(statSync(pluginDir).isDirectory()).toBeTrue();
+Bun.spawnSync([harness.bunExe(), "install"], {
+  cwd: pluginDir,
+  stdio: ["ignore", "inherit", "inherit"],
+  env: harness.bunEnv,
+});

@@ -42,15 +42,16 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
             args && "side" in args // "side" only passed when run from dev server
               ? (args as { side: "client" | "server" }).side
               : "server";
+          const generate = baseCompileOptions.generate ?? side;
 
           const compileFn = isModule ? compileModule : compile;
           const result = compileFn(sourceText, {
             ...baseCompileOptions,
-            generate: baseCompileOptions.generate ?? side,
+            generate,
             filename: args.path,
           });
           var { js, css } = result;
-          if (css?.code) {
+          if (css?.code && generate != "server") {
             const uid = `${basename(path)}-${hash(path)}-style`.replaceAll(`"`, `'`);
             const virtualName = virtualNamespace + ":" + uid + ".css";
             virtualCssModules.set(virtualName, css.code);

@@ -1426,12 +1426,14 @@ pub const SourceMapOption = enum {
     @"inline",
     external,
     linked,
+    compact,
 
     pub fn fromApi(source_map: ?Api.SourceMapMode) SourceMapOption {
         return switch (source_map orelse .none) {
             .external => .external,
             .@"inline" => .@"inline",
             .linked => .linked,
+            .compact => .compact,
             else => .none,
         };
     }
@@ -1441,15 +1443,20 @@ pub const SourceMapOption = enum {
             .external => .external,
             .@"inline" => .@"inline",
             .linked => .linked,
+            .compact => .compact,
             .none => .none,
         };
     }
 
     pub fn hasExternalFiles(mode: SourceMapOption) bool {
         return switch (mode) {
-            .linked, .external => true,
+            .linked, .external, .compact => true,
             else => false,
         };
+    }
+
+    pub fn shouldUseCompactFormat(mode: SourceMapOption) bool {
+        return mode == .compact;
     }
 
     pub const Map = bun.ComptimeStringMap(SourceMapOption, .{
@@ -1457,6 +1464,7 @@ pub const SourceMapOption = enum {
         .{ "inline", .@"inline" },
         .{ "external", .external },
         .{ "linked", .linked },
+        .{ "compact", .compact },
     });
 };
 
@@ -1498,6 +1506,7 @@ pub const BundleOptions = struct {
     emit_decorator_metadata: bool = false,
     auto_import_jsx: bool = true,
     allow_runtime: bool = true,
+    
 
     trim_unused_imports: ?bool = null,
     mark_builtins_as_external: bool = false,

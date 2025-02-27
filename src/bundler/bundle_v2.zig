@@ -14122,7 +14122,7 @@ pub const LinkerContext = struct {
                 );
 
                 switch (chunk.content.sourcemap(c.options.source_maps)) {
-                    .external, .linked => |tag| {
+                    .external, .linked, .compact => |tag| {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
                         bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
@@ -14442,7 +14442,7 @@ pub const LinkerContext = struct {
             );
 
             switch (chunk.content.sourcemap(c.options.source_maps)) {
-                .external, .linked => |tag| {
+                .external, .linked, .compact => |tag| {
                     const output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const source_map_final_rel_path = strings.concat(default_allocator, &.{
                         chunk.final_rel_path,

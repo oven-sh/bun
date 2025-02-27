@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+pub const bun = @import("root").bun;
 const string = bun.string;
 const JSAst = bun.JSAst;
 const BabyList = JSAst.BabyList;
@@ -34,6 +34,21 @@ sources: [][]const u8 = &[_][]u8{},
 sources_content: []string,
 mapping: Mapping.List = .{},
 allocator: std.mem.Allocator,
+
+/// If available, an optimized compact encoding using SIMD acceleration and double-delta encoding
+compact_mapping: ?@import("compact.zig").CompactSourceMap = null,
+
+/// Free all memory associated with the source map
+pub fn deinit(this: *SourceMap) void {
+    if (this.compact_mapping) |*compact_map| {
+        compact_map.deinit();
+        this.compact_mapping = null;
+    }
+
+    if (this.mapping.len > 0) {
+        this.mapping.deinit(this.allocator);
+    }
+}
 
 /// Dictates what parseUrl/parseJSON return.
 pub const ParseUrlResultHint = union(enum) {
@@ -223,6 +238,10 @@ pub fn parseJSON(
 
         break :content try alloc.dupe(u8, str);
     } else null;
+
+    // We'll enable compact format conversion based on the bundle option
+    // which will be passed in directly from the CLI or API call context
+    // This function doesn't need to modify the mapping automatically
 
     return .{
         .map = map,
@@ -633,6 +652,9 @@ pub const ParsedSourceMap = struct {
 
     is_standalone_module_graph: bool = false,
 
+    /// If available, an optimized compact encoding using SIMD acceleration and delta encoding
+    compact_mapping: ?@import("compact.zig").CompactSourceMap = null,
+
     pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn, null);
 
     const SourceContentPtr = packed struct(u64) {
@@ -660,6 +682,11 @@ pub const ParsedSourceMap = struct {
 
     fn deinitWithAllocator(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
         this.mappings.deinit(allocator);
+
+        if (this.compact_mapping) |*compact_map| {
+            compact_map.deinit();
+            this.compact_mapping = null;
+        }
 
         if (this.external_source_names.len > 0) {
             for (this.external_source_names) |name|
@@ -967,7 +994,46 @@ pub fn find(
     line: i32,
     column: i32,
 ) ?Mapping {
+    // Use compact mapping if available (most efficient and memory-friendly)
+    if (this.compact_mapping) |*compact_map| {
+        // Use SIMD-optimized find when available
+        return compact_map.findSIMD(this.allocator, line, column) catch
+        // Fall back to standard VLQ search if compact search fails
+            return Mapping.find(this.mapping, line, column);
+    }
+
+    // Standard VLQ-based search if compact mapping not available
     return Mapping.find(this.mapping, line, column);
+}
+
+/// Create a compact sourcemap representation if one doesn't exist already
+pub fn ensureCompactMapping(this: *SourceMap) !void {
+    // If we already have a compact mapping, nothing to do
+    if (this.compact_mapping != null) return;
+
+    // If we don't have a standard mapping either, nothing to convert
+    if (this.mapping.len == 0) return;
+
+    // Convert the standard mapping to compact format
+    const CompactSourceMap = @import("compact.zig");
+    var compact = try CompactSourceMap.create(this.allocator);
+
+    // Add all mappings from the standard format
+    for (0..this.mapping.len) |i| {
+        const mapping = Mapping{
+            .generated = this.mapping.items(.generated)[i],
+            .original = this.mapping.items(.original)[i],
+            .source_index = this.mapping.items(.source_index)[i],
+        };
+
+        try compact.addMapping(mapping);
+    }
+
+    // Finalize any pending block
+    try compact.finalizeCurrentBlock();
+
+    // Update the internal representation
+    this.compact_mapping = compact;
 }
 
 pub const SourceMapShifts = struct {
@@ -1216,12 +1282,16 @@ pub const Chunk = struct {
     /// ignore empty chunks
     should_ignore: bool = true,
 
+    /// When using CompactBuilder, this field will contain the actual CompactSourceMap structure
+    compact_data: ?@import("compact.zig").CompactSourceMap = null,
+
     pub const empty: Chunk = .{
         .buffer = MutableString.initEmpty(bun.default_allocator),
         .mappings_count = 0,
         .end_state = .{},
         .final_generated_column = 0,
         .should_ignore = true,
+        .compact_data = null,
     };
 
     pub fn printSourceMapContents(
@@ -1362,6 +1432,67 @@ pub const Chunk = struct {
             return this.count;
         }
     };
+    pub const AnyBuilder = union(enum) {
+        default: Builder,
+        compact: CompactBuilder,
+        none,
+
+        pub fn line_offset_tables(this: *AnyBuilder) *LineOffsetTable.List {
+            return switch (this.*) {
+                .none => unreachable,
+                inline else => |*builder| &builder.line_offset_tables,
+            };
+        }
+
+        pub fn generateChunk(this: *AnyBuilder, output: []const u8) Chunk {
+            return switch (this.*) {
+                .none => Chunk.empty,
+                inline else => |*builder| builder.generateChunk(output),
+            };
+        }
+
+        pub fn updateGeneratedLineAndColumn(this: *AnyBuilder, output: []const u8) void {
+            return switch (this.*) {
+                .none => {},
+                inline else => |*builder| builder.updateGeneratedLineAndColumn(output),
+            };
+        }
+
+        pub fn appendMappingWithoutRemapping(this: *AnyBuilder, mapping: Mapping) void {
+            return switch (this.*) {
+                .none => {},
+                inline else => |*builder| builder.appendMappingWithoutRemapping(mapping),
+            };
+        }
+
+        pub fn appendMapping(this: *AnyBuilder, mapping: Mapping) void {
+            return switch (this.*) {
+                .none => {},
+                inline else => |*builder| builder.appendMapping(mapping),
+            };
+        }
+
+        pub fn appendLineSeparator(this: *AnyBuilder) anyerror!void {
+            return switch (this.*) {
+                .none => {},
+                inline else => |*builder| builder.appendLineSeparator(),
+            };
+        }
+
+        pub fn addSourceMapping(this: *AnyBuilder, loc: Logger.Loc, output: []const u8) void {
+            return switch (this.*) {
+                .none => {},
+                inline else => |*builder| builder.addSourceMapping(loc, output),
+            };
+        }
+
+        pub fn set_line_offset_table_byte_offset_list(this: *AnyBuilder, list: []const u32) void {
+            return switch (this.*) {
+                .none => {},
+                inline else => |*builder| builder.line_offset_table_byte_offset_list = list,
+            };
+        }
+    };
 
     pub fn NewBuilder(comptime SourceMapFormatType: type) type {
         return struct {
@@ -1374,6 +1505,9 @@ pub const Chunk = struct {
             generated_column: i32 = 0,
             prev_loc: Logger.Loc = Logger.Loc.Empty,
             has_prev_state: bool = false,
+
+            /// The context for the SourceMapFormat implementation
+            ctx: SourceMapper = undefined,
 
             line_offset_table_byte_offset_list: []const u32 = &.{},
 
@@ -1397,17 +1531,33 @@ pub const Chunk = struct {
 
             pub noinline fn generateChunk(b: *ThisBuilder, output: []const u8) Chunk {
                 b.updateGeneratedLineAndColumn(output);
-                if (b.prepend_count) {
-                    b.source_map.getBuffer().list.items[0..8].* = @as([8]u8, @bitCast(b.source_map.getBuffer().list.items.len));
-                    b.source_map.getBuffer().list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
-                    b.source_map.getBuffer().list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
+
+                // Handle compact format specially
+                const CompactSourceMapFormat = @import("compact.zig").CompactSourceMapFormat;
+                var compact_data: ?@import("compact.zig").CompactSourceMap = null;
+
+                if (SourceMapFormatType == CompactSourceMapFormat) {
+                    // Just get the compact sourcemap directly - no VLQ generation
+                    compact_data = b.source_map.ctx.getCompactSourceMap() catch bun.outOfMemory();
                 }
+
+                if (b.prepend_count) {
+                    // Only applies to the standard VLQ format
+                    var buffer = b.source_map.getBuffer();
+                    if (buffer.list.items.len >= 24) {
+                        buffer.list.items[0..8].* = @as([8]u8, @bitCast(buffer.list.items.len));
+                        buffer.list.items[8..16].* = @as([8]u8, @bitCast(b.source_map.getCount()));
+                        buffer.list.items[16..24].* = @as([8]u8, @bitCast(b.approximate_input_line_count));
+                    }
+                }
+
                 return Chunk{
                     .buffer = b.source_map.getBuffer(),
                     .mappings_count = b.source_map.getCount(),
                     .end_state = b.prev_state,
                     .final_generated_column = b.generated_column,
                     .should_ignore = b.source_map.shouldIgnore(),
+                    .compact_data = compact_data,
                 };
             }
 
@@ -1558,6 +1708,9 @@ pub const Chunk = struct {
     }
 
     pub const Builder = NewBuilder(VLQSourceMap);
+
+    /// Builder for compact sourcemap format
+    pub const CompactBuilder = NewBuilder(@import("compact.zig").Format);
 };
 
 /// https://sentry.engineering/blog/the-case-for-debug-ids
@@ -1586,3 +1739,82 @@ pub const LineOffsetTable = @import("./LineOffsetTable.zig");
 const decodeVLQAssumeValid = vlq.decodeAssumeValid;
 const VLQ = vlq.VLQ;
 const decodeVLQ = vlq.decode;
+
+/// Create a SourceMap from a Chunk, properly handling the format based on selected option
+pub fn fromChunk(
+    allocator: std.mem.Allocator,
+    chunk: Chunk,
+    sources: [][]const u8,
+    sources_content: []string,
+    source_map_option: @import("../options.zig").SourceMapOption,
+) !*SourceMap {
+    // Create a new SourceMap
+    const source_map = try allocator.create(SourceMap);
+    errdefer allocator.destroy(source_map);
+
+    source_map.* = SourceMap{
+        .sources = sources,
+        .sources_content = sources_content,
+        .mapping = Mapping.List{},
+        .allocator = allocator,
+        .compact_mapping = null,
+    };
+
+    // Check if we should use compact format
+    const use_compact = source_map_option.shouldUseCompactFormat();
+
+    // Handle different cases based on available data and requested format
+    if (chunk.compact_data) |compact_data| {
+        // We have compact data already from the generation process
+        if (use_compact) {
+            // Use compact format directly - this is the optimal case
+            source_map.compact_mapping = compact_data;
+        } else {
+            // VLQ format was requested despite having compact data
+            // Convert the compact data to VLQ - this is less efficient
+            source_map.mapping = try compact_data.decode(allocator);
+        }
+    } else {
+        // We have VLQ data - this is typical for standard format
+        if (chunk.buffer.list.items.len > 0) {
+            // Parse the VLQ mappings
+            const parse_result = switch (Mapping.parse(
+                allocator,
+                chunk.buffer.list.items,
+                null,
+                @as(i32, @intCast(sources.len)),
+                @max(1, @as(i32, @intCast(sources_content.len))),
+            )) {
+                .success => |parsed| parsed.mappings,
+                .fail => |_| return error.InvalidSourceMap,
+            };
+
+            source_map.mapping = parse_result;
+
+            // Convert to compact format if requested
+            if (use_compact) {
+                const CompactSourceMap = @import("compact.zig");
+                var compact = try CompactSourceMap.create(allocator);
+
+                // Add all mappings from the standard format
+                for (0..source_map.mapping.len) |i| {
+                    const mapping = Mapping{
+                        .generated = source_map.mapping.items(.generated)[i],
+                        .original = source_map.mapping.items(.original)[i],
+                        .source_index = source_map.mapping.items(.source_index)[i],
+                    };
+
+                    try compact.addMapping(mapping);
+                }
+
+                // Finalize any pending block
+                try compact.finalizeCurrentBlock();
+
+                // Set the compact mapping
+                source_map.compact_mapping = compact;
+            }
+        }
+    }
+
+    return source_map;
+}

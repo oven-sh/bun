@@ -10,6 +10,7 @@ const Lock = bun.Mutex;
 const Api = @import("./api/schema.zig").Api;
 const fs = @import("fs.zig");
 const bun = @import("root").bun;
+
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -422,13 +423,16 @@ pub const SourceMapHandler = struct {
 
     const Callback = *const fn (*anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void;
     pub fn onSourceMapChunk(self: *const @This(), chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+        // Ensure proper alignment when calling the callback
         try self.callback(self.ctx, chunk, source);
     }
 
     pub fn For(comptime Type: type, comptime handler: (fn (t: *Type, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void)) type {
         return struct {
             pub fn onChunk(self: *anyopaque, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
-                try handler(@as(*Type, @ptrCast(@alignCast(self))), chunk, source);
+                // Make sure we properly align the self pointer to the Type's alignment requirements
+                const aligned_self = @as(*Type, @ptrCast(@alignCast(self)));
+                try handler(aligned_self, chunk, source);
             }
 
             pub fn init(self: *Type) SourceMapHandler {
@@ -449,10 +453,15 @@ pub const Options = struct {
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
     source_path: ?fs.Path = null,
+    use_compact_sourcemap: bool = false,
     allocator: std.mem.Allocator = default_allocator,
     source_map_allocator: ?std.mem.Allocator = null,
     source_map_handler: ?SourceMapHandler = null,
-    source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
+    source_map_builder: union(enum) {
+        none: void,
+        default: *bun.sourcemap.Chunk.Builder,
+        compact: *bun.sourcemap.Chunk.CompactBuilder,
+    } = .none,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
     target: options.Target = .browser,
 
@@ -688,7 +697,7 @@ fn NewPrinter(
 
         renamer: rename.Renamer,
         prev_stmt_tag: Stmt.Tag = .s_empty,
-        source_map_builder: SourceMap.Chunk.Builder = undefined,
+        source_map_builder: SourceMap.Chunk.AnyBuilder = undefined,
 
         symbol_counter: u32 = 0,
 
@@ -5203,7 +5212,7 @@ fn NewPrinter(
             import_records: []const ImportRecord,
             opts: Options,
             renamer: bun.renamer.Renamer,
-            source_map_builder: SourceMap.Chunk.Builder,
+            source_map_builder: SourceMap.Chunk.AnyBuilder,
         ) Printer {
             if (imported_module_ids_list_unset) {
                 imported_module_ids_list = std.ArrayList(u32).init(default_allocator);
@@ -5222,11 +5231,12 @@ fn NewPrinter(
             };
             if (comptime generate_source_map) {
                 // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
-                printer.source_map_builder.line_offset_table_byte_offset_list =
+                printer.source_map_builder.set_line_offset_table_byte_offset_list(
                     printer
-                    .source_map_builder
-                    .line_offset_tables
-                    .items(.byte_offset_to_start_of_line);
+                        .source_map_builder
+                        .line_offset_tables()
+                        .items(.byte_offset_to_start_of_line),
+                );
             }
 
             return printer;
@@ -5666,30 +5676,74 @@ pub fn getSourceMapBuilder(
     opts: Options,
     source: *const logger.Source,
     tree: *const Ast,
-) SourceMap.Chunk.Builder {
-    if (comptime generate_source_map == .disable)
-        return undefined;
+) SourceMap.Chunk.AnyBuilder {
+    if (comptime generate_source_map == .disable) {
+        return .none;
+    }
 
-    return .{
-        .source_map = .init(
-            opts.source_map_allocator orelse opts.allocator,
-            is_bun_platform and generate_source_map == .lazy,
-        ),
-        .cover_lines_without_mappings = true,
-        .approximate_input_line_count = tree.approximate_newline_count,
-        .prepend_count = is_bun_platform and generate_source_map == .lazy,
-        .line_offset_tables = opts.line_offset_tables orelse brk: {
-            if (generate_source_map == .lazy) break :brk SourceMap.LineOffsetTable.generate(
-                opts.source_map_allocator orelse opts.allocator,
-                source.contents,
-                @as(
-                    i32,
-                    @intCast(tree.approximate_newline_count),
-                ),
-            );
-            break :brk .empty;
-        },
+    const allocator = opts.source_map_allocator orelse opts.allocator;
+    const line_offset_tables = opts.line_offset_tables orelse line_tables: {
+        if (generate_source_map == .lazy) {
+            break :line_tables SourceMap.LineOffsetTable.generate(allocator, source.contents, @as(i32, @intCast(tree.approximate_newline_count)));
+        }
+        break :line_tables SourceMap.LineOffsetTable.List{};
     };
+
+    // Common builder configuration
+    const prepend_count = is_bun_platform and generate_source_map == .lazy;
+    const approximate_line_count = tree.approximate_newline_count;
+    const cover_lines = true; // cover_lines_without_mappings
+
+    if (opts.use_compact_sourcemap) {
+        // Initialize the SourceMapper for the CompactBuilder
+        const format_type = SourceMap.Chunk.SourceMapFormat(@import("sourcemap/compact.zig").Format);
+        const source_mapper = format_type.init(allocator, prepend_count);
+
+        // Initialize the compact sourcemap builder
+        var builder = SourceMap.Chunk.CompactBuilder{
+            .cover_lines_without_mappings = cover_lines,
+            .approximate_input_line_count = approximate_line_count,
+            .prepend_count = prepend_count,
+            .line_offset_tables = line_offset_tables,
+            .input_source_map = null,
+            .source_map = source_mapper,
+            .prev_state = .{},
+            .last_generated_update = 0,
+            .generated_column = 0,
+            .prev_loc = bun.logger.Loc.Empty,
+            .has_prev_state = false,
+            .line_offset_table_byte_offset_list = &[_]u32{},
+            .line_starts_with_mapping = false,
+        };
+
+        // Use the AnyBuilder union to return the correct type
+        // Ensure it's properly initialized to prevent alignment issues
+        return SourceMap.Chunk.AnyBuilder{ .compact = builder };
+    } else {
+        // Initialize the SourceMapper for the Builder
+        const format_type = SourceMap.Chunk.SourceMapFormat(SourceMap.Chunk.VLQSourceMap);
+        const source_mapper = format_type.init(allocator, prepend_count);
+
+        // Initialize the default sourcemap builder
+        const builder = SourceMap.Chunk.Builder{
+            .cover_lines_without_mappings = cover_lines,
+            .approximate_input_line_count = approximate_line_count,
+            .prepend_count = prepend_count,
+            .line_offset_tables = line_offset_tables,
+            .input_source_map = null,
+            .source_map = source_mapper,
+            .prev_state = .{},
+            .last_generated_update = 0,
+            .generated_column = 0,
+            .prev_loc = bun.logger.Loc.Empty,
+            .has_prev_state = false,
+            .line_offset_table_byte_offset_list = &[_]u32{},
+            .line_starts_with_mapping = false,
+        };
+
+        // Use the AnyBuilder union to return the correct type
+        return SourceMap.Chunk.AnyBuilder{ .default = builder };
+    }
 }
 
 pub fn printAst(
@@ -5796,7 +5850,7 @@ pub fn printAst(
     );
     defer {
         if (comptime generate_source_map) {
-            printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
+            printer.source_map_builder.line_offset_tables().deinit(opts.allocator);
         }
     }
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
@@ -6061,6 +6115,9 @@ pub fn printWithWriterAndPlatform(
         const chunk = printer.source_map_builder.generateChunk(written);
         if (chunk.should_ignore)
             break :brk null;
+
+        // Conversion to compact format handled separately in the cli
+
         break :brk chunk;
     } else null;
 
@@ -6118,7 +6175,11 @@ pub fn printCommonJS(
 
     if (comptime generate_source_map) {
         if (opts.source_map_handler) |handler| {
-            try handler.onSourceMapChunk(printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten()), source.*);
+            const chunk = printer.source_map_builder.generateChunk(printer.writer.ctx.getWritten());
+
+            // Conversion to compact format handled separately in the cli
+
+            try handler.onSourceMapChunk(chunk, source.*);
         }
     }
 

@@ -870,6 +870,7 @@ pub const Transpiler = struct {
                         .minify_syntax = transpiler.options.minify_syntax,
                         .minify_identifiers = transpiler.options.minify_identifiers,
                         .transform_only = transpiler.options.transform_only,
+                        .use_compact_sourcemap = true,
                         .module_type = if (is_bun and transpiler.options.transform_only)
                             // this is for when using `bun build --no-bundle`
                             // it should copy what was passed for the cli

@@ -1936,6 +1936,9 @@ pub const Api = struct {
         external,
 
         linked,
+        
+        /// compact
+        compact,
 
         _,
 

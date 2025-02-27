@@ -241,7 +241,17 @@ pub const SavedSourceMap = struct {
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
 
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
-        try this.putMappings(source, chunk.buffer);
+        // If we have compact sourcemap data, we need to handle it specially
+        if (chunk.compact_data != null) {
+            // For now, just convert the compact data to a regular buffer
+            const allocator = bun.default_allocator;
+            var temp_buffer = bun.MutableString.initEmpty(allocator);
+            try chunk.compact_data.?.writeVLQs(&temp_buffer);
+            try this.putMappings(source, temp_buffer);
+        } else {
+            // Standard VLQ format
+            try this.putMappings(source, chunk.buffer);
+        }
     }
 
     pub const SourceMapHandler = js_printer.SourceMapHandler.For(SavedSourceMap, onSourceMapChunk);
@@ -270,7 +280,6 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
-        try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
     }
 
     fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {

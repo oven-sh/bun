@@ -4539,3 +4539,22 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
     CREATE_METHOD_TABLE(GlobalObject) };
 
 } // namespace Zig
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented, (JSGlobalObject * leixcalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(leixcalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return throwVMError(leixcalGlobalObject, scope, "Not implemented"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined, (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(leixcalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = callFrame->argument(0).toWTFString(leixcalGlobalObject);
+    scope.assertNoException();
+    auto count = callFrame->argument(1).toNumber(leixcalGlobalObject);
+    scope.assertNoException();
+    auto* func = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, leixcalGlobalObject, count, name, jsFunctionNotImplemented);
+    return JSC::JSValue::encode(func);
+}

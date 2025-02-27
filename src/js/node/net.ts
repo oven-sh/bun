@@ -110,6 +110,11 @@ function destroyWhenAborted(err) {
     this.destroy(err.target.reason);
   }
 }
+function onReadableStreamEnd() {
+  if (!this.allowHalfOpen) {
+    this.write = writeAfterFIN;
+  }
+}
 // Provide a better error message when we call end() as a result
 // of the other side sending a FIN.  The standard 'write after end'
 // is overly vague, and makes it seem like the user's code is to blame.
@@ -271,7 +276,6 @@ const Socket = (function (InternalSocket) {
       },
       binaryType: "buffer",
     };
-
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
@@ -301,7 +305,6 @@ const Socket = (function (InternalSocket) {
       Socket.#EmitEndNT(self, err);
       self.data = null;
     }
-
     static #Drain(socket) {
       const self = socket.data;
       if (!self) return;
@@ -319,7 +322,6 @@ const Socket = (function (InternalSocket) {
         self[kBytesWritten] = socket.bytesWritten;
       }
     }
-
     static [bunSocketServerHandlers] = {
       data: Socket.#Handlers.data,
       close(socket, err) {
@@ -531,6 +533,10 @@ const Socket = (function (InternalSocket) {
       this[kSetNoDelay] = Boolean(noDelay);
       this[kSetKeepAlive] = Boolean(keepAlive);
       this[kSetKeepAliveInitialDelay] = ~~(keepAliveInitialDelay / 1000);
+
+      // Shut down the socket when we're finished with it.
+      this.on("end", onReadableStreamEnd);
+
       if (socket instanceof Socket) {
         this.#socket = socket;
       }

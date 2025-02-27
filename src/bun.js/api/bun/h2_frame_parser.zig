@@ -1079,8 +1079,6 @@ pub const H2FrameParser = struct {
         }
 
         pub fn detachContext(this: *Stream) void {
-            var context = this.jsContext;
-            defer context.deinit();
             this.jsContext.deinit();
         }
 

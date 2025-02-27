@@ -403,18 +403,19 @@ pub const S3BlobStatTask = struct {
 
     pub fn onS3StatResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
+        const globalThis = this.global;
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(this.global, S3Stat.init(
+                this.promise.resolve(globalThis, S3Stat.init(
                     stat_result.size,
                     stat_result.etag,
                     stat_result.contentType,
                     stat_result.lastModified,
-                    this.global,
-                ).toJS(this.global));
+                    globalThis,
+                ).toJS(globalThis));
             },
             .not_found, .failure => |err| {
-                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
+                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
             },
         }
     }

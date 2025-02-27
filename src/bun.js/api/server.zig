@@ -7226,8 +7226,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // native handle is done, keeping the JS binding doesn't use
                 // `this.memoryCost()` bytes.
                 if (this.dev_server) |dev| {
-                    dev.deinit();
                     this.dev_server = null;
+                    dev.deinit();
                 }
 
                 // Only free the memory if the JS reference has been freed too

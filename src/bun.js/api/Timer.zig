@@ -915,7 +915,7 @@ const TimerObjectInternals = struct {
         var time_before_call: timespec = undefined;
 
         if (kind != .setInterval) {
-            this.strong_this.deinit();
+            this.strong_this.clearWithoutDeallocation();
         } else {
             time_before_call = timespec.msFromNow(this.interval);
         }

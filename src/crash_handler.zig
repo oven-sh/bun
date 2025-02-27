@@ -1186,12 +1186,12 @@ const StackLine = struct {
         };
 
         if (known.object) |object| {
-            try vlq.encode(1).writeTo(writer);
-            try vlq.encode(@intCast(object.len)).writeTo(writer);
+            try VLQ.encode(1).writeTo(writer);
+            try VLQ.encode(@intCast(object.len)).writeTo(writer);
             try writer.writeAll(object);
         }
 
-        try vlq.encode(known.address).writeTo(writer);
+        try VLQ.encode(known.address).writeTo(writer);
     }
 
     pub fn format(line: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -1318,8 +1318,8 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 }
 
 fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
-    const first = vlq.encode(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
-    const second = vlq.encode(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
+    const first = VLQ.encode(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
+    const second = VLQ.encode(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
     try first.writeTo(writer);
     try second.writeTo(writer);
 }

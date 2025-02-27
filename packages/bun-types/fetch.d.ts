@@ -100,6 +100,17 @@ var Response: {
   error(): Response;
 };
 
+type _BunTLSOptions = import("bun").TLSOptions;
+interface BunFetchRequestInitTLS extends _BunTLSOptions {
+  /**
+   * Custom function to check the server identity
+   * @param hostname - The hostname of the server
+   * @param cert - The certificate of the server
+   * @returns An error if the server is unauthorized, otherwise undefined
+   */
+  checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+}
+
 /**
  * BunFetchRequestInit represents additional options that Bun supports in `fetch()` only.
  *
@@ -111,21 +122,7 @@ interface BunFetchRequestInit extends RequestInit {
   /**
    * Override the default TLS options
    */
-  tls?: {
-    /**
-     * Whether to reject unauthorized certificates
-     * @default true
-     */
-    rejectUnauthorized?: boolean | undefined;
-
-    /**
-     * Custom function to check the server identity
-     * @param hostname - The hostname of the server
-     * @param cert - The certificate of the server
-     * @returns An error if the server is unauthorized, otherwise undefined
-     */
-    checkServerIdentity?: (hostname: string, cert: { subject: { CN: string } }) => Error | undefined | void;
-  };
+  tls?: BunFetchRequestInitTLS;
 }
 
 var fetch: {

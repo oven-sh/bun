@@ -62,7 +62,7 @@ fetch("", {
   tls: {
     rejectUnauthorized: false,
     checkServerIdentity: () => {
-      return;
+      return undefined;
     },
   },
 });
@@ -176,8 +176,8 @@ declare const cert: string;
 
 Bun.serve({
   fetch: () => new Response("ok"),
-  key,
-  cert,
+  key: key,
+  cert: cert,
   tls: {
     key,
     cert,

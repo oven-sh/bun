@@ -3948,13 +3948,14 @@ declare module "bun" {
 
   interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {
+      TLSOptionsAsDeprecated {
     unix?: never;
     tls?: TLSOptions | TLSOptions[];
   }
+
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {
+      TLSOptionsAsDeprecated {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)
@@ -3962,6 +3963,7 @@ declare module "bun" {
     unix: string;
     tls?: TLSOptions | TLSOptions[];
   }
+
   interface ErrorLike extends Error {
     code?: string;
     errno?: number;

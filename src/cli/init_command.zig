@@ -401,7 +401,7 @@ pub const InitCommand = struct {
                 Output.prettyErrorln("Failed to create directory {s}: {s}", .{ ifdir, @errorName(err) });
                 Global.exit(1);
             };
-            std.posix.chdir(ifdir) catch |err| {
+            bun.sys.chdir(ifdir) catch |err| {
                 Output.prettyErrorln("Failed to change directory to {s}: {s}", .{ ifdir, @errorName(err) });
                 Global.exit(1);
             };

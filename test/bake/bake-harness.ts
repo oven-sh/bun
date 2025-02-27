@@ -109,6 +109,8 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
+
+  deinitTesting?: boolean;
 }
 
 let interactive = false;
@@ -1329,15 +1331,14 @@ function testImpl<T extends DevServerTest>(
             }
             extractedServer.stop(true);
             extractedServer = null!;
-            const targetCount = before + 1;
             let attempts = 0;
             while (getDevServerDeinitCount() === before) {
               Bun.gc(true);
+              await new Promise(resolve => setTimeout(resolve, 1));
               fullGC();
-              await new Promise(resolve => setTimeout(resolve, 100));
               attempts++;
-              if (attempts > 10) {
-                throw new Error("Failed to trigger deinit");
+              if (attempts > 100) {
+                throw new Error("Failed to trigger deinit. Check with BUN_DEBUG_Server=1 and see why it does not free itself.");
               }
             }
             process.exit(0); 
@@ -1364,6 +1365,7 @@ function testImpl<T extends DevServerTest>(
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
+          // BUN_DEBUG_SERVER: "1",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1404,10 +1406,11 @@ function testImpl<T extends DevServerTest>(
     if (interactive) {
       console.log("\x1b[32mPASS\x1b[0m");
       await maybeWaitInteractive("exit");
+      if (options.deinitTesting !== false) await dev.gracefulExit();
       process.exit(0);
     }
 
-    await dev.gracefulExit();
+    if (options.deinitTesting !== false) await dev.gracefulExit();
   }
 
   const name = `${

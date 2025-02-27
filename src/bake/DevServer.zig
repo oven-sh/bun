@@ -5199,7 +5199,7 @@ const DirectoryWatchStore = struct {
     }
 
     /// Expects dependency list to be already freed
-    fn freeEntry(store: *DirectoryWatchStore, entry_index: usize) void {
+    fn freeEntry(store: *DirectoryWatchStore, alloc: Allocator, entry_index: usize) void {
         const entry = store.watches.values()[entry_index];
 
         debug.log("DirectoryWatchStore.freeEntry({d}, {})", .{
@@ -5210,6 +5210,8 @@ const DirectoryWatchStore = struct {
         store.owner().bun_watcher.removeAtIndex(entry.watch_index, 0, &.{}, .file);
 
         defer _ = if (entry.dir_fd_owned) bun.sys.close(entry.dir);
+
+        alloc.free(store.watches.keys()[entry_index]);
         store.watches.swapRemoveAt(entry_index);
 
         if (store.watches.entries.len == 0) {
@@ -6050,7 +6052,7 @@ pub const HotReloadEvent = struct {
                     entry.first_dep = new_first_dep;
                 } else {
                     // without any files to depend on this watcher is freed
-                    dev.directory_watchers.freeEntry(watcher_index);
+                    dev.directory_watchers.freeEntry(dev.allocator, watcher_index);
                 }
             }
         }

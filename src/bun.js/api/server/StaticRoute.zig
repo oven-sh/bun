@@ -230,7 +230,7 @@ pub fn on(this: *StaticRoute, resp: AnyResponse) void {
 
 fn toAsync(this: *StaticRoute, resp: AnyResponse) void {
     resp.onAborted(*StaticRoute, onAborted, this);
-    resp.onWritable(*StaticRoute, onWritableBytes, this);
+    resp.onWritable(*StaticRoute, onWritable, this);
 }
 
 fn onAborted(this: *StaticRoute, resp: AnyResponse) void {
@@ -267,17 +267,18 @@ pub fn doRenderBlobCorked(this: *StaticRoute, resp: AnyResponse, did_finish: *bo
     this.renderBytes(resp, did_finish);
 }
 
-fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) void {
+fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     if (this.server) |server| {
         resp.timeout(server.config().idleTimeout);
     }
 
     if (!this.onWritableBytes(write_offset, resp)) {
         this.toAsync(resp);
-        return;
+        return false;
     }
 
     this.onResponseComplete(resp);
+    return true;
 }
 
 fn onWritableBytes(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {

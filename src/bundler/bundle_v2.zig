@@ -816,6 +816,9 @@ pub const BundleV2 = struct {
                         import_record.specifier,
                         target.bakeGraph(),
                     ) catch bun.outOfMemory();
+
+                    // Turn this into an invalid AST, so that incremental mode skips it when printing.
+                    this.graph.ast.items(.parts)[import_record.importer_source_index.?].len = 0;
                 }
             }
 

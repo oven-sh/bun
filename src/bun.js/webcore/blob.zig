@@ -2766,7 +2766,7 @@ pub const Blob = struct {
             }
 
             pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
-                const globalThis = this.promise.strong.globalThis.?;
+                const globalThis = this.event_loop.global;
                 const promise = this.promise.swap();
                 const err_instance = err.toJSC(globalThis);
                 var event_loop = this.event_loop;
@@ -2820,7 +2820,7 @@ pub const Blob = struct {
                     this.truncate();
                     written = @intCast(this.size);
                 }
-                const globalThis = this.promise.strong.globalThis.?;
+                const globalThis = this.event_loop.global;
                 const promise = this.promise.swap();
                 var event_loop = this.event_loop;
                 event_loop.enter();

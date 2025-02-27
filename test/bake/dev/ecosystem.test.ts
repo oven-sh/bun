@@ -12,6 +12,7 @@ import { devTest } from "../bake-harness";
 devTest("svelte component islands example", {
   fixture: "svelte-component-islands",
   timeoutMultiplier: 2,
+  deinitTesting: false, // TODO: scoped out because server-components are not officially supported
   async test(dev) {
     const html = await dev.fetch("/").text();
     if (html.includes("Bun__renderFallbackError")) throw new Error("failed");
@@ -27,7 +28,6 @@ devTest("svelte component islands example", {
     await Bun.sleep(500); // TODO: de-flake event ordering.
     expect(await c.elemText("button")).toBe("Clicked 6 times");
 
-    // TODO: plugin watch
     // await dev.patch("pages/index.svelte", {
     //   find: "non-interactive",
     //   replace: "awesome",

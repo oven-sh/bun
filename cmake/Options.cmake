@@ -20,7 +20,7 @@ else()
   setx(RELEASE OFF)
 endif()
 
-if(CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
+if(CMAKE_BUILD_TYPE MATCHES "Debug")
   setx(DEBUG ON)
 else()
   setx(DEBUG OFF)
@@ -67,13 +67,7 @@ optionx(ENABLE_ASSERTIONS BOOL "If debug assertions should be enabled" DEFAULT $
 
 optionx(ENABLE_CANARY BOOL "If canary features should be enabled" DEFAULT ON)
 
-if(ENABLE_CANARY AND BUILDKITE)
-  execute_process(
-    COMMAND buildkite-agent meta-data get "canary"
-    OUTPUT_VARIABLE DEFAULT_CANARY_REVISION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-  )
-elseif(ENABLE_CANARY)
+if(ENABLE_CANARY)
   set(DEFAULT_CANARY_REVISION "1")
 else()
   set(DEFAULT_CANARY_REVISION "0")
@@ -91,6 +85,11 @@ optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT
 
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
+endif()
+if(DEBUG AND APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+  optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ON)
+else()
+  optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT OFF)
 endif()
 
 optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)

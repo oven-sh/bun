@@ -9,8 +9,6 @@ const fmt = std.fmt;
 const Environment = bun.Environment;
 const sha = bun.sha;
 
-pub usingnamespace std.fmt;
-
 pub const TableSymbols = struct {
     enable_ansi_colors: bool,
 
@@ -234,19 +232,28 @@ const JSONFormatter = struct {
 
 const JSONFormatterUTF8 = struct {
     input: []const u8,
+    opts: Options,
+
+    pub const Options = struct {
+        quote: bool = true,
+    };
 
     pub fn format(self: JSONFormatterUTF8, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+        if (self.opts.quote) {
+            try bun.js_printer.writeJSONString(self.input, @TypeOf(writer), writer, .utf8);
+        } else {
+            try bun.js_printer.writePreQuotedString(self.input, @TypeOf(writer), writer, '"', false, true, .utf8);
+        }
     }
 };
 
 /// Expects latin1
-pub fn formatJSONString(text: []const u8) JSONFormatter {
+pub fn formatJSONStringLatin1(text: []const u8) JSONFormatter {
     return .{ .input = text };
 }
 
-pub fn formatJSONStringUTF8(text: []const u8) JSONFormatterUTF8 {
-    return .{ .input = text };
+pub fn formatJSONStringUTF8(text: []const u8, opts: JSONFormatterUTF8.Options) JSONFormatterUTF8 {
+    return .{ .input = text, .opts = opts };
 }
 
 const SharedTempBuffer = [32 * 1024]u8;
@@ -1335,7 +1342,7 @@ pub fn quote(self: string) bun.fmt.QuotedFormatter {
     };
 }
 
-pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.EnumLiteral)) type {
+pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.enum_literal)) type {
     return struct {
         pretty: bool = true,
         const output = brk: {
@@ -1366,7 +1373,7 @@ pub fn EnumTagListFormatter(comptime Enum: type, comptime Separator: @Type(.Enum
     };
 }
 
-pub fn enumTagList(comptime Enum: type, comptime separator: @Type(.EnumLiteral)) EnumTagListFormatter(Enum, separator) {
+pub fn enumTagList(comptime Enum: type, comptime separator: @Type(.enum_literal)) EnumTagListFormatter(Enum, separator) {
     return EnumTagListFormatter(Enum, separator){};
 }
 
@@ -1482,12 +1489,12 @@ pub const SizeFormatter = struct {
     }
 };
 
-pub fn size(value: anytype, opts: SizeFormatter.Options) SizeFormatter {
+pub fn size(bytes: anytype, opts: SizeFormatter.Options) SizeFormatter {
     return .{
-        .value = switch (@TypeOf(value)) {
-            f64, f32, f128 => @intFromFloat(value),
-            i64, isize => @intCast(value),
-            else => value,
+        .value = switch (@TypeOf(bytes)) {
+            f64, f32, f128 => @intFromFloat(bytes),
+            i64, isize => @intCast(bytes),
+            else => bytes,
         },
         .opts = opts,
     };
@@ -1717,86 +1724,79 @@ fn escapePowershellImpl(str: []const u8, comptime f: []const u8, _: std.fmt.Form
     try writer.writeAll(remain);
 }
 
-pub const fmt_js_test_bindings = struct {
-    const Formatter = enum {
-        fmtJavaScript,
-        escapePowershell,
-    };
+pub const js_bindings = struct {
+    const gen = bun.gen.fmt;
 
     /// Internal function for testing in highlighter.test.ts
-    pub fn jsFunctionStringFormatter(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!bun.JSC.JSValue {
-        const args = callframe.arguments_old(2);
-        if (args.len < 2) {
-            return globalThis.throwNotEnoughArguments("code", 1, 0);
-        }
-
-        const code = try args.ptr[0].toSliceOrNull(globalThis);
-        defer code.deinit();
-
+    pub fn fmtString(global: *bun.JSC.JSGlobalObject, code: []const u8, formatter_id: gen.Formatter) bun.JSError!bun.String {
         var buffer = bun.MutableString.initEmpty(bun.default_allocator);
         defer buffer.deinit();
         var writer = buffer.bufferedWriter();
 
-        const formatter_id: Formatter = @enumFromInt(args.ptr[1].toInt32());
         switch (formatter_id) {
-            .fmtJavaScript => {
-                const formatter = bun.fmt.fmtJavaScript(code.slice(), .{
+            .highlight_javascript => {
+                const formatter = bun.fmt.fmtJavaScript(code, .{
                     .enable_colors = true,
                     .check_for_unhighlighted_write = false,
                 });
                 std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-                    return globalThis.throwError(err, "Error formatting");
+                    return global.throwError(err, "while formatting");
                 };
             },
-            .escapePowershell => {
-                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
-                    return globalThis.throwError(err, "Error formatting");
+            .escape_powershell => {
+                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code)}) catch |err| {
+                    return global.throwError(err, "while formatting");
                 };
             },
         }
 
         writer.flush() catch |err| {
-            return globalThis.throwError(err, "Error formatting");
+            return global.throwError(err, "while formatting");
         };
 
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(globalThis);
+        return bun.String.createUTF8(buffer.list.items);
     }
 };
 
+// Equivalent to ERR_OUT_OF_RANGE from
 fn NewOutOfRangeFormatter(comptime T: type) type {
     return struct {
         value: T,
         min: i64 = std.math.maxInt(i64),
         max: i64 = std.math.maxInt(i64),
         field_name: []const u8,
+        msg: []const u8 = "",
 
         pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll("The value of \"");
             try writer.writeAll(self.field_name);
-            try writer.writeAll("\" ");
+            try writer.writeAll("\" is out of range. It must be ");
+
             const min = self.min;
             const max = self.max;
+            const msg = self.msg;
 
             if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d} and <= {d}.", .{ min, max });
+                try std.fmt.format(writer, ">= {d} and <= {d}.", .{ min, max });
             } else if (min != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be >= {d}.", .{min});
+                try std.fmt.format(writer, ">= {d}.", .{min});
             } else if (max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, "must be <= {d}.", .{max});
+                try std.fmt.format(writer, "<= {d}.", .{max});
+            } else if (msg.len > 0) {
+                try writer.writeAll(msg);
+                try writer.writeByte('.');
             } else {
-                try writer.writeAll("must be within the range of values for type ");
+                try writer.writeAll("within the range of values for type ");
                 try writer.writeAll(comptime @typeName(T));
                 try writer.writeAll(".");
             }
 
             if (comptime T == f64 or T == f32) {
-                try std.fmt.format(writer, " Received: {}", .{double(self.value)});
+                try std.fmt.format(writer, " Received {}", .{double(self.value)});
             } else if (comptime T == []const u8) {
-                try std.fmt.format(writer, " Received: {s}", .{self.value});
+                try std.fmt.format(writer, " Received {s}", .{self.value});
             } else {
-                try std.fmt.format(writer, " Received: {d}", .{self.value});
+                try std.fmt.format(writer, " Received {d}", .{self.value});
             }
         }
     };
@@ -1820,10 +1820,11 @@ pub const OutOfRangeOptions = struct {
     min: i64 = std.math.maxInt(i64),
     max: i64 = std.math.maxInt(i64),
     field_name: []const u8,
+    msg: []const u8 = "",
 };
 
 pub fn outOfRange(value: anytype, options: OutOfRangeOptions) OutOfRangeFormatter(@TypeOf(value)) {
-    return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name };
+    return .{ .value = value, .min = options.min, .max = options.max, .field_name = options.field_name, .msg = options.msg };
 }
 
 /// esbuild has an 8 character truncation of a base32 encoded bytes. this

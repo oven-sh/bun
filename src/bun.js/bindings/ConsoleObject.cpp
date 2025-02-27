@@ -39,7 +39,7 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
             client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
         }
     }
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto args = arguments.ptr();
     JSC__JSValue jsArgs[255];
 
@@ -55,11 +55,7 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
         return;
     }
 
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-    Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type),
-        static_cast<uint32_t>(level), globalObject, jsArgs,
-        count);
-    scope.clearException();
+    Bun__ConsoleObject__messageWithTypeAndLevel(this->m_client, static_cast<uint32_t>(type), static_cast<uint32_t>(level), globalObject, jsArgs, count);
 }
 void ConsoleObject::count(JSGlobalObject* globalObject, const String& label)
 {

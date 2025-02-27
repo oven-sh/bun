@@ -28,8 +28,8 @@ describe("#09555", () => {
 
     let total = 0;
     const res = await fetch(server.url.href);
-    const stream = Readable.fromWeb(res.body);
-    let chunks = [];
+    const stream = Readable.fromWeb(res.body!);
+    let chunks: any[] = [];
     for await (const chunk of stream) {
       total += chunk.length;
       chunks.push(chunk);

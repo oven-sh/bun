@@ -18,8 +18,9 @@ pub fn PropertyIdImpl() type {
     return struct {
         pub fn toCss(this: *const PropertyId, comptime W: type, dest: *Printer(W)) PrintErr!void {
             var first = true;
-            const name = this.name(this);
+            const name = this.name();
             const prefix_value = this.prefix().orNone();
+
             inline for (VendorPrefix.FIELDS) |field| {
                 if (@field(prefix_value, field)) {
                     var prefix: VendorPrefix = .{};

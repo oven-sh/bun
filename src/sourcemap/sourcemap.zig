@@ -583,15 +583,13 @@ pub const Mapping = struct {
                 .generated = generated,
                 .original = original,
                 .source_index = source_index,
-            }) catch unreachable;
+            }) catch bun.outOfMemory();
         }
 
-        return ParseResult{
-            .success = .{
-                .mappings = mapping,
-                .input_line_count = input_line_count,
-            },
-        };
+        return .{ .success = .{
+            .mappings = mapping,
+            .input_line_count = input_line_count,
+        } };
     }
 };
 
@@ -627,27 +625,29 @@ pub const ParsedSourceMap = struct {
     /// maps `source_index` to the correct filename.
     external_source_names: []const []const u8 = &.{},
     /// In order to load source contents from a source-map after the fact,
-    // / a handle to the underlying source provider is stored. Within this pointer,
+    /// a handle to the underlying source provider is stored. Within this pointer,
     /// a flag is stored if it is known to be an inline or external source map.
     ///
     /// Source contents are large, we don't preserve them in memory. This has
     /// the downside of repeatedly re-decoding sourcemaps if multiple errors
     /// are emitted (specifically with Bun.inspect / unhandled; the ones that
     /// rely on source contents)
-    underlying_provider: SourceContentPtr = .{ .data = 0 },
+    underlying_provider: SourceContentPtr = .none,
 
-    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+    ref_count: std.atomic.Value(u32) = .init(1),
 
     is_standalone_module_graph: bool = false,
 
-    pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
+    pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn, null);
 
     const SourceContentPtr = packed struct(u64) {
-        load_hint: SourceMapLoadHint = .none,
+        load_hint: SourceMapLoadHint,
         data: u62,
 
+        pub const none: SourceContentPtr = .{ .load_hint = .none, .data = 0 };
+
         fn fromProvider(p: *SourceProviderMap) SourceContentPtr {
-            return .{ .data = @intCast(@intFromPtr(p)) };
+            return .{ .load_hint = .none, .data = @intCast(@intFromPtr(p)) };
         }
 
         pub fn provider(sc: SourceContentPtr) ?*SourceProviderMap {
@@ -1158,16 +1158,17 @@ const vlq_lookup_table: [256]VLQ = brk: {
     break :brk entries;
 };
 
-const vlq_max_in_bytes = 8;
+/// Source map VLQ values are limited to i32
+/// Encoding min and max ints are "//////D" and "+/////D", respectively.
+/// These are 7 bytes long. This makes the `VLQ` struct 8 bytes.
+const vlq_max_in_bytes = 7;
 pub const VLQ = struct {
-    // We only need to worry about i32
-    // That means the maximum VLQ-encoded value is 8 bytes
-    // because there are only 4 bits of number inside each VLQ value
-    // and it expects i32
-    // therefore, it can never be more than 32 bits long
-    // I believe the actual number is 7 bytes long, however we can add an extra byte to be more cautious
     bytes: [vlq_max_in_bytes]u8,
     len: u4 = 0,
+
+    pub fn slice(self: *const VLQ) []const u8 {
+        return self.bytes[0..self.len];
+    }
 
     pub fn writeTo(self: VLQ, writer: anytype) !void {
         try writer.writeAll(self.bytes[0..self.len]);
@@ -1602,6 +1603,14 @@ pub const Chunk = struct {
     /// ignore empty chunks
     should_ignore: bool = true,
 
+    pub const empty: Chunk = .{
+        .buffer = MutableString.initEmpty(bun.default_allocator),
+        .mappings_count = 0,
+        .end_state = .{},
+        .final_generated_column = 0,
+        .should_ignore = true,
+    };
+
     pub fn printSourceMapContents(
         chunk: Chunk,
         source: Logger.Source,
@@ -1660,13 +1669,14 @@ pub const Chunk = struct {
         return output;
     }
 
+    // TODO: remove the indirection by having generic functions for SourceMapFormat and NewBuilder. Source maps are always VLQ
     pub fn SourceMapFormat(comptime Type: type) type {
         return struct {
             ctx: Type,
             const Format = @This();
 
             pub fn init(allocator: std.mem.Allocator, prepend_count: bool) Format {
-                return Format{ .ctx = Type.init(allocator, prepend_count) };
+                return .{ .ctx = Type.init(allocator, prepend_count) };
             }
 
             pub inline fn appendLineSeparator(this: *Format) anyerror!void {
@@ -1956,4 +1966,4 @@ pub const DebugIDFormatter = struct {
 
 const assert = bun.assert;
 
-pub usingnamespace @import("./CodeCoverage.zig");
+pub const coverage = @import("./CodeCoverage.zig");

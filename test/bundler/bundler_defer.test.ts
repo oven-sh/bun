@@ -1,14 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { itBundled } from './expectBundled';
-import { bunExe, bunEnv, tempDirWithFiles } from 'harness';
-import * as path from 'node:path';
+import { itBundled } from "./expectBundled";
+import { bunExe, bunEnv, tempDirWithFiles } from "harness";
+import * as path from "node:path";
 
 describe("defer", () => {
   {
     let state: string = "Should not see this!";
 
     itBundled("works", {
-      experimentalCss: true,
       minifyWhitespace: true,
       files: {
         "/entry.css": /* css */ `
@@ -47,7 +46,6 @@ describe("defer", () => {
     let actions: Action[] = [];
 
     itBundled("executes before everything", {
-      experimentalCss: true,
       minifyWhitespace: true,
       files: {
         "/entry.css": /* css */ `
@@ -86,7 +84,6 @@ describe("defer", () => {
   {
     let action: string[] = [];
     itBundled("executes after all plugins have been setup", {
-      experimentalCss: true,
       minifyWhitespace: true,
       files: {
         "/entry.css": /* css */ `
@@ -146,7 +143,6 @@ describe("defer", () => {
       try {
         const result = await Bun.build({
           entrypoints: [path.join(folder, "index.ts")],
-          experimentalCss: true,
           minify: true,
           plugins: [
             {
@@ -181,8 +177,9 @@ describe("defer", () => {
           ],
         });
         console.log(result);
-      } catch (err) {
+      } catch (err: any) {
         expect(err).toBeDefined();
+        expect(err.message).toBe("WOOPS");
         return;
       }
       throw new Error("DIDNT GET ERROR!");
@@ -205,7 +202,6 @@ describe("defer", () => {
     }
 
     itBundled("basic", {
-      experimentalCss: true,
       files: {
         "/index.ts": /* ts */ `
           import { lmao } from "./lmao.ts";
@@ -213,15 +209,15 @@ describe("defer", () => {
 
           console.log("Foo", foo, lmao);
             `,
-                  "/lmao.ts": `
+        "/lmao.ts": `
           import { foo } from "./foo.ts";
           export const lmao = "lolss";
           console.log(foo);
             `,
-                  "/foo.ts": `
+        "/foo.ts": `
             export const foo = 'lkdfjlsdf';
             console.log('hi')`,
-                  "/a.css": `
+        "/a.css": `
             h1 {
               color: blue;
             }
@@ -285,7 +281,6 @@ describe("defer", () => {
   }
 
   itBundled("edgecase", {
-    experimentalCss: true,
     minifyWhitespace: true,
     files: {
       "/entry.css": /* css */ `
@@ -317,7 +312,6 @@ describe("defer", () => {
 
   // encountered double free when CSS build has error
   itBundled("shouldn't crash on CSS parse error", {
-    experimentalCss: true,
     files: {
       "/index.ts": /* ts */ `
 import { lmao } from "./lmao.ts";
@@ -371,7 +365,6 @@ console.log("FOOOO", foo);
   });
 
   itBundled("works as expected when onLoad error occurs after defer", {
-    experimentalCss: true,
     files: {
       "/index.ts": /* ts */ `
 import { lmao } from "./lmao.ts";
@@ -423,7 +416,6 @@ console.log("FOOOO", foo);
   });
 
   itBundled("calling defer more than once errors", {
-    experimentalCss: true,
     files: {
       "/index.ts": /* ts */ `
 import { lmao } from "./lmao.ts";
@@ -515,7 +507,7 @@ return \`Hello \${name}!\`;
 export function formatDate(date: Date): string {
 return date.toLocaleDateString("en-US", {
 weekday: "long",
-year: "numeric", 
+year: "numeric",
 month: "long",
 day: "numeric"
 });

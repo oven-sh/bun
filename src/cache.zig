@@ -20,7 +20,6 @@ const Define = @import("./defines.zig").Define;
 const std = @import("std");
 const fs = @import("./fs.zig");
 const sync = @import("sync.zig");
-const Mutex = @import("./lock.zig").Lock;
 
 const import_record = @import("./import_record.zig");
 
@@ -46,10 +45,28 @@ const debug = Output.scoped(.fs, false);
 pub const Fs = struct {
     pub const Entry = struct {
         contents: string,
-        fd: StoredFileDescriptorType = bun.invalid_fd,
+        fd: StoredFileDescriptorType,
+        /// When `contents` comes from a native plugin, this field is populated
+        /// with information on how to free it.
+        external_free_function: ExternalFreeFunction = .none,
+
+        pub const ExternalFreeFunction = struct {
+            ctx: ?*anyopaque,
+            function: ?*const fn (?*anyopaque) callconv(.C) void,
+
+            pub const none: ExternalFreeFunction = .{ .ctx = null, .function = null };
+
+            pub fn call(this: *const @This()) void {
+                if (this.function) |func| {
+                    func(this.ctx);
+                }
+            }
+        };
 
         pub fn deinit(entry: *Entry, allocator: std.mem.Allocator) void {
-            if (entry.contents.len > 0) {
+            if (entry.external_free_function.function) |func| {
+                func(entry.external_free_function.ctx);
+            } else if (entry.contents.len > 0) {
                 allocator.free(entry.contents);
                 entry.contents = "";
             }

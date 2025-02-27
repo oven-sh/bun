@@ -41,7 +41,7 @@ JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncToJSON);
 
 ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JSValue thisValue)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* callSite = JSC::jsDynamicCast<CallSite*>(thisValue)) {
@@ -53,7 +53,7 @@ ALWAYS_INLINE static CallSite* getCallSite(JSGlobalObject* globalObject, JSC::JS
 }
 
 #define ENTER_PROTO_FUNC()                                                  \
-    JSC::VM& vm = globalObject->vm();                                       \
+    auto& vm = JSC::getVM(globalObject);                                    \
     auto scope = DECLARE_THROW_SCOPE(vm);                                   \
                                                                             \
     CallSite* callSite = getCallSite(globalObject, callFrame->thisValue()); \

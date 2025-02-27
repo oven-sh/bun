@@ -4,7 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
-const SmolStr = @import("../string_types.zig").SmolStr;
+const SmolStr = @import("../string.zig").SmolStr;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 
 /// Using u16 because anymore tokens than that results in an unreasonably high
@@ -66,7 +66,6 @@ pub fn StackStack(comptime T: type, comptime SizeType: type, comptime N: SizeTyp
         len: SizeType = 0,
 
         pub const Error = error{
-            StackEmpty,
             StackFull,
         };
 
@@ -159,7 +158,7 @@ pub fn expand(
     tokens: []Token,
     out: []std.ArrayList(u8),
     contains_nested: bool,
-) (error{ StackFull, StackEmpty } || ParserError)!void {
+) (error{StackFull} || ParserError)!void {
     var out_key_counter: u16 = 1;
     if (!contains_nested) {
         var expansions_table = try buildExpansionTableAlloc(allocator, tokens);

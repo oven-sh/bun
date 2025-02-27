@@ -19,6 +19,7 @@
 */
 
 #include "root.h"
+#include "JavaScriptCore/ExceptionScope.h"
 
 #include "JSTextEncoder.h"
 
@@ -80,7 +81,7 @@ extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject
 
 template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
@@ -180,7 +181,7 @@ using JSTextEncoderDOMConstructor = JSDOMConstructor<JSTextEncoder>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSTextEncoderDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -246,7 +247,7 @@ static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
 
 // JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> input))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -280,7 +281,7 @@ static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
 
 // JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> sourceStr, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination))
 // {
-//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     auto& vm = JSC::getVM(lexicalGlobalObject);
 //     IGNORE_WARNINGS_BEGIN("frame-address")
 //     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
 //     IGNORE_WARNINGS_END
@@ -350,7 +351,7 @@ void JSTextEncoder::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsTextEncoderConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSTextEncoderPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
@@ -384,7 +385,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     }
     JSC::JSString* input = argument0.value().toStringOrNull(lexicalGlobalObject);
     JSC::EncodedJSValue res;
-    String str;
+    StringView str;
     if (input->is8Bit()) {
         if (input->isRope()) {
             GCDeferralContext gcDeferralContext(vm);
@@ -392,14 +393,20 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
                 RELEASE_AND_RETURN(throwScope, encodedValue);
             }
+
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
-        str = input->value(lexicalGlobalObject);
+        str = input->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
         res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
     } else {
-        str = input->value(lexicalGlobalObject);
+        str = input->view(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
         res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
     }
+
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));

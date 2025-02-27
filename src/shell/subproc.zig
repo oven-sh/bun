@@ -511,7 +511,7 @@ pub const ShellSubprocess = struct {
         return this.process.kill(@intCast(sig));
     }
 
-    // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {
+    // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {
     //     return this.observable_getters.contains(getter);
     // }
 
@@ -528,7 +528,7 @@ pub const ShellSubprocess = struct {
         // this.ipc_mode = .none;
     }
 
-    pub fn closeIO(this: *@This(), comptime io: @Type(.EnumLiteral)) void {
+    pub fn closeIO(this: *@This(), comptime io: @Type(.enum_literal)) void {
         if (this.closed.contains(io)) return;
         log("close IO {s}", .{@tagName(io)});
         this.closed.insert(io);
@@ -704,7 +704,7 @@ pub const ShellSubprocess = struct {
         }
 
         pub fn fillEnvFromProcess(this: *SpawnArgs, globalThis: *JSGlobalObject) void {
-            var env_iter = EnvMapIter.init(globalThis.bunVM().bundler.env.map, this.arena.allocator());
+            var env_iter = EnvMapIter.init(globalThis.bunVM().transpiler.env.map, this.arena.allocator());
             return this.fillEnv(globalThis, &env_iter, false);
         }
 
@@ -782,7 +782,7 @@ pub const ShellSubprocess = struct {
         const is_sync = config.is_sync;
 
         if (!spawn_args.override_env and spawn_args.env_array.items.len == 0) {
-            // spawn_args.env_array.items = jsc_vm.bundler.env.map.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
+            // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
             spawn_args.env_array.items = event_loop.createNullDelimitedEnvMap(allocator) catch bun.outOfMemory();
             spawn_args.env_array.capacity = spawn_args.env_array.items.len;
         }
@@ -830,7 +830,7 @@ pub const ShellSubprocess = struct {
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = true,
                 .loop = event_loop,
-            } else {},
+            },
         };
 
         spawn_args.argv.append(allocator, null) catch {
@@ -848,7 +848,7 @@ pub const ShellSubprocess = struct {
         ) catch |err| {
             return .{ .err = .{ .custom = std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
         }) {
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
+            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
             .result => |result| result,
         };
 
@@ -1020,7 +1020,7 @@ pub const PipeReader = struct {
         }
     };
 
-    pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
+    pub usingnamespace bun.NewRefCounted(PipeReader, deinit, null);
 
     pub const CapturedWriter = struct {
         dead: bool = true,

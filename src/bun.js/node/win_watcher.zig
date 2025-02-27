@@ -4,13 +4,13 @@ const windows = bun.windows;
 const uv = windows.libuv;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 const string = bun.string;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Output = bun.Output;
-const Watcher = @import("../../watcher.zig");
+const Watcher = bun.Watcher;
 
 const FSWatcher = bun.JSC.Node.FSWatcher;
 const EventType = @import("./path_watcher.zig").PathWatcher.EventType;

@@ -1,0 +1,19 @@
+name: Typos
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Spellcheck
+        uses: crate-ci/typos@v1.29.4
+        with:
+          files: docs/**/*

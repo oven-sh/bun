@@ -1,6 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
@@ -8,8 +7,7 @@ const string = bun.string;
 const JSC = bun.JSC;
 const js = JSC.C;
 const WebCore = JSC.WebCore;
-const Bundler = bun.bundler;
-const VirtualMachine = JavaScript.VirtualMachine;
+const Transpiler = bun.transpiler;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
@@ -60,14 +58,14 @@ pub const FileSystemRouter = struct {
         }
         var vm = globalThis.bunVM();
 
-        var root_dir_path: ZigString.Slice = ZigString.Slice.fromUTF8NeverFree(vm.bundler.fs.top_level_dir);
+        var root_dir_path: ZigString.Slice = ZigString.Slice.fromUTF8NeverFree(vm.transpiler.fs.top_level_dir);
         defer root_dir_path.deinit();
         var origin_str: ZigString.Slice = .{};
         var asset_prefix_slice: ZigString.Slice = .{};
 
         var out_buf: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
         if (try argument.get(globalThis, "style")) |style_val| {
-            if (!style_val.getZigString(globalThis).eqlComptime("nextjs")) {
+            if (!(try style_val.getZigString(globalThis)).eqlComptime("nextjs")) {
                 return globalThis.throwInvalidArguments("Only 'nextjs' style is currently implemented", .{});
             }
         } else {
@@ -78,7 +76,7 @@ pub const FileSystemRouter = struct {
             if (!dir.isString()) {
                 return globalThis.throwInvalidArguments("Expected dir to be a string", .{});
             }
-            const root_dir_path_ = dir.toSlice(globalThis, globalThis.allocator());
+            const root_dir_path_ = try dir.toSlice(globalThis, globalThis.allocator());
             if (!(root_dir_path_.len == 0 or strings.eqlComptime(root_dir_path_.slice(), "."))) {
                 // resolve relative path if needed
                 const path = root_dir_path_.slice();
@@ -115,7 +113,7 @@ pub const FileSystemRouter = struct {
                     return globalThis.throwInvalidArguments("Expected fileExtensions to be an Array of strings", .{});
                 }
                 if (val.getLength(globalThis) == 0) continue;
-                extensions.appendAssumeCapacity((val.toSlice(globalThis, allocator).clone(allocator) catch unreachable).slice()[1..]);
+                extensions.appendAssumeCapacity(((try val.toSlice(globalThis, allocator)).clone(allocator) catch unreachable).slice()[1..]);
             }
         }
 
@@ -127,16 +125,16 @@ pub const FileSystemRouter = struct {
                 return globalThis.throwInvalidArguments("Expected assetPrefix to be a string", .{});
             }
 
-            asset_prefix_slice = asset_prefix.toSlice(globalThis, allocator).clone(allocator) catch unreachable;
+            asset_prefix_slice = (try asset_prefix.toSlice(globalThis, allocator)).clone(allocator) catch unreachable;
         }
-        const orig_log = vm.bundler.resolver.log;
+        const orig_log = vm.transpiler.resolver.log;
         var log = Log.Log.init(allocator);
-        vm.bundler.resolver.log = &log;
-        defer vm.bundler.resolver.log = orig_log;
+        vm.transpiler.resolver.log = &log;
+        defer vm.transpiler.resolver.log = orig_log;
 
         const path_to_use = (root_dir_path.cloneWithTrailingSlash(allocator) catch unreachable).slice();
 
-        const root_dir_info = vm.bundler.resolver.readDirInfo(path_to_use) catch {
+        const root_dir_info = vm.transpiler.resolver.readDirInfo(path_to_use) catch {
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
@@ -148,13 +146,13 @@ pub const FileSystemRouter = struct {
             return globalThis.throw("Unable to find directory: {s}", .{root_dir_path.slice()});
         };
 
-        var router = Router.init(vm.bundler.fs, allocator, .{
+        var router = Router.init(vm.transpiler.fs, allocator, .{
             .dir = path_to_use,
             .extensions = if (extensions.items.len > 0) extensions.items else default_extensions,
             .asset_prefix_path = asset_prefix_slice.slice(),
         }) catch unreachable;
 
-        router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
+        router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             origin_str.deinit();
             arena.deinit();
             globalThis.allocator().destroy(arena);
@@ -167,7 +165,7 @@ pub const FileSystemRouter = struct {
                 globalThis.allocator().destroy(arena);
                 return globalThis.throwInvalidArguments("Expected origin to be a string", .{});
             }
-            origin_str = origin.toSlice(globalThis, globalThis.allocator());
+            origin_str = try origin.toSlice(globalThis, globalThis.allocator());
         }
 
         if (log.errors + log.warnings > 0) {
@@ -201,10 +199,10 @@ pub const FileSystemRouter = struct {
         var vm = globalThis.bunVM();
         var path = inputPath;
         if (comptime Environment.isWindows) {
-            path = vm.bundler.resolver.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, path);
+            path = vm.transpiler.resolver.fs.normalizeBuf(&win32_normalized_dir_info_cache_buf, path);
         }
 
-        const root_dir_info = vm.bundler.resolver.readDirInfo(path) catch {
+        const root_dir_info = vm.transpiler.resolver.readDirInfo(path) catch {
             return;
         };
 
@@ -216,7 +214,7 @@ pub const FileSystemRouter = struct {
                     if (entry.base()[0] == '.') {
                         continue :outer;
                     }
-                    if (entry.kind(&vm.bundler.fs.fs, false) == .dir) {
+                    if (entry.kind(&vm.transpiler.fs.fs, false) == .dir) {
                         inline for (Router.banned_dirs) |banned_dir| {
                             if (strings.eqlComptime(entry.base(), comptime banned_dir)) {
                                 continue :outer;
@@ -224,16 +222,16 @@ pub const FileSystemRouter = struct {
                         }
 
                         var abs_parts_con = [_]string{ entry.dir, entry.base() };
-                        const full_path = vm.bundler.fs.abs(&abs_parts_con);
+                        const full_path = vm.transpiler.fs.abs(&abs_parts_con);
 
-                        _ = vm.bundler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
+                        _ = vm.transpiler.resolver.bustDirCache(strings.withoutTrailingSlashWindowsPath(full_path));
                         bustDirCacheRecursive(this, globalThis, full_path);
                     }
                 }
             }
         }
 
-        _ = vm.bundler.resolver.bustDirCache(path);
+        _ = vm.transpiler.resolver.bustDirCache(path);
     }
 
     pub fn bustDirCache(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) void {
@@ -249,14 +247,14 @@ pub const FileSystemRouter = struct {
         var allocator = arena.allocator();
         var vm = globalThis.bunVM();
 
-        const orig_log = vm.bundler.resolver.log;
+        const orig_log = vm.transpiler.resolver.log;
         var log = Log.Log.init(allocator);
-        vm.bundler.resolver.log = &log;
-        defer vm.bundler.resolver.log = orig_log;
+        vm.transpiler.resolver.log = &log;
+        defer vm.transpiler.resolver.log = orig_log;
 
         bustDirCache(this, globalThis);
 
-        const root_dir_info = vm.bundler.resolver.readDirInfo(this.router.config.dir) catch {
+        const root_dir_info = vm.transpiler.resolver.readDirInfo(this.router.config.dir) catch {
             return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "reading root directory"));
         } orelse {
             arena.deinit();
@@ -264,12 +262,12 @@ pub const FileSystemRouter = struct {
             return globalThis.throw("Unable to find directory: {s}", .{this.router.config.dir});
         };
 
-        var router = Router.init(vm.bundler.fs, allocator, .{
+        var router = Router.init(vm.transpiler.fs, allocator, .{
             .dir = allocator.dupe(u8, this.router.config.dir) catch unreachable,
             .extensions = allocator.dupe(string, this.router.config.extensions) catch unreachable,
             .asset_prefix_path = this.router.config.asset_prefix_path,
         }) catch unreachable;
-        router.loadRoutes(&log, root_dir_info, Resolver, &vm.bundler.resolver, router.config.dir) catch {
+        router.loadRoutes(&log, root_dir_info, Resolver, &vm.transpiler.resolver, router.config.dir) catch {
             arena.deinit();
             globalThis.allocator().destroy(arena);
             return globalThis.throwValue(log.toJS(globalThis, globalThis.allocator(), "loading routes"));
@@ -299,7 +297,7 @@ pub const FileSystemRouter = struct {
 
         var path: ZigString.Slice = brk: {
             if (argument.isString()) {
-                break :brk argument.toSlice(globalThis, globalThis.allocator()).clone(globalThis.allocator()) catch unreachable;
+                break :brk (try argument.toSlice(globalThis, globalThis.allocator())).clone(globalThis.allocator()) catch unreachable;
             }
 
             if (argument.isCell()) {
@@ -583,7 +581,7 @@ pub const MatchedRoute = struct {
         // this is kind of bad. we should consider instead a way to inline the contents of the script.
         if (client_framework_enabled) {
             JSC.API.Bun.getPublicPath(
-                Bundler.ClientEntryPoint.generateEntryPointPath(
+                Transpiler.ClientEntryPoint.generateEntryPointPath(
                     &entry_point_tempbuf,
                     Fs.PathName.init(file_path),
                 ),
@@ -605,7 +603,7 @@ pub const MatchedRoute = struct {
         var writer = stream.writer();
         JSC.API.Bun.getPublicPathWithAssetPrefix(
             this.route.file_path,
-            if (this.base_dir) |base_dir| base_dir.slice() else VirtualMachine.get().bundler.fs.top_level_dir,
+            if (this.base_dir) |base_dir| base_dir.slice() else JSC.VirtualMachine.get().transpiler.fs.top_level_dir,
             if (this.origin) |origin| URL.parse(origin.slice()) else URL{},
             if (this.asset_prefix) |prefix| prefix.slice() else "",
             @TypeOf(&writer),

@@ -11,6 +11,8 @@ interface Config {
   separateSSRGraph?: true;
 
   // Client
+  /** Bun version */
+  bun: string;
   /** Dev Server's `configuration_hash_key` */
   version: string;
   /** If available, this is the Id of `react-refresh/runtime` */
@@ -42,6 +44,9 @@ declare const side: "client" | "server";
  * aimed for the end user should always be enabled.
  */
 declare const IS_BUN_DEVELOPMENT: any;
+
+/** If this is the fallback error page */
+declare const IS_ERROR_RUNTIME: boolean;
 
 declare var __bun_f: any;
 

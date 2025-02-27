@@ -2,13 +2,15 @@ option(WEBKIT_VERSION "The version of WebKit to use")
 option(WEBKIT_LOCAL "If a local version of WebKit should be used instead of downloading")
 
 if(NOT WEBKIT_VERSION)
-  set(WEBKIT_VERSION 8f9ae4f01a047c666ef548864294e01df731d4ea)
+  set(WEBKIT_VERSION c333de54223425d7148603d63dd3f6152d0bc348)
 endif()
+
+string(SUBSTRING ${WEBKIT_VERSION} 0 16 WEBKIT_VERSION_PREFIX)
 
 if(WEBKIT_LOCAL)
   set(DEFAULT_WEBKIT_PATH ${VENDOR_PATH}/WebKit/WebKitBuild/${CMAKE_BUILD_TYPE})
 else()
-  set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit-${WEBKIT_VERSION})
+  set(DEFAULT_WEBKIT_PATH ${CACHE_PATH}/webkit-${WEBKIT_VERSION_PREFIX})
 endif()
 
 option(WEBKIT_PATH "The path to the WebKit directory")
@@ -30,6 +32,8 @@ if(WEBKIT_LOCAL)
       ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders
       ${WEBKIT_PATH}/bmalloc/Headers
       ${WEBKIT_PATH}/WTF/Headers
+      ${WEBKIT_PATH}/JavaScriptCore/DerivedSources/inspector
+      ${WEBKIT_PATH}/JavaScriptCore/PrivateHeaders/JavaScriptCore
     )
   endif()
 
@@ -73,6 +77,10 @@ elseif(ENABLE_LTO AND NOT WIN32)
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-lto")
 else()
   set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}")
+endif()
+
+if(ENABLE_ASAN)
+  set(WEBKIT_SUFFIX "${WEBKIT_SUFFIX}-asan")
 endif()
 
 set(WEBKIT_NAME bun-webkit-${WEBKIT_OS}-${WEBKIT_ARCH}${WEBKIT_SUFFIX})

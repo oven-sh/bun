@@ -5,8 +5,8 @@
 import * as React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { createFromReadableStream } from "react-server-dom-bun/client.browser";
-import { onServerSideReload } from 'bun:bake/client';
-import { flushSync } from 'react-dom';
+import { onServerSideReload } from "bun:bake/client";
+import { flushSync } from "react-dom";
 
 const te = new TextEncoder();
 const td = new TextDecoder();
@@ -74,7 +74,7 @@ const Root = () => {
 const root = hydrateRoot(document, <Root />, {
   onUncaughtError(e) {
     console.error(e);
-  }
+  },
 });
 
 // Keep a cache of page objects to avoid re-fetching a page when pressing the
@@ -118,7 +118,7 @@ const firstPageId = Date.now();
     // This is done client-side because a React error will unmount all elements.
     const sheet = new CSSStyleSheet();
     document.adoptedStyleSheets.push(sheet);
-    sheet.replaceSync(':where(*)::view-transition-group(root){animation:none}');
+    sheet.replaceSync(":where(*)::view-transition-group(root){animation:none}");
   }
 }
 
@@ -142,10 +142,8 @@ async function goto(href: string, cacheId?: number) {
   if (cached) {
     currentCssList = cached.css;
     await ensureCssIsReady(currentCssList);
-    setPage?.(rscPayload = cached.element);
-    console.log("cached", cached);
-    if (olderController?.signal.aborted === false) 
-      abortOnRender = olderController;
+    setPage?.((rscPayload = cached.element));
+    if (olderController?.signal.aborted === false) abortOnRender = olderController;
     return;
   }
 
@@ -199,7 +197,7 @@ async function goto(href: string, cacheId?: number) {
   // Save this promise so that pressing the back button in the browser navigates
   // to the same instance of the old page, instead of re-fetching it.
   if (cacheId) {
-    cachedPages.set(cacheId, { css: currentCssList, element: p });
+    cachedPages.set(cacheId, { css: currentCssList!, element: p });
   }
 
   // Defer aborting a previous request until VERY late. If a previous stream is
@@ -214,8 +212,7 @@ async function goto(href: string, cacheId?: number) {
     if (document.startViewTransition as unknown) {
       document.startViewTransition(() => {
         flushSync(() => {
-          if (thisNavigationId === lastNavigationId)
-            setPage(rscPayload = p);
+          if (thisNavigationId === lastNavigationId) setPage((rscPayload = p));
         });
       });
     } else {
@@ -228,9 +225,7 @@ async function goto(href: string, cacheId?: number) {
 function ensureCssIsReady(cssList: string[]) {
   const wait: Promise<void>[] = [];
   for (const href of cssList) {
-    console.log("check", href);
     const existing = cssFiles.get(href);
-    console.log("get", existing);
     if (existing) {
       const { promise, link } = existing;
       if (promise) {
@@ -247,7 +242,6 @@ function ensureCssIsReady(cssList: string[]) {
         link.href = href;
         document.head.appendChild(link);
       }).then(() => {
-        console.log("loaded", href);
         entry.promise = null;
       });
       entry = { promise, link };
@@ -332,7 +326,6 @@ document.addEventListener("click", async (event, element = event.target as HTMLA
 
 // Handle browser navigation events
 window.addEventListener("popstate", event => {
-  console.log("popstate", event);
   let state = event.state;
   if (typeof state !== "number") {
     state = undefined;
@@ -342,8 +335,8 @@ window.addEventListener("popstate", event => {
 
 if (import.meta.env.DEV) {
   // Frameworks can call `onServerSideReload` to hook into server-side hot
-  // module reloading. 
-  onServerSideReload(async() => {
+  // module reloading.
+  onServerSideReload(async () => {
     const newId = Date.now();
     history.replaceState(newId, "", location.href);
     await goto(location.href, newId);
@@ -355,7 +348,7 @@ if (import.meta.env.DEV) {
     onServerSideReload,
     get currentCssList() {
       return currentCssList;
-    }
+    },
   };
 }
 
@@ -417,7 +410,7 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
     }
     if (chunks.length === 1) {
       const first = chunks[0];
-      if(first.byteLength >= size) {
+      if (first.byteLength >= size) {
         chunks[0] = first.subarray(size);
         totalBytes -= size;
         return first.subarray(0, size);
@@ -446,14 +439,12 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
       return buffer;
     }
   };
-  const header = new Uint32Array(await readChunk(4))[0]; 
-  console.log('h', header);
+  const header = new Uint32Array(await readChunk(4))[0];
   if (header === 0) {
     currentCssList = [];
   } else {
     currentCssList = td.decode(await readChunk(header)).split("\n");
   }
-  console.log('cc', currentCssList);
   if (chunks.length === 0) {
     return stream;
   }
@@ -474,6 +465,6 @@ async function readCssMetadataFallback(stream: ReadableStream<Uint8Array>) {
     },
     cancel() {
       reader.cancel();
-    }
+    },
   });
 }

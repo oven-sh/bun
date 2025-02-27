@@ -13,7 +13,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const sync = @import("sync.zig");
-const Mutex = @import("./lock.zig").Lock;
+const Mutex = bun.Mutex;
 const Semaphore = sync.Semaphore;
 const Fs = @This();
 const path_handler = @import("./resolver/resolve_path.zig");
@@ -37,7 +37,7 @@ pub const Preallocate = struct {
 };
 
 pub const FileSystem = struct {
-    top_level_dir: string,
+    top_level_dir: stringZ,
 
     // used on subsequent updates
     top_level_dir_buf: bun.PathBuffer = undefined,
@@ -108,22 +108,14 @@ pub const FileSystem = struct {
         ENOTDIR,
     };
 
-    pub fn init(top_level_dir: ?string) !*FileSystem {
+    pub fn init(top_level_dir: ?stringZ) !*FileSystem {
         return initWithForce(top_level_dir, false);
     }
 
-    pub fn initWithForce(top_level_dir_: ?string, comptime force: bool) !*FileSystem {
+    pub fn initWithForce(top_level_dir_: ?stringZ, comptime force: bool) !*FileSystem {
         const allocator = bun.fs_allocator;
         var top_level_dir = top_level_dir_ orelse (if (Environment.isBrowser) "/project/" else try bun.getcwdAlloc(allocator));
-
-        // Ensure there's a trailing separator in the top level directory
-        // This makes path resolution more reliable
-        if (!bun.path.isSepAny(top_level_dir[top_level_dir.len - 1])) {
-            const tld = try allocator.alloc(u8, top_level_dir.len + 1);
-            bun.copy(u8, tld, top_level_dir);
-            tld[tld.len - 1] = std.fs.path.sep;
-            top_level_dir = tld;
-        }
+        _ = &top_level_dir;
 
         if (!instance_loaded or force) {
             instance = FileSystem{
@@ -420,18 +412,18 @@ pub const FileSystem = struct {
 
     // }
     pub fn normalize(_: *@This(), str: string) string {
-        return @call(bun.callmod_inline, path_handler.normalizeString, .{ str, true, .auto });
+        return @call(bun.callmod_inline, path_handler.normalizeString, .{ str, true, bun.path.Platform.auto });
     }
 
     pub fn normalizeBuf(_: *@This(), buf: []u8, str: string) string {
-        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, .auto, false });
+        return @call(bun.callmod_inline, path_handler.normalizeStringBuf, .{ str, buf, false, bun.path.Platform.auto, false });
     }
 
     pub fn join(_: *@This(), parts: anytype) string {
         return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             &join_buf,
             parts,
-            .loose,
+            bun.path.Platform.loose,
         });
     }
 
@@ -439,7 +431,7 @@ pub const FileSystem = struct {
         return @call(bun.callmod_inline, path_handler.joinStringBuf, .{
             buf,
             parts,
-            .loose,
+            bun.path.Platform.loose,
         });
     }
 
@@ -545,7 +537,7 @@ pub const FileSystem = struct {
                 .windows => win_tempdir_cache orelse {
                     const value = bun.getenvZ("TEMP") orelse bun.getenvZ("TMP") orelse brk: {
                         if (bun.getenvZ("SystemRoot") orelse bun.getenvZ("windir")) |windir| {
-                            break :brk bun.fmt.allocPrint(
+                            break :brk std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}\\Temp",
                                 .{strings.withoutTrailingSlash(windir)},
@@ -562,7 +554,7 @@ pub const FileSystem = struct {
                         var tmp_buf: bun.PathBuffer = undefined;
                         const cwd = std.posix.getcwd(&tmp_buf) catch @panic("Failed to get cwd for platformTempDir");
                         const root = bun.path.windowsFilesystemRoot(cwd);
-                        break :brk bun.fmt.allocPrint(
+                        break :brk std.fmt.allocPrint(
                             bun.default_allocator,
                             "{s}\\Windows\\Temp",
                             .{strings.withoutTrailingSlash(root)},
@@ -819,10 +811,19 @@ pub const FileSystem = struct {
                 Limit.handles_before = limit;
                 file_limit = limit.max;
                 Limit.handles = file_limit;
-                if (limit.cur < limit.max or limit.max < 163840) {
+                const max_to_use: @TypeOf(limit.max) = if (Environment.isMusl)
+                    // musl has extremely low defaults here, so we really want
+                    // to enable this on musl or tests will start failing.
+                    @max(limit.max, 163840)
+                else
+                    // apparently, requesting too high of a number can cause other processes to not start.
+                    // https://discord.com/channels/876711213126520882/1316342194176790609/1318175562367242271
+                    // https://github.com/postgres/postgres/blob/fee2b3ea2ecd0da0c88832b37ac0d9f6b3bfb9a9/src/backend/storage/file/fd.c#L1072
+                    limit.max;
+                if (limit.cur < max_to_use) {
                     var new_limit = std.mem.zeroes(std.posix.rlimit);
-                    new_limit.cur = @max(limit.max, 163840);
-                    new_limit.max = @max(limit.max, 163840);
+                    new_limit.cur = max_to_use;
+                    new_limit.max = max_to_use;
 
                     std.posix.setrlimit(resource, new_limit) catch break :blk;
                     file_limit = new_limit.max;
@@ -1163,25 +1164,6 @@ pub const FileSystem = struct {
         ) !PathContentsPair {
             FileSystem.setMaxFd(file.handle);
 
-            // Skip the extra file.stat() call when possible
-            var size = _size orelse (file.getEndPos() catch |err| {
-                fs.readFileError(path, err);
-                return err;
-            });
-            debug("stat({d}) = {d}", .{ file.handle, size });
-
-            // Skip the pread call for empty files
-            // Otherwise will get out of bounds errors
-            // plus it's an unnecessary syscall
-            if (size == 0) {
-                if (comptime use_shared_buffer) {
-                    shared_buffer.reset();
-                    return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
-                } else {
-                    return PathContentsPair{ .path = Path.init(path), .contents = "" };
-                }
-            }
-
             var file_contents: []u8 = undefined;
 
             // When we're serving a JavaScript-like file over HTTP, we do not want to cache the contents in memory
@@ -1190,6 +1172,26 @@ pub const FileSystem = struct {
             // As a mitigation, we can just keep one buffer forever and re-use it for the parsed files
             if (use_shared_buffer) {
                 shared_buffer.reset();
+
+                // Skip the extra file.stat() call when possible
+                var size = _size orelse (file.getEndPos() catch |err| {
+                    fs.readFileError(path, err);
+                    return err;
+                });
+                debug("stat({d}) = {d}", .{ file.handle, size });
+
+                // Skip the pread call for empty files
+                // Otherwise will get out of bounds errors
+                // plus it's an unnecessary syscall
+                if (size == 0) {
+                    if (comptime use_shared_buffer) {
+                        shared_buffer.reset();
+                        return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
+                    } else {
+                        return PathContentsPair{ .path = Path.init(path), .contents = "" };
+                    }
+                }
+
                 var offset: u64 = 0;
                 try shared_buffer.growBy(size + 1);
                 shared_buffer.list.expandToCapacity();
@@ -1243,19 +1245,65 @@ pub const FileSystem = struct {
                     file_contents = try bom.removeAndConvertToUTF8WithoutDealloc(allocator, &shared_buffer.list);
                 }
             } else {
-                // We use pread to ensure if the file handle was open, it doesn't seek from the last position
+                var initial_buf: [16384]u8 = undefined;
+                var prev_file_pos: ?u64 = null;
+
+                // Optimization: don't call stat() unless the file is big enough
+                // that we need to dynamically allocate memory to read it.
+                const initial_read = if (_size == null) brk: {
+                    var buf: []u8 = &initial_buf;
+                    prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
+                    const read_count = file.preadAll(buf, 0) catch |err| {
+                        fs.readFileError(path, err);
+                        return err;
+                    };
+                    if (read_count + 1 < buf.len) {
+                        var allocation = try allocator.alloc(u8, read_count + 1);
+                        @memcpy(allocation[0..read_count], buf[0..read_count]);
+                        allocation[read_count] = 0;
+                        file_contents = allocation[0..read_count];
+
+                        if (strings.BOM.detect(file_contents)) |bom| {
+                            debug("Convert {s} BOM", .{@tagName(bom)});
+                            file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
+                        }
+                        if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
+
+                        return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
+                    }
+
+                    break :brk buf[0..read_count];
+                } else initial_buf[0..0];
+
+                if (comptime Environment.isWindows) {
+                    if (prev_file_pos == null) {
+                        prev_file_pos = try file.getPos();
+                    }
+                }
+
+                // Skip the extra file.stat() call when possible
+                const size = _size orelse (file.getEndPos() catch |err| {
+                    fs.readFileError(path, err);
+                    return err;
+                });
+                debug("stat({d}) = {d}", .{ file.handle, size });
+
                 var buf = try allocator.alloc(u8, size + 1);
+                @memcpy(buf[0..initial_read.len], initial_read);
+
+                if (size == 0) {
+                    return PathContentsPair{ .path = Path.init(path), .contents = "" };
+                }
 
                 // stick a zero at the end
                 buf[size] = 0;
 
-                const prev_file_pos = if (comptime Environment.isWindows) try file.getPos() else 0;
-                const read_count = file.preadAll(buf, 0) catch |err| {
+                const read_count = file.preadAll(buf[initial_read.len..], initial_read.len) catch |err| {
                     fs.readFileError(path, err);
                     return err;
                 };
-                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos);
-                file_contents = buf[0..read_count];
+                if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
+                file_contents = buf[0 .. read_count + initial_read.len];
                 debug("pread({d}, {d}) = {d}", .{ file.handle, size, read_count });
 
                 if (strings.BOM.detect(file_contents)) |bom| {
@@ -1516,6 +1564,10 @@ pub const PathName = struct {
     ext: string,
     filename: string,
 
+    pub fn extWithoutLeadingDot(self: *const PathName) string {
+        return if (self.ext.len > 0 and self.ext[0] == '.') self.ext[1..] else self.ext;
+    }
+
     pub fn nonUniqueNameStringBase(self: *const PathName) string {
         // /bar/foo/index.js -> foo
         if (self.dir.len > 0 and strings.eqlComptime(self.base, "index")) {
@@ -1712,15 +1764,20 @@ pub const Path = struct {
 
     pub fn isJSONCFile(this: *const Path) bool {
         const str = this.name.filename;
-        if (strings.eqlComptime(str, "package.json")) {
+
+        if (strings.eqlComptime(str, "package.json") or strings.eqlComptime(str, "bun.lock")) {
             return true;
         }
 
-        if (!(strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig."))) {
-            return false;
+        if (strings.hasSuffixComptime(str, ".jsonc")) {
+            return true;
         }
 
-        return strings.hasSuffixComptime(str, ".json");
+        if (strings.hasPrefixComptime(str, "tsconfig.") or strings.hasPrefixComptime(str, "jsconfig.")) {
+            return strings.hasSuffixComptime(str, ".json");
+        }
+
+        return false;
     }
 
     pub const PackageRelative = struct {

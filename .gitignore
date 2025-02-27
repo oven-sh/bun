@@ -16,6 +16,7 @@
 .vscode/clang*
 .vscode/cpp*
 .zig-cache
+.bake-debug
 *.a
 *.bc
 *.big
@@ -116,8 +117,10 @@ scripts/env.local
 sign.*.json
 sign.json
 src/bake/generated.ts
+src/generated_enum_extractor.zig
 src/bun.js/bindings-obj
 src/bun.js/bindings/GeneratedJS2Native.zig
+src/bun.js/bindings/GeneratedBindings.zig
 src/bun.js/debug-bindings-obj
 src/deps/zig-clap/.gitattributes
 src/deps/zig-clap/.github
@@ -149,6 +152,7 @@ src/bake/generated.ts
 test/cli/install/registry/packages/publish-pkg-*
 test/cli/install/registry/packages/@secret/publish-pkg-8
 test/js/third_party/prisma/prisma/sqlite/dev.db-journal
+tmp
 
 # Dependencies
 /vendor
@@ -177,3 +181,5 @@ test/js/third_party/prisma/prisma/sqlite/dev.db-journal
 .buildkite/ci.yml
 *.sock
 scratch*.{js,ts,tsx,cjs,mjs}
+
+*.bun-build

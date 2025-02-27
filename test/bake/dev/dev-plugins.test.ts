@@ -1,5 +1,5 @@
-// CSS tests concern bundling bugs with CSS files
-import { devTest, minimalFramework } from "../dev-server-harness";
+// Plugin tests concern plugins in development mode.
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -30,7 +30,7 @@ devTest("onResolve", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect('value: 1');
+    await dev.fetch("/").equals("value: 1");
   },
 });
 devTest("onLoad", {
@@ -61,9 +61,9 @@ devTest("onLoad", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect('value: 1');
-    await dev.fetch("/").expect('value: 1');
-    await dev.fetch("/").expect('value: 1');
+    await dev.fetch("/").equals("value: 1");
+    await dev.fetch("/").equals("value: 1");
+    await dev.fetch("/").equals("value: 1");
   },
 });
 devTest("onResolve + onLoad virtual file", {
@@ -99,7 +99,7 @@ devTest("onResolve + onLoad virtual file", {
     `,
   },
   async test(dev) {
-    await dev.fetch("/").expect([
+    await dev.fetch("/").equals([
       {
         path: "hello.ts",
         namespace: "virtual",

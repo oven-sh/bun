@@ -72,7 +72,7 @@ pub const Body = struct {
 
         try formatter.writeIndent(Writer, writer);
         try writer.writeAll(comptime Output.prettyFmt("<r>bodyUsed<d>:<r> ", enable_ansi_colors));
-        formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
+        try formatter.printAs(.Boolean, Writer, writer, JSC.JSValue.jsBoolean(this.value == .Used), .BooleanObject, enable_ansi_colors);
 
         if (this.value == .Blob) {
             try formatter.printComma(Writer, writer, enable_ansi_colors);
@@ -89,7 +89,7 @@ pub const Body = struct {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
-                formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+                try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
             }
         }
     }
@@ -150,6 +150,18 @@ pub const Body = struct {
                 }
 
                 return false;
+            }
+
+            if (this.readable.get()) |readable| {
+                return readable.isDisturbed(globalObject);
+            }
+
+            return false;
+        }
+
+        pub fn isDisturbed2(this: *const PendingValue, globalObject: *JSC.JSGlobalObject) bool {
+            if (this.promise != null) {
+                return true;
             }
 
             if (this.readable.get()) |readable| {
@@ -402,6 +414,16 @@ pub const Body = struct {
             };
         }
 
+        pub fn memoryCost(this: *const Value) usize {
+            return switch (this.*) {
+                .InternalBlob => this.InternalBlob.bytes.items.len,
+                .WTFStringImpl => this.WTFStringImpl.memoryCost(),
+                .Locked => this.Locked.sizeHint(),
+                // .InlineBlob => this.InlineBlob.sliceConst().len,
+                else => 0,
+            };
+        }
+
         pub fn estimatedSize(this: *const Value) usize {
             return switch (this.*) {
                 .InternalBlob => this.InternalBlob.sliceConst().len,
@@ -542,7 +564,7 @@ pub const Body = struct {
             const js_type = value.jsType();
 
             if (js_type.isStringLike()) {
-                var str = value.toBunString(globalThis);
+                var str = try value.toBunString(globalThis);
                 if (str.length() == 0) {
                     return Body.Value{
                         .Empty = {},
@@ -556,7 +578,7 @@ pub const Body = struct {
                 };
             }
 
-            if (js_type.isTypedArray()) {
+            if (js_type.isTypedArrayOrArrayBuffer()) {
                 if (value.asArrayBuffer(globalThis)) |buffer| {
                     const bytes = buffer.byteSlice();
 
@@ -1089,9 +1111,9 @@ pub const Body = struct {
         var body = Body{ .value = Value{ .Null = {} } };
 
         body.value = try Value.fromJS(globalThis, value);
-        if (body.value == .Blob)
+        if (body.value == .Blob) {
             assert(body.value.Blob.allocator == null); // owned by Body
-
+        }
         return body;
     }
 };
@@ -1405,7 +1427,7 @@ pub const BodyValueBufferer = struct {
         global: *JSGlobalObject,
         allocator: std.mem.Allocator,
     ) @This() {
-        const this = .{
+        const this: BodyValueBufferer = .{
             .ctx = ctx,
             .onFinishedBuffering = onFinish,
             .allocator = allocator,
@@ -1464,7 +1486,7 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    fn onFinishedLoadingFile(sink: *@This(), bytes: JSC.WebCore.Blob.ReadFile.ResultType) void {
+    fn onFinishedLoadingFile(sink: *@This(), bytes: Blob.ReadFileResultType) void {
         switch (bytes) {
             .err => |err| {
                 log("onFinishedLoadingFile Error", .{});
@@ -1699,12 +1721,10 @@ pub const BodyValueBufferer = struct {
     });
 
     comptime {
-        if (!JSC.is_bindgen) {
-            const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(jsonResolveStream, .{ .name = Export[0].symbol_name });
-            const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(jsonRejectStream, .{ .name = Export[1].symbol_name });
-        }
+        const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
+        @export(&jsonResolveStream, .{ .name = Export[0].symbol_name });
+        const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
+        @export(&jsonRejectStream, .{ .name = Export[1].symbol_name });
     }
 };
 

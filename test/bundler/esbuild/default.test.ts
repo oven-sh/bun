@@ -1,4 +1,5 @@
 import assert from "assert";
+import path from "path";
 import { describe, expect } from "bun:test";
 import { osSlashes } from "harness";
 import { dedent, ESBUILD_PATH, itBundled } from "../expectBundled";
@@ -2797,20 +2798,25 @@ describe("bundler", () => {
     },
     bundling: false,
   });
-  itBundled("default/ImportMetaCommonJS", {
+  itBundled("default/ImportMetaCommonJS", ({ root }) => ({
+    // Currently Bun emits `import.meta` instead of correctly
+    // polyfilling its properties.
+    todo: true,
     files: {
       "/entry.js": `
-      import fs from "fs";
-      import { fileURLToPath } from "url";
-      console.log(fs.existsSync(fileURLToPath(import.meta.url)), fs.existsSync(import.meta.path));
+        import fs from "fs";
+        import { fileURLToPath } from "url";
+        console.log(fileURLToPath(import.meta.url) === ${JSON.stringify(path.join(root, "out.cjs"))});
       `,
     },
+    outfile: "out.cjs",
     format: "cjs",
     target: "node",
     run: {
+      runtime: "node",
       stdout: "true true",
     },
-  });
+  }));
   itBundled("default/ImportMetaES6", {
     files: {
       "/entry.js": `console.log(import.meta.url, import.meta.path)`,

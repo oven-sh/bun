@@ -30,7 +30,6 @@ Bun implements the vast majority of Jest's matchers, but compatibility isn't 100
 
 Some notable missing features:
 
-- `expect().toMatchInlineSnapshot()`
 - `expect().toHaveReturned()`
 
 ---

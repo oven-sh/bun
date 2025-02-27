@@ -515,8 +515,7 @@ pub const ZigString = extern struct {
         else
             try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
 
-        try list.append(0);
-        return list.items[0 .. list.items.len - 1 :0];
+        return list.toOwnedSliceSentinel(0);
     }
 
     pub fn trunc(this: ZigString, len: usize) ZigString {

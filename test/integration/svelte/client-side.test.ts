@@ -24,9 +24,6 @@ test("Bundling Svelte components", async () => {
       minify: true,
       target: "browser",
       plugins: [SveltePlugin({ development: true })],
-      // conditions: {
-      //   "deve"
-      // }
     });
     expect(result.success).toBeTrue();
 

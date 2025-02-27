@@ -175,9 +175,9 @@ pub const Subprocess = struct {
     stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
     pid_rusage: ?Rusage = null,
 
-    exit_promise: JSC.Strong = .{},
-    on_exit_callback: JSC.Strong = .{},
-    on_disconnect_callback: JSC.Strong = .{},
+    exit_promise: JSC.Strong = .empty,
+    on_exit_callback: JSC.Strong = .empty,
+    on_disconnect_callback: JSC.Strong = .empty,
 
     globalThis: *JSC.JSGlobalObject,
     observable_getters: std.enums.EnumSet(enum {
@@ -192,7 +192,7 @@ pub const Subprocess = struct {
 
     /// `null` indicates all of the IPC data is uninitialized.
     ipc_data: ?IPC.IPCData,
-    ipc_callback: JSC.Strong = .{},
+    ipc_callback: JSC.Strong = .empty,
     flags: Flags = .{},
 
     weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
@@ -2184,10 +2184,10 @@ pub const Subprocess = struct {
             .stdout = .{ .ignore = {} },
             .stderr = .{ .ignore = {} },
             .stdio_pipes = .{},
-            .on_exit_callback = .{},
-            .on_disconnect_callback = .{},
+            .on_exit_callback = .empty,
+            .on_disconnect_callback = .empty,
             .ipc_data = null,
-            .ipc_callback = .{},
+            .ipc_callback = .empty,
             .flags = .{
                 .is_sync = is_sync,
             },
@@ -2234,15 +2234,15 @@ pub const Subprocess = struct {
             // 2. Process.
             .ref_count = 2,
             .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
-            .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
-            .on_disconnect_callback = if (on_disconnect_callback != .zero) JSC.Strong.create(on_disconnect_callback, globalThis) else .{},
+            .on_exit_callback = JSC.Strong.create(on_exit_callback, globalThis),
+            .on_disconnect_callback = JSC.Strong.create(on_disconnect_callback, globalThis),
             .ipc_data = if (!is_sync and comptime Environment.isWindows)
                 if (maybe_ipc_mode) |ipc_mode| .{
                     .mode = ipc_mode,
                 } else null
             else
                 null,
-            .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else .{},
+            .ipc_callback = JSC.Strong.create(ipc_callback, globalThis),
             .flags = .{
                 .is_sync = is_sync,
             },

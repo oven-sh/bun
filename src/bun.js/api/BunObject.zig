@@ -1318,7 +1318,7 @@ pub const Crypto = struct {
                         return;
                     }
 
-                    const globalThis = this.promise.strong.globalThis orelse this.vm.global;
+                    const globalThis = this.vm.global;
                     const promise = this.promise.swap();
                     if (this.err) |err| {
                         promise.reject(globalThis, createCryptoError(globalThis, err));
@@ -1994,7 +1994,7 @@ pub const Crypto = struct {
                 });
                 result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
-                this.promise.strong = .{};
+                this.promise.deinit();
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
@@ -2208,7 +2208,7 @@ pub const Crypto = struct {
                 });
                 result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
-                this.promise.strong = .{};
+                this.promise.deinit();
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
@@ -3105,22 +3105,22 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPServer)) => {
                         var server: *JSC.API.HTTPServer = entry.as(JSC.API.HTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPServer)) => {
                         var server: *JSC.API.DebugHTTPServer = entry.as(JSC.API.DebugHTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPSServer)) => {
                         var server: *JSC.API.DebugHTTPSServer = entry.as(JSC.API.DebugHTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPSServer)) => {
                         var server: *JSC.API.HTTPSServer = entry.as(JSC.API.HTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     else => {},
                 }
@@ -3155,9 +3155,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     if (route_list_object != .zero) {
                         ServerType.routeListSetCached(obj, globalObject, route_list_object);
                     }
-                    obj.protect();
-
-                    server.thisObject = obj;
+                    server.js_value.set(globalObject, obj);
 
                     if (config.allow_hot) {
                         if (globalObject.bunVM().hotMap()) |hot| {

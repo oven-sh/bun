@@ -317,6 +317,25 @@ export class Dev {
     });
     return client;
   }
+
+  async gracefulExit() {
+    await this.fetch("/_dev_server_test_set");
+    this.devProcess.send({ type: "graceful-exit" });
+    await Promise.race([
+      //
+      this.devProcess.exited,
+      new Promise(resolve => setTimeout(resolve, 2000)),
+    ]);
+    if (this.output.panicked) {
+      await this.devProcess.exited;
+      throw new Error("DevServer panicked");
+    }
+    if (this.devProcess.exitCode !== 0) {
+      throw new Error(
+        `DevServer exited with code ${this.devProcess.exitCode ?? `Signal ${this.devProcess.signalCode}`}`,
+      );
+    }
+  }
 }
 
 class DevFetchPromise extends Promise<Response> {
@@ -1088,7 +1107,11 @@ class OutputLineStream extends EventEmitter {
           last = lines.pop()!;
           for (const line of lines) {
             this.lines.push(line);
-            if (line.includes("============================================================")) {
+            if (
+              line.includes("============================================================") ||
+              line.includes("Allocation scope leaked")
+            ) {
+              // Tell consumers to wait for the process to exit
               this.panicked = true;
               this.emit("panic");
             }
@@ -1280,10 +1303,46 @@ function testImpl<T extends DevServerTest>(
       path.join(root, "harness_start.ts"),
       dedent`
         import appConfig from "${path.join(mainDir, "bun.app.ts")}";
+        import { fullGC } from "bun:jsc";
+
+        const routes = appConfig.static ?? (appConfig.routes ??= {});
+        if (!routes) throw new Error("No routes found in bun.app.ts");
+        let extractedServer = null;
+        routes['/_dev_server_test_set'] = async (req, server) => (extractedServer = server, new Response(""));
+        
         export default {
           ...appConfig,
           port: ${interactive ? 3000 : 0},
         };
+
+        process.on("message", async(message) => {
+          if (message.type === "graceful-exit") {
+            if (!extractedServer) {
+              throw new Error("Server not found");
+            }
+            const { getDevServerDeinitCount } = require("bun:internal-for-testing")
+            const before = getDevServerDeinitCount();
+            if (!extractedServer.development) {
+              extractedServer.stop(true);
+              process.exit(0);
+              return;
+            }
+            extractedServer.stop(true);
+            extractedServer = null!;
+            const targetCount = before + 1;
+            let attempts = 0;
+            while (getDevServerDeinitCount() === before) {
+              Bun.gc(true);
+              fullGC();
+              await new Promise(resolve => setTimeout(resolve, 100));
+              attempts++;
+              if (attempts > 10) {
+                throw new Error("Failed to trigger deinit");
+              }
+            }
+            process.exit(0); 
+          }
+        });
       `,
     );
 
@@ -1311,6 +1370,7 @@ function testImpl<T extends DevServerTest>(
       onExit: (subprocess, exitCode, signalCode, error) => {
         danglingProcesses.delete(subprocess);
       },
+      ipc(message, subprocess) {},
     });
     danglingProcesses.add(devProcess);
     if (interactive) {
@@ -1346,6 +1406,8 @@ function testImpl<T extends DevServerTest>(
       await maybeWaitInteractive("exit");
       process.exit(0);
     }
+
+    await dev.gracefulExit();
   }
 
   const name = `${

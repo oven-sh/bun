@@ -116,15 +116,16 @@ pub const UpgradedDuplex = struct {
     const WrapperType = SSLWrapper(*UpgradedDuplex);
 
     wrapper: ?WrapperType,
-    origin: JSC.Strong = .{}, // any duplex
+    origin: JSC.Strong = .empty, // any duplex
+    global: ?*JSC.JSGlobalObject = null,
     ssl_error: CertError = .{},
     vm: *JSC.VirtualMachine,
     handlers: Handlers,
 
-    onDataCallback: JSC.Strong = .{},
-    onEndCallback: JSC.Strong = .{},
-    onWritableCallback: JSC.Strong = .{},
-    onCloseCallback: JSC.Strong = .{},
+    onDataCallback: JSC.Strong = .empty,
+    onEndCallback: JSC.Strong = .empty,
+    onWritableCallback: JSC.Strong = .empty,
+    onCloseCallback: JSC.Strong = .empty,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .UpgradedDuplex,
@@ -179,7 +180,7 @@ pub const UpgradedDuplex = struct {
             return;
         }
         if (this.origin.get()) |duplex| {
-            const globalThis = this.origin.globalThis.?;
+            const globalThis = this.global.?;
             const writeOrEnd = if (msg_more) duplex.getFunction(globalThis, "write") catch return orelse return else duplex.getFunction(globalThis, "end") catch return orelse return;
             if (data) |data_| {
                 const buffer = JSC.BinaryType.toJS(.Buffer, data_, globalThis);
@@ -336,7 +337,8 @@ pub const UpgradedDuplex = struct {
     ) UpgradedDuplex {
         return UpgradedDuplex{
             .vm = globalThis.bunVM(),
-            .origin = JSC.Strong.create(origin, globalThis),
+            .origin = .create(origin, globalThis),
+            .global = globalThis,
             .wrapper = null,
             .handlers = handlers,
         };

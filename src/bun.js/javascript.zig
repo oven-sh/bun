@@ -869,7 +869,7 @@ pub const VirtualMachine = struct {
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSInternalPromise = undefined,
     entry_point_result: struct {
-        value: JSC.Strong = .{},
+        value: JSC.Strong = .empty,
         cjs_set_value: bool = false,
     } = .{},
 

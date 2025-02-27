@@ -22,8 +22,6 @@ const body = document.body;
 const root = document.body.appendChild(document.createElement("div"));
 
 const { default: TodoApp } = await import("./todo-list.svelte");
-// const app = root.appendChild(document.createElement("svelte-component"));
-// app.component = TodoApp;
 
 mount(TodoApp, { target: root });
 expect(root.innerHTML).not.toBeEmpty();

@@ -77,6 +77,10 @@ pub const Request = struct {
     pub const getBlobWithoutCallFrame = RequestMixin.getBlobWithoutCallFrame;
     pub const WeakRef = bun.WeakPtr(Request, .weak_ptr_data);
 
+    pub fn memoryCost(this: *const Request) usize {
+        return @sizeOf(Request) + this.request_context.memoryCost() + this.url.byteSlice().len + this.body.value.memoryCost();
+    }
+
     pub export fn Request__getUWSRequest(
         this: *Request,
     ) ?*uws.Request {
@@ -93,13 +97,9 @@ pub const Request = struct {
         this.request_context.enableTimeoutEvents();
     }
 
-    pub export fn Request__setTimeout(
-        this: *Request,
-        seconds: JSC.JSValue,
-        globalThis: *JSC.JSGlobalObject,
-    ) void {
+    pub export fn Request__setTimeout(this: *Request, seconds: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
         if (!seconds.isNumber()) {
-            globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{});
+            globalThis.throw("Failed to set timeout: The provided value is not of type 'number'.", .{}) catch {};
             return;
         }
 
@@ -107,11 +107,9 @@ pub const Request = struct {
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            _ = Request__getUWSRequest;
-            _ = Request__setInternalEventCallback;
-            _ = Request__setTimeout;
-        }
+        _ = Request__getUWSRequest;
+        _ = Request__setInternalEventCallback;
+        _ = Request__setTimeout;
     }
 
     pub const InternalJSEventCallback = struct {
@@ -194,8 +192,20 @@ pub const Request = struct {
         return this.reported_estimated_size;
     }
 
+    pub fn getRemoteSocketInfo(this: *Request, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+        if (this.request_context.getRemoteSocketInfo()) |info| {
+            return JSC.JSSocketAddress.create(globalObject, info.ip, info.port, info.is_ipv6);
+        }
+
+        return null;
+    }
+
     pub fn calculateEstimatedByteSize(this: *Request) void {
         this.reported_estimated_size = this.body.value.estimatedSize() + this.sizeOfURL() + @sizeOf(Request);
+    }
+
+    pub export fn Bun__JSRequest__calculateEstimatedByteSize(this: *Request) void {
+        this.calculateEstimatedByteSize();
     }
 
     pub fn toJS(this: *Request, globalObject: *JSGlobalObject) JSValue {
@@ -203,9 +213,18 @@ pub const Request = struct {
         return Request.toJSUnchecked(globalObject, this);
     }
 
-    pub fn writeFormat(this: *Request, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+    extern "JS" fn Bun__getParamsIfBunRequest(this_value: JSValue) JSValue;
+
+    pub fn writeFormat(this: *Request, this_value: JSValue, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
         const Writer = @TypeOf(writer);
-        try writer.print("Request ({}) {{\n", .{bun.fmt.size(this.body.value.size(), .{})});
+
+        const params_object = Bun__getParamsIfBunRequest(this_value);
+
+        const class_label = switch (params_object) {
+            .zero => "Request",
+            else => "BunRequest",
+        };
+        try writer.print("{s} ({}) {{\n", .{ class_label, bun.fmt.size(this.body.value.size(), .{}) });
         {
             formatter.indent += 1;
             defer formatter.indent -|= 1;
@@ -225,9 +244,17 @@ pub const Request = struct {
             formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
             try writer.writeAll("\n");
 
+            if (params_object.isCell()) {
+                try formatter.writeIndent(Writer, writer);
+                try writer.writeAll(comptime Output.prettyFmt("<r>params<d>:<r> ", enable_ansi_colors));
+                try formatter.printAs(.Private, Writer, writer, params_object, .Object, enable_ansi_colors);
+                formatter.printComma(Writer, writer, enable_ansi_colors) catch unreachable;
+                try writer.writeAll("\n");
+            }
+
             try formatter.writeIndent(Writer, writer);
             try writer.writeAll(comptime Output.prettyFmt("<r>headers<d>:<r> ", enable_ansi_colors));
-            formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
+            try formatter.printAs(.Private, Writer, writer, this.getHeaders(formatter.globalThis), .DOMWrapper, enable_ansi_colors);
 
             if (this.body.value == .Blob) {
                 try writer.writeAll("\n");
@@ -247,7 +274,7 @@ pub const Request = struct {
                 if (this.body.value.Locked.readable.get()) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
-                    formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
+                    try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
                 }
             }
         }
@@ -381,12 +408,9 @@ pub const Request = struct {
     ) JSC.JSValue {
         return ZigString.init("").toJS(globalThis);
     }
-    pub fn getUrl(
-        this: *Request,
-        globalObject: *JSC.JSGlobalObject,
-    ) JSC.JSValue {
+    pub fn getUrl(this: *Request, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         this.ensureURL() catch {
-            globalObject.throw("Failed to join URL", .{});
+            globalObject.throw("Failed to join URL", .{}) catch {}; // TODO: propagate
             return .zero;
         };
 
@@ -493,6 +517,7 @@ pub const Request = struct {
                     const href = bun.JSC.URL.hrefFromString(this.url);
                     // TODO: what is the right thing to do for invalid URLS?
                     if (!href.isEmpty()) {
+                        this.url.deref();
                         this.url = href;
                     }
 
@@ -542,9 +567,9 @@ pub const Request = struct {
         }
 
         if (arguments.len == 0) {
-            return globalThis.throw2("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
+            return globalThis.throw("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
         } else if (arguments[0].isEmptyOrUndefinedOrNull() or !arguments[0].isCell()) {
-            return globalThis.throw2("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
+            return globalThis.throw("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
         }
 
         const url_or_object = arguments[0];
@@ -564,7 +589,7 @@ pub const Request = struct {
             if (!req.url.isEmpty())
                 fields.insert(.url);
         } else if (!url_or_object_type.isObject()) {
-            return globalThis.throw2("Failed to construct 'Request': expected non-empty string or object", .{});
+            return globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
         }
 
         const values_to_try_ = [_]JSValue{
@@ -615,7 +640,7 @@ pub const Request = struct {
                     }
                 }
 
-                if (value.asDirect(JSC.WebCore.Response)) |response| {
+                if (value.asDirect(Response)) |response| {
                     if (!fields.contains(.method)) {
                         req.method = response.init.method;
                         fields.insert(.method);
@@ -678,7 +703,7 @@ pub const Request = struct {
             }
 
             if (!fields.contains(.signal)) {
-                if (value.getTruthy(globalThis, "signal")) |signal_| {
+                if (try value.getTruthy(globalThis, "signal")) |signal_| {
                     fields.insert(.signal);
                     if (AbortSignal.fromJS(signal_)) |signal| {
                         //Keep it alive
@@ -686,7 +711,7 @@ pub const Request = struct {
                         req.signal = signal.ref();
                     } else {
                         if (!globalThis.hasException()) {
-                            globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
+                            return globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
                         }
                         return error.JSError;
                     }
@@ -729,7 +754,7 @@ pub const Request = struct {
         }
 
         if (req.url.isEmpty()) {
-            return globalThis.throw2("Failed to construct 'Request': url is required.", .{});
+            return globalThis.throw("Failed to construct 'Request': url is required.", .{});
         }
 
         const href = JSC.URL.hrefFromString(req.url);
@@ -737,9 +762,7 @@ pub const Request = struct {
             if (!globalThis.hasException()) {
                 // globalThis.throw can cause GC, which could cause the above string to be freed.
                 // so we must increment the reference count before calling it.
-                globalThis.ERR_INVALID_URL("Failed to construct 'Request': Invalid URL \"{}\"", .{
-                    req.url,
-                }).throw();
+                return globalThis.ERR_INVALID_URL("Failed to construct 'Request': Invalid URL \"{}\"", .{req.url}).throw();
             }
             return error.JSError;
         }
@@ -768,7 +791,7 @@ pub const Request = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!*Request {
-        const arguments_ = callframe.arguments(2);
+        const arguments_ = callframe.arguments_old(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
         const request = try constructInto(globalThis, arguments);
@@ -924,7 +947,7 @@ pub const Request = struct {
         const vm = globalThis.bunVM();
         const body = vm.initRequestBodyValue(this.body.value.clone(globalThis)) catch {
             if (!globalThis.hasException()) {
-                globalThis.throw("Failed to clone request", .{});
+                globalThis.throw("Failed to clone request", .{}) catch {};
             }
             return;
         };

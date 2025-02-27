@@ -135,3 +135,7 @@ test("Module._resolveLookupPaths", () => {
   expect(Module._resolveLookupPaths("./bar", { paths: ["a"] })).toEqual(["."]);
   expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
 });
+
+test("Module.findSourceMap doesn't throw", () => {
+  expect(Module.findSourceMap("foo")).toEqual(undefined);
+});

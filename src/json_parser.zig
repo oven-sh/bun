@@ -34,7 +34,7 @@ const G = js_ast.G;
 const T = js_lexer.T;
 const E = js_ast.E;
 const Stmt = js_ast.Stmt;
-const Expr = js_ast.Expr;
+pub const Expr = js_ast.Expr;
 const Binding = js_ast.Binding;
 const Symbol = js_ast.Symbol;
 const Level = js_ast.Op.Level;
@@ -87,7 +87,7 @@ const HashMapPool = struct {
 
 fn newExpr(t: anytype, loc: logger.Loc) Expr {
     const Type = @TypeOf(t);
-    if (comptime @typeInfo(Type) == .Pointer) {
+    if (comptime @typeInfo(Type) == .pointer) {
         @compileError("Unexpected pointer");
     }
 
@@ -250,13 +250,9 @@ fn JSONLikeParser_(
                     const DuplicateNodeType = comptime if (opts.json_warn_duplicate_keys) *HashMapPool.LinkedList.Node else void;
                     const HashMapType = comptime if (opts.json_warn_duplicate_keys) HashMapPool.HashMap else void;
 
-                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys)
-                        HashMapPool.get(p.allocator)
-                    else {};
+                    var duplicates_node: DuplicateNodeType = if (comptime opts.json_warn_duplicate_keys) HashMapPool.get(p.allocator);
 
-                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys)
-                        duplicates_node.data
-                    else {};
+                    var duplicates: HashMapType = if (comptime opts.json_warn_duplicate_keys) duplicates_node.data;
 
                     defer {
                         if (comptime opts.json_warn_duplicate_keys) {
@@ -500,6 +496,7 @@ pub const PackageJSONVersionChecker = struct {
                     }
 
                     if (p.has_found_name and p.has_found_version) return newExpr(E.Missing{}, loc);
+
                     has_properties = true;
                 }
 
@@ -536,7 +533,7 @@ pub fn toAST(
     const type_info: std.builtin.Type = @typeInfo(Type);
 
     switch (type_info) {
-        .Bool => {
+        .bool => {
             return Expr{
                 .data = .{ .e_boolean = .{
                     .value = value,
@@ -544,7 +541,7 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Int => {
+        .int => {
             return Expr{
                 .data = .{
                     .e_number = .{
@@ -554,7 +551,7 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Float => {
+        .float => {
             return Expr{
                 .data = .{
                     .e_number = .{
@@ -564,9 +561,9 @@ pub fn toAST(
                 .loc = logger.Loc{},
             };
         },
-        .Pointer => |ptr_info| switch (ptr_info.size) {
-            .One => switch (@typeInfo(ptr_info.child)) {
-                .Array => {
+        .pointer => |ptr_info| switch (ptr_info.size) {
+            .one => switch (@typeInfo(ptr_info.child)) {
+                .array => {
                     const Slice = []const std.meta.Elem(ptr_info.child);
                     return try toAST(allocator, Slice, value.*);
                 },
@@ -574,7 +571,7 @@ pub fn toAST(
                     return try toAST(allocator, @TypeOf(value.*), value.*);
                 },
             },
-            .Slice => {
+            .slice => {
                 if (ptr_info.child == u8) {
                     return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
                 }
@@ -586,7 +583,7 @@ pub fn toAST(
             },
             else => @compileError("Unable to stringify type '" ++ @typeName(T) ++ "'"),
         },
-        .Array => |Array| {
+        .array => |Array| {
             if (Array.child == u8) {
                 return Expr.init(js_ast.E.String, js_ast.E.String.init(value), logger.Loc.Empty);
             }
@@ -596,7 +593,7 @@ pub fn toAST(
 
             return Expr.init(js_ast.E.Array, js_ast.E.Array{ .items = exprs }, logger.Loc.Empty);
         },
-        .Struct => |Struct| {
+        .@"struct" => |Struct| {
             const fields: []const std.builtin.Type.StructField = Struct.fields;
             var properties = try allocator.alloc(js_ast.G.Property, fields.len);
             var property_i: usize = 0;
@@ -617,25 +614,25 @@ pub fn toAST(
                 logger.Loc.Empty,
             );
         },
-        .Null => {
+        .null => {
             return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
         },
-        .Optional => {
+        .optional => {
             if (value) |_value| {
                 return try toAST(allocator, @TypeOf(_value), _value);
             } else {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             }
         },
-        .Enum => {
+        .@"enum" => {
             _ = std.meta.intToEnum(Type, @intFromEnum(value)) catch {
                 return Expr{ .data = .{ .e_null = .{} }, .loc = logger.Loc{} };
             };
 
             return toAST(allocator, string, @as(string, @tagName(value)));
         },
-        .ErrorSet => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
-        .Union => |Union| {
+        .error_set => return try toAST(allocator, []const u8, bun.asByteSlice(@errorName(value))),
+        .@"union" => |Union| {
             const info = Union;
             if (info.tag_type) |UnionTagType| {
                 inline for (info.fields) |u_field| {
@@ -653,7 +650,7 @@ pub fn toAST(
                                                 @field(value, u_field.name),
                                             ),
                                             .is_comptime = false,
-                                            .default_value = undefined,
+                                            .default_value_ptr = undefined,
                                             .alignment = @alignOf(
                                                 @TypeOf(
                                                     @field(value, u_field.name),
@@ -741,41 +738,6 @@ pub fn parse(
 /// Use this when the text may need to be reprinted to disk as JSON (and not as JavaScript)
 /// Eagerly converting UTF-8 to UTF-16 can cause a performance issue
 pub fn parsePackageJSONUTF8(
-    source: *const logger.Source,
-    log: *logger.Log,
-    allocator: std.mem.Allocator,
-) !Expr {
-    const len = source.contents.len;
-
-    switch (len) {
-        // This is to be consisntent with how disabled JS files are handled
-        0 => {
-            return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-        },
-        // This is a fast pass I guess
-        2 => {
-            if (strings.eqlComptime(source.contents[0..1], "\"\"") or strings.eqlComptime(source.contents[0..1], "''")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_string_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "{}")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_object_data };
-            } else if (strings.eqlComptime(source.contents[0..1], "[]")) {
-                return Expr{ .loc = logger.Loc{ .start = 0 }, .data = empty_array_data };
-            }
-        },
-        else => {},
-    }
-
-    var parser = try JSONLikeParser(.{
-        .is_json = true,
-        .allow_comments = true,
-        .allow_trailing_commas = true,
-    }).init(allocator, source.*, log);
-    bun.assert(parser.source().contents.len > 0);
-
-    return try parser.parseExpr(false, true);
-}
-
-pub fn parsePackageJSONUTF8AlwaysDecode(
     source: *const logger.Source,
     log: *logger.Log,
     allocator: std.mem.Allocator,
@@ -1049,8 +1011,8 @@ const js_printer = bun.js_printer;
 const renamer = @import("renamer.zig");
 const SymbolList = [][]Symbol;
 
-const Bundler = bun.Bundler;
-const ParseResult = bun.bundler.ParseResult;
+const Transpiler = bun.Transpiler;
+const ParseResult = bun.transpiler.ParseResult;
 fn expectPrintedJSON(_contents: string, expected: string) !void {
     Expr.Data.Store.create(default_allocator);
     Stmt.Data.Store.create(default_allocator);

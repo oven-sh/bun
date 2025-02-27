@@ -235,7 +235,7 @@ The following classes are typed arrays, along with a description of how they int
 ---
 
 - [`BigInt64Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/BigInt64Array)
-- Every eight (8) bytes are interpreted as an unsigned `BigInt`. Range -9223372036854775808 to 9223372036854775807 (though `BigInt` is capable of representing larger numbers).
+- Every eight (8) bytes are interpreted as a signed `BigInt`. Range -9223372036854775808 to 9223372036854775807 (though `BigInt` is capable of representing larger numbers).
 
 ---
 

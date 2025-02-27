@@ -1,4 +1,4 @@
-FROM debian:bullseye-slim AS build
+FROM debian:bookworm-slim AS build
 
 # https://github.com/oven-sh/bun/releases
 ARG BUN_VERSION=latest
@@ -60,6 +60,8 @@ FROM debian:bullseye
 
 COPY docker-entrypoint.sh /usr/local/bin
 COPY --from=build /usr/local/bin/bun /usr/local/bin/bun
+RUN mkdir -p /usr/local/bun-node-fallback-bin && ln -s /usr/local/bin/bun /usr/local/bun-node-fallback-bin/node
+ENV PATH "${PATH}:/usr/local/bun-node-fallback-bin"
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful

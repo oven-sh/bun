@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const Fs = @import("../../fs.zig");
 const Path = @import("../../resolver/resolve_path.zig");
 const Encoder = JSC.WebCore.Encoder;
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 const uws = @import("../../deps/uws.zig");
 
 const PathWatcher = @import("./path_watcher.zig");
@@ -26,9 +26,9 @@ const log = bun.Output.scoped(.StatWatcher, false);
 
 fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool) JSC.JSValue {
     if (bigint) {
-        return StatsBig.new(StatsBig.init(stats)).toJS(globalThis);
+        return StatsBig.init(stats).toJS(globalThis);
     } else {
-        return StatsSmall.new(StatsSmall.init(stats)).toJS(globalThis);
+        return StatsSmall.init(stats).toJS(globalThis);
     }
 }
 
@@ -40,10 +40,10 @@ pub const StatWatcherScheduler = struct {
     vm: *bun.JSC.VirtualMachine,
     watchers: WatcherQueue = WatcherQueue{},
 
-    event_loop_timer: EventLoopTimer = .{
+    event_loop_timer: EventLoopTimer.Node = .{ .data = .{
         .next = .{},
         .tag = .StatWatcherScheduler,
-    },
+    } },
 
     const WatcherQueue = UnboundedQueue(StatWatcher, .next);
 
@@ -86,19 +86,17 @@ pub const StatWatcherScheduler = struct {
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
     fn setTimer(this: *StatWatcherScheduler, interval: i32) void {
 
-        // if the timer is active we need to remove it
-        if (this.event_loop_timer.state == .ACTIVE) {
-            this.vm.timer.remove(&this.event_loop_timer);
-        }
-
         // if the interval is 0 means that we stop the timer
         if (interval == 0) {
+            // if the timer is active we need to remove it
+            if (this.event_loop_timer.data.state == .ACTIVE) {
+                this.vm.timer.remove(&this.event_loop_timer);
+            }
             return;
         }
 
         // reschedule the timer
-        this.event_loop_timer.next = bun.timespec.msFromNow(interval);
-        this.vm.timer.insert(&this.event_loop_timer);
+        this.vm.timer.update(&this.event_loop_timer, &bun.timespec.msFromNow(interval));
     }
 
     /// Schedule a task to set the timer in the main thread
@@ -121,10 +119,9 @@ pub const StatWatcherScheduler = struct {
     }
 
     pub fn timerCallback(this: *StatWatcherScheduler) EventLoopTimer.Arm {
-        const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
+        const has_been_cleared = this.event_loop_timer.data.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
 
-        this.event_loop_timer.state = .FIRED;
-        this.event_loop_timer.heap = .{};
+        this.event_loop_timer.data.state = .FIRED;
 
         if (has_been_cleared) {
             return .disarm;
@@ -237,7 +234,7 @@ pub const StatWatcher = struct {
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
             const vm = ctx.vm();
             const path = try PathLike.fromJSWithAllocator(ctx, arguments, bun.default_allocator) orelse {
-                return ctx.throwInvalidArguments2("filename must be a string or TypedArray", .{});
+                return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
 
             var listener: JSC.JSValue = .zero;
@@ -254,9 +251,9 @@ pub const StatWatcher = struct {
                     // default false
                     bigint = (try options_or_callable.getBooleanStrict(ctx, "bigint")) orelse false;
 
-                    if (options_or_callable.get(ctx, "interval")) |interval_| {
+                    if (try options_or_callable.get(ctx, "interval")) |interval_| {
                         if (!interval_.isNumber() and !interval_.isAnyInt()) {
-                            return ctx.throwInvalidArguments2("interval must be a number", .{});
+                            return ctx.throwInvalidArguments("interval must be a number", .{});
                         }
                         interval = interval_.coerce(i32, ctx);
                     }
@@ -270,7 +267,7 @@ pub const StatWatcher = struct {
             }
 
             if (listener == .zero) {
-                return ctx.throwInvalidArguments2("Expected \"listener\" callback", .{});
+                return ctx.throwInvalidArguments("Expected \"listener\" callback", .{});
             }
 
             return Arguments{
@@ -309,8 +306,6 @@ pub const StatWatcher = struct {
     }
 
     pub fn hasPendingActivity(this: *StatWatcher) bool {
-        @fence(.acquire);
-
         return this.used_by_scheduler_thread.load(.acquire);
     }
 
@@ -341,17 +336,18 @@ pub const StatWatcher = struct {
         watcher: *StatWatcher,
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
 
+        pub usingnamespace bun.New(@This());
+
         pub fn createAndSchedule(
             watcher: *StatWatcher,
         ) void {
-            var task = bun.default_allocator.create(InitialStatTask) catch bun.outOfMemory();
-            task.* = .{ .watcher = watcher };
+            const task = InitialStatTask.new(.{ .watcher = watcher });
             JSC.WorkPool.schedule(&task.task);
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
             const initial_stat_task: *InitialStatTask = @fieldParentPtr("task", task);
-            defer bun.default_allocator.destroy(initial_stat_task);
+            defer initial_stat_task.destroy();
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
@@ -409,6 +405,10 @@ pub const StatWatcher = struct {
             },
         ) catch |err| this.globalThis.reportActiveExceptionAsUnhandled(err);
 
+        if (this.closed) {
+            this.used_by_scheduler_thread.store(false, .release);
+            return;
+        }
         vm.rareData().nodeFSStatWatcherScheduler(vm).append(this);
     }
 
@@ -450,7 +450,8 @@ pub const StatWatcher = struct {
     pub fn init(args: Arguments) !*StatWatcher {
         log("init", .{});
 
-        var buf: bun.PathBuffer = undefined;
+        const buf = bun.PathBufferPool.get();
+        defer bun.PathBufferPool.put(buf);
         var slice = args.path.slice();
         if (bun.strings.startsWith(slice, "file://")) {
             slice = slice[6..];
@@ -459,7 +460,7 @@ pub const StatWatcher = struct {
         var parts = [_]string{slice};
         const file_path = Path.joinAbsStringBuf(
             Fs.FileSystem.instance.top_level_dir,
-            &buf,
+            buf,
             &parts,
             .auto,
         );
@@ -483,7 +484,7 @@ pub const StatWatcher = struct {
             // Instant.now will not fail on our target platforms.
             .last_check = std.time.Instant.now() catch unreachable,
             // InitStatTask is responsible for setting this
-            .last_stat = undefined,
+            .last_stat = std.mem.zeroes(bun.Stat),
             .last_jsvalue = JSC.Strong.init(),
         };
         errdefer this.deinit();

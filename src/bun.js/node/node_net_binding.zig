@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const C = bun.C.translated;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
@@ -24,15 +25,13 @@ pub fn getDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
 pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "setDefaultAutoSelectFamily", (struct {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(1);
+            const arguments = callframe.arguments_old(1);
             if (arguments.len < 1) {
-                globalThis.throw("missing argument", .{});
-                return .undefined;
+                return globalThis.throw("missing argument", .{});
             }
             const arg = arguments.slice()[0];
             if (!arg.isBoolean()) {
-                globalThis.throwInvalidArguments("autoSelectFamilyDefault", .{});
-                return .undefined;
+                return globalThis.throwInvalidArguments("autoSelectFamilyDefault", .{});
             }
             const value = arg.toBoolean();
             autoSelectFamilyDefault = value;
@@ -59,19 +58,26 @@ pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
 pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "setDefaultAutoSelectFamilyAttemptTimeout", (struct {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments(1);
+            const arguments = callframe.arguments_old(1);
             if (arguments.len < 1) {
-                globalThis.throw("missing argument", .{});
-                return .undefined;
+                return globalThis.throw("missing argument", .{});
             }
             const arg = arguments.slice()[0];
             if (!arg.isInt32AsAnyInt()) {
-                globalThis.throwInvalidArguments("autoSelectFamilyAttemptTimeoutDefault", .{});
-                return .undefined;
+                return globalThis.throwInvalidArguments("autoSelectFamilyAttemptTimeoutDefault", .{});
             }
             const value: u32 = @max(10, arg.coerceToInt32(globalThis));
             autoSelectFamilyAttemptTimeoutDefault = value;
             return JSC.jsNumber(value);
         }
     }).setter, 1, .{});
+}
+
+pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
+    const net = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
+
+    net.put(global, "SocketAddress", SocketAddress.getConstructor(global));
+
+    return net;
 }

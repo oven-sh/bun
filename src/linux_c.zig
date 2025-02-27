@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+pub extern "c" fn memmem(haystack: [*]const u8, haystacklen: usize, needle: [*]const u8, needlelen: usize) ?[*]const u8;
 pub const SystemErrno = enum(u8) {
     SUCCESS = 0,
     EPERM = 1,
@@ -151,146 +152,6 @@ pub const SystemErrno = enum(u8) {
         if (code >= max) return null;
         return @enumFromInt(code);
     }
-
-    pub fn label(this: SystemErrno) ?[:0]const u8 {
-        return labels.get(this) orelse null;
-    }
-
-    const LabelMap = std.EnumMap(SystemErrno, [:0]const u8);
-    pub const labels: LabelMap = brk: {
-        var map: LabelMap = LabelMap.initFull("");
-
-        map.put(.EPERM, "Operation not permitted");
-        map.put(.ENOENT, "No such file or directory");
-        map.put(.ESRCH, "No such process");
-        map.put(.EINTR, "Interrupted system call");
-        map.put(.EIO, "I/O error");
-        map.put(.ENXIO, "No such device or address");
-        map.put(.E2BIG, "Argument list too long");
-        map.put(.ENOEXEC, "Exec format error");
-        map.put(.EBADF, "Bad file descriptor");
-        map.put(.ECHILD, "No child processes");
-        map.put(.EAGAIN, "Try again");
-        map.put(.ENOMEM, "Out of memory");
-        map.put(.EACCES, "Permission denied");
-        map.put(.EFAULT, "Bad address");
-        map.put(.ENOTBLK, "Block device required");
-        map.put(.EBUSY, "Device or resource busy");
-        map.put(.EEXIST, "File or folder exists");
-        map.put(.EXDEV, "Cross-device link");
-        map.put(.ENODEV, "No such device");
-        map.put(.ENOTDIR, "Not a directory");
-        map.put(.EISDIR, "Is a directory");
-        map.put(.EINVAL, "Invalid argument");
-        map.put(.ENFILE, "File table overflow");
-        map.put(.EMFILE, "Too many open files");
-        map.put(.ENOTTY, "Not a typewriter");
-        map.put(.ETXTBSY, "Text file busy");
-        map.put(.EFBIG, "File too large");
-        map.put(.ENOSPC, "No space left on device");
-        map.put(.ESPIPE, "Illegal seek");
-        map.put(.EROFS, "Read-only file system");
-        map.put(.EMLINK, "Too many links");
-        map.put(.EPIPE, "Broken pipe");
-        map.put(.EDOM, "Math argument out of domain of func");
-        map.put(.ERANGE, "Math result not representable");
-        map.put(.EDEADLK, "Resource deadlock would occur");
-        map.put(.ENAMETOOLONG, "File name too long");
-        map.put(.ENOLCK, "No record locks available");
-        map.put(.ENOSYS, "Function not implemented");
-        map.put(.ENOTEMPTY, "Directory not empty");
-        map.put(.ELOOP, "Too many symbolic links encountered");
-        map.put(.ENOMSG, "No message of desired type");
-        map.put(.EIDRM, "Identifier removed");
-        map.put(.ECHRNG, "Channel number out of range");
-        map.put(.EL2NSYNC, "Level 2 not synchronized");
-        map.put(.EL3HLT, "Level 3 halted");
-        map.put(.EL3RST, "Level 3 reset");
-        map.put(.ELNRNG, "Link number out of range");
-        map.put(.EUNATCH, "Protocol driver not attached");
-        map.put(.ENOCSI, "No CSI structure available");
-        map.put(.EL2HLT, "Level 2 halted");
-        map.put(.EBADE, "Invalid exchange");
-        map.put(.EBADR, "Invalid request descriptor");
-        map.put(.EXFULL, "Exchange full");
-        map.put(.ENOANO, "No anode");
-        map.put(.EBADRQC, "Invalid request code");
-        map.put(.EBADSLT, "Invalid slot");
-        map.put(.EBFONT, "Bad font file format");
-        map.put(.ENOSTR, "Device not a stream");
-        map.put(.ENODATA, "No data available");
-        map.put(.ETIME, "Timer expired");
-        map.put(.ENOSR, "Out of streams resources");
-        map.put(.ENONET, "Machine is not on the network");
-        map.put(.ENOPKG, "Package not installed");
-        map.put(.EREMOTE, "Object is remote");
-        map.put(.ENOLINK, "Link has been severed");
-        map.put(.EADV, "Advertise error");
-        map.put(.ESRMNT, "Srmount error");
-        map.put(.ECOMM, "Communication error on send");
-        map.put(.EPROTO, "Protocol error");
-        map.put(.EMULTIHOP, "Multihop attempted");
-        map.put(.EDOTDOT, "RFS specific error");
-        map.put(.EBADMSG, "Not a data message");
-        map.put(.EOVERFLOW, "Value too large for defined data type");
-        map.put(.ENOTUNIQ, "Name not unique on network");
-        map.put(.EBADFD, "File descriptor in bad state");
-        map.put(.EREMCHG, "Remote address changed");
-        map.put(.ELIBACC, "Can not access a needed shared library");
-        map.put(.ELIBBAD, "Accessing a corrupted shared library");
-        map.put(.ELIBSCN, "lib section in a.out corrupted");
-        map.put(.ELIBMAX, "Attempting to link in too many shared libraries");
-        map.put(.ELIBEXEC, "Cannot exec a shared library directly");
-        map.put(.EILSEQ, "Illegal byte sequence");
-        map.put(.ERESTART, "Interrupted system call should be restarted");
-        map.put(.ESTRPIPE, "Streams pipe error");
-        map.put(.EUSERS, "Too many users");
-        map.put(.ENOTSOCK, "Socket operation on non-socket");
-        map.put(.EDESTADDRREQ, "Destination address required");
-        map.put(.EMSGSIZE, "Message too long");
-        map.put(.EPROTOTYPE, "Protocol wrong type for socket");
-        map.put(.ENOPROTOOPT, "Protocol not available");
-        map.put(.EPROTONOSUPPORT, "Protocol not supported");
-        map.put(.ESOCKTNOSUPPORT, "Socket type not supported");
-        map.put(.ENOTSUP, "Operation not supported on transport endpoint");
-        map.put(.EPFNOSUPPORT, "Protocol family not supported");
-        map.put(.EAFNOSUPPORT, "Address family not supported by protocol");
-        map.put(.EADDRINUSE, "Address already in use");
-        map.put(.EADDRNOTAVAIL, "Cannot assign requested address");
-        map.put(.ENETDOWN, "Network is down");
-        map.put(.ENETUNREACH, "Network is unreachable");
-        map.put(.ENETRESET, "Network dropped connection because of reset");
-        map.put(.ECONNABORTED, "Software caused connection abort");
-        map.put(.ECONNRESET, "Connection reset by peer");
-        map.put(.ENOBUFS, "No buffer space available");
-        map.put(.EISCONN, "Transport endpoint is already connected");
-        map.put(.ENOTCONN, "Transport endpoint is not connected");
-        map.put(.ESHUTDOWN, "Cannot send after transport endpoint shutdown");
-        map.put(.ETOOMANYREFS, "Too many references: cannot splice");
-        map.put(.ETIMEDOUT, "Connection timed out");
-        map.put(.ECONNREFUSED, "Connection refused");
-        map.put(.EHOSTDOWN, "Host is down");
-        map.put(.EHOSTUNREACH, "No route to host");
-        map.put(.EALREADY, "Operation already in progress");
-        map.put(.EINPROGRESS, "Operation now in progress");
-        map.put(.ESTALE, "Stale NFS file handle");
-        map.put(.EUCLEAN, "Structure needs cleaning");
-        map.put(.ENOTNAM, "Not a XENIX named type file");
-        map.put(.ENAVAIL, "No XENIX semaphores available");
-        map.put(.EISNAM, "Is a named type file");
-        map.put(.EREMOTEIO, "Remote I/O error");
-        map.put(.EDQUOT, "Quota exceeded");
-        map.put(.ENOMEDIUM, "No medium found");
-        map.put(.EMEDIUMTYPE, "Wrong medium type");
-        map.put(.ECANCELED, "Operation Canceled");
-        map.put(.ENOKEY, "Required key not available");
-        map.put(.EKEYEXPIRED, "Key has expired");
-        map.put(.EKEYREVOKED, "Key has been revoked");
-        map.put(.EKEYREJECTED, "Key was rejected by service");
-        map.put(.EOWNERDEAD, "Owner died");
-        map.put(.ENOTRECOVERABLE, "State not recoverable");
-        break :brk map;
-    };
 };
 
 pub const UV_E2BIG: i32 = @intFromEnum(SystemErrno.E2BIG);
@@ -633,6 +494,8 @@ pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t
 pub extern fn vmsplice(fd: c_int, iovec: [*]const std.posix.iovec, iovec_count: usize, flags: u32) isize;
 
 const net_c = @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
     @cInclude("net/if.h"); // IFF_RUNNING, IFF_UP
     @cInclude("fcntl.h"); // F_DUPFD_CLOEXEC
@@ -688,6 +551,8 @@ pub fn getErrno(rc: anytype) E {
 pub const getuid = std.os.linux.getuid;
 pub const getgid = std.os.linux.getgid;
 pub const linux_fs = if (bun.Environment.isLinux) @cImport({
+    // TODO: remove this c import! instead of adding to it, add to
+    // c-headers-for-zig.h and use bun.C.translated.
     @cInclude("linux/fs.h");
 }) else struct {};
 
@@ -721,7 +586,7 @@ pub const RWFFlagSupport = enum(u8) {
         if (comptime !bun.Environment.isLinux) return false;
         switch (rwf_bool.load(.monotonic)) {
             .unknown => {
-                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
+                if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK() or bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK")) {
                     rwf_bool.store(.unsupported, .monotonic);
                     return false;
                 }
@@ -741,7 +606,7 @@ pub const RWFFlagSupport = enum(u8) {
     }
 };
 
-pub extern "C" fn sys_preadv2(
+pub extern "c" fn sys_preadv2(
     fd: c_int,
     iov: [*]const std.posix.iovec,
     iovcnt: c_int,
@@ -749,7 +614,7 @@ pub extern "C" fn sys_preadv2(
     flags: c_uint,
 ) isize;
 
-pub extern "C" fn sys_pwritev2(
+pub extern "c" fn sys_pwritev2(
     fd: c_int,
     iov: [*]const std.posix.iovec_const,
     iovcnt: c_int,
@@ -765,12 +630,8 @@ pub const RENAME_NOREPLACE = 1 << 0;
 pub const RENAME_EXCHANGE = 1 << 1;
 pub const RENAME_WHITEOUT = 1 << 2;
 
-pub extern "C" fn quick_exit(code: c_int) noreturn;
-pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
-
-pub const netdb = @cImport({
-    @cInclude("netdb.h");
-});
+pub extern "c" fn quick_exit(code: c_int) noreturn;
+pub extern "c" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
 
 export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxevents: i32, timeout: ?*const std.os.linux.timespec, sigmask: ?*const std.os.linux.sigset_t) isize {
     return @bitCast(
@@ -781,7 +642,70 @@ export fn sys_epoll_pwait2(epfd: i32, events: ?[*]std.os.linux.epoll_event, maxe
             @bitCast(@as(isize, @intCast(maxevents))),
             @intFromPtr(timeout),
             @intFromPtr(sigmask),
+            // This is the correct value. glibc claims to pass `sizeof sigset_t` for this argument,
+            // which would be 128, but they actually pass 8 which is what the kernel expects.
+            // https://github.com/ziglang/zig/issues/12715
             8,
         ),
     );
 }
+
+// *********************************************************************************
+// libc overrides
+// *********************************************************************************
+
+fn simulateLibcErrno(rc: usize) c_int {
+    const signed: isize = @bitCast(rc);
+    const int: c_int = @intCast(if (signed > -4096 and signed < 0) -signed else 0);
+    std.c._errno().* = int;
+    return if (signed > -4096 and signed < 0) -1 else int;
+}
+
+pub export fn stat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {
+    // https://git.musl-libc.org/cgit/musl/tree/src/stat/stat.c
+    const rc = std.os.linux.fstatat(std.os.linux.AT.FDCWD, path, buf, 0);
+    return simulateLibcErrno(rc);
+}
+
+pub const stat64 = stat;
+pub const lstat64 = lstat;
+pub const fstat64 = fstat;
+pub const fstatat64 = fstatat;
+
+pub export fn lstat(path: [*:0]const u8, buf: *std.os.linux.Stat) c_int {
+    // https://git.musl-libc.org/cgit/musl/tree/src/stat/lstat.c
+    const rc = std.os.linux.fstatat(std.os.linux.AT.FDCWD, path, buf, std.os.linux.AT.SYMLINK_NOFOLLOW);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn fstat(fd: c_int, buf: *std.os.linux.Stat) c_int {
+    const rc = std.os.linux.fstat(fd, buf);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn fstatat(dirfd: i32, path: [*:0]const u8, buf: *std.os.linux.Stat, flags: u32) c_int {
+    const rc = std.os.linux.fstatat(dirfd, path, buf, flags);
+    return simulateLibcErrno(rc);
+}
+
+pub export fn statx(dirfd: i32, path: [*:0]const u8, flags: u32, mask: u32, buf: *std.os.linux.Statx) c_int {
+    const rc = std.os.linux.statx(dirfd, path, flags, mask, buf);
+    return simulateLibcErrno(rc);
+}
+
+comptime {
+    _ = stat;
+    _ = stat64;
+    _ = lstat;
+    _ = lstat64;
+    _ = fstat;
+    _ = fstat64;
+    _ = fstatat;
+    _ = statx;
+    @export(&stat, .{ .name = "stat64" });
+    @export(&lstat, .{ .name = "lstat64" });
+    @export(&fstat, .{ .name = "fstat64" });
+    @export(&fstatat, .{ .name = "fstatat64" });
+}
+
+// *********************************************************************************

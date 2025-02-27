@@ -7,7 +7,7 @@ Use `bun publish` to publish a package to the npm registry.
 $ bun publish
 
 ## Output
-bun publish v1.1.30 (ca7428e9)
+bun publish v$BUN_LATEST_VERSION (ca7428e9)
 
 packed 203B package.json
 packed 224B README.md
@@ -105,3 +105,4 @@ $ bun publish --otp 123456
 ### `--gzip-level`
 
 Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).
+{% bunCLIUsage command="publish" /%}

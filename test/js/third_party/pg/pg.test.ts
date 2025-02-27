@@ -16,7 +16,7 @@ async function insertUsers(client: Client) {
 
   // Prepare the query to insert multiple rows
   const insertQuery = `
-    INSERT INTO users (name, email, age)
+    INSERT INTO pg_users (name, email, age)
     VALUES ${users.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}, $${i * 3 + 3})`).join(", ")};
   `;
 
@@ -34,7 +34,7 @@ async function connect() {
   await client.connect().then(() => {
     // Define the SQL query to create a table
     const createTableQuery = `
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS pg_users (
         id SERIAL PRIMARY KEY,
         name VARCHAR(100) NOT NULL,
         email VARCHAR(100) UNIQUE NOT NULL,
@@ -47,7 +47,7 @@ async function connect() {
     return client.query(createTableQuery);
   });
   // check if we need to populate the data
-  const { rows } = await client.query("SELECT COUNT(*) AS count FROM users");
+  const { rows } = await client.query("SELECT COUNT(*) AS count FROM pg_users");
   const userCount = Number.parseInt(rows[0].count, 10);
   if (userCount === 0) await insertUsers(client);
   return client;
@@ -68,7 +68,7 @@ describe.skipIf(!databaseUrl)("pg", () => {
 
   test("should execute big query and end connection", async () => {
     const client = await connect();
-    const res = await client.query(`SELECT * FROM users LIMIT 300`);
+    const res = await client.query(`SELECT * FROM pg_users LIMIT 300`);
     expect(res.rows.length).toBe(300);
     await client.end();
   }, 20_000);

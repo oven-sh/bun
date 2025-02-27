@@ -21,15 +21,14 @@ const allocators = @import("allocators.zig");
 const JSC = bun.JSC;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
-const is_bindgen = false;
 const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 const OOM = bun.OOM;
-
+const Loader = bun.options.Loader;
 /// This is the index to the automatically-generated part containing code that
 /// calls "__export(exports, { ... getters ... })". This is used to generate
 /// getters on an exports object for ES6 export statements, and is both for
@@ -132,7 +131,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn reset(store: *Store) void {
-            store.debug_lock.assertUnlocked();
             log("reset", .{});
 
             if (Environment.isDebug) {
@@ -152,8 +150,6 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             comptime if (!supportsType(T)) {
                 @compileError("Store does not know about type: " ++ @typeName(T));
             };
-
-            store.debug_lock.assertUnlocked();
 
             if (store.current.tryAlloc(T)) |ptr|
                 return ptr;
@@ -1305,8 +1301,8 @@ pub const Symbol = struct {
                         .{
                             symbol.original_name, @tagName(symbol.kind),
                             if (symbol.hasLink()) symbol.link else Ref{
-                                .source_index = @as(Ref.Int, @truncate(i)),
-                                .inner_index = @as(Ref.Int, @truncate(inner_index)),
+                                .source_index = @truncate(i),
+                                .inner_index = @truncate(inner_index),
                                 .tag = .symbol,
                             },
                         },
@@ -1618,7 +1614,7 @@ pub const E = struct {
         pub fn hasSameFlagsAs(a: *Dot, b: *Dot) bool {
             return (a.optional_chain == b.optional_chain and
                 a.is_direct_eval == b.is_direct_eval and
-                a.can_be_unwrapped_if_unused == b.can_be_unwrapped_if_unused and a.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused);
+                a.can_be_removed_if_unused == b.can_be_removed_if_unused and a.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused);
         }
     };
 
@@ -1652,7 +1648,7 @@ pub const E = struct {
         must_keep_due_to_with_stmt: bool = false,
 
         // If true, this identifier is known to not have a side effect (i.e. to not
-        // throw an exception) when referenced. If false, this identifier may or may
+        // throw an exception) when referenced. If false, this identifier may or
         // not have side effects when referenced. This is used to allow the removal
         // of known globals such as "Object" if they aren't used.
         can_be_removed_if_unused: bool = false,
@@ -2031,12 +2027,12 @@ pub const E = struct {
                         return error.Clobber;
                     },
                     .e_object => |object| {
-                        if (rope.next == null) {
-                            // success
-                            return existing;
+                        if (rope.next != null) {
+                            return try object.getOrPutObject(rope.next.?, allocator);
                         }
 
-                        return try object.getOrPutObject(rope.next.?, allocator);
+                        // success
+                        return existing;
                     },
                     else => {
                         return error.Clobber;
@@ -2140,7 +2136,7 @@ pub const E = struct {
 
         /// Assumes each key in the property is a string
         pub fn alphabetizeProperties(this: *Object) void {
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.isDebug) {
                 for (this.properties.slice()) |prop| {
                     bun.assert(prop.key.?.data == .e_string);
                 }
@@ -2507,20 +2503,17 @@ pub const E = struct {
             if (s.isUTF8()) {
                 if (try strings.toUTF16Alloc(allocator, s.slice8(), false, false)) |utf16| {
                     var out, const chars = bun.String.createUninitialized(.utf16, utf16.len);
-                    defer out.deref();
                     @memcpy(chars, utf16);
-                    return out.toJS(globalObject);
+                    return out.transferToJS(globalObject);
                 } else {
                     var out, const chars = bun.String.createUninitialized(.latin1, s.slice8().len);
-                    defer out.deref();
                     @memcpy(chars, s.slice8());
-                    return out.toJS(globalObject);
+                    return out.transferToJS(globalObject);
                 }
             } else {
                 var out, const chars = bun.String.createUninitialized(.utf16, s.slice16().len);
-                defer out.deref();
                 @memcpy(chars, s.slice16());
-                return out.toJS(globalObject);
+                return out.transferToJS(globalObject);
             }
         }
 
@@ -3044,7 +3037,7 @@ pub const Stmt = struct {
         return Stmt.allocate(allocator, S.SExpr, S.SExpr{ .value = expr }, expr.loc);
     }
 
-    pub const Tag = enum(u6) {
+    pub const Tag = enum {
         s_block,
         s_break,
         s_class,
@@ -3126,7 +3119,13 @@ pub const Stmt = struct {
         s_empty: S.Empty, // special case, its a zero value type
         s_debugger: S.Debugger,
 
-        s_lazy_export: Expr.Data,
+        s_lazy_export: *Expr.Data,
+
+        comptime {
+            if (@sizeOf(Stmt) > 24) {
+                @compileLog("Expected Stmt to be <= 24 bytes, but it is", @sizeOf(Stmt), " bytes");
+            }
+        }
 
         pub const Store = struct {
             const StoreType = NewStore(&.{
@@ -3203,9 +3202,9 @@ pub const Stmt = struct {
     };
 
     pub fn StoredData(tag: Tag) type {
-        const T = std.meta.FieldType(Data, tag);
+        const T = @FieldType(Data, tag);
         return switch (@typeInfo(T)) {
-            .Pointer => |ptr| ptr.child,
+            .pointer => |ptr| ptr.child,
             else => T,
         };
     }
@@ -3363,7 +3362,7 @@ pub const Expr = struct {
     pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
         if (std.meta.activeTag(expr.data) != .e_object) return false;
         const obj = expr.data.e_object;
-        if (@intFromPtr(obj.properties.ptr) == 0) return false;
+        if (obj.properties.len == 0) return false;
 
         for (obj.properties.slice()) |prop| {
             if (prop.value == null) continue;
@@ -3528,9 +3527,42 @@ pub const Expr = struct {
     pub fn asProperty(expr: *const Expr, name: string) ?Query {
         if (std.meta.activeTag(expr.data) != .e_object) return null;
         const obj = expr.data.e_object;
-        if (@intFromPtr(obj.properties.ptr) == 0) return null;
+        if (obj.properties.len == 0) return null;
 
         return obj.asProperty(name);
+    }
+
+    pub fn asPropertyStringMap(expr: *const Expr, name: string, allocator: std.mem.Allocator) ?*bun.StringArrayHashMap(string) {
+        if (std.meta.activeTag(expr.data) != .e_object) return null;
+        const obj_ = expr.data.e_object;
+        if (obj_.properties.len == 0) return null;
+        const query = obj_.asProperty(name) orelse return null;
+        if (query.expr.data != .e_object) return null;
+
+        const obj = query.expr.data.e_object;
+        var count: usize = 0;
+        for (obj.properties.slice()) |prop| {
+            const key = prop.key.?.asString(allocator) orelse continue;
+            const value = prop.value.?.asString(allocator) orelse continue;
+            count += @as(usize, @intFromBool(key.len > 0 and value.len > 0));
+        }
+
+        if (count == 0) return null;
+        var map = bun.StringArrayHashMap(string).init(allocator);
+        map.ensureUnusedCapacity(count) catch return null;
+
+        for (obj.properties.slice()) |prop| {
+            const key = prop.key.?.asString(allocator) orelse continue;
+            const value = prop.value.?.asString(allocator) orelse continue;
+
+            if (!(key.len > 0 and value.len > 0)) continue;
+
+            map.putAssumeCapacity(key, value);
+        }
+
+        const ptr = allocator.create(bun.StringArrayHashMap(string)) catch unreachable;
+        ptr.* = map;
+        return ptr;
     }
 
     pub const ArrayIterator = struct {
@@ -3549,7 +3581,7 @@ pub const Expr = struct {
     pub fn asArray(expr: *const Expr) ?ArrayIterator {
         if (std.meta.activeTag(expr.data) != .e_array) return null;
         const array = expr.data.e_array;
-        if (array.items.len == 0 or @intFromPtr(array.items.ptr) == 0) return null;
+        if (array.items.len == 0) return null;
 
         return ArrayIterator{ .array = array, .index = 0 };
     }
@@ -4531,7 +4563,7 @@ pub const Expr = struct {
         };
     }
 
-    pub const Tag = enum(u6) {
+    pub const Tag = enum {
         e_array,
         e_unary,
         e_binary,
@@ -5274,7 +5306,7 @@ pub const Expr = struct {
             bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
         }
 
-        pub fn as(data: Data, comptime tag: Tag) ?std.meta.FieldType(Data, tag) {
+        pub fn as(data: Data, comptime tag: Tag) ?@FieldType(Data, @tagName(tag)) {
             return if (data == tag) @field(data, @tagName(tag)) else null;
         }
 
@@ -6011,7 +6043,7 @@ pub const Expr = struct {
             p: anytype,
             comptime kind: enum { loose, strict },
         ) Equality {
-            comptime bun.assert(@typeInfo(@TypeOf(p)).Pointer.size == .One); // pass *Parser
+            comptime bun.assert(@typeInfo(@TypeOf(p)).pointer.size == .one); // pass *Parser
 
             // https://dorey.github.io/JavaScript-Equality-Table/
             switch (left) {
@@ -6297,9 +6329,9 @@ pub const Expr = struct {
     };
 
     pub fn StoredData(tag: Tag) type {
-        const T = std.meta.FieldType(Data, tag);
+        const T = @FieldType(Data, tag);
         return switch (@typeInfo(T)) {
-            .Pointer => |ptr| ptr.child,
+            .pointer => |ptr| ptr.child,
             else => T,
         };
     }
@@ -6878,8 +6910,6 @@ pub const Ast = struct {
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
-    prepend_part: ?Part = null,
-
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
@@ -6975,7 +7005,7 @@ pub const BundledAst = struct {
     hashbang: string = "",
     parts: Part.List = .{},
     css: ?*bun.css.BundlerStyleSheet = null,
-    url_for_css: ?[]const u8 = null,
+    url_for_css: []const u8 = "",
     symbols: Symbol.List = .{},
     module_scope: Scope = .{},
     char_freq: CharFreq = undefined,
@@ -7092,7 +7122,6 @@ pub const BundledAst = struct {
             .import_records = ast.import_records,
 
             .hashbang = ast.hashbang,
-            // .url_for_css = ast.url_for_css orelse "",
             .parts = ast.parts,
             // This list may be mutated later, so we should store the capacity
             .symbols = ast.symbols,
@@ -7136,28 +7165,25 @@ pub const BundledAst = struct {
         };
     }
 
-    /// TODO: I don't like having to do this extra allocation. Is there a way to only do this if we know it is imported by a CSS file?
+    /// TODO: Move this from being done on all parse tasks into the start of the linker. This currently allocates base64 encoding for every small file loaded thing.
     pub fn addUrlForCss(
         this: *BundledAst,
         allocator: std.mem.Allocator,
-        css_enabled: bool,
         source: *const logger.Source,
         mime_type_: ?[]const u8,
         unique_key: ?[]const u8,
     ) void {
-        if (css_enabled) {
+        {
             const mime_type = if (mime_type_) |m| m else MimeType.byExtension(bun.strings.trimLeadingChar(std.fs.path.extension(source.path.text), '.')).value;
             const contents = source.contents;
             // TODO: make this configurable
             const COPY_THRESHOLD = 128 * 1024; // 128kb
             const should_copy = contents.len >= COPY_THRESHOLD and unique_key != null;
+            if (should_copy) return;
             this.url_for_css = url_for_css: {
-                // Copy it
-                if (should_copy) break :url_for_css unique_key.?;
 
                 // Encode as base64
                 const encode_len = bun.base64.encodeLen(contents);
-                if (encode_len == 0) return;
                 const data_url_prefix_len = "data:".len + mime_type.len + ";base64,".len;
                 const total_buffer_len = data_url_prefix_len + encode_len;
                 var encoded = allocator.alloc(u8, total_buffer_len) catch bun.outOfMemory();
@@ -7869,8 +7895,8 @@ pub const Macro = struct {
     const DotEnv = @import("./env_loader.zig");
     const js = @import("./bun.js/javascript_core_c_api.zig");
     const Zig = @import("./bun.js/bindings/exports.zig");
-    const Bundler = bun.Bundler;
-    const MacroEntryPoint = bun.bundler.MacroEntryPoint;
+    const Transpiler = bun.Transpiler;
+    const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
     const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
     pub const MacroRemapEntry = @import("./resolver/package_json.zig").MacroImportReplacementMap;
 
@@ -7895,12 +7921,12 @@ pub const Macro = struct {
             return this.remap.get(path);
         }
 
-        pub fn init(bundler: *Bundler) MacroContext {
+        pub fn init(transpiler: *Transpiler) MacroContext {
             return MacroContext{
                 .macros = MacroMap.init(default_allocator),
-                .resolver = &bundler.resolver,
-                .env = bundler.env,
-                .remap = bundler.options.macro_remap,
+                .resolver = &transpiler.resolver,
+                .env = transpiler.env,
+                .remap = transpiler.options.macro_remap,
             };
         }
 
@@ -8057,13 +8083,14 @@ pub const Macro = struct {
                 .allocator = default_allocator,
                 .args = resolver.opts.transform_options,
                 .log = log,
+                .is_main_thread = false,
                 .env_loader = env,
             });
 
             _vm.enableMacroMode();
             _vm.eventLoop().ensureWaker();
 
-            try _vm.bundler.configureDefines();
+            try _vm.transpiler.configureDefines();
             break :brk _vm;
         };
 
@@ -8091,7 +8118,7 @@ pub const Macro = struct {
 
         threadlocal var args_buf: [3]js.JSObjectRef = undefined;
         threadlocal var exception_holder: Zig.ZigException.Holder = undefined;
-        pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError;
+        pub const MacroError = error{ MacroFailed, OutOfMemory } || ToJSError || bun.JSError;
 
         pub const Run = struct {
             caller: Expr,
@@ -8115,7 +8142,6 @@ pub const Macro = struct {
                 source: *const logger.Source,
                 id: i32,
             ) MacroError!Expr {
-                if (comptime is_bindgen) return undefined;
                 const macro_callback = macro.vm.macros.get(id) orelse return caller;
 
                 const result = js.JSObjectCallAsFunctionReturnValueHoldingAPILock(
@@ -8149,7 +8175,7 @@ pub const Macro = struct {
                 this: *Run,
                 value: JSC.JSValue,
             ) MacroError!Expr {
-                return try switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
+                return switch (JSC.ConsoleObject.Formatter.Tag.get(value, this.global).tag) {
                     .Error => this.coerce(value, .Error),
                     .Undefined => this.coerce(value, .Undefined),
                     .Null => this.coerce(value, .Null),
@@ -8163,14 +8189,13 @@ pub const Macro = struct {
                     .String => this.coerce(value, .String),
                     .Promise => this.coerce(value, .Promise),
                     else => brk: {
-                        var name = value.getClassInfoName() orelse bun.String.init("unknown");
-                        defer name.deref();
+                        const name = value.getClassInfoName() orelse "unknown";
 
                         this.log.addErrorFmt(
                             this.source,
                             this.caller.loc,
                             this.allocator,
-                            "cannot coerce {} ({s}) to Bun's AST. Please return a simpler type",
+                            "cannot coerce {s} ({s}) to Bun's AST. Please return a simpler type",
                             .{ name, @tagName(value.jsType()) },
                         ) catch unreachable;
                         break :brk error.MacroFailed;
@@ -8307,7 +8332,7 @@ pub const Macro = struct {
                             return _entry.value_ptr.*;
                         }
 
-                        var object_iter = JSC.JSPropertyIterator(.{
+                        var object_iter = try JSC.JSPropertyIterator(.{
                             .skip_empty_name = false,
                             .include_value = true,
                         }).init(this.global, value);
@@ -8324,7 +8349,7 @@ pub const Macro = struct {
                         );
                         _entry.value_ptr.* = out;
 
-                        while (object_iter.next()) |prop| {
+                        while (try object_iter.next()) |prop| {
                             properties[object_iter.i] = G.Property{
                                 .key = Expr.init(E.String, E.String.init(prop.toOwnedSlice(this.allocator) catch unreachable), this.caller.loc),
                                 .value = try this.run(object_iter.value),
@@ -8358,7 +8383,7 @@ pub const Macro = struct {
                         return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                     },
                     .String => {
-                        var bun_str = value.toBunString(this.global);
+                        var bun_str = try value.toBunString(this.global);
                         defer bun_str.deref();
 
                         // encode into utf16 so the printer escapes the string correctly
@@ -8502,7 +8527,7 @@ pub const Macro = struct {
             });
         }
 
-        extern "C" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
+        extern "c" fn Bun__startMacro(function: *const anyopaque, *anyopaque) void;
     };
 };
 

@@ -11,13 +11,14 @@ const PackageManager = Install.PackageManager;
 const Integrity = @import("./integrity.zig").Integrity;
 const Npm = @import("./npm.zig");
 const Resolution = @import("./resolution.zig").Resolution;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const std = @import("std");
 const string = @import("../string_types.zig").string;
 const strings = @import("../string_immutable.zig");
 const Path = @import("../resolver/resolve_path.zig");
 const Environment = bun.Environment;
 const w = std.os.windows;
+const OOM = bun.OOM;
 
 const ExtractTarball = @This();
 
@@ -52,48 +53,17 @@ pub fn buildURL(
     full_name_: strings.StringOrTinyString,
     version: Semver.Version,
     string_buf: []const u8,
-) !string {
-    return try buildURLWithPrinter(
+) OOM!string {
+    return buildURLWithPrinter(
         registry_,
         full_name_,
         version,
         string_buf,
         @TypeOf(FileSystem.instance.dirname_store),
         string,
-        anyerror,
+        OOM,
         FileSystem.instance.dirname_store,
         FileSystem.DirnameStore.print,
-    );
-}
-
-pub fn buildURLWithWriter(
-    comptime Writer: type,
-    writer: Writer,
-    registry_: string,
-    full_name_: strings.StringOrTinyString,
-    version: Semver.Version,
-    string_buf: []const u8,
-) !void {
-    const Printer = struct {
-        writer: Writer,
-
-        pub fn print(this: @This(), comptime fmt: string, args: anytype) Writer.Error!void {
-            return try std.fmt.format(this.writer, fmt, args);
-        }
-    };
-
-    return try buildURLWithPrinter(
-        registry_,
-        full_name_,
-        version,
-        string_buf,
-        Printer,
-        void,
-        Writer.Error,
-        Printer{
-            .writer = writer,
-        },
-        Printer.print,
     );
 }
 
@@ -261,7 +231,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         if (PackageManager.verbose_install) {
             const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
             const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), bun.fmt.fmtDuration(elapsed) });
+            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len, .{}), std.fmt.fmtDuration(elapsed) });
         }
 
         switch (this.resolution.tag) {
@@ -323,7 +293,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
         if (PackageManager.verbose_install) {
             const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
-            Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, bun.fmt.fmtDuration(elapsed) });
+            Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, std.fmt.fmtDuration(elapsed) });
             Output.flush();
         }
     }

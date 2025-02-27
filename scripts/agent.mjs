@@ -20,6 +20,7 @@ import {
   getEnv,
   writeFile,
   spawnSafe,
+  mkdir,
 } from "./utils.mjs";
 import { parseArgs } from "node:util";
 
@@ -32,7 +33,10 @@ async function doBuildkiteAgent(action) {
 
   let homePath, cachePath, logsPath, agentLogPath, pidPath;
   if (isWindows) {
-    throw new Error("TODO: Windows");
+    homePath = "C:\\buildkite-agent";
+    cachePath = join(homePath, "cache");
+    logsPath = join(homePath, "logs");
+    agentLogPath = join(logsPath, "buildkite-agent.log");
   } else {
     homePath = "/var/lib/buildkite-agent";
     cachePath = "/var/cache/buildkite-agent";
@@ -45,6 +49,22 @@ async function doBuildkiteAgent(action) {
     const command = process.execPath;
     const args = [realpathSync(process.argv[1]), "start"];
 
+    if (isWindows) {
+      mkdir(logsPath);
+
+      const nssm = which("nssm", { required: true });
+      const nssmCommands = [
+        [nssm, "install", "buildkite-agent", command, ...args],
+        [nssm, "set", "buildkite-agent", "Start", "SERVICE_AUTO_START"],
+        [nssm, "set", "buildkite-agent", "AppDirectory", homePath],
+        [nssm, "set", "buildkite-agent", "AppStdout", agentLogPath],
+        [nssm, "set", "buildkite-agent", "AppStderr", agentLogPath],
+      ];
+      for (const command of nssmCommands) {
+        await spawnSafe(command, { stdio: "inherit" });
+      }
+    }
+
     if (isOpenRc()) {
       const servicePath = "/etc/init.d/buildkite-agent";
       const service = `#!/sbin/openrc-run
@@ -55,10 +75,10 @@ async function doBuildkiteAgent(action) {
         command_user=${escape(username)}
 
         pidfile=${escape(pidPath)}
-        start_stop_daemon_args=" \
-          --background \
-          --make-pidfile \
-          --stdout ${escape(agentLogPath)} \
+        start_stop_daemon_args=" \\
+          --background \\
+          --make-pidfile \\
+          --stdout ${escape(agentLogPath)} \\
           --stderr ${escape(agentLogPath)}"
 
         depend() {
@@ -77,11 +97,11 @@ async function doBuildkiteAgent(action) {
         Description=Buildkite Agent
         After=syslog.target
         After=network-online.target
-      
+
         [Service]
         Type=simple
         User=${username}
-        ExecStart=${escape(command)} ${escape(args.map(escape).join(" "))}
+        ExecStart=${escape(command)} ${args.map(escape).join(" ")}
         RestartSec=5
         Restart=on-failure
         KillMode=process
@@ -89,7 +109,7 @@ async function doBuildkiteAgent(action) {
         [Journal]
         Storage=persistent
         StateDirectory=${escape(agentLogPath)}
-      
+
         [Install]
         WantedBy=multi-user.target
       `;
@@ -107,13 +127,21 @@ async function doBuildkiteAgent(action) {
       token = await getCloudMetadataTag("buildkite:token");
     }
 
+    if (!token) {
+      throw new Error(
+        "Buildkite token not found: either set BUILDKITE_AGENT_TOKEN or add a buildkite:token label to the instance",
+      );
+    }
+
     let shell;
     if (isWindows) {
-      const pwsh = which(["pwsh", "powershell"], { required: true });
-      shell = `${pwsh} -Command`;
+      // Command Prompt has a faster startup time than PowerShell.
+      // Also, it propogates the exit code of the command, which PowerShell does not.
+      const cmd = which("cmd", { required: true });
+      shell = `"${cmd}" /S /C`;
     } else {
-      const sh = which(["bash", "sh"], { required: true });
-      shell = `${sh} -c`;
+      const sh = which("sh", { required: true });
+      shell = `${sh} -elc`;
     }
 
     const flags = ["enable-job-log-tmpfile", "no-feature-reporting"];

@@ -110,7 +110,8 @@ function destroyWhenAborted(err) {
     this.destroy(err.target.reason);
   }
 }
-function onReadableStreamEnd() {
+// in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
+function onSocketEnd() {
   if (!this.allowHalfOpen) {
     this.write = writeAfterFIN;
   }
@@ -535,7 +536,7 @@ const Socket = (function (InternalSocket) {
       this[kSetKeepAliveInitialDelay] = ~~(keepAliveInitialDelay / 1000);
 
       // Shut down the socket when we're finished with it.
-      this.on("end", onReadableStreamEnd);
+      this.on("end", onSocketEnd);
 
       if (socket instanceof Socket) {
         this.#socket = socket;

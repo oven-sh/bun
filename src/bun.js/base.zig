@@ -743,10 +743,6 @@ pub const RefString = struct {
         this.impl.deref();
     }
 
-    pub export fn RefString__free(this: *anyopaque, _: *anyopaque, _: u32) void {
-        bun.cast(*RefString, this).deinit();
-    }
-
     pub fn deinit(this: *RefString) void {
         if (this.onBeforeDeinit) |onBeforeDeinit| {
             onBeforeDeinit(this.ctx.?, this);

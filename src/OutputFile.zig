@@ -95,13 +95,13 @@ pub const Value = union(Kind) {
                 const FreeContext = struct {
                     allocator: std.mem.Allocator,
 
-                    fn onFree(uncast_ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void {
-                        const ctx: *@This() = @alignCast(@ptrCast(uncast_ctx));
+                    fn onFree(ctx: *@This(), buffer: *anyopaque, len: u32) callconv(.C) void {
                         ctx.allocator.free(@as([*]u8, @ptrCast(buffer))[0..len]);
                         bun.destroy(ctx);
                     }
                 };
                 return bun.String.createExternal(
+                    *FreeContext,
                     buf.bytes,
                     true,
                     bun.new(FreeContext, .{ .allocator = buf.allocator }),

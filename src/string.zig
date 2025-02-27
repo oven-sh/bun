@@ -189,6 +189,27 @@ pub const String = extern struct {
         return this;
     }
 
+    /// Convert dead strings into `error.OutOfMemory`.
+    ///
+    /// When building with assertions, this also checks that Strings backed by a
+    /// `WTF::StringImpl` have at least one reference.
+    pub inline fn unwrap(this: String) OOM!String {
+        switch (this.tag) {
+            .Dead => {
+                @branchHint(.unlikely);
+                return error.OutOfMemory;
+            },
+            .WTFStringImpl => {
+                @branchHint(.likely);
+                if (comptime bun.Environment.allow_assert) {
+                    bun.assert(this.value.WTFStringImpl.hasAtLeastOneRef());
+                }
+                return this;
+            },
+            else => return this,
+        }
+    }
+
     pub fn createUTF8(bytes: []const u8) String {
         return JSC.WebCore.Encoder.toBunStringComptime(bytes, .utf8);
     }
@@ -381,18 +402,41 @@ pub const String = extern struct {
     /// ctx is the pointer passed into `createExternal`
     /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
     /// len is the number of characters in that buffer.
-    pub const ExternalStringImplFreeFunction = fn (ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void;
+    pub fn ExternalStringImplFreeFunction(comptime Ctx: type) type {
+        return fn (ctx: Ctx, buffer: *anyopaque, len: u32) callconv(.C) void;
+    }
 
-    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: *anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
+    /// Creates a `String` backed by a `WTF::ExternalStringImpl`.
+    ///
+    /// External strings are WTF strings with bytes allocated somewhere else.
+    /// When destroyed, they call `callback`, which should free the allocation
+    /// as needed.
+    ///
+    ///
+    /// If `bytes` is too long (longer than `max_length()`), `callback` gets
+    /// called and a `dead` string is returned. `bytes` cannot be empty. Passing
+    /// an empty slice is safety-checked Illegal Behavior.
+    ///
+    /// ### Memory Characteristics
+    /// - Allocates memory for backing `WTF::ExternalStringImpl` struct. Does
+    ///   not allocate for actual string bytes.
+    /// - `bytes` is borrowed.
+    pub fn createExternal(
+        comptime Ctx: type,
+        bytes: []const u8,
+        isLatin1: bool,
+        ctx: Ctx,
+        callback: ?*const ExternalStringImplFreeFunction(Ctx),
+    ) String {
+        comptime if (@typeInfo(Ctx) != .pointer) @compileError("context must be a pointer");
         JSC.markBinding(@src());
-        bun.assert(bytes.len > 0);
         if (bytes.len > max_length()) {
             if (callback) |cb| {
                 cb(ctx, @ptrCast(@constCast(bytes.ptr)), @truncate(bytes.len));
             }
             return dead;
         }
-        return validateRefCount(BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback));
+        return validateRefCount(BunString__createExternal(@ptrCast(bytes.ptr), bytes.len, isLatin1, ctx, @ptrCast(callback)));
     }
 
     /// This should rarely be used. The WTF::StringImpl* will never be freed.
@@ -437,14 +481,41 @@ pub const String = extern struct {
         };
     }
 
+    /// Create a `String` from a UTF-8 slice.
+    ///
+    /// No checks are performed to ensure `value` is valid UTF-8. Caller is
+    /// responsible for ensuring `value` is valid.
+    ///
+    /// ### Memory Characteristics
+    /// - `value` is borrowed.
+    /// - Never allocates or copies any memory
+    /// - Does not increment reference counts
     pub fn fromUTF8(value: []const u8) String {
         return String.init(ZigString.initUTF8(value));
     }
 
+    /// Create a `String` from a UTF-16 slice.
+    ///
+    /// No checks are performed to ensure `value` is valid UTF-16. Caller is
+    /// responsible for ensuring `value` is valid.
+    ///
+    /// ### Memory Characteristics
+    /// - `value` is borrowed.
+    /// - Never allocates or copies any memory
+    /// - Does not increment reference counts
     pub fn fromUTF16(value: []const u16) String {
         return String.init(ZigString.initUTF16(value));
     }
 
+    /// Create a `String` from a byte slice.
+    ///
+    /// Checks if `value` is ASCII (using `strings.isAllASCII`) and, if so,
+    /// the returned `String` is marked as UTF-8. Otherwise, no encoding is assumed.
+    ///
+    /// ### Memory Characteristics
+    /// - `value` is borrowed.
+    /// - Never allocates or copies any memory
+    /// - Does not increment reference counts
     pub fn fromBytes(value: []const u8) String {
         return String.init(ZigString.fromBytes(value));
     }

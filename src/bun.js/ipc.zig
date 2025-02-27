@@ -50,7 +50,7 @@ pub const IPCDecodeError = error{
     NotEnoughBytes,
     /// Format could not be recognized. Report an error and close the socket.
     InvalidFormat,
-};
+} || bun.OOM;
 
 pub const IPCSerializationError = error{
     /// Value could not be serialized.
@@ -181,8 +181,8 @@ const advanced = struct {
 };
 
 const json = struct {
-    fn jsonIPCDataStringFreeCB(context: *anyopaque, _: *anyopaque, _: u32) callconv(.C) void {
-        @as(*bool, @ptrCast(context)).* = true;
+    fn jsonIPCDataStringFreeCB(context: *bool, _: *anyopaque, _: u32) callconv(.C) void {
+        context.* = true;
     }
 
     pub fn getVersionPacket() []const u8 {
@@ -195,6 +195,7 @@ const json = struct {
     // 2 is internal
 
     pub fn decodeIPCMessage(data: []const u8, globalThis: *JSC.JSGlobalObject) IPCDecodeError!DecodeIPCMessageResult {
+        // <tag>{ "foo": "bar"} // tag is 1 or 2
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
             var kind = data[0];
             var json_data = data[0..idx];
@@ -210,7 +211,9 @@ const json = struct {
                 },
             }
 
-            if (json_data.len == 0) return IPCDecodeError.NotEnoughBytes;
+            // no point in attempting to JSON.parse an empty string
+            // TODO: should we return NotEnoughBytes?
+            if (json_data.len == 0) return error.InvalidFormat;
 
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;
@@ -219,7 +222,8 @@ const json = struct {
             // This is only possible for ascii data, as that fits into latin1
             // otherwise we have to convert it utf-8 into utf16-le.
             var str = if (is_ascii)
-                bun.String.createExternal(json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB)
+                // .dead if `json_data` exceeds max length
+                try bun.String.createExternal(*bool, json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB).unwrap()
             else
                 bun.String.fromUTF8(json_data);
 
@@ -726,6 +730,12 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                             socket.close(.failure);
                             return;
                         },
+                        error.OutOfMemory => {
+                            Output.printErrorln("IPC message is too long.", .{});
+                            this.handleIPCClose();
+                            socket.close(.failure);
+                            return;
+                        },
                     };
 
                     this.handleIPCMessage(result.message);
@@ -752,6 +762,12 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                     },
                     error.InvalidFormat => {
                         Output.printErrorln("InvalidFormatError during IPC message handling", .{});
+                        this.handleIPCClose();
+                        socket.close(.failure);
+                        return;
+                    },
+                    error.OutOfMemory => {
+                        Output.printErrorln("IPC message is too long.", .{});
                         this.handleIPCClose();
                         socket.close(.failure);
                         return;

@@ -12,15 +12,13 @@
     "check:types": "tsc --noEmit",
     "build:types": "tsc --emitDeclarationOnly --declaration --declarationDir ./dist"
   },
-  "dependencies": {
-    "svelte": "^5.20.4",
-    "svelte-hmr": "^0.16.0"
-  },
   "devDependencies": {
-    "bun-types": "canary"
+    "bun-types": "canary",
+    "svelte": "^5.20.4"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5",
+    "svelte": "^5"
   },
   "files": [
     "README.md",

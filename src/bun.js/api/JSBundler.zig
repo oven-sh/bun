@@ -578,6 +578,7 @@ pub const JSBundler = struct {
         );
     }
 
+    /// `Bun.build(config)`
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,

@@ -69,7 +69,7 @@ public:
         {
         }
 
-        VirtualModuleMap* virtualModules = nullptr;
+        VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 

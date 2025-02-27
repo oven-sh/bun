@@ -242,6 +242,7 @@ pub const RuntimeTranspilerStore = struct {
         input_specifier: bun.String,
         path: Fs.Path,
         referrer: bun.String,
+        loader: bun.options.Loader,
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
@@ -253,7 +254,7 @@ pub const RuntimeTranspilerStore = struct {
             .non_threadsafe_referrer = referrer,
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
-            .loader = vm.transpiler.options.loader(owned_path.name.ext),
+            .loader = loader,
             .promise = JSC.Strong.create(JSValue.fromCell(promise), globalObject),
             .poll_ref = .{},
             .fetcher = TranspilerJob.Fetcher{
@@ -1497,7 +1498,7 @@ pub const ModuleLoader = struct {
         const disable_transpilying = comptime flags.disableTranspiling();
 
         if (comptime disable_transpilying) {
-            if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json)) {
+            if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json or loader == .jsonc)) {
                 // Don't print "export default <file path>"
                 return ResolvedSource{
                     .allocator = null,
@@ -1510,7 +1511,7 @@ pub const ModuleLoader = struct {
         }
 
         switch (loader) {
-            .js, .jsx, .ts, .tsx, .json, .toml, .text => {
+            .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.transpiler.resetStore();
                 const hash = bun.Watcher.getHash(path.text);
@@ -1649,7 +1650,7 @@ pub const ModuleLoader = struct {
                 }
 
                 var parse_result: ParseResult = switch (disable_transpilying or
-                    (loader == .json and !path.isJSONCFile())) {
+                    (loader == .json)) {
                     inline else => |return_file_only| brk: {
                         break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                             parse_options,
@@ -1722,7 +1723,7 @@ pub const ModuleLoader = struct {
                     return error.ParseError;
                 }
 
-                if (loader == .json and !path.isJSONCFile()) {
+                if (loader == .json) {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createUTF8(parse_result.source.contents),
@@ -1748,7 +1749,7 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                if (loader == .json or loader == .toml) {
+                if (loader == .json or loader == .jsonc or loader == .toml) {
                     if (parse_result.empty) {
                         return ResolvedSource{
                             .allocator = null,
@@ -2277,7 +2278,7 @@ pub const ModuleLoader = struct {
 
         // Deliberately optional.
         // The concurrent one only handles javascript-like loaders right now.
-        var loader: ?options.Loader = jsc_vm.transpiler.options.loaders.get(path.name.ext);
+        var loader: ?options.Loader = path.loader(&jsc_vm.transpiler.options.loaders);
 
         if (jsc_vm.module_loader.eval_source) |eval_source| {
             if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
@@ -2304,7 +2305,7 @@ pub const ModuleLoader = struct {
                         path = current_path;
                     }
 
-                    loader = jsc_vm.transpiler.options.loaders.get(current_path.name.ext) orelse .tsx;
+                    loader = current_path.loader(&jsc_vm.transpiler.options.loaders) orelse .tsx;
                 } else {
                     loader = .tsx;
                 }
@@ -2322,36 +2323,9 @@ pub const ModuleLoader = struct {
             }
         }
 
-        if (type_attribute) |attribute| {
-            if (attribute.eqlComptime("sqlite")) {
-                loader = .sqlite;
-            } else if (attribute.eqlComptime("text")) {
-                loader = .text;
-            } else if (attribute.eqlComptime("json")) {
-                loader = .json;
-            } else if (attribute.eqlComptime("toml")) {
-                loader = .toml;
-            } else if (attribute.eqlComptime("file")) {
-                loader = .file;
-            } else if (attribute.eqlComptime("js")) {
-                loader = .js;
-            } else if (attribute.eqlComptime("jsx")) {
-                loader = .jsx;
-            } else if (attribute.eqlComptime("ts")) {
-                loader = .ts;
-            } else if (attribute.eqlComptime("tsx")) {
-                loader = .tsx;
-            } else if (attribute.eqlComptime("html")) {
-                loader = .html;
-            }
-        }
-
-        // If we were going to choose file loader, see if it's a bun.lock
-        if (loader == null) {
-            if (strings.eqlComptime(path.name.filename, "bun.lock")) {
-                loader = .json;
-            }
-        }
+        if (type_attribute) |attribute| if (attribute.asUTF8()) |attr_utf8| if (bun.options.Loader.fromString(attr_utf8)) |attr_loader| {
+            loader = attr_loader;
+        };
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -2373,6 +2347,7 @@ pub const ModuleLoader = struct {
                         specifier_ptr.dupeRef(),
                         path,
                         referrer.dupeRef(),
+                        concurrent_loader,
                     );
                 }
             }

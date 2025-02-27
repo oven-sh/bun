@@ -6,6 +6,9 @@ const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const { CryptoHasher } = Bun;
+const { isKeyObject, isCryptoKey } = require("node:util/types");
+const LazyTransform = require("internal/streams/lazy_transform");
+
 const {
   symmetricKeySize,
   asymmetricKeyDetails,
@@ -19,6 +22,7 @@ const {
   generateKeyPairSync,
   sign: nativeSign,
   verify: nativeVerify,
+  // signOneShot,
   publicEncrypt,
   privateDecrypt,
   privateEncrypt,
@@ -35,6 +39,28 @@ const {
   certExportChallenge,
   getCiphers,
   _getCipherInfo,
+  kKeyEncodingPKCS1,
+  kKeyEncodingPKCS8,
+  kKeyEncodingSPKI,
+  kKeyEncodingSEC1,
+  kKeyFormatDER,
+  kKeyFormatPEM,
+  kKeyFormatJWK,
+  // kKeyTypeSecret,
+  kKeyTypePublic,
+  kKeyTypePrivate,
+  kSigEncDER,
+  kSigEncP1363,
+  // kWebCryptoKeyFormatRaw,
+  // kWebCryptoKeyFormatPKCS8,
+  // kWebCryptoKeyFormatSPKI,
+  // kWebCryptoKeyFormatJWK,
+  // EVP_PKEY_ED25519,
+  // EVP_PKEY_ED448,
+  // EVP_PKEY_X25519,
+  // EVP_PKEY_X448,
+  Sign: _Sign,
+  // SignJob: _SignJob,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
@@ -46,7 +72,25 @@ const {
   pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
-const { validateObject, validateString, validateInt32 } = require("internal/validators");
+const {
+  validateObject,
+  validateString,
+  validateInt32,
+  validateEncoding,
+  validateFunction,
+  validateOneOf,
+} = require("internal/validators");
+
+const kHandle = Symbol("kHandle");
+const kKeyObject = Symbol("kKeyObject");
+
+function getStringOption(options, key) {
+  let value;
+  if (options && (value = options[key]) != null) {
+    validateString(value, `options.${key}`);
+  }
+  return value;
+}
 
 function verifySpkac(spkac, encoding) {
   return certVerifySpkac(getArrayBufferOrView(spkac, "spkac", encoding));
@@ -157,6 +201,10 @@ var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
+function isStringOrBuffer(val) {
+  return typeof val === "string" || isArrayBufferView(val) || isAnyArrayBuffer(val);
+}
+
 function exportIfKeyObject(key) {
   if (key instanceof KeyObject) {
     key = key.export();
@@ -180,7 +228,7 @@ function getKeyFrom(key, type) {
   }
   return key;
 }
-function getArrayBufferOrView(buffer, name, encoding) {
+function getArrayBufferOrView(buffer, name, encoding?) {
   if (buffer instanceof KeyObject) {
     if (buffer.type !== "secret") {
       const error = new TypeError(
@@ -11473,16 +11521,11 @@ var require_browser8 = __commonJS({
       var hash = this._hash.digest();
       return verify(sig, hash, key, this._signType, this._tag);
     };
-    function createSign(algorithm) {
-      return new Sign(algorithm);
-    }
     function createVerify(algorithm) {
       return new Verify(algorithm);
     }
     module.exports = {
-      Sign: createSign,
       Verify: createVerify,
-      createSign,
       createVerify,
     };
   },
@@ -11694,7 +11737,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.DiffieHellman = dh.DiffieHellman;
     exports.diffieHellman = dh.diffieHellman;
     var sign = require_browser8();
-    exports.createSign = sign.createSign;
     exports.Sign = sign.Sign;
     exports.createVerify = sign.createVerify;
     exports.Verify = sign.Verify;
@@ -12030,7 +12072,7 @@ crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
-const _createSign = crypto_exports.createSign;
+const _createSign = createSign;
 
 crypto_exports.sign = function (algorithm, data, key, callback) {
   // TODO: move this to native
@@ -12197,5 +12239,312 @@ crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
 crypto_exports.Certificate = Certificate;
+
+// Key input contexts.
+const kConsumePublic = 0;
+const kConsumePrivate = 1;
+const kCreatePublic = 2;
+const kCreatePrivate = 3;
+
+const encodingNames = [];
+for (const m of [
+  [kKeyEncodingPKCS1, "pkcs1"],
+  [kKeyEncodingPKCS8, "pkcs8"],
+  [kKeyEncodingSPKI, "spki"],
+  [kKeyEncodingSEC1, "sec1"],
+]) {
+  encodingNames[m[0]] = m[1];
+}
+
+function option(name, objName) {
+  return objName === undefined ? `options.${name}` : `options.${objName}.${name}`;
+}
+
+function parseKeyType(typeStr, required, keyType, isPublic, optionName) {
+  if (typeStr === undefined && !required) {
+    return undefined;
+  } else if (typeStr === "pkcs1") {
+    if (keyType !== undefined && keyType !== "rsa") {
+      throw $ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(typeStr, "can only be used for RSA keys");
+    }
+    return kKeyEncodingPKCS1;
+  } else if (typeStr === "spki" && isPublic !== false) {
+    return kKeyEncodingSPKI;
+  } else if (typeStr === "pkcs8" && isPublic !== true) {
+    return kKeyEncodingPKCS8;
+  } else if (typeStr === "sec1" && isPublic !== true) {
+    if (keyType !== undefined && keyType !== "ec") {
+      throw $ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(typeStr, "can only be used for EC keys");
+    }
+    return kKeyEncodingSEC1;
+  }
+
+  throw $ERR_INVALID_ARG_VALUE(optionName, typeStr);
+}
+
+function parseKeyFormat(formatStr, defaultFormat, optionName) {
+  if (formatStr === undefined && defaultFormat !== undefined) return defaultFormat;
+  else if (formatStr === "pem") return kKeyFormatPEM;
+  else if (formatStr === "der") return kKeyFormatDER;
+  else if (formatStr === "jwk") return kKeyFormatJWK;
+  throw $ERR_INVALID_ARG_VALUE(optionName, formatStr);
+}
+
+function parseKeyFormatAndType(enc, keyType, isPublic, objName) {
+  const { format: formatStr, type: typeStr } = enc;
+
+  const isInput = keyType === undefined;
+  const format = parseKeyFormat(formatStr, isInput ? kKeyFormatPEM : undefined, option("format", objName));
+
+  const isRequired = (!isInput || format === kKeyFormatDER) && format !== kKeyFormatJWK;
+  const type = parseKeyType(typeStr, isRequired, keyType, isPublic, option("type", objName));
+  return { format, type };
+}
+
+function parseKeyEncoding(enc, keyType, isPublic, objName?) {
+  validateObject(enc, "options");
+
+  const isInput = keyType === undefined;
+
+  const { format, type } = parseKeyFormatAndType(enc, keyType, isPublic, objName);
+
+  let cipher, passphrase, encoding;
+  if (isPublic !== true) {
+    ({ cipher, passphrase, encoding } = enc);
+
+    if (!isInput) {
+      if (cipher != null) {
+        if (typeof cipher !== "string") throw $ERR_INVALID_ARG_VALUE(option("cipher", objName), cipher);
+        if (format === kKeyFormatDER && (type === kKeyEncodingPKCS1 || type === kKeyEncodingSEC1)) {
+          throw $ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(encodingNames[type], "does not support encryption");
+        }
+      } else if (passphrase !== undefined) {
+        throw $ERR_INVALID_ARG_VALUE(option("cipher", objName), cipher);
+      }
+    }
+
+    if (
+      (isInput && passphrase !== undefined && !isStringOrBuffer(passphrase)) ||
+      (!isInput && cipher != null && !isStringOrBuffer(passphrase))
+    ) {
+      throw $ERR_INVALID_ARG_VALUE(option("passphrase", objName), passphrase);
+    }
+  }
+
+  if (passphrase !== undefined) passphrase = getArrayBufferOrView(passphrase, "key.passphrase", encoding);
+
+  return { format, type, cipher, passphrase };
+}
+
+function getKeyTypes(allowKeyObject, bufferOnly = false) {
+  const types = [
+    "ArrayBuffer",
+    "Buffer",
+    "TypedArray",
+    "DataView",
+    "string", // Only if bufferOnly == false
+    "KeyObject", // Only if allowKeyObject == true && bufferOnly == false
+    "CryptoKey", // Only if allowKeyObject == true && bufferOnly == false
+  ];
+  if (bufferOnly) {
+    return types.slice(0, 4);
+  } else if (!allowKeyObject) {
+    return types.slice(0, 5);
+  }
+  return types;
+}
+
+function getKeyObjectHandleFromJwk(key, ctx) {
+  validateObject(key, "key");
+  validateOneOf(key.kty, "key.kty", ["RSA", "EC", "OKP"]);
+  const isPublic = ctx === kConsumePublic || ctx === kCreatePublic;
+
+  if (key.kty === "OKP") {
+    validateString(key.crv, "key.crv");
+    validateOneOf(key.crv, "key.crv", ["Ed25519", "Ed448", "X25519", "X448"]);
+    validateString(key.x, "key.x");
+
+    if (!isPublic) validateString(key.d, "key.d");
+
+    let keyData;
+    if (isPublic) keyData = Buffer.from(key.x, "base64");
+    else keyData = Buffer.from(key.d, "base64");
+
+    switch (key.crv) {
+      case "Ed25519":
+      case "X25519":
+        if (keyData.byteLength !== 32) {
+          throw $ERR_CRYPTO_INVALID_JWK();
+        }
+        break;
+      case "Ed448":
+        if (keyData.byteLength !== 57) {
+          throw $ERR_CRYPTO_INVALID_JWK();
+        }
+        break;
+      case "X448":
+        if (keyData.byteLength !== 56) {
+          throw $ERR_CRYPTO_INVALID_JWK();
+        }
+        break;
+    }
+
+    const handle = new KeyObjectHandle();
+
+    const keyType = isPublic ? kKeyTypePublic : kKeyTypePrivate;
+    if (!handle.initEDRaw(key.crv, keyData, keyType)) {
+      throw new ERR_CRYPTO_INVALID_JWK();
+    }
+
+    return handle;
+  }
+
+  if (key.kty === "EC") {
+    validateString(key.crv, "key.crv");
+    validateOneOf(key.crv, "key.crv", ["P-256", "secp256k1", "P-384", "P-521"]);
+    validateString(key.x, "key.x");
+    validateString(key.y, "key.y");
+
+    const jwk = {
+      kty: key.kty,
+      crv: key.crv,
+      x: key.x,
+      y: key.y,
+    };
+
+    if (!isPublic) {
+      validateString(key.d, "key.d");
+      jwk.d = key.d;
+    }
+
+    const handle = new KeyObjectHandle();
+    const type = handle.initJwk(jwk, jwk.crv);
+    if (type === undefined) throw $ERR_CRYPTO_INVALID_JWK();
+
+    return handle;
+  }
+
+  // RSA
+  validateString(key.n, "key.n");
+  validateString(key.e, "key.e");
+
+  const jwk = {
+    kty: key.kty,
+    n: key.n,
+    e: key.e,
+  };
+
+  if (!isPublic) {
+    validateString(key.d, "key.d");
+    validateString(key.p, "key.p");
+    validateString(key.q, "key.q");
+    validateString(key.dp, "key.dp");
+    validateString(key.dq, "key.dq");
+    validateString(key.qi, "key.qi");
+    jwk.d = key.d;
+    jwk.p = key.p;
+    jwk.q = key.q;
+    jwk.dp = key.dp;
+    jwk.dq = key.dq;
+    jwk.qi = key.qi;
+  }
+
+  const handle = new KeyObjectHandle();
+  const type = handle.initJwk(jwk);
+  if (type === undefined) throw $ERR_CRYPTO_INVALID_JWK();
+
+  return handle;
+}
+
+function getKeyObjectHandle(key, ctx) {
+  if (ctx === kCreatePrivate) {
+    throw $ERR_INVALID_ARG_TYPE("key", ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"], key);
+  }
+
+  if (key.type !== "private") {
+    if (ctx === kConsumePrivate || ctx === kCreatePublic)
+      throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(key.type, "private");
+    if (key.type !== "public") {
+      throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(key.type, "private or public");
+    }
+  }
+
+  return key[kHandle];
+}
+
+function prepareAsymmetricKey(key, ctx) {
+  if (isKeyObject(key)) {
+    // Best case: A key object, as simple as that.
+    return { data: getKeyObjectHandle(key, ctx) };
+  } else if (isCryptoKey(key)) {
+    return { data: getKeyObjectHandle(key[kKeyObject], ctx) };
+  } else if (isStringOrBuffer(key)) {
+    // Expect PEM by default, mostly for backward compatibility.
+    return { format: kKeyFormatPEM, data: getArrayBufferOrView(key, "key") };
+  } else if (typeof key === "object") {
+    const { key: data, encoding, format } = key;
+
+    // The 'key' property can be a KeyObject as well to allow specifying
+    // additional options such as padding along with the key.
+    if (isKeyObject(data)) return { data: getKeyObjectHandle(data, ctx) };
+    else if (isCryptoKey(data)) return { data: getKeyObjectHandle(data[kKeyObject], ctx) };
+    else if (format === "jwk") {
+      validateObject(data, "key.key");
+      return { data: getKeyObjectHandleFromJwk(data, ctx), format: "jwk" };
+    }
+
+    // Either PEM or DER using PKCS#1 or SPKI.
+    if (!isStringOrBuffer(data)) {
+      throw $ERR_INVALID_ARG_TYPE("key.key", getKeyTypes(ctx !== kCreatePrivate), data);
+    }
+
+    const isPublic = ctx === kConsumePrivate || ctx === kCreatePrivate ? false : undefined;
+    return {
+      data: getArrayBufferOrView(data, "key", encoding),
+      ...parseKeyEncoding(key, undefined, isPublic),
+    };
+  }
+  throw $ERR_INVALID_ARG_TYPE("key", getKeyTypes(ctx !== kCreatePrivate), key);
+}
+
+function preparePrivateKey(key) {
+  return prepareAsymmetricKey(key, kConsumePrivate);
+}
+
+function Sign(algorithm, options): void {
+  if (!(this instanceof Sign)) {
+    return new Sign(algorithm, options);
+  }
+
+  validateString(algorithm, "algorithm");
+  this[kHandle] = new _Sign();
+  this[kHandle].init(algorithm);
+
+  StreamModule.Writable.$apply(this, [options]);
+}
+
+$toClass(Sign, "Sign", StreamModule.Writable);
+
+Sign.prototype._write = function _write(chunk, encoding, callback) {
+  this.update(chunk, encoding);
+  callback();
+};
+
+Sign.prototype.update = function update(data, encoding) {
+  return this[kHandle].update(data, encoding);
+};
+
+Sign.prototype.sign = function sign(options, encoding) {
+  return this[kHandle].sign(options, encoding);
+};
+
+crypto_exports.Sign = Sign;
+
+function createSign(algorithm, options) {
+  return new Sign(algorithm, options);
+}
+
+crypto_exports.createSign = createSign;
+
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

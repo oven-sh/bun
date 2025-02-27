@@ -2136,6 +2136,11 @@ pub const Formatter = struct {
 
                 if (jsType == .RegExpObject and enable_ansi_colors) {
                     writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
+                } else if (jsType == .StringObject) {
+                    if (enable_ansi_colors) {
+                        writer.print(comptime Output.prettyFmt("<r><green>", enable_ansi_colors), .{});
+                    }
+                    writer.print("[String: '", .{});
                 }
 
                 if (str.isUTF16()) {
@@ -2155,6 +2160,12 @@ pub const Formatter = struct {
 
                 if (jsType == .RegExpObject and enable_ansi_colors) {
                     writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});
+                } else if (jsType == .StringObject) {
+                    writer.print("']", .{});
+
+                    if (enable_ansi_colors) {
+                        writer.print(comptime Output.prettyFmt("<r>", enable_ansi_colors), .{});
+                    }
                 }
             },
             .Integer => {

@@ -176,8 +176,6 @@ declare const cert: string;
 
 Bun.serve({
   fetch: () => new Response("ok"),
-  key: key,
-  cert: cert,
   tls: {
     key,
     cert,

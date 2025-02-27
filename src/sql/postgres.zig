@@ -853,6 +853,7 @@ pub const PostgresSQLQuery = struct {
                     connection.prepared_statement_id += 1;
                     stmt.* = .{ .signature = signature, .ref_count = 2, .status = if (can_execute) .parsing else .pending };
                     this.statement = stmt;
+
                     entry_value.* = stmt;
                 } else {
                     stmt.* = .{ .signature = signature, .ref_count = 1, .status = if (can_execute) .parsing else .pending };
@@ -956,9 +957,21 @@ pub const PostgresRequest = struct {
         iter.to(0);
         var i: usize = 0;
         while (iter.next()) |value| : (i += 1) {
-            const parameter_field = parameter_fields[i];
-            const is_custom_type = std.math.maxInt(short) < parameter_field;
-            const tag: types.Tag = if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
+            const tag: types.Tag = brk: {
+                if (i >= len) {
+                    // parameter in array but not in parameter_fields
+                    // this is probably a bug a bug in bun lets return .text here so the server will send a error 08P01
+                    // with will describe better the error saying exactly how many parameters are missing and are expected
+                    // Example:
+                    // SQL error: PostgresError: bind message supplies 0 parameters, but prepared statement "PSELECT * FROM test_table WHERE id=$1 .in$0" requires 1
+                    // errno: "08P01",
+                    // code: "ERR_POSTGRES_SERVER_ERROR"
+                    break :brk .text;
+                }
+                const parameter_field = parameter_fields[i];
+                const is_custom_type = std.math.maxInt(short) < parameter_field;
+                break :brk if (is_custom_type) .text else @enumFromInt(@as(short, @intCast(parameter_field)));
+            };
             if (value.isEmptyOrUndefinedOrNull()) {
                 debug("  -> NULL", .{});
                 //  As a special case, -1 indicates a
@@ -1245,25 +1258,25 @@ pub const PostgresSQLConnection = struct {
 
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
-    timer: JSC.BunTimer.EventLoopTimer = .{
+    timer: JSC.BunTimer.EventLoopTimer.Node = .{ .data = .{
         .tag = .PostgresSQLConnectionTimeout,
         .next = .{
             .sec = 0,
             .nsec = 0,
         },
-    },
+    } },
 
     /// This timer controls the maximum lifetime of a connection.
     /// It starts when the connection successfully starts (i.e. after handshake is complete).
     /// It stops when the connection is closed.
     max_lifetime_interval_ms: u32 = 0,
-    max_lifetime_timer: JSC.BunTimer.EventLoopTimer = .{
+    max_lifetime_timer: JSC.BunTimer.EventLoopTimer.Node = .{ .data = .{
         .tag = .PostgresSQLConnectionMaxLifetime,
         .next = .{
             .sec = 0,
             .nsec = 0,
         },
-    },
+    } },
 
     pub const ConnectionFlags = packed struct {
         is_ready_for_query: bool = false,
@@ -1408,23 +1421,23 @@ pub const PostgresSQLConnection = struct {
         };
     }
     pub fn disableConnectionTimeout(this: *PostgresSQLConnection) void {
-        if (this.timer.state == .ACTIVE) {
+        if (this.timer.data.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.timer);
         }
-        this.timer.state = .CANCELLED;
+        this.timer.data.state = .CANCELLED;
     }
     pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
         // if we are processing data, don't reset the timeout, wait for the data to be processed
         if (this.flags.is_processing_data) return;
         const interval = this.getTimeoutInterval();
-        if (this.timer.state == .ACTIVE) {
+        if (this.timer.data.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.timer);
         }
         if (interval == 0) {
             return;
         }
 
-        this.timer.next = bun.timespec.msFromNow(@intCast(interval));
+        this.timer.data.next = bun.timespec.msFromNow(@intCast(interval));
         this.globalObject.bunVM().timer.insert(&this.timer);
     }
 
@@ -1483,16 +1496,16 @@ pub const PostgresSQLConnection = struct {
     }
     fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
         if (this.max_lifetime_interval_ms == 0) return;
-        if (this.max_lifetime_timer.state == .ACTIVE) return;
+        if (this.max_lifetime_timer.data.state == .ACTIVE) return;
 
-        this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+        this.max_lifetime_timer.data.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
         this.globalObject.bunVM().timer.insert(&this.max_lifetime_timer);
     }
 
     pub fn onConnectionTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
         debug("onConnectionTimeout", .{});
 
-        this.timer.state = .FIRED;
+        this.timer.data.state = .FIRED;
         if (this.flags.is_processing_data) {
             return .disarm;
         }
@@ -1518,7 +1531,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
         debug("onMaxLifetimeTimeout", .{});
-        this.max_lifetime_timer.state = .FIRED;
+        this.max_lifetime_timer.data.state = .FIRED;
         if (this.status == .failed) return .disarm;
         this.failFmt(.ERR_POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
         return .disarm;
@@ -2090,10 +2103,10 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn stopTimers(this: *PostgresSQLConnection) void {
-        if (this.timer.state == .ACTIVE) {
+        if (this.timer.data.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.timer);
         }
-        if (this.max_lifetime_timer.state == .ACTIVE) {
+        if (this.max_lifetime_timer.data.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.max_lifetime_timer);
         }
     }
@@ -2109,7 +2122,9 @@ pub const PostgresSQLConnection = struct {
         this.write_buffer.deinit(bun.default_allocator);
         this.read_buffer.deinit(bun.default_allocator);
         this.backend_parameters.deinit();
-        bun.default_allocator.free(this.options_buf);
+
+        bun.freeSensitive(bun.default_allocator, this.options_buf);
+
         this.tls_config.deinit();
         bun.default_allocator.destroy(this);
     }
@@ -3598,7 +3613,8 @@ pub const PostgresSQLConnection = struct {
                 try reader.eatMessage(protocol.ParseComplete);
                 const request = this.current() orelse return error.ExpectedRequest;
                 if (request.statement) |statement| {
-                    if (statement.status == .parsing) {
+                    // if we have params wait for parameter description
+                    if (statement.status == .parsing and statement.signature.fields.len == 0) {
                         statement.status = .prepared;
                     }
                 }
@@ -3609,6 +3625,9 @@ pub const PostgresSQLConnection = struct {
                 const request = this.current() orelse return error.ExpectedRequest;
                 var statement = request.statement orelse return error.ExpectedStatement;
                 statement.parameters = description.parameters;
+                if (statement.status == .parsing) {
+                    statement.status = .prepared;
+                }
             },
             .RowDescription => {
                 var description: protocol.RowDescription = undefined;

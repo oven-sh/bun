@@ -771,7 +771,6 @@ pub const VirtualMachine = struct {
     main_is_html_entrypoint: bool = false,
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
-    process: bun.JSC.C.JSObjectRef = null,
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
@@ -1021,14 +1020,21 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+    pub fn isEventLoopAliveExcludingImmediates(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
             vm.active_tasks +
             vm.event_loop.tasks.count +
-            vm.event_loop.immediate_tasks.count +
-            vm.event_loop.next_immediate_tasks.count +
             @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
+    }
+
+    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+        return vm.isEventLoopAliveExcludingImmediates() or
+            // We need to keep running in this case so that immediate tasks get run. But immediates
+            // intentionally don't make the event loop _active_ so we need to check for them
+            // separately.
+            vm.event_loop.immediate_tasks.count > 0 or
+            vm.event_loop.next_immediate_tasks.count > 0;
     }
 
     pub fn wakeup(this: *VirtualMachine) void {
@@ -1403,13 +1409,18 @@ pub const VirtualMachine = struct {
 
     pub fn onExit(this: *VirtualMachine) void {
         this.exit_handler.dispatchOnExit();
+        this.is_shutting_down = true;
 
         const rare_data = this.rare_data orelse return;
-        var hooks = rare_data.cleanup_hooks;
-        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.default_allocator);
-        rare_data.cleanup_hooks = .{};
-        for (hooks.items) |hook| {
-            hook.execute();
+        defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
+        // Make sure we run new cleanup hooks introduced by running cleanup hooks
+        while (rare_data.cleanup_hooks.items.len > 0) {
+            var hooks = rare_data.cleanup_hooks;
+            defer hooks.deinit(bun.default_allocator);
+            rare_data.cleanup_hooks = .{};
+            for (hooks.items) |hook| {
+                hook.execute();
+            }
         }
     }
 

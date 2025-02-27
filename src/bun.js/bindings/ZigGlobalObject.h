@@ -54,6 +54,7 @@ class GlobalInternals;
 #include "BunHttp2CommonStrings.h"
 #include "BunGlobalScope.h"
 #include <js_native_api.h>
+#include <node_api.h>
 
 namespace WebCore {
 class WorkerGlobalScope;
@@ -268,7 +269,6 @@ public:
 
     Structure* NapiExternalStructure() const { return m_NapiExternalStructure.getInitializedOnMainThread(this); }
     Structure* NapiPrototypeStructure() const { return m_NapiPrototypeStructure.getInitializedOnMainThread(this); }
-    Structure* NAPIFunctionStructure() const { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
     Structure* NapiHandleScopeImplStructure() const { return m_NapiHandleScopeImplStructure.getInitializedOnMainThread(this); }
     Structure* NapiTypeTagStructure() const { return m_NapiTypeTagStructure.getInitializedOnMainThread(this); }
 
@@ -308,7 +308,7 @@ public:
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
-    Bun::WorkerGlobalScope& globalEventScope;
+    Ref<Bun::WorkerGlobalScope> globalEventScope;
 
     void resetOnEachMicrotaskTick();
 
@@ -466,13 +466,6 @@ public:
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
 
-    // NAPI instance data
-    // This is not a correct implementation
-    // Addon modules can override each other's data
-    void* napiInstanceData = nullptr;
-    void* napiInstanceDataFinalizer = nullptr;
-    void* napiInstanceDataFinalizerHint = nullptr;
-
     // Used by napi_type_tag_object to associate a 128-bit type ID with JS objects.
     // Should only use JSCell* keys and NapiTypeTag values.
     LazyProperty<JSGlobalObject, JSC::JSWeakMap> m_napiTypeTags;
@@ -592,7 +585,6 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_JSCryptoKey;
     LazyProperty<JSGlobalObject, Structure> m_NapiExternalStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
-    LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiHandleScopeImplStructure;
     LazyProperty<JSGlobalObject, Structure> m_NapiTypeTagStructure;
 
@@ -616,16 +608,10 @@ public:
 
     bool hasOverridenModuleResolveFilenameFunction = false;
 
-    // Almost all NAPI functions should set error_code to the status they're returning right before
-    // they return it
-    napi_extended_error_info m_lastNapiErrorInfo = {
-        .error_message = "",
-        // Not currently used by Bun -- always nullptr
-        .engine_reserved = nullptr,
-        // Not currently used by Bun -- always zero
-        .engine_error_code = 0,
-        .error_code = napi_ok,
-    };
+    WTF::Vector<std::unique_ptr<napi_env__>> m_napiEnvs;
+    napi_env makeNapiEnv(const napi_module&);
+    napi_env makeNapiEnvForFFI();
+    bool hasNapiFinalizers() const;
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
@@ -712,5 +698,8 @@ inline void* bunVM(Zig::GlobalObject* globalObject)
 {
     return globalObject->bunVM();
 }
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplemented);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined);
 
 #endif

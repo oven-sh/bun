@@ -83,10 +83,10 @@ pub const TestRunner = struct {
     // from `setDefaultTimeout() or jest.setTimeout()`
     default_timeout_override: u32 = std.math.maxInt(u32),
 
-    event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
+    event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer.Node = .{ .data = .{
         .next = .{},
         .tag = .TestRunner,
-    },
+    } },
     active_test_for_timeout: ?TestRunner.Test.ID = null,
     test_options: *const bun.CLI.Command.TestOptions = undefined,
 
@@ -107,7 +107,7 @@ pub const TestRunner = struct {
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
         _ = vm; // autofix
-        this.event_loop_timer.state = .FIRED;
+        this.event_loop_timer.data.state = .FIRED;
 
         if (this.pending_test) |pending_test| {
             if (!pending_test.reported and (this.active_test_for_timeout orelse return) == pending_test.test_id) {
@@ -132,12 +132,12 @@ pub const TestRunner = struct {
         const then = bun.timespec.msFromNow(@intCast(milliseconds));
         const vm = JSC.VirtualMachine.get();
 
-        this.event_loop_timer.tag = .TestRunner;
-        if (this.event_loop_timer.state == .ACTIVE) {
+        this.event_loop_timer.data.tag = .TestRunner;
+        if (this.event_loop_timer.data.state == .ACTIVE) {
             vm.timer.remove(&this.event_loop_timer);
         }
 
-        this.event_loop_timer.next = then;
+        this.event_loop_timer.data.next = then;
         vm.timer.insert(&this.event_loop_timer);
     }
 

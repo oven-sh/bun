@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import fs from "fs";
+import fs, { readdirSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import path from "path";
 
@@ -76,3 +76,26 @@ test("bun init with piped cli", () => {
   expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
   expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
 }, 30_000);
+
+test("bun init in folder", () => {
+  const temp = tmpdirSync();
+  const out = Bun.spawnSync({
+    cmd: [bunExe(), "init", "-y", "mydir"],
+    cwd: temp,
+    stdio: ["ignore", "inherit", "inherit"],
+    env: bunEnv,
+  });
+  expect(out.exitCode).toBe(0);
+  expect(readdirSync(temp).sort()).toEqual(["mydir"]);
+  expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
+    [
+      ".gitignore",
+      "README.md",
+      "bun.lock",
+      "index.ts",
+      "node_modules",
+      "package.json",
+      "tsconfig.json",
+    ]
+  `);
+});

@@ -366,19 +366,45 @@ pub const InitCommand = struct {
         private: bool = true,
     };
 
-    pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
-        const print_help = brk: {
-            for (argv) |arg| {
+    pub fn exec(alloc: std.mem.Allocator, init_args: [][:0]const u8) !void {
+        // --minimal is a special preset to create only empty package.json + tsconfig.json
+        var minimal = false;
+        var auto_yes = false;
+        var parse_flags = true;
+        var initialize_in_folder: ?[]const u8 = null;
+        for (init_args) |arg_| {
+            const arg = bun.span(arg_);
+            if (parse_flags and arg.len > 0 and arg[0] == '-') {
                 if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
-                    break :brk true;
+                    CLI.Command.Tag.printHelp(.InitCommand, true);
+                    Global.exit(0);
+                } else if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
+                    minimal = true;
+                } else if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
+                    auto_yes = true;
+                } else if (strings.eqlComptime(arg, "--")) {
+                    parse_flags = false;
+                } else {
+                    // invalid flag; ignore
+                }
+            } else {
+                if (initialize_in_folder == null) {
+                    initialize_in_folder = arg;
+                } else {
+                    // invalid positional; ignore
                 }
             }
-            break :brk false;
-        };
+        }
 
-        if (print_help) {
-            CLI.Command.Tag.printHelp(.InitCommand, true);
-            Global.exit(0);
+        if (initialize_in_folder) |ifdir| {
+            std.fs.cwd().makePath(ifdir) catch |err| {
+                Output.prettyErrorln("Failed to create directory {s}: {s}", .{ ifdir, @errorName(err) });
+                Global.exit(1);
+            };
+            std.posix.chdir(ifdir) catch |err| {
+                Output.prettyErrorln("Failed to change directory to {s}: {s}", .{ ifdir, @errorName(err) });
+                Global.exit(1);
+            };
         }
 
         var fs = try Fs.FileSystem.init(null);
@@ -464,17 +490,6 @@ pub const InitCommand = struct {
             }
         }
 
-        // --minimal is a special preset to create only empty package.json + tsconfig.json
-        const minimal = brk: {
-            for (argv) |arg_| {
-                const arg = bun.span(arg_);
-                if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
-                    break :brk true;
-                }
-            }
-            break :brk false;
-        };
-
         if (fields.entry_point.len == 0 and !minimal) infer: {
             fields.entry_point = "index.ts";
 
@@ -525,16 +540,6 @@ pub const InitCommand = struct {
                 logger.Loc.Empty,
             ).data.e_object;
         }
-
-        const auto_yes = Output.stdout_descriptor_type != .terminal or minimal or brk: {
-            for (argv) |arg_| {
-                const arg = bun.span(arg_);
-                if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
-                    break :brk true;
-                }
-            }
-            break :brk false;
-        };
 
         var template: Template = .blank;
 

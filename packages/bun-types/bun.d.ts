@@ -1301,7 +1301,7 @@ declare module "bun" {
      *       sessionToken: tempSessionToken
      *     });
      */
-    sessionToken?: string;
+    sessionToken?: string | null;
 
     /**
      * The S3-compatible service endpoint URL.

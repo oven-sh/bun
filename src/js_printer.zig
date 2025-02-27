@@ -6001,7 +6001,7 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (opts.module_type == .internal_bake_dev) {
+    if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
         printer.indent();
         printer.printIndent();
         if (!ast.top_level_await_keyword.isEmpty()) {

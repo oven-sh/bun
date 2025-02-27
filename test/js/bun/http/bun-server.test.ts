@@ -1099,5 +1099,20 @@ describe("HEAD requests #15355", () => {
       expect(response.headers.get("content-length")).toBe("11");
       expect(await response.text()).toBe("");
     });
+
+    test("should allow Strict-Transport-Security", async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("Hello World", {
+            status: 200,
+            headers: { "Strict-Transport-Security": "max-age=31536000" },
+          });
+        },
+      });
+      const response = await fetch(server.url, { method: "HEAD" });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
+    });
   });
 });

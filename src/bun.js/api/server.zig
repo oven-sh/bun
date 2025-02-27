@@ -193,7 +193,6 @@ fn writeHeaders(
     ctxLog("writeHeaders", .{});
     headers.fastRemove(.ContentLength);
     headers.fastRemove(.TransferEncoding);
-    if (!ssl) headers.fastRemove(.StrictTransportSecurity);
     if (resp_ptr) |resp| {
         headers.toUWSResponse(ssl, resp);
     }

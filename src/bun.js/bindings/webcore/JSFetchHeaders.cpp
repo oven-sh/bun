@@ -218,6 +218,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     auto& impl = castedThis->wrapped();
     if (name->length() != "set-cookie"_s.length() || name->convertToASCIILowercase() != "set-cookie"_s) {
         throwTypeError(lexicalGlobalObject, scope, "Only \"set-cookie\" is supported."_s);
+        return {};
     }
 
     auto values = impl.getSetCookieHeaders();
@@ -581,6 +582,28 @@ static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_keysCaller(JSG
 JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_keys, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     return IDLOperation<JSFetchHeaders>::call<jsFetchHeadersPrototypeFunction_keysCaller>(*lexicalGlobalObject, *callFrame, "keys");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = castThisValue<JSFetchHeaders>(*lexicalGlobalObject, callFrame->thisValue());
+
+    if (!thisObject) {
+        throwTypeError(lexicalGlobalObject, scope, "\"this\" must be an instance of Headers"_s);
+        return {};
+    }
+
+    FetchHeaders& headers = thisObject->wrapped();
+    JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.size());
+
+    for (unsigned int i = 0; const auto& header : headers.internalHeaders()) {
+        outArray->putDirectIndex(lexicalGlobalObject, i++, jsString(vm, header.name()));
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(outArray));
 }
 
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_valuesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)

@@ -2411,6 +2411,8 @@ pub const JSPromise = opaque {
     pub const Strong = struct {
         strong: JSC.Strong = .empty,
 
+        pub const empty: Strong = .{ .strong = .empty };
+
         pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().reject(globalThis, val);
         }

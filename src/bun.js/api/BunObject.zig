@@ -1992,9 +1992,10 @@ pub const Crypto = struct {
                     .global = this.global,
                     .ref = this.ref,
                 });
+                this.promise = .empty;
+
                 result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
-                this.promise.deinit();
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
@@ -2206,9 +2207,10 @@ pub const Crypto = struct {
                     .global = this.global,
                     .ref = this.ref,
                 });
+                this.promise = .empty;
+
                 result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
-                this.promise.deinit();
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }

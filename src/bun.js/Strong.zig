@@ -95,9 +95,7 @@ const Impl = opaque {
         Bun__StrongRef__clear(this);
     }
 
-    pub fn deinit(
-        this: *Impl,
-    ) void {
+    pub fn deinit(this: *Impl) void {
         JSC.markBinding(@src());
         Bun__StrongRef__delete(this);
     }

@@ -14,6 +14,8 @@ console.log(Infinity);
 console.log(-Infinity);
 console.log(Symbol("Symbol Description"));
 console.log(new Date(Math.pow(2, 34) * 56));
+console.log(new String("Hello"));
+console.log(new String("Hello 👋🏼"));
 console.log([123, 456, 789]);
 console.log({ name: "foo" });
 console.log({ a: 123, b: 456, c: 789 });

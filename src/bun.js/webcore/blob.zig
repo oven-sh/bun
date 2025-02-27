@@ -903,16 +903,15 @@ pub const Blob = struct {
                 const Wrapper = struct {
                     promise: JSC.JSPromise.Strong,
                     store: *Store,
+                    global: *JSC.JSGlobalObject,
+
                     pub usingnamespace bun.New(@This());
 
-                    pub fn resolve(result: S3.S3UploadResult, this: *@This()) void {
-                        if (this.promise.globalObject()) |globalObject| {
-                            switch (result) {
-                                .success => this.promise.resolve(globalObject, JSC.jsNumber(0)),
-                                .failure => |err| {
-                                    this.promise.reject(globalObject, err.toJS(globalObject, this.store.getPath()));
-                                },
-                            }
+                    pub fn resolve(result: S3.S3UploadResult, opaque_this: *anyopaque) void {
+                        const this: *@This() = @ptrCast(@alignCast(opaque_this));
+                        switch (result) {
+                            .success => this.promise.resolve(this.global, JSC.jsNumber(0)),
+                            .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
                         }
                         this.deinit();
                     }
@@ -937,10 +936,11 @@ pub const Blob = struct {
                     aws_options.acl,
                     proxy_url,
                     aws_options.storage_class,
-                    @ptrCast(&Wrapper.resolve),
+                    Wrapper.resolve,
                     Wrapper.new(.{
                         .promise = promise,
                         .store = destination_blob.store.?,
+                        .global = ctx,
                     }),
                 );
                 return promise_value;
@@ -1078,16 +1078,15 @@ pub const Blob = struct {
                         const Wrapper = struct {
                             store: *Store,
                             promise: JSC.JSPromise.Strong,
+                            global: *JSC.JSGlobalObject,
+
                             pub usingnamespace bun.New(@This());
 
-                            pub fn resolve(result: S3.S3UploadResult, this: *@This()) void {
-                                if (this.promise.globalObject()) |globalObject| {
-                                    switch (result) {
-                                        .success => this.promise.resolve(globalObject, JSC.jsNumber(this.store.data.bytes.len)),
-                                        .failure => |err| {
-                                            this.promise.reject(globalObject, err.toJS(globalObject, this.store.getPath()));
-                                        },
-                                    }
+                            pub fn resolve(result: S3.S3UploadResult, opaque_self: *anyopaque) void {
+                                const this: *@This() = @ptrCast(@alignCast(opaque_self));
+                                switch (result) {
+                                    .success => this.promise.resolve(this.global, JSC.jsNumber(this.store.data.bytes.len)),
+                                    .failure => |err| this.promise.reject(this.global, err.toJS(this.global, this.store.getPath())),
                                 }
                                 this.deinit();
                             }
@@ -1109,10 +1108,11 @@ pub const Blob = struct {
                             aws_options.acl,
                             proxy_url,
                             aws_options.storage_class,
-                            @ptrCast(&Wrapper.resolve),
+                            Wrapper.resolve,
                             Wrapper.new(.{
                                 .store = store,
                                 .promise = promise,
+                                .global = ctx,
                             }),
                         );
                         return promise_value;
@@ -1307,7 +1307,7 @@ pub const Blob = struct {
                             var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                             defer aws_options.deinit();
                             _ = response.body.value.toReadableStream(globalThis);
-                            if (locked.readable.get()) |readable| {
+                            if (locked.readable.get(globalThis)) |readable| {
                                 if (readable.isDisturbed(globalThis)) {
                                     destination_blob.detach();
                                     return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -1368,7 +1368,7 @@ pub const Blob = struct {
                             var aws_options = try s3.getCredentialsWithOptions(options.extra_options, globalThis);
                             defer aws_options.deinit();
                             _ = request.body.value.toReadableStream(globalThis);
-                            if (locked.readable.get()) |readable| {
+                            if (locked.readable.get(globalThis)) |readable| {
                                 if (readable.isDisturbed(globalThis)) {
                                     destination_blob.detach();
                                     return globalThis.throwInvalidArguments("ReadableStream has already been used", .{});
@@ -2766,7 +2766,7 @@ pub const Blob = struct {
             }
 
             pub fn throw(this: *CopyFileWindows, err: bun.sys.Error) void {
-                const globalThis = this.promise.strong.globalThis.?;
+                const globalThis = this.event_loop.global;
                 const promise = this.promise.swap();
                 const err_instance = err.toJSC(globalThis);
                 var event_loop = this.event_loop;
@@ -2820,7 +2820,7 @@ pub const Blob = struct {
                     this.truncate();
                     written = @intCast(this.size);
                 }
-                const globalThis = this.promise.strong.globalThis.?;
+                const globalThis = this.event_loop.global;
                 const promise = this.promise.swap();
                 var event_loop = this.event_loop;
                 event_loop.enter();
@@ -3560,17 +3560,19 @@ pub const Blob = struct {
             const Wrapper = struct {
                 promise: JSC.JSPromise.Strong,
                 store: *Store,
+                global: *JSC.JSGlobalObject,
 
                 pub usingnamespace bun.New(@This());
 
-                pub fn resolve(result: S3.S3DeleteResult, self: *@This()) void {
+                pub fn resolve(result: S3.S3DeleteResult, opaque_self: *anyopaque) void {
+                    const self: *@This() = @ptrCast(@alignCast(opaque_self));
                     defer self.deinit();
-                    const globalObject = self.promise.globalObject().?;
+                    const globalObject = self.global;
                     switch (result) {
                         .success => {
                             self.promise.resolve(globalObject, .true);
                         },
-                        inline .not_found, .failure => |err| {
+                        .not_found, .failure => |err| {
                             self.promise.reject(globalObject, err.toJS(globalObject, self.store.getPath()));
                         },
                     }
@@ -3591,6 +3593,7 @@ pub const Blob = struct {
             S3.delete(&aws_options.credentials, this.path(), @ptrCast(&Wrapper.resolve), Wrapper.new(.{
                 .promise = promise,
                 .store = store, // store is needed in case of not found error
+                .global = globalThis,
             }), proxy);
             store.ref();
 
@@ -4065,7 +4068,7 @@ pub const Blob = struct {
         var strong = this.readable_stream_ref;
         defer strong.deinit();
         this.readable_stream_ref = .{};
-        if (strong.get()) |stream| {
+        if (strong.get(globalThis)) |stream| {
             stream.done(globalThis);
         }
         this.promise.resolve(globalThis, JSC.JSValue.jsNumber(0));
@@ -4084,7 +4087,7 @@ pub const Blob = struct {
 
         this.promise.reject(globalThis, err);
 
-        if (strong.get()) |stream| {
+        if (strong.get(globalThis)) |stream| {
             stream.cancel(globalThis);
         }
         return .undefined;

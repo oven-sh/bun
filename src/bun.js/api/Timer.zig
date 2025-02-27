@@ -808,7 +808,7 @@ const TimerObjectInternals = struct {
     // if they never access the timer by integer, don't create a hashmap entry.
     has_accessed_primitive: bool = false,
 
-    strong_this: JSC.Strong = .{},
+    strong_this: JSC.Strong = .empty,
 
     has_js_ref: bool = true,
 
@@ -867,7 +867,7 @@ const TimerObjectInternals = struct {
             }
             return;
         };
-        const globalThis = this.strong_this.globalThis.?;
+        const globalThis = vm.global;
         this.strong_this.deinit();
         this.eventLoopTimer().state = .FIRED;
         this.setEnableKeepingEventLoopAlive(vm, false);
@@ -897,11 +897,11 @@ const TimerObjectInternals = struct {
 
         this.eventLoopTimer().state = .FIRED;
 
+        const globalThis = vm.global;
+
         if (has_been_cleared) {
             if (vm.isInspectorEnabled()) {
-                if (this.strong_this.globalThis) |globalThis| {
-                    Debugger.didCancelAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }));
-                }
+                Debugger.didCancelAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }));
             }
 
             this.has_cleared_timer = true;
@@ -911,12 +911,11 @@ const TimerObjectInternals = struct {
             return .disarm;
         }
 
-        const globalThis = this.strong_this.globalThis.?;
         const this_object = this.strong_this.get().?;
         var time_before_call: timespec = undefined;
 
         if (kind != .setInterval) {
-            this.strong_this.clear();
+            this.strong_this.clearWithoutDeallocation();
         } else {
             time_before_call = timespec.msFromNow(this.interval);
         }

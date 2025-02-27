@@ -4,7 +4,15 @@ import { SveltePlugin } from "bun-plugin-svelte";
 import { promises as fs } from "node:fs";
 import { Subprocess } from "bun";
 
-const fixturePath = (...segs: string[]): string => path.join(__dirname, "fixtures", ...segs);
+const fixturePath = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", ...segs);
+
+beforeAll(async() => {
+  const child = Bun.spawn([bunExe(), "install"], {
+    cwd: path.resolve(import.meta.dirname, "..", "..", "..", "packages", "bun-plugin-svelte"),
+    stdio: ["inherit", "inherit", "inherit"]
+  });
+  expect(await child.exited).toBe(0);
+})
 
 test("Bundling Svelte components", async () => {
   const outdir = tmpdirSync("bun-svelte-client-side");

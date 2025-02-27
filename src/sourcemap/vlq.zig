@@ -60,8 +60,7 @@ fn encodeSlowPath(value: i32) VLQ {
         @as(u32, @bitCast((-value << 1) | 1));
 
     // source mappings are limited to i32
-    comptime var i: usize = 0;
-    inline while (i < vlq_max_in_bytes) : (i += 1) {
+    inline for (0..vlq_max_in_bytes) |_| {
         var digit = vlq & 31;
         vlq >>= 5;
 
@@ -90,9 +89,9 @@ pub const VLQResult = struct {
 const base64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 // base64 stores values up to 7 bits
-const base64_lut: [std.math.maxInt(u7)]u7 = brk: {
+const base64_lut: [std.math.maxInt(u7)]u8 = brk: {
     @setEvalBranchQuota(9999);
-    var bytes = [_]u7{std.math.maxInt(u7)} ** std.math.maxInt(u7);
+    var bytes = [_]u8{std.math.maxInt(u7)} ** std.math.maxInt(u7);
 
     for (base64, 0..) |c, i| {
         bytes[c] = i;
@@ -109,8 +108,7 @@ pub fn decode(encoded: []const u8, start: usize) VLQResult {
     const encoded_ = encoded[start..][0..@min(encoded.len - start, comptime (vlq_max_in_bytes + 1))];
 
     // inlining helps for the 1 or 2 byte case, hurts a little for larger
-    comptime var i: usize = 0;
-    inline while (i < vlq_max_in_bytes + 1) : (i += 1) {
+    inline for (0..vlq_max_in_bytes + 1) |i| {
         const index = @as(u32, base64_lut[@as(u7, @truncate(encoded_[i]))]);
 
         // decode a byte

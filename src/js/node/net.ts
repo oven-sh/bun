@@ -22,10 +22,12 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { SocketAddress, addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
+const { SocketAddress, addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
+const { getTimerDuration } = require("internal/timers");
+const { validateFunction } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1048,11 +1050,15 @@ const Socket = (function (InternalSocket) {
     }
 
     setTimeout(timeout, callback) {
+      timeout = getTimerDuration(timeout, "msecs");
       // internally or timeouts are in seconds
       // we use Math.ceil because 0 would disable the timeout and less than 1 second but greater than 1ms would be 1 second (the minimum)
       this._handle?.timeout(Math.ceil(timeout / 1000));
       this.timeout = timeout;
-      if (callback) this.once("timeout", callback);
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
       return this;
     }
     // for compatibility

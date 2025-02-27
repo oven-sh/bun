@@ -2048,11 +2048,8 @@ fn NewSocket(comptime ssl: bool) type {
             log("getAuthorized()", .{});
             return JSValue.jsBoolean(this.flags.authorized);
         }
-        pub fn timeout(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+
+        pub fn timeout(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments_old(1);
             if (this.socket.isDetached()) return JSValue.jsUndefined();

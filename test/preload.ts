@@ -25,6 +25,6 @@ const pluginDir = path.resolve(import.meta.dirname, "..", "packages", "bun-plugi
 expect(statSync(pluginDir).isDirectory()).toBeTrue();
 Bun.spawnSync([harness.bunExe(), "install"], {
   cwd: pluginDir,
-  stdio: ["ignore", "inherit", "inherit"],
+  stdio: ["ignore", "ignore", "ignore"],
   env: harness.bunEnv,
 });

@@ -237,8 +237,8 @@ const SocketMonitor = struct {
 pub const PostgresSQLContext = struct {
     tcp: ?*uws.SocketContext = null,
 
-    onQueryResolveFn: JSC.Strong = .{},
-    onQueryRejectFn: JSC.Strong = .{},
+    onQueryResolveFn: JSC.Strong = .empty,
+    onQueryRejectFn: JSC.Strong = .empty,
 
     pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var ctx = &globalObject.bunVM().rareData().postgresql_context;
@@ -3954,7 +3954,7 @@ pub const PostgresSQLConnection = struct {
 };
 
 pub const PostgresCachedStructure = struct {
-    structure: JSC.Strong = .{},
+    structure: JSC.Strong = .empty,
     // only populated if more than JSC.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     fields: ?[]JSC.JSObject.ExternColumnIdentifier = null,
 

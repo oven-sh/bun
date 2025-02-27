@@ -363,15 +363,16 @@ fn constructS3FileInternal(
 
 pub const S3BlobStatTask = struct {
     promise: JSC.JSPromise.Strong,
+    global: *JSC.JSGlobalObject,
     store: *Blob.Store,
+
     usingnamespace bun.New(S3BlobStatTask);
 
     pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
-        const globalThis = this.promise.globalObject().?;
         switch (result) {
             .not_found => {
-                this.promise.resolve(globalThis, .false);
+                this.promise.resolve(this.global, .false);
             },
             .success => |_| {
                 // calling .exists() should not prevent it to download a bigger file
@@ -379,31 +380,30 @@ pub const S3BlobStatTask = struct {
                 // if (this.blob.size == Blob.max_size) {
                 //     this.blob.size = @truncate(stat.size);
                 // }
-                this.promise.resolve(globalThis, .true);
+                this.promise.resolve(this.global, .true);
             },
             .failure => |err| {
-                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
             },
         }
     }
 
     pub fn onS3SizeResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
-        const globalThis = this.promise.globalObject().?;
 
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(globalThis, JSValue.jsNumber(stat_result.size));
+                this.promise.resolve(this.global, JSValue.jsNumber(stat_result.size));
             },
-            inline .not_found, .failure => |err| {
-                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+            .not_found, .failure => |err| {
+                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
             },
         }
     }
 
     pub fn onS3StatResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
-        const globalThis = this.promise.globalObject().?;
+        const globalThis = this.global;
         switch (result) {
             .success => |stat_result| {
                 this.promise.resolve(globalThis, S3Stat.init(
@@ -414,7 +414,7 @@ pub const S3BlobStatTask = struct {
                     globalThis,
                 ).toJS(globalThis));
             },
-            inline .not_found, .failure => |err| {
+            .not_found, .failure => |err| {
                 this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
             },
         }
@@ -424,6 +424,7 @@ pub const S3BlobStatTask = struct {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
+            .global = globalThis,
         });
         this.store.ref();
         const promise = this.promise.value();
@@ -438,6 +439,7 @@ pub const S3BlobStatTask = struct {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
+            .global = globalThis,
         });
         this.store.ref();
         const promise = this.promise.value();
@@ -452,6 +454,7 @@ pub const S3BlobStatTask = struct {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
+            .global = globalThis,
         });
         this.store.ref();
         const promise = this.promise.value();

@@ -129,7 +129,7 @@ const Handlers = struct {
     globalObject: *JSC.JSGlobalObject,
     active_connections: u32 = 0,
     is_server: bool = false,
-    promise: JSC.Strong = .{},
+    promise: JSC.Strong = .empty,
 
     protection_count: bun.DebugOnly(u32) = bun.DebugOnlyDefault(0),
 
@@ -187,10 +187,10 @@ const Handlers = struct {
         this.active_connections -= 1;
         if (this.active_connections == 0) {
             if (this.is_server) {
-                var listen_socket: *Listener = @fieldParentPtr("handlers", this);
+                const listen_socket: *Listener = @fieldParentPtr("handlers", this);
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if (listen_socket.listener == .none) {
-                    listen_socket.strong_self.clear();
+                    listen_socket.strong_self.deinit();
                 }
             } else {
                 this.unprotect();
@@ -520,8 +520,8 @@ pub const Listener = struct {
     ssl: bool = false,
     protos: ?[]const u8 = null,
 
-    strong_data: JSC.Strong = .{},
-    strong_self: JSC.Strong = .{},
+    strong_data: JSC.Strong = .empty,
+    strong_self: JSC.Strong = .empty,
 
     pub usingnamespace JSC.Codegen.JSListener;
 
@@ -968,8 +968,8 @@ pub const Listener = struct {
                 this.socket_context = null;
                 ctx.deinit(this.ssl);
             }
-            this.strong_self.clear();
-            this.strong_data.clear();
+            this.strong_self.clearWithoutDeallocation();
+            this.strong_data.clearWithoutDeallocation();
         } else {
             if (force_close) {
                 // close all connections in this context and wait for them to close
@@ -1063,7 +1063,7 @@ pub const Listener = struct {
     pub fn unref(this: *Listener, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(globalObject.bunVM());
         if (this.handlers.active_connections == 0) {
-            this.strong_self.clear();
+            this.strong_self.clearWithoutDeallocation();
         }
         return JSValue.jsUndefined();
     }

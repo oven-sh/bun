@@ -2410,7 +2410,9 @@ pub const JSPromise = opaque {
     }
 
     pub const Strong = struct {
-        strong: JSC.Strong = .{},
+        strong: JSC.Strong = .empty,
+
+        pub const empty: Strong = .{ .strong = .empty };
 
         pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().reject(globalThis, val);
@@ -2464,17 +2466,13 @@ pub const JSPromise = opaque {
             return this.strong.has();
         }
 
-        pub fn globalObject(this: *const Strong) ?*JSC.JSGlobalObject {
-            return this.strong.globalThis;
-        }
-
         pub fn swap(this: *Strong) *JSC.JSPromise {
             const prom = this.strong.swap().asPromise().?;
             this.strong.deinit();
             return prom;
         }
+
         pub fn deinit(this: *Strong) void {
-            this.strong.clear();
             this.strong.deinit();
         }
     };

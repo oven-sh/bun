@@ -237,7 +237,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 (try entry_points.getOrPutEntryPoint(client, .client)).toOptional()
             else
                 .none,
-            .server_file_string = .{},
+            .server_file_string = .empty,
         });
     }
 

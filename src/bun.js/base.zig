@@ -355,7 +355,7 @@ pub const ArrayBuffer = extern struct {
 
     pub const Strong = struct {
         array_buffer: ArrayBuffer,
-        held: JSC.Strong = .{},
+        held: JSC.Strong = .empty,
 
         pub fn clear(this: *ArrayBuffer.Strong) void {
             var ref: *JSC.napi.Ref = this.ref orelse return;
@@ -1319,7 +1319,7 @@ pub const Ref = struct {
     }
 };
 
-pub const Strong = @import("./Strong.zig").Strong;
+pub const Strong = @import("./Strong.zig");
 pub const Weak = @import("./Weak.zig").Weak;
 pub const WeakRefType = @import("./Weak.zig").WeakRefType;
 

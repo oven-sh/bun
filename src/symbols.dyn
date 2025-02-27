@@ -149,6 +149,12 @@
     _node_api_create_syntax_error;
     _node_api_symbol_for;
     _node_api_throw_syntax_error;
+    _node_api_create_buffer_from_arraybuffer;
+    _node_api_get_module_file_name;
+    _node_api_post_finalizer;
+    _node_api_create_property_key_latin1;
+    _node_api_create_property_key_utf16;
+    _node_api_create_property_key_utf8;
     __ZN2v87Isolate10GetCurrentEv;
     __ZN2v87Isolate13TryGetCurrentEv;
     __ZN2v87Isolate17GetCurrentContextEv;

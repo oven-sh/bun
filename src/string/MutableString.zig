@@ -57,7 +57,7 @@ pub fn writableNBytesAssumeCapacity(self: *MutableString, amount: usize) []u8 {
 /// Returns a pointer to the end of the list - `amount` bytes.
 pub fn writableNBytes(self: *MutableString, amount: usize) Allocator.Error![]u8 {
     try self.growIfNeeded(amount);
-    return self.list.items[self.list.items.len - amount ..];
+    return self.writableNBytesAssumeCapacity(amount);
 }
 
 pub fn write(self: *MutableString, bytes: anytype) Allocator.Error!usize {

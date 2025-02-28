@@ -799,7 +799,7 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
                 pubConfig.format = format;
 
                 // Parse type for public key
-                auto pubType = parseKeyType(lexicalGlobalObject, typeValue, format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::nullStringView(), false, "options.type"_s);
+                auto pubType = parseKeyType(lexicalGlobalObject, typeValue, format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::nullStringView(), std::nullopt, "options.type"_s);
                 RETURN_IF_EXCEPTION(scope, std::nullopt);
 
                 if (pubType.has_value()) {
@@ -874,7 +874,7 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
             pubConfig.format = format;
 
             // Parse type for public key
-            auto pubType = parseKeyType(lexicalGlobalObject, typeValue, format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::nullStringView(), false, "options.type"_s);
+            auto pubType = parseKeyType(lexicalGlobalObject, typeValue, format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::nullStringView(), std::nullopt, "options.type"_s);
             RETURN_IF_EXCEPTION(scope, std::nullopt);
 
             if (pubType.has_value()) {

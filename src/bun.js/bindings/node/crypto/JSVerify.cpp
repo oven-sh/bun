@@ -2,6 +2,7 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSType.h"
+#include "SubtleCrypto.h"
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
@@ -19,6 +20,10 @@
 #include <openssl/ecdsa.h>
 #include "ncrypto.h"
 #include "JSSign.h"
+#include "JsonWebKey.h"
+#include "CryptoKeyEC.h"
+#include "CryptoKeyRSA.h"
+#include "wtf/text/Base64.h"
 
 // Forward declarations for functions defined in other files
 namespace Bun {
@@ -801,7 +806,9 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
 
         if (!key.isCell()) {
             if (formatStr == "jwk"_s) {
-                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "object"_s, key);
+                // Use our implementation of JWK key handling
+                bool isPublic = true;
+                return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
             } else {
                 Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, key);
             }
@@ -882,9 +889,9 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
                 throwCryptoError(lexicalGlobalObject, scope, privRes.openssl_error.value_or(0), "Failed to read key"_s);
                 return std::nullopt;
             } else if (formatStr == "jwk"_s) {
-                // JWK format is not implemented in this version
-                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "object for JWK format"_s, key);
-                return std::nullopt;
+                // Use our implementation of JWK key handling
+                bool isPublic = true;
+                return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
             }
         } else if (key.isString()) {
             // Handle string key
@@ -921,6 +928,370 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
     }
 
     Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
+    return std::nullopt;
+}
+
+// Implements the getKeyObjectHandleFromJwk function similar to Node.js implementation
+std::optional<ncrypto::EVPKeyPointer> getKeyObjectHandleFromJwk(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue key, bool isPublic)
+{
+    auto& vm = lexicalGlobalObject->vm();
+
+    // Validate that key is an object
+    if (!key.isObject()) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "object"_s, key);
+        return std::nullopt;
+    }
+
+    JSObject* keyObj = key.getObject();
+
+    // Get and validate key.kty
+    JSValue ktyValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "kty"_s));
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    if (!ktyValue.isString()) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.kty"_s, "string"_s, ktyValue);
+        return std::nullopt;
+    }
+
+    WTF::String kty = ktyValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    // Validate kty is one of the supported types
+    const WTF::Vector<ASCIILiteral> validKeyTypes = { "RSA"_s, "EC"_s, "OKP"_s };
+    bool isValidType = false;
+    for (const auto& validType : validKeyTypes) {
+        if (kty == validType) {
+            isValidType = true;
+            break;
+        }
+    }
+
+    if (!isValidType) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "key.kty"_s, "must be one of: "_s, ktyValue, validKeyTypes);
+        return std::nullopt;
+    }
+
+    // Handle OKP keys
+    if (kty == "OKP"_s) {
+        // Get and validate key.crv
+        JSValue crvValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "crv"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (!crvValue.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.crv"_s, "string"_s, crvValue);
+            return std::nullopt;
+        }
+
+        WTF::String crv = crvValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        // Validate crv is one of the supported curves
+        const WTF::Vector<WTF::ASCIILiteral> validCurves = { "Ed25519"_s, "Ed448"_s, "X25519"_s, "X448"_s };
+        bool validCurve = false;
+        for (const auto& validCurveType : validCurves) {
+            if (crv == validCurveType) {
+                validCurve = true;
+                break;
+            }
+        }
+
+        if (!validCurve) {
+            Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "key.crv"_s, "must be one of: "_s, crvValue, validCurves);
+            return std::nullopt;
+        }
+
+        // Get and validate key.x
+        JSValue xValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "x"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (!xValue.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.x"_s, "string"_s, xValue);
+            return std::nullopt;
+        }
+
+        WTF::String xStr = xValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        // For private keys, validate key.d
+        WTF::String dStr;
+        if (!isPublic) {
+            JSValue dValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "d"_s));
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (!dValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.d"_s, "string"_s, dValue);
+                return std::nullopt;
+            }
+
+            dStr = dValue.toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+        }
+
+        // Convert base64 strings to binary data
+        Vector<uint8_t> keyData;
+        if (isPublic) {
+            auto xData = WTF::base64Decode(xStr);
+            // auto xData = WTF::base64Decode(xStr);
+            if (!xData) {
+                Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+                return std::nullopt;
+            }
+            keyData = WTFMove(*xData);
+        } else {
+            auto dData = WTF::base64Decode(dStr);
+            if (!dData) {
+                Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+                return std::nullopt;
+            }
+            keyData = WTFMove(*dData);
+        }
+
+        // Validate key length based on curve
+        if ((crv == "Ed25519"_s || crv == "X25519"_s) && keyData.size() != 32) {
+            Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+            return std::nullopt;
+        } else if (crv == "Ed448"_s && keyData.size() != 57) {
+            Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+            return std::nullopt;
+        } else if (crv == "X448"_s && keyData.size() != 56) {
+            Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+            return std::nullopt;
+        }
+
+        // Create the key
+        int nid = 0;
+        if (crv == "Ed25519"_s) {
+            nid = EVP_PKEY_ED25519;
+        } else if (crv == "Ed448"_s) {
+            nid = EVP_PKEY_ED448;
+        } else if (crv == "X25519"_s) {
+            nid = EVP_PKEY_X25519;
+        } else if (crv == "X448"_s) {
+            nid = EVP_PKEY_X448;
+        }
+
+        ncrypto::Buffer<const unsigned char> buffer {
+            .data = keyData.data(),
+            .len = keyData.size(),
+        };
+
+        if (isPublic) {
+            return ncrypto::EVPKeyPointer::NewRawPublic(nid, buffer);
+        } else {
+            return ncrypto::EVPKeyPointer::NewRawPrivate(nid, buffer);
+        }
+    }
+    // Handle EC keys
+    else if (kty == "EC"_s) {
+        // Get and validate key.crv
+        JSValue crvValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "crv"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (!crvValue.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.crv"_s, "string"_s, crvValue);
+            return std::nullopt;
+        }
+
+        WTF::String crv = crvValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        // Validate crv is one of the supported curves
+        const WTF::Vector<WTF::ASCIILiteral> validCurves = { "P-256"_s, "secp256k1"_s, "P-384"_s, "P-521"_s };
+        bool validCurve = false;
+        for (const auto& validCurveType : validCurves) {
+            if (crv == validCurveType) {
+                validCurve = true;
+                break;
+            }
+        }
+
+        if (!validCurve) {
+            Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "key.crv"_s, "must be one of:"_s, crvValue, validCurves);
+            return std::nullopt;
+        }
+
+        // Get and validate key.x and key.y
+        JSValue xValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "x"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (!xValue.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.x"_s, "string"_s, xValue);
+            return std::nullopt;
+        }
+
+        JSValue yValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "y"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (!yValue.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.y"_s, "string"_s, yValue);
+            return std::nullopt;
+        }
+
+        // For private keys, validate key.d
+        if (!isPublic) {
+            JSValue dValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "d"_s));
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (!dValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.d"_s, "string"_s, dValue);
+                return std::nullopt;
+            }
+        }
+
+        // Convert to WebCrypto JsonWebKey and use existing implementation
+        auto jwk = WebCore::JsonWebKey();
+        jwk.kty = kty;
+        jwk.crv = crv;
+        jwk.x = xValue.toWTFString(lexicalGlobalObject);
+        jwk.y = yValue.toWTFString(lexicalGlobalObject);
+
+        if (!isPublic) {
+            jwk.d = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "d"_s)).toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+        }
+
+        // Use the WebCrypto implementation to import the key
+        RefPtr<WebCore::CryptoKeyEC> result;
+        if (isPublic) {
+            result = WebCore::CryptoKeyEC::importJwk(WebCore::CryptoAlgorithmIdentifier::ECDSA, crv, WTFMove(jwk), true, WebCore::CryptoKeyUsageVerify);
+        } else {
+            result = WebCore::CryptoKeyEC::importJwk(WebCore::CryptoAlgorithmIdentifier::ECDSA, crv, WTFMove(jwk), true, WebCore::CryptoKeyUsageSign);
+        }
+
+        if (!result) {
+            Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+            return std::nullopt;
+        }
+
+        // Convert CryptoKeyEC to EVPKeyPointer
+        AsymmetricKeyValue keyValue(*result);
+        if (!keyValue.key) {
+            Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+            return std::nullopt;
+        }
+
+        EVP_PKEY_up_ref(keyValue.key);
+        return ncrypto::EVPKeyPointer(keyValue.key);
+    }
+    // Handle RSA keys
+    else if (kty == "RSA"_s) {
+        // Get and validate key.n and key.e
+        JSValue nValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "n"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (!nValue.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.n"_s, "string"_s, nValue);
+            return std::nullopt;
+        }
+
+        JSValue eValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "e"_s));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (!eValue.isString()) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.e"_s, "string"_s, eValue);
+            return std::nullopt;
+        }
+
+        // For private keys, validate additional parameters
+        if (!isPublic) {
+            JSValue dValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "d"_s));
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (!dValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.d"_s, "string"_s, dValue);
+                return std::nullopt;
+            }
+
+            JSValue pValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "p"_s));
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (!pValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.p"_s, "string"_s, pValue);
+                return std::nullopt;
+            }
+
+            JSValue qValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "q"_s));
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (!qValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.q"_s, "string"_s, qValue);
+                return std::nullopt;
+            }
+
+            JSValue dpValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "dp"_s));
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (!dpValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.dp"_s, "string"_s, dpValue);
+                return std::nullopt;
+            }
+
+            JSValue dqValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "dq"_s));
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (!dqValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.dq"_s, "string"_s, dqValue);
+                return std::nullopt;
+            }
+
+            JSValue qiValue = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "qi"_s));
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (!qiValue.isString()) {
+                Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.qi"_s, "string"_s, qiValue);
+                return std::nullopt;
+            }
+        }
+
+        // Convert to WebCrypto JsonWebKey and use existing implementation
+        auto jwk = WebCore::JsonWebKey();
+        jwk.kty = kty;
+        jwk.n = nValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        jwk.e = eValue.toWTFString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+        if (!isPublic) {
+            jwk.d = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "d"_s)).toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            jwk.p = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "p"_s)).toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            jwk.q = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "q"_s)).toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            jwk.dp = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "dp"_s)).toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            jwk.dq = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "dq"_s)).toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+            jwk.qi = keyObj->get(lexicalGlobalObject, Identifier::fromString(vm, "qi"_s)).toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+        }
+
+        // Use the WebCrypto implementation to import the key
+        RefPtr<WebCore::CryptoKeyRSA> result;
+        if (isPublic) {
+            result = WebCore::CryptoKeyRSA::importJwk(WebCore::CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5, std::nullopt, WTFMove(jwk), true, WebCore::CryptoKeyUsageVerify);
+        } else {
+            result = WebCore::CryptoKeyRSA::importJwk(WebCore::CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5, std::nullopt, WTFMove(jwk), true, WebCore::CryptoKeyUsageSign);
+        }
+
+        if (!result) {
+            Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+            return std::nullopt;
+        }
+
+        // Convert CryptoKeyRSA to EVPKeyPointer
+        AsymmetricKeyValue keyValue(*result);
+        if (!keyValue.key) {
+            Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
+            return std::nullopt;
+        }
+
+        EVP_PKEY_up_ref(keyValue.key);
+        return ncrypto::EVPKeyPointer(keyValue.key);
+    }
+
+    // Should never reach here due to earlier validation
+    Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
     return std::nullopt;
 }
 

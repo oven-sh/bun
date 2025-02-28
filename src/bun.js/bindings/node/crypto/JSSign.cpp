@@ -15,6 +15,7 @@
 #include "JSBuffer.h"
 #include "util.h"
 #include "BunString.h"
+#include "JSVerify.h"
 
 namespace Bun {
 
@@ -436,41 +437,6 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     return JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuffer), 0, sigBuf.len);
 }
 
-std::optional<ncrypto::EVPKeyPointer> preparePrivateJWK(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue key, JSC::JSType keyCellType)
-{
-    auto& vm = lexicalGlobalObject->vm();
-
-    if (keyCellType != JSC::JSType::ObjectType && keyCellType != JSC::JSType::FinalObjectType) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "object"_s, key);
-        return std::nullopt;
-    }
-
-    JSValue kty = key.get(lexicalGlobalObject, Identifier::fromString(vm, "kty"_s));
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    const WTF::Vector<ASCIILiteral> keyTypes = { "EC"_s, "RSA"_s, "OCT"_s };
-
-    if (!kty.isString()) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "key.kty"_s, "must be one of: "_s, kty, keyTypes);
-        return std::nullopt;
-    }
-    JSC::JSString* ktyString = kty.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    WTF::StringView ktyView = ktyString->view(lexicalGlobalObject);
-
-    bool found = false;
-    for (ASCIILiteral keyType : keyTypes) {
-        if (ktyView == keyType) {
-            found = true;
-        }
-    }
-    (void)found;
-
-    Bun::V::validateOneOf(scope, lexicalGlobalObject, "key.kty"_s, kty, keyTypes);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-    return std::nullopt;
-}
-
 std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -633,7 +599,8 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
                 ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
                 return keyPtr;
             } else if (formatStr == "jwk"_s) {
-                return preparePrivateJWK(lexicalGlobalObject, scope, key, keyCellType);
+                bool isPublic = false;
+                return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
             }
         } else if (key.isString()) {
             WTF::String keyStr = key.toWTFString(lexicalGlobalObject);
@@ -641,7 +608,8 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
 
             return keyFromString(lexicalGlobalObject, scope, keyStr, passphrase);
         } else if (formatStr == "jwk"_s) {
-            return preparePrivateJWK(lexicalGlobalObject, scope, key, keyCellType);
+            bool isPublic = false;
+            return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
         }
 
         Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, key);

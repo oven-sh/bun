@@ -98,7 +98,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_from);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
 

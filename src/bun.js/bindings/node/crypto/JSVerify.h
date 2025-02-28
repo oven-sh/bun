@@ -13,6 +13,9 @@ class JSVerify;
 class JSVerifyPrototype;
 class JSVerifyConstructor;
 
+// Function to handle JWK format keys
+std::optional<ncrypto::EVPKeyPointer> getKeyObjectHandleFromJwk(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue key, bool isPublic);
+
 class JSVerify final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;

@@ -270,7 +270,6 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-    
     loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
 #else
     do {

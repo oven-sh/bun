@@ -1508,7 +1508,10 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
-  assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev, not " + caller);
+  assert(
+    caller.startsWith(devTestRoot) || caller.includes("dev-and-prod"),
+    "dev server tests must be in test/bake/dev, not " + caller,
+  );
 
   return testImpl(description, options, "development", caller);
 }
@@ -1516,7 +1519,10 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 export function prodTest<T extends DevServerTest>(description: string, options: T): T {
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
-  assert(caller.startsWith(prodTestRoot), "dev server tests must be in test/bake/prod, not " + caller);
+  assert(
+    caller.startsWith(prodTestRoot) || caller.includes("dev-and-prod"),
+    "prod server tests must be in test/bake/prod, not " + caller,
+  );
 
   return testImpl(description, options, "production", caller);
 }

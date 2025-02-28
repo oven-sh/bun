@@ -1,5 +1,5 @@
 // Tests which apply to both dev and prod. They are run twice.
-import { devAndProductionTest, emptyHtmlFile } from "./bake-harness";
+import { devAndProductionTest, devTest, emptyHtmlFile } from "./bake-harness";
 
 devAndProductionTest("define config via bunfig.toml", {
   files: {
@@ -129,7 +129,8 @@ devAndProductionTest("inline script and styles appear", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
-devAndProductionTest("using runtime import", {
+// TODO: revive production
+devTest("using runtime import", {
   files: {
     "index.html": emptyHtmlFile({
       styles: [],

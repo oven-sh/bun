@@ -257,6 +257,38 @@ pub const Mapping = struct {
 
     pub const List = bun.MultiArrayList(Mapping);
 
+    pub fn writeVLQs(mappings: List, writer: anytype) !void {
+        var last_col: i32 = 0;
+        var last_src: i32 = 0;
+        var last_ol: i32 = 0;
+        var last_oc: i32 = 0;
+        var current_line: i32 = 0;
+        for (
+            mappings.items(.generated),
+            mappings.items(.original),
+            mappings.items(.source_index),
+            0..,
+        ) |gen, orig, source_index, i| {
+            if (current_line != gen.lines) {
+                assert(gen.lines > current_line);
+                const inc = gen.lines - current_line;
+                try writer.writeByteNTimes(';', @intCast(inc));
+                current_line = gen.lines;
+                last_col = 0;
+            } else if (i != 0) {
+                try writer.writeByte(',');
+            }
+            try vlq.encode(gen.columns - last_col).writeTo(writer);
+            last_col = gen.columns;
+            try vlq.encode(source_index - last_src).writeTo(writer);
+            last_src = source_index;
+            try vlq.encode(orig.lines - last_ol).writeTo(writer);
+            last_ol = orig.lines;
+            try vlq.encode(orig.columns - last_oc).writeTo(writer);
+            last_oc = orig.columns;
+        }
+    }
+
     pub const Lookup = struct {
         mapping: Mapping,
         source_map: ?*ParsedSourceMap = null,
@@ -653,7 +685,7 @@ pub const ParsedSourceMap = struct {
     is_standalone_module_graph: bool = false,
 
     /// If available, an optimized compact encoding using SIMD acceleration and delta encoding
-    compact_mapping: ?@import("compact.zig").CompactSourceMap = null,
+    compact_mapping: ?CompactSourceMap = null,
 
     pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn, null);
 
@@ -702,36 +734,23 @@ pub const ParsedSourceMap = struct {
         return @ptrFromInt(this.underlying_provider.data);
     }
 
-    pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
-        var last_col: i32 = 0;
-        var last_src: i32 = 0;
-        var last_ol: i32 = 0;
-        var last_oc: i32 = 0;
-        var current_line: i32 = 0;
-        for (
-            map.mappings.items(.generated),
-            map.mappings.items(.original),
-            map.mappings.items(.source_index),
-            0..,
-        ) |gen, orig, source_index, i| {
-            if (current_line != gen.lines) {
-                assert(gen.lines > current_line);
-                const inc = gen.lines - current_line;
-                try writer.writeByteNTimes(';', @intCast(inc));
-                current_line = gen.lines;
-                last_col = 0;
-            } else if (i != 0) {
-                try writer.writeByte(',');
+    pub fn find(map: *ParsedSourceMap, line: i32, column: i32) ?Mapping {
+        if (map.compact_mapping) |*compact_map| {
+            var stack_fallback = std.heap.stackFallback(1024, bun.default_allocator);
+            var arena = bun.ArenaAllocator.init(stack_fallback.get());
+            defer arena.deinit();
+            const allocator = arena.allocator();
+
+            if (compact_map.find(allocator, line, column) catch null) |mapping| {
+                return mapping;
             }
-            try vlq.encode(gen.columns - last_col).writeTo(writer);
-            last_col = gen.columns;
-            try vlq.encode(source_index - last_src).writeTo(writer);
-            last_src = source_index;
-            try vlq.encode(orig.lines - last_ol).writeTo(writer);
-            last_ol = orig.lines;
-            try vlq.encode(orig.columns - last_oc).writeTo(writer);
-            last_oc = orig.columns;
         }
+
+        return Mapping.find(map.mappings, line, column);
+    }
+
+    pub fn writeVLQs(map: *const ParsedSourceMap, writer: anytype) !void {
+        return Mapping.writeVLQs(map.mappings, writer);
     }
 
     pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Formatter(formatVLQsImpl) {
@@ -997,9 +1016,9 @@ pub fn find(
     // Use compact mapping if available (most efficient and memory-friendly)
     if (this.compact_mapping) |*compact_map| {
         // Use SIMD-optimized find when available
-        return compact_map.findSIMD(this.allocator, line, column) catch
-        // Fall back to standard VLQ search if compact search fails
-            return Mapping.find(this.mapping, line, column);
+        if (compact_map.find(this.allocator, line, column) catch null) |mapping| {
+            return mapping;
+        }
     }
 
     // Standard VLQ-based search if compact mapping not available
@@ -1015,7 +1034,7 @@ pub fn ensureCompactMapping(this: *SourceMap) !void {
     if (this.mapping.len == 0) return;
 
     // Convert the standard mapping to compact format
-    const CompactSourceMap = @import("compact.zig");
+
     var compact = try CompactSourceMap.create(this.allocator);
 
     // Add all mappings from the standard format
@@ -1283,7 +1302,7 @@ pub const Chunk = struct {
     should_ignore: bool = true,
 
     /// When using CompactBuilder, this field will contain the actual CompactSourceMap structure
-    compact_data: ?@import("compact.zig").CompactSourceMap = null,
+    compact_data: ?CompactSourceMap = null,
 
     pub const empty: Chunk = .{
         .buffer = MutableString.initEmpty(bun.default_allocator),
@@ -1506,9 +1525,6 @@ pub const Chunk = struct {
             prev_loc: Logger.Loc = Logger.Loc.Empty,
             has_prev_state: bool = false,
 
-            /// The context for the SourceMapFormat implementation
-            ctx: SourceMapper = undefined,
-
             line_offset_table_byte_offset_list: []const u32 = &.{},
 
             // This is a workaround for a bug in the popular "source-map" library:
@@ -1533,15 +1549,12 @@ pub const Chunk = struct {
                 b.updateGeneratedLineAndColumn(output);
 
                 // Handle compact format specially
-                const CompactSourceMapFormat = @import("compact.zig").CompactSourceMapFormat;
-                var compact_data: ?@import("compact.zig").CompactSourceMap = null;
+                var compact_data: ?CompactSourceMap = null;
 
-                if (SourceMapFormatType == CompactSourceMapFormat) {
+                if (SourceMapFormatType == CompactSourceMap.Format) {
                     // Just get the compact sourcemap directly - no VLQ generation
                     compact_data = b.source_map.ctx.getCompactSourceMap() catch bun.outOfMemory();
-                }
-
-                if (b.prepend_count) {
+                } else if (b.prepend_count) {
                     // Only applies to the standard VLQ format
                     var buffer = b.source_map.getBuffer();
                     if (buffer.list.items.len >= 24) {
@@ -1710,7 +1723,7 @@ pub const Chunk = struct {
     pub const Builder = NewBuilder(VLQSourceMap);
 
     /// Builder for compact sourcemap format
-    pub const CompactBuilder = NewBuilder(@import("compact.zig").Format);
+    pub const CompactBuilder = NewBuilder(CompactSourceMap.Format);
 };
 
 /// https://sentry.engineering/blog/the-case-for-debug-ids
@@ -1793,7 +1806,6 @@ pub fn fromChunk(
 
             // Convert to compact format if requested
             if (use_compact) {
-                const CompactSourceMap = @import("compact.zig");
                 var compact = try CompactSourceMap.create(allocator);
 
                 // Add all mappings from the standard format
@@ -1818,3 +1830,5 @@ pub fn fromChunk(
 
     return source_map;
 }
+
+pub const CompactSourceMap = @import("compact.zig");

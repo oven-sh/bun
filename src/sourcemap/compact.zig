@@ -11,10 +11,8 @@ const LineColumnOffset = SourceMap.LineColumnOffset;
 
 /// Import and re-export the compact sourcemap implementation
 pub const double_delta_encoding = @import("compact/delta_encoding.zig");
-pub const simd_helpers = @import("compact/simd_helpers.zig");
 
 pub const DoubleDeltaEncoder = double_delta_encoding.DoubleDeltaEncoder;
-pub const SIMDHelpers = simd_helpers.SIMDHelpers;
 pub const CompactSourceMap = @This();
 
 /// Magic bytes to identify a compact sourcemap
@@ -186,7 +184,7 @@ pub const Format = struct {
         // Update input line count from our tracking
         this.map.input_line_count = this.approximate_input_line_count;
 
-        return this.map.*;
+        return this.map;
     }
 
     /// Get base64-encoded mappings for inline sourcemaps
@@ -390,14 +388,6 @@ fn finalizeCurrentBlock(self: *CompactSourceMap) !void {
 
     // Reset the current block buffer
     self.current_block_buffer.clearRetainingCapacity();
-}
-
-/// Const version of finalizeCurrentBlock that can work with const CompactSourceMap
-/// This doesn't actually modify the structure, just ensures no pending work is lost
-fn finalizeCurrentBlockConst(self: *const CompactSourceMap) !void {
-    // If we're a const reference, we don't actually finalize anything
-    // This is just for compatibility with code that calls this method on a const ref
-    return;
 }
 
 /// Get the total memory usage of this compact sourcemap
@@ -794,84 +784,143 @@ fn decodeBlock(
         // Check if we can use SIMD batch decoding for a group of mappings
         if (i + 4 <= block.count) {
             // We have at least 4 more mappings to decode, use batch processing
-            var dod_values: [20]i32 = undefined; // Space for 4 mappings × 5 values each
+            var dod_values: [4][5]i32 = undefined;
+            const dod_values_slice: []i32 = std.mem.bytesAsSlice(i32, std.mem.sliceAsBytes(&dod_values));
 
             // Use SIMD-accelerated batch decoding to read double-delta values
-            const bytes_read = DoubleDeltaEncoder.decodeBatch(block.data[offset..], &dod_values);
+            const bytes_read = DoubleDeltaEncoder.decodeBatch(block.data[offset..], dod_values_slice);
             offset += bytes_read;
 
             // Process the successfully decoded mappings - each mapping has 5 values
             const mappings_decoded = @min(4, bytes_read / 5);
 
             // Convert double-delta values to delta values using SIMD helpers
-            var delta_values: [20]i32 = undefined;
+            var delta_values: [4][5]i32 = undefined;
 
             // Process delta-of-delta values for generated line
-            // No need to copy the data, since the function expects a const slice
-            const dod_slice = dod_values[0 .. mappings_decoded * 5];
+            // Extract the data from each row of the first column (gen_line)
+            var gen_line_dod = [_]i32{
+                dod_values[0][0],
+                dod_values[1][0],
+                dod_values[2][0],
+                dod_values[3][0],
+            };
 
             // Base values don't need to be mutable if they're not modified
             var base_values_array = [_]i32{ current_deltas.gen_line_delta, current_deltas.gen_line_delta, current_deltas.gen_line_delta, current_deltas.gen_line_delta };
             const base_slice = base_values_array[0..mappings_decoded];
 
-            // Results slice needs to be mutable since it's written to, but it's a slice of a mutable array so it's OK
-            const results_slice = delta_values[0 .. mappings_decoded * 5];
+            // Create a mutable result array
+            var gen_line_results: [4]i32 = undefined;
+            const gen_line_results_slice = gen_line_results[0..mappings_decoded];
 
-            SIMDHelpers.DeltaOfDeltaProcessor.process(dod_slice, base_slice, results_slice);
+            // Process the values
+            DoubleDeltaEncoder.process(gen_line_dod[0..mappings_decoded], base_slice, gen_line_results_slice);
 
-            // Process delta-of-delta values for generated column
-            const gen_col_dod_slice = dod_values[1 .. mappings_decoded * 5]; // Use the const slice directly
+            // Copy back to the delta_values 2D array
+            for (0..mappings_decoded) |idx| {
+                delta_values[idx][0] = gen_line_results[idx];
+            }
+
+            // Extract data for generated column (column 1)
+            var gen_col_dod = [_]i32{
+                dod_values[0][1],
+                dod_values[1][1],
+                dod_values[2][1],
+                dod_values[3][1],
+            };
 
             // Base values can be const
             var gen_col_base_array = [_]i32{ current_deltas.gen_col_delta, current_deltas.gen_col_delta, current_deltas.gen_col_delta, current_deltas.gen_col_delta };
             const gen_col_base_slice = gen_col_base_array[0..mappings_decoded];
 
-            // Results can be const since they're a slice of a mutable array
-            const gen_col_results_slice = delta_values[1 .. mappings_decoded * 5];
+            // Create result array
+            var gen_col_results: [4]i32 = undefined;
+            const gen_col_results_slice = gen_col_results[0..mappings_decoded];
 
-            SIMDHelpers.DeltaOfDeltaProcessor.process(gen_col_dod_slice, gen_col_base_slice, gen_col_results_slice);
+            DoubleDeltaEncoder.process(gen_col_dod[0..mappings_decoded], gen_col_base_slice, gen_col_results_slice);
 
-            // Process delta-of-delta values for source index
-            const src_idx_dod_slice = dod_values[2 .. mappings_decoded * 5]; // Use the const slice directly
+            // Copy back to the delta_values 2D array
+            for (0..mappings_decoded) |idx| {
+                delta_values[idx][1] = gen_col_results[idx];
+            }
+
+            // Process delta-of-delta values for source index (column 2)
+            var src_idx_dod = [_]i32{
+                dod_values[0][2],
+                dod_values[1][2],
+                dod_values[2][2],
+                dod_values[3][2],
+            };
 
             // Base values can be const
             var src_idx_base_array = [_]i32{ current_deltas.src_idx_delta, current_deltas.src_idx_delta, current_deltas.src_idx_delta, current_deltas.src_idx_delta };
             const src_idx_base_slice = src_idx_base_array[0..mappings_decoded];
 
-            // Results can be const since they're a slice of a mutable array
-            const src_idx_results_slice = delta_values[2 .. mappings_decoded * 5];
+            // Create result array
+            var src_idx_results: [4]i32 = undefined;
+            const src_idx_results_slice = src_idx_results[0..mappings_decoded];
 
-            SIMDHelpers.DeltaOfDeltaProcessor.process(src_idx_dod_slice, src_idx_base_slice, src_idx_results_slice);
+            DoubleDeltaEncoder.process(src_idx_dod[0..mappings_decoded], src_idx_base_slice, src_idx_results_slice);
 
-            // Process delta-of-delta values for original line
-            const orig_line_dod_slice = dod_values[3 .. mappings_decoded * 5]; // Use the const slice directly
+            // Copy back to the delta_values 2D array
+            for (0..mappings_decoded) |idx| {
+                delta_values[idx][2] = src_idx_results[idx];
+            }
 
+            // Process delta-of-delta values for original line (column 3)
+            var orig_line_dod = [_]i32{
+                dod_values[0][3],
+                dod_values[1][3],
+                dod_values[2][3],
+                dod_values[3][3],
+            };
+
+            // Base values can be const
             var orig_line_base_array = [_]i32{ current_deltas.orig_line_delta, current_deltas.orig_line_delta, current_deltas.orig_line_delta, current_deltas.orig_line_delta };
             const orig_line_base_slice = orig_line_base_array[0..mappings_decoded];
 
-            // Results can be const since they're a slice of a mutable array
-            const orig_line_results_slice = delta_values[3 .. mappings_decoded * 5];
+            // Create result array
+            var orig_line_results: [4]i32 = undefined;
+            const orig_line_results_slice = orig_line_results[0..mappings_decoded];
 
-            SIMDHelpers.DeltaOfDeltaProcessor.process(orig_line_dod_slice, orig_line_base_slice, orig_line_results_slice);
+            DoubleDeltaEncoder.process(orig_line_dod[0..mappings_decoded], orig_line_base_slice, orig_line_results_slice);
 
-            // Process delta-of-delta values for original column
-            const orig_col_dod_slice = dod_values[4 .. mappings_decoded * 5]; // Use the const slice directly
+            // Copy back to the delta_values 2D array
+            for (0..mappings_decoded) |idx| {
+                delta_values[idx][3] = orig_line_results[idx];
+            }
 
+            // Process delta-of-delta values for original column (column 4)
+            var orig_col_dod = [_]i32{
+                dod_values[0][4],
+                dod_values[1][4],
+                dod_values[2][4],
+                dod_values[3][4],
+            };
+
+            // Base values can be const
             var orig_col_base_array = [_]i32{ current_deltas.orig_col_delta, current_deltas.orig_col_delta, current_deltas.orig_col_delta, current_deltas.orig_col_delta };
             const orig_col_base_slice = orig_col_base_array[0..mappings_decoded];
 
-            // Results can be const since they're a slice of a mutable array
-            const orig_col_results_slice = delta_values[4 .. mappings_decoded * 5];
+            // Create result array
+            var orig_col_results: [4]i32 = undefined;
+            const orig_col_results_slice = orig_col_results[0..mappings_decoded];
 
-            SIMDHelpers.DeltaOfDeltaProcessor.process(orig_col_dod_slice, orig_col_base_slice, orig_col_results_slice);
+            DoubleDeltaEncoder.process(orig_col_dod[0..mappings_decoded], orig_col_base_slice, orig_col_results_slice);
+
+            // Copy back to the delta_values 2D array
+            for (0..mappings_decoded) |idx| {
+                delta_values[idx][4] = orig_col_results[idx];
+            }
 
             // Now apply deltas to get absolute values and append mappings
             for (0..mappings_decoded) |j| {
-                const gen_line_delta = delta_values[j * 5 + 0];
-                const gen_col_delta = delta_values[j * 5 + 1];
-                const src_idx_delta = delta_values[j * 5 + 2];
-                const orig_line_delta = delta_values[j * 5 + 3];
-                const orig_col_delta = delta_values[j * 5 + 4];
+                const gen_line_delta = delta_values[j][0];
+                const gen_col_delta = delta_values[j][1];
+                const src_idx_delta = delta_values[j][2];
+                const orig_line_delta = delta_values[j][3];
+                const orig_col_delta = delta_values[j][4];
 
                 // Update current values with the deltas
                 current_values.generated_line += gen_line_delta;
@@ -976,7 +1025,7 @@ fn decodeBlock(
 }
 
 /// Find a mapping at a specific line/column position using SIMD acceleration
-pub fn findSIMD(self: CompactSourceMap, allocator: std.mem.Allocator, line: i32, column: i32) !?Mapping {
+pub fn find(self: CompactSourceMap, allocator: std.mem.Allocator, line: i32, column: i32) !?Mapping {
     // Quick reject if empty map
     if (self.blocks.items.len == 0 and self.current_block_count == 0) {
         return null;
@@ -1015,7 +1064,7 @@ pub fn findSIMD(self: CompactSourceMap, allocator: std.mem.Allocator, line: i32,
         }
 
         // Use SIMD search to find the right block
-        if (SIMDHelpers.SIMDSearch.find(block_lines, block_columns, line, column)) |idx| {
+        if (findImpl(block_lines, block_columns, line, column)) |idx| {
             best_block_idx = idx;
             found_block = true;
         }
@@ -1058,24 +1107,13 @@ pub fn findSIMD(self: CompactSourceMap, allocator: std.mem.Allocator, line: i32,
         defer partial_mappings.deinit(allocator);
 
         try partial_mappings.ensureTotalCapacity(allocator, temp_block.count);
+        partial_mappings.len = temp_block.count;
         try self.decodeBlock(allocator, &partial_mappings, temp_block);
 
-        // Use SIMD search within the block mappings
-        var mapping_lines = try allocator.alloc(i32, partial_mappings.len);
-        defer allocator.free(mapping_lines);
-
-        var mapping_columns = try allocator.alloc(i32, partial_mappings.len);
-        defer allocator.free(mapping_columns);
-
-        // Fill the arrays with mapping positions
-        for (0..partial_mappings.len) |i| {
-            mapping_lines[i] = partial_mappings.items(.generated)[i].lines;
-            mapping_columns[i] = partial_mappings.items(.generated)[i].columns;
-        }
-
-        // Use SIMD to find the right mapping in the block
-        if (SIMDHelpers.SIMDSearch.find(mapping_lines, mapping_columns, line, column)) |idx| {
-            return partial_mappings.get(idx);
+        if (partial_mappings.len > 0) {
+            if (Mapping.find(partial_mappings, line, column)) |mapping| {
+                return mapping;
+            }
         }
     } else if (found_block) {
         const block = self.blocks.items[best_block_idx];
@@ -1102,75 +1140,10 @@ pub fn findSIMD(self: CompactSourceMap, allocator: std.mem.Allocator, line: i32,
         try partial_mappings.ensureTotalCapacity(allocator, block.count);
         try self.decodeBlock(allocator, &partial_mappings, block);
 
-        // Use SIMD search within the block mappings
-        var mapping_lines = try allocator.alloc(i32, partial_mappings.len);
-        defer allocator.free(mapping_lines);
-
-        var mapping_columns = try allocator.alloc(i32, partial_mappings.len);
-        defer allocator.free(mapping_columns);
-
-        // Fill the arrays with mapping positions
-        for (0..partial_mappings.len) |i| {
-            mapping_lines[i] = partial_mappings.items(.generated)[i].lines;
-            mapping_columns[i] = partial_mappings.items(.generated)[i].columns;
-        }
-
-        // Use SIMD to find the right mapping in the block
-        if (SIMDHelpers.SIMDSearch.find(mapping_lines, mapping_columns, line, column)) |idx| {
-            return partial_mappings.get(idx);
-        }
+        return Mapping.find(partial_mappings, line, column);
     }
 
     return null;
-}
-
-/// Standard find implementation as fallback
-pub fn find(self: CompactSourceMap, allocator: std.mem.Allocator, line: i32, column: i32) !?Mapping {
-    // Use the SIMD-accelerated version
-    return try self.findSIMD(allocator, line, column);
-}
-
-/// Write VLQ-compatible output for compatibility with standard sourcemap consumers
-pub fn writeVLQs(self: CompactSourceMap, writer: anytype) !void {
-    // Finalize the current block to ensure all mappings are included
-    try self.finalizeCurrentBlock();
-
-    // Now decode all blocks
-    const mappings = try self.decode(bun.default_allocator);
-    defer mappings.deinit(bun.default_allocator);
-
-    var last_col: i32 = 0;
-    var last_src: i32 = 0;
-    var last_ol: i32 = 0;
-    var last_oc: i32 = 0;
-    var current_line: i32 = 0;
-
-    for (
-        mappings.items(.generated),
-        mappings.items(.original),
-        mappings.items(.source_index),
-        0..,
-    ) |gen, orig, source_index, i| {
-        if (current_line != gen.lines) {
-            assert(gen.lines > current_line);
-            const inc = gen.lines - current_line;
-            try writer.writeByteNTimes(';', @intCast(inc));
-            current_line = gen.lines;
-            last_col = 0;
-        } else if (i != 0) {
-            try writer.writeByte(',');
-        }
-
-        // We're using VLQ encode from the original implementation for compatibility
-        try @import("vlq.zig").encode(gen.columns - last_col).writeTo(writer);
-        last_col = gen.columns;
-        try @import("vlq.zig").encode(source_index - last_src).writeTo(writer);
-        last_src = source_index;
-        try @import("vlq.zig").encode(orig.lines - last_ol).writeTo(writer);
-        last_ol = orig.lines;
-        try @import("vlq.zig").encode(orig.columns - last_oc).writeTo(writer);
-        last_oc = orig.columns;
-    }
 }
 
 /// Serialization header for the compact sourcemap format
@@ -1184,46 +1157,14 @@ pub const Header = struct {
 };
 
 /// Write VLQ-compatible mappings to a MutableString for compatibility with standard sourcemap consumers
-pub fn writeVLQs(self: *const CompactSourceMap, output_buffer: *bun.MutableString) !void {
+pub fn writeVLQs(self: *CompactSourceMap, output_buffer: *bun.MutableString) !void {
     // Finalize the current block to ensure all mappings are included
-    try self.finalizeCurrentBlockConst();
+    try self.finalizeCurrentBlock();
 
     // Now decode all blocks
     const mappings = try self.decode(bun.default_allocator);
     defer mappings.deinit(bun.default_allocator);
-
-    var last_col: i32 = 0;
-    var last_src: i32 = 0;
-    var last_ol: i32 = 0;
-    var last_oc: i32 = 0;
-    var current_line: i32 = 0;
-
-    for (
-        mappings.items(.generated),
-        mappings.items(.original),
-        mappings.items(.source_index),
-        0..,
-    ) |gen, orig, source_index, i| {
-        if (current_line != gen.lines) {
-            assert(gen.lines > current_line);
-            const inc = gen.lines - current_line;
-            try output_buffer.appendNTimes(';', @intCast(inc));
-            current_line = gen.lines;
-            last_col = 0;
-        } else if (i != 0) {
-            try output_buffer.appendChar(',');
-        }
-
-        // We're using VLQ encode from the original implementation for compatibility
-        try @import("vlq.zig").encode(gen.columns - last_col).appendTo(output_buffer);
-        last_col = gen.columns;
-        try @import("vlq.zig").encode(source_index - last_src).appendTo(output_buffer);
-        last_src = source_index;
-        try @import("vlq.zig").encode(orig.lines - last_ol).appendTo(output_buffer);
-        last_ol = orig.lines;
-        try @import("vlq.zig").encode(orig.columns - last_oc).appendTo(output_buffer);
-        last_oc = orig.columns;
-    }
+    try SourceMap.Mapping.writeVLQs(mappings, output_buffer);
 }
 
 /// Serialize a compact sourcemap to binary format (for storage or transmission)
@@ -1244,7 +1185,7 @@ pub fn serialize(self: CompactSourceMap, allocator: std.mem.Allocator) ![]u8 {
     total_size += self.blocks.len * @sizeOf(u16); // For count
 
     // Add size for all encoded data
-    for (self.blocks) |block| {
+    for (self.blocks.items) |*block| {
         total_size += block.data.len;
     }
 
@@ -1258,7 +1199,7 @@ pub fn serialize(self: CompactSourceMap, allocator: std.mem.Allocator) ![]u8 {
     // Write blocks
     var offset = @sizeOf(Header);
 
-    for (self.blocks) |block| {
+    for (self.blocks.items) |*block| {
         // Write base values
         @memcpy(buffer[offset..][0..@sizeOf(Block.BaseValues)], std.mem.asBytes(&block.base));
         offset += @sizeOf(Block.BaseValues);
@@ -1363,9 +1304,6 @@ pub fn deserialize(allocator: std.mem.Allocator, data: []const u8) !CompactSourc
         .sources_count = header.sources_count,
     };
 }
-
-/// Format marker type for the CompactSourceMap
-pub const CompactSourceMapFormat = enum { Compact };
 
 /// Inline serialization for direct embedding in sourcemaps
 pub fn getInlineBase64(self: CompactSourceMap, allocator: std.mem.Allocator) ![]const u8 {
@@ -1486,4 +1424,27 @@ pub fn convertSourceMapToCompact(
 
     // Update the internal representation
     sourcemap.compact_mapping = compact;
+}
+
+fn findImpl(lines: []const i32, columns: []const i32, target_line: i32, target_column: i32) ?usize {
+    var index: usize = 0;
+    var count = lines.len;
+
+    while (count > 0) {
+        const step = count / 2;
+        const i = index + step;
+
+        if (lines[i] < target_line or (lines[i] == target_line and columns[i] <= target_column)) {
+            index = i + 1;
+            count -= step + 1;
+        } else {
+            count = step;
+        }
+    }
+
+    if (index > 0) {
+        return index - 1;
+    }
+
+    return index;
 }

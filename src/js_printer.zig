@@ -5690,7 +5690,7 @@ pub fn getSourceMapBuilder(
     };
 
     // Common builder configuration
-    const prepend_count = is_bun_platform and generate_source_map == .lazy;
+    const prepend_count = is_bun_platform and generate_source_map == .lazy and !opts.use_compact_sourcemap;
     const approximate_line_count = tree.approximate_newline_count;
     const cover_lines = true; // cover_lines_without_mappings
 
@@ -5700,7 +5700,7 @@ pub fn getSourceMapBuilder(
         const source_mapper = format_type.init(allocator, prepend_count);
 
         // Initialize the compact sourcemap builder
-        var builder = SourceMap.Chunk.CompactBuilder{
+        const builder = SourceMap.Chunk.CompactBuilder{
             .cover_lines_without_mappings = cover_lines,
             .approximate_input_line_count = approximate_line_count,
             .prepend_count = prepend_count,

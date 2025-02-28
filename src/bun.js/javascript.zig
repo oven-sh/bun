@@ -135,6 +135,25 @@ pub const SavedSourceMap = struct {
         map.mutex.unlock();
     }
 
+    pub const CompactMappings = struct {
+        compact: bun.sourcemap.CompactSourceMap,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn deinit(this: *CompactMappings) void {
+            this.compact.deinit();
+            this.destroy();
+        }
+
+        pub fn toMapping(this: *CompactMappings, allocator: Allocator, _: string) anyerror!ParsedSourceMap {
+            const compact = this.compact;
+            this.compact = .{
+                .allocator = allocator,
+            };
+            return ParsedSourceMap{ .compact_mapping = compact };
+        }
+    };
+
     // For the runtime, we store the number of mappings and how many bytes the final list is at the beginning of the array
     // The first 8 bytes are the length of the array
     // The second 8 bytes are the number of mappings
@@ -195,6 +214,7 @@ pub const SavedSourceMap = struct {
     pub const Value = TaggedPointerUnion(.{
         ParsedSourceMap,
         SavedMappings,
+        CompactMappings,
         SourceProviderMap,
     });
 
@@ -242,14 +262,10 @@ pub const SavedSourceMap = struct {
 
     pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
         // If we have compact sourcemap data, we need to handle it specially
-        if (chunk.compact_data != null) {
-            // For now, just convert the compact data to a regular buffer
-            const allocator = bun.default_allocator;
-            var temp_buffer = bun.MutableString.initEmpty(allocator);
-            try chunk.compact_data.?.writeVLQs(&temp_buffer);
-            try this.putMappings(source, temp_buffer);
+        if (chunk.compact_data) |compact| {
+            try this.putValue(source.path.text, Value.init(CompactMappings.new(.{ .compact = compact })));
         } else {
-            // Standard VLQ format
+            // Standard VLQ format - pass through directly
             try this.putMappings(source, chunk.buffer);
         }
     }
@@ -271,6 +287,8 @@ pub const SavedSourceMap = struct {
                     saved.deinit();
                 } else if (value.get(SourceProviderMap)) |provider| {
                     _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+                } else if (value.get(CompactMappings)) |compact| {
+                    compact.deinit();
                 }
             }
         }
@@ -280,6 +298,7 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
+        try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
     }
 
     fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
@@ -297,6 +316,8 @@ pub const SavedSourceMap = struct {
                 saved.deinit();
             } else if (old_value.get(SourceProviderMap)) |provider| {
                 _ = provider; // do nothing, we did not hold a ref to ZigSourceProvider
+            } else if (old_value.get(CompactMappings)) |compact| {
+                compact.deinit();
             }
         }
         entry.value_ptr.* = value.ptr();
@@ -365,6 +386,18 @@ pub const SavedSourceMap = struct {
                 MissingSourceMapNoteInfo.path = storage;
                 return .{};
             },
+            @field(Value.Tag, @typeName(CompactMappings)) => {
+                defer this.unlock();
+                var compact = Value.from(mapping.value_ptr.*).as(CompactMappings);
+                defer compact.deinit();
+                const result = ParsedSourceMap.new(compact.toMapping(default_allocator, path) catch {
+                    _ = this.map.remove(mapping.key_ptr.*);
+                    return .{};
+                });
+                mapping.value_ptr.* = Value.init(result).ptr();
+                result.ref();
+                return .{ .map = result };
+            },
             else => {
                 if (Environment.allow_assert) {
                     @panic("Corrupt pointer tag");
@@ -393,9 +426,7 @@ pub const SavedSourceMap = struct {
         });
         const map = parse.map orelse return null;
 
-        const mapping = parse.mapping orelse
-            SourceMap.Mapping.find(map.mappings, line, column) orelse
-            return null;
+        const mapping = map.find(line, column) orelse return null;
 
         return .{
             .mapping = mapping,

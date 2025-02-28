@@ -924,6 +924,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSign;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSVerify;
     std::unique_ptr<IsoSubspace> m_subspaceForServerRouteList;
     std::unique_ptr<IsoSubspace> m_subspaceForBunRequest;
 };

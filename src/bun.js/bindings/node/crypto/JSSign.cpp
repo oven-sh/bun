@@ -16,15 +16,6 @@
 #include "util.h"
 #include "BunString.h"
 
-namespace NodeCryptoKeys {
-enum class DSASigEnc {
-    DER,
-    P1363,
-    Invalid,
-};
-
-}
-
 namespace Bun {
 
 using namespace JSC;
@@ -45,7 +36,7 @@ static const JSC::HashTableValue JSSignPrototypeTableValues[] = {
     { "update"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic,
         { JSC::HashTableValue::NativeFunctionType, jsSignProtoFuncUpdate, 2 } },
     { "sign"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic,
-        { JSC::HashTableValue::NativeFunctionType, jsSignProtoFuncSign, 7 } },
+        { JSC::HashTableValue::NativeFunctionType, jsSignProtoFuncSign, 2 } },
 };
 
 // JSSign implementation
@@ -139,34 +130,6 @@ JSSignConstructor* JSSignConstructor::create(JSC::VM& vm, JSC::Structure* struct
 JSC::Structure* JSSignConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
     return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
-}
-
-ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalObject, JSValue formatValue, WTF::ASCIILiteral optionName, std::optional<ncrypto::EVPKeyPointer::PKFormatType> defaultFormat = std::nullopt)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    if (formatValue.isUndefined() && defaultFormat) {
-        return defaultFormat.value();
-    }
-
-    if (!formatValue.isString()) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, formatValue);
-        return {};
-    }
-
-    WTF::String formatStr = formatValue.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (formatStr == "pem"_s) {
-        return ncrypto::EVPKeyPointer::PKFormatType::PEM;
-    }
-
-    if (formatStr == "der"_s) {
-        return ncrypto::EVPKeyPointer::PKFormatType::DER;
-    }
-
-    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "format"_s, formatValue);
-    return {};
 }
 
 // Helper function to get integer option from JSObject
@@ -508,49 +471,9 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateJWK(JSGlobalObject* lexicalG
     return std::nullopt;
 }
 
-std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue)
-{
-    ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
-    config.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-    config.passphrase = passphraseFromBufferSource(lexicalGlobalObject, scope, passphraseValue);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-    UTF8View keyUtf8(keyView);
-
-    auto keySpan = keyUtf8.span();
-
-    ncrypto::Buffer<const unsigned char> ncryptoBuf {
-        .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
-        .len = keySpan.size(),
-    };
-    auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
-    if (res) {
-        ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
-        return keyPtr;
-    }
-
-    if (res.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
-        Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
-        return std::nullopt;
-    }
-
-    throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read private key"_s);
-    return std::nullopt;
-}
-
 std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey)
 {
     VM& vm = lexicalGlobalObject->vm();
-
-    bool optionsBool = maybeKey.toBoolean(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-    // https://github.com/nodejs/node/blob/1b2d2f7e682268228b1352cba7389db01614812a/lib/internal/crypto/sig.js#L116
-    if (!optionsBool) {
-        Bun::ERR::CRYPTO_SIGN_KEY_REQUIRED(scope, lexicalGlobalObject);
-        return std::nullopt;
-    }
 
     if (!maybeKey.isCell()) {
         Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
@@ -566,9 +489,14 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
         // convert it to a key object, then to EVPKeyPointer
         auto& key = cryptoKey->wrapped();
         AsymmetricKeyValue keyValue(key);
-        ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-        return keyPtr;
+        if (keyValue.key) {
+            EVP_PKEY_up_ref(keyValue.key);
+            ncrypto::EVPKeyPointer keyPtr(keyValue.key);
+            return keyPtr;
+        }
 
+        throwCryptoOperationFailed(lexicalGlobalObject, scope);
+        return std::nullopt;
     } else if (maybeKey.isObject()) {
         JSObject* optionsObj = optionsCell->getObject();
         const auto& names = WebCore::builtinNames(vm);
@@ -579,8 +507,13 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
 
                 auto& key = cryptoKey->wrapped();
                 AsymmetricKeyValue keyValue(key);
-                ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-                return keyPtr;
+                if (keyValue.key) {
+                    EVP_PKEY_up_ref(keyValue.key);
+                    ncrypto::EVPKeyPointer keyPtr(keyValue.key);
+                    return keyPtr;
+                }
+                throwCryptoOperationFailed(lexicalGlobalObject, scope);
+                return std::nullopt;
             }
         } else if (optionsType >= Int8ArrayType && optionsType <= DataViewType) {
             auto dataBuf = KeyObject__GetBuffer(maybeKey);
@@ -645,9 +578,13 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
             auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(keyCell);
             auto& key = cryptoKey->wrapped();
             AsymmetricKeyValue keyValue(key);
-            ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-            return keyPtr;
-
+            if (keyValue.key) {
+                EVP_PKEY_up_ref(keyValue.key);
+                ncrypto::EVPKeyPointer keyPtr(keyValue.key);
+                return keyPtr;
+            }
+            throwCryptoOperationFailed(lexicalGlobalObject, scope);
+            return std::nullopt;
         } else if (key.isObject()) {
             JSObject* keyObj = key.getObject();
             if (auto keyVal = keyObj->getIfPropertyExists(lexicalGlobalObject, names.bunNativePtrPrivateName())) {
@@ -656,9 +593,13 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
 
                     auto& key = cryptoKey->wrapped();
                     AsymmetricKeyValue keyValue(key);
-                    ncrypto::EVPKeyPointer keyPtr(keyValue.key);
-
-                    return keyPtr;
+                    if (keyValue.key) {
+                        EVP_PKEY_up_ref(keyValue.key);
+                        ncrypto::EVPKeyPointer keyPtr(WTFMove(keyValue.key));
+                        return keyPtr;
+                    }
+                    throwCryptoOperationFailed(lexicalGlobalObject, scope);
+                    return std::nullopt;
                 }
             } else if (keyCellType >= Int8ArrayType && keyCellType <= DataViewType) {
                 auto dataBuf = KeyObject__GetBuffer(key);
@@ -758,7 +699,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     if (!maybeKeyPtr) {
         return JSValue::encode({});
     }
-    ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
+    ncrypto::EVPKeyPointer& keyPtr = maybeKeyPtr.value();
 
     int32_t padding = getPadding(lexicalGlobalObject, options, keyPtr);
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));

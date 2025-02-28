@@ -4,24 +4,21 @@
 #include "JSBuffer.h"
 #include "helpers.h"
 #include "ncrypto.h"
-#include "util.h"
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 
 namespace Bun {
 
-// JSC_DECLARE_HOST_FUNCTION(jsSignOneShot);
+class JSVerify;
+class JSVerifyPrototype;
+class JSVerifyConstructor;
 
-class JSSign;
-class JSSignPrototype;
-class JSSignConstructor;
-
-class JSSign final : public JSC::JSDestructibleObject {
+class JSVerify final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSSign* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject);
+    static JSVerify* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     template<typename CellType, JSC::SubspaceAccess mode>
@@ -32,16 +29,16 @@ public:
     ncrypto::EVPMDCtxPointer m_mdCtx;
 
 private:
-    JSSign(JSC::VM& vm, JSC::Structure* structure);
+    JSVerify(JSC::VM& vm, JSC::Structure* structure);
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 };
 
-class JSSignPrototype final : public JSC::JSNonFinalObject {
+class JSVerifyPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSSignPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
+    static JSVerifyPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     template<typename CellType, JSC::SubspaceAccess>
@@ -53,16 +50,16 @@ public:
     DECLARE_INFO;
 
 private:
-    JSSignPrototype(JSC::VM& vm, JSC::Structure* structure);
+    JSVerifyPrototype(JSC::VM& vm, JSC::Structure* structure);
     void finishCreation(JSC::VM& vm);
 };
 
-class JSSignConstructor final : public JSC::InternalFunction {
+class JSVerifyConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSSignConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype);
+    static JSVerifyConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     template<typename CellType, JSC::SubspaceAccess>
@@ -74,15 +71,10 @@ public:
     DECLARE_INFO;
 
 private:
-    JSSignConstructor(JSC::VM& vm, JSC::Structure* structure);
+    JSVerifyConstructor(JSC::VM& vm, JSC::Structure* structure);
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype);
 };
 
-void setupJSSignClassStructure(JSC::LazyClassStructure::Initializer& init);
-
-static int32_t getPadding(JSC::JSGlobalObject* globalObject, JSC::JSValue options, const ncrypto::EVPKeyPointer& pkey);
-static std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSC::JSValue options, WTF::ASCIILiteral name);
-static NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSC::JSValue options);
-static std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSValue options);
+void setupJSVerifyClassStructure(JSC::LazyClassStructure::Initializer& init);
 
 } // namespace Bun

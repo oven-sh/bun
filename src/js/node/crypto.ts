@@ -6,8 +6,6 @@ const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const { CryptoHasher } = Bun;
-const { isKeyObject, isCryptoKey } = require("node:util/types");
-const LazyTransform = require("internal/streams/lazy_transform");
 
 const {
   symmetricKeySize,
@@ -22,7 +20,6 @@ const {
   generateKeyPairSync,
   sign: nativeSign,
   verify: nativeVerify,
-  // signOneShot,
   publicEncrypt,
   privateDecrypt,
   privateEncrypt,
@@ -39,28 +36,10 @@ const {
   certExportChallenge,
   getCiphers,
   _getCipherInfo,
-  kKeyEncodingPKCS1,
-  kKeyEncodingPKCS8,
-  kKeyEncodingSPKI,
-  kKeyEncodingSEC1,
-  kKeyFormatDER,
-  kKeyFormatPEM,
-  kKeyFormatJWK,
-  // kKeyTypeSecret,
-  kKeyTypePublic,
-  kKeyTypePrivate,
-  kSigEncDER,
-  kSigEncP1363,
-  // kWebCryptoKeyFormatRaw,
-  // kWebCryptoKeyFormatPKCS8,
-  // kWebCryptoKeyFormatSPKI,
-  // kWebCryptoKeyFormatJWK,
-  // EVP_PKEY_ED25519,
-  // EVP_PKEY_ED448,
-  // EVP_PKEY_X25519,
-  // EVP_PKEY_X448,
   Sign: _Sign,
   // SignJob: _SignJob,
+  Verify: _Verify,
+  // VerifyJob: _VerifyJob,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
@@ -72,25 +51,9 @@ const {
   pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
-const {
-  validateObject,
-  validateString,
-  validateInt32,
-  validateEncoding,
-  validateFunction,
-  validateOneOf,
-} = require("internal/validators");
+const { validateObject, validateString, validateInt32 } = require("internal/validators");
 
 const kHandle = Symbol("kHandle");
-const kKeyObject = Symbol("kKeyObject");
-
-function getStringOption(options, key) {
-  let value;
-  if (options && (value = options[key]) != null) {
-    validateString(value, `options.${key}`);
-  }
-  return value;
-}
 
 function verifySpkac(spkac, encoding) {
   return certVerifySpkac(getArrayBufferOrView(spkac, "spkac", encoding));
@@ -11268,269 +11231,6 @@ var require_curves2 = __commonJS({
   },
 });
 
-// node_modules/browserify-sign/browser/sign.js
-var require_sign = __commonJS({
-  "node_modules/browserify-sign/browser/sign.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer,
-      createHmac = require_browser3(),
-      crt = require_browserify_rsa(),
-      EC = require_elliptic().ec,
-      BN = require_bn3(),
-      parseKeys = require_parse_asn1(),
-      curves = require_curves2();
-    function sign(hash, key, hashType, signType, tag) {
-      var priv = parseKeys(getKeyFrom(key, "private"));
-      if (priv.curve) {
-        if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
-        return ecSign(hash, priv);
-      } else if (priv.type === "dsa") {
-        if (signType !== "dsa") throw new Error("wrong private key type");
-        return dsaSign(hash, priv, hashType);
-      } else if (signType !== "rsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
-      hash = Buffer2.concat([tag, hash]);
-      for (var len = priv.modulus.byteLength(), pad = [0, 1]; hash.length + pad.length + 1 < len; ) pad.push(255);
-      pad.push(0);
-      for (var i = -1; ++i < hash.length; ) pad.push(hash[i]);
-      var out = crt(pad, priv);
-      return out;
-    }
-    function ecSign(hash, priv) {
-      var curveId = curves[priv.curve.join(".")];
-      if (!curveId) throw new Error("unknown curve " + priv.curve.join("."));
-      var curve = new EC(curveId),
-        key = curve.keyFromPrivate(priv.privateKey),
-        out = key.sign(hash);
-      return Buffer2.from(out.toDER());
-    }
-    function dsaSign(hash, priv, algo) {
-      for (
-        var x = priv.params.priv_key,
-          p = priv.params.p,
-          q = priv.params.q,
-          g = priv.params.g,
-          r = new BN(0),
-          k,
-          H = bits2int(hash, q).mod(q),
-          s = !1,
-          kv = getKey(x, q, hash, algo);
-        s === !1;
-
-      )
-        (k = makeKey(q, kv, algo)),
-          (r = makeR(g, k, p, q)),
-          (s = k
-            .invm(q)
-            .imul(H.add(x.mul(r)))
-            .mod(q)),
-          s.cmpn(0) === 0 && ((s = !1), (r = new BN(0)));
-      return toDER(r, s);
-    }
-    function toDER(r, s) {
-      (r = r.toArray()), (s = s.toArray()), r[0] & 128 && (r = [0].concat(r)), s[0] & 128 && (s = [0].concat(s));
-      var total = r.length + s.length + 4,
-        res = [48, total, 2, r.length];
-      return (res = res.concat(r, [2, s.length], s)), Buffer2.from(res);
-    }
-    function getKey(x, q, hash, algo) {
-      if (((x = Buffer2.from(x.toArray())), x.length < q.byteLength())) {
-        var zeros = Buffer2.alloc(q.byteLength() - x.length);
-        x = Buffer2.concat([zeros, x]);
-      }
-      var hlen = hash.length,
-        hbits = bits2octets(hash, q),
-        v = Buffer2.alloc(hlen);
-      v.fill(1);
-      var k = Buffer2.alloc(hlen);
-      return (
-        (k = createHmac(algo, k)
-          .update(v)
-          .update(Buffer2.from([0]))
-          .update(x)
-          .update(hbits)
-          .digest()),
-        (v = createHmac(algo, k).update(v).digest()),
-        (k = createHmac(algo, k)
-          .update(v)
-          .update(Buffer2.from([1]))
-          .update(x)
-          .update(hbits)
-          .digest()),
-        (v = createHmac(algo, k).update(v).digest()),
-        { k, v }
-      );
-    }
-    function bits2int(obits, q) {
-      var bits = new BN(obits),
-        shift = (obits.length << 3) - q.bitLength();
-      return shift > 0 && bits.ishrn(shift), bits;
-    }
-    function bits2octets(bits, q) {
-      (bits = bits2int(bits, q)), (bits = bits.mod(q));
-      var out = Buffer2.from(bits.toArray());
-      if (out.length < q.byteLength()) {
-        var zeros = Buffer2.alloc(q.byteLength() - out.length);
-        out = Buffer2.concat([zeros, out]);
-      }
-      return out;
-    }
-    function makeKey(q, kv, algo) {
-      var t, k;
-      do {
-        for (t = Buffer2.alloc(0); t.length * 8 < q.bitLength(); )
-          (kv.v = createHmac(algo, kv.k).update(kv.v).digest()), (t = Buffer2.concat([t, kv.v]));
-        (k = bits2int(t, q)),
-          (kv.k = createHmac(algo, kv.k)
-            .update(kv.v)
-            .update(Buffer2.from([0]))
-            .digest()),
-          (kv.v = createHmac(algo, kv.k).update(kv.v).digest());
-      } while (k.cmp(q) !== -1);
-      return k;
-    }
-    function makeR(g, k, p, q) {
-      return g.toRed(BN.mont(p)).redPow(k).fromRed().mod(q);
-    }
-    module.exports = sign;
-    module.exports.getKey = getKey;
-    module.exports.makeKey = makeKey;
-  },
-});
-
-// node_modules/browserify-sign/browser/verify.js
-var require_verify = __commonJS({
-  "node_modules/browserify-sign/browser/verify.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer,
-      BN = require_bn3(),
-      EC = require_elliptic().ec,
-      parseKeys = require_parse_asn1(),
-      curves = require_curves2();
-    function verify(sig, hash, key, signType, tag) {
-      var pub = parseKeys(getKeyFrom(key, "public"));
-      if (pub.type === "ec") {
-        if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
-        return ecVerify(sig, hash, pub);
-      } else if (pub.type === "dsa") {
-        if (signType !== "dsa") throw new Error("wrong public key type");
-        return dsaVerify(sig, hash, pub);
-      } else if (signType !== "rsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
-      hash = Buffer2.concat([tag, hash]);
-      for (var len = pub.modulus.byteLength(), pad = [1], padNum = 0; hash.length + pad.length + 2 < len; )
-        pad.push(255), padNum++;
-      pad.push(0);
-      for (var i = -1; ++i < hash.length; ) pad.push(hash[i]);
-      pad = Buffer2.from(pad);
-      var red = BN.mont(pub.modulus);
-      (sig = new BN(sig).toRed(red)),
-        (sig = sig.redPow(new BN(pub.publicExponent))),
-        (sig = Buffer2.from(sig.fromRed().toArray()));
-      var out = padNum < 8 ? 1 : 0;
-      for (len = Math.min(sig.length, pad.length), sig.length !== pad.length && (out = 1), i = -1; ++i < len; )
-        out |= sig[i] ^ pad[i];
-      return out === 0;
-    }
-    function ecVerify(sig, hash, pub) {
-      var curveId = curves[pub.data.algorithm.curve.join(".")];
-      if (!curveId) throw new Error("unknown curve " + pub.data.algorithm.curve.join("."));
-      var curve = new EC(curveId),
-        pubkey = pub.data.subjectPrivateKey.data;
-      return curve.verify(hash, sig, pubkey);
-    }
-    function dsaVerify(sig, hash, pub) {
-      var p = pub.data.p,
-        q = pub.data.q,
-        g = pub.data.g,
-        y = pub.data.pub_key,
-        unpacked = parseKeys.signature.decode(sig, "der"),
-        s = unpacked.s,
-        r = unpacked.r;
-      checkValue(s, q), checkValue(r, q);
-      var montp = BN.mont(p),
-        w = s.invm(q),
-        v = g
-          .toRed(montp)
-          .redPow(new BN(hash).mul(w).mod(q))
-          .fromRed()
-          .mul(y.toRed(montp).redPow(r.mul(w).mod(q)).fromRed())
-          .mod(p)
-          .mod(q);
-      return v.cmp(r) === 0;
-    }
-    function checkValue(b, q) {
-      if (b.cmpn(0) <= 0) throw new Error("invalid sig");
-      if (b.cmp(q) >= q) throw new Error("invalid sig");
-    }
-    module.exports = verify;
-  },
-});
-
-// node_modules/browserify-sign/browser/index.js
-var require_browser8 = __commonJS({
-  "node_modules/browserify-sign/browser/index.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer;
-    var createHash = require_browser2();
-    var inherits = require_inherits_browser();
-    var sign = require_sign();
-    var verify = require_verify();
-    var algorithms = require_algorithms();
-    Object.keys(algorithms).forEach(function (key) {
-      (algorithms[key].id = Buffer2.from(algorithms[key].id, "hex")), (algorithms[key.toLowerCase()] = algorithms[key]);
-    });
-    function Sign(algorithm) {
-      if (typeof algorithm === "string") {
-        algorithm = algorithm.toLowerCase();
-      }
-      StreamModule.Writable.$call(this);
-      var data = algorithms[algorithm];
-      if (!data) throw new Error("Unknown message digest");
-      (this._hashType = data.hash),
-        (this._hash = createHash(data.hash)),
-        (this._tag = data.id),
-        (this._signType = data.sign);
-    }
-    inherits(Sign, StreamModule.Writable);
-    Sign.prototype._write = function (data, _, done) {
-      this._hash.update(data), done();
-    };
-    Sign.prototype.update = function (data, enc) {
-      return typeof data == "string" && (data = Buffer2.from(data, enc)), this._hash.update(data), this;
-    };
-    Sign.prototype.sign = function (key, enc) {
-      this.end();
-      var hash = this._hash.digest(),
-        sig = sign(hash, key, this._hashType, this._signType, this._tag);
-      return enc ? sig.toString(enc) : sig;
-    };
-    function Verify(algorithm) {
-      StreamModule.Writable.$call(this);
-      if (typeof algorithm === "string") {
-        algorithm = algorithm.toLowerCase();
-      }
-      var data = algorithms[algorithm];
-      if (!data) throw new Error("Unknown message digest");
-      (this._hash = createHash(data.hash)), (this._tag = data.id), (this._signType = data.sign);
-    }
-    inherits(Verify, StreamModule.Writable);
-    Verify.prototype._write = function (data, _, done) {
-      this._hash.update(data), done();
-    };
-    Verify.prototype.update = function (data, enc) {
-      return typeof data == "string" && (data = Buffer2.from(data, enc)), this._hash.update(data), this;
-    };
-    Verify.prototype.verify = function (key, sig, enc) {
-      typeof sig == "string" && (sig = Buffer2.from(sig, enc)), this.end();
-      var hash = this._hash.digest();
-      return verify(sig, hash, key, this._signType, this._tag);
-    };
-    function createVerify(algorithm) {
-      return new Verify(algorithm);
-    }
-    module.exports = {
-      Verify: createVerify,
-      createVerify,
-    };
-  },
-});
-
 // node_modules/create-ecdh/node_modules/bn.js/lib/bn.js
 var require_bn6 = require_bn;
 
@@ -11736,10 +11436,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.createDiffieHellman = dh.createDiffieHellman;
     exports.DiffieHellman = dh.DiffieHellman;
     exports.diffieHellman = dh.diffieHellman;
-    var sign = require_browser8();
-    exports.Sign = sign.Sign;
-    exports.createVerify = sign.createVerify;
-    exports.Verify = sign.Verify;
     const ecdh = require_browser9();
     exports.ECDH = ecdh.ECDH;
     exports.createECDH = ecdh.createECDH;
@@ -12072,7 +11768,6 @@ crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
-const _createSign = createSign;
 
 crypto_exports.sign = function (algorithm, data, key, callback) {
   // TODO: move this to native
@@ -12095,7 +11790,7 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
       let result;
       if (key.asymmetricKeyType === "rsa") {
         // RSA-PSS is supported by native but other RSA algorithms are not
-        result = _createSign(algorithm || "sha256")
+        result = createSign(algorithm || "sha256")
           .update(data)
           .sign(key);
       } else {
@@ -12107,7 +11802,7 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
     }
   } else {
     if (key.asymmetricKeyType === "rsa") {
-      return _createSign(algorithm || "sha256")
+      return createSign(algorithm || "sha256")
         .update(data)
         .sign(key);
     } else {
@@ -12115,7 +11810,6 @@ crypto_exports.sign = function (algorithm, data, key, callback) {
     }
   }
 };
-const _createVerify = crypto_exports.createVerify;
 
 crypto_exports.verify = function (algorithm, data, key, signature, callback) {
   // TODO: move this to native
@@ -12138,7 +11832,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
       let result;
       if (key.asymmetricKeyType === "rsa") {
         // RSA-PSS is supported by native but other RSA algorithms are not
-        result = _createVerify(algorithm || "sha256")
+        result = createVerify(algorithm || "sha256")
           .update(data)
           .verify(key, signature);
       } else {
@@ -12150,7 +11844,7 @@ crypto_exports.verify = function (algorithm, data, key, signature, callback) {
     }
   } else {
     if (key.asymmetricKeyType === "rsa") {
-      return _createVerify(algorithm || "sha256")
+      return createVerify(algorithm || "sha256")
         .update(data)
         .verify(key, signature);
     } else {
@@ -12240,277 +11934,6 @@ crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
 crypto_exports.Certificate = Certificate;
 
-// Key input contexts.
-const kConsumePublic = 0;
-const kConsumePrivate = 1;
-const kCreatePublic = 2;
-const kCreatePrivate = 3;
-
-const encodingNames = [];
-for (const m of [
-  [kKeyEncodingPKCS1, "pkcs1"],
-  [kKeyEncodingPKCS8, "pkcs8"],
-  [kKeyEncodingSPKI, "spki"],
-  [kKeyEncodingSEC1, "sec1"],
-]) {
-  encodingNames[m[0]] = m[1];
-}
-
-function option(name, objName) {
-  return objName === undefined ? `options.${name}` : `options.${objName}.${name}`;
-}
-
-function parseKeyType(typeStr, required, keyType, isPublic, optionName) {
-  if (typeStr === undefined && !required) {
-    return undefined;
-  } else if (typeStr === "pkcs1") {
-    if (keyType !== undefined && keyType !== "rsa") {
-      throw $ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(typeStr, "can only be used for RSA keys");
-    }
-    return kKeyEncodingPKCS1;
-  } else if (typeStr === "spki" && isPublic !== false) {
-    return kKeyEncodingSPKI;
-  } else if (typeStr === "pkcs8" && isPublic !== true) {
-    return kKeyEncodingPKCS8;
-  } else if (typeStr === "sec1" && isPublic !== true) {
-    if (keyType !== undefined && keyType !== "ec") {
-      throw $ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(typeStr, "can only be used for EC keys");
-    }
-    return kKeyEncodingSEC1;
-  }
-
-  throw $ERR_INVALID_ARG_VALUE(optionName, typeStr);
-}
-
-function parseKeyFormat(formatStr, defaultFormat, optionName) {
-  if (formatStr === undefined && defaultFormat !== undefined) return defaultFormat;
-  else if (formatStr === "pem") return kKeyFormatPEM;
-  else if (formatStr === "der") return kKeyFormatDER;
-  else if (formatStr === "jwk") return kKeyFormatJWK;
-  throw $ERR_INVALID_ARG_VALUE(optionName, formatStr);
-}
-
-function parseKeyFormatAndType(enc, keyType, isPublic, objName) {
-  const { format: formatStr, type: typeStr } = enc;
-
-  const isInput = keyType === undefined;
-  const format = parseKeyFormat(formatStr, isInput ? kKeyFormatPEM : undefined, option("format", objName));
-
-  const isRequired = (!isInput || format === kKeyFormatDER) && format !== kKeyFormatJWK;
-  const type = parseKeyType(typeStr, isRequired, keyType, isPublic, option("type", objName));
-  return { format, type };
-}
-
-function parseKeyEncoding(enc, keyType, isPublic, objName?) {
-  validateObject(enc, "options");
-
-  const isInput = keyType === undefined;
-
-  const { format, type } = parseKeyFormatAndType(enc, keyType, isPublic, objName);
-
-  let cipher, passphrase, encoding;
-  if (isPublic !== true) {
-    ({ cipher, passphrase, encoding } = enc);
-
-    if (!isInput) {
-      if (cipher != null) {
-        if (typeof cipher !== "string") throw $ERR_INVALID_ARG_VALUE(option("cipher", objName), cipher);
-        if (format === kKeyFormatDER && (type === kKeyEncodingPKCS1 || type === kKeyEncodingSEC1)) {
-          throw $ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS(encodingNames[type], "does not support encryption");
-        }
-      } else if (passphrase !== undefined) {
-        throw $ERR_INVALID_ARG_VALUE(option("cipher", objName), cipher);
-      }
-    }
-
-    if (
-      (isInput && passphrase !== undefined && !isStringOrBuffer(passphrase)) ||
-      (!isInput && cipher != null && !isStringOrBuffer(passphrase))
-    ) {
-      throw $ERR_INVALID_ARG_VALUE(option("passphrase", objName), passphrase);
-    }
-  }
-
-  if (passphrase !== undefined) passphrase = getArrayBufferOrView(passphrase, "key.passphrase", encoding);
-
-  return { format, type, cipher, passphrase };
-}
-
-function getKeyTypes(allowKeyObject, bufferOnly = false) {
-  const types = [
-    "ArrayBuffer",
-    "Buffer",
-    "TypedArray",
-    "DataView",
-    "string", // Only if bufferOnly == false
-    "KeyObject", // Only if allowKeyObject == true && bufferOnly == false
-    "CryptoKey", // Only if allowKeyObject == true && bufferOnly == false
-  ];
-  if (bufferOnly) {
-    return types.slice(0, 4);
-  } else if (!allowKeyObject) {
-    return types.slice(0, 5);
-  }
-  return types;
-}
-
-function getKeyObjectHandleFromJwk(key, ctx) {
-  validateObject(key, "key");
-  validateOneOf(key.kty, "key.kty", ["RSA", "EC", "OKP"]);
-  const isPublic = ctx === kConsumePublic || ctx === kCreatePublic;
-
-  if (key.kty === "OKP") {
-    validateString(key.crv, "key.crv");
-    validateOneOf(key.crv, "key.crv", ["Ed25519", "Ed448", "X25519", "X448"]);
-    validateString(key.x, "key.x");
-
-    if (!isPublic) validateString(key.d, "key.d");
-
-    let keyData;
-    if (isPublic) keyData = Buffer.from(key.x, "base64");
-    else keyData = Buffer.from(key.d, "base64");
-
-    switch (key.crv) {
-      case "Ed25519":
-      case "X25519":
-        if (keyData.byteLength !== 32) {
-          throw $ERR_CRYPTO_INVALID_JWK();
-        }
-        break;
-      case "Ed448":
-        if (keyData.byteLength !== 57) {
-          throw $ERR_CRYPTO_INVALID_JWK();
-        }
-        break;
-      case "X448":
-        if (keyData.byteLength !== 56) {
-          throw $ERR_CRYPTO_INVALID_JWK();
-        }
-        break;
-    }
-
-    const handle = new KeyObjectHandle();
-
-    const keyType = isPublic ? kKeyTypePublic : kKeyTypePrivate;
-    if (!handle.initEDRaw(key.crv, keyData, keyType)) {
-      throw new ERR_CRYPTO_INVALID_JWK();
-    }
-
-    return handle;
-  }
-
-  if (key.kty === "EC") {
-    validateString(key.crv, "key.crv");
-    validateOneOf(key.crv, "key.crv", ["P-256", "secp256k1", "P-384", "P-521"]);
-    validateString(key.x, "key.x");
-    validateString(key.y, "key.y");
-
-    const jwk = {
-      kty: key.kty,
-      crv: key.crv,
-      x: key.x,
-      y: key.y,
-    };
-
-    if (!isPublic) {
-      validateString(key.d, "key.d");
-      jwk.d = key.d;
-    }
-
-    const handle = new KeyObjectHandle();
-    const type = handle.initJwk(jwk, jwk.crv);
-    if (type === undefined) throw $ERR_CRYPTO_INVALID_JWK();
-
-    return handle;
-  }
-
-  // RSA
-  validateString(key.n, "key.n");
-  validateString(key.e, "key.e");
-
-  const jwk = {
-    kty: key.kty,
-    n: key.n,
-    e: key.e,
-  };
-
-  if (!isPublic) {
-    validateString(key.d, "key.d");
-    validateString(key.p, "key.p");
-    validateString(key.q, "key.q");
-    validateString(key.dp, "key.dp");
-    validateString(key.dq, "key.dq");
-    validateString(key.qi, "key.qi");
-    jwk.d = key.d;
-    jwk.p = key.p;
-    jwk.q = key.q;
-    jwk.dp = key.dp;
-    jwk.dq = key.dq;
-    jwk.qi = key.qi;
-  }
-
-  const handle = new KeyObjectHandle();
-  const type = handle.initJwk(jwk);
-  if (type === undefined) throw $ERR_CRYPTO_INVALID_JWK();
-
-  return handle;
-}
-
-function getKeyObjectHandle(key, ctx) {
-  if (ctx === kCreatePrivate) {
-    throw $ERR_INVALID_ARG_TYPE("key", ["string", "ArrayBuffer", "Buffer", "TypedArray", "DataView"], key);
-  }
-
-  if (key.type !== "private") {
-    if (ctx === kConsumePrivate || ctx === kCreatePublic)
-      throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(key.type, "private");
-    if (key.type !== "public") {
-      throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(key.type, "private or public");
-    }
-  }
-
-  return key[kHandle];
-}
-
-function prepareAsymmetricKey(key, ctx) {
-  if (isKeyObject(key)) {
-    // Best case: A key object, as simple as that.
-    return { data: getKeyObjectHandle(key, ctx) };
-  } else if (isCryptoKey(key)) {
-    return { data: getKeyObjectHandle(key[kKeyObject], ctx) };
-  } else if (isStringOrBuffer(key)) {
-    // Expect PEM by default, mostly for backward compatibility.
-    return { format: kKeyFormatPEM, data: getArrayBufferOrView(key, "key") };
-  } else if (typeof key === "object") {
-    const { key: data, encoding, format } = key;
-
-    // The 'key' property can be a KeyObject as well to allow specifying
-    // additional options such as padding along with the key.
-    if (isKeyObject(data)) return { data: getKeyObjectHandle(data, ctx) };
-    else if (isCryptoKey(data)) return { data: getKeyObjectHandle(data[kKeyObject], ctx) };
-    else if (format === "jwk") {
-      validateObject(data, "key.key");
-      return { data: getKeyObjectHandleFromJwk(data, ctx), format: "jwk" };
-    }
-
-    // Either PEM or DER using PKCS#1 or SPKI.
-    if (!isStringOrBuffer(data)) {
-      throw $ERR_INVALID_ARG_TYPE("key.key", getKeyTypes(ctx !== kCreatePrivate), data);
-    }
-
-    const isPublic = ctx === kConsumePrivate || ctx === kCreatePrivate ? false : undefined;
-    return {
-      data: getArrayBufferOrView(data, "key", encoding),
-      ...parseKeyEncoding(key, undefined, isPublic),
-    };
-  }
-  throw $ERR_INVALID_ARG_TYPE("key", getKeyTypes(ctx !== kCreatePrivate), key);
-}
-
-function preparePrivateKey(key) {
-  return prepareAsymmetricKey(key, kConsumePrivate);
-}
-
 function Sign(algorithm, options): void {
   if (!(this instanceof Sign)) {
     return new Sign(algorithm, options);
@@ -12540,11 +11963,40 @@ Sign.prototype.sign = function sign(options, encoding) {
 
 crypto_exports.Sign = Sign;
 
-function createSign(algorithm, options) {
+function createSign(algorithm, options?) {
   return new Sign(algorithm, options);
 }
 
 crypto_exports.createSign = createSign;
+
+function Verify(algorithm, options): void {
+  if (!(this instanceof Verify)) {
+    return new Verify(algorithm, options);
+  }
+
+  validateString(algorithm, "algorithm");
+  this[kHandle] = new _Verify();
+  this[kHandle].init(algorithm);
+
+  StreamModule.Writable.$apply(this, [options]);
+}
+
+$toClass(Verify, "Verify", StreamModule.Writable);
+
+Verify.prototype._write = Sign.prototype._write;
+Verify.prototype.update = Sign.prototype.update;
+
+Verify.prototype.verify = function verify(options, signature, sigEncoding) {
+  return this[kHandle].verify(options, signature, sigEncoding);
+};
+
+crypto_exports.Verify = Verify;
+
+function createVerify(algorithm, options?) {
+  return new Verify(algorithm, options);
+}
+
+crypto_exports.createVerify = createVerify;
 
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

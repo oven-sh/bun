@@ -41,7 +41,7 @@
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
 #include "JSSign.h"
-// #include "JSVerify.h"
+#include "JSVerify.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -459,8 +459,8 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Sign"_s)),
         globalObject->m_JSSignClassStructure.constructor(globalObject));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Verify"_s)),
-    //     globalObject->m_JSVerifyClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Verify"_s)),
+        globalObject->m_JSVerifyClassStructure.constructor(globalObject));
     // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "signOneShot"_s)),
     //     JSFunction::create(vm, globalObject, 4, "signOneShot"_s, jsSignOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
 

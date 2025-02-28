@@ -9,6 +9,65 @@ namespace Bun {
 
 using namespace JSC;
 
+std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue)
+{
+    ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
+    config.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
+
+    config.passphrase = passphraseFromBufferSource(lexicalGlobalObject, scope, passphraseValue);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    UTF8View keyUtf8(keyView);
+
+    auto keySpan = keyUtf8.span();
+
+    ncrypto::Buffer<const unsigned char> ncryptoBuf {
+        .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
+        .len = keySpan.size(),
+    };
+    auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
+    if (res) {
+        ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
+        return keyPtr;
+    }
+
+    if (res.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
+        Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
+        return std::nullopt;
+    }
+
+    throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read private key"_s);
+    return std::nullopt;
+}
+
+ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalObject, JSValue formatValue, WTF::ASCIILiteral optionName, std::optional<ncrypto::EVPKeyPointer::PKFormatType> defaultFormat)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    if (formatValue.isUndefined() && defaultFormat) {
+        return defaultFormat.value();
+    }
+
+    if (!formatValue.isString()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, formatValue);
+        return {};
+    }
+
+    WTF::String formatStr = formatValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (formatStr == "pem"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::PEM;
+    }
+
+    if (formatStr == "der"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::DER;
+    }
+
+    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "format"_s, formatValue);
+    return {};
+}
+
 std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue input)
 {
     if (input.isUndefinedOrNull()) {

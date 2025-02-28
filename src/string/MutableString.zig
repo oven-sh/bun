@@ -43,8 +43,21 @@ pub fn owns(this: *const MutableString, items: []const u8) bool {
     return bun.isSliceInBuffer(items, this.list.items.ptr[0..this.list.capacity]);
 }
 
-pub fn growIfNeeded(self: *MutableString, amount: usize) Allocator.Error!void {
+pub inline fn growIfNeeded(self: *MutableString, amount: usize) Allocator.Error!void {
     try self.list.ensureUnusedCapacity(self.allocator, amount);
+}
+
+pub fn writableNBytesAssumeCapacity(self: *MutableString, amount: usize) []u8 {
+    bun.assert(self.list.items.len + amount <= self.list.capacity);
+    self.list.items.len += amount;
+    return self.list.items[self.list.items.len - amount ..];
+}
+
+/// Increases the length of the buffer by `amount` bytes, expanding the capacity if necessary.
+/// Returns a pointer to the end of the list - `amount` bytes.
+pub fn writableNBytes(self: *MutableString, amount: usize) Allocator.Error![]u8 {
+    try self.growIfNeeded(amount);
+    return self.writableNBytesAssumeCapacity(amount);
 }
 
 pub fn write(self: *MutableString, bytes: anytype) Allocator.Error!usize {

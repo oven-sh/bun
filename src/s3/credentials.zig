@@ -358,27 +358,27 @@ pub const S3Credentials = struct {
 
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
-                bun.default_allocator.free(this.amz_date);
+                bun.freeSensitive(bun.default_allocator, this.amz_date);
             }
 
             if (this.session_token.len > 0) {
-                bun.default_allocator.free(this.session_token);
+                bun.freeSensitive(bun.default_allocator, this.session_token);
             }
 
             if (this.content_disposition.len > 0) {
-                bun.default_allocator.free(this.content_disposition);
+                bun.freeSensitive(bun.default_allocator, this.content_disposition);
             }
 
             if (this.host.len > 0) {
-                bun.default_allocator.free(this.host);
+                bun.freeSensitive(bun.default_allocator, this.host);
             }
 
             if (this.authorization.len > 0) {
-                bun.default_allocator.free(this.authorization);
+                bun.freeSensitive(bun.default_allocator, this.authorization);
             }
 
             if (this.url.len > 0) {
-                bun.default_allocator.free(this.url);
+                bun.freeSensitive(bun.default_allocator, this.url);
             }
 
             if (this.content_md5.len > 0) {

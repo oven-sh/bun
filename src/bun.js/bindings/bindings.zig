@@ -2410,7 +2410,9 @@ pub const JSPromise = opaque {
     }
 
     pub const Strong = struct {
-        strong: JSC.Strong = .{},
+        strong: JSC.Strong = .empty,
+
+        pub const empty: Strong = .{ .strong = .empty };
 
         pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().reject(globalThis, val);
@@ -2464,17 +2466,13 @@ pub const JSPromise = opaque {
             return this.strong.has();
         }
 
-        pub fn globalObject(this: *const Strong) ?*JSC.JSGlobalObject {
-            return this.strong.globalThis;
-        }
-
         pub fn swap(this: *Strong) *JSC.JSPromise {
             const prom = this.strong.swap().asPromise().?;
             this.strong.deinit();
             return prom;
         }
+
         pub fn deinit(this: *Strong) void {
-            this.strong.clear();
             this.strong.deinit();
         }
     };
@@ -3601,7 +3599,6 @@ pub const JSMap = opaque {
     }
 };
 
-// TODO: this should not need to be `pub`
 pub const JSValueReprInt = i64;
 
 /// ABI-compatible with EncodedJSValue
@@ -3612,19 +3609,24 @@ pub const JSValue = enum(i64) {
     true = FFI.TrueI64,
     false = 0x6,
 
+    // TODO: Remove
     /// Typically means an exception was thrown.
     zero = 0,
 
-    /// JSValue::ValueDeleted
+    // TODO: Remove
+    /// This corresponds to `JSValue::ValueDeleted` in C++ It is never OK to use
+    /// this value except in the return value of `JSC__JSValue__getIfPropertyExistsImpl`
+    /// and `JSC__JSValue__fastGet`
     ///
     /// Deleted is a special encoding used in JSC hash map internals used for
-    /// the null state. It is re-used here for encoding the "not present" state.
+    /// the null state. It is re-used here for encoding the "not present" state
+    /// in `JSC__JSValue__getIfPropertyExistsImpl`
     property_does_not_exist_on_object = 0x4,
     _,
 
     /// When JavaScriptCore throws something, it returns a null cell (0). The
     /// exception is set on the global object. ABI-compatible with EncodedJSValue.
-    pub const MaybeException = enum(i64) {
+    pub const MaybeException = enum(JSValueReprInt) {
         zero = 0,
         _,
 

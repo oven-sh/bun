@@ -102,6 +102,13 @@ describe("File", () => {
     expect(file.lastModified).toBeGreaterThan(0);
   });
 
+  it("constructor with empty array", () => {
+    const file = new File([], "empty.txt", { type: "text/plain;charset=utf-8" });
+    expect(file.name).toBe("empty.txt");
+    expect(file.size).toBe(0);
+    expect(file.type).toBe("text/plain;charset=utf-8");
+  });
+
   it("constructor with lastModified", () => {
     const file = new File(["foo"], "bar.txt", { type: "text/plain;charset=utf-8", lastModified: 123 });
     expect(file.name).toBe("bar.txt");

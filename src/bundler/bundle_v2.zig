@@ -816,6 +816,9 @@ pub const BundleV2 = struct {
                         import_record.specifier,
                         target.bakeGraph(),
                     ) catch bun.outOfMemory();
+
+                    // Turn this into an invalid AST, so that incremental mode skips it when printing.
+                    this.graph.ast.items(.parts)[import_record.importer_source_index.?].len = 0;
                 }
             }
 
@@ -13680,7 +13683,12 @@ pub const LinkerContext = struct {
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,
-            .source_map_allocator = writer.buffer.allocator,
+            .source_map_allocator = if (c.dev_server != null and
+                c.parse_graph.input_files.items(.loader)[source_index.get()].isJavaScriptLike())
+                // The loader check avoids globally allocating asset source maps
+                writer.buffer.allocator
+            else
+                allocator,
             .to_esm_ref = to_esm_ref,
             .to_commonjs_ref = to_commonjs_ref,
             .require_ref = switch (c.options.output_format) {

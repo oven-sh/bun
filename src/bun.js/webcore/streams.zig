@@ -1753,16 +1753,11 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         }
 
         fn getThis(global: *JSGlobalObject, callframe: *const JSC.CallFrame) !*ThisSink {
-            switch (fromJSExtern(callframe.this())) {
-                .detached => {
-                    global.throw("This " ++ abi_name ++ " has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.", .{});
-                    return error.JSError;
-                },
-                .cast_failed => {
-                    return globalThis.ERR_INVALID_THIS("Expected " ++ abi_name, .{}).throw();
-                },
-                else => |ptr| return @ptrFromInt(@intFromEnum(ptr)),
-            }
+            return switch (fromJSExtern(callframe.this())) {
+                .detached => global.throw("This " ++ abi_name ++ " has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.", .{}),
+                .cast_failed => global.ERR_INVALID_THIS("Expected " ++ abi_name, .{}).throw(),
+                else => |ptr| @ptrFromInt(@intFromEnum(ptr)),
+            };
         }
 
         pub fn unprotect(this: *@This()) void {
@@ -1829,7 +1824,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
         pub fn writeUTF8(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
             JSC.markBinding(@src());
 
-            var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
+            const this = try getThis(globalThis, callframe);
 
             if (comptime @hasDecl(SinkType, "getPendingError")) {
                 if (this.sink.getPendingError()) |err| {
@@ -3458,8 +3453,13 @@ pub const FileSink = struct {
     pub const IOWriter = bun.io.StreamingWriter(@This(), onWrite, onError, onReady, onClose);
     pub const Poll = IOWriter;
 
-    fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
-        var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(globalObject, jsvalue) orelse return));
+    pub fn memoryCost(this: *const FileSink) usize {
+        // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).
+        return this.writer.memoryCost();
+    }
+
+    fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(_: *JSC.JSGlobalObject, jsvalue: JSC.JSValue) callconv(.C) void {
+        var this: *FileSink = @alignCast(@ptrCast(JSSink.fromJS(jsvalue) orelse return));
         this.force_sync = true;
         if (comptime !Environment.isWindows) {
             this.writer.force_sync = true;

@@ -681,7 +681,7 @@ BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 CPP_DECL JSC__JSValue NetworkSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
 CPP_DECL JSC__JSValue NetworkSink__createObject(JSC__JSGlobalObject* arg0, void* arg1, uintptr_t destructor);
 CPP_DECL void NetworkSink__detachPtr(JSC__JSValue JSValue0);
-CPP_DECL void* NetworkSink__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
+CPP_DECL void* NetworkSink__fromJS(JSC__JSValue JSValue1);
 CPP_DECL void NetworkSink__onClose(JSC__JSValue JSValue0, JSC__JSValue JSValue1);
 CPP_DECL void NetworkSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSValue JSValue2);
 

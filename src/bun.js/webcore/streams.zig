@@ -1752,7 +1752,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime abi_name: []const u8) type {
             }
         }
 
-        fn getThis(global: *JSGlobalObject, callframe: *const JSC.CallFrame) !*ThisSink {
+        fn getThis(global: *JSGlobalObject, callframe: *const JSC.CallFrame) bun.JSError!*ThisSink {
             return switch (fromJSExtern(callframe.this())) {
                 .detached => global.throw("This " ++ abi_name ++ " has already been closed. A \"direct\" ReadableStream terminates its underlying socket once `async pull()` returns.", .{}),
                 .cast_failed => global.ERR_INVALID_THIS("Expected " ++ abi_name, .{}).throw(),

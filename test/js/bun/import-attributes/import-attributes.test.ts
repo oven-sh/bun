@@ -4,6 +4,31 @@ import * as path from "path";
 const loaders = ["js", "jsx", "ts", "tsx", "json", "jsonc", "toml", "text", "sqlite", "file"];
 const other_loaders_do_not_crash = ["webassembly", "does_not_exist"];
 
+async function testBunRunRequire(dir: string, loader: string | null, filename: string): Promise<unknown> {
+  if (loader != null) throw new Error("cannot use loader with require()");
+  const cmd = [bunExe(), "-e", `const contents = require('./${filename}'); console.log(JSON.stringify(contents));`];
+  const result = Bun.spawnSync({
+    cmd: cmd,
+    cwd: dir,
+  });
+  if (result.exitCode !== 0) {
+    if (result.stderr.toString().includes("panic")) {
+      console.error("cmd stderr");
+      console.log(result.stderr.toString());
+      console.error("cmd stdout");
+      console.log(result.stdout.toString());
+      console.error("cmd args");
+      console.log(JSON.stringify(cmd));
+      console.error("cmd cwd");
+      console.log(dir);
+      throw new Error("panic");
+    }
+    return "error";
+    // return result.stderr.toString().match(/error: .+/)?.[0];
+  } else {
+    return JSON.parse(result.stdout.toString());
+  }
+}
 async function testBunRun(dir: string, loader: string | null, filename: string): Promise<unknown> {
   const cmd = [
     bunExe(),
@@ -65,6 +90,44 @@ async function testBunBuild(dir: string, loader: string | null, filename: string
   await Bun.write(
     path.join(dir, "main_" + loader + ".js"),
     `import * as contents from './${filename}'${loader != null ? ` with {type: '${loader}'${loader === "sqlite" ? ", embed: 'true'" : ""}}` : ""}; console.log(JSON.stringify(contents));`,
+  );
+  const result = await Bun.build({
+    entrypoints: [path.join(dir, "main_" + loader + ".js")],
+    throw: false,
+    target: "bun",
+    outdir: path.join(dir, "out"),
+  });
+  if (result.success) {
+    const cmd = [bunExe(), "out/main_" + loader + ".js"];
+    const result = Bun.spawnSync({
+      cmd: cmd,
+      cwd: dir,
+    });
+    if (result.exitCode !== 0) {
+      if (result.stderr.toString().includes("panic")) {
+        console.error("cmd stderr");
+        console.log(result.stderr.toString());
+        console.error("cmd stdout");
+        console.log(result.stdout.toString());
+        console.error("cmd args");
+        console.log(JSON.stringify(cmd));
+        console.error("cmd cwd");
+        console.log(dir);
+        throw new Error("panic");
+      }
+      return "error";
+    } else {
+      return JSON.parse(result.stdout.toString());
+    }
+  } else {
+    return "error";
+  }
+}
+async function testBunBuildRequire(dir: string, loader: string | null, filename: string): Promise<unknown> {
+  if (loader != null) throw new Error("cannot use loader with require()");
+  await Bun.write(
+    path.join(dir, "main_" + loader + ".js"),
+    `const contents = require('./${filename}'); console.log(JSON.stringify(contents));`,
   );
   const result = await Bun.build({
     entrypoints: [path.join(dir, "main_" + loader + ".js")],
@@ -302,6 +365,25 @@ describe("other loaders do not crash", () => {
   for (const skipped_loader of other_loaders_do_not_crash) {
     test(skipped_loader, async () => {
       await compileAndTest(`export const a = "demo";`);
+    });
+  }
+});
+
+describe("?raw", () => {
+  for (const [name, fn] of [
+    ["bun run", testBunRun],
+    // ["bun build", testBunBuild], // TODO: bun.build doesn't support query params at all yet
+    ["bun run await import", testBunRunAwaitImport],
+    ["require", testBunRunRequire],
+    // ["bun build require", testBunBuildRequire], // TODO: bun.build doesn't support query params at all yet
+  ] as const) {
+    test(name, async () => {
+      const filename = "abcd.js";
+      const code = "export const a = 'demo';";
+      const question_raw = tempDirWithFiles("import-attributes", {
+        [filename]: code,
+      });
+      expect(await fn(question_raw, null, filename + "?raw")).toEqual({ default: code });
     });
   }
 });

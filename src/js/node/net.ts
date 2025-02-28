@@ -1403,6 +1403,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     hostname = hostname || "::";
   }
 
+  if (this._handle) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
   try {
     var tls = undefined;
     var TLSSocketClass = undefined;

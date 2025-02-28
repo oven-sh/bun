@@ -89,7 +89,7 @@ std::optional<ncrypto::EVPKeyPointer::PKEncodingType> parseKeyType(JSC::JSGlobal
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     if (typeStr == "pkcs1"_s) {
-        if (keyType != "rsa"_s) {
+        if (keyType && keyType != "rsa"_s) {
             Bun::ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, "pkcs1"_s, "can only be used for RSA keys"_s);
             return std::nullopt;
         }
@@ -99,7 +99,7 @@ std::optional<ncrypto::EVPKeyPointer::PKEncodingType> parseKeyType(JSC::JSGlobal
     } else if (typeStr == "pkcs8"_s && isPublic != true) {
         return ncrypto::EVPKeyPointer::PKEncodingType::PKCS8;
     } else if (typeStr == "sec1"_s && isPublic != true) {
-        if (keyType != "ec"_s) {
+        if (keyType && keyType != "ec"_s) {
             Bun::ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, "sec1"_s, "can only be used for EC keys"_s);
             return std::nullopt;
         }

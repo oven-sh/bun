@@ -133,73 +133,6 @@ JSC::Structure* JSSignConstructor::createStructure(JSC::VM& vm, JSC::JSGlobalObj
     return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags), info());
 }
 
-// Helper function to get integer option from JSObject
-static std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSValue options, WTF::ASCIILiteral name)
-{
-    JSC::VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::JSValue value = options.get(globalObject, JSC::Identifier::fromString(vm, name));
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-    if (value.isUndefined())
-        return std::nullopt;
-
-    if (!value.isInt32()) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, name), value);
-        return std::nullopt;
-    }
-
-    return value.asInt32();
-}
-
-// Get padding value from options object
-static int32_t getPadding(JSC::JSGlobalObject* globalObject, JSValue options, const ncrypto::EVPKeyPointer& pkey)
-{
-    auto padding = getIntOption(globalObject, options, "padding"_s);
-    return padding.value_or(pkey.getDefaultSignPadding());
-}
-
-// Get salt length value from options object
-static std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSValue options)
-{
-    return getIntOption(globalObject, options, "saltLength"_s);
-}
-
-static NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValue options)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (!options.isObject()) {
-        return NodeCryptoKeys::DSASigEnc::DER;
-    }
-
-    JSValue dsaEncoding = options.get(globalObject, Identifier::fromString(globalObject->vm(), "dsaEncoding"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (dsaEncoding.isUndefined()) {
-        return NodeCryptoKeys::DSASigEnc::DER;
-    }
-
-    if (!dsaEncoding.isString()) {
-        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.dsaEncoding"_s, dsaEncoding);
-        return {};
-    }
-
-    WTF::String dsaEncodingStr = dsaEncoding.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (dsaEncodingStr == "der"_s) {
-        return NodeCryptoKeys::DSASigEnc::DER;
-    }
-
-    if (dsaEncodingStr == "ieee-p1363"_s) {
-        return NodeCryptoKeys::DSASigEnc::P1363;
-    }
-
-    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.dsaEncoding"_s, dsaEncoding);
-    return {};
-}
-
 // Prototype function implementations
 JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncInit, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -683,52 +616,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     return JSValue::encode(resBuf);
 }
 
-// JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * globalObject, CallFrame* callFrame))
-// {
-//     VM& vm = globalObject->vm();
-//     auto scope = DECLARE_THROW_SCOPE(vm);
-
-//     JSValue algorithmValue = callFrame->argument(0);
-//     if (!algorithmValue.isNull()) {
-//         Bun::V::validateString(scope, globalObject, algorithmValue, "algorithm"_s);
-//         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-//     }
-
-//     JSValue callbackValue = callFrame->argument(3);
-//     if (!callbackValue.isUndefined()) {
-//         Bun::V::validateFunction(scope, globalObject, callbackValue, "callback"_s);
-//         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-//     }
-
-//     JSValue key = callFrame->argument(2);
-//     bool keyBoolean = key.toBoolean(globalObject);
-//     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-//     if (!keyBoolean) {
-//         return Bun::ERR::CRYPTO_SIGN_KEY_REQUIRED(scope, globalObject);
-//     }
-
-//     std::optional<int> saltLen = getSaltLength(globalObject, key);
-//     (void)saltLen;
-//     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-//     NodeCryptoKeys::DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, key);
-//     (void)dsaSigEnc;
-//     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-//     std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(globalObject, scope, key);
-//     if (!maybeKeyPtr) {
-//         return JSValue::encode({});
-//     }
-
-//     ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
-
-//     int32_t padding = getPadding(globalObject, key, keyPtr);
-//     (void)padding;
-//     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
-
-//     return JSValue::encode(jsUndefined());
-// }
-
 // Constructor function implementations
 JSC_DEFINE_HOST_FUNCTION(callSign, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
@@ -760,6 +647,11 @@ JSC_DEFINE_HOST_FUNCTION(constructSign, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     return JSC::JSValue::encode(JSSign::create(vm, structure, globalObject));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode({});
 }
 
 void setupJSSignClassStructure(LazyClassStructure::Initializer& init)

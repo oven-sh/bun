@@ -4,6 +4,8 @@
 #include "ErrorCode.h"
 #include "ncrypto.h"
 #include "BunString.h"
+#include "JSBuffer.h"
+#include "JSDOMConvertEnumeration.h"
 
 namespace Bun {
 
@@ -235,5 +237,119 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
 
     // Throw the decorated error
     throwException(globalObject, scope, errorObject);
+}
+
+std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSValue options, WTF::ASCIILiteral name)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue value = options.get(globalObject, JSC::Identifier::fromString(vm, name));
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    if (value.isUndefined())
+        return std::nullopt;
+
+    if (!value.isInt32()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, makeString("options."_s, name), value);
+        return std::nullopt;
+    }
+
+    return value.asInt32();
+}
+
+int32_t getPadding(JSC::JSGlobalObject* globalObject, JSValue options, const ncrypto::EVPKeyPointer& pkey)
+{
+    auto padding = getIntOption(globalObject, options, "padding"_s);
+    return padding.value_or(pkey.getDefaultSignPadding());
+}
+
+std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSValue options)
+{
+    return getIntOption(globalObject, options, "saltLength"_s);
+}
+
+NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValue options)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!options.isObject()) {
+        return NodeCryptoKeys::DSASigEnc::DER;
+    }
+
+    JSValue dsaEncoding = options.get(globalObject, Identifier::fromString(globalObject->vm(), "dsaEncoding"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (dsaEncoding.isUndefined()) {
+        return NodeCryptoKeys::DSASigEnc::DER;
+    }
+
+    if (!dsaEncoding.isString()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.dsaEncoding"_s, dsaEncoding);
+        return {};
+    }
+
+    WTF::String dsaEncodingStr = dsaEncoding.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (dsaEncodingStr == "der"_s) {
+        return NodeCryptoKeys::DSASigEnc::DER;
+    }
+
+    if (dsaEncodingStr == "ieee-p1363"_s) {
+        return NodeCryptoKeys::DSASigEnc::P1363;
+    }
+
+    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.dsaEncoding"_s, dsaEncoding);
+    return {};
+}
+
+JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue)
+{
+    if (value.isString()) {
+        JSString* dataString = value.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (encoding == WebCore::BufferEncodingType::hex && dataString->length() % 2 != 0) {
+            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
+            return {};
+        }
+
+        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataString, encoding));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
+        if (!view) {
+            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of Buffer, TypedArray, or DataView"_s, value);
+            return {};
+        }
+
+        if (view->isDetached()) {
+            throwTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+
+        return view;
+    }
+
+    if (!value.isCell() || !JSC::isTypedArrayTypeIncludingDataView(value.asCell()->type())) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of Buffer, TypedArray, or DataView"_s, value);
+        return {};
+    }
+
+    auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value);
+    if (!view) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of Buffer, TypedArray, or DataView"_s, value);
+        return {};
+    }
+
+    if (view->isDetached()) {
+        throwTypeError(globalObject, scope, "Buffer is detached"_s);
+        return {};
+    }
+
+    return view;
 }
 }

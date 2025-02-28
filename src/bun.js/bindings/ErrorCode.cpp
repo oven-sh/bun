@@ -829,7 +829,12 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const WTF::Vector<ASCIILiteral>& oneOf)
 {
     WTF::StringBuilder builder;
-    builder.append("The argument '"_s);
+    builder.append("The "_s);
+    if (WTF::StringView(name).contains('.')) {
+        builder.append("property '"_s);
+    } else {
+        builder.append("argument '"_s);
+    }
     builder.append(name);
     builder.append("' "_s);
     builder.append(reason);
@@ -852,11 +857,22 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
 {
     WTF::StringBuilder builder;
+
+    builder.append("The "_s);
+    if (name.contains('.')) {
+        builder.append("property '"_s);
+    } else {
+        builder.append("argument '"_s);
+    }
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+    builder.append(". Received "_s);
+
     JSValueToStringSafe(globalObject, builder, value);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    auto message = makeString("The argument '"_s, name, "' "_s, reason, ". Received "_s, builder.toString());
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, message));
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
     return {};
 }
 

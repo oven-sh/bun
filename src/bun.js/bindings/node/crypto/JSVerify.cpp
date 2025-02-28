@@ -34,6 +34,7 @@ using namespace JSC;
 JSC_DECLARE_HOST_FUNCTION(jsVerifyProtoFuncInit);
 JSC_DECLARE_HOST_FUNCTION(jsVerifyProtoFuncUpdate);
 JSC_DECLARE_HOST_FUNCTION(jsVerifyProtoFuncVerify);
+JSC_DECLARE_HOST_FUNCTION(jsVerifyOneShot);
 
 // Constructor functions
 JSC_DECLARE_HOST_FUNCTION(callVerify);
@@ -415,6 +416,11 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     return JSValue::encode(jsBoolean(result));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode({});
+}
+
 JSC_DEFINE_HOST_FUNCTION(callVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -444,142 +450,6 @@ void setupJSVerifyClassStructure(LazyClassStructure::Initializer& init)
     init.setPrototype(prototype);
     init.setStructure(structure);
     init.setConstructor(constructor);
-}
-
-// Helper function to get a buffer from a signature value with optional encoding
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue)
-{
-    if (value.isString()) {
-        JSString* dataString = value.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        auto encoding = parseEnumeration<BufferEncodingType>(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (encoding == BufferEncodingType::hex && dataString->length() % 2 != 0) {
-            Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
-            return {};
-        }
-
-        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataString, encoding));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
-        if (!view) {
-            Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of Buffer, TypedArray, or DataView"_s, value);
-            return {};
-        }
-
-        if (view->isDetached()) {
-            throwTypeError(globalObject, scope, "Buffer is detached"_s);
-            return {};
-        }
-
-        return view;
-    }
-
-    if (!value.isCell() || !JSC::isTypedArrayTypeIncludingDataView(value.asCell()->type())) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of Buffer, TypedArray, or DataView"_s, value);
-        return {};
-    }
-
-    auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value);
-    if (!view) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, argName, "string or an instance of Buffer, TypedArray, or DataView"_s, value);
-        return {};
-    }
-
-    if (view->isDetached()) {
-        throwTypeError(globalObject, scope, "Buffer is detached"_s);
-        return {};
-    }
-
-    return view;
-}
-
-// Helper function to get padding from options
-int32_t getPadding(JSGlobalObject* globalObject, JSValue options, const ncrypto::EVPKeyPointer& pkey)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    int32_t padding = pkey.getDefaultSignPadding();
-
-    if (options.isObject()) {
-        JSObject* optionsObj = options.getObject();
-        JSValue paddingValue = optionsObj->get(globalObject, Identifier::fromString(globalObject->vm(), "padding"_s));
-        RETURN_IF_EXCEPTION(scope, padding);
-
-        if (!paddingValue.isUndefined() && paddingValue.isNumber()) {
-            padding = paddingValue.asInt32();
-            RETURN_IF_EXCEPTION(scope, padding);
-        }
-    }
-
-    return padding;
-}
-
-// Helper function to get salt length from options
-std::optional<int> getSaltLength(JSGlobalObject* globalObject, JSValue options)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    std::optional<int> saltLen;
-
-    if (options.isObject()) {
-        JSObject* optionsObj = options.getObject();
-        JSValue saltLenValue = optionsObj->get(globalObject, Identifier::fromString(globalObject->vm(), "saltLength"_s));
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-        if (!saltLenValue.isUndefined() && saltLenValue.isNumber()) {
-            saltLen = saltLenValue.asInt32();
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-        }
-    }
-
-    return saltLen;
-}
-
-// Helper function to get DSA signature encoding from options
-NodeCryptoKeys::DSASigEnc getDSASigEnc(JSGlobalObject* globalObject, JSValue options)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-
-    NodeCryptoKeys::DSASigEnc dsaSigEnc = NodeCryptoKeys::DSASigEnc::DER;
-
-    if (options.isObject()) {
-        JSObject* optionsObj = options.getObject();
-        JSValue dsaSigEncValue = optionsObj->get(globalObject, Identifier::fromString(globalObject->vm(), "dsaEncoding"_s));
-        RETURN_IF_EXCEPTION(scope, dsaSigEnc);
-
-        if (!dsaSigEncValue.isUndefined()) {
-            if (dsaSigEncValue.isString()) {
-                JSString* dsaSigEncString = dsaSigEncValue.toString(globalObject);
-                RETURN_IF_EXCEPTION(scope, dsaSigEnc);
-
-                WTF::StringView dsaSigEncView = dsaSigEncString->view(globalObject);
-                if (dsaSigEncView == "der"_s) {
-                    dsaSigEnc = NodeCryptoKeys::DSASigEnc::DER;
-                } else if (dsaSigEncView == "ieee-p1363"_s) {
-                    dsaSigEnc = NodeCryptoKeys::DSASigEnc::P1363;
-                } else {
-                    dsaSigEnc = NodeCryptoKeys::DSASigEnc::Invalid;
-                }
-            } else if (dsaSigEncValue.isNumber()) {
-                int32_t value = dsaSigEncValue.asInt32();
-                RETURN_IF_EXCEPTION(scope, dsaSigEnc);
-
-                if (value == 0) {
-                    dsaSigEnc = NodeCryptoKeys::DSASigEnc::DER;
-                } else if (value == 1) {
-                    dsaSigEnc = NodeCryptoKeys::DSASigEnc::P1363;
-                } else {
-                    dsaSigEnc = NodeCryptoKeys::DSASigEnc::Invalid;
-                }
-            }
-        }
-    }
-
-    return dsaSigEnc;
 }
 
 std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView)

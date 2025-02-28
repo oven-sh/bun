@@ -37,9 +37,9 @@ const {
   getCiphers,
   _getCipherInfo,
   Sign: _Sign,
-  // SignJob: _SignJob,
+  sign,
   Verify: _Verify,
-  // VerifyJob: _VerifyJob,
+  verify,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
@@ -11962,6 +11962,7 @@ Sign.prototype.sign = function sign(options, encoding) {
 };
 
 crypto_exports.Sign = Sign;
+crypto_exports.sign = sign;
 
 function createSign(algorithm, options?) {
   return new Sign(algorithm, options);
@@ -11991,6 +11992,7 @@ Verify.prototype.verify = function verify(options, signature, sigEncoding) {
 };
 
 crypto_exports.Verify = Verify;
+crypto_exports.verify = verify;
 
 function createVerify(algorithm, options?) {
   return new Verify(algorithm, options);

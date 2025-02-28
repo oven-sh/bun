@@ -116,7 +116,9 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     if (keyBuffer.hasException())
         return JSValue::encode(jsUndefined());
 
-    if (keyBuffer.returnValue().isEmpty())
+    auto buffer = keyBuffer.releaseReturnValue();
+
+    if (buffer.size() == 0)
         return JSValue::encode(JSC::jsEmptyString(vm));
 
     auto curveName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
@@ -135,8 +137,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     if (!point)
         return throwVMError(lexicalGlobalObject, scope, "Failed to create EC_POINT"_s);
 
-    const unsigned char* key_data = keyBuffer.returnValue().data();
-    size_t key_length = keyBuffer.returnValue().size();
+    const unsigned char* key_data = buffer.data();
+    size_t key_length = buffer.size();
 
     if (!EC_POINT_oct2point(group, point, key_data, key_length, nullptr))
         return throwVMError(lexicalGlobalObject, scope, "Failed to convert Buffer to EC_POINT"_s);
@@ -238,7 +240,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return JSValue::encode(jsUndefined());
     }
 
-    auto buffer = input.returnValue();
+    auto buffer = input.releaseReturnValue();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
@@ -262,7 +264,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto buffer = input.returnValue();
+    auto buffer = input.releaseReturnValue();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
@@ -296,7 +298,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto buffer = input.returnValue();
+    auto buffer = input.releaseReturnValue();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
@@ -459,10 +461,12 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Sign"_s)),
         globalObject->m_JSSignClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "sign"_s)),
+        JSFunction::create(vm, globalObject, 4, "sign"_s, jsSignOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Verify"_s)),
         globalObject->m_JSVerifyClassStructure.constructor(globalObject));
-    // obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "signOneShot"_s)),
-    //     JSFunction::create(vm, globalObject, 4, "signOneShot"_s, jsSignOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "verify"_s)),
+        JSFunction::create(vm, globalObject, 4, "verify"_s, jsVerifyOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

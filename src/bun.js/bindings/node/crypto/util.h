@@ -25,5 +25,10 @@ std::optional<ncrypto::EVPKeyPointer::PKEncodingType> parseKeyType(JSC::JSGlobal
 std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue input);
 void throwCryptoError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, unsigned long err, const char* message = nullptr);
 void throwCryptoOperationFailed(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope);
+std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSValue options, WTF::ASCIILiteral name);
+int32_t getPadding(JSC::JSGlobalObject* globalObject, JSValue options, const ncrypto::EVPKeyPointer& pkey);
+std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSValue options);
+NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValue options);
+JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue);
 
 }

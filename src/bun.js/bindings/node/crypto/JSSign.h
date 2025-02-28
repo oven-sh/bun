@@ -78,11 +78,8 @@ private:
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype);
 };
 
-void setupJSSignClassStructure(JSC::LazyClassStructure::Initializer& init);
+JSC_DECLARE_HOST_FUNCTION(jsSignOneShot);
 
-static int32_t getPadding(JSC::JSGlobalObject* globalObject, JSC::JSValue options, const ncrypto::EVPKeyPointer& pkey);
-static std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSC::JSValue options, WTF::ASCIILiteral name);
-static NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSC::JSValue options);
-static std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSValue options);
+void setupJSSignClassStructure(JSC::LazyClassStructure::Initializer& init);
 
 } // namespace Bun

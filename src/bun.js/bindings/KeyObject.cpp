@@ -102,7 +102,7 @@ static bool KeyObject__IsASN1Sequence(const unsigned char* data, size_t size,
     if (data[1] & 0x80) {
         // Long form.
         size_t n_bytes = data[1] & ~0x80;
-        if (n_bytes + 2 > size || n_bytes > sizeof(size_t))
+        if (n_bytes > size || n_bytes > sizeof(size_t))
             return false;
         size_t length = 0;
         for (size_t i = 0; i < n_bytes; i++)
@@ -1319,7 +1319,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createSecretKey, (JSC::JSGlobalObject * lexi
     return {};
 }
 
-ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
+ExceptionOr<std::span<const uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
 {
     if (!bufferArg.isCell()) {
         return Exception { OperationError };
@@ -1343,13 +1343,10 @@ ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
         JSC::JSArrayBufferView* view = jsCast<JSC::JSArrayBufferView*>(bufferArgCell);
-
-        void* data = view->vector();
-        size_t byteLength = view->length();
-        if (UNLIKELY(!data)) {
+        if (view->isDetached()) {
             break;
         }
-        return Vector<uint8_t>(std::span { (uint8_t*)data, byteLength });
+        return view->span();
     }
     case ArrayBufferType: {
         auto* jsBuffer = jsDynamicCast<JSC::JSArrayBuffer*>(bufferArgCell);
@@ -1357,12 +1354,10 @@ ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
             break;
         }
         auto* buffer = jsBuffer->impl();
-        void* data = buffer->data();
-        size_t byteLength = buffer->byteLength();
-        if (UNLIKELY(!data)) {
+        if (buffer->isDetached()) {
             break;
         }
-        return Vector<uint8_t>(std::span { (uint8_t*)data, byteLength });
+        return buffer->span();
     }
     default: {
         break;

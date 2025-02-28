@@ -1207,7 +1207,7 @@ describe("websocket and routes test", () => {
     const { routes, fetch: serverFetch, shouldBeUpgraded, hasPOST, expectedPath, testName } = config;
     test(testName, async () => {
       using server = Bun.serve({
-        port: 3010, // I don't know if this is necessary; my port 3000 was taken
+       port: 0,
         routes,
         fetch: serverFetch,
         websocket: {

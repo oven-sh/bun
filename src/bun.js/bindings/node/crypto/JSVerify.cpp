@@ -318,7 +318,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePublicOrPrivateKey(globalObject, scope, options);
     ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
     if (!maybeKeyPtr) {
-        return JSValue::encode(jsBoolean(false));
+        return JSValue::encode({});
     }
     ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
 
@@ -657,8 +657,8 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, uin
 
 std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView)
 {
-    ncrypto::EVPKeyPointer::PublicKeyEncodingConfig config;
-    config.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
+    ncrypto::EVPKeyPointer::PublicKeyEncodingConfig publicConfig;
+    publicConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
 
     UTF8View keyUtf8(keyView);
     auto keySpan = keyUtf8.span();
@@ -668,13 +668,23 @@ std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexica
         .len = keySpan.size(),
     };
 
-    auto res = ncrypto::EVPKeyPointer::TryParsePublicKey(config, ncryptoBuf);
-    if (res) {
-        ncrypto::EVPKeyPointer keyPtr(WTFMove(res.value));
+    auto publicRes = ncrypto::EVPKeyPointer::TryParsePublicKey(publicConfig, ncryptoBuf);
+    if (publicRes) {
+        ncrypto::EVPKeyPointer keyPtr(WTFMove(publicRes.value));
         return keyPtr;
     }
 
-    throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read public key"_s);
+    if (publicRes.error.value() == ncrypto::EVPKeyPointer::PKParseError::NOT_RECOGNIZED) {
+        ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privateConfig;
+        privateConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
+        auto privateRes = ncrypto::EVPKeyPointer::TryParsePrivateKey(privateConfig, ncryptoBuf);
+        if (privateRes) {
+            ncrypto::EVPKeyPointer keyPtr(WTFMove(privateRes.value));
+            return keyPtr;
+        }
+    }
+
+    throwCryptoError(lexicalGlobalObject, scope, publicRes.openssl_error.value_or(0), "Failed to read public key"_s);
     return std::nullopt;
 }
 

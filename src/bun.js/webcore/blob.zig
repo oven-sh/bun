@@ -3680,18 +3680,17 @@ pub const Blob = struct {
         }
 
         pub fn toInternalBlob(this: *ByteStore) InternalBlob {
-            if (this.ptr == null) {
-                return InternalBlob{
-                    .bytes = std.ArrayList(u8){
-                        .items = &.{},
-                        .capacity = 0,
-                        .allocator = this.allocator,
-                    },
-                };
-            }
+            const ptr = this.ptr orelse return InternalBlob{
+                .bytes = std.ArrayList(u8){
+                    .items = &.{},
+                    .capacity = 0,
+                    .allocator = this.allocator,
+                },
+            };
+
             const result = InternalBlob{
                 .bytes = std.ArrayList(u8){
-                    .items = this.ptr.?[0..this.len],
+                    .items = ptr[0..this.len],
                     .capacity = this.cap,
                     .allocator = this.allocator,
                 },

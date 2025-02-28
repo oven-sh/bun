@@ -1832,7 +1832,7 @@ function onServerResponseClose() {
 let OriginalWriteHeadFn, OriginalImplicitHeadFn;
 
 function ServerResponse(req, options) {
-  if (!new.target) {
+  if (!(this instanceof ServerResponse)) {
     return new ServerResponse(req, options);
   }
 

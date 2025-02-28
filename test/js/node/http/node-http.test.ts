@@ -2061,7 +2061,7 @@ it("should work when sending https.request with agent:false", async () => {
   await promise;
 });
 
-it("client should use chunked encoded if more than one write is called", async () => {
+it("client should use chunked encoding if more than one write is called", async () => {
   function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }

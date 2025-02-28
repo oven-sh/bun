@@ -228,3 +228,40 @@ devTest("directory cache bust case #17576", {
     await c.expectMessage(456);
   },
 });
+devTest("deleting imported file shows error then recovers", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+    "unrelated.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+    await dev.delete("other.ts", {
+      errors: ['index.ts:1:23: error: Could not resolve: "./other"'],
+    });
+    await c.expectReload(async () => {
+      await dev.write(
+        "other.ts",
+        `
+        export const value = 456;
+      `,
+      );
+    });
+    await c.expectMessage(456);
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.delete("unrelated.ts");
+    });
+  },
+});

@@ -2636,6 +2636,7 @@ pub fn handleParseTaskFailure(
     graph: bake.Graph,
     abs_path: []const u8,
     log: *const Log,
+    bv2: *BundleV2,
 ) bun.OOM!void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
@@ -2648,14 +2649,11 @@ pub fn handleParseTaskFailure(
     });
 
     if (err == error.FileNotFound) {
-        // Special-case files being deleted. Note that if a
-        // file never existed, resolution would fail first.
-        //
-        // TODO: this should walk up the graph one level, and queue all of these
-        // files for re-bundling if they aren't already in the BundleV2 graph.
+        // Special-case files being deleted. Note that if a file had never
+        // existed, resolution would fail first.
         switch (graph) {
-            .server, .ssr => try dev.server_graph.onFileDeleted(abs_path, log),
-            .client => try dev.client_graph.onFileDeleted(abs_path, log),
+            .server, .ssr => dev.server_graph.onFileDeleted(abs_path, bv2),
+            .client => dev.client_graph.onFileDeleted(abs_path, bv2),
         }
     } else {
         switch (graph) {
@@ -4326,16 +4324,55 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
-        pub fn onFileDeleted(g: *@This(), abs_path: []const u8, log: *const Log) !void {
+        pub fn onFileDeleted(g: *@This(), abs_path: []const u8, bv2: *bun.BundleV2) void {
             const index = g.getFileIndex(abs_path) orelse return;
 
-            if (g.first_dep.items[index.get()] == .none) {
-                g.disconnectAndDeleteFile(index);
-            } else {
-                // TODO: This is incorrect, delete it!
-                // Keep the file so others may refer to it, but mark as failed.
-                try g.insertFailure(.abs_path, abs_path, log, false);
+            const keys = g.bundled_files.keys();
+
+            // Disconnect all imports
+            var it: ?EdgeIndex = g.first_import.items[index.get()].unwrap();
+            while (it) |edge_index| {
+                const dep = g.edges.items[edge_index.get()];
+                it = dep.next_import.unwrap();
+                assert(dep.dependency == index);
+
+                g.disconnectEdgeFromDependencyList(edge_index);
+                g.freeEdge(edge_index);
             }
+
+            // Rebuild all dependencies
+            it = g.first_dep.items[index.get()].unwrap();
+            while (it) |edge_index| {
+                const dep = g.edges.items[edge_index.get()];
+                it = dep.next_import.unwrap();
+                assert(dep.imported == index);
+
+                bv2.enqueueFileFromDevServerIncrementalGraphInvalidation(
+                    keys[dep.dependency.get()],
+                    switch (side) {
+                        .client => .browser,
+                        .server => .bun,
+                    },
+                ) catch bun.outOfMemory();
+            }
+
+            // Bust the resolution caches of the dir containing this file,
+            // so that it cannot be resolved.
+            const dirname = std.fs.path.dirname(abs_path) orelse abs_path;
+            _ = bv2.transpiler.resolver.bustDirCache(dirname);
+
+            // Additionally, clear the cached entry of the file from the path to
+            // source index map.
+            const hash = bun.hash(abs_path);
+            var any_found = false;
+            for ([_]*bun.bundle_v2.PathToSourceIndexMap{
+                &bv2.graph.path_to_source_index_map,
+                &bv2.graph.client_path_to_source_index_map,
+                &bv2.graph.ssr_path_to_source_index_map,
+            }) |map| {
+                any_found = map.remove(hash) or any_found;
+            }
+            bun.debugAssert(any_found);
         }
 
         pub fn ensureStaleBitCapacity(g: *@This(), are_new_files_stale: bool) !void {
@@ -6477,7 +6514,7 @@ pub const EntryPointList = struct {
 
     pub const empty: EntryPointList = .{ .set = .{} };
 
-    const Flags = packed struct(u8) {
+    pub const Flags = packed struct(u8) {
         client: bool = false,
         server: bool = false,
         ssr: bool = false,

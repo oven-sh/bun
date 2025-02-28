@@ -238,6 +238,37 @@ export class Dev {
     await this.write(file, content, { dedent: false });
   }
 
+  /**
+   * Deletes a file and waits for hot reload if in development mode
+   * @param file Path to the file to delete, relative to the root directory
+   * @param options Options for handling errors after deletion
+   * @returns Promise that resolves when the file is deleted and hot reload is complete (if applicable)
+   */
+  delete(file: string, options: { errors?: null | ErrorSpec[] } = {}) {
+    const snapshot = snapshotCallerLocation();
+    return withAnnotatedStack(snapshot, async () => {
+      await maybeWaitInteractive("delete " + file);
+      const isDev = this.nodeEnv === "development";
+      const wait = isDev && this.waitForHotReload();
+
+      const filePath = this.join(file);
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File ${file} does not exist`);
+      }
+
+      fs.unlinkSync(filePath);
+      await wait;
+
+      let errors = options.errors;
+      if (isDev && errors !== null) {
+        errors ??= [];
+        for (const client of this.connectedClients) {
+          await client.expectErrorOverlay(errors, null);
+        }
+      }
+    });
+  }
+
   patch(
     file: string,
     {

@@ -64,8 +64,50 @@ ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalO
         return ncrypto::EVPKeyPointer::PKFormatType::DER;
     }
 
-    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "format"_s, formatValue);
+    if (formatStr == "jwk"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::JWK;
+    }
+
+    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, formatValue);
     return {};
+}
+
+std::optional<ncrypto::EVPKeyPointer::PKEncodingType> parseKeyType(JSC::JSGlobalObject* globalObject, JSValue typeValue, bool required, WTF::StringView keyType, bool isPublic, WTF::ASCIILiteral optionName)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    if (typeValue.isUndefined() && !required) {
+        return std::nullopt;
+    }
+
+    if (!typeValue.isString()) {
+        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, typeValue);
+        return std::nullopt;
+    }
+
+    WTF::String typeStr = typeValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    if (typeStr == "pkcs1"_s) {
+        if (keyType != "rsa"_s) {
+            Bun::ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, "pkcs1"_s, "can only be used for RSA keys"_s);
+            return std::nullopt;
+        }
+        return ncrypto::EVPKeyPointer::PKEncodingType::PKCS1;
+    } else if (typeStr == "spki"_s && isPublic != false) {
+        return ncrypto::EVPKeyPointer::PKEncodingType::SPKI;
+    } else if (typeStr == "pkcs8"_s && isPublic != true) {
+        return ncrypto::EVPKeyPointer::PKEncodingType::PKCS8;
+    } else if (typeStr == "sec1"_s && isPublic != true) {
+        if (keyType != "ec"_s) {
+            Bun::ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, "sec1"_s, "can only be used for EC keys"_s);
+            return std::nullopt;
+        }
+        return ncrypto::EVPKeyPointer::PKEncodingType::SEC1;
+    }
+
+    Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, typeValue);
+    return std::nullopt;
 }
 
 std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue input)

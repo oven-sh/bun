@@ -294,7 +294,10 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
 std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue);
-bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, uint8_t* derBuffer, size_t derMaxSize, size_t bytesOfRS, size_t* derLen);
+bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
+    const ncrypto::EVPKeyPointer& pkey,
+    WTF::Vector<uint8_t>& derBuffer,
+    size_t* derLen);
 
 JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -386,39 +389,25 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     // Handle P1363 format conversion for EC keys if needed
     ncrypto::Buffer<const unsigned char> sigBuf {
-        .data = static_cast<const unsigned char*>(signatureBuffer->span().data()),
-        .len = signatureBuffer->span().size(),
+        .data = static_cast<const unsigned char*>(signatureBuffer->vector()),
+        .len = signatureBuffer->byteLength(),
     };
 
     if (dsaSigEnc == NodeCryptoKeys::DSASigEnc::P1363 && keyPtr.isSigVariant()) {
-        auto bytesOfRS = keyPtr.getBytesOfRS();
-        if (!bytesOfRS) {
-            throwTypeError(globalObject, scope, "Failed to get signature size"_s);
-            return JSValue::encode(jsBoolean(false));
-        }
-
-        size_t derMaxSize = 2 + 2 * (2 + bytesOfRS.value());
-
         WTF::Vector<uint8_t> derBuffer;
-        if (!derBuffer.tryReserveInitialCapacity(derMaxSize)) {
-            throwOutOfMemoryError(globalObject, scope);
-            return JSValue::encode({});
-        }
-
         size_t derLen = 0;
-        if (!convertP1363ToDER(sigBuf, derBuffer.data(), derMaxSize, bytesOfRS.value(), &derLen)) {
-            throwTypeError(globalObject, scope, "Failed to convert signature format"_s);
-            return JSValue::encode(jsBoolean(false));
+
+        if (convertP1363ToDER(sigBuf, keyPtr, derBuffer, &derLen)) {
+            // Conversion succeeded, perform verification with the converted signature
+            ncrypto::Buffer<const uint8_t> derSigBuf {
+                .data = derBuffer.data(),
+                .len = derLen
+            };
+
+            bool result = pkctx.verify(derSigBuf, data);
+            return JSValue::encode(jsBoolean(result));
         }
-
-        // Perform verification with the converted signature
-        ncrypto::Buffer<const uint8_t> derSigBuf {
-            .data = derBuffer.data(),
-            .len = derLen
-        };
-
-        bool result = pkctx.verify(derSigBuf, data);
-        return JSValue::encode(jsBoolean(result));
+        // If conversion failed, fall through to use the original signature
     }
 
     // Perform verification with the original signature
@@ -593,73 +582,6 @@ NodeCryptoKeys::DSASigEnc getDSASigEnc(JSGlobalObject* globalObject, JSValue opt
     return dsaSigEnc;
 }
 
-// Helper function to convert P1363 format to DER format
-bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, uint8_t* derBuffer, size_t derMaxSize, size_t bytesOfRS, size_t* derLen)
-{
-    // Check if the signature has the correct length for P1363 format
-    if (p1363Sig.len != 2 * bytesOfRS) {
-        return false;
-    }
-
-    // Create a new ECDSA_SIG structure
-    ECDSA_SIG* sig = ECDSA_SIG_new();
-    if (!sig) {
-        return false;
-    }
-
-    // Create a BN_CTX for temporary BIGNUM calculations
-    BN_CTX* ctx = BN_CTX_new();
-    if (!ctx) {
-        ECDSA_SIG_free(sig);
-        return false;
-    }
-
-    // Extract r and s values from the P1363 format
-    BIGNUM* r = BN_CTX_get(ctx);
-    BIGNUM* s = BN_CTX_get(ctx);
-
-    if (!r || !s) {
-        ECDSA_SIG_free(sig);
-        BN_CTX_free(ctx);
-        return false;
-    }
-
-    // Convert the first half of the signature to r
-    if (BN_bin2bn(p1363Sig.data, bytesOfRS, r) == nullptr) {
-        ECDSA_SIG_free(sig);
-        BN_CTX_free(ctx);
-        return false;
-    }
-
-    // Convert the second half of the signature to s
-    if (BN_bin2bn(p1363Sig.data + bytesOfRS, bytesOfRS, s) == nullptr) {
-        ECDSA_SIG_free(sig);
-        BN_CTX_free(ctx);
-        return false;
-    }
-
-    // Set the r and s components in the ECDSA_SIG structure
-    if (ECDSA_SIG_set0(sig, BN_dup(r), BN_dup(s)) != 1) {
-        ECDSA_SIG_free(sig);
-        BN_CTX_free(ctx);
-        return false;
-    }
-
-    // Convert the ECDSA_SIG to DER format
-    int len = i2d_ECDSA_SIG(sig, &derBuffer);
-    if (len <= 0 || static_cast<size_t>(len) > derMaxSize) {
-        ECDSA_SIG_free(sig);
-        BN_CTX_free(ctx);
-        return false;
-    }
-
-    *derLen = static_cast<size_t>(len);
-
-    ECDSA_SIG_free(sig);
-    BN_CTX_free(ctx);
-    return true;
-}
-
 std::optional<ncrypto::EVPKeyPointer> keyFromPublicString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView)
 {
     ncrypto::EVPKeyPointer::PublicKeyEncodingConfig publicConfig;
@@ -749,21 +671,21 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
                 return std::nullopt;
             }
         } else if (optionsType >= Int8ArrayType && optionsType <= DataViewType) {
-            // Handle buffer input
+            // Handle buffer input directly
             auto dataBuf = KeyObject__GetBuffer(maybeKey);
             if (dataBuf.hasException()) {
                 return std::nullopt;
             }
-
-            // Try to parse as a public key first
-            ncrypto::EVPKeyPointer::PublicKeyEncodingConfig pubConfig;
-            pubConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
 
             auto buffer = dataBuf.releaseReturnValue();
             ncrypto::Buffer<const unsigned char> ncryptoBuf {
                 .data = buffer.data(),
                 .len = buffer.size(),
             };
+
+            // Try as public key first with default PEM format
+            ncrypto::EVPKeyPointer::PublicKeyEncodingConfig pubConfig;
+            pubConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
 
             auto pubRes = ncrypto::EVPKeyPointer::TryParsePublicKey(pubConfig, ncryptoBuf);
             if (pubRes) {
@@ -795,8 +717,11 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
         RETURN_IF_EXCEPTION(scope, {});
         JSValue formatValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
         RETURN_IF_EXCEPTION(scope, {});
+        JSValue typeValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "type"_s));
+        RETURN_IF_EXCEPTION(scope, {});
         JSValue passphrase = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "passphrase"_s));
         RETURN_IF_EXCEPTION(scope, {});
+
         WTF::StringView formatStr = WTF::nullStringView();
         if (formatValue.isString()) {
             auto str = formatValue.toString(lexicalGlobalObject);
@@ -859,9 +784,27 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
                     .len = buffer.size(),
                 };
 
+                // Parse format and type from options
+                auto format = parseKeyFormat(lexicalGlobalObject, formatValue, "options.format"_s, ncrypto::EVPKeyPointer::PKFormatType::PEM);
+                RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+                // If format is JWK, use our JWK implementation
+                if (format == ncrypto::EVPKeyPointer::PKFormatType::JWK) {
+                    bool isPublic = true;
+                    return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
+                }
+
                 // Try as public key first
                 ncrypto::EVPKeyPointer::PublicKeyEncodingConfig pubConfig;
-                pubConfig.format = parseKeyFormat(lexicalGlobalObject, formatValue, "options.format"_s, ncrypto::EVPKeyPointer::PKFormatType::PEM);
+                pubConfig.format = format;
+
+                // Parse type for public key
+                auto pubType = parseKeyType(lexicalGlobalObject, typeValue, format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::emptyStringView(), true, "options.type"_s);
+                RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+                if (pubType.has_value()) {
+                    pubConfig.type = pubType.value();
+                }
 
                 auto pubRes = ncrypto::EVPKeyPointer::TryParsePublicKey(pubConfig, ncryptoBuf);
                 if (pubRes) {
@@ -871,7 +814,16 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
 
                 // If public key parsing fails, try as a private key
                 ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privConfig;
-                privConfig.format = parseKeyFormat(lexicalGlobalObject, formatValue, "options.format"_s, ncrypto::EVPKeyPointer::PKFormatType::PEM);
+                privConfig.format = format;
+
+                // Parse type for private key
+                auto privType = parseKeyType(lexicalGlobalObject, typeValue, format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::emptyStringView(), false, "options.type"_s);
+                RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+                if (privType.has_value()) {
+                    privConfig.type = privType.value();
+                }
+
                 privConfig.passphrase = passphraseFromBufferSource(lexicalGlobalObject, scope, passphrase);
                 RETURN_IF_EXCEPTION(scope, std::nullopt);
 
@@ -898,15 +850,71 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
             WTF::String keyStr = key.toWTFString(lexicalGlobalObject);
             RETURN_IF_EXCEPTION(scope, std::nullopt);
 
-            // Try as public key first
-            auto pubKeyPtr = keyFromPublicString(lexicalGlobalObject, scope, keyStr);
-            if (pubKeyPtr) {
-                return pubKeyPtr;
-            }
+            // Parse format and type from options
+            auto format = parseKeyFormat(lexicalGlobalObject, formatValue, "options.format"_s, ncrypto::EVPKeyPointer::PKFormatType::PEM);
             RETURN_IF_EXCEPTION(scope, std::nullopt);
 
+            // If format is JWK, use our JWK implementation
+            if (format == ncrypto::EVPKeyPointer::PKFormatType::JWK) {
+                bool isPublic = true;
+                return getKeyObjectHandleFromJwk(lexicalGlobalObject, scope, key, isPublic);
+            }
+
+            // Try as public key first with specified format and type
+            UTF8View keyUtf8(keyStr);
+            auto keySpan = keyUtf8.span();
+
+            ncrypto::Buffer<const unsigned char> ncryptoBuf {
+                .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
+                .len = keySpan.size(),
+            };
+
+            // Try as public key first
+            ncrypto::EVPKeyPointer::PublicKeyEncodingConfig pubConfig;
+            pubConfig.format = format;
+
+            // Parse type for public key
+            auto pubType = parseKeyType(lexicalGlobalObject, typeValue, format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::emptyStringView(), true, "options.type"_s);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (pubType.has_value()) {
+                pubConfig.type = pubType.value();
+            }
+
+            auto pubRes = ncrypto::EVPKeyPointer::TryParsePublicKey(pubConfig, ncryptoBuf);
+            if (pubRes) {
+                ncrypto::EVPKeyPointer keyPtr(WTFMove(pubRes.value));
+                return keyPtr;
+            }
+
             // If public key parsing fails, try as a private key
-            return keyFromString(lexicalGlobalObject, scope, keyStr, passphrase);
+            ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privConfig;
+            privConfig.format = format;
+
+            // Parse type for private key
+            auto privType = parseKeyType(lexicalGlobalObject, typeValue, format == ncrypto::EVPKeyPointer::PKFormatType::DER, WTF::emptyStringView(), false, "options.type"_s);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            if (privType.has_value()) {
+                privConfig.type = privType.value();
+            }
+
+            privConfig.passphrase = passphraseFromBufferSource(lexicalGlobalObject, scope, passphrase);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+            auto privRes = ncrypto::EVPKeyPointer::TryParsePrivateKey(privConfig, ncryptoBuf);
+            if (privRes) {
+                ncrypto::EVPKeyPointer keyPtr(WTFMove(privRes.value));
+                return keyPtr;
+            }
+
+            if (privRes.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
+                Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
+                return std::nullopt;
+            }
+
+            throwCryptoError(lexicalGlobalObject, scope, privRes.openssl_error.value_or(0), "Failed to read key"_s);
+            return std::nullopt;
         }
 
         Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, key);
@@ -916,15 +924,42 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
         WTF::String keyStr = maybeKey.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
 
+        // Try as public key first with default PEM format
+        UTF8View keyUtf8(keyStr);
+        auto keySpan = keyUtf8.span();
+
+        ncrypto::Buffer<const unsigned char> ncryptoBuf {
+            .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
+            .len = keySpan.size(),
+        };
+
         // Try as public key first
-        auto pubKeyPtr = keyFromPublicString(lexicalGlobalObject, scope, keyStr);
-        if (pubKeyPtr) {
-            return pubKeyPtr;
+        ncrypto::EVPKeyPointer::PublicKeyEncodingConfig pubConfig;
+        pubConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
+
+        auto pubRes = ncrypto::EVPKeyPointer::TryParsePublicKey(pubConfig, ncryptoBuf);
+        if (pubRes) {
+            ncrypto::EVPKeyPointer keyPtr(WTFMove(pubRes.value));
+            return keyPtr;
         }
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
 
         // If public key parsing fails, try as a private key
-        return keyFromString(lexicalGlobalObject, scope, keyStr, jsUndefined());
+        ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig privConfig;
+        privConfig.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
+
+        auto privRes = ncrypto::EVPKeyPointer::TryParsePrivateKey(privConfig, ncryptoBuf);
+        if (privRes) {
+            ncrypto::EVPKeyPointer keyPtr(WTFMove(privRes.value));
+            return keyPtr;
+        }
+
+        if (privRes.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
+            Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
+            return std::nullopt;
+        }
+
+        throwCryptoError(lexicalGlobalObject, scope, privRes.openssl_error.value_or(0), "Failed to read key"_s);
+        return std::nullopt;
     }
 
     Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
@@ -1293,6 +1328,74 @@ std::optional<ncrypto::EVPKeyPointer> getKeyObjectHandleFromJwk(JSGlobalObject* 
     // Should never reach here due to earlier validation
     Bun::ERR::CRYPTO_INVALID_JWK(scope, lexicalGlobalObject);
     return std::nullopt;
+}
+
+bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
+    const ncrypto::EVPKeyPointer& pkey,
+    WTF::Vector<uint8_t>& derBuffer,
+    size_t* derLen)
+{
+    // Get the size of r and s components from the key
+    auto bytesOfRS = pkey.getBytesOfRS();
+    if (!bytesOfRS) {
+        // If we can't get the bytes of RS, this is not a signature variant
+        // that we can convert. Return false to indicate that the original
+        // signature should be used.
+        return false;
+    }
+
+    size_t bytesOfRSValue = bytesOfRS.value();
+
+    // Check if the signature size is valid (should be 2 * bytesOfRS)
+    if (p1363Sig.len != 2 * bytesOfRSValue) {
+        // If the signature size doesn't match what we expect, return false
+        // to indicate that the original signature should be used.
+        return false;
+    }
+
+    // Calculate the maximum size needed for DER encoding
+    size_t derMaxSize = 2 + 2 * (2 + bytesOfRSValue);
+
+    // Allocate buffer for DER encoded signature
+    if (!derBuffer.tryReserveInitialCapacity(derMaxSize)) {
+        return false;
+    }
+
+    // Create BignumPointers for r and s components
+    ncrypto::BignumPointer r(p1363Sig.data, bytesOfRSValue);
+    if (!r) {
+        return false;
+    }
+
+    ncrypto::BignumPointer s(p1363Sig.data + bytesOfRSValue, bytesOfRSValue);
+    if (!s) {
+        return false;
+    }
+
+    // Create a new ECDSA_SIG structure and set r and s components
+    auto asn1_sig = ncrypto::ECDSASigPointer::New();
+    if (!asn1_sig) {
+        return false;
+    }
+
+    if (!asn1_sig.setParams(std::move(r), std::move(s))) {
+        return false;
+    }
+
+    // Encode the signature in DER format
+    auto buf = asn1_sig.encode();
+    if (!buf.data || buf.len == 0 || buf.len > derMaxSize) {
+        return false;
+    }
+
+    // Copy the DER encoded signature to the output buffer
+    memcpy(derBuffer.data(), buf.data, buf.len);
+    *derLen = buf.len;
+
+    // Resize the buffer to the actual size of the DER signature
+    derBuffer.shrink(buf.len);
+
+    return true;
 }
 
 } // namespace Bun

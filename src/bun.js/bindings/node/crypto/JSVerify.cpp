@@ -289,7 +289,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 
 std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue);
-bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, unsigned char* derBuffer, size_t derMaxSize, size_t bytesOfRS, size_t* derLen);
+bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, uint8_t* derBuffer, size_t derMaxSize, size_t bytesOfRS, size_t* derLen);
 
 JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -393,21 +393,22 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
         }
 
         size_t derMaxSize = 2 + 2 * (2 + bytesOfRS.value());
-        auto derBuffer = std::make_unique<unsigned char[]>(derMaxSize);
-        if (!derBuffer) {
-            throwTypeError(globalObject, scope, "Failed to allocate DER buffer"_s);
-            return JSValue::encode(jsBoolean(false));
+
+        WTF::Vector<uint8_t> derBuffer;
+        if (!derBuffer.tryReserveInitialCapacity(derMaxSize)) {
+            throwOutOfMemoryError(globalObject, scope);
+            return JSValue::encode({});
         }
 
         size_t derLen = 0;
-        if (!convertP1363ToDER(sigBuf, derBuffer.get(), derMaxSize, bytesOfRS.value(), &derLen)) {
+        if (!convertP1363ToDER(sigBuf, derBuffer.data(), derMaxSize, bytesOfRS.value(), &derLen)) {
             throwTypeError(globalObject, scope, "Failed to convert signature format"_s);
             return JSValue::encode(jsBoolean(false));
         }
 
         // Perform verification with the converted signature
-        ncrypto::Buffer<const unsigned char> derSigBuf {
-            .data = derBuffer.get(),
+        ncrypto::Buffer<const uint8_t> derSigBuf {
+            .data = derBuffer.data(),
             .len = derLen
         };
 
@@ -588,76 +589,7 @@ NodeCryptoKeys::DSASigEnc getDSASigEnc(JSGlobalObject* globalObject, JSValue opt
 }
 
 // Helper function to convert P1363 format to DER format
-// namespace ncrypto {
-// bool convertP1363ToDER(const Buffer<const unsigned char>& p1363Sig, unsigned char* derBuffer, size_t derMaxSize, size_t bytesOfRS, size_t* derLen)
-// {
-//     // Check if the signature has the correct length for P1363 format
-//     if (p1363Sig.len != 2 * bytesOfRS) {
-//         return false;
-//     }
-
-//     // Create a new ECDSA_SIG structure
-//     ECDSA_SIG* sig = ECDSA_SIG_new();
-//     if (!sig) {
-//         return false;
-//     }
-
-//     // Create a BN_CTX for temporary BIGNUM calculations
-//     BN_CTX* ctx = BN_CTX_new();
-//     if (!ctx) {
-//         ECDSA_SIG_free(sig);
-//         return false;
-//     }
-
-//     // Extract r and s values from the P1363 format
-//     BIGNUM* r = BN_CTX_get(ctx);
-//     BIGNUM* s = BN_CTX_get(ctx);
-
-//     if (!r || !s) {
-//         ECDSA_SIG_free(sig);
-//         BN_CTX_free(ctx);
-//         return false;
-//     }
-
-//     // Convert the first half of the signature to r
-//     if (BN_bin2bn(p1363Sig.data, bytesOfRS, r) == nullptr) {
-//         ECDSA_SIG_free(sig);
-//         BN_CTX_free(ctx);
-//         return false;
-//     }
-
-//     // Convert the second half of the signature to s
-//     if (BN_bin2bn(p1363Sig.data + bytesOfRS, bytesOfRS, s) == nullptr) {
-//         ECDSA_SIG_free(sig);
-//         BN_CTX_free(ctx);
-//         return false;
-//     }
-
-//     // Set the r and s components in the ECDSA_SIG structure
-//     if (ECDSA_SIG_set0(sig, BN_dup(r), BN_dup(s)) != 1) {
-//         ECDSA_SIG_free(sig);
-//         BN_CTX_free(ctx);
-//         return false;
-//     }
-
-//     // Convert the ECDSA_SIG to DER format
-//     int len = i2d_ECDSA_SIG(sig, &derBuffer);
-//     if (len <= 0 || static_cast<size_t>(len) > derMaxSize) {
-//         ECDSA_SIG_free(sig);
-//         BN_CTX_free(ctx);
-//         return false;
-//     }
-
-//     *derLen = static_cast<size_t>(len);
-
-//     ECDSA_SIG_free(sig);
-//     BN_CTX_free(ctx);
-//     return true;
-// }
-// }
-
-// Helper function to convert P1363 format to DER format
-bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, unsigned char* derBuffer, size_t derMaxSize, size_t bytesOfRS, size_t* derLen)
+bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, uint8_t* derBuffer, size_t derMaxSize, size_t bytesOfRS, size_t* derLen)
 {
     // Check if the signature has the correct length for P1363 format
     if (p1363Sig.len != 2 * bytesOfRS) {

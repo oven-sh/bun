@@ -502,4 +502,28 @@ describe("bundler", () => {
       '+"æ"',
     ],
   });
+  itBundled("minify/ImportMetaHotTreeShaking", {
+    files: {
+      "/entry.ts": `
+        capture(import.meta.hot);
+        if (import.meta.hot) {
+          console.log("This should be removed");
+          throw new Error("This should be removed");
+        }
+        if (import.meta.hot == undefined) {
+          console.log("This should be removed");
+          throw new Error("This should be removed");
+        }
+        capture("This should remain");
+      `,
+    },
+    outfile: "/out.js",
+    capture: ["void 0", '"This should remain"'],
+    minifySyntax: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("console.log");
+      api.expectFile("/out.js").not.toContain("throw");
+      api.expectFile("/out.js").not.toContain("import.meta.hot");
+    },
+  });
 });

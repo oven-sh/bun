@@ -1303,8 +1303,6 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    _ = try user_defines.getOrPutValue("import.meta.hot", "false");
-
     const resolved_defines = try defines.DefineData.fromInput(user_defines, drop, log, allocator);
 
     const drop_debugger = for (drop) |item| {

@@ -5,6 +5,7 @@ devTest("html file is watched", {
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["/script.ts"],
+      body: "<h1>Hello</h1>",
     }),
     "script.ts": `
       console.log("hello");

@@ -182,7 +182,7 @@ devTest("using runtime import", {
             //
             "()=>module.require",
             "()=>module.require",
-            "()=>module.importMeta().require",
+            "()=>module.importMeta.require",
             true,
             true,
             true,

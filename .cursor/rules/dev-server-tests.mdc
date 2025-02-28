@@ -2,6 +2,7 @@
 description: Writing HMR/Dev Server tests
 globs: test/bake/*
 ---
+
 # Writing HMR/Dev Server tests
 
 Dev server tests validate that hot-reloading is robust, correct, and reliable. Remember to write thorough, yet concise tests.
@@ -9,10 +10,10 @@ Dev server tests validate that hot-reloading is robust, correct, and reliable. R
 ## File Structure
 
 - `test/bake/bake-harness.ts` - shared utilities and test harness
-    - primary test functions `devTest` / `prodTest` / `devAndProductionTest`
-    - class `Dev` (controls subprocess for dev server)
-    - class `Client` (controls a happy-dom subprocess for having the page open)
-    - more helpers
+  - primary test functions `devTest` / `prodTest` / `devAndProductionTest`
+  - class `Dev` (controls subprocess for dev server)
+  - class `Client` (controls a happy-dom subprocess for having the page open)
+  - more helpers
 - `test/bake/client-fixture.mjs` - subprocess for what `Client` controls. it loads a page and uses IPC to query parts of the page, run javascript, and much more.
 - `test/bake/dev/*.test.ts` - these call `devTest` to test dev server and hot reloading
 - `test/bake/dev-and-prod.ts` - these use `devAndProductionTest` to run the same test on dev and production mode. these tests cannot really test hot reloading for obvious reasons.
@@ -39,6 +40,7 @@ devTest("html file is watched", {
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["/script.ts"],
+      body: "<h1>Hello</h1>",
     }),
     "script.ts": `
       console.log("hello");
@@ -131,7 +133,7 @@ devTest("import then create", {
 Many functions take an options value to allow specifying it will produce errors. For example, this delete is going to cause a resolution failure.
 
 ```ts
-    await dev.delete("other.ts", {
-      errors: ['index.ts:1:16: error: Could not resolve: "./other"'],
-    });
+await dev.delete("other.ts", {
+  errors: ['index.ts:1:16: error: Could not resolve: "./other"'],
+});
 ```

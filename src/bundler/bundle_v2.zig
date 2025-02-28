@@ -13158,7 +13158,7 @@ pub const LinkerContext = struct {
             }
 
             // add a marker for the client runtime to tell that this is an ES module
-            if (ast.exports_kind.isESMWithDynamicFallback()) {
+            if (ast.exports_kind == .esm) {
                 stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
                     .value = Expr.assign(
                         Expr.init(E.Dot, .{

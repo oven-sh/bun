@@ -113,7 +113,7 @@ pub const Request = struct {
     }
 
     pub const InternalJSEventCallback = struct {
-        function: JSC.Strong = .{},
+        function: JSC.Strong = .empty,
 
         pub const EventType = enum(u8) {
             timeout = 0,
@@ -271,7 +271,7 @@ pub const Request = struct {
                     try Blob.writeFormatForSize(false, size, writer, enable_ansi_colors);
                 }
             } else if (this.body.value == .Locked) {
-                if (this.body.value.Locked.readable.get()) |stream| {
+                if (this.body.value.Locked.readable.get(this.body.value.Locked.global)) |stream| {
                     try writer.writeAll("\n");
                     try formatter.writeIndent(Writer, writer);
                     try formatter.printAs(.Object, Writer, writer, stream.value, stream.value.jsType(), enable_ansi_colors);
@@ -820,14 +820,14 @@ pub const Request = struct {
         const js_wrapper = cloned.toJS(globalThis);
         if (js_wrapper != .zero) {
             if (cloned.body.value == .Locked) {
-                if (cloned.body.value.Locked.readable.get()) |readable| {
+                if (cloned.body.value.Locked.readable.get(globalThis)) |readable| {
                     // If we are teed, then we need to update the cached .body
                     // value to point to the new readable stream
                     // We must do this on both the original and cloned request
                     // but especially the original request since it will have a stale .body value now.
                     Request.bodySetCached(js_wrapper, globalThis, readable.value);
 
-                    if (this.body.value.Locked.readable.get()) |other_readable| {
+                    if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
                         Request.bodySetCached(this_value, globalThis, other_readable.value);
                     }
                 }

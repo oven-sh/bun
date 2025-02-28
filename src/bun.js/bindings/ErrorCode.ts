@@ -87,6 +87,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["ERR_INVALID_CHAR", TypeError],
   ["MODULE_NOT_FOUND", Error],
+  ["ERR_SERVER_ALREADY_LISTEN", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

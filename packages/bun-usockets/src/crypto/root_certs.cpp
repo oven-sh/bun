@@ -2,6 +2,7 @@
 // so we use C++ std::atomic instead.
 #include "./root_certs.h"
 #include "./internal/internal.h"
+#include "internal/safety.h"
 #include <atomic>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
@@ -153,17 +154,15 @@ extern "C" X509_STORE *us_get_default_ca_store() {
   // load all root_cert_instances on the default ca store
   for (size_t i = 0; i < root_certs_size; i++) {
     X509 *cert = root_cert_instances[i];
-    if (cert == NULL)
-      continue;
-    X509_up_ref(cert);
-    X509_STORE_add_cert(store, cert);
+    if (cert == NULL) continue;
+    X509_STORE_add_cert(store, cert); // note: increments ref count
   }
 
   if (root_extra_cert_instances) {
     for (int i = 0; i < sk_X509_num(root_extra_cert_instances); i++) {
-      X509 *cert = sk_X509_value(root_extra_cert_instances, i);
-      X509_up_ref(cert);
-      X509_STORE_add_cert(store, cert);
+      X509 *cert = sk_X509_value(root_extra_cert_instances, i);  // ptr borrowed from stack. ref count not incremented.
+      if (cert == NULL) continue;
+      X509_STORE_add_cert(store, cert); // note: increments ref count
     }
   }
 

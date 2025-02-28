@@ -19,6 +19,7 @@
 
 
 #include "internal/internal.h"
+#include "internal/safety.h"
 #include "libusockets.h"
 #include <string.h>
 
@@ -925,6 +926,9 @@ end:
 
 int add_ca_cert_to_ctx_store(SSL_CTX *ctx, const char *content,
                              X509_STORE *store) {
+  assert(ctx);
+  assert(content);
+  assert(store);
 
   X509 *x = NULL;
   ERR_clear_error(); // clear error stack for SSL_CTX_use_certificate()
@@ -1132,13 +1136,18 @@ int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   return 1;
 }
 
-SSL_CTX *create_ssl_context_from_bun_options(
+/// Returns `NULL` on error. `err` may or may not have been populated.
+/// If it's not populated, an OpenSSL occurred, and OpenSSL err apis
+/// (e.g. `ERR_get_error`) should be used to obtain error info.
+SSL_CTX * create_ssl_context_from_bun_options(
     struct us_bun_socket_context_options_t options, 
     enum create_bun_socket_error_t *err) {
   ERR_clear_error();
+  *err = CREATE_BUN_SOCKET_ERROR_NONE;
 
   /* Create the context */
   SSL_CTX *ssl_context = SSL_CTX_new(TLS_method());
+  if (!ssl_context) return NULL;
 
   /* Default options we rely on - changing these will break our logic */
   SSL_CTX_set_read_ahead(ssl_context, 1);
@@ -1179,14 +1188,12 @@ SSL_CTX *create_ssl_context_from_bun_options(
   if (options.cert_file_name) {
     if (SSL_CTX_use_certificate_chain_file(ssl_context,
                                            options.cert_file_name) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+        goto err_ctx;
     }
   } else if (options.cert && options.cert_count > 0) {
     for (unsigned int i = 0; i < options.cert_count; i++) {
       if (us_ssl_ctx_use_certificate_chain(ssl_context, options.cert[i]) != 1) {
-        free_ssl_context(ssl_context);
-        return NULL;
+        goto err_ctx;
       }
     }
   }
@@ -1195,15 +1202,13 @@ SSL_CTX *create_ssl_context_from_bun_options(
   if (options.key_file_name) {
     if (SSL_CTX_use_PrivateKey_file(ssl_context, options.key_file_name,
                                     SSL_FILETYPE_PEM) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+      goto err_ctx;
     }
   } else if (options.key && options.key_count > 0) {
     for (unsigned int i = 0; i < options.key_count; i++) {
       if (us_ssl_ctx_use_privatekey_content(ssl_context, options.key[i],
                                             SSL_FILETYPE_PEM) != 1) {
-        free_ssl_context(ssl_context);
-        return NULL;
+        goto err_ctx;
       }
     }
   }
@@ -1211,20 +1216,19 @@ SSL_CTX *create_ssl_context_from_bun_options(
   if (options.ca_file_name) {
     SSL_CTX_set_cert_store(ssl_context, us_get_default_ca_store());
 
-    STACK_OF(X509_NAME) * ca_list;
+    STACK_OF(X509_NAME) * ca_list = NULL;
     ca_list = SSL_load_client_CA_file(options.ca_file_name);
     if (ca_list == NULL) {
       *err = CREATE_BUN_SOCKET_ERROR_LOAD_CA_FILE;
-      free_ssl_context(ssl_context);
-      return NULL;
+      goto err_ctx;
     }
 
     SSL_CTX_set_client_CA_list(ssl_context, ca_list);
+    MOVED(ca_list);
     if (SSL_CTX_load_verify_locations(ssl_context, options.ca_file_name,
                                       NULL) != 1) {
       *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE;
-      free_ssl_context(ssl_context);
-      return NULL;
+      goto err_ctx;
     }
 
     if (options.reject_unauthorized) {
@@ -1239,6 +1243,7 @@ SSL_CTX *create_ssl_context_from_bun_options(
     X509_STORE *cert_store = NULL;
 
     for (unsigned int i = 0; i < options.ca_count; i++) {
+      // FIXME(@DonIsaac): Does this need to be done within this loop? Can it be moved outside?
       if (cert_store == NULL) {
         cert_store = us_get_default_ca_store();
         SSL_CTX_set_cert_store(ssl_context, cert_store);
@@ -1246,8 +1251,8 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
       if (!add_ca_cert_to_ctx_store(ssl_context, options.ca[i], cert_store)) {
         *err = CREATE_BUN_SOCKET_ERROR_INVALID_CA;
-        free_ssl_context(ssl_context);
-        return NULL;
+        if (cert_store) X509_STORE_free(cert_store); // shouldn't ever be null, but just in case
+        goto err_ctx;
       }
 
      // It may return spurious errors here.
@@ -1284,21 +1289,18 @@ SSL_CTX *create_ssl_context_from_bun_options(
       dh_2048 = PEM_read_DHparams(paramfile, NULL, NULL, NULL);
       fclose(paramfile);
     } else {
-      free_ssl_context(ssl_context);
-      return NULL;
+      goto err_ctx;
     }
 
     if (dh_2048 == NULL) {
-      free_ssl_context(ssl_context);
-      return NULL;
+      goto err_ctx;
     }
 
     const long set_tmp_dh = SSL_CTX_set_tmp_dh(ssl_context, dh_2048);
     DH_free(dh_2048);
 
     if (set_tmp_dh != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+      goto err_ctx;
     }
 
     /* OWASP Cipher String 'A+'
@@ -1307,15 +1309,13 @@ SSL_CTX *create_ssl_context_from_bun_options(
             ssl_context,
             "DHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-"
             "AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256") != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+      goto err_ctx;
     }
   }
 
   if (options.ssl_ciphers) {
     if (SSL_CTX_set_cipher_list(ssl_context, options.ssl_ciphers) != 1) {
-      free_ssl_context(ssl_context);
-      return NULL;
+      goto err_ctx;
     }
   }
 
@@ -1325,6 +1325,10 @@ SSL_CTX *create_ssl_context_from_bun_options(
 
   /* This must be free'd with free_ssl_context, not SSL_CTX_free */
   return ssl_context;
+
+  err_ctx:
+    free_ssl_context(ssl_context);
+    return NULL;
 }
 
 /* Returns a servername's userdata if any */

@@ -5010,7 +5010,6 @@ pub const ParseTask = struct {
         opts.macro_context = &this.data.macro_context;
         opts.package_version = task.package_version;
 
-        opts.features.auto_polyfill_require = output_format == .esm;
         opts.features.allow_runtime = !source.index.isRuntime();
         opts.features.unwrap_commonjs_to_esm = output_format == .esm and FeatureFlags.unwrap_commonjs_to_esm;
         opts.features.top_level_await = output_format == .esm or output_format == .internal_bake_dev;
@@ -5023,6 +5022,7 @@ pub const ParseTask = struct {
         opts.features.emit_decorator_metadata = transpiler.options.emit_decorator_metadata;
         opts.features.unwrap_commonjs_packages = transpiler.options.unwrap_commonjs_packages;
         opts.features.hot_module_reloading = output_format == .internal_bake_dev and !source.index.isRuntime();
+        opts.features.auto_polyfill_require = output_format == .esm and !opts.features.hot_module_reloading;
         opts.features.react_fast_refresh = target == .browser and
             transpiler.options.react_fast_refresh and
             loader.isJSX() and
@@ -13146,7 +13146,7 @@ pub const LinkerContext = struct {
         // referencing everything by array makes the code a lot more annoying :(
         var ast: JSAst = c.graph.ast.get(part_range.source_index.get());
 
-        // For Bun Kit, part generation is entirely special cased.
+        // For HMR, part generation is entirely special cased.
         // - export wrapping is already done.
         // - import wrapping needs to know resolved paths
         // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
@@ -13210,6 +13210,8 @@ pub const LinkerContext = struct {
                 },
             } }, Logger.Loc.Empty));
 
+            ast.flags.uses_module_ref = true;
+
             return c.printCodeForFileInChunkJS(
                 r,
                 allocator,
@@ -13217,9 +13219,9 @@ pub const LinkerContext = struct {
                 (&single_stmt)[0..1],
                 &ast,
                 flags,
-                toESMRef,
-                toCommonJSRef,
-                runtimeRequireRef,
+                .None,
+                .None,
+                null,
                 part_range.source_index,
             );
         }
@@ -13762,7 +13764,7 @@ pub const LinkerContext = struct {
             .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
-            .commonjs_module_ref = if (ast.flags.uses_module_ref or c.options.output_format == .internal_bake_dev)
+            .commonjs_module_ref = if (ast.flags.uses_module_ref)
                 ast.module_ref
             else
                 Ref.None,

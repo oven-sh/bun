@@ -1447,8 +1447,8 @@ function testImpl<T extends DevServerTest>(
   const name = `${
     NODE_ENV === "development" //
       ? Bun.enableANSIColors
-        ? "\x1b[35mDEV\x1b[0m"
-        : "DEV"
+        ? " \x1b[35mDEV\x1b[0m"
+        : " DEV"
       : Bun.enableANSIColors
         ? "\x1b[36mPROD\x1b[0m"
         : "PROD"

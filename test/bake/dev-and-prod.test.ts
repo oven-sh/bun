@@ -150,7 +150,17 @@ devAndProductionTest("using runtime import", {
       class x {}
 
       // __require
-      console.log(require === eval("module.require"));
+      const A = () => require;
+      const B = () => module.require;
+      const C = () => import.meta.require;
+      if (import.meta.hot) {
+        console.log(A.toString().replaceAll(" ", "").replaceAll("\\n", ""));
+        console.log(B.toString().replaceAll(" ", "").replaceAll("\\n", ""));
+        console.log(C.toString().replaceAll(" ", "").replaceAll("\\n", ""));
+        console.log(A() === eval("module.require"));
+        console.log(B() === eval("module.require"));
+        console.log(C() === eval("module.require"));
+      }
     `,
     "tsconfig.json": `
       {
@@ -162,6 +172,21 @@ devAndProductionTest("using runtime import", {
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage("b", "a", "decorator");
+    await c.expectMessage(
+      "b",
+      "a",
+      "decorator",
+      ...(dev.nodeEnv === "development"
+        ? [
+            //
+            "()=>module.require",
+            "()=>module.require",
+            "()=>module.importMeta().require",
+            true,
+            true,
+            true,
+          ]
+        : []),
+    );
   },
 });

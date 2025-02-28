@@ -5300,6 +5300,8 @@ pub const Expr = struct {
         e_import_meta_main: E.ImportMetaMain,
         e_require_main,
 
+        e_
+
         e_inlined_enum: *E.InlinedEnum,
 
         comptime {

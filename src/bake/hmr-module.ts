@@ -89,6 +89,8 @@ export class HotModule<E = any> {
         enumerable: false,
       });
     }
+
+    this.require = this.require.bind(this);
   }
 
   require(id: Id, onReload?: ExportsCallbackFunction) {
@@ -103,14 +105,7 @@ export class HotModule<E = any> {
     mod._deps.set(this, onReload ? { _callback: onReload, _expectedImports: expectedImports } : undefined);
     const { exports, _esm } = mod;
     const object = _esm ? exports : (mod._ext_exports ??= runtimeHelpers.__toESM(exports));
-
-    // if (expectedImports && mod._state === State.Ready) {
-    //   for (const key of expectedImports) {
-    //     if (!(key in object)) {
-    //       throw new SyntaxError(`The requested module '${id}' does not provide an export named '${key}'`);
-    //     }
-    //   }
-    // }
+    // TODO: ESM rewrite
     return object;
   }
 
@@ -165,6 +160,8 @@ function initImportMeta(m: HotModule): ImportMeta {
   return {
     url: `bun://${m.id}`,
     main: false,
+    // @ts-ignore
+    require: m.require,
     // @ts-ignore
     get hot() {
       const hot = new Hot(m);
@@ -258,7 +255,7 @@ export function loadModule<T = any>(
   }
   const load = input_graph[key];
   if (type < 0 && isAsyncFunction(load)) {
-    // TODO: This is possible to implement, but requires some care.
+    // TODO: This is possible to implement, but requires some care. (ESM rewrite)
     throw new Error("Cannot load ES module synchronously");
   }
   if (!load) {

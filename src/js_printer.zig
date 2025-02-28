@@ -2275,6 +2275,8 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".main");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.print("false");
                     } else {
                         p.print("require.main");
                     }
@@ -2285,6 +2287,9 @@ fn NewPrinter(
 
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".require");
                     } else {
                         p.print("require");
                     }
@@ -2296,6 +2301,9 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".require.resolve");
                     } else {
                         p.print("require.resolve");
                     }

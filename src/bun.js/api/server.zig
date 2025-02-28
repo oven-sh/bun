@@ -193,7 +193,6 @@ fn writeHeaders(
     ctxLog("writeHeaders", .{});
     headers.fastRemove(.ContentLength);
     headers.fastRemove(.TransferEncoding);
-    if (!ssl) headers.fastRemove(.StrictTransportSecurity);
     if (resp_ptr) |resp| {
         headers.toUWSResponse(ssl, resp);
     }
@@ -332,7 +331,7 @@ pub const ServerInitContext = struct {
 
 const UserRouteBuilder = struct {
     route: RouteDeclaration,
-    callback: JSC.Strong = .{},
+    callback: JSC.Strong = .empty,
 
     // We need to be able to apply the route to multiple Apps even when there is only one RouteList.
     pub const RouteDeclaration = struct {
@@ -771,7 +770,7 @@ pub const ServerConfig = struct {
                 if (@field(this, field)) |slice_ptr| {
                     const slice = std.mem.span(slice_ptr);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.freeSensitive(bun.default_allocator, slice);
                     }
                     @field(this, field) = "";
                 }
@@ -781,7 +780,7 @@ pub const ServerConfig = struct {
                 for (0..this.cert_count) |i| {
                     const slice = std.mem.span(cert[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.freeSensitive(bun.default_allocator, slice);
                     }
                 }
 
@@ -793,7 +792,7 @@ pub const ServerConfig = struct {
                 for (0..this.key_count) |i| {
                     const slice = std.mem.span(key[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.freeSensitive(bun.default_allocator, slice);
                     }
                 }
 
@@ -805,7 +804,7 @@ pub const ServerConfig = struct {
                 for (0..this.ca_count) |i| {
                     const slice = std.mem.span(ca[i]);
                     if (slice.len > 0) {
-                        bun.default_allocator.free(slice);
+                        bun.freeSensitive(bun.default_allocator, slice);
                     }
                 }
 
@@ -2768,7 +2767,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         var strong_readable = response.body.value.Locked.readable;
                         response.body.value.Locked.readable = .{};
                         defer strong_readable.deinit();
-                        if (strong_readable.get()) |readable| {
+                        if (strong_readable.get(globalThis)) |readable| {
                             readable.abort(globalThis);
                             any_js_calls = true;
                         }
@@ -3738,8 +3737,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 assert(req.server != null);
 
                 if (resp.body.value == .Locked) {
-                    if (resp.body.value.Locked.readable.get()) |stream| {
-                        stream.done(req.server.?.globalThis);
+                    const global = resp.body.value.Locked.global;
+                    if (resp.body.value.Locked.readable.get(global)) |stream| {
+                        stream.done(global);
                     }
                     resp.body.value.Locked.readable.deinit();
                     resp.body.value = .{ .Used = {} };
@@ -3791,7 +3791,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (req.response_ptr) |resp| {
                 if (resp.body.value == .Locked) {
-                    if (resp.body.value.Locked.readable.get()) |stream| {
+                    if (resp.body.value.Locked.readable.get(globalThis)) |stream| {
                         stream.done(globalThis);
                     }
                     resp.body.value.Locked.readable.deinit();
@@ -3853,7 +3853,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         return;
                     }
 
-                    if (lock.readable.get()) |stream_| {
+                    if (lock.readable.get(globalThis)) |stream_| {
                         const stream: JSC.WebCore.ReadableStream = stream_;
                         // we hold the stream alive until we're done with it
                         this.readable_stream_ref = lock.readable;
@@ -4119,7 +4119,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.flags.has_called_error_handler = true;
                     const result = server.config.onError.call(
                         server.globalThis,
-                        server.thisObject,
+                        server.js_value.get() orelse .undefined,
                         &.{value},
                     ) catch |err| server.globalThis.takeException(err);
                     defer result.ensureStillAlive();
@@ -4365,7 +4365,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // After the user does request.body,
             // if they then do .text(), .arrayBuffer(), etc
             // we can no longer hold the strong reference from the body value ref.
-            if (this.request_body_readable_stream_ref.get()) |readable| {
+            if (this.request_body_readable_stream_ref.get(globalThis)) |readable| {
                 assert(this.request_body_buf.items.len == 0);
                 vm.eventLoop().enter();
                 defer vm.eventLoop().exit();
@@ -4504,7 +4504,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onRequestBodyReadableStreamAvailable(ptr: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
             var this = bun.cast(*RequestContext, ptr);
-            bun.debugAssert(this.request_body_readable_stream_ref.held.ref == null);
+            bun.debugAssert(this.request_body_readable_stream_ref.held.impl == null);
             this.request_body_readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
         }
 
@@ -6155,9 +6155,9 @@ pub const ServerWebSocket = struct {
 
 pub const NodeHTTPResponse = struct {
     response: uws.AnyResponse,
-    onDataCallback: JSC.Strong = .{},
-    onWritableCallback: JSC.Strong = .{},
-    onAbortedCallback: JSC.Strong = .{},
+    onDataCallback: JSC.Strong = .empty,
+    onWritableCallback: JSC.Strong = .empty,
+    onAbortedCallback: JSC.Strong = .empty,
 
     ref_count: u32 = 1,
     js_ref: JSC.Ref = .{},
@@ -6168,7 +6168,7 @@ pub const NodeHTTPResponse = struct {
     is_request_pending: bool = true,
     body_read_state: BodyReadState = .none,
     body_read_ref: JSC.Ref = .{},
-    promise: JSC.Strong = .{},
+    promise: JSC.Strong = .empty,
     server: AnyServer,
 
     /// When you call pause() on the node:http IncomingMessage
@@ -6649,7 +6649,7 @@ pub const NodeHTTPResponse = struct {
                     this.onAbortedCallback.deinit();
                 }
             }
-            const globalThis = this.onAbortedCallback.globalThis orelse JSC.VirtualMachine.get().global;
+            const globalThis = JSC.VirtualMachine.get().global;
             const vm = globalThis.bunVM();
             const event_loop = vm.eventLoop();
 
@@ -6844,7 +6844,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         if (this.onDataCallback.get()) |callback| {
-            const globalThis = this.onDataCallback.globalThis orelse JSC.VirtualMachine.get().global;
+            const globalThis = JSC.VirtualMachine.get().global;
             const event_loop = globalThis.bunVM().eventLoop();
 
             const bytes: JSC.JSValue = brk: {
@@ -6892,7 +6892,7 @@ pub const NodeHTTPResponse = struct {
             return false;
         }
         const on_writable = this.onWritableCallback.trySwap() orelse return false;
-        const globalThis = this.onWritableCallback.globalThis orelse JSC.VirtualMachine.get().global;
+        const globalThis = JSC.VirtualMachine.get().global;
         const vm = globalThis.bunVM();
 
         response.corked(JSC.EventLoop.runCallback, .{ vm.eventLoop(), on_writable, globalThis, .undefined, &.{JSC.JSValue.jsNumberFromUint64(offset)} });
@@ -6997,7 +6997,7 @@ pub const NodeHTTPResponse = struct {
             switch (this.response.write(bytes)) {
                 .want_more => |written| {
                     this.response.clearOnWritable();
-                    this.onWritableCallback.clear();
+                    this.onWritableCallback.clearWithoutDeallocation();
                     return JSC.JSValue.jsNumberFromUint64(written);
                 },
                 .backpressure => |written| {
@@ -7013,7 +7013,7 @@ pub const NodeHTTPResponse = struct {
 
     pub fn setOnWritable(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
         if (this.isDone() or value == .undefined) {
-            this.onWritableCallback.clear();
+            this.onWritableCallback.clearWithoutDeallocation();
             return true;
         }
 
@@ -7031,7 +7031,7 @@ pub const NodeHTTPResponse = struct {
 
     pub fn setOnAbort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
         if (this.isDone() or value == .undefined) {
-            this.onAbortedCallback.clear();
+            this.onAbortedCallback.clearWithoutDeallocation();
             return true;
         }
 
@@ -7413,6 +7413,9 @@ const PluginsResult = union(enum) {
 
 pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comptime debug_mode_: bool) type {
     return struct {
+        pub usingnamespace NamespaceType;
+        pub usingnamespace bun.New(@This());
+
         pub const ssl_enabled = ssl_enabled_;
         pub const debug_mode = debug_mode_;
 
@@ -7422,7 +7425,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const App = uws.NewApp(ssl_enabled);
 
         listener: ?*App.ListenSocket = null,
-        thisObject: JSC.JSValue = JSC.JSValue.zero,
+        js_value: JSC.Strong = .empty,
         /// Potentially null before listen() is called, and once .destroy() is called.
         app: ?*App = null,
         vm: *JSC.VirtualMachine,
@@ -7506,11 +7509,16 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return JSValue.jsNumber((this.app.?.numSubscribers(topic.slice())));
         }
 
-        pub usingnamespace NamespaceType;
-        pub usingnamespace bun.New(@This());
-
         pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!*ThisServer {
             return globalThis.throw2("Server() is not a constructor", .{});
+        }
+
+        pub fn jsValueAssertAlive(server: *ThisServer) JSC.JSValue {
+            bun.debugAssert(server.listener != null); // this assertion is only valid while listening
+            return server.js_value.get() orelse brk: {
+                bun.debugAssert(false);
+                break :brk .undefined; // safe-ish
+            };
         }
 
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
@@ -7522,7 +7530,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn memoryCost(this: *ThisServer) usize {
             return @sizeOf(ThisServer) +
                 this.base_url_string_for_joining.len +
-                this.config.memoryCost();
+                this.config.memoryCost() +
+                (if (this.dev_server) |dev| dev.memoryCost() else 0);
         }
 
         pub fn timeout(this: *ThisServer, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -7934,7 +7943,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             const route_list_value = this.setRoutes();
             if (new_config.had_routes_object) {
-                NamespaceType.routeListSetCached(this.thisObject, this.globalThis, route_list_value);
+                if (this.js_value.get()) |server_js_value| {
+                    NamespaceType.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                }
             }
         }
 
@@ -7947,13 +7958,15 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this.app.?.clearRoutes();
             const route_list_value = this.setRoutes();
             if (route_list_value != .zero) {
-                NamespaceType.routeListSetCached(this.thisObject, this.globalThis, route_list_value);
+                if (this.js_value.get()) |server_js_value| {
+                    NamespaceType.routeListSetCached(server_js_value, this.globalThis, route_list_value);
+                }
             }
             return true;
         }
 
         pub fn onReload(this: *ThisServer, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-            const arguments = callframe.arguments_old(1).slice();
+            const arguments = callframe.arguments();
             if (arguments.len < 1) {
                 return globalThis.throwNotEnoughArguments("reload", 1, 0);
             }
@@ -7974,7 +7987,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             this.onReloadFromZig(&new_config, globalThis);
 
-            return this.thisObject;
+            return this.js_value.get() orelse .undefined;
         }
 
         pub fn onFetch(
@@ -8070,7 +8083,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             const response_value = this.config.onRequest.call(
                 this.globalThis,
-                this.thisObject,
+                this.jsValueAssertAlive(),
                 &[_]JSC.JSValue{request.toJS(this.globalThis)},
             ) catch |err| this.globalThis.takeException(err);
 
@@ -8105,8 +8118,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     break :brk false;
                 };
 
-                this.thisObject.unprotect();
-                this.thisObject = .undefined;
                 this.stop(abrupt);
             }
 
@@ -8115,8 +8126,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
             if (this.listener != null) {
-                this.thisObject.unprotect();
-                this.thisObject = .undefined;
                 this.stop(true);
             }
 
@@ -8305,11 +8314,25 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn deinitIfWeCan(this: *ThisServer) void {
-            httplog("deinitIfWeCan", .{});
+            if (Environment.enable_logs)
+                httplog("deinitIfWeCan. requests={d}, listener={s}, websockets={s}, has_handled_all_closed_promise={}, all_closed_promise={s}, has_js_deinited={}", .{
+                    this.pending_requests,
+                    if (this.listener == null) "null" else "some",
+                    if (this.hasActiveWebSockets()) "active" else "no",
+                    this.flags.has_handled_all_closed_promise,
+                    if (this.all_closed_promise.strong.has()) "has" else "no",
+                    this.flags.has_js_deinited,
+                });
 
             const vm = this.globalThis.bunVM();
 
-            if (this.pending_requests == 0 and this.listener == null and !this.hasActiveWebSockets() and !this.flags.has_handled_all_closed_promise and this.all_closed_promise.strong.has()) {
+            if (this.pending_requests == 0 and
+                this.listener == null and
+                !this.hasActiveWebSockets() and
+                !this.flags.has_handled_all_closed_promise and
+                this.all_closed_promise.strong.has())
+            {
+                httplog("schedule other promise", .{});
                 const event_loop = vm.eventLoop();
 
                 // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
@@ -8319,19 +8342,37 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 const task = ServerAllConnectionsClosedTask.new(.{
                     .globalObject = this.globalThis,
                     // Duplicate the Strong handle so that we can hold two independent strong references to it.
-                    .promise = JSC.JSPromise.Strong{
+                    .promise = .{
                         .strong = JSC.Strong.create(this.all_closed_promise.value(), this.globalThis),
                     },
                     .tracker = JSC.AsyncTaskTracker.init(vm),
                 });
                 event_loop.enqueueTask(JSC.Task.init(task));
             }
-            if (this.pending_requests == 0 and this.listener == null and this.flags.has_js_deinited and !this.hasActiveWebSockets()) {
+            if (this.pending_requests == 0 and
+                this.listener == null and
+                !this.hasActiveWebSockets())
+            {
                 if (this.config.websocket) |*ws| {
                     ws.handler.app = null;
                 }
                 this.unref();
-                this.scheduleDeinit();
+
+                // Detach DevServer. This is needed because there are aggressive
+                // tests that check for DevServer memory soundness. This reveals
+                // a larger problem, that it seems that some objects like Server
+                // should be detachable from their JSValue, so that when the
+                // native handle is done, keeping the JS binding doesn't use
+                // `this.memoryCost()` bytes.
+                if (this.dev_server) |dev| {
+                    this.dev_server = null;
+                    dev.deinit();
+                }
+
+                // Only free the memory if the JS reference has been freed too
+                if (this.flags.has_js_deinited) {
+                    this.scheduleDeinit();
+                }
             }
         }
 
@@ -8356,6 +8397,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn stop(this: *ThisServer, abrupt: bool) void {
+            this.js_value.deinit();
+
             if (this.config.allow_hot and this.config.id.len > 0) {
                 if (this.globalThis.bunVM().hotMap()) |hot| {
                     hot.remove(this.config.id);
@@ -8367,8 +8410,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn scheduleDeinit(this: *ThisServer) void {
-            if (this.flags.deinit_scheduled)
+            if (this.flags.deinit_scheduled) {
+                httplog("scheduleDeinit (again)", .{});
                 return;
+            }
             this.flags.deinit_scheduled = true;
             httplog("scheduleDeinit", .{});
 
@@ -8647,7 +8692,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             resp.timeout(this.config.idleTimeout);
 
             const globalThis = this.globalThis;
-            const thisObject = this.thisObject;
+            const thisObject = this.js_value.get() orelse .undefined;
             const vm = this.vm;
 
             var node_http_response: ?*NodeHTTPResponse = null;
@@ -8677,7 +8722,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 success: void,
                 pending: JSC.JSValue,
             };
-            var strong_promise: JSC.Strong = .{};
+            var strong_promise: JSC.Strong = .empty;
             var needs_to_drain = true;
 
             defer {
@@ -8723,7 +8768,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                                 }
 
                                 node_response.promise = strong_promise;
-                                strong_promise = .{};
+                                strong_promise = .empty;
                                 result._then2(globalThis, strong_self, NodeHTTPResponse.Bun__NodeHTTPRequest__onResolve, NodeHTTPResponse.Bun__NodeHTTPRequest__onReject);
                                 is_async = true;
                             }
@@ -8809,8 +8854,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false) orelse return;
 
-            const server_request_list = NamespaceType.routeListGetCached(server.thisObject).?;
-            var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.thisObject, server_request_list, &prepared.js_request, req);
+            const server_request_list = NamespaceType.routeListGetCached(server.jsValueAssertAlive()).?;
+            var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req);
 
             if (server.globalThis.tryTakeException()) |exception| {
                 response_value = exception;
@@ -8854,10 +8899,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             bun.assert(this.config.onRequest != .zero);
 
-            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &.{
-                prepared.js_request,
-                this.thisObject,
-            }) catch |err|
+            const js_value = this.jsValueAssertAlive();
+            const response_value = this.config.onRequest.call(
+                this.globalThis,
+                js_value,
+                &.{ prepared.js_request, js_value },
+            ) catch |err|
                 this.globalThis.takeException(err);
 
             this.handleRequest(&should_deinit_context, prepared, req, response_value);
@@ -8883,7 +8930,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             bun.assert(callback != .zero);
             const args = .{prepared.js_request} ++ extra_args;
-            const response_value = callback.call(this.globalThis, this.thisObject, &args) catch |err|
+            const response_value = callback.call(
+                this.globalThis,
+                this.jsValueAssertAlive(),
+                &args,
+            ) catch |err|
                 this.globalThis.takeException(err);
 
             defer if (req == .stack) {
@@ -9078,12 +9129,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
             var args = [_]JSC.JSValue{
                 request_object.toJS(this.globalThis),
-                this.thisObject,
+                this.jsValueAssertAlive(),
             };
             const request_value = args[0];
             request_value.ensureStillAlive();
 
-            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args) catch |err|
+            const response_value = this.config.onRequest.call(this.globalThis, this.jsValueAssertAlive(), &args) catch |err|
                 this.globalThis.takeException(err);
             defer {
                 // uWS request will not live longer than this function

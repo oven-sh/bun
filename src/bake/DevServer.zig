@@ -12,13 +12,6 @@ pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
 const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
 
-/// Blockers to enable this in debug builds, which also means blockers to
-/// enabling `.deinit()` in a release.
-/// - Fix all memory leaks
-/// - Fix cases where the server is deinitialized while bundling state is present.
-/// Otherwise, this will reduce stability.
-const experiment_with_memory_assertions = false;
-
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
     arena: Allocator,
@@ -170,6 +163,8 @@ next_bundle: struct {
     requests: DeferredRequest.List,
 },
 deferred_request_pool: bun.HiveArray(DeferredRequest.Node, DeferredRequest.max_preallocated).Fallback,
+/// UWS can handle closing the websocket connections themselves
+active_websocket_connections: std.AutoHashMapUnmanaged(*HmrSocket, void),
 
 // Debugging
 
@@ -325,7 +320,7 @@ pub const RouteBundle = struct {
         }
         self.client_script_generation = std.crypto.random.int(u32);
         switch (self.data) {
-            .framework => |*fw| fw.cached_client_bundle_url.clear(),
+            .framework => |*fw| fw.cached_client_bundle_url.clearWithoutDeallocation(),
             .html => |*html| if (html.cached_response) |cached_response| {
                 cached_response.deref();
                 html.cached_response = null;
@@ -377,8 +372,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .vm = options.vm,
         .server = null,
         .directory_watchers = .empty,
-        .server_fetch_function_callback = .{},
-        .server_register_update_callback = .{},
+        .server_fetch_function_callback = .empty,
+        .server_register_update_callback = .empty,
         .generation = 0,
         .graph_safety_lock = .unlocked,
         .dump_dir = dump_dir,
@@ -395,6 +390,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .route_lookup = .empty,
         .route_bundles = .empty,
         .html_router = .empty,
+        .active_websocket_connections = .empty,
         .current_bundle = null,
         .next_bundle = .{
             .route_queue = .empty,
@@ -605,7 +601,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
                     toOpaqueFileId(.client, try dev.client_graph.insertStale(client, false)).toOptional()
                 else
                     .none,
-                .server_file_string = .{},
+                .server_file_string = .empty,
             });
 
             try dev.route_lookup.put(allocator, server_file, .{
@@ -625,25 +621,12 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     if (bun.FeatureFlags.bake_debugging_features and dev.has_pre_crash_handler)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);
 
-    if (experiment_with_memory_assertions) {
-        EnsureAllMemoryFreed.mutex.lock();
-        defer EnsureAllMemoryFreed.mutex.unlock();
-        try EnsureAllMemoryFreed.entries.put(bun.default_allocator, dev, {});
-        bun.Global.addExitCallback(EnsureAllMemoryFreed.check);
-    }
-
     return dev;
 }
 
 pub fn deinit(dev: *DevServer) void {
-    if (!experiment_with_memory_assertions)
-        return; // TODO: unflag deinit
+    dev_server_deinit_count_for_testing +|= 1;
 
-    if (experiment_with_memory_assertions) {
-        EnsureAllMemoryFreed.mutex.lock();
-        defer EnsureAllMemoryFreed.mutex.unlock();
-        _ = EnsureAllMemoryFreed.entries.swapRemove(dev);
-    }
     const allocator = dev.allocator;
     const discard = voidFieldTypeDiscardHelper;
     _ = VoidFieldTypes(DevServer){
@@ -651,7 +634,6 @@ pub fn deinit(dev: *DevServer) void {
         .allocator = {},
         .allocation_scope = {}, // deinit at end
         .configuration_hash_key = {},
-        .watcher_atomics = {},
         .plugin_state = {},
         .generation = {},
         .bundles_since_last_error = {},
@@ -703,6 +685,9 @@ pub fn deinit(dev: *DevServer) void {
         },
         .directory_watchers = {
             // dev.directory_watchers.dependencies
+            for (dev.directory_watchers.watches.keys()) |dir_name| {
+                allocator.free(dir_name);
+            }
             for (dev.directory_watchers.dependencies.items) |watcher| {
                 allocator.free(watcher.specifier);
             }
@@ -718,16 +703,19 @@ pub fn deinit(dev: *DevServer) void {
             dev.bundling_failures.deinit(allocator);
         },
         .current_bundle = {
-            // TODO: deinitializing in this state is almost certainly an assertion failure.
             if (dev.current_bundle) |_| {
-                bun.debugAssert(false);
+                bun.debugAssert(false); // impossible to de-initialize this state correctly.
             }
         },
         .next_bundle = {
             var r = dev.next_bundle.requests.first;
-            while (r) |request| : (r = request.next) {
+            while (r) |request| {
+                defer dev.deferred_request_pool.put(request);
                 // TODO: deinitializing in this state is almost certainly an assertion failure.
+                // This code is shipped in release because it is only reachable by experimenntal server components.
+                bun.debugAssert(request.data.handler != .server_handler);
                 request.data.deinit();
+                r = request.next;
             }
             dev.next_bundle.route_queue.deinit(allocator);
         },
@@ -739,6 +727,19 @@ pub fn deinit(dev: *DevServer) void {
                 value.response.deref();
             }
             dev.source_maps.entries.deinit(allocator);
+        },
+        .active_websocket_connections = {
+            var it = dev.active_websocket_connections.keyIterator();
+            while (it.next()) |item| {
+                const s: *HmrSocket = item.*;
+                if (s.underlying) |websocket|
+                    websocket.close();
+            }
+            dev.active_websocket_connections.deinit(allocator);
+        },
+        .watcher_atomics = for (&dev.watcher_atomics.events) |*event| {
+            event.aligned.dirs.deinit(dev.allocator);
+            event.aligned.files.deinit(dev.allocator);
         },
     };
     dev.allocation_scope.deinit();
@@ -807,6 +808,9 @@ pub fn memoryCost(dev: *DevServer) usize {
         .assets = {
             cost += dev.assets.memoryCost();
         },
+        .active_websocket_connections = {
+            cost += dev.active_websocket_connections.capacity() * @sizeOf(*HmrSocket);
+        },
         .source_maps = {
             cost += memoryCostArrayHashMap(dev.source_maps.entries);
             for (dev.source_maps.entries.values()) |entry| {
@@ -851,6 +855,9 @@ pub fn memoryCost(dev: *DevServer) usize {
             cost += memoryCostArrayHashMap(dev.directory_watchers.watches);
             for (dev.directory_watchers.dependencies.items) |dep| {
                 cost += dep.specifier.len;
+            }
+            for (dev.directory_watchers.watches.keys()) |dir_name| {
+                cost += dir_name.len;
             }
         },
         .html_router = {
@@ -2408,7 +2415,7 @@ pub fn finalizeBundle(
             const route_bundle = dev.routeBundlePtr(RouteBundle.Index.init(@intCast(i)));
             if (dev.incremental_result.had_adjusted_edges) {
                 switch (route_bundle.data) {
-                    .framework => |*fw_bundle| fw_bundle.cached_css_file_array.clear(),
+                    .framework => |*fw_bundle| fw_bundle.cached_css_file_array.clearWithoutDeallocation(),
                     .html => |*html| if (html.cached_response) |blob| {
                         blob.deref();
                         html.cached_response = null;
@@ -2614,11 +2621,11 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
             dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch bun.outOfMemory();
         }
 
-        dev.startAsyncBundle(
-            entry_points,
-            dev.next_bundle.reload_event != null,
-            std.time.Timer.start() catch @panic("timers unsupported"),
-        ) catch bun.outOfMemory();
+        const is_reload, const timer = if (dev.next_bundle.reload_event) |re|
+            .{ true, re.timer }
+        else
+            .{ false, std.time.Timer.start() catch @panic("timers unsupported") };
+        dev.startAsyncBundle(entry_points, is_reload, timer) catch bun.outOfMemory();
 
         dev.next_bundle.route_queue.clearRetainingCapacity();
         dev.next_bundle.reload_event = null;
@@ -2785,9 +2792,9 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
             .framework => |route_index| .{ .framework = .{
                 .route_index = route_index,
                 .evaluate_failure = null,
-                .cached_module_list = .{},
-                .cached_client_bundle_url = .{},
-                .cached_css_file_array = .{},
+                .cached_module_list = .empty,
+                .cached_client_bundle_url = .empty,
+                .cached_css_file_array = .empty,
             } },
             .html => |html| brk: {
                 const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.html_bundle.path, false, true);
@@ -2896,8 +2903,9 @@ fn sendBuiltInNotFound(resp: anytype) void {
 
 fn printMemoryLine(dev: *DevServer) void {
     if (!debug.isVisible()) return;
-    Output.prettyErrorln("<d>DevServer tracked {}, measured: {}, process: {}<r>", .{
+    Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
         bun.fmt.size(dev.memoryCost(), .{}),
+        dev.allocation_scope.state.allocations.count(),
         bun.fmt.size(dev.allocation_scope.state.total_memory_allocated, .{}),
         bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
     });
@@ -5191,7 +5199,7 @@ const DirectoryWatchStore = struct {
     }
 
     /// Expects dependency list to be already freed
-    fn freeEntry(store: *DirectoryWatchStore, entry_index: usize) void {
+    fn freeEntry(store: *DirectoryWatchStore, alloc: Allocator, entry_index: usize) void {
         const entry = store.watches.values()[entry_index];
 
         debug.log("DirectoryWatchStore.freeEntry({d}, {})", .{
@@ -5202,6 +5210,8 @@ const DirectoryWatchStore = struct {
         store.owner().bun_watcher.removeAtIndex(entry.watch_index, 0, &.{}, .file);
 
         defer _ = if (entry.dir_fd_owned) bun.sys.close(entry.dir);
+
+        alloc.free(store.watches.keys()[entry_index]);
         store.watches.swapRemoveAt(entry_index);
 
         if (store.watches.entries.len == 0) {
@@ -5519,8 +5529,8 @@ noinline fn dumpBundleForChunk(dev: *DevServer, dump_dir: std.fs.Dir, side: bake
     var a: bun.PathBuffer = undefined;
     var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     const rel_path = bun.path.relativeBufZ(&a, cwd, key);
-    const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
-    _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
+    const size = std.mem.replacementSize(u8, rel_path, ".." ++ std.fs.path.sep_str, "_.._" ++ std.fs.path.sep_str);
+    _ = std.mem.replace(u8, rel_path, ".." ++ std.fs.path.sep_str, "_.._" ++ std.fs.path.sep_str, &b);
     const rel_path_escaped = b[0..size];
     dumpBundle(dump_dir, switch (side) {
         .client => .client,
@@ -5611,6 +5621,7 @@ pub fn onWebSocketUpgrade(
         .subscriptions = .{},
         .active_route = .none,
     });
+    dev.active_websocket_connections.put(dev.allocator, dw, {}) catch bun.outOfMemory();
     _ = res.upgrade(
         *HmrSocket,
         dw,
@@ -5769,6 +5780,7 @@ const HmrTopic = enum(u8) {
 
 const HmrSocket = struct {
     dev: *DevServer,
+    underlying: ?AnyWebSocket = null,
     subscriptions: HmrTopic.Bits,
     /// Allows actions which inspect or mutate sensitive DevServer state.
     is_from_localhost: bool,
@@ -5778,6 +5790,7 @@ const HmrSocket = struct {
 
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
         _ = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
+        s.underlying = ws;
     }
 
     pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
@@ -5856,7 +5869,8 @@ const HmrSocket = struct {
             s.dev.routeBundlePtr(old).active_viewers -= 1;
         }
 
-        defer s.dev.allocator.destroy(s);
+        bun.debugAssert(s.dev.active_websocket_connections.remove(s));
+        s.dev.allocator.destroy(s);
     }
 };
 
@@ -6038,7 +6052,7 @@ pub const HotReloadEvent = struct {
                     entry.first_dep = new_first_dep;
                 } else {
                     // without any files to depend on this watcher is freed
-                    dev.directory_watchers.freeEntry(watcher_index);
+                    dev.directory_watchers.freeEntry(dev.allocator, watcher_index);
                 }
             }
         }
@@ -6615,6 +6629,10 @@ pub const Assets = struct {
             // replaced in-place with the new asset.
             if (assets.refs.items[entry_index.get()] == 1) {
                 const slice = assets.files.entries.slice();
+
+                const prev = slice.items(.value)[entry_index.get()];
+                prev.deref();
+
                 slice.items(.key)[entry_index.get()] = content_hash;
                 slice.items(.value)[entry_index.get()] = StaticRoute.initFromAnyBlob(contents, .{
                     .mime_type = mime_type,
@@ -6671,6 +6689,7 @@ pub const Assets = struct {
         assert(dec_count > 0);
         assets.refs.items[index.get()] -= dec_count;
         if (assets.refs.items[index.get()] == 0) {
+            assets.files.values()[index.get()].deref();
             assets.files.swapRemoveAt(index.get());
             _ = assets.refs.swapRemove(index.get());
         }
@@ -7258,27 +7277,6 @@ fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
     return memory;
 }
 
-/// Make it so in a debug build, pressing Ctrl+C to close will forcefully call
-/// deinit, running all finalization assertions, before exiting the application.
-///
-/// This isn't perfect because there could be pending requests, but this
-/// trade-off is done for simplicity.
-const EnsureAllMemoryFreed = if (experiment_with_memory_assertions) struct {
-    var entries: AutoArrayHashMapUnmanaged(*DevServer, void) = .empty;
-    var mutex: bun.Mutex = .{};
-    fn check() callconv(.C) void {
-        var copy = brk: {
-            mutex.lock();
-            defer mutex.unlock();
-            const copy = entries;
-            entries = .empty;
-            break :brk copy;
-        };
-        defer copy.deinit(bun.default_allocator);
-        for (copy.keys()) |dev| dev.deinit();
-    }
-};
-
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
 fn VoidFieldTypes(comptime T: type) type {
     const fields = @typeInfo(T).@"struct".fields;
@@ -7297,6 +7295,16 @@ fn VoidFieldTypes(comptime T: type) type {
 
 fn voidFieldTypeDiscardHelper(data: anytype) void {
     _ = data;
+}
+
+/// `test/bake/deinitialization.test.ts` checks for this as well as all tests
+/// using the dev server test harness (test/bake/bake-harness.ts)
+///
+/// In debug builds, this will also assert that AllocationScope.deinit was
+/// called, validating that all Dev Server tests have no leaks.
+var dev_server_deinit_count_for_testing: usize = 0;
+pub fn getDeinitCountForTesting() usize {
+    return dev_server_deinit_count_for_testing;
 }
 
 const std = @import("std");

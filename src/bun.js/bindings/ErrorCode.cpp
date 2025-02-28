@@ -794,8 +794,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
 {
     WTF::StringBuilder builder;
     builder.append("The argument '"_s);
-    auto& vm = JSC::getVM(globalObject);
-    determineSpecificType(vm, globalObject, builder, name);
+    JSValueToStringSafe(globalObject, builder, name);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     builder.append("' "_s);
@@ -807,9 +806,9 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
         if (index.isString()) {
             JSString* str = index.toString(globalObject);
             RETURN_IF_EXCEPTION(throwScope, {});
-            builder.append('`');
+            builder.append('\'');
             builder.append(str->view(globalObject));
-            builder.append('`');
+            builder.append('\'');
         } else {
             JSValueToStringSafe(globalObject, builder, index);
             RETURN_IF_EXCEPTION(throwScope, {});

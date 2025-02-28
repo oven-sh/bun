@@ -35,7 +35,7 @@ import {
  * @typedef {"musl"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
  * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
- * @typedef {"release" | "assert" | "debug"} Profile
+ * @typedef {"release" | "safe" | "assert" | "debug"} Profile
  */
 
 /**
@@ -818,6 +818,10 @@ function getOptionsStep() {
             value: "assert",
           },
           {
+            label: `${getEmoji("safe")} Release with Runtime Safety Checks`,
+            value: "safe",
+          },
+          {
             label: `${getEmoji("debug")} Debug`,
             value: "debug",
           },
@@ -997,6 +1001,8 @@ async function getPipelineOptions() {
     return false;
   };
 
+  const isOnMain = isMainBranch();
+
   const isCanary =
     !parseBoolean(getEnv("RELEASE", false) || "false") &&
     !/\[(release|build release|release build)\]/i.test(commitMessage);
@@ -1011,7 +1017,7 @@ async function getPipelineOptions() {
     publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
-    buildProfiles: ["release"],
+    buildProfiles: isOnMain ? ["release"] : ["safe"],
   };
 }
 

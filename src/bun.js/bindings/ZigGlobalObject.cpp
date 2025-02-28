@@ -4263,7 +4263,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     BunString moduleNameZ;
 
     String moduleName = moduleNameValue->value(globalObject);
-#if BUN_DEBUG
+#if BUN_DEBUG || ASSERT_ENABLED
     auto startRefCount = moduleName.impl()->refCount();
 #endif
     if (moduleName.startsWith("file://"_s)) {

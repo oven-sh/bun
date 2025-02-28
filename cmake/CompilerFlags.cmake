@@ -218,6 +218,13 @@ if(ENABLE_ASSERTIONS)
     )
   endif()
 else()
+  if(ENABLE_SAFE)
+    register_compiler_flags(
+      DESCRIPTION "Do not eliminate null-pointer checks"
+      -fno-delete-null-pointer-checks
+    )
+  endif()
+
   register_compiler_definitions(
     DESCRIPTION "Disable debug assertions"
     NDEBUG=1

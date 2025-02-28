@@ -4109,7 +4109,7 @@ pub const ParseTask = struct {
 
         const parse_task = ParseTask{
             .ctx = undefined,
-            .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
+            .path = Fs.Path.initWithNamespace("bun:wrap", "bun"),
             .side_effects = .no_side_effects__pure_data,
             .jsx = .{
                 .parse = false,
@@ -12986,7 +12986,7 @@ pub const LinkerContext = struct {
         stmts: *StmtList,
         part_stmts: []const js_ast.Stmt,
         allocator: std.mem.Allocator,
-        ast: *const JSAst,
+        ast: *JSAst,
     ) !void {
         _ = source_index; // may be used
 
@@ -13025,7 +13025,18 @@ pub const LinkerContext = struct {
                         true;
 
                     // module.importSync('path', (module) => ns = module, ['dep', 'etc'])
-                    const call = if (is_enabled) call: {
+                    const call = if (is_enabled) if (record.tag == .runtime)
+                        Expr.init(E.Call, .{
+                            .target = Expr.init(E.Dot, .{
+                                .target = module_id,
+                                .name = "require",
+                                .name_loc = stmt.loc,
+                            }, stmt.loc),
+                            .args = .init(
+                                try allocator.dupe(Expr, &.{Expr.init(E.String, .{ .data = "bun:wrap" }, .Empty)}),
+                            ),
+                        }, .Empty)
+                    else call: {
                         const path = if (record.source_index.isValid())
                             c.parse_graph.input_files.items(.source)[record.source_index.get()].path
                         else
@@ -13147,7 +13158,7 @@ pub const LinkerContext = struct {
             }
 
             // add a marker for the client runtime to tell that this is an ES module
-            if (ast.exports_kind == .esm) {
+            if (ast.exports_kind.isESMWithDynamicFallback()) {
                 stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
                     .value = Expr.assign(
                         Expr.init(E.Dot, .{

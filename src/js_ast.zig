@@ -7331,7 +7331,7 @@ pub const TSNamespaceMember = struct {
 /// Inlined enum values can only be numbers and strings
 /// This type special cases an encoding similar to JSValue, where nan-boxing is used
 /// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
-pub const InlinedEnumValue = packed struct {
+pub const InlinedEnumValue = struct {
     raw_data: u64,
 
     pub const Decoded = union(enum) {
@@ -7403,27 +7403,22 @@ pub const ExportsKind = enum {
     // module.
     esm_with_dynamic_fallback_from_cjs,
 
-    const dynamic = std.EnumSet(ExportsKind).init(.{
-        .esm_with_dynamic_fallback = true,
-        .esm_with_dynamic_fallback_from_cjs = true,
-        .cjs = true,
-    });
-
-    const with_dynamic_fallback = std.EnumSet(ExportsKind).init(.{
-        .esm_with_dynamic_fallback = true,
-        .esm_with_dynamic_fallback_from_cjs = true,
-    });
-
     pub fn isDynamic(self: ExportsKind) bool {
-        return dynamic.contains(self);
+        return switch (self) {
+            .cjs, .esm_with_dynamic_fallback, .esm_with_dynamic_fallback_from_cjs => true,
+            .none, .esm => false,
+        };
+    }
+
+    pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
+        return switch (self) {
+            .none, .cjs, .esm => false,
+            .esm_with_dynamic_fallback, .esm_with_dynamic_fallback_from_cjs => true,
+        };
     }
 
     pub fn jsonStringify(self: @This(), writer: anytype) !void {
         return try writer.write(@tagName(self));
-    }
-
-    pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
-        return with_dynamic_fallback.contains(self);
     }
 };
 

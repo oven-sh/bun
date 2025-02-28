@@ -2600,17 +2600,26 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.first != null) {
         var sfb = std.heap.stackFallback(4096, dev.allocator);
         const temp_alloc = sfb.get();
-        var entry_points: EntryPointList = EntryPointList.empty;
+        var entry_points: EntryPointList = .empty;
         defer entry_points.deinit(temp_alloc);
 
-        if (dev.next_bundle.reload_event) |event| {
+        const is_reload, const timer = if (dev.next_bundle.reload_event) |event| brk: {
+            dev.next_bundle.reload_event = null;
+
+            const reload_event_timer = event.timer;
+
             event.processFileList(dev, &entry_points, temp_alloc);
 
             if (dev.watcher_atomics.recycleEventFromDevServer(event)) |second| {
+                if (Environment.isDebug) {
+                    assert(second.debug_mutex.tryLock());
+                }
                 second.processFileList(dev, &entry_points, temp_alloc);
                 dev.watcher_atomics.recycleSecondEventFromDevServer(second);
             }
-        }
+
+            break :brk .{ true, reload_event_timer };
+        } else .{ false, std.time.Timer.start() catch @panic("timers unsupported") };
 
         for (dev.next_bundle.route_queue.keys()) |route_bundle_index| {
             const rb = dev.routeBundlePtr(route_bundle_index);
@@ -2618,14 +2627,9 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
             dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch bun.outOfMemory();
         }
 
-        const is_reload, const timer = if (dev.next_bundle.reload_event) |re|
-            .{ true, re.timer }
-        else
-            .{ false, std.time.Timer.start() catch @panic("timers unsupported") };
         dev.startAsyncBundle(entry_points, is_reload, timer) catch bun.outOfMemory();
 
         dev.next_bundle.route_queue.clearRetainingCapacity();
-        dev.next_bundle.reload_event = null;
     }
 }
 
@@ -6016,6 +6020,8 @@ pub const HotReloadEvent = struct {
     /// 1 if referenced, 0 if unreferenced; see WatcherAtomics
     contention_indicator: std.atomic.Value(u32),
 
+    debug_mutex: if (Environment.isDebug) bun.Mutex else void,
+
     pub fn initEmpty(owner: *DevServer) HotReloadEvent {
         return .{
             .owner = owner,
@@ -6024,7 +6030,17 @@ pub const HotReloadEvent = struct {
             .dirs = .empty,
             .timer = undefined,
             .contention_indicator = .init(0),
+            .debug_mutex = if (Environment.isDebug) .{} else {},
         };
+    }
+
+    pub fn reset(ev: *HotReloadEvent) void {
+        if (Environment.isDebug)
+            ev.debug_mutex.unlock();
+
+        ev.files.clearRetainingCapacity();
+        ev.dirs.clearRetainingCapacity();
+        ev.timer = undefined;
     }
 
     pub fn isEmpty(ev: *const HotReloadEvent) bool {
@@ -6122,7 +6138,8 @@ pub const HotReloadEvent = struct {
         defer debug.log("HMR Task end", .{});
 
         const dev = first.owner;
-        if (Environment.allow_assert) {
+        if (Environment.isDebug) {
+            assert(first.debug_mutex.tryLock());
             assert(first.contention_indicator.load(.seq_cst) == 0);
         }
 
@@ -6141,6 +6158,9 @@ pub const HotReloadEvent = struct {
         const timer = first.timer;
 
         if (dev.watcher_atomics.recycleEventFromDevServer(first)) |second| {
+            if (Environment.isDebug) {
+                assert(second.debug_mutex.tryLock());
+            }
             second.processFileList(dev, &entry_points, temp_alloc);
             dev.watcher_atomics.recycleSecondEventFromDevServer(second);
         }
@@ -6222,6 +6242,9 @@ const WatcherAtomics = struct {
 
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
+        if (Environment.isDebug)
+            assert(ev.debug_mutex.tryLock());
+
         return ev;
     }
 
@@ -6230,6 +6253,15 @@ const WatcherAtomics = struct {
     fn watcherReleaseAndSubmitEvent(state: *WatcherAtomics, ev: *HotReloadEvent) void {
         state.watcher_has_event.unlock();
         ev.owner.bun_watcher.thread_lock.assertLocked();
+
+        if (Environment.isDebug) {
+            for (std.mem.asBytes(&ev.timer)) |b| {
+                if (b != 0xAA) break;
+            } else @panic("timer is undefined memory in watcherReleaseAndSubmitEvent");
+        }
+
+        if (Environment.isDebug)
+            ev.debug_mutex.unlock();
 
         if (!ev.isEmpty()) {
             @branchHint(.likely);
@@ -6267,8 +6299,7 @@ const WatcherAtomics = struct {
     /// Called by DevServer after it receives a task callback. If this returns
     /// another event, that event must be recycled with `recycleSecondEventFromDevServer`
     fn recycleEventFromDevServer(state: *WatcherAtomics, first_event: *HotReloadEvent) ?*HotReloadEvent {
-        first_event.files.clearRetainingCapacity();
-        first_event.timer = undefined;
+        first_event.reset();
 
         // Reset the watch count to zero, while detecting if
         // the other watch event was submitted.
@@ -6306,8 +6337,7 @@ const WatcherAtomics = struct {
     }
 
     fn recycleSecondEventFromDevServer(state: *WatcherAtomics, second_event: *HotReloadEvent) void {
-        second_event.files.clearRetainingCapacity();
-        second_event.timer = undefined;
+        second_event.reset();
 
         state.dev_server_has_event.unlock();
         if (Environment.allow_assert) {

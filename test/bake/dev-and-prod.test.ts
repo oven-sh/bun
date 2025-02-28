@@ -129,3 +129,39 @@ devAndProductionTest("inline script and styles appear", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
+devAndProductionTest("using runtime import", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      // __using
+      {
+        using a = { [Symbol.dispose]: () => console.log("a") };
+        console.log("b");
+      }
+
+      // __legacyDecorateClassTS
+      function undefinedDecorator(target) {
+        console.log("decorator");
+      }
+      @undefinedDecorator
+      class x {}
+
+      // __require
+      console.log(require === eval("module.require"));
+    `,
+    "tsconfig.json": `
+      {
+        "compilerOptions": {
+          "experimentalDecorators": true
+        }
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b", "a", "decorator");
+  },
+});

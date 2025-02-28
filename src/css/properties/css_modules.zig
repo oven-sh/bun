@@ -100,17 +100,28 @@ pub const Specifier = union(enum) {
     /// The referenced name is global.
     global,
     /// The referenced name comes from the specified file.
-    file: []const u8,
+    ///
+    /// Is an import record index
+    file: u32,
     /// The referenced name comes from a source index (used during bundling).
-    source_index: u32,
+    // source_index: u32,
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
     }
 
     pub fn parse(input: *css.Parser) css.Result(Specifier) {
-        if (input.tryParse(css.Parser.expectString, .{}).asValue()) |file| {
-            return .{ .result = .{ .file = file } };
+        const start_position = input.position();
+        if (input.tryParse(css.Parser.expectUrlOrString, .{}).asValue()) |file| {
+            const import_record_idx = switch (input.addImportRecordForUrl(file, start_position)) {
+                .result => |idx| idx,
+                .err => |e| return .{ .err = e },
+            };
+            return .{
+                .result = .{
+                    .file = import_record_idx,
+                },
+            };
         }
         if (input.expectIdentMatching("global").asErr()) |e| return .{ .err = e };
         return .{ .result = .global };
@@ -119,8 +130,11 @@ pub const Specifier = union(enum) {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.*) {
             .global => dest.writeStr("global"),
-            .file => |file| css.serializer.serializeString(file, dest) catch return dest.addFmtError(),
-            .source_index => {},
+            .file => |import_record_idx| {
+                const url = try dest.getImportRecordUrl(import_record_idx);
+                css.serializer.serializeString(url, dest) catch return dest.addFmtError();
+            },
+            // .source_index => {},
         };
     }
 

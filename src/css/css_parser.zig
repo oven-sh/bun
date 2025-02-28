@@ -4,10 +4,14 @@ const bun = @import("root").bun;
 const logger = bun.logger;
 const Log = logger.Log;
 
+pub const SrcIndex = bun.bundle_v2.Index;
+
+pub const SymbolList = bun.JSAst.Symbol.List;
+
 const ArrayList = std.ArrayListUnmanaged;
 
-const ImportRecord = bun.ImportRecord;
-const ImportKind = bun.ImportKind;
+pub const ImportRecord = bun.ImportRecord;
+pub const ImportKind = bun.ImportKind;
 
 pub const prefixes = @import("./prefixes.zig");
 
@@ -19,6 +23,7 @@ pub const CssModuleExports = css_modules.CssModuleExports;
 pub const CssModule = css_modules.CssModule;
 pub const CssModuleReferences = css_modules.CssModuleReferences;
 pub const CssModuleReference = css_modules.CssModuleReference;
+pub const CssModuleConfig = css_modules.Config;
 
 pub const css_rules = @import("./rules/rules.zig");
 pub const CssRule = css_rules.CssRule;
@@ -1148,6 +1153,8 @@ fn parse_until_before(
             } else null,
             .stop_before = delimiters,
             .import_records = parser.import_records,
+            .flags = parser.flags,
+            .extra = parser.extra,
         };
         const result = delimited_parser.parseEntirely(T, closure, parse_fn);
         if (error_behavior == .stop and result.isErr()) {
@@ -1223,6 +1230,8 @@ fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, compt
         .input = parser.input,
         .stop_before = closing_delimiter,
         .import_records = parser.import_records,
+        .flags = parser.flags,
+        .extra = parser.extra,
     };
     const result = nested_parser.parseEntirely(T, closure, parsefn);
     if (nested_parser.at_start_of) |block_type2| {
@@ -1628,6 +1637,8 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
         at_rule_parser: *AtRuleParserT,
         // TODO: think about memory management
         rules: *CssRuleList(AtRuleT),
+        composes: *ComposesMap,
+        composes_refs: SmallList(bun.bundle_v2.Ref, 2) = .{},
 
         const State = enum(u8) {
             start = 1,
@@ -1873,13 +1884,14 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
             }
         };
 
-        pub fn new(allocator: Allocator, options: *const ParserOptions, at_rule_parser: *AtRuleParserT, rules: *CssRuleList(AtRuleT)) @This() {
+        pub fn new(allocator: Allocator, options: *const ParserOptions, at_rule_parser: *AtRuleParserT, rules: *CssRuleList(AtRuleT), composes: *ComposesMap) @This() {
             return .{
                 .options = options,
                 .state = .start,
                 .at_rule_parser = at_rule_parser,
                 .rules = rules,
                 .allocator = allocator,
+                .composes = composes,
             };
         }
 
@@ -1893,6 +1905,9 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 .is_in_style_rule = false,
                 .allow_declarations = false,
                 .allocator = this.allocator,
+                .composes = this.composes,
+                .composes_refs = &this.composes_refs,
+                .allow_composes = false,
             };
         }
     };
@@ -1913,6 +1928,10 @@ pub fn NestedRuleParser(comptime T: type) type {
         // todo_stuff.think_mem_mgmt
         rules: *CssRuleList(T.CustomAtRuleParser.AtRule),
         is_in_style_rule: bool,
+        allow_composes: bool,
+        saw_composes: bool = false,
+        composes_refs: *SmallList(bun.bundle_v2.Ref, 2),
+        composes: *ComposesMap,
         allow_declarations: bool,
         allocator: Allocator,
 
@@ -2521,11 +2540,29 @@ pub fn NestedRuleParser(comptime T: type) type {
 
             pub fn parseBlock(this: *This, selectors: Prelude, start: *const ParserState, input: *Parser) Result(QualifiedRule) {
                 const loc = this.getLoc(start);
+                defer this.saw_composes = false;
+                defer this.composes_refs.clearRetainingCapacity();
+                // we don't allow composes in nested style rules
+                if (input.flags.css_modules and !this.is_in_style_rule) {
+                    this.allow_composes = brk: {
+                        var found_any: bool = false;
+                        // store all css module export names relevant to this style rule in `this.composes_refs`
+                        for (selectors.v.slice()) |*sel| {
+                            for (sel.components.items) |*comp| {
+                                if (comp.asLocallyScoped()) |id| {
+                                    this.composes_refs.append(input.allocator(), id.asRef().?);
+                                    found_any = true;
+                                }
+                            }
+                        }
+                        break :brk found_any;
+                    };
+                }
                 const result = switch (this.parseNested(input, true)) {
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
                 };
-                const declarations = result[0];
+                const declarations: DeclarationBlock = result[0];
                 const rules = result[1];
 
                 this.rules.v.append(this.allocator, .{
@@ -2557,15 +2594,28 @@ pub fn NestedRuleParser(comptime T: type) type {
             pub const Declaration = void;
 
             pub fn parseValue(this: *This, name: []const u8, input: *Parser) Result(Declaration) {
-                return css_decls.parse_declaration(
+                return css_decls.parse_declaration_impl(
                     name,
                     input,
                     &this.declarations,
                     &this.important_declarations,
                     this.options,
+                    this,
                 );
             }
         };
+
+        pub fn recordComposes(this: *This, allocator: Allocator, composes: *const Composes) void {
+            for (this.composes_refs.slice()) |ref| {
+                const entry = this.composes.getOrPut(allocator, ref) catch bun.outOfMemory();
+                if (!entry.found_existing) {
+                    const list = bun.BabyList(Composes){};
+                    entry.value_ptr.* = list;
+                }
+                entry.value_ptr.*.push(allocator, composes.*) catch bun.outOfMemory();
+            }
+            this.saw_composes = true;
+        }
 
         pub fn parseNested(this: *This, input: *Parser, is_style_rule: bool) Result(struct { DeclarationBlock, CssRuleList(T.CustomAtRuleParser.AtRule) }) {
             // TODO: think about memory management in error cases
@@ -2579,6 +2629,9 @@ pub fn NestedRuleParser(comptime T: type) type {
                 .rules = &rules,
                 .is_in_style_rule = this.is_in_style_rule or is_style_rule,
                 .allow_declarations = this.allow_declarations or this.is_in_style_rule or is_style_rule,
+                .allow_composes = this.allow_composes and !this.is_in_style_rule,
+                .composes = this.composes,
+                .composes_refs = this.composes_refs,
             };
 
             const parse_declarations = This.RuleBodyItemParser.parseDeclarations(&nested_parser);
@@ -2790,6 +2843,29 @@ pub const BundlerTailwindState = struct {
     output_from_tailwind: ?[]const u8 = null,
 };
 
+/// Additional data we don't want store
+/// on the stylesheet
+pub const StylesheetExtra = struct {
+    /// Uses when css modules is enabled
+    symbols: SymbolList = .{},
+};
+
+pub const ParserExtra = struct {
+    symbols: SymbolList = .{},
+    local_scope: LocalScope = .{},
+    source_index: SrcIndex,
+};
+
+pub const CustomIdentList = css_values.ident.CustomIdentList;
+pub const Specifier = css_properties.css_modules.Specifier;
+pub const Composes = css_properties.css_modules.Composes;
+pub const ComposesMap = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, bun.BabyList(Composes));
+
+// pub const ComposesInfo = struct {
+//     names: *const CustomIdentList,
+//     from: ?Specifier,
+// };
+
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {
         /// A list of top-level rules within the style sheet.
@@ -2800,6 +2876,17 @@ pub fn StyleSheet(comptime AtRule: type) type {
         options: ParserOptions,
         tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0 = if (AtRule == BundlerAtRule) null else 0,
         layer_names: bun.BabyList(LayerName) = .{},
+        /// Used when css modules is enabled
+        ///
+        /// Maps `local name string` -> `Ref`
+        ///
+        /// Invariants:
+        ///    1. `local_scope.values()[i].source_index == <source_index_of_stylesheet>`
+        ///    2. `local_scope.values()[i].tag == .symbol`
+        ///    3. `local_scopes.values().last().inner_index == symbols.count() - 1`
+        local_scope: LocalScope = .{},
+        /// Used whenn css modules is enabled
+        composes: ComposesMap = .{},
 
         const This = @This();
 
@@ -2814,7 +2901,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
         }
 
         /// Minify and transform the style sheet for the provided browser targets.
-        pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions) Maybe(void, Err(MinifyErrorKind)) {
+        pub fn minify(this: *@This(), allocator: Allocator, options: MinifyOptions, extra: *const StylesheetExtra) Maybe(void, Err(MinifyErrorKind)) {
             const ctx = PropertyHandlerContext.new(allocator, options.targets, &options.unused_symbols);
             var handler = declaration.DeclarationHandler.default();
             var important_handler = declaration.DeclarationHandler.default();
@@ -2843,6 +2930,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 .unused_symbols = &options.unused_symbols,
                 .custom_media = custom_media,
                 .css_modules = this.options.css_modules != null,
+                .extra = extra,
             };
 
             this.rules.minify(&minify_ctx, false) catch {
@@ -2852,10 +2940,18 @@ pub fn StyleSheet(comptime AtRule: type) type {
             return .{ .result = {} };
         }
 
-        pub fn toCssWithWriter(this: *const @This(), allocator: Allocator, writer: anytype, options: css_printer.PrinterOptions, import_info: ?bun.css.ImportInfo) PrintResult(ToCssResultInternal) {
+        pub fn toCssWithWriter(
+            this: *const @This(),
+            allocator: Allocator,
+            writer: anytype,
+            options: css_printer.PrinterOptions,
+            import_info: ?bun.css.ImportInfo,
+            local_names: ?*const LocalsResultsMap,
+            symbols: *const bun.JSAst.Symbol.Map,
+        ) PrintResult(ToCssResultInternal) {
             const W = @TypeOf(writer);
 
-            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info);
+            var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info, local_names, symbols);
             const result = this.toCssWithWriterImpl(allocator, W, &printer, options) catch {
                 bun.assert(printer.error_kind != null);
                 return .{
@@ -2915,36 +3011,53 @@ pub fn StyleSheet(comptime AtRule: type) type {
             }
         }
 
-        pub fn toCss(this: *const @This(), allocator: Allocator, options: css_printer.PrinterOptions, import_info: ?bun.css.ImportInfo) PrintResult(ToCssResult) {
+        pub fn toCss(
+            this: *const @This(),
+            allocator: Allocator,
+            options: css_printer.PrinterOptions,
+            import_info: ?bun.css.ImportInfo,
+            local_names: ?*const LocalsResultsMap,
+            symbols: *const bun.JSAst.Symbol.Map,
+        ) PrintResult(ToCssResult) {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             var dest = ArrayList(u8).initCapacity(allocator, 1) catch unreachable;
             const writer = dest.writer(allocator);
-            const result = switch (toCssWithWriter(this, allocator, writer, options, import_info)) {
+            const result = switch (toCssWithWriter(
+                this,
+                allocator,
+                writer,
+                options,
+                import_info,
+                local_names,
+                symbols,
+            )) {
                 .result => |v| v,
                 .err => |e| return .{ .err = e },
             };
-            return .{ .result = ToCssResult{
-                .code = dest.items,
-                .dependencies = result.dependencies,
-                .exports = result.exports,
-                .references = result.references,
-            } };
+            return .{
+                .result = ToCssResult{
+                    .code = dest.items,
+                    .dependencies = result.dependencies,
+                    .exports = result.exports,
+                    .references = result.references,
+                },
+            };
         }
 
-        pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: ?*bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {
+        pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: ?*bun.BabyList(ImportRecord), source_index: SrcIndex) Maybe(struct { This, StylesheetExtra }, Err(ParserError)) {
             var default_at_rule_parser = DefaultAtRuleParser{};
-            return parseWith(allocator, code, options, DefaultAtRuleParser, &default_at_rule_parser, import_records);
+            return parseWith(allocator, code, options, DefaultAtRuleParser, &default_at_rule_parser, import_records, source_index);
         }
 
-        pub fn parseBundler(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord)) Maybe(This, Err(ParserError)) {
+        pub fn parseBundler(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord), source_index: SrcIndex) Maybe(struct { This, StylesheetExtra }, Err(ParserError)) {
             var at_rule_parser = BundlerAtRuleParser{
                 .import_records = import_records,
                 .allocator = allocator,
                 .options = &options,
                 .layer_names = .{},
             };
-            return parseWith(allocator, code, options, BundlerAtRuleParser, &at_rule_parser, import_records);
+            return parseWith(allocator, code, options, BundlerAtRuleParser, &at_rule_parser, import_records, source_index);
         }
 
         /// Parse a style sheet from a string.
@@ -2955,9 +3068,33 @@ pub fn StyleSheet(comptime AtRule: type) type {
             comptime P: type,
             at_rule_parser: *P,
             import_records: ?*bun.BabyList(ImportRecord),
-        ) Maybe(This, Err(ParserError)) {
+            source_index: SrcIndex,
+        ) Maybe(struct { This, StylesheetExtra }, Err(ParserError)) {
+            var composes = ComposesMap{};
+            var parser_extra = ParserExtra{
+                .local_scope = .{},
+                .symbols = .{},
+                .source_index = source_index,
+            };
+
+            // Assert invariant 2
+            defer if (comptime bun.Environment.isDebug) {
+                if (options.css_modules != null) {
+                    for (parser_extra.local_scope.values()) |ref| {
+                        bun.assert(ref.tag == .symbol);
+                    }
+                }
+            };
+
             var input = ParserInput.new(allocator, code);
-            var parser = Parser.new(&input, import_records);
+            var parser = Parser.new(
+                &input,
+                import_records,
+                .{
+                    .css_modules = options.css_modules != null,
+                },
+                &parser_extra,
+            );
 
             var license_comments = ArrayList([]const u8){};
             var state = parser.state();
@@ -2979,7 +3116,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             parser.reset(&state);
 
             var rules = CssRuleList(AtRule){};
-            var rule_parser = TopLevelRuleParser(P).new(allocator, &options, at_rule_parser, &rules);
+            var rule_parser = TopLevelRuleParser(P).new(allocator, &options, at_rule_parser, &rules, &composes);
             var rule_list_parser = StyleSheetParser(TopLevelRuleParser(P)).new(&parser, &rule_parser);
 
             while (rule_list_parser.next(allocator)) |result| {
@@ -3000,13 +3137,19 @@ pub fn StyleSheet(comptime AtRule: type) type {
             source_map_urls.append(allocator, parser.currentSourceMapUrl()) catch bun.outOfMemory();
 
             return .{
-                .result = This{
-                    .rules = rules,
-                    .sources = sources,
-                    .source_map_urls = source_map_urls,
-                    .license_comments = license_comments,
-                    .options = options,
-                    .layer_names = if (comptime P == BundlerAtRuleParser) at_rule_parser.layer_names else .{},
+                .result = .{
+                    This{
+                        .rules = rules,
+                        .sources = sources,
+                        .source_map_urls = source_map_urls,
+                        .license_comments = license_comments,
+                        .options = options,
+                        .layer_names = if (comptime P == BundlerAtRuleParser) at_rule_parser.layer_names else .{},
+                        .local_scope = parser_extra.local_scope,
+                    },
+                    StylesheetExtra{
+                        .symbols = parser_extra.symbols,
+                    },
                 },
             };
         }
@@ -3129,9 +3272,21 @@ pub const StyleAttribute = struct {
     declarations: DeclarationBlock,
     sources: ArrayList([]const u8),
 
-    pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord)) Maybe(StyleAttribute, Err(ParserError)) {
+    pub fn parse(allocator: Allocator, code: []const u8, options: ParserOptions, import_records: *bun.BabyList(ImportRecord), source_index: SrcIndex) Maybe(StyleAttribute, Err(ParserError)) {
+        var parser_extra = ParserExtra{
+            .local_scope = .{},
+            .symbols = .{},
+            .source_index = source_index,
+        };
         var input = ParserInput.new(allocator, code);
-        var parser = Parser.new(&input, import_records);
+        var parser = Parser.new(
+            &input,
+            import_records,
+            .{
+                .css_modules = options.css_modules != null,
+            },
+            &parser_extra,
+        );
         const sources = sources: {
             var s = ArrayList([]const u8).initCapacity(allocator, 1) catch bun.outOfMemory();
             s.appendAssumeCapacity(options.filename);
@@ -3153,9 +3308,18 @@ pub const StyleAttribute = struct {
         //   "Source maps are not supported for style attributes"
         // );
 
+        var symbols = bun.JSAst.Symbol.Map{};
         var dest = ArrayList(u8){};
         const writer = dest.writer(allocator);
-        var printer = Printer(@TypeOf(writer)).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info);
+        var printer = Printer(@TypeOf(writer)).new(
+            allocator,
+            std.ArrayList(u8).init(allocator),
+            writer,
+            options,
+            import_info,
+            null,
+            &symbols,
+        );
         printer.sources = &this.sources;
 
         try this.declarations.toCss(@TypeOf(writer), &printer);
@@ -3417,11 +3581,48 @@ const ParseUntilErrorBehavior = enum {
 //     }
 // };
 
+/// If css modules is enabled, this maps locally scoped class names to their ref.
+///
+/// We use this ref as a layer of indirection during the bundling stage because we don't
+/// know the final generated class names for local scope until print time.
+pub const LocalScope = std.StringArrayHashMapUnmanaged(bun.bundle_v2.Ref);
+/// Local symbol renaming results go here
+pub const LocalsResultsMap = bun.bundle_v2.MangledProps;
+
 pub const Parser = struct {
     input: *ParserInput,
     at_start_of: ?BlockType = null,
     stop_before: Delimiters = Delimiters.NONE,
+    flags: Opts,
     import_records: ?*bun.BabyList(ImportRecord),
+    extra: ?*ParserExtra,
+
+    const Opts = packed struct(u8) {
+        css_modules: bool = false,
+        __unused: u7 = 0,
+    };
+
+    pub fn addSymbolForName(this: *Parser, name: []const u8) bun.bundle_v2.Ref {
+        // don't call this if css modules is not enabled!
+        bun.assert(this.flags.css_modules);
+        bun.assert(this.extra != null);
+        const extra = this.extra.?;
+
+        const entry = extra.local_scope.getOrPut(this.allocator(), name) catch bun.outOfMemory();
+        if (!entry.found_existing) {
+            entry.value_ptr.* = bun.bundle_v2.Ref{
+                .source_index = @intCast(this.extra.?.source_index.get()),
+                .inner_index = @intCast(extra.symbols.len),
+                .tag = .symbol,
+            };
+            extra.symbols.push(this.allocator(), bun.JSAst.Symbol{
+                .kind = .local_css,
+                .original_name = name,
+            }) catch bun.outOfMemory();
+        }
+
+        return entry.value_ptr.*;
+    }
 
     // TODO: dedupe import records??
     pub fn addImportRecordForUrl(this: *Parser, url: []const u8, start_position: usize) Result(u32) {
@@ -3449,10 +3650,12 @@ pub const Parser = struct {
     ///
     /// Pass in `import_records` to track imports (`@import` rules, `url()` tokens). If this
     /// is `null`, calling `Parser.addImportRecordForUrl` will error.
-    pub fn new(input: *ParserInput, import_records: ?*bun.BabyList(ImportRecord)) Parser {
+    pub fn new(input: *ParserInput, import_records: ?*bun.BabyList(ImportRecord), flags: Opts, extra: ?*ParserExtra) Parser {
         return Parser{
             .input = input,
+            .flags = flags,
             .import_records = import_records,
+            .extra = extra,
         };
     }
 
@@ -4299,7 +4502,12 @@ pub const nth = struct {
 
     fn parse_number_saturate(allocator: Allocator, string: []const u8) Maybe(i32, void) {
         var input = ParserInput.new(allocator, string);
-        var parser = Parser.new(&input, null);
+        var parser = Parser.new(
+            &input,
+            null,
+            .{},
+            null,
+        );
         const tok = switch (parser.nextIncludingWhitespaceAndComments()) {
             .result => |v| v,
             .err => {
@@ -6495,7 +6703,7 @@ pub const parse_utility = struct {
         var import_records = bun.BabyList(bun.ImportRecord){};
         defer import_records.deinitWithAllocator(allocator);
         var i = ParserInput.new(allocator, input);
-        var parser = Parser.new(&i, &import_records);
+        var parser = Parser.new(&i, &import_records, .{}, null);
         const result = switch (parse_one(&parser)) {
             .err => |e| return .{ .err = e },
             .result => |v| v,
@@ -6515,13 +6723,15 @@ pub const to_css = struct {
         this: *const T,
         options: PrinterOptions,
         import_info: ?ImportInfo,
+        local_names: ?*const LocalsResultsMap,
+        symbols: *const bun.JSAst.Symbol.Map,
     ) PrintErr![]const u8 {
         var s = ArrayList(u8){};
         errdefer s.deinit(allocator);
         const writer = s.writer(allocator);
         const W = @TypeOf(writer);
         // PERF: think about how cheap this is to create
-        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info);
+        var printer = Printer(W).new(allocator, std.ArrayList(u8).init(allocator), writer, options, import_info, local_names, symbols);
         defer printer.deinit();
         switch (T) {
             CSSString => try CSSStringFns.toCss(this, W, &printer),

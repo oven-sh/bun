@@ -56,7 +56,8 @@ pub const DeclarationBlock = struct {
             var arraylist = ArrayList(u8){};
             const w = arraylist.writer(bun.default_allocator);
             defer arraylist.deinit(bun.default_allocator);
-            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null);
+            var symbols = bun.JSAst.Symbol.Map{};
+            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
             defer printer.deinit();
             this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
             try writer.writeAll(arraylist.items);
@@ -299,6 +300,17 @@ pub fn parse_declaration(
     important_declarations: *DeclarationList,
     options: *const css.ParserOptions,
 ) Result(void) {
+    return parse_declaration_impl(name, input, declarations, important_declarations, options, {});
+}
+
+pub fn parse_declaration_impl(
+    name: []const u8,
+    input: *css.Parser,
+    declarations: *DeclarationList,
+    important_declarations: *DeclarationList,
+    options: *const css.ParserOptions,
+    composes_ctx: anytype,
+) Result(void) {
     const property_id = css.PropertyId.fromStr(name);
     var delimiters = css.Delimiters{ .bang = true };
     if (property_id != .custom or property_id.custom != .custom) {
@@ -331,6 +343,11 @@ pub fn parse_declaration(
         important_declarations.append(input.allocator(), property) catch bun.outOfMemory();
     } else {
         declarations.append(input.allocator(), property) catch bun.outOfMemory();
+    }
+
+    if (@TypeOf(composes_ctx) != void and composes_ctx.allow_composes and property == .composes) {
+        bun.assert(input.flags.css_modules);
+        composes_ctx.recordComposes(input.allocator(), &property.composes);
     }
 
     return .{ .result = {} };

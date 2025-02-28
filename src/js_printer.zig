@@ -486,6 +486,8 @@ pub const Options = struct {
     // us do binary search on to figure out what line a given AST node came from
     line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
 
+    mangled_props: ?*const bun.bundle_v2.MangledProps,
+
     // Default indentation is 2 spaces
     pub const Indentation = struct {
         scalar: usize = 2,
@@ -956,6 +958,15 @@ fn NewPrinter(
             }
         }
 
+        pub fn mangledPropName(p: *Printer, _ref: Ref) string {
+            const ref = p.symbols().follow(_ref);
+            // TODO: we don't support that
+            if (p.options.mangled_props != null) {
+                if (p.options.mangled_props.?.get(ref)) |name| return name;
+            }
+            return p.renamer.nameForSymbol(ref);
+        }
+
         pub inline fn printSpace(p: *Printer) void {
             if (!p.options.minify_whitespace)
                 p.print(" ");
@@ -1349,6 +1360,13 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
+            // TODO: esbuild does this to make the source map more accurate with E.NameOfSymbol
+            // if (printer.symbols().get(printer.symbols().follow(ref))) |original_symbol| {
+            //     if (!bun.strings.eql( original_symbol.original_name, name)) {
+            //         printer.source_map_builder.addSourceMapping(location, originalName);
+            //         return;
+            //     }
+            // }
             printer.addSourceMapping(location);
         }
 
@@ -2729,6 +2747,9 @@ fn NewPrinter(
                     p.printStringLiteralEString(e, true);
                 },
                 .e_template => |e| {
+                    // TODO: esbuild has some code to "Inline enums and mangled properties when minifying"
+                    // if (e.tag != null and (e.tag.?.data == .e_name_of_symbol)) {}
+
                     if (e.tag) |tag| {
                         p.addSourceMapping(expr.loc);
                         // Optional chains are forbidden in template tags
@@ -3025,6 +3046,18 @@ fn NewPrinter(
                         p.print(e.comment);
                         p.print(" */");
                     }
+                },
+                .e_name_of_symbol => |e| {
+                    const name = p.mangledPropName(e.ref);
+                    p.addSourceMappingForName(expr.loc, name, e.ref);
+
+                    if (!p.options.minify_whitespace and e.has_property_key_comment) {
+                        p.print(" /* @__KEY__ */");
+                    }
+
+                    p.print('"');
+                    p.printStringCharactersUTF8(name, '"');
+                    p.print('"');
                 },
 
                 .e_jsx_element,

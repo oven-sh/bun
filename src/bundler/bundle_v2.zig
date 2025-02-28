@@ -67,7 +67,7 @@ const linker = @import("../linker.zig");
 const sourcemap = bun.sourcemap;
 const StringJoiner = bun.StringJoiner;
 const base64 = bun.base64;
-const Ref = @import("../ast/base.zig").Ref;
+pub const Ref = @import("../ast/base.zig").Ref;
 const Define = @import("../defines.zig").Define;
 const DebugOptions = @import("../cli.zig").Command.DebugOptions;
 const ThreadPoolLib = @import("../thread_pool.zig");
@@ -134,6 +134,8 @@ const debug_deferred = bun.Output.scoped(.BUNDLER_DEFERRED, true);
 const DataURL = @import("../resolver/resolver.zig").DataURL;
 
 const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
+
+pub const MangledProps = std.AutoArrayHashMapUnmanaged(Ref, []const u8);
 
 fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8) bun.tracy.Ctx {
     return bun.tracy.traceNamed(src, "Transpiler." ++ name);
@@ -4083,6 +4085,7 @@ pub const ParseTask = struct {
         loader: Loader,
         unique_key_prefix: u64,
         unique_key_for_additional_file: *FileLoaderHash,
+        has_any_css_locals: *std.atomic.Value(u32),
     ) !JSAst {
         switch (loader) {
             .jsx, .tsx, .js, .ts => {
@@ -4279,6 +4282,7 @@ pub const ParseTask = struct {
                 return JSAst.init(ast);
             },
             .css => {
+                // make css ast
                 var import_records = BabyList(ImportRecord){};
                 const source_code = source.contents;
                 var temp_log = bun.logger.Log.init(allocator);
@@ -4286,11 +4290,22 @@ pub const ParseTask = struct {
                     temp_log.appendToMaybeRecycled(log, &source) catch bun.outOfMemory();
                 }
 
-                var css_ast = switch (bun.css.BundlerStyleSheet.parseBundler(
+                const css_module_suffix = ".module.css";
+                const enable_css_modules = source.path.pretty.len > css_module_suffix.len and
+                    strings.eqlComptime(source.path.pretty[source.path.pretty.len - css_module_suffix.len ..], css_module_suffix);
+                const parser_options = if (enable_css_modules) init: {
+                    var parseropts = bun.css.ParserOptions.default(allocator, &temp_log);
+                    parseropts.filename = bun.path.basename(source.path.pretty);
+                    parseropts.css_modules = bun.css.CssModuleConfig{};
+                    break :init parseropts;
+                } else bun.css.ParserOptions.default(allocator, &temp_log);
+
+                var css_ast, var extra = switch (bun.css.BundlerStyleSheet.parseBundler(
                     allocator,
                     source_code,
-                    bun.css.ParserOptions.default(allocator, &temp_log),
+                    parser_options,
                     &import_records,
+                    source.index,
                 )) {
                     .result => |v| v,
                     .err => |e| {
@@ -4298,16 +4313,34 @@ pub const ParseTask = struct {
                         return error.SyntaxError;
                     },
                 };
+                // Make sure the css modules local refs:
+                //  1. point to this source index
+                //  2. are all symbols
+                //  3. last ref is the last symbol so we can quickly make bitsets later
+                if (comptime bun.Environment.isDebug) {
+                    if (css_ast.local_scope.count() > 0) {
+                        for (css_ast.local_scope.values()) |ref| {
+                            bun.assert(ref.source_index == source.index.get());
+                            bun.assert(ref.tag == .symbol);
+                        }
+                        const last_ref = css_ast.local_scope.values()[css_ast.local_scope.values().len - 1];
+                        bun.assert(last_ref.inner_index == css_ast.local_scope.count() - 1);
+                    }
+                }
                 if (css_ast.minify(allocator, bun.css.MinifyOptions{
                     .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
                     .unused_symbols = .{},
-                }).asErr()) |e| {
+                }, &extra).asErr()) |e| {
                     try e.addToLogger(&temp_log, &source, allocator);
                     return error.MinifyError;
                 }
+                if (css_ast.local_scope.count() > 0) {
+                    _ = has_any_css_locals.fetchAdd(1, .monotonic);
+                }
+                // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
                 const root = Expr.init(E.Object, E.Object{}, Logger.Loc{ .start = 0 });
                 const css_ast_heap = bun.create(allocator, bun.css.BundlerStyleSheet, css_ast);
-                var ast = JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
+                var ast = JSAst.init((try js_parser.newLazyExportASTImpl(allocator, transpiler.options.define, opts, &temp_log, root, &source, "", extra.symbols)).?);
                 ast.css = css_ast_heap;
                 ast.import_records = import_records;
                 return ast;
@@ -4976,7 +5009,7 @@ pub const ParseTask = struct {
             .content_hash = 0,
         };
         var ast: JSAst = if (!is_empty)
-            try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file)
+            try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
             inline else => |as_undefined| if (loader == .css) try getEmptyCSSAST(
                 log,
@@ -6161,9 +6194,14 @@ pub const LinkerContext = struct {
     /// to know whether or not we can free it safely.
     pending_task_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
+    ///
+    has_any_css_locals: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
+
     /// Used by Bake to extract []CompileResult before it is joined
     dev_server: ?*bun.bake.DevServer = null,
     framework: ?*const bake.Framework = null,
+
+    mangled_props: MangledProps = .{},
 
     fn pathWithPrettyInitialized(this: *LinkerContext, path: Fs.Path) !Fs.Path {
         return genericPathWithPrettyInitialized(path, this.options.target, this.resolver.fs.top_level_dir, this.graph.allocator);
@@ -7553,6 +7591,7 @@ pub const LinkerContext = struct {
                     const writer = arrlist.writer(arena.allocator());
                     const W = @TypeOf(writer);
                     arrlist.appendSlice(arena.allocator(), "[") catch unreachable;
+                    var symbols = Symbol.Map{};
                     for (entry.conditions.sliceConst(), 0..) |*condition_, j| {
                         const condition: *const bun.css.ImportConditions = condition_;
                         const scratchbuf = std.ArrayList(u8).init(arena.allocator());
@@ -7566,6 +7605,8 @@ pub const LinkerContext = struct {
                                 .ast_urls_for_css = this.parse_graph.ast.items(.url_for_css),
                                 .ast_unique_key_for_additional_file = this.parse_graph.input_files.items(.unique_key_for_additional_file),
                             },
+                            &this.mangled_props,
+                            &symbols,
                         );
 
                         condition.toCss(W, &printer) catch unreachable;
@@ -7790,6 +7831,8 @@ pub const LinkerContext = struct {
 
     fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) !void {
         const exports_kind = this.graph.ast.items(.exports_kind)[source_index];
+        const all_css_asts = this.graph.ast.items(.css);
+        const maybe_css_ast: ?*bun.css.BundlerStyleSheet = all_css_asts[source_index];
         var parts = &this.graph.ast.items(.parts)[source_index];
 
         if (parts.len < 1) {
@@ -7802,6 +7845,140 @@ pub const LinkerContext = struct {
             @panic("Internal error: expected at least one statement in the lazy export");
         }
 
+        const module_ref = this.graph.ast.items(.module_ref)[source_index];
+
+        // Handle css modules
+        //
+        // --- original comment from esbuild ---
+        // If this JavaScript file is a stub from a CSS file, populate the exports of
+        // this JavaScript stub with the local names from that CSS file. This is done
+        // now instead of earlier because we need the whole bundle to be present.
+        if (maybe_css_ast) |css_ast| {
+            const stmt: Stmt = part.stmts[0];
+            if (stmt.data != .s_lazy_export) {
+                @panic("Internal error: expected top-level lazy export statement");
+            }
+            if (css_ast.local_scope.count() > 0) {
+                var exports = E.Object{};
+
+                const symbols: *const Symbol.List = &this.graph.ast.items(.symbols)[source_index];
+                const all_import_records: []const BabyList(bun.css.ImportRecord) = this.graph.ast.items(.import_records);
+
+                const values = css_ast.local_scope.values();
+                const last_ref = values[values.len - 1];
+
+                var inner_visited = try BitSet.initEmpty(this.allocator, last_ref.inner_index);
+                defer inner_visited.deinit(this.allocator);
+                var composes_visited = std.AutoArrayHashMap(bun.bundle_v2.Ref, void).init(this.allocator);
+                defer composes_visited.deinit();
+
+                const Visitor = struct {
+                    inner_visited: *BitSet,
+                    composes_visited: *std.AutoArrayHashMap(bun.bundle_v2.Ref, void),
+                    parts: *std.ArrayList(E.TemplatePart),
+                    all_import_records: []const BabyList(bun.css.ImportRecord),
+                    all_css_asts: []?*bun.css.BundlerStyleSheet,
+                    source_index: Index.Int,
+                    loc: Loc,
+
+                    fn clearAll(visitor: *@This()) void {
+                        visitor.inner_visited.setAll(false);
+                        visitor.composes_visited.clearRetainingCapacity();
+                    }
+
+                    fn visitName(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref) void {
+                        const from_this_file = ref.sourceIndex() == visitor.source_index;
+                        if ((from_this_file and visitor.inner_visited.isSet(ref.innerIndex())) or
+                            (!from_this_file and visitor.composes_visited.contains(ref)))
+                        {
+                            return;
+                        }
+
+                        visitor.visitComposes(ast, ref);
+                        visitor.parts.append(E.TemplatePart{
+                            .value = Expr.init(
+                                E.NameOfSymbol,
+                                E.NameOfSymbol{
+                                    .ref = ref,
+                                },
+                                visitor.loc,
+                            ),
+                            .tail = .{
+                                .raw = " ",
+                            },
+                            .tail_loc = visitor.loc,
+                        }) catch bun.outOfMemory();
+
+                        if (from_this_file) {
+                            visitor.inner_visited.set(ref.innerIndex());
+                        } else {
+                            visitor.composes_visited.put(ref, {}) catch unreachable;
+                        }
+                    }
+
+                    fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref) void {
+                        if (ast.composes.count() > 0) {
+                            const composes = ast.composes.getPtr(ref) orelse return;
+                            for (composes.slice()) |*compose| {
+                                if (compose.from != null and compose.from.? == .file) {
+                                    const import_record_idx = compose.from.?.file;
+                                    const import_records: *const BabyList(bun.css.ImportRecord) = &visitor.all_import_records[visitor.source_index];
+                                    const import_record = import_records.at(import_record_idx);
+                                    if (import_record.source_index.isValid()) {
+                                        const other_file = visitor.all_css_asts[import_record.source_index.get()].?;
+                                        for (compose.names.slice()) |name| {
+                                            const other_name_ref = other_file.local_scope.get(name.v) orelse continue;
+                                            visitor.visitName(other_file, other_name_ref);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+
+                var visitor = Visitor{
+                    .inner_visited = &inner_visited,
+                    .composes_visited = &composes_visited,
+                    .source_index = source_index,
+                    .parts = undefined,
+                    .all_import_records = all_import_records,
+                    .all_css_asts = all_css_asts,
+                    .loc = stmt.loc,
+                };
+
+                for (values) |ref| {
+                    bun.assert(ref.source_index == source_index);
+                    bun.assert(ref.inner_index < symbols.len);
+
+                    var template_parts = std.ArrayList(E.TemplatePart).init(this.allocator);
+                    var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref }, stmt.loc);
+
+                    visitor.parts = &template_parts;
+                    visitor.clearAll();
+                    visitor.visitComposes(css_ast, ref);
+
+                    if (template_parts.items.len > 0) {
+                        value = Expr.init(
+                            E.Template,
+                            E.Template{
+                                .parts = template_parts.items,
+                                .head = .{
+                                    .raw = "",
+                                },
+                            },
+                            stmt.loc,
+                        );
+                    }
+
+                    const key = symbols.at(ref.innerIndex()).original_name;
+                    try exports.put(this.allocator, key, value);
+                }
+
+                part.stmts[0].data.s_lazy_export.* = Expr.init(E.Object, exports, stmt.loc).data;
+            }
+        }
+
         const stmt: Stmt = part.stmts[0];
         if (stmt.data != .s_lazy_export) {
             @panic("Internal error: expected top-level lazy export statement");
@@ -7811,7 +7988,6 @@ pub const LinkerContext = struct {
             .data = stmt.data.s_lazy_export.*,
             .loc = stmt.loc,
         };
-        const module_ref = this.graph.ast.items(.module_ref)[source_index];
 
         switch (exports_kind) {
             .cjs => {
@@ -10131,6 +10307,8 @@ pub const LinkerContext = struct {
 
         const css_import = chunk.content.css.imports_in_chunk_in_order.at(imports_in_chunk_index);
         const css: *const bun.css.BundlerStyleSheet = &chunk.content.css.asts[imports_in_chunk_index];
+        // const symbols: []const Symbol.List = c.graph.ast.items(.symbols);
+        const symbols = &c.graph.symbols;
 
         switch (css_import.kind) {
             .layers => {
@@ -10148,6 +10326,9 @@ pub const LinkerContext = struct {
                         .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
                         .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
                     },
+                    &c.mangled_props,
+                    // layer does not need symbols i think
+                    symbols,
                 )) {
                     .result => {},
                     .err => {
@@ -10182,6 +10363,9 @@ pub const LinkerContext = struct {
                         .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
                         .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
                     },
+                    &c.mangled_props,
+                    // external_path does not need symbols i think
+                    symbols,
                 )) {
                     .result => {},
                     .err => {
@@ -10207,6 +10391,7 @@ pub const LinkerContext = struct {
                     // TODO: make this more configurable
                     .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
                 };
+                symbols.dump();
                 _ = switch (css.toCssWithWriter(
                     worker.allocator,
                     &buffer_writer,
@@ -10216,6 +10401,8 @@ pub const LinkerContext = struct {
                         .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
                         .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
                     },
+                    &c.mangled_props,
+                    symbols,
                 )) {
                     .result => {},
                     .err => {
@@ -10411,6 +10598,8 @@ pub const LinkerContext = struct {
                                         .ast_urls_for_css = c.parse_graph.ast.items(.url_for_css),
                                         .ast_unique_key_for_additional_file = c.parse_graph.input_files.items(.unique_key_for_additional_file),
                                     },
+                                    &c.mangled_props,
+                                    &c.graph.symbols,
                                 )) {
                                     .result => |v| v,
                                     .err => |e| {
@@ -10927,6 +11116,7 @@ pub const LinkerContext = struct {
                 .minify_syntax = c.options.minify_syntax,
                 .target = c.options.target,
                 .print_dce_annotations = c.options.emit_dce_annotations,
+                .mangled_props = &c.mangled_props,
                 // .const_values = c.graph.const_values,
             };
 
@@ -12066,6 +12256,7 @@ pub const LinkerContext = struct {
             .minify_whitespace = c.options.minify_whitespace,
             .print_dce_annotations = c.options.emit_dce_annotations,
             .minify_syntax = c.options.minify_syntax,
+            .mangled_props = &c.mangled_props,
             // .const_values = c.graph.const_values,
         };
 
@@ -13627,6 +13818,7 @@ pub const LinkerContext = struct {
                 c.parse_graph.input_files.items(.source)
             else
                 null,
+            .mangled_props = &c.mangled_props,
         };
 
         writer.buffer.reset();
@@ -13681,9 +13873,65 @@ pub const LinkerContext = struct {
         shifts: []sourcemap.SourceMapShifts,
     };
 
+    fn mangleLocalCss(c: *LinkerContext) void {
+        if (c.has_any_css_locals.load(.monotonic) == 0) return;
+
+        const all_css_asts: []?*bun.css.BundlerStyleSheet = c.graph.ast.items(.css);
+        const all_symbols: []Symbol.List = c.graph.ast.items(.symbols);
+        const all_sources: []Logger.Source = c.parse_graph.input_files.items(.source);
+
+        // Collect all local css names
+        var sfb = std.heap.stackFallback(512, c.allocator);
+        const allocator = sfb.get();
+        var local_css_names = std.AutoArrayHashMap(bun.bundle_v2.Ref, void).init(allocator);
+        defer local_css_names.deinit();
+
+        for (all_css_asts, 0..) |maybe_css_ast, source_index| {
+            if (maybe_css_ast) |css_ast| {
+                if (css_ast.local_scope.count() == 0) continue;
+                const symbols = all_symbols[source_index];
+                for (symbols.sliceConst(), 0..) |*symbol_, inner_index| {
+                    var symbol = symbol_;
+                    if (symbol.kind == .local_css) {
+                        const ref = ref: {
+                            var ref = Ref.init(@intCast(inner_index), @intCast(source_index), false);
+                            ref.tag = .symbol;
+                            while (symbol.hasLink()) {
+                                ref = symbol.link;
+                                symbol = all_symbols[ref.source_index].at(ref.inner_index);
+                            }
+                            break :ref ref;
+                        };
+
+                        const entry = local_css_names.getOrPut(ref) catch bun.outOfMemory();
+                        if (entry.found_existing) continue;
+
+                        const source = all_sources[ref.source_index];
+
+                        const original_name = symbol.original_name;
+                        const path_hash = bun.css.css_modules.hash(
+                            allocator,
+                            "{s}",
+                            .{
+                                // TODO: not sure if this is the right path to use for the hashing
+                                source.path.pretty,
+                            },
+                            false,
+                        );
+
+                        const final_generated_name = std.fmt.allocPrint(c.graph.allocator, "{s}_{s}", .{ original_name, path_hash }) catch bun.outOfMemory();
+                        c.mangled_props.put(c.allocator, ref, final_generated_name) catch bun.outOfMemory();
+                    }
+                }
+            }
+        }
+    }
+
     pub fn generateChunksInParallel(c: *LinkerContext, chunks: []Chunk, comptime is_dev_server: bool) !if (is_dev_server) void else std.ArrayList(options.OutputFile) {
         const trace = tracer(@src(), "generateChunksInParallel");
         defer trace.end();
+
+        c.mangleLocalCss();
 
         var has_js_chunk = false;
         var has_css_chunk = false;

@@ -2083,6 +2083,7 @@ pub const PackCommand = struct {
             &json.source,
             .{
                 .indent = json.indentation,
+                .mangled_props = null,
             },
         ) catch |err| {
             return switch (err) {

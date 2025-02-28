@@ -119,23 +119,32 @@ pub fn testingImpl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame, c
         source.slice(),
         parser_options,
         &import_records,
+        bun.bundle_v2.Index.invalid,
     )) {
-        .result => |stylesheet_| {
-            var stylesheet = stylesheet_;
+        .result => |ret| {
+            var stylesheet, var extra = ret;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();
             minify_options.targets.browsers = browsers;
-            _ = stylesheet.minify(alloc, minify_options).assert();
+            _ = stylesheet.minify(alloc, minify_options, &extra).assert();
 
-            const result = switch (stylesheet.toCss(alloc, bun.css.PrinterOptions{
-                .minify = switch (test_kind) {
-                    .minify => true,
-                    .normal => false,
-                    .prefix => false,
+            const symbols = bun.JSAst.Symbol.Map{};
+            var local_names = bun.css.LocalsResultsMap{};
+            const result = switch (stylesheet.toCss(
+                alloc,
+                bun.css.PrinterOptions{
+                    .minify = switch (test_kind) {
+                        .minify => true,
+                        .normal => false,
+                        .prefix => false,
+                    },
+                    .targets = .{
+                        .browsers = minify_options.targets.browsers,
+                    },
                 },
-                .targets = .{
-                    .browsers = minify_options.targets.browsers,
-                },
-            }, .initOutsideOfBundler(&import_records))) {
+                .initOutsideOfBundler(&import_records),
+                &local_names,
+                &symbols,
+            )) {
                 .result => |result| result,
                 .err => |err| {
                     return err.toJSString(alloc, globalThis);
@@ -307,7 +316,7 @@ pub fn attrTest(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     const parser_options = bun.css.ParserOptions.default(alloc, &log);
 
     var import_records = bun.BabyList(bun.ImportRecord){};
-    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options, &import_records)) {
+    switch (bun.css.StyleAttribute.parse(alloc, source.slice(), parser_options, &import_records, bun.bundle_v2.Index.invalid)) {
         .result => |stylesheet_| {
             var stylesheet = stylesheet_;
             var minify_options: bun.css.MinifyOptions = bun.css.MinifyOptions.default();

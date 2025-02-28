@@ -1226,6 +1226,9 @@ pub const Symbol = struct {
         /// Assigning to a "const" symbol will throw a TypeError at runtime
         constant,
 
+        // CSS identifiers that are renamed to be unique to the file they are in
+        local_css,
+
         /// This annotates all other symbols that don't have special behavior.
         other,
 
@@ -1372,6 +1375,11 @@ pub const Symbol = struct {
             return Map{ .symbols_for_source = symbols_for_source };
         }
 
+        pub fn initWithOneList(list: List) Map {
+            const baby_list = BabyList(List).init((&list)[0..1]);
+            return initList(baby_list);
+        }
+
         pub fn initList(list: NestedList) Map {
             return Map{ .symbols_for_source = list };
         }
@@ -1439,6 +1447,17 @@ pub const OptionalChain = enum(u1) {
 };
 
 pub const E = struct {
+    /// This represents an internal property name that can be mangled. The symbol
+    /// referenced by this expression should be a "SymbolMangledProp" symbol.
+    pub const NameOfSymbol = struct {
+        ref: Ref = Ref.None,
+
+        /// If true, a preceding comment contains "@__KEY__"
+        ///
+        /// Currently not used
+        has_property_key_comment: bool = false,
+    };
+
     pub const Array = struct {
         items: ExprNodeList = ExprNodeList{},
         comma_after_spread: ?logger.Loc = null,
@@ -4225,6 +4244,14 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
+            E.NameOfSymbol => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_name_of_symbol = Data.Store.append(E.NameOfSymbol, st),
+                    },
+                };
+            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4607,6 +4634,7 @@ pub const Expr = struct {
         e_import_meta_main,
         e_require_main,
         e_inlined_enum,
+        e_name_of_symbol,
 
         // object, regex and array may have had side effects
         pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -5302,6 +5330,8 @@ pub const Expr = struct {
 
         e_inlined_enum: *E.InlinedEnum,
 
+        e_name_of_symbol: *E.NameOfSymbol,
+
         comptime {
             bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
         }
@@ -5653,6 +5683,10 @@ pub const Expr = struct {
         pub fn writeToHasher(this: Expr.Data, hasher: anytype, symbol_table: anytype) void {
             writeAnyToHasher(hasher, std.meta.activeTag(this));
             switch (this) {
+                .e_name_of_symbol => |e| {
+                    const symbol = e.ref.getSymbol(symbol_table);
+                    hasher.update(symbol.original_name);
+                },
                 .e_array => |e| {
                     writeAnyToHasher(hasher, .{
                         e.is_single_line,
@@ -6256,6 +6290,7 @@ pub const Expr = struct {
 
         pub const Store = struct {
             const StoreType = NewStore(&.{
+                E.NameOfSymbol,
                 E.Array,
                 E.Arrow,
                 E.Await,

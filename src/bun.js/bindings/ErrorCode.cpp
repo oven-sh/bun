@@ -1443,6 +1443,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
     case ErrorCode::ERR_DIR_CLOSED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
+    case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
 
     default: {
         break;

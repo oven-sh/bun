@@ -63,6 +63,20 @@ $ bun install --filter "pkg-*" --filter "!pkg-c"
 $ bun install --filter "./packages/pkg-*" --filter "!pkg-c" # or --filter "!./packages/pkg-c"
 ```
 
+When publishing, `workspace:` versions are replaced by the package's `package.json` version,
+
+```
+"workspace:*" -> "1.0.1"
+"workspace:^" -> "^1.0.1"
+"workspace:~" -> "~1.0.1"
+```
+
+Setting a specific version takes precedence over the package's `package.json` version,
+
+```
+"workspace:1.0.2" -> "1.0.2" // Even if current version is 1.0.1
+```
+
 Workspaces have a couple major benefits.
 
 - **Code can be split into logical parts.** If one package relies on another, you can simply add it as a dependency in `package.json`. If package `b` depends on `a`, `bun install` will install your local `packages/a` directory into `node_modules` instead of downloading it from the npm registry.

@@ -203,7 +203,7 @@ const LibUVBackend = struct {
         this.head.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
     }
 
-    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         const key = GetAddrInfoRequest.PendingCacheKey.init(query);
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
@@ -1776,10 +1776,10 @@ pub const DNSResolver = struct {
     options: c_ares.ChannelOptions = .{},
 
     ref_count: u32 = 1,
-    event_loop_timer: EventLoopTimer = .{
+    event_loop_timer: EventLoopTimer.Node = .{ .data = .{
         .next = .{},
         .tag = .DNSResolver,
-    },
+    } },
 
     pending_host_cache_cares: PendingCache = .empty,
     pending_host_cache_native: PendingCache = .empty,
@@ -1894,13 +1894,13 @@ pub const DNSResolver = struct {
             this.deref();
         }
 
-        this.event_loop_timer.state = .PENDING;
+        this.event_loop_timer.data.state = .PENDING;
 
         if (this.getChannelOrError(vm.global)) |channel| {
             if (this.anyRequestsPending()) {
                 c_ares.ares_process_fd(channel, c_ares.ARES_SOCKET_BAD, c_ares.ARES_SOCKET_BAD);
                 if (this.addTimer(now)) {
-                    return .{ .rearm = this.event_loop_timer.next };
+                    return .{ .rearm = this.event_loop_timer.data.next };
                 }
             }
         } else |_| {}
@@ -1933,19 +1933,19 @@ pub const DNSResolver = struct {
     }
 
     fn addTimer(this: *DNSResolver, now: ?*const timespec) bool {
-        if (this.event_loop_timer.state == .ACTIVE) {
+        if (this.event_loop_timer.data.state == .ACTIVE) {
             return false;
         }
 
         this.ref();
-        this.event_loop_timer.next = (now orelse &timespec.now()).addMs(1000);
+        this.event_loop_timer.data.next = (now orelse &timespec.now()).addMs(1000);
         this.vm.timer.incrementTimerRef(1);
         this.vm.timer.insert(&this.event_loop_timer);
         return true;
     }
 
     fn removeTimer(this: *DNSResolver) void {
-        if (this.event_loop_timer.state != .ACTIVE) {
+        if (this.event_loop_timer.data.state != .ACTIVE) {
             return;
         }
 

@@ -209,31 +209,23 @@ pub const CachedBytecode = opaque {
 
     pub const VTable = &std.mem.Allocator.VTable{
         .alloc = struct {
-            pub fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
-                _ = ctx; // autofix
-                _ = len; // autofix
-                _ = ptr_align; // autofix
-                _ = ret_addr; // autofix
+            pub fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+                _ = ctx;
+                _ = len;
+                _ = alignment;
+                _ = ret_addr;
                 @panic("Unexpectedly called CachedBytecode.alloc");
             }
         }.alloc,
-        .resize = struct {
-            pub fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-                _ = ctx; // autofix
-                _ = buf; // autofix
-                _ = buf_align; // autofix
-                _ = new_len; // autofix
-                _ = ret_addr; // autofix
-                return false;
-            }
-        }.resize,
         .free = struct {
-            pub fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, _: usize) void {
-                _ = buf; // autofix
-                _ = buf_align; // autofix
+            pub fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, _: usize) void {
+                _ = buf;
+                _ = alignment;
                 CachedBytecode__deref(@ptrCast(ctx));
             }
         }.free,
+        .resize = &std.mem.Allocator.noResize,
+        .remap = &std.mem.Allocator.noRemap,
     };
 
     pub fn allocator(this: *CachedBytecode) std.mem.Allocator {
@@ -2172,7 +2164,7 @@ pub const CommonAbortReason = enum(u8) {
     extern fn WebCore__CommonAbortReason__toJS(*JSGlobalObject, CommonAbortReason) JSValue;
 };
 
-pub const AbortSignal = extern opaque {
+pub const AbortSignal = opaque {
     extern fn WebCore__AbortSignal__aborted(arg0: *AbortSignal) bool;
     extern fn WebCore__AbortSignal__abortReason(arg0: *AbortSignal) JSValue;
     extern fn WebCore__AbortSignal__addListener(arg0: *AbortSignal, arg1: ?*anyopaque, ArgFn2: ?*const fn (?*anyopaque, JSValue) callconv(.C) void) *AbortSignal;

@@ -3678,7 +3678,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
-            while (queue.popOrNull()) |index| {
+            while (queue.pop()) |index| {
                 for (ctx.import_records[index.get()].slice()) |import_record| {
                     const result = try processEdgeAttachment(g, ctx, temp_alloc, quick_lookup, new_imports, file_index, import_record, .css);
                     if (result == .@"continue" and import_record.source_index.isValid()) {
@@ -4857,7 +4857,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         fn newEdge(g: *@This(), edge: Edge) !EdgeIndex {
-            if (g.edges_free_list.popOrNull()) |index| {
+            if (g.edges_free_list.pop()) |index| {
                 g.edges.items[index.get()] = edge;
                 return index;
             }
@@ -5221,7 +5221,7 @@ const DirectoryWatchStore = struct {
     }
 
     fn appendDepAssumeCapacity(store: *DirectoryWatchStore, dep: Dep) Dep.Index {
-        if (store.dependencies_free_list.popOrNull()) |index| {
+        if (store.dependencies_free_list.pop()) |index| {
             store.dependencies.items[index.get()] = dep;
             return index;
         }

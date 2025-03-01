@@ -5770,7 +5770,7 @@ pub const Blob = struct {
                     joiner.push(sliced.slice(), sliced.allocator.get());
                 },
             }
-            current = stack.popOrNull() orelse break;
+            current = stack.pop() orelse break;
         }
 
         const joined = try joiner.done(bun.default_allocator);

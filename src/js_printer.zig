@@ -3014,7 +3014,7 @@ fn NewPrinter(
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation
                     while (p.binary_expression_stack.items.len > stack_bottom) {
-                        var last = p.binary_expression_stack.pop();
+                        var last = p.binary_expression_stack.pop().?;
                         last.visitRightAndFinish(p);
                     }
                 },

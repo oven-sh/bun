@@ -7120,7 +7120,7 @@ pub const LinkerContext = struct {
                 // }
 
                 defer {
-                    _ = visitor.visited.popOrNull();
+                    _ = visitor.visited.pop();
                 }
 
                 // Iterate over the top-level "@import" rules
@@ -17276,7 +17276,8 @@ const ExternalFreeFunctionAllocator = struct {
     const vtable: std.mem.Allocator.VTable = .{
         .alloc = &alloc,
         .free = &free,
-        .resize = &resize,
+        .resize = &std.mem.Allocator.noResize,
+        .remap = &std.mem.Allocator.noRemap,
     };
 
     pub fn create(free_callback: *const fn (ctx: *anyopaque) callconv(.C) void, context: *anyopaque) std.mem.Allocator {
@@ -17289,15 +17290,11 @@ const ExternalFreeFunctionAllocator = struct {
         };
     }
 
-    fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
+    fn alloc(_: *anyopaque, _: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
         return null;
     }
 
-    fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-        return false;
-    }
-
-    fn free(ext_free_function: *anyopaque, _: []u8, _: u8, _: usize) void {
+    fn free(ext_free_function: *anyopaque, _: []u8, _: std.mem.Alignment, _: usize) void {
         const info: *ExternalFreeFunctionAllocator = @alignCast(@ptrCast(ext_free_function));
         info.free_callback(info.context);
         bun.default_allocator.destroy(info);

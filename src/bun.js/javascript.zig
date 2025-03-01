@@ -723,7 +723,7 @@ const AutoKiller = struct {
 
     fn killProcesses(this: *AutoKiller) u32 {
         var count: u32 = 0;
-        while (this.processes.popOrNull()) |process| {
+        while (this.processes.pop()) |process| {
             if (!process.key.hasExited()) {
                 log("process.kill {d}", .{process.key.pid});
                 count += @as(u32, @intFromBool(process.key.kill(bun.SignalCode.default) == .result));

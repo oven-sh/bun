@@ -7736,7 +7736,7 @@ fn NewParser_(
                 p.panic("Internal error", .{});
             }
 
-            _ = children.popOrNull();
+            _ = children.pop();
         }
 
         fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
@@ -16574,7 +16574,7 @@ fn NewParser_(
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation.
                     while (p.binary_expression_stack.items.len > stack_bottom) {
-                        v = p.binary_expression_stack.pop();
+                        v = p.binary_expression_stack.pop().?;
                         v.e.left = current;
                         current = v.visitRightAndFinish(p);
                     }

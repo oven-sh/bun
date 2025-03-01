@@ -341,11 +341,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     std::optional<int> saltLen = getSaltLength(globalObject, options);
     RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
 
-    // For RSA-PSS verification, if no salt length is specified, use -1 (auto-detect)
-    if (!saltLen.has_value() && padding == RSA_PKCS1_PSS_PADDING) {
-        saltLen = -1; // Auto-detect for verification
-    }
-
     // Get DSA signature encoding format
     NodeCryptoKeys::DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, options);
     RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
@@ -485,11 +480,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSC::JSGlobalObject * globalObject, J
 
     std::optional<int> saltLen = getSaltLength(globalObject, keyValue);
     RETURN_IF_EXCEPTION(scope, {});
-
-    // For RSA-PSS verification, if no salt length is specified, use -1 (auto-detect)
-    if (!saltLen.has_value() && padding == RSA_PKCS1_PSS_PADDING) {
-        saltLen = -1; // Auto-detect for verification
-    }
 
     // Get DSA signature encoding format
     NodeCryptoKeys::DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, keyValue);

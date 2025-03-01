@@ -285,7 +285,7 @@ pub const RunCommand = struct {
 
         for (passthrough) |part| {
             try copy_script.append(' ');
-            if (bun.shell.needsEscapeUtf8AsciiLatin1(part)) {
+            if (bun.shell.needsEscape(u8, part)) {
                 try bun.shell.escape8Bit(part, &copy_script, true);
             } else {
                 try copy_script.appendSlice(part);

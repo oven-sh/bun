@@ -233,7 +233,15 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
                         break :brk args;
                     };
-                    return @call(.auto, func, args);
+                    const ret = @call(.auto, func, args);
+                    if (Ret == void and @TypeOf(ret) == @import("shell/interpreter.zig").Interpreter.NextExec) {
+                        ret.executeTodoReview();
+                        return {};
+                    }
+                    if (Ret == @import("shell/interpreter.zig").Interpreter.NextExec and @TypeOf(ret) == void) {
+                        return .todo_review;
+                    }
+                    return ret;
                 }
             }
             @panic("Invalid tag");

@@ -2183,6 +2183,11 @@ pub const AbortSignal = extern opaque {
     extern fn WebCore__AbortSignal__toJS(arg0: *AbortSignal, arg1: *JSGlobalObject) JSValue;
     extern fn WebCore__AbortSignal__unref(arg0: *AbortSignal) void;
 
+    extern fn WebCore__AbortSignal__isTimeout(*const AbortSignal) bool;
+    pub fn isTimeout(this: *const AbortSignal) bool {
+        return WebCore__AbortSignal__isTimeout(this);
+    }
+
     pub fn listen(
         this: *AbortSignal,
         comptime Context: type,

@@ -629,6 +629,7 @@ declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
 declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
 declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
 declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
+declare function $ERR_SERVER_ALREADY_LISTEN(): Error;
 
 /**
  * Convert a function to a class-like object.

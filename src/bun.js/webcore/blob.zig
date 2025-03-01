@@ -1683,13 +1683,27 @@ pub const Blob = struct {
                 switch (store_.data) {
                     .bytes => |*bytes| {
                         bytes.stored_name = bun.PathString.init(
-                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch bun.outOfMemory()).slice(),
                         );
                     },
                     .s3, .file => {
                         blob.name = name_value_str.dupeRef();
                     },
                 }
+            } else if (!name_value_str.isEmpty()) {
+                // not store but we have a name so we need a store
+                blob.store = Blob.Store.new(.{
+                    .data = .{
+                        .bytes = Blob.ByteStore.initEmptyWithName(
+                            bun.PathString.init(
+                                (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch bun.outOfMemory()).slice(),
+                            ),
+                            allocator,
+                        ),
+                    },
+                    .allocator = allocator,
+                    .ref_count = .init(1),
+                });
             }
         }
 
@@ -3635,7 +3649,7 @@ pub const Blob = struct {
     };
 
     pub const ByteStore = struct {
-        ptr: [*]u8 = undefined,
+        ptr: ?[*]u8 = undefined,
         len: SizeType = 0,
         cap: SizeType = 0,
         allocator: std.mem.Allocator,
@@ -3651,15 +3665,32 @@ pub const Blob = struct {
                 .allocator = allocator,
             };
         }
+        pub fn initEmptyWithName(name: bun.PathString, allocator: std.mem.Allocator) ByteStore {
+            return .{
+                .ptr = null,
+                .len = 0,
+                .cap = 0,
+                .allocator = allocator,
+                .stored_name = name,
+            };
+        }
 
         pub fn fromArrayList(list: std.ArrayListUnmanaged(u8), allocator: std.mem.Allocator) !*ByteStore {
             return ByteStore.init(list.items, allocator);
         }
 
         pub fn toInternalBlob(this: *ByteStore) InternalBlob {
+            const ptr = this.ptr orelse return InternalBlob{
+                .bytes = std.ArrayList(u8){
+                    .items = &.{},
+                    .capacity = 0,
+                    .allocator = this.allocator,
+                },
+            };
+
             const result = InternalBlob{
                 .bytes = std.ArrayList(u8){
-                    .items = this.ptr[0..this.len],
+                    .items = ptr[0..this.len],
                     .capacity = this.cap,
                     .allocator = this.allocator,
                 },
@@ -3671,16 +3702,27 @@ pub const Blob = struct {
             return result;
         }
         pub fn slice(this: ByteStore) []u8 {
-            return this.ptr[0..this.len];
+            if (this.ptr) |ptr| {
+                return ptr[0..this.len];
+            }
+            return "";
         }
 
         pub fn allocatedSlice(this: ByteStore) []u8 {
-            return this.ptr[0..this.cap];
+            if (this.ptr) |ptr| {
+                return ptr[0..this.cap];
+            }
+            return "";
         }
 
         pub fn deinit(this: *ByteStore) void {
             bun.default_allocator.free(this.stored_name.slice());
-            this.allocator.free(this.ptr[0..this.cap]);
+            if (this.ptr) |ptr| {
+                this.allocator.free(ptr[0..this.cap]);
+            }
+            this.ptr = null;
+            this.len = 0;
+            this.cap = 0;
         }
 
         pub fn asArrayList(this: ByteStore) std.ArrayListUnmanaged(u8) {

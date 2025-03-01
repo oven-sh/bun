@@ -503,10 +503,13 @@ assert.throws(
 
 {
   const data = Buffer.from('Hello world');
+  const keys = [['ec-key.pem', 64]];
+  
   // Unabled to sign or verify with DSA keys
   // https://boringssl.googlesource.com/boringssl/+/HEAD/PORTING.md#dsa-s
-  // const keys = [['ec-key.pem', 64], ['dsa_private_1025.pem', 40]];
-  const keys = [['ec-key.pem', 64]];
+  if (!common.openSSLIsBoringSSL) {
+    keys.push(['dsa_private_1025.pem', 40]);
+  }
 
   for (const [file, length] of keys) {
     const privKey = fixtures.readKey(file);

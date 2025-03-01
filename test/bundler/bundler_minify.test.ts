@@ -526,4 +526,54 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });
+  itBundled("minify/ProductionMode", {
+    files: {
+      "/entry.jsx": `
+        import {foo} from 'dev-trap';
+        capture(process.env.NODE_ENV);
+        capture(1232 + 521)
+        console.log(<div>Hello</div>);
+      `,
+      "/node_modules/react/jsx-dev-runtime.js": `
+        throw new Error("Should not use dev runtime");
+      `,
+      "/node_modules/react/jsx-runtime.js": `
+        export function jsx(type, props) {
+          return {type, props};
+        }
+        export const Fragment = Symbol.for("jsx-runtime");
+      `,
+      "/node_modules/dev-trap/package.json": `{
+        "name": "dev-trap",
+        "exports": {
+          "development": "./dev.js",
+          "default": "./prod.js"
+        }
+      }`,
+      "/node_modules/dev-trap/dev.js": `
+        throw new Error("FAIL");
+      `,
+      "/node_modules/dev-trap/prod.js": `
+        export const foo = "production";
+      `
+    },
+    capture: ["\"production\"", "1753"],
+    production: true,
+    onAfterBundle(api) {
+      const output = api.readFile("out.js");
+
+      expect(output).not.toContain("FAIL");
+
+      // Check minification
+      expect(output).not.toContain("\t");
+      expect(output).not.toContain("  ");
+      
+      // Check NODE_ENV is inlined
+      expect(output).toContain('"production"');
+      expect(output).not.toContain("process.env.NODE_ENV");
+
+      // Check JSX uses production runtime
+      expect(output).toContain("jsx-runtime");
+    }
+  });
 });

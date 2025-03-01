@@ -225,7 +225,7 @@ pub const BuildCommand = struct {
         this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
         if (ctx.bundler_options.production) {
-            try this_transpiler.options.define.insert(allocator, "process.env.NODE_ENV", .initStaticString(&.{ .data = "production" }));
+            try this_transpiler.env.map.put("NODE_ENV", "production");
         }
 
         try this_transpiler.configureDefines();

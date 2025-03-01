@@ -1407,6 +1407,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  if (onListen !== null) {
+    this.once("listening", onListen);
+  }
+
   try {
     var tls = undefined;
     var TLSSocketClass = undefined;
@@ -1501,7 +1505,7 @@ Server.prototype[kRealListen] = function realListen(
   // That leads to all sorts of confusion.
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this, onListen?.bind(this));
+  setTimeout(emitListeningNextTick, 1, this);
 };
 
 Server.prototype.getsockname = function getsockname(out) {
@@ -1528,14 +1532,8 @@ class ConnResetException extends Error {
   }
 }
 
-function emitListeningNextTick(self, onListen) {
-  if (typeof onListen === "function") {
-    try {
-      onListen.$call(self);
-    } catch (err) {
-      self.emit("error", err);
-    }
-  }
+function emitListeningNextTick(self) {
+  if (!self._handle) return;
   self.emit("listening");
 }
 

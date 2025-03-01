@@ -53,6 +53,7 @@ typedef struct BunString {
     BunStringImpl impl;
 
     enum ZeroCopyTag { ZeroCopy };
+    enum NonNullTag { NonNull };
 
     // If it's not a WTFStringImpl, this does nothing
     inline void ref();
@@ -68,6 +69,10 @@ typedef struct BunString {
     // if it was a ZigString, it still allocates a WTF::StringImpl.
     // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
     WTF::String toWTFString(ZeroCopyTag) const;
+
+    // If the string is empty, this will ensure m_impl is non-null by
+    // using shared static emptyString.
+    WTF::String toWTFString(NonNullTag) const;
 
     WTF::String transferToWTFString();
 

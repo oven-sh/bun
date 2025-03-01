@@ -20,7 +20,7 @@ describe("udpSocket()", () => {
     expect(socket.port).toBe(socket.port); // test that property is cached
     expect(socket.hostname).toBeString();
     expect(socket.hostname).toBe(socket.hostname); // test that property is cached
-    expect(socket.address).toEqual({
+    expect(socket.address).toMatchObject({
       address: socket.hostname,
       family: socket.hostname === "::" ? "IPv6" : "IPv4",
       port: socket.port,

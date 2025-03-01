@@ -940,11 +940,24 @@ for (let withOverridenBufferWrite of [false, true]) {
 
       it("offset returns are correct", () => {
         const b = Buffer.allocUnsafe(16);
-        expect(b.writeUInt32LE(0, 0)).toBe(4);
-        expect(b.writeUInt16LE(0, 4)).toBe(6);
-        expect(b.writeUInt8(0, 6)).toBe(7);
-        expect(b.writeInt8(0, 7)).toBe(8);
-        expect(b.writeDoubleLE(0, 8)).toBe(16);
+        expect(b.writeInt8(0, 2)).toBe(3);
+        expect(b.writeUInt8(0, 2)).toBe(3);
+        expect(b.writeInt16LE(0, 2)).toBe(4);
+        expect(b.writeInt16BE(0, 2)).toBe(4);
+        expect(b.writeUInt16LE(0, 2)).toBe(4);
+        expect(b.writeUInt16BE(0, 2)).toBe(4);
+        expect(b.writeInt32LE(0, 2)).toBe(6);
+        expect(b.writeInt32BE(0, 2)).toBe(6);
+        expect(b.writeUInt32LE(0, 2)).toBe(6);
+        expect(b.writeUInt32BE(0, 2)).toBe(6);
+        expect(b.writeFloatLE(0, 2)).toBe(6);
+        expect(b.writeFloatBE(0, 2)).toBe(6);
+        expect(b.writeDoubleLE(0, 2)).toBe(10);
+        expect(b.writeDoubleBE(0, 2)).toBe(10);
+        expect(b.writeBigInt64LE(0n, 2)).toBe(10);
+        expect(b.writeBigInt64BE(0n, 2)).toBe(10);
+        expect(b.writeBigUInt64LE(0n, 2)).toBe(10);
+        expect(b.writeBigUInt64BE(0n, 2)).toBe(10);
       });
 
       it("unmatched surrogates should not produce invalid utf8 output", () => {
@@ -1834,6 +1847,16 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.indexOf("b", {})).toBe(1);
         expect(b.indexOf("b", null)).toBe(1);
         expect(b.indexOf("b", [])).toBe(1);
+
+        expect(b.indexOf("f", 5)).toBe(5);
+        expect(b.indexOf("d", 2)).toBe(3);
+        expect(b.indexOf("f", -1)).toBe(5);
+        expect(b.indexOf("f", 6)).toBe(-1);
+
+        expect(b.indexOf(100, 2)).toBe(3);
+        expect(b.indexOf(102, 5)).toBe(5);
+        expect(b.indexOf(102, -1)).toBe(5);
+        expect(b.indexOf(102, 6)).toBe(-1);
       });
 
       it("lastIndexOf", () => {

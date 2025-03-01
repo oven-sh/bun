@@ -83,6 +83,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["ERR_INVALID_CHAR", TypeError],
   ["MODULE_NOT_FOUND", Error],
+  ["ERR_SERVER_ALREADY_LISTEN", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -183,6 +184,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_QUERY_CANCELLED", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSAFE_TRANSACTION", Error, "PostgresError"],
   ["ERR_POSTGRES_NOT_TAGGED_CALL", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNKNOWN_FORMAT_CODE", Error, "PostgresError"],
   // S3
   ["ERR_S3_MISSING_CREDENTIALS", Error],
   ["ERR_S3_INVALID_METHOD", Error],

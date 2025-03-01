@@ -2055,7 +2055,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
                     if (p.options.module_type == .internal_bake_dev) {
                         p.printSymbol(p.options.commonjs_module_ref);
-                        p.print(".importMeta()");
+                        p.print(".importMeta");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
                         p.print("import.meta");
@@ -2116,21 +2116,43 @@ fn NewPrinter(
                         }
                     }
                 },
-                .e_module_dot_exports => {
-                    p.printSpaceBeforeIdentifier();
-                    p.addSourceMapping(expr.loc);
+                .e_special => |special| switch (special) {
+                    .module_exports => {
+                        p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
 
-                    if (p.options.commonjs_module_exports_assigned_deoptimized) {
-                        if (p.options.commonjs_module_ref.isValid()) {
-                            p.printSymbol(p.options.commonjs_module_ref);
+                        if (p.options.commonjs_module_exports_assigned_deoptimized) {
+                            if (p.options.commonjs_module_ref.isValid()) {
+                                p.printSymbol(p.options.commonjs_module_ref);
+                            } else {
+                                p.print("module");
+                            }
+                            p.print(".exports");
                         } else {
-                            p.print("module");
+                            p.printSymbol(p.options.commonjs_named_exports_ref);
                         }
-                        p.print(".exports");
-                    } else {
-                        p.printSymbol(p.options.commonjs_named_exports_ref);
-                    }
+                    },
+                    .hot => {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".hot");
+                    },
+                    .hot_accept => {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".hot.accept");
+                    },
+                    .hot_accept_visited => {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".hot.acceptSpecifiers");
+                    },
+                    .resolved_specifier_string => |index| {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printStringLiteralUTF8(p.importRecord(index.get()).path.pretty, true);
+                    },
                 },
+
                 .e_commonjs_export_identifier => |id| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -2275,6 +2297,8 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".main");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.print("false");
                     } else {
                         p.print("require.main");
                     }
@@ -2285,6 +2309,9 @@ fn NewPrinter(
 
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".require");
                     } else {
                         p.print("require");
                     }
@@ -2296,6 +2323,9 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".require.resolve");
                     } else {
                         p.print("require.resolve");
                     }
@@ -3029,7 +3059,6 @@ fn NewPrinter(
 
                 .e_jsx_element,
                 .e_private_identifier,
-                .e_template_part,
                 => {
                     if (Environment.isDebug)
                         Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});

@@ -621,17 +621,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     }
     ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
 
-    // Check if key has type property
-    JSValue typeValue = options.get(lexicalGlobalObject, Identifier::fromString(vm, "type"_s));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Parse key type for private key if provided
-    std::optional<ncrypto::EVPKeyPointer::PKEncodingType> keyType;
-    if (!typeValue.isUndefined() && !typeValue.isNull()) {
-        keyType = parseKeyType(lexicalGlobalObject, typeValue, false, WTF::nullStringView(), false, "key.type"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
     // Use the signWithKey function to perform the signing operation
     JSUint8Array* signature = signWithKey(lexicalGlobalObject, thisObject, keyPtr, dsaSigEnc, padding, saltLen);
     if (!signature) {

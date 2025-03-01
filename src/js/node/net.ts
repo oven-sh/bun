@@ -923,10 +923,9 @@ const Socket = (function (InternalSocket) {
         this._writableState.destroyed = true;
       }
 
-      const didDetach = this._handle == null;
       this._handle = null;
       callback(err);
-      if (!didDetach) process.nextTick(emitCloseNT, this, !!err);
+      process.nextTick(emitCloseNT, this, !!err);
     }
 
     _final(callback) {

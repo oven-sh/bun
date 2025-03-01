@@ -294,14 +294,14 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
 }
 
 std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey);
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue);
 bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     const ncrypto::EVPKeyPointer& pkey,
-    WTF::Vector<uint8_t>& derBuffer,
-    size_t* derLen);
+    WTF::Vector<uint8_t>& derBuffer);
 
 JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -322,6 +322,9 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     JSValue options = callFrame->argument(0);
     JSValue signatureValue = callFrame->argument(1);
     JSValue sigEncodingValue = callFrame->argument(2);
+
+    JSC::JSArrayBufferView* signatureBuffer = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
 
     // Prepare the public or private key from options
     std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePublicOrPrivateKey(globalObject, scope, options);
@@ -348,8 +351,6 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
 
     // Get the signature buffer
-    JSC::JSArrayBufferView* signatureBuffer = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, sigEncodingValue);
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(jsBoolean(false)));
 
     // Move mdCtx out of JSVerify object to finalize it
     ncrypto::EVPMDCtxPointer mdCtx = WTFMove(thisObject->m_mdCtx);
@@ -396,13 +397,12 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     if (dsaSigEnc == NodeCryptoKeys::DSASigEnc::P1363 && keyPtr.isSigVariant()) {
         WTF::Vector<uint8_t> derBuffer;
-        size_t derLen = 0;
 
-        if (convertP1363ToDER(sigBuf, keyPtr, derBuffer, &derLen)) {
+        if (convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
             // Conversion succeeded, perform verification with the converted signature
             ncrypto::Buffer<const uint8_t> derSigBuf {
                 .data = derBuffer.data(),
-                .len = derLen
+                .len = derBuffer.size(),
             };
 
             bool result = pkctx.verify(derSigBuf, data);
@@ -416,9 +416,162 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
     return JSValue::encode(jsBoolean(result));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return JSValue::encode({});
+    ncrypto::ClearErrorOnReturn clearError;
+
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto argCount = callFrame->argumentCount();
+
+    // Validate algorithm if provided
+    JSValue algorithmValue = callFrame->argument(0);
+    const EVP_MD* digest = nullptr;
+    if (!algorithmValue.isNull()) {
+        Bun::V::validateString(scope, globalObject, algorithmValue, "algorithm"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        WTF::String algorithmName = algorithmValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        digest = ncrypto::getDigestByName(algorithmName);
+        if (!digest) {
+            return Bun::ERR::CRYPTO_INVALID_DIGEST(scope, globalObject, algorithmName);
+        }
+    }
+
+    // Get data argument
+    JSValue dataValue = callFrame->argument(1);
+    JSC::JSArrayBufferView* dataView = getArrayBufferOrView(globalObject, scope, dataValue, "data"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!dataView) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "Buffer, TypedArray, or DataView"_s, dataValue);
+    }
+
+    // Get signature argument
+    JSValue signatureValue = callFrame->argument(3);
+    JSC::JSArrayBufferView* signatureView = getArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!signatureView) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "signature"_s, "Buffer, TypedArray, or DataView"_s, signatureValue);
+    }
+
+    // Get key argument
+    JSValue keyValue = callFrame->argument(2);
+
+    // Prepare the public or private key
+    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePublicOrPrivateKey(globalObject, scope, keyValue);
+    ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
+    if (!maybeKeyPtr) {
+        return {};
+    }
+    ncrypto::EVPKeyPointer keyPtr = WTFMove(maybeKeyPtr.value());
+
+    // Get callback if provided
+    JSValue callbackValue;
+    bool hasCallback = false;
+    if (argCount > 4) {
+        callbackValue = callFrame->argument(4);
+        if (!callbackValue.isUndefined()) {
+            Bun::V::validateFunction(scope, globalObject, callbackValue, "callback"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            hasCallback = true;
+        }
+    }
+
+    // Get RSA padding mode and salt length if applicable
+    int32_t padding = getPadding(globalObject, keyValue, keyPtr);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    std::optional<int> saltLen = getSaltLength(globalObject, keyValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // For RSA-PSS verification, if no salt length is specified, use -1 (auto-detect)
+    if (!saltLen.has_value() && padding == RSA_PKCS1_PSS_PADDING) {
+        saltLen = -1; // Auto-detect for verification
+    }
+
+    // Get DSA signature encoding format
+    NodeCryptoKeys::DSASigEnc dsaSigEnc = getDSASigEnc(globalObject, keyValue);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Create data buffer
+    ncrypto::Buffer<const uint8_t> dataBuf {
+        .data = static_cast<const uint8_t*>(dataView->vector()),
+        .len = dataView->byteLength()
+    };
+
+    // Create signature buffer
+    ncrypto::Buffer<const uint8_t> sigBuf {
+        .data = static_cast<const uint8_t*>(signatureView->vector()),
+        .len = signatureView->byteLength()
+    };
+
+    // Create a new EVP_MD_CTX for verification
+    auto mdCtx = ncrypto::EVPMDCtxPointer::New();
+    if (!mdCtx) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to create message digest context"_s);
+        return {};
+    }
+
+    // Initialize the context for verification with the key and digest
+    auto ctx = mdCtx.verifyInit(keyPtr, digest);
+    if (!ctx.has_value()) {
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to initialize verification context"_s);
+        return {};
+    }
+
+    // Apply RSA options if needed
+    if (keyPtr.isRsaVariant()) {
+        if (!ncrypto::EVPKeyCtxPointer::setRsaPadding(ctx.value(), padding, saltLen)) {
+            Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to set RSA padding"_s);
+            return {};
+        }
+    }
+
+    // Handle P1363 format conversion if needed
+    bool result = false;
+    if (dsaSigEnc == NodeCryptoKeys::DSASigEnc::P1363 && keyPtr.isSigVariant()) {
+        WTF::Vector<uint8_t> derBuffer;
+
+        if (convertP1363ToDER(sigBuf, keyPtr, derBuffer)) {
+            // Conversion succeeded, create a new buffer with the converted signature
+            ncrypto::Buffer<const uint8_t> derSigBuf {
+                .data = derBuffer.data(),
+                .len = derBuffer.size(),
+            };
+
+            // Perform verification with the converted signature
+            result = mdCtx.verify(dataBuf, derSigBuf);
+        } else {
+            // If conversion failed, try with the original signature
+            result = mdCtx.verify(dataBuf, sigBuf);
+        }
+    } else {
+        // Perform verification with the original signature
+        result = mdCtx.verify(dataBuf, sigBuf);
+    }
+
+    // If we have a callback, call it with the result
+    if (hasCallback) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(jsNull());
+        args.append(jsBoolean(result));
+        ASSERT(!args.hasOverflowed());
+
+        NakedPtr<JSC::Exception> returnedException = nullptr;
+        JSC::CallData callData = JSC::getCallData(callbackValue);
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, callbackValue, callData, JSC::jsUndefined(), args, returnedException);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (returnedException) {
+            scope.throwException(globalObject, returnedException.get());
+        }
+
+        return JSValue::encode(jsUndefined());
+    }
+
+    // Otherwise, return the result directly
+    return JSValue::encode(jsBoolean(result));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callVerify, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -842,10 +995,8 @@ std::optional<ncrypto::EVPKeyPointer> getKeyObjectHandleFromJwk(JSGlobalObject* 
     auto& vm = lexicalGlobalObject->vm();
 
     // Validate that key is an object
-    if (!key.isObject()) {
-        Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "object"_s, key);
-        return std::nullopt;
-    }
+    Bun::V::validateObject(scope, lexicalGlobalObject, key, "key.key"_s);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
 
     JSObject* keyObj = key.getObject();
 
@@ -1202,8 +1353,7 @@ std::optional<ncrypto::EVPKeyPointer> getKeyObjectHandleFromJwk(JSGlobalObject* 
 
 bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     const ncrypto::EVPKeyPointer& pkey,
-    WTF::Vector<uint8_t>& derBuffer,
-    size_t* derLen)
+    WTF::Vector<uint8_t>& derBuffer)
 {
     // Get the size of r and s components from the key
     auto bytesOfRS = pkey.getBytesOfRS();
@@ -1220,14 +1370,6 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     if (p1363Sig.len != 2 * bytesOfRSValue) {
         // If the signature size doesn't match what we expect, return false
         // to indicate that the original signature should be used.
-        return false;
-    }
-
-    // Calculate the maximum size needed for DER encoding
-    size_t derMaxSize = 2 + 2 * (2 + bytesOfRSValue);
-
-    // Allocate buffer for DER encoded signature
-    if (!derBuffer.tryReserveInitialCapacity(derMaxSize)) {
         return false;
     }
 
@@ -1254,16 +1396,13 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
 
     // Encode the signature in DER format
     auto buf = asn1_sig.encode();
-    if (!buf.data || buf.len == 0 || buf.len > derMaxSize) {
+    if (buf.len < 0) {
         return false;
     }
 
-    // Copy the DER encoded signature to the output buffer
-    memcpy(derBuffer.data(), buf.data, buf.len);
-    *derLen = buf.len;
-
-    // Resize the buffer to the actual size of the DER signature
-    derBuffer.shrink(buf.len);
+    if (!derBuffer.tryAppend(std::span<uint8_t> { buf.data, buf.len })) {
+        return false;
+    }
 
     return true;
 }

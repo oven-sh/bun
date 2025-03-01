@@ -67,14 +67,10 @@ function validateLinkHeaderValue(hints) {
   );
 }
 hideFromStack(validateLinkHeaderValue);
-// TODO: do it in NodeValidator.cpp
-function validateObject(value: unknown, name: string): asserts value is object {
-  if (typeof value !== "object" || value === null) throw $ERR_INVALID_ARG_TYPE(name, "object", value);
-}
-hideFromStack(validateObject);
 
 export default {
-  validateObject: validateObject,
+  /** (value, name) */
+  validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
   /**

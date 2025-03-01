@@ -615,6 +615,37 @@ JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto value = callFrame->argument(0);
+
+    if (value.isNull() || JSC::isArray(globalObject, value)) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+    }
+
+    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    if (value.isNull() || JSC::isArray(globalObject, value)) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
+    }
+
+    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 //
 //
 

@@ -681,7 +681,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSC::JSGlobalObject * globalObject, JSC
     // Validate algorithm if provided
     JSValue algorithmValue = callFrame->argument(0);
     const EVP_MD* digest = nullptr;
-    if (!algorithmValue.isNull()) {
+    if (!algorithmValue.isUndefinedOrNull()) {
         Bun::V::validateString(scope, globalObject, algorithmValue, "algorithm"_s);
         RETURN_IF_EXCEPTION(scope, {});
 

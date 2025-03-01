@@ -1407,7 +1407,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
-  if (onListen !== null) {
+  if (onListen != null) {
     this.once("listening", onListen);
   }
 

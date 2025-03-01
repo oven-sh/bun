@@ -16,6 +16,8 @@
 #include "util.h"
 #include "BunString.h"
 #include "JSVerify.h"
+#include "CryptoAlgorithmRegistry.h"
+#include "CryptoKeyRSA.h"
 
 namespace Bun {
 
@@ -370,7 +372,7 @@ JSUint8Array* signWithKey(JSC::JSGlobalObject* lexicalGlobalObject, JSSign* this
     return JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTFMove(sigBuffer), 0, sigBuf.len);
 }
 
-std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey)
+std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey, std::optional<WebCore::CryptoAlgorithmIdentifier> algorithmIdentifier)
 {
     ncrypto::ClearErrorOnReturn clearError;
 
@@ -389,6 +391,23 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
 
         // convert it to a key object, then to EVPKeyPointer
         auto& key = cryptoKey->wrapped();
+
+        if (algorithmIdentifier) {
+            switch (key.keyClass()) {
+            case CryptoKeyClass::RSA: {
+                const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
+                CryptoAlgorithmIdentifier restrictHash;
+                bool isRestricted = rsa.isRestrictedToHash(restrictHash);
+                if (isRestricted && algorithmIdentifier.value() != restrictHash) {
+                    JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
+                    return std::nullopt;
+                }
+            }
+            default:
+                break;
+            }
+        }
+
         AsymmetricKeyValue keyValue(key);
         if (keyValue.key) {
             EVP_PKEY_up_ref(keyValue.key);
@@ -407,6 +426,23 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
                 auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(val.asCell());
 
                 auto& key = cryptoKey->wrapped();
+
+                if (algorithmIdentifier) {
+                    switch (key.keyClass()) {
+                    case CryptoKeyClass::RSA: {
+                        const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
+                        CryptoAlgorithmIdentifier restrictHash;
+                        bool isRestricted = rsa.isRestrictedToHash(restrictHash);
+                        if (isRestricted && algorithmIdentifier.value() != restrictHash) {
+                            JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
+                            return std::nullopt;
+                        }
+                    }
+                    default:
+                        break;
+                    }
+                }
+
                 AsymmetricKeyValue keyValue(key);
                 if (keyValue.key) {
                     EVP_PKEY_up_ref(keyValue.key);
@@ -478,6 +514,23 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
         if (keyCell->inherits<WebCore::JSCryptoKey>()) {
             auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(keyCell);
             auto& key = cryptoKey->wrapped();
+
+            if (algorithmIdentifier) {
+                switch (key.keyClass()) {
+                case CryptoKeyClass::RSA: {
+                    const auto& rsa = downcast<WebCore::CryptoKeyRSA>(key);
+                    CryptoAlgorithmIdentifier restrictHash;
+                    bool isRestricted = rsa.isRestrictedToHash(restrictHash);
+                    if (isRestricted && algorithmIdentifier.value() != restrictHash) {
+                        JSC::throwTypeError(lexicalGlobalObject, scope, "digest not allowed"_s);
+                        return std::nullopt;
+                    }
+                }
+                default:
+                    break;
+                }
+            }
+
             AsymmetricKeyValue keyValue(key);
             if (keyValue.key) {
                 EVP_PKEY_up_ref(keyValue.key);
@@ -614,7 +667,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncSign, (JSC::JSGlobalObject * lexicalGlob
     RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
     // Get key argument
-    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(lexicalGlobalObject, scope, options);
+    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(lexicalGlobalObject, scope, options, std::nullopt);
     ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
     if (!maybeKeyPtr) {
         return {};
@@ -680,6 +733,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSC::JSGlobalObject * globalObject, JSC
 
     // Validate algorithm if provided
     JSValue algorithmValue = callFrame->argument(0);
+    std::optional<WebCore::CryptoAlgorithmIdentifier> hash = std::nullopt;
     const EVP_MD* digest = nullptr;
     if (!algorithmValue.isUndefinedOrNull()) {
         Bun::V::validateString(scope, globalObject, algorithmValue, "algorithm"_s);
@@ -687,6 +741,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSC::JSGlobalObject * globalObject, JSC
 
         WTF::String algorithmName = algorithmValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+
+        hash = WebCore::CryptoAlgorithmRegistry::singleton().identifier(algorithmName);
 
         digest = ncrypto::getDigestByName(algorithmName);
         if (!digest) {
@@ -714,7 +770,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSC::JSGlobalObject * globalObject, JSC
     RETURN_IF_EXCEPTION(scope, {});
 
     // Prepare the private key
-    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(globalObject, scope, keyValue);
+    std::optional<ncrypto::EVPKeyPointer> maybeKeyPtr = preparePrivateKey(globalObject, scope, keyValue, hash);
     ASSERT(!!scope.exception() == !maybeKeyPtr.has_value());
     if (!maybeKeyPtr) {
         return {};

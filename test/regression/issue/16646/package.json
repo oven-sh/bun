@@ -1,0 +1,8 @@
+{
+  "name": "16646",
+  "version": "1.0.0",
+  "description": "",
+  "dependencies": {
+    "rimraf": "^6.0.1"
+  }
+}

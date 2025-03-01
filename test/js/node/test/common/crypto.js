@@ -158,13 +158,9 @@ module.exports = {
   // opensslCli defined lazily to reduce overhead of spawnSync
   get opensslCli() {
     if (opensslCli !== null) return opensslCli;
-    
-    if (process.platform === 'win32') {
-      opensslCli = false;
-    } else {
-      opensslCli = 'openssl';
-    }
 
+    opensslCli = Bun.which('openssl');
+    
     return opensslCli;
 
     // if (process.config.variables.node_shared_openssl) {

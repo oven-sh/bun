@@ -610,42 +610,6 @@ assert.throws(
   }
 }
 
-
-// RSA-PSS Sign test by verifying with 'openssl dgst -verify'
-// Note: this particular test *must* be the last in this file as it will exit
-// early if no openssl binary is found
-{
-  if (!opensslCli) {
-    common.skip('node compiled without OpenSSL CLI.');
-  }
-
-  const pubfile = fixtures.path('keys', 'rsa_public_2048.pem');
-  const privkey = fixtures.readKey('rsa_private_2048.pem');
-
-  const msg = 'Test123';
-  const s5 = crypto.createSign('SHA256')
-    .update(msg)
-    .sign({
-      key: privkey,
-      padding: crypto.constants.RSA_PKCS1_PSS_PADDING
-    });
-
-  const tmpdir = require('../common/tmpdir');
-  tmpdir.refresh();
-
-  const sigfile = tmpdir.resolve('s5.sig');
-  fs.writeFileSync(sigfile, s5);
-  const msgfile = tmpdir.resolve('s5.msg');
-  fs.writeFileSync(msgfile, msg);
-
-  exec(...common.escapePOSIXShell`"${
-    opensslCli}" dgst -sha256 -verify "${pubfile}" -signature "${
-    sigfile}" -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-2 "${msgfile
-  }"`, common.mustCall((err, stdout, stderr) => {
-    assert(stdout.includes('Verified OK'));
-  }));
-}
-
 {
   // Test RSA-PSS.
   if (!common.openSSLIsBoringSSL) {
@@ -832,4 +796,39 @@ assert.throws(
       crypto.createVerify('SHA256').update('Test123').verify(publicKey, 'sig');
     }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE' : 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
   }
+}
+
+// RSA-PSS Sign test by verifying with 'openssl dgst -verify'
+// Note: this particular test *must* be the last in this file as it will exit
+// early if no openssl binary is found
+{
+  if (!opensslCli) {
+    common.skip('node compiled without OpenSSL CLI.');
+  }
+
+  const pubfile = fixtures.path('keys', 'rsa_public_2048.pem');
+  const privkey = fixtures.readKey('rsa_private_2048.pem');
+
+  const msg = 'Test123';
+  const s5 = crypto.createSign('SHA256')
+    .update(msg)
+    .sign({
+      key: privkey,
+      padding: crypto.constants.RSA_PKCS1_PSS_PADDING
+    });
+
+  const tmpdir = require('../common/tmpdir');
+  tmpdir.refresh();
+
+  const sigfile = tmpdir.resolve('s5.sig');
+  fs.writeFileSync(sigfile, s5);
+  const msgfile = tmpdir.resolve('s5.msg');
+  fs.writeFileSync(msgfile, msg);
+
+  exec(...common.escapePOSIXShell`"${
+    opensslCli}" dgst -sha256 -verify "${pubfile}" -signature "${
+    sigfile}" -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:-2 "${msgfile
+  }"`, common.mustCall((err, stdout, stderr) => {
+    assert(stdout.includes('Verified OK'));
+  }));
 }

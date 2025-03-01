@@ -27,7 +27,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction } = require("internal/validators");
+const { validateFunction, validateNumber } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -658,9 +658,9 @@ const Socket = (function (InternalSocket) {
         host,
         path,
         socket,
-        // TODOs
         localAddress,
         localPort,
+        // TODOs
         family,
         hints,
         lookup,
@@ -674,6 +674,13 @@ const Socket = (function (InternalSocket) {
         checkServerIdentity,
         session,
       } = options;
+
+      if (localAddress && !isIP(localAddress)) {
+        throw $ERR_INVALID_IP_ADDRESS(localAddress);
+      }
+      if (localPort) {
+        validateNumber(localPort, "options.localPort");
+      }
 
       this.servername = servername;
 

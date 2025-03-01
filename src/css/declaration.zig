@@ -324,7 +324,7 @@ pub fn parse_declaration_impl(
         .property_id = property_id,
         .options = options,
     };
-    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, struct {
+    var property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, struct {
         pub fn parseFn(this: *Closure, input2: *css.Parser) Result(css.Property) {
             return css.Property.parse(this.property_id, input2, this.options);
         }
@@ -339,15 +339,15 @@ pub fn parse_declaration_impl(
         }
     }.parsefn, .{}).isOk();
     if (input.expectExhausted().asErr()) |e| return .{ .err = e };
-    if (important) {
-        important_declarations.append(input.allocator(), property) catch bun.outOfMemory();
-    } else {
-        declarations.append(input.allocator(), property) catch bun.outOfMemory();
-    }
 
     if (@TypeOf(composes_ctx) != void and composes_ctx.allow_composes and property == .composes) {
         bun.assert(input.flags.css_modules);
         composes_ctx.recordComposes(input.allocator(), &property.composes);
+    }
+    if (important) {
+        important_declarations.append(input.allocator(), property) catch bun.outOfMemory();
+    } else {
+        declarations.append(input.allocator(), property) catch bun.outOfMemory();
     }
 
     return .{ .result = {} };

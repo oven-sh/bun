@@ -154,78 +154,79 @@ pub const CssModule = struct {
     }
 
     pub fn handleComposes(
-        this: *CssModule,
+        _: *CssModule,
         comptime W: type,
-        dest: *css.Printer(W),
+        _: *css.Printer(W),
         selectors: *const css.selector.parser.SelectorList,
-        composes: *const css.css_properties.css_modules.Composes,
-        source_index: u32,
+        _: *const css.css_properties.css_modules.Composes,
+        _: u32,
     ) css.Maybe(void, css.PrinterErrorKind) {
-        const allocator = dest.allocator;
+        // const allocator = dest.allocator;
         for (selectors.v.slice()) |*sel| {
             if (sel.len() == 1) {
-                const component: *const css.selector.parser.Component = &sel.components.items[0];
-                switch (component.*) {
-                    .class => |id| {
-                        for (composes.names.slice()) |name| {
-                            const reference: CssModuleReference = if (composes.from) |*specifier|
-                                switch (specifier.*) {
-                                    // .source_index => |dep_source_index| {
-                                    //     if (this.exports_by_source_index.items[dep_source_index].get(name.v)) |entry| {
-                                    //         const entry_name = entry.name;
-                                    //         const composes2 = &entry.composes;
-                                    //         const @"export" = this.exports_by_source_index.items[source_index].getPtr(id.v).?;
+                // const component: *const css.selector.parser.Component = &sel.components.items[0];
+                // switch (component.*) {
+                //     .class => |id| {
+                //         for (composes.names.slice()) |name| {
+                //             const reference: CssModuleReference = if (composes.from) |*specifier|
+                //                 switch (specifier.*) {
+                //                     // .source_index => |dep_source_index| {
+                //                     //     if (this.exports_by_source_index.items[dep_source_index].get(name.v)) |entry| {
+                //                     //         const entry_name = entry.name;
+                //                     //         const composes2 = &entry.composes;
+                //                     //         const @"export" = this.exports_by_source_index.items[source_index].getPtr(id.v).?;
 
-                                    //         @"export".composes.append(allocator, .{ .local = .{ .name = entry_name } }) catch bun.outOfMemory();
-                                    //         @"export".composes.appendSlice(allocator, composes2.items) catch bun.outOfMemory();
-                                    //     }
-                                    //     continue;
-                                    // },
-                                    .global => CssModuleReference{ .global = .{ .name = name.v } },
-                                    .file => |file| init: {
-                                        const import_record = dest.importRecord(file) catch return .{ .err = css.PrinterErrorKind.no_import_records };
-                                        break :init CssModuleReference{
-                                            .dependency = .{
-                                                .name = name.v,
-                                                .specifier = import_record.path.text,
-                                            },
-                                        };
-                                    },
-                                }
-                            else
-                                CssModuleReference{
-                                    .local = .{
-                                        .name = this.config.pattern.writeToString(
-                                            allocator,
-                                            ArrayList(u8){},
-                                            this.hashes.items[source_index],
-                                            this.sources.items[source_index],
-                                            name.v,
-                                        ),
-                                    },
-                                };
+                //                     //         @"export".composes.append(allocator, .{ .local = .{ .name = entry_name } }) catch bun.outOfMemory();
+                //                     //         @"export".composes.appendSlice(allocator, composes2.items) catch bun.outOfMemory();
+                //                     //     }
+                //                     //     continue;
+                //                     // },
+                //                     .global => CssModuleReference{ .global = .{ .name = name.v } },
+                //                     .file => |file| init: {
+                //                         const import_record = dest.importRecord(file) catch return .{ .err = css.PrinterErrorKind.no_import_records };
+                //                         break :init CssModuleReference{
+                //                             .dependency = .{
+                //                                 .name = name.v,
+                //                                 .specifier = import_record.path.text,
+                //                             },
+                //                         };
+                //                     },
+                //                 }
+                //             else
+                //                 CssModuleReference{
+                //                     .local = .{
+                //                         .name = this.config.pattern.writeToString(
+                //                             allocator,
+                //                             ArrayList(u8){},
+                //                             this.hashes.items[source_index],
+                //                             this.sources.items[source_index],
+                //                             name.v,
+                //                         ),
+                //                     },
+                //                 };
 
-                            const str_value = id.asStr(dest.symbols, dest.local_names) orelse @panic("no str value");
+                //             const str_value = id.asStr(dest.symbols, dest.local_names) orelse @panic("no str value");
 
-                            const export_value = this.exports_by_source_index.items[source_index].getPtr(str_value) orelse unreachable;
-                            export_value.composes.append(allocator, reference) catch bun.outOfMemory();
+                //             const export_value = this.exports_by_source_index.items[source_index].getPtr(str_value) orelse unreachable;
+                //             export_value.composes.append(allocator, reference) catch bun.outOfMemory();
 
-                            const contains_reference = brk: {
-                                for (export_value.composes.items) |*compose_| {
-                                    const compose: *const CssModuleReference = compose_;
-                                    if (compose.eql(&reference)) {
-                                        break :brk true;
-                                    }
-                                }
-                                break :brk false;
-                            };
-                            if (!contains_reference) {
-                                export_value.composes.append(allocator, reference) catch bun.outOfMemory();
-                            }
-                        }
-                    },
-                    else => {},
-                }
+                //             const contains_reference = brk: {
+                //                 for (export_value.composes.items) |*compose_| {
+                //                     const compose: *const CssModuleReference = compose_;
+                //                     if (compose.eql(&reference)) {
+                //                         break :brk true;
+                //                     }
+                //                 }
+                //                 break :brk false;
+                //             };
+                //             if (!contains_reference) {
+                //                 export_value.composes.append(allocator, reference) catch bun.outOfMemory();
+                //             }
+                //         }
+                //     },
+                //     else => {},
+                // }
+                continue;
             }
 
             // The composes property can only be used within a simple class selector.

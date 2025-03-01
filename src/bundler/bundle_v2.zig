@@ -7221,7 +7221,14 @@ pub const LinkerContext = struct {
                     }
                 }
 
-                // TODO: composes from css modules
+                // Iterate over the "composes" directives. Note that the order doesn't
+                // matter for these because the output order is explicitly undfened
+                // in the specification.
+                for (visitor.all_import_records[source_index.get()].sliceConst()) |*record| {
+                    if (record.kind == .composes and record.source_index.isValid()) {
+                        visitor.visit(record.source_index, wrapping_conditions, wrapping_import_records);
+                    }
+                }
 
                 if (comptime bun.Environment.isDebug) {
                     debug(
@@ -7831,6 +7838,7 @@ pub const LinkerContext = struct {
 
     fn generateCodeForLazyExport(this: *LinkerContext, source_index: Index.Int) !void {
         const exports_kind = this.graph.ast.items(.exports_kind)[source_index];
+        const all_sources = this.parse_graph.input_files.items(.source);
         const all_css_asts = this.graph.ast.items(.css);
         const maybe_css_ast: ?*bun.css.BundlerStyleSheet = all_css_asts[source_index];
         var parts = &this.graph.ast.items(.parts)[source_index];
@@ -7858,16 +7866,23 @@ pub const LinkerContext = struct {
             if (stmt.data != .s_lazy_export) {
                 @panic("Internal error: expected top-level lazy export statement");
             }
-            if (css_ast.local_scope.count() > 0) {
+            if (css_ast.local_scope.count() > 0) out: {
                 var exports = E.Object{};
 
                 const symbols: *const Symbol.List = &this.graph.ast.items(.symbols)[source_index];
                 const all_import_records: []const BabyList(bun.css.ImportRecord) = this.graph.ast.items(.import_records);
 
                 const values = css_ast.local_scope.values();
-                const last_ref = values[values.len - 1];
+                if (values.len == 0) break :out;
+                const size = size: {
+                    var size: u32 = 0;
+                    for (values) |ref| {
+                        size = @max(size, ref.inner_index);
+                    }
+                    break :size size + 1;
+                };
 
-                var inner_visited = try BitSet.initEmpty(this.allocator, last_ref.inner_index);
+                var inner_visited = try BitSet.initEmpty(this.allocator, size);
                 defer inner_visited.deinit(this.allocator);
                 var composes_visited = std.AutoArrayHashMap(bun.bundle_v2.Ref, void).init(this.allocator);
                 defer composes_visited.deinit();
@@ -7878,15 +7893,18 @@ pub const LinkerContext = struct {
                     parts: *std.ArrayList(E.TemplatePart),
                     all_import_records: []const BabyList(bun.css.ImportRecord),
                     all_css_asts: []?*bun.css.BundlerStyleSheet,
+                    all_sources: []const Logger.Source,
                     source_index: Index.Int,
+                    log: *Logger.Log,
                     loc: Loc,
+                    allocator: std.mem.Allocator,
 
                     fn clearAll(visitor: *@This()) void {
                         visitor.inner_visited.setAll(false);
                         visitor.composes_visited.clearRetainingCapacity();
                     }
 
-                    fn visitName(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref) void {
+                    fn visitName(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref, idx: Index.Int) void {
                         const from_this_file = ref.sourceIndex() == visitor.source_index;
                         if ((from_this_file and visitor.inner_visited.isSet(ref.innerIndex())) or
                             (!from_this_file and visitor.composes_visited.contains(ref)))
@@ -7894,7 +7912,7 @@ pub const LinkerContext = struct {
                             return;
                         }
 
-                        visitor.visitComposes(ast, ref);
+                        visitor.visitComposes(ast, ref, idx);
                         visitor.parts.append(E.TemplatePart{
                             .value = Expr.init(
                                 E.NameOfSymbol,
@@ -7904,7 +7922,7 @@ pub const LinkerContext = struct {
                                 visitor.loc,
                             ),
                             .tail = .{
-                                .raw = " ",
+                                .cooked = E.String.init(" "),
                             },
                             .tail_loc = visitor.loc,
                         }) catch bun.outOfMemory();
@@ -7916,20 +7934,41 @@ pub const LinkerContext = struct {
                         }
                     }
 
-                    fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref) void {
+                    fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref, idx: Index.Int) void {
                         if (ast.composes.count() > 0) {
                             const composes = ast.composes.getPtr(ref) orelse return;
-                            for (composes.slice()) |*compose| {
-                                if (compose.from != null and compose.from.? == .file) {
-                                    const import_record_idx = compose.from.?.file;
-                                    const import_records: *const BabyList(bun.css.ImportRecord) = &visitor.all_import_records[visitor.source_index];
-                                    const import_record = import_records.at(import_record_idx);
-                                    if (import_record.source_index.isValid()) {
-                                        const other_file = visitor.all_css_asts[import_record.source_index.get()].?;
-                                        for (compose.names.slice()) |name| {
-                                            const other_name_ref = other_file.local_scope.get(name.v) orelse continue;
-                                            visitor.visitName(other_file, other_name_ref);
+                            for (composes.slice()) |*compose_extended| {
+                                const compose = &compose_extended.composes;
+                                // it is imported
+                                if (compose.from != null) {
+                                    if (compose.from.? == .file) {
+                                        const import_record_idx = compose.from.?.file;
+                                        const import_records: *const BabyList(bun.css.ImportRecord) = &visitor.all_import_records[idx];
+                                        const import_record = import_records.at(import_record_idx);
+                                        if (import_record.source_index.isValid()) {
+                                            const other_file = visitor.all_css_asts[import_record.source_index.get()].?;
+                                            for (compose.names.slice()) |name| {
+                                                const other_name_ref = other_file.local_scope.get(name.v) orelse continue;
+                                                visitor.visitName(other_file, other_name_ref, import_record.source_index.get());
+                                            }
                                         }
+                                    } else {
+                                        @panic("TODO ZACK GLOBAL SCOPE COMPOSES");
+                                    }
+                                } else {
+                                    // it is from the current file
+                                    for (compose.names.slice()) |name| {
+                                        const name_ref = ast.local_scope.get(name.v) orelse {
+                                            visitor.log.addErrorFmt(
+                                                &visitor.all_sources[idx],
+                                                compose.loc,
+                                                visitor.allocator,
+                                                "The name {s} never appears in {s} as a locally scoped name",
+                                                .{ name.v, visitor.all_sources[idx].path.pretty },
+                                            ) catch bun.outOfMemory();
+                                            continue;
+                                        };
+                                        visitor.visitName(ast, name_ref, idx);
                                     }
                                 }
                             }
@@ -7945,6 +7984,9 @@ pub const LinkerContext = struct {
                     .all_import_records = all_import_records,
                     .all_css_asts = all_css_asts,
                     .loc = stmt.loc,
+                    .log = this.log,
+                    .all_sources = all_sources,
+                    .allocator = this.allocator,
                 };
 
                 for (values) |ref| {
@@ -7956,15 +7998,21 @@ pub const LinkerContext = struct {
 
                     visitor.parts = &template_parts;
                     visitor.clearAll();
-                    visitor.visitComposes(css_ast, ref);
+                    visitor.inner_visited.set(ref.innerIndex());
+                    visitor.visitComposes(css_ast, ref, source_index);
 
                     if (template_parts.items.len > 0) {
+                        template_parts.append(E.TemplatePart{
+                            .value = value,
+                            .tail_loc = stmt.loc,
+                            .tail = .{ .cooked = E.String.init("") },
+                        }) catch bun.outOfMemory();
                         value = Expr.init(
                             E.Template,
                             E.Template{
                                 .parts = template_parts.items,
                                 .head = .{
-                                    .raw = "",
+                                    .cooked = E.String.init(""),
                                 },
                             },
                             stmt.loc,
@@ -8149,6 +8197,7 @@ pub const LinkerContext = struct {
 
                 // Is it CSS?
                 if (css_asts[id] != null) {
+                    const css_ast = css_asts[id].?;
                     // Inline URLs for non-CSS files into the CSS file
                     _ = this.scanCSSImports(
                         id,
@@ -8158,8 +8207,34 @@ pub const LinkerContext = struct {
                         loaders,
                         this.log,
                     );
-                    // TODO:
+
                     // Validate cross-file "composes: ... from" named imports
+                    for (css_ast.composes.values()) |*composes| {
+                        for (composes.slice()) |*compose_extended| {
+                            const compose = &compose_extended.composes;
+                            if (compose.from == null or compose.from.? != .file) continue;
+                            const import_record_idx = compose.from.?.file;
+                            const record = &import_records[import_record_idx];
+                            if (!record.source_index.isValid()) continue;
+                            const other_css_ast = css_asts[record.source_index.get()] orelse continue;
+                            for (compose.names.slice()) |name| {
+                                if (!other_css_ast.local_scope.contains(name.v)) {
+                                    try this.log.addErrorFmt(
+                                        &input_files[record.source_index.get()],
+                                        compose.loc,
+                                        this.allocator,
+                                        "The name {s} never appears in {s}",
+                                        .{
+                                            name.v,
+                                            input_files[record.source_index.get()].path.pretty,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    this.validateComposesFromProperties(id, css_ast, import_records_list, css_asts);
+
                     continue;
                 }
 
@@ -8938,6 +9013,74 @@ pub const LinkerContext = struct {
                     }
                 }
             }
+        }
+    }
+
+    fn validateComposesFromProperties(
+        this: *LinkerContext,
+        index: Index.Int,
+        root_css_ast: *bun.css.BundlerStyleSheet,
+        import_records_list: []ImportRecord.List,
+        all_css_asts: []const ?*bun.css.BundlerStyleSheet,
+    ) void {
+        const PropertyInFile = struct {
+            source_index: Index.Int,
+            loc: bun.logger.Loc,
+        };
+        const Visitor = struct {
+            visited: std.AutoArrayHashMap(Ref, void),
+            properties: std.AutoArrayHashMap(bun.css.PropertyIdTag, PropertyInFile),
+            all_import_records: []const ImportRecord.List,
+            all_css_asts: []const ?*bun.css.BundlerStyleSheet,
+
+            fn clearRetainingCapacity(v: *@This()) void {
+                v.visited.clearRetainingCapacity();
+                v.properties.clearRetainingCapacity();
+            }
+
+            fn visit(v: *@This(), idx: Index.Int, ast: *bun.css.BundlerStyleSheet, ref: Ref) void {
+                if (v.visited.contains(ref)) return;
+                v.visited.put(ref, {}) catch unreachable;
+
+                const composes = ast.composes.getPtr(ref) orelse return;
+                for (composes.sliceConst()) |*composes_extended| {
+                    const compose = &composes_extended.composes;
+                    // is an import
+                    if (compose.from != null) {
+                        if (compose.from.? == .file) {
+                            const import_record_idx = compose.from.?.file;
+                            const record = v.all_import_records[idx].at(import_record_idx);
+                            if (record.source_index.isInvalid()) continue;
+                            const other_ast = v.all_css_asts[record.source_index.get()] orelse continue;
+                            for (compose.names.slice()) |name| {
+                                const other_name = other_ast.local_scope.get(name.v) orelse continue;
+                                v.visit(record.source_index.get(), other_ast, other_name);
+                            }
+                        } else {
+                            // TODO: global scope
+                        }
+                    } else {
+                        // inside this file
+                        for (compose.names.slice()) |name| {
+                            const name_ref = ast.local_scope.get(name.v) orelse continue;
+                            v.visit(idx, ast, name_ref);
+                        }
+                    }
+
+                    // Warn about cross-file composition with the same CSS properties
+                    @panic("TODO");
+                }
+            }
+        };
+        var visitor = Visitor{
+            .visited = std.AutoArrayHashMap(Ref, void).init(this.allocator),
+            .properties = std.AutoArrayHashMap(bun.css.PropertyIdTag, PropertyInFile).init(this.allocator),
+            .all_import_records = import_records_list,
+            .all_css_asts = all_css_asts,
+        };
+        for (root_css_ast.local_scope.values()) |local| {
+            visitor.clearRetainingCapacity();
+            visitor.visit(index, root_css_ast, local);
         }
     }
 
@@ -10539,6 +10682,7 @@ pub const LinkerContext = struct {
                             .source_map_urls = .{},
                             .license_comments = .{},
                             .options = bun.css.ParserOptions.default(allocator, null),
+                            .composes = .{},
                         };
                         wrapRulesWithConditions(&ast, allocator, &entry.conditions);
                         chunk.content.css.asts[i] = ast;
@@ -10582,6 +10726,7 @@ pub const LinkerContext = struct {
                                         }) catch bun.outOfMemory();
                                         break :rules rules;
                                     },
+                                    .composes = .{},
                                 };
 
                                 const printer_options = bun.css.PrinterOptions{
@@ -10634,6 +10779,7 @@ pub const LinkerContext = struct {
                             .source_map_urls = .{},
                             .license_comments = .{},
                             .options = bun.css.ParserOptions.default(allocator, null),
+                            .composes = .{},
                         };
                     },
                     .source_index => |source_index| {

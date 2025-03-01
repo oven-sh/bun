@@ -698,6 +698,8 @@ fn NewPrinter(
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
+        was_lazy_export: bool = false,
+
         const Printer = @This();
 
         /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
@@ -2747,8 +2749,59 @@ fn NewPrinter(
                     p.printStringLiteralEString(e, true);
                 },
                 .e_template => |e| {
-                    // TODO: esbuild has some code to "Inline enums and mangled properties when minifying"
-                    // if (e.tag != null and (e.tag.?.data == .e_name_of_symbol)) {}
+                    if (e.tag == null and (p.options.minify_syntax or p.was_lazy_export)) {
+                        var replaced = std.ArrayList(E.TemplatePart).init(p.options.allocator);
+                        for (e.parts, 0..) |_part, i| {
+                            var part = _part;
+                            const inlined_value: ?js_ast.Expr = switch (part.value.data) {
+                                .e_name_of_symbol => |e2| Expr.init(
+                                    E.String,
+                                    E.String.init(p.mangledPropName(e2.ref)),
+                                    part.value.loc,
+                                ),
+                                .e_dot => brk: {
+                                    // TODO: handle this here
+                                    break :brk null;
+                                },
+                                else => null,
+                            };
+
+                            if (inlined_value) |value| {
+                                if (replaced.items.len == 0) {
+                                    replaced.appendSlice(e.parts[0..i]) catch bun.outOfMemory();
+                                }
+                                part.value = value;
+                                replaced.append(part) catch bun.outOfMemory();
+                            } else if (replaced.items.len > 0) {
+                                replaced.append(part) catch bun.outOfMemory();
+                            }
+                        }
+
+                        if (replaced.items.len > 0) {
+                            var copy = e.*;
+                            copy.parts = replaced.items;
+                            const e2 = copy.fold(p.options.allocator, expr.loc);
+                            switch (e2.data) {
+                                .e_string => {
+                                    p.print('"');
+                                    p.printStringCharactersUTF8(e2.data.e_string.data, '"');
+                                    p.print('"');
+                                    return;
+                                },
+                                .e_template => {
+                                    e.* = e2.data.e_template.*;
+                                },
+                                else => {},
+                            }
+                        }
+
+                        // Convert no-substitution template literals into strings if it's smaller
+                        if (e.parts.len == 0) {
+                            p.addSourceMapping(expr.loc);
+                            p.printStringCharactersEString(&e.head.cooked, '`');
+                            return;
+                        }
+                    }
 
                     if (e.tag) |tag| {
                         p.addSourceMapping(expr.loc);
@@ -5832,6 +5885,7 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
+    printer.was_lazy_export = tree.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -6024,6 +6078,7 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
+    printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();

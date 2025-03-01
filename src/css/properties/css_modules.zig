@@ -37,10 +37,12 @@ pub const Composes = struct {
     /// Where the class names are composed from.
     from: ?Specifier,
     /// The source location of the `composes` property.
-    loc: Location,
+    loc: bun.logger.Loc,
+    loc2: Location,
 
     pub fn parse(input: *css.Parser) css.Result(Composes) {
-        const loc = input.currentSourceLocation();
+        const loc = input.position();
+        const loc2 = input.currentSourceLocation();
         var names: CustomIdentList = .{};
         while (input.tryParse(parseOneIdent, .{}).asValue()) |name| {
             names.append(input.allocator(), name);
@@ -53,7 +55,14 @@ pub const Composes = struct {
             .err => |e| return .{ .err = e },
         } else null;
 
-        return .{ .result = Composes{ .names = names, .from = from, .loc = Location.fromSourceLocation(loc) } };
+        return .{
+            .result = Composes{
+                .names = names,
+                .from = from,
+                .loc = bun.logger.Loc{ .start = @intCast(loc) },
+                .loc2 = Location.fromSourceLocation(loc2),
+            },
+        };
     }
 
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {

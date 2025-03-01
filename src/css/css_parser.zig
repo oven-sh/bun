@@ -2550,7 +2550,8 @@ pub fn NestedRuleParser(comptime T: type) type {
                         for (selectors.v.slice()) |*sel| {
                             for (sel.components.items) |*comp| {
                                 if (comp.asLocallyScoped()) |id| {
-                                    this.composes_refs.append(input.allocator(), id.asRef().?);
+                                    const ref = id.asRef().?;
+                                    this.composes_refs.append(input.allocator(), ref);
                                     found_any = true;
                                 }
                             }
@@ -2564,6 +2565,18 @@ pub fn NestedRuleParser(comptime T: type) type {
                 };
                 const declarations: DeclarationBlock = result[0];
                 const rules = result[1];
+
+                if (this.allow_composes and this.composes_refs.len() > 0 and this.saw_composes) {
+                    var usage = PropertyBitset.initEmpty();
+                    fillPropertyBitSet(&usage, &declarations);
+
+                    for (this.composes_refs.slice()) |ref| {
+                        const composes_entries = this.composes.getPtr(ref).?;
+                        for (composes_entries.slice()) |*composes| {
+                            composes.fillPropertyUsage(&usage);
+                        }
+                    }
+                }
 
                 this.rules.v.append(this.allocator, .{
                     .style = StyleRule(AtRuleT){
@@ -2605,14 +2618,19 @@ pub fn NestedRuleParser(comptime T: type) type {
             }
         };
 
-        pub fn recordComposes(this: *This, allocator: Allocator, composes: *const Composes) void {
+        /// If css modules is enabled, we want to record each occurence of the `composes` property
+        /// for the bundler so we can generate the lazy JS import object later.
+        pub fn recordComposes(this: *This, allocator: Allocator, composes: *Composes) void {
             for (this.composes_refs.slice()) |ref| {
                 const entry = this.composes.getOrPut(allocator, ref) catch bun.outOfMemory();
                 if (!entry.found_existing) {
-                    const list = bun.BabyList(Composes){};
+                    const list = bun.BabyList(ComposesExtended){};
                     entry.value_ptr.* = list;
                 }
-                entry.value_ptr.*.push(allocator, composes.*) catch bun.outOfMemory();
+                const composes_extended = ComposesExtended{
+                    .composes = composes.deepClone(allocator),
+                };
+                entry.value_ptr.*.push(allocator, composes_extended) catch bun.outOfMemory();
             }
             this.saw_composes = true;
         }
@@ -2859,7 +2877,33 @@ pub const ParserExtra = struct {
 pub const CustomIdentList = css_values.ident.CustomIdentList;
 pub const Specifier = css_properties.css_modules.Specifier;
 pub const Composes = css_properties.css_modules.Composes;
-pub const ComposesMap = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, bun.BabyList(Composes));
+pub const ComposesMap = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, bun.BabyList(ComposesExtended));
+
+// TODO: this is chonky
+// TODO: this won't work for custom properties
+pub const PropertyBitset = std.bit_set.ArrayBitSet(usize, std.math.ceilPowerOfTwo(u16, bun.meta.EnumFields(PropertyIdTag).len) catch @panic("FUCK"));
+pub fn fillPropertyBitSet(bitset: *PropertyBitset, block: *const DeclarationBlock) void {
+    for (block.declarations.items) |*prop| {
+        const tag = @as(PropertyIdTag, prop.*);
+        const int: u16 = @intFromEnum(tag);
+        bitset.set(int);
+    }
+    for (block.important_declarations.items) |*prop| {
+        const tag = @as(PropertyIdTag, prop.*);
+        const int: u16 = @intFromEnum(tag);
+        bitset.set(int);
+    }
+}
+
+pub const ComposesExtended = struct {
+    composes: Composes,
+    property_usage: PropertyBitset = PropertyBitset.initEmpty(),
+    custom_properties: bun.BabyList([]const u8) = .{},
+
+    pub inline fn fillPropertyUsage(this: *ComposesExtended, used: *const PropertyBitset) void {
+        this.property_usage.setIntersection(used.*);
+    }
+};
 
 // pub const ComposesInfo = struct {
 //     names: *const CustomIdentList,
@@ -2886,7 +2930,9 @@ pub fn StyleSheet(comptime AtRule: type) type {
         ///    3. `local_scopes.values().last().inner_index == symbols.count() - 1`
         local_scope: LocalScope = .{},
         /// Used whenn css modules is enabled
-        composes: ComposesMap = .{},
+        ///
+        /// `bun.bundle_v2.Ref` => `bun.BabyList(ComposesExtended)`
+        composes: ComposesMap,
 
         const This = @This();
 
@@ -2897,6 +2943,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 .source_map_urls = .{},
                 .license_comments = .{},
                 .options = ParserOptions.default(allocator, null),
+                .composes = .{},
             };
         }
 
@@ -3146,6 +3193,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                         .options = options,
                         .layer_names = if (comptime P == BundlerAtRuleParser) at_rule_parser.layer_names else .{},
                         .local_scope = parser_extra.local_scope,
+                        .composes = composes,
                     },
                     StylesheetExtra{
                         .symbols = parser_extra.symbols,

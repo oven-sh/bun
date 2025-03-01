@@ -127,7 +127,7 @@ pub fn StyleRule(comptime R: type) type {
                         if (decl.* == .composes) {
                             const composes = &decl.composes;
                             if (dest.isNested() and dest.css_module != null) {
-                                return dest.newError(css.PrinterErrorKind.invalid_composes_nesting, composes.loc);
+                                return dest.newError(css.PrinterErrorKind.invalid_composes_nesting, composes.loc2);
                             }
 
                             if (dest.css_module) |*css_module| {
@@ -138,7 +138,7 @@ pub fn StyleRule(comptime R: type) type {
                                     composes,
                                     this.loc.source_index,
                                 ).asErr()) |error_kind| {
-                                    return dest.newError(error_kind, composes.loc);
+                                    return dest.newError(error_kind, composes.loc2);
                                 }
                                 continue;
                             }

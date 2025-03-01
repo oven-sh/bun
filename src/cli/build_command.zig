@@ -323,7 +323,7 @@ pub const BuildCommand = struct {
                 break :brk result.output_files;
             }
 
-            if (ctx.bundler_options.outdir.len == 0 and outfile.len > 0) {
+            if (ctx.bundler_options.outdir.len == 0 and outfile.len > 0 and !ctx.bundler_options.compile) {
                 this_transpiler.options.entry_naming = try std.fmt.allocPrint(allocator, "./{s}", .{
                     std.fs.path.basename(outfile),
                 });

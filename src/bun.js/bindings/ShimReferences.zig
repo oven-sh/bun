@@ -70,4 +70,5 @@ pub fn addShimReferences() void {
     BodyValueBuffererContext.shim.ref();
 
     _ = @import("LoadLibrary.zig").Bun__LoadLibraryBunString;
+    _ = &JSC.NodeModuleModule__findPath;
 }

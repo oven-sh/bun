@@ -645,7 +645,7 @@ assert.throws(
 
 {
   // Test RSA-PSS.
-  {
+  if (!common.openSSLIsBoringSSL) {
     // This key pair does not restrict the message digest algorithm or salt
     // length.
     const publicPem = fixtures.readKey('rsa_pss_public_2048.pem');
@@ -676,7 +676,7 @@ assert.throws(
     }
   }
 
-  {
+  if (!common.openSSLIsBoringSSL) {
     // This key pair enforces sha256 as the message digest and the MGF1
     // message digest and a salt length of at least 16 bytes.
     const publicPem =
@@ -718,7 +718,7 @@ assert.throws(
     }
   }
 
-  {
+  if (!common.openSSLIsBoringSSL) {
     // This key enforces sha512 as the message digest and sha256 as the MGF1
     // message digest.
     const publicPem =
@@ -763,8 +763,8 @@ assert.throws(
     });
     crypto.sign('sha512', 'message', privateKey);
   }, {
-    code: 'ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY',
-    message: /digest too big for rsa key/
+    code: common.openSSLIsBoringSSL ? 'ERR_OSSL_DIGEST_TOO_BIG_FOR_RSA_KEY' : 'ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY',
+    message: common.openSSLIsBoringSSL ? /DIGEST_TOO_BIG_FOR_RSA_KEY/ : /digest too big for rsa key/
   });
 }
 
@@ -788,41 +788,45 @@ assert.throws(
 
 {
   // Ed25519 and Ed448 must use the one-shot methods
-  // const keys = [{ privateKey: fixtures.readKey('ed25519_private.pem', 'ascii'),
-  //                 publicKey: fixtures.readKey('ed25519_public.pem', 'ascii') },
-  //               { privateKey: fixtures.readKey('ed448_private.pem', 'ascii'),
-  //                 publicKey: fixtures.readKey('ed448_public.pem', 'ascii') }];
-
   const keys = [{ privateKey: fixtures.readKey('ed25519_private.pem', 'ascii'),
                   publicKey: fixtures.readKey('ed25519_public.pem', 'ascii') }];
+
+  if (!common.openSSLIsBoringSSL) {
+    keys.push({ privateKey: fixtures.readKey('ed448_private.pem', 'ascii'),
+                publicKey: fixtures.readKey('ed448_public.pem', 'ascii') });
+  }
 
   for (const { publicKey, privateKey } of keys) {
     assert.throws(() => {
       crypto.createSign('SHA256').update('Test123').sign(privateKey);
-    }, { code: 'ERR_OSSL_COMMAND_NOT_SUPPORTED', message: 'error:06000065:public key routines:OPENSSL_internal:COMMAND_NOT_SUPPORTED' });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(privateKey, 'sig');
-    }, { code: 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: 'Unsupported crypto operation' });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(publicKey, 'sig');
-    }, { code: 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: 'Unsupported crypto operation' });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
   }
 }
 
 {
   // Dh, x25519 and x448 should not be used for signing/verifying
   // https://github.com/nodejs/node/issues/53742
-  for (const algo of ['dh', 'x25519', 'x448']) {
+  const algos = ['x25519'];
+  if (!common.openSSLIsBoringSSL) {
+    algos.push('dh', 'x448');
+  }
+  for (const algo of algos) {
     const privateKey = fixtures.readKey(`${algo}_private.pem`, 'ascii');
     const publicKey = fixtures.readKey(`${algo}_public.pem`, 'ascii');
     assert.throws(() => {
       crypto.createSign('SHA256').update('Test123').sign(privateKey);
-    }, { code: /supported/i, message: /supported/i });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE' : 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(privateKey, 'sig');
-    }, { code: 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: /operation not supported for this keytype/ });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE' : 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(publicKey, 'sig');
-    }, { code: 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: /operation not supported for this keytype/ });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE' : 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
   }
 }

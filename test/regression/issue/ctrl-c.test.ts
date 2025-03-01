@@ -10,7 +10,6 @@ test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {
 
         const handler = () => {
           count++;
-          console.count("SIGINT");
           if (count === 1024 * 4) {
             process.off("SIGINT", handler);
             process.exitCode = 0;

@@ -12,7 +12,7 @@ pub const JSPromise = opaque {
         fulfilled = 1,
         rejected = 2,
     };
-    
+
     extern fn JSC__JSPromise__asValue(arg0: *JSPromise, arg1: *JSGlobalObject) JSValue;
     extern fn JSC__JSPromise__create(arg0: *JSGlobalObject) *JSPromise;
     extern fn JSC__JSPromise__isHandled(arg0: *const JSPromise, arg1: *VM) bool;
@@ -96,7 +96,7 @@ pub const JSPromise = opaque {
                 this.weak.deinit();
                 return prom;
             }
-            
+
             pub fn deinit(this: *WeakType) void {
                 this.weak.clear();
                 this.weak.deinit();
@@ -210,7 +210,7 @@ pub const JSPromise = opaque {
 
         return resolvedPromiseValue(globalObject, value);
     }
-    
+
     pub fn status(this: *const JSPromise, vm: *VM) Status {
         return JSC__JSPromise__status(this, vm);
     }

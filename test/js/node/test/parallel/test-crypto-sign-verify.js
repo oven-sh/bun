@@ -425,10 +425,14 @@ assert.throws(
     public: fixtures.readKey('ed25519_public.pem', 'ascii'),
     algo: null,
     sigLen: 64 },
+    // Skipped by electron
+    // https://github.com/electron/electron/blob/add374ef6a3e576fa4f73dbf68199540668a75cf/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L407
+    /*
   { private: fixtures.readKey('ed448_private.pem', 'ascii'),
     public: fixtures.readKey('ed448_public.pem', 'ascii'),
     algo: null,
     sigLen: 114 },
+    */
   { private: fixtures.readKey('rsa_private_2048.pem', 'ascii'),
     public: fixtures.readKey('rsa_public_2048.pem', 'ascii'),
     algo: 'sha1',

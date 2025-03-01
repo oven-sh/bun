@@ -606,6 +606,8 @@ declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
 declare function $ERR_STREAM_ALREADY_FINISHED(method: string): Error;
 declare function $ERR_MISSING_ARGS(a1: string, a2?: string): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
+declare function $ERR_MISSING_ARGS(...args: string): TypeError;
+declare function $ERR_MISSING_ARGS(args: string[]): TypeError;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;

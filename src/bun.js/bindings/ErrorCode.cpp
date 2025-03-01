@@ -1184,55 +1184,36 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         case 1: {
             ASSERT("At least one arg needs to be specified");
         }
-        case 2: {
-            JSValue arg0 = callFrame->argument(1);
-            auto* jsString = arg0.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto str0 = jsString->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            WTF::StringBuilder builder;
-            builder.append("The \""_s);
-            builder.append(str0);
-            builder.append("\" argument must be specified"_s);
-            return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
-        }
-        case 3: {
-            JSValue arg0 = callFrame->argument(1);
-            auto* jsString = arg0.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto str0 = jsString->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue arg1 = callFrame->argument(2);
-            auto* jsString1 = arg1.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto str1 = jsString1->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            WTF::StringBuilder builder;
-            builder.append("The \""_s);
-            builder.append(str0);
-            builder.append("\" and \""_s);
-            builder.append(str1);
-            builder.append("\" arguments must be specified"_s);
-            return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
-        }
         default: {
             WTF::StringBuilder result;
             result.append("The "_s);
             auto argumentCount = callFrame->argumentCount();
             for (int i = 1; i < argumentCount; i += 1) {
-                if (i == argumentCount - 1) result.append("and "_s);
-                result.append('"');
+                if (i > 1 && i == argumentCount - 1) result.append("and "_s);
                 JSValue arg = callFrame->argument(i);
+                if (JSC::isArray(globalObject, arg)) {
+                    auto* arr = jsCast<JSArray*>(arg);
+                    for (uint j = 0; j < arr->length(); j++) {
+                        if (j > 0) result.append(" or "_s);
+                        result.append('"');
+                        result.append(arr->get(globalObject, j).toString(globalObject)->view(globalObject));
+                        result.append('"');
+                    }
+                    if (i != argumentCount - 1) result.append(',');
+                    result.append(' ');
+                    continue;
+                }
                 auto* jsString = arg.toString(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
                 auto str = jsString->view(globalObject);
-                RETURN_IF_EXCEPTION(scope, {});
+                result.append('"');
                 result.append(str);
                 result.append('"');
-                if (i != argumentCount - 1) result.append(',');
+                if (argumentCount >= 4 && i != argumentCount - 1) result.append(',');
                 result.append(' ');
             }
-            result.append("arguments must be specified"_s);
+            result.append("argument"_s);
+            if (argumentCount > 2) result.append('s');
+            result.append(" must be specified"_s);
             return JSC::JSValue::encode(createError(globalObject, error, result.toString()));
         }
         }

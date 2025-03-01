@@ -1,13 +1,13 @@
-/// Adding to this namespace is considered deprecated.
-///
-/// If the declaration truly came from C, it should be perfectly possible to
-/// translate the definition and put it in `c-headers-for-zig.h`, and available
-/// via the lowercase `c` namespace. Wrappers around functions should go in a
-/// more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
-/// 
-/// By avoiding manual transcription of C headers into Zig, we avoid bugs due to
-/// different definitions between platforms, as well as very common mistakes
-/// that can be made when porting definitions. It also keeps code much cleaner.
+//! Adding to this namespace is considered deprecated.
+//!
+//! If the declaration truly came from C, it should be perfectly possible to
+//! translate the definition and put it in `c-headers-for-zig.h`, and available
+//! via the lowercase `c` namespace. Wrappers around functions should go in a
+//! more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
+//!
+//! By avoiding manual transcription of C headers into Zig, we avoid bugs due to
+//! different definitions between platforms, as well as very common mistakes
+//! that can be made when porting definitions. It also keeps code much cleaner.
 const std = @import("std");
 const bun = @import("root").bun;
 const Environment = @import("./env.zig");

@@ -106,7 +106,6 @@ const Dependency = js_ast.Dependency;
 const JSAst = js_ast.BundledAst;
 const Loader = options.Loader;
 pub const Index = @import("../ast/base.zig").Index;
-const Batcher = bun.Batcher;
 const Symbol = js_ast.Symbol;
 const EventLoop = bun.JSC.AnyEventLoop;
 const MultiArrayList = bun.MultiArrayList;
@@ -2188,7 +2187,7 @@ pub const BundleV2 = struct {
                     const fd = if (bun.Watcher.requires_file_descriptors)
                         switch (bun.sys.open(
                             &(std.posix.toPosixPath(load.path) catch break :add_watchers),
-                            bun.C.O_EVTONLY,
+                            bun.c.O_EVTONLY,
                             0,
                         )) {
                             .result => |fd| fd,
@@ -4495,7 +4494,7 @@ pub const ParseTask = struct {
 
         result: ?*OnBeforeParseResult = null,
 
-        const headers = bun.C.translated;
+        const headers = bun.c;
 
         comptime {
             bun.assert(@sizeOf(OnBeforeParseArguments) == @sizeOf(headers.OnBeforeParseArguments));
@@ -5804,15 +5803,9 @@ const LinkerGraph = struct {
                         list.appendSliceAssumeCapacity(original_parts.slice());
                         list.appendAssumeCapacity(self.part_id);
 
-                        entry.value_ptr.* = BabyList(u32).init(list.items);
+                        entry.value_ptr.* = .init(list.items);
                     } else {
-                        entry.value_ptr.* = bun.from(
-                            BabyList(u32),
-                            self.graph.allocator,
-                            &[_]u32{
-                                self.part_id,
-                            },
-                        ) catch unreachable;
+                        entry.value_ptr.* = BabyList(u32).fromSlice(self.graph.allocator, &.{self.part_id}) catch bun.outOfMemory();
                     }
                 } else {
                     entry.value_ptr.push(self.graph.allocator, self.part_id) catch unreachable;
@@ -15416,17 +15409,13 @@ pub const LinkerContext = struct {
                     }
                     break :brk dependencies;
                 } else &.{};
+                var symbol_uses: Part.SymbolUseMap = .empty;
+                symbol_uses.put(c.allocator, wrapper_ref, .{ .count_estimate = 1 }) catch bun.outOfMemory();
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
                         .stmts = &.{},
-                        .symbol_uses = bun.from(
-                            Part.SymbolUseMap,
-                            c.allocator,
-                            .{
-                                .{ wrapper_ref, Symbol.Use{ .count_estimate = 1 } },
-                            },
-                        ) catch unreachable,
+                        .symbol_uses = symbol_uses,
                         .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(
                             c.allocator,
                             &[_]js_ast.DeclaredSymbol{
@@ -15478,16 +15467,12 @@ pub const LinkerContext = struct {
                     };
                 }
 
+                var symbol_uses: Part.SymbolUseMap = .empty;
+                symbol_uses.put(c.allocator, wrapper_ref, .{ .count_estimate = 1 }) catch bun.outOfMemory();
                 const part_index = c.graph.addPartToFile(
                     source_index,
                     .{
-                        .symbol_uses = bun.fromMapLike(
-                            Part.SymbolUseMap,
-                            c.allocator,
-                            &.{
-                                .{ wrapper_ref, .{ .count_estimate = 1 } },
-                            },
-                        ) catch unreachable,
+                        .symbol_uses = symbol_uses,
                         .declared_symbols = js_ast.DeclaredSymbol.List.fromSlice(c.allocator, &[_]js_ast.DeclaredSymbol{
                             .{ .ref = wrapper_ref, .is_top_level = true },
                         }) catch unreachable,

@@ -4,24 +4,8 @@ const string = bun.string;
 const std = @import("std");
 const Output = bun.Output;
 
-fn _getSystem() type {
-    // this is a workaround for a Zig stage1 bug
-    // the "usingnamespace" is evaluating in dead branches
-    return brk: {
-        if (comptime bun.Environment.isLinux) {
-            const Type = bun.C.linux;
-            break :brk struct {
-                pub usingnamespace std.posix.system;
-                pub usingnamespace Type;
-            };
-        }
-
-        break :brk std.posix.system;
-    };
-}
-
 const Environment = bun.Environment;
-const system = _getSystem();
+const system = std.posix.system;
 
 const Maybe = JSC.Maybe;
 

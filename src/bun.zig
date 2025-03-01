@@ -102,7 +102,20 @@ pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
+/// Adding to this namespace is considered deprecated.
+///
+/// If the declaration truly came from C, it should be perfectly possible to
+/// translate the definition and put it in `c-headers-for-zig.h`, and available
+/// via the lowercase `c` namespace. Wrappers around functions should go in a
+/// more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
+/// 
+/// By avoiding manual transcription of C headers into Zig, we avoid bugs due to
+/// different definitions between platforms, as well as very common mistakes
+/// that can be made when porting definitions. It also keeps code much cleaner.
 pub const C = @import("c.zig");
+/// Translated from `c-headers-for-zig.h` for the current platform.
+pub const c = @import("translated-c-headers");
+
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
@@ -607,7 +620,7 @@ pub fn hash32(content: []const u8) u32 {
 pub const HiveArray = @import("./hive_array.zig").HiveArray;
 
 pub fn rand(bytes: []u8) void {
-    _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
+    _ = BoringSSL.c.RAND_bytes(bytes.ptr, bytes.len);
 }
 
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
@@ -1586,7 +1599,14 @@ pub const ImportKind = @import("./import_record.zig").ImportKind;
 
 pub const Watcher = @import("./Watcher.zig");
 
-pub usingnamespace @import("./util.zig");
+pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
+    var remain = dest;
+    for (src) |group| {
+        bun.copy(T, remain[0..group.len], group);
+        remain = remain[group.len..];
+    }
+}
+
 pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
@@ -1601,7 +1621,6 @@ pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 /// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
-        []const u8, []u8, [:0]const u8, [:0]u8 => buffer.ptr[0..buffer.len],
         [*:0]u8, [*:0]const u8 => buffer[0..len(buffer)],
         [*c]const u8, [*c]u8 => span(buffer),
 
@@ -1700,6 +1719,8 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 }
 
+extern "c" fn on_before_reload_process_linux() void;
+
 /// Reload Bun's process. This clones envp, argv, and gets the current
 /// executable path.
 ///
@@ -1787,13 +1808,13 @@ pub fn reloadProcess(
         attrs.resetSignals() catch {};
 
         attrs.set(
-            C.POSIX_SPAWN_CLOEXEC_DEFAULT |
+            C.translated.POSIX_SPAWN_CLOEXEC_DEFAULT |
                 // Apple Extension: If this bit is set, rather
                 // than returning to the caller, posix_spawn(2)
                 // and posix_spawnp(2) will behave as a more
                 // featureful execve(2).
-                C.POSIX_SPAWN_SETEXEC |
-                C.POSIX_SPAWN_SETSIGDEF | C.POSIX_SPAWN_SETSIGMASK,
+                C.translated.POSIX_SPAWN_SETEXEC |
+                C.translated.POSIX_SPAWN_SETSIGDEF | C.translated.POSIX_SPAWN_SETSIGMASK,
         ) catch unreachable;
         switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
@@ -1812,10 +1833,6 @@ pub fn reloadProcess(
             },
         }
     } else if (comptime Environment.isPosix) {
-        const on_before_reload_process_linux = struct {
-            pub extern "c" fn on_before_reload_process_linux() void;
-        }.on_before_reload_process_linux;
-
         on_before_reload_process_linux();
         const err = std.posix.execveZ(
             exec_path,
@@ -2720,8 +2737,8 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
     if (!Environment.isWindows) return @ptrCast(literal);
     return comptime {
         var buf: [literal.len:0]u8 = undefined;
-        for (literal, 0..) |c, i| {
-            buf[i] = if (c == '/') '\\' else c;
+        for (literal, 0..) |char, i| {
+            buf[i] = if (char == '/') '\\' else char;
             assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
@@ -2735,8 +2752,8 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
     if (!Environment.isWindows) return @ptrCast(literal);
     return comptime {
         var buf: [literal.len:0]OSPathChar = undefined;
-        for (literal, 0..) |c, i| {
-            buf[i] = if (c == '/') '\\' else c;
+        for (literal, 0..) |char, i| {
+            buf[i] = if (char == '/') '\\' else char;
             assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;

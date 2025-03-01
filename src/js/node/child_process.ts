@@ -178,9 +178,6 @@ function spawn(file, args, options) {
       abortChildProcess(child, killSignal, signal.reason);
     }
   }
-  process.nextTick(() => {
-    child.emit("spawn");
-  });
   return child;
 }
 
@@ -1316,7 +1313,9 @@ class ChildProcess extends EventEmitter {
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
-      onSpawnNT(this);
+      process.nextTick(() => {
+        this.emit("spawn");
+      });
 
       if (has_ipc) {
         this.send = this.#send;
@@ -1567,10 +1566,6 @@ function normalizeStdio(stdio): string[] {
   } else {
     throw ERR_INVALID_OPT_VALUE("stdio", stdio);
   }
-}
-
-function onSpawnNT(self) {
-  self.emit("spawn");
 }
 
 function abortChildProcess(child, killSignal, reason) {

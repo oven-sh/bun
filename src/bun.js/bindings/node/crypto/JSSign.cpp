@@ -776,41 +776,58 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSC::JSGlobalObject * globalObject, JSC
         }
     }
 
-    // Perform the one-shot signing operation
-    auto signatureData = mdCtx.signOneShot(dataBuf);
-    if (!signatureData) {
-        throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to create signature"_s);
-        return {};
-    }
-
-    // Convert to P1363 format if requested for EC keys
     RefPtr<JSC::ArrayBuffer> sigBuffer = nullptr;
-    if (dsaSigEnc == NodeCryptoKeys::DSASigEnc::P1363 && keyPtr.isSigVariant() && keyPtr.getBytesOfRS().value_or(0) * 2 > 0) {
-        auto p1363Size = keyPtr.getBytesOfRS().value_or(0) * 2;
-        sigBuffer = JSC::ArrayBuffer::tryCreate(p1363Size, 1);
-        if (!sigBuffer) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate P1363 buffer"_s);
+    if (keyPtr.isOneShotVariant()) {
+        auto data = mdCtx.signOneShot(dataBuf);
+        if (!data) {
+            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to create signature"_s);
             return {};
         }
 
-        ncrypto::Buffer<const unsigned char> derSig {
-            .data = static_cast<const unsigned char*>(sigBuffer->data()),
-            .len = signatureData.size()
-        };
-
-        if (!ncrypto::extractP1363(derSig, static_cast<unsigned char*>(sigBuffer->data()), p1363Size / 2)) {
-            Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert signature format"_s);
-            return {};
-        }
-    } else {
-        sigBuffer = JSC::ArrayBuffer::tryCreate(signatureData.size(), 1);
+        sigBuffer = JSC::ArrayBuffer::tryCreate(data.size(), 1);
         if (!sigBuffer) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate signature buffer"_s);
             return {};
         }
 
-        memcpy(sigBuffer->data(), signatureData.get(), signatureData.size());
+        memcpy(sigBuffer->data(), data.get(), data.size());
+
+    } else {
+        auto signatureData = mdCtx.sign(dataBuf);
+        if (!signatureData) {
+            throwCryptoError(globalObject, scope, ERR_get_error(), "Failed to create signature"_s);
+            return {};
+        }
+
+        // Convert to P1363 format if requested for EC keys
+        if (dsaSigEnc == NodeCryptoKeys::DSASigEnc::P1363 && keyPtr.isSigVariant() && keyPtr.getBytesOfRS().value_or(0) * 2 > 0) {
+            auto p1363Size = keyPtr.getBytesOfRS().value_or(0) * 2;
+            sigBuffer = JSC::ArrayBuffer::tryCreate(p1363Size, 1);
+            if (!sigBuffer) {
+                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate P1363 buffer"_s);
+                return {};
+            }
+
+            ncrypto::Buffer<const unsigned char> derSig {
+                .data = reinterpret_cast<const unsigned char*>(signatureData.get()),
+                .len = signatureData.size()
+            };
+
+            if (!ncrypto::extractP1363(derSig, static_cast<unsigned char*>(sigBuffer->data()), p1363Size / 2)) {
+                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to convert signature format"_s);
+                return {};
+            }
+        } else {
+            sigBuffer = JSC::ArrayBuffer::tryCreate(signatureData.size(), 1);
+            if (!sigBuffer) {
+                Bun::throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to allocate signature buffer"_s);
+                return {};
+            }
+
+            memcpy(sigBuffer->data(), signatureData.get(), signatureData.size());
+        }
     }
+    ASSERT(sigBuffer);
 
     // Create JSUint8Array from the signature buffer
     auto* globalObj = defaultGlobalObject(globalObject);

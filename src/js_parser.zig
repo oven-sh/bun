@@ -1694,31 +1694,31 @@ pub const SideEffects = enum(u1) {
                     return null;
                 }
             },
-            .e_if => |__if__| {
-                __if__.yes = simplifyUnusedExpr(p, __if__.yes) orelse __if__.yes.toEmpty();
-                __if__.no = simplifyUnusedExpr(p, __if__.no) orelse __if__.no.toEmpty();
+            .e_if => |ternary| {
+                ternary.yes = simplifyUnusedExpr(p, ternary.yes) orelse ternary.yes.toEmpty();
+                ternary.no = simplifyUnusedExpr(p, ternary.no) orelse ternary.no.toEmpty();
 
                 // "foo() ? 1 : 2" => "foo()"
-                if (__if__.yes.isEmpty() and __if__.no.isEmpty()) {
-                    return simplifyUnusedExpr(p, __if__.test_);
+                if (ternary.yes.isEmpty() and ternary.no.isEmpty()) {
+                    return simplifyUnusedExpr(p, ternary.test_);
                 }
 
                 // "foo() ? 1 : bar()" => "foo() || bar()"
-                if (__if__.yes.isEmpty()) {
+                if (ternary.yes.isEmpty()) {
                     return Expr.joinWithLeftAssociativeOp(
                         .bin_logical_or,
-                        __if__.test_,
-                        __if__.no,
+                        ternary.test_,
+                        ternary.no,
                         p.allocator,
                     );
                 }
 
                 // "foo() ? bar() : 2" => "foo() && bar()"
-                if (__if__.no.isEmpty()) {
+                if (ternary.no.isEmpty()) {
                     return Expr.joinWithLeftAssociativeOp(
                         .bin_logical_and,
-                        __if__.test_,
-                        __if__.yes,
+                        ternary.test_,
+                        ternary.yes,
                         p.allocator,
                     );
                 }
@@ -1774,7 +1774,19 @@ pub const SideEffects = enum(u1) {
                     .bin_loose_ne,
                     => {
                         if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
-                            return Expr.joinWithComma(simplifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(), simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(), p.allocator);
+                            return Expr.joinWithComma(
+                                simplifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
+                                simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
+                                p.allocator,
+                            );
+                        }
+                        // If one side is a number, the number can be printed as
+                        // `0` since the result being unused doesnt matter, we
+                        // only care to invoke the coercion.
+                        if (bin.left.data == .e_number) {
+                            bin.left.data = .{ .e_number = .{ .value = 0.0 } };
+                        } else if (bin.right.data == .e_number) {
+                            bin.right.data = .{ .e_number = .{ .value = 0.0 } };
                         }
                     },
 
@@ -1935,7 +1947,7 @@ pub const SideEffects = enum(u1) {
             result = result.joinWithComma(visited_right, p.allocator);
         }
 
-        return if (result.isMissing()) Expr.empty else result;
+        return if (result.isMissing()) null else result;
     }
 
     fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {

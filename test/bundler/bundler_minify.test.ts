@@ -555,9 +555,9 @@ describe("bundler", () => {
       `,
       "/node_modules/dev-trap/prod.js": `
         export const foo = "production";
-      `
+      `,
     },
-    capture: ["\"production\"", "1753"],
+    capture: ['"production"', "1753"],
     production: true,
     onAfterBundle(api) {
       const output = api.readFile("out.js");
@@ -567,13 +567,43 @@ describe("bundler", () => {
       // Check minification
       expect(output).not.toContain("\t");
       expect(output).not.toContain("  ");
-      
+
       // Check NODE_ENV is inlined
       expect(output).toContain('"production"');
       expect(output).not.toContain("process.env.NODE_ENV");
 
       // Check JSX uses production runtime
       expect(output).toContain("jsx-runtime");
-    }
+    },
+  });
+  itBundled("minify/UnusedInCommaExpression", {
+    files: {
+      "/entry.ts": `
+        let flag = computeSomethingUnknown();
+        // the expression 'flag === 1' has no side effects
+        capture((flag === 1234 ? "a" : "b", "c"));
+        // 'flag == 1234' may invoke a side effect
+        capture((flag == 1234 ? "a" : "b", "c"));
+        // 'unbound' may invoke a side effect
+        capture((unbound ? "a" : "b", "c"));
+        // two side effects
+        capture((flag == 1234 ? "a" : unbound, "c"));
+        // two side effects 2
+        capture(([flag == 1234] ? unbound : other, "c"));
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      // 'flag' cannot throw on access or comparison via '==='
+      '"c"',
+      // 0 is inserted instead of 1234 because it is shorter and invokes the same coercion side effects
+      '(flag == 0, "c")',
+      // 'unbound' may throw on access
+      '(unbound, "c")',
+      // 0 is not inserted here because the result of 'flag == 1234' is used by the ternary
+      '(flag == 1234 || unbound, "c")',
+      // || is not inserted since the condition is always true, can simplify '1234' to '0'
+      '(flag == 0, unbound, "c")',
+    ],
   });
 });

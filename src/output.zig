@@ -788,6 +788,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
                 return;
             }
 
+            if (bun.crash_handler.isPanicking()) return;
+
             if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
             defer {
                 if (Environment.enable_logs)

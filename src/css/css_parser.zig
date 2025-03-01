@@ -1928,11 +1928,13 @@ pub fn NestedRuleParser(comptime T: type) type {
         // todo_stuff.think_mem_mgmt
         rules: *CssRuleList(T.CustomAtRuleParser.AtRule),
         is_in_style_rule: bool,
+        allow_declarations: bool,
+
         allow_composes: bool,
         saw_composes: bool = false,
         composes_refs: *SmallList(bun.bundle_v2.Ref, 2),
         composes: *ComposesMap,
-        allow_declarations: bool,
+
         allocator: Allocator,
 
         const This = @This();
@@ -2568,13 +2570,14 @@ pub fn NestedRuleParser(comptime T: type) type {
 
                 if (this.allow_composes and this.composes_refs.len() > 0 and this.saw_composes) {
                     var usage = PropertyBitset.initEmpty();
-                    fillPropertyBitSet(&usage, &declarations);
+                    var custom_properties = bun.BabyList([]const u8){};
+                    fillPropertyBitSet(this.allocator, &usage, &declarations, &custom_properties);
+
+                    const custom_properties_slice = custom_properties.slice();
 
                     for (this.composes_refs.slice()) |ref| {
                         const composes_entries = this.composes.getPtr(ref).?;
-                        for (composes_entries.slice()) |*composes| {
-                            composes.fillPropertyUsage(&usage);
-                        }
+                        composes_entries.fillPropertyUsage(&usage, custom_properties_slice);
                     }
                 }
 
@@ -2624,13 +2627,9 @@ pub fn NestedRuleParser(comptime T: type) type {
             for (this.composes_refs.slice()) |ref| {
                 const entry = this.composes.getOrPut(allocator, ref) catch bun.outOfMemory();
                 if (!entry.found_existing) {
-                    const list = bun.BabyList(ComposesExtended){};
-                    entry.value_ptr.* = list;
+                    entry.value_ptr.* = ComposesEntry{};
                 }
-                const composes_extended = ComposesExtended{
-                    .composes = composes.deepClone(allocator),
-                };
-                entry.value_ptr.*.push(allocator, composes_extended) catch bun.outOfMemory();
+                entry.value_ptr.*.composes.push(allocator, composes.deepClone(allocator)) catch bun.outOfMemory();
             }
             this.saw_composes = true;
         }
@@ -2877,33 +2876,47 @@ pub const ParserExtra = struct {
 pub const CustomIdentList = css_values.ident.CustomIdentList;
 pub const Specifier = css_properties.css_modules.Specifier;
 pub const Composes = css_properties.css_modules.Composes;
-pub const ComposesMap = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, bun.BabyList(ComposesExtended));
+pub const ComposesMap = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, ComposesEntry);
+pub const ComposesEntry = struct {
+    composes: bun.BabyList(Composes) = .{},
+    property_usage: PropertyBitset = PropertyBitset.initEmpty(),
+    custom_properties: []const []const u8 = &.{},
+
+    pub inline fn fillPropertyUsage(this: *ComposesEntry, used: *const PropertyBitset, custom_properties: []const []const u8) void {
+        this.property_usage.setIntersection(used.*);
+        this.custom_properties = custom_properties;
+    }
+};
 
 // TODO: this is chonky
 // TODO: this won't work for custom properties
 pub const PropertyBitset = std.bit_set.ArrayBitSet(usize, std.math.ceilPowerOfTwo(u16, bun.meta.EnumFields(PropertyIdTag).len) catch @panic("FUCK"));
-pub fn fillPropertyBitSet(bitset: *PropertyBitset, block: *const DeclarationBlock) void {
+pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: *const DeclarationBlock, custom_properties: *bun.BabyList([]const u8)) void {
     for (block.declarations.items) |*prop| {
-        const tag = @as(PropertyIdTag, prop.*);
+        const tag = switch (prop.*) {
+            .custom => {
+                custom_properties.push(allocator, prop.custom.name.asStr()) catch bun.outOfMemory();
+                continue;
+            },
+            .unparsed => |u| @as(PropertyIdTag, u.property_id),
+            else => @as(PropertyIdTag, prop.*),
+        };
         const int: u16 = @intFromEnum(tag);
         bitset.set(int);
     }
     for (block.important_declarations.items) |*prop| {
-        const tag = @as(PropertyIdTag, prop.*);
+        const tag = switch (prop.*) {
+            .custom => {
+                custom_properties.push(allocator, prop.custom.name.asStr()) catch bun.outOfMemory();
+                continue;
+            },
+            .unparsed => |u| @as(PropertyIdTag, u.property_id),
+            else => @as(PropertyIdTag, prop.*),
+        };
         const int: u16 = @intFromEnum(tag);
         bitset.set(int);
     }
 }
-
-pub const ComposesExtended = struct {
-    composes: Composes,
-    property_usage: PropertyBitset = PropertyBitset.initEmpty(),
-    custom_properties: bun.BabyList([]const u8) = .{},
-
-    pub inline fn fillPropertyUsage(this: *ComposesExtended, used: *const PropertyBitset) void {
-        this.property_usage.setIntersection(used.*);
-    }
-};
 
 // pub const ComposesInfo = struct {
 //     names: *const CustomIdentList,

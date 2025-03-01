@@ -7937,8 +7937,7 @@ pub const LinkerContext = struct {
                     fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref, idx: Index.Int) void {
                         if (ast.composes.count() > 0) {
                             const composes = ast.composes.getPtr(ref) orelse return;
-                            for (composes.slice()) |*compose_extended| {
-                                const compose = &compose_extended.composes;
+                            for (composes.composes.slice()) |*compose| {
                                 // it is imported
                                 if (compose.from != null) {
                                     if (compose.from.? == .file) {
@@ -8210,8 +8209,7 @@ pub const LinkerContext = struct {
 
                     // Validate cross-file "composes: ... from" named imports
                     for (css_ast.composes.values()) |*composes| {
-                        for (composes.slice()) |*compose_extended| {
-                            const compose = &compose_extended.composes;
+                        for (composes.composes.slice()) |*compose| {
                             if (compose.from == null or compose.from.? != .file) continue;
                             const import_record_idx = compose.from.?.file;
                             const record = &import_records[import_record_idx];
@@ -9025,13 +9023,68 @@ pub const LinkerContext = struct {
     ) void {
         const PropertyInFile = struct {
             source_index: Index.Int,
+            /// currently not used
             loc: bun.logger.Loc,
         };
         const Visitor = struct {
             visited: std.AutoArrayHashMap(Ref, void),
-            properties: std.AutoArrayHashMap(bun.css.PropertyIdTag, PropertyInFile),
+            properties: std.StringArrayHashMap(PropertyInFile),
             all_import_records: []const ImportRecord.List,
             all_css_asts: []const ?*bun.css.BundlerStyleSheet,
+            all_symbols: *const Symbol.Map,
+            all_sources: []const Logger.Source,
+            allocator: std.mem.Allocator,
+            log: *Logger.Log,
+
+            pub fn deinit(v: *@This()) void {
+                v.visited.deinit();
+                v.properties.deinit();
+            }
+
+            fn addPropertyOrWarn(v: *@This(), local: Ref, name: []const u8, source_index: Index.Int, loc: bun.logger.Loc) void {
+                const entry = v.properties.getOrPut(name) catch bun.outOfMemory();
+
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = .{
+                        .source_index = source_index,
+                        .loc = loc,
+                    };
+                    return;
+                }
+
+                if (entry.value_ptr.source_index == source_index or entry.value_ptr.source_index == Index.invalid.get()) {
+                    return;
+                }
+
+                const local_original_name = v.all_symbols.get(local).?.original_name;
+                v.log.addMsg(.{
+                    .kind = .warn,
+                    .data = Logger.rangeData(
+                        &v.all_sources[source_index],
+                        Logger.Range{ .loc = loc },
+                        Logger.Log.allocPrint(
+                            v.allocator,
+                            "The value of {s} in the class {s} is undefined.",
+                            .{ name, local_original_name },
+                        ) catch bun.outOfMemory(),
+                    ).cloneLineText(v.log.clone_line_text, v.log.msgs.allocator) catch bun.outOfMemory(),
+                    .notes = v.allocator.dupe(
+                        Logger.Data,
+                        &.{
+                            .{ .text = std.fmt.allocPrint(
+                                v.allocator,
+                                "The specification of \"composes\" does not define an order when class declarations from separate files are composed together." ++
+                                    "The value of the {s} property for {s} may change unpredictably as the code is edited. " ++
+                                    "Make sure that all definitions of {s} for {s} are in a single file.",
+                                .{ name, local_original_name, name, local_original_name },
+                            ) catch bun.outOfMemory() },
+                        },
+                    ) catch bun.outOfMemory(),
+                }) catch bun.outOfMemory();
+
+                // Don't warn more than once
+                entry.value_ptr.source_index = Index.invalid.get();
+            }
 
             fn clearRetainingCapacity(v: *@This()) void {
                 v.visited.clearRetainingCapacity();
@@ -9043,8 +9096,7 @@ pub const LinkerContext = struct {
                 v.visited.put(ref, {}) catch unreachable;
 
                 const composes = ast.composes.getPtr(ref) orelse return;
-                for (composes.sliceConst()) |*composes_extended| {
-                    const compose = &composes_extended.composes;
+                for (composes.composes.sliceConst()) |*compose| {
                     // is an import
                     if (compose.from != null) {
                         if (compose.from.? == .file) {
@@ -9068,16 +9120,33 @@ pub const LinkerContext = struct {
                     }
 
                     // Warn about cross-file composition with the same CSS properties
-                    @panic("TODO");
+                    var iter = composes.property_usage.iterator(.{});
+                    while (iter.next()) |property_tag| {
+                        const property_id_tag: bun.css.PropertyIdTag = @enumFromInt(@as(u16, @intCast(property_tag)));
+                        bun.assert(property_id_tag != .custom);
+                        bun.assert(property_id_tag != .unparsed);
+                        v.addPropertyOrWarn(ref, @tagName(property_id_tag), idx, bun.logger.Loc.Empty);
+                    }
+
+                    for (composes.custom_properties) |property| {
+                        v.addPropertyOrWarn(ref, property, idx, bun.logger.Loc.Empty);
+                    }
                 }
             }
         };
+        var sfb = std.heap.stackFallback(1024, this.allocator);
+        const allocator = sfb.get();
         var visitor = Visitor{
-            .visited = std.AutoArrayHashMap(Ref, void).init(this.allocator),
-            .properties = std.AutoArrayHashMap(bun.css.PropertyIdTag, PropertyInFile).init(this.allocator),
+            .visited = std.AutoArrayHashMap(Ref, void).init(allocator),
+            .properties = std.StringArrayHashMap(PropertyInFile).init(allocator),
             .all_import_records = import_records_list,
             .all_css_asts = all_css_asts,
+            .all_symbols = &this.graph.symbols,
+            .all_sources = this.parse_graph.input_files.items(.source),
+            .allocator = allocator,
+            .log = this.log,
         };
+        defer visitor.deinit();
         for (root_css_ast.local_scope.values()) |local| {
             visitor.clearRetainingCapacity();
             visitor.visit(index, root_css_ast, local);
@@ -10534,7 +10603,6 @@ pub const LinkerContext = struct {
                     // TODO: make this more configurable
                     .minify = c.options.minify_whitespace or c.options.minify_syntax or c.options.minify_identifiers,
                 };
-                symbols.dump();
                 _ = switch (css.toCssWithWriter(
                     worker.allocator,
                     &buffer_writer,

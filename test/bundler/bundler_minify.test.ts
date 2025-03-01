@@ -510,7 +510,7 @@ describe("bundler", () => {
           console.log("This should be removed");
           throw new Error("This should be removed");
         }
-        if (import.meta.hot == undefined) {
+        if (import.meta.hot != undefined) {
           console.log("This should be removed");
           throw new Error("This should be removed");
         }

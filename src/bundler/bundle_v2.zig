@@ -2997,6 +2997,14 @@ pub const BundleV2 = struct {
                 }
             };
 
+            if (strings.eqlComptime(import_record.path.text, "bun:wrap")) {
+                import_record.path.namespace = "bun";
+                import_record.tag = .runtime;
+                import_record.path.text = "wrap";
+                import_record.source_index = .runtime;
+                continue;
+            }
+
             if (ast.target.isBun()) {
                 if (JSC.HardcodedModule.Aliases.get(import_record.path.text, options.Target.bun)) |replacement| {
                     import_record.path.text = replacement.path;
@@ -4109,7 +4117,7 @@ pub const ParseTask = struct {
 
         const parse_task = ParseTask{
             .ctx = undefined,
-            .path = Fs.Path.initWithNamespace("bun:wrap", "bun"),
+            .path = Fs.Path.initWithNamespace("runtime", "bun:runtime"),
             .side_effects = .no_side_effects__pure_data,
             .jsx = .{
                 .parse = false,

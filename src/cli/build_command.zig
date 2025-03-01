@@ -224,8 +224,16 @@ pub const BuildCommand = struct {
         this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
         this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
+        if (ctx.bundler_options.production) {
+            try this_transpiler.options.define.insert(allocator, "process.env.NODE_ENV", .initStaticString(&.{ .data = "production" }));
+        }
+
         try this_transpiler.configureDefines();
         this_transpiler.configureLinker();
+
+        if (ctx.bundler_options.production) {
+            bun.assert(!this_transpiler.options.jsx.development);
+        }
 
         // This is currently done in DevServer by default, but not in Bun.build
         if (!this_transpiler.options.production) {

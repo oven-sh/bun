@@ -211,9 +211,9 @@ pub const PackCommand = struct {
             MissingPackageJSON,
         } ||
             if (for_publish) error{
-            RestrictedUnscopedPackage,
-            PrivatePackage,
-        } else error{};
+                RestrictedUnscopedPackage,
+                PrivatePackage,
+            } else error{};
     }
 
     const package_prefix = "package/";
@@ -291,7 +291,7 @@ pub const PackCommand = struct {
         defer subpath_dedupe.deinit();
 
         // first find included dirs and files
-        while (dirs.popOrNull()) |dir_info| {
+        while (dirs.pop()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer {
                 if (dir_depth != 1) {
@@ -320,10 +320,10 @@ pub const PackCommand = struct {
 
                     if (entry.kind == .file and
                         (eql(entry_name, "package.json") or
-                        eql(entry_name, "LICENSE") or
-                        eql(entry_name, "LICENCE") or
-                        eql(entry_name, "README") or
-                        entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.")))
+                            eql(entry_name, "LICENSE") or
+                            eql(entry_name, "LICENCE") or
+                            eql(entry_name, "README") or
+                            entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.")))
                         included = true;
                 }
 
@@ -394,7 +394,7 @@ pub const PackCommand = struct {
         var ignores: std.ArrayListUnmanaged(IgnorePatterns) = .{};
         defer ignores.deinit(allocator);
 
-        while (dirs.popOrNull()) |dir_info| {
+        while (dirs.pop()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer dir.close();
 
@@ -610,7 +610,7 @@ pub const PackCommand = struct {
             }
         }
 
-        while (additional_bundled_deps.popOrNull()) |bundled_dir_info| {
+        while (additional_bundled_deps.pop()) |bundled_dir_info| {
             const dir_subpath = bundled_dir_info[1];
             const maybe_slash = strings.lastIndexOfChar(dir_subpath, '/');
             bun.assertWithLocation(maybe_slash != null, @src());
@@ -652,7 +652,7 @@ pub const PackCommand = struct {
 
         try dirs.append(ctx.allocator, bundled_dir_info);
 
-        while (dirs.popOrNull()) |dir_info| {
+        while (dirs.pop()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer dir.close();
 
@@ -787,7 +787,7 @@ pub const PackCommand = struct {
 
         try dirs.append(allocator, .{ root_dir, "", 1 });
 
-        while (dirs.popOrNull()) |dir_info| {
+        while (dirs.pop()) |dir_info| {
             var dir, const dir_subpath, const dir_depth = dir_info;
             defer {
                 if (dir_depth != 1) {
@@ -1035,12 +1035,12 @@ pub const PackCommand = struct {
             // first, check files that can never be ignored. project root directory only
             if (entry.kind == .file and
                 (eql(entry_name, "package.json") or
-                eql(entry_name, "LICENSE") or
-                eql(entry_name, "LICENCE") or
-                eql(entry_name, "README") or
-                entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.") or
-                eql(entry_name, "CHANGELOG") or
-                entry_name.len > "CHANGELOG.".len and eql(entry_name[0.."CHANGELOG.".len], "CHANGELOG.")))
+                    eql(entry_name, "LICENSE") or
+                    eql(entry_name, "LICENCE") or
+                    eql(entry_name, "README") or
+                    entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.") or
+                    eql(entry_name, "CHANGELOG") or
+                    entry_name.len > "CHANGELOG.".len and eql(entry_name[0.."CHANGELOG.".len], "CHANGELOG.")))
                 return null;
 
             // check default ignores that only apply to the root project directory

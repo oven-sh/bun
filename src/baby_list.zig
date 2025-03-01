@@ -94,7 +94,7 @@ pub fn BabyList(comptime Type: type) type {
             this.update(list_);
         }
 
-        pub fn popOrNull(this: *@This()) ?Type {
+        pub fn pop(this: *@This()) ?Type {
             if (this.len == 0) return null;
             this.len -= 1;
             return this.ptr[this.len];

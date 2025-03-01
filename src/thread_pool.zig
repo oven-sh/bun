@@ -419,11 +419,11 @@ pub const default_thread_stack_size = brk: {
 
     if (!Environment.isMac) break :brk default;
 
-    const size = default - (default % std.mem.page_size);
+    const size = default - (default % std.heap.page_size_max);
 
     // stack size must be a multiple of page_size
     // macOS will fail to spawn a thread if the stack size is not a multiple of page_size
-    if (size % std.mem.page_size != 0)
+    if (size % std.heap.page_size_max != 0)
         @compileError("Thread stack size is not a multiple of page size");
 
     break :brk size;

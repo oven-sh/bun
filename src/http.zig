@@ -1388,7 +1388,7 @@ pub const HTTPThread = struct {
             this.queued_writes.clearRetainingCapacity();
         }
 
-        while (this.queued_proxy_deref.popOrNull()) |http| {
+        while (this.queued_proxy_deref.pop()) |http| {
             http.deref();
         }
 

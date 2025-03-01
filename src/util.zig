@@ -229,8 +229,6 @@ pub fn fromSlice(
     }
 }
 
-
-
 fn needsAllocator(comptime Fn: anytype) bool {
     return std.meta.fields(std.meta.ArgsTuple(@TypeOf(Fn))).len > 2;
 }

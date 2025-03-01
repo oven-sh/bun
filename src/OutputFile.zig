@@ -233,15 +233,11 @@ pub fn init(options: Options) OutputFile {
     };
 }
 
-/// Given the `--outdir` as root_dir, this will return the relative path to display in terminal
-pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) ![]const u8 {
+pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) !void {
     switch (f.value) {
+        .noop => {},
         .saved => {
-            var rel_path = f.dest_path;
-            if (f.dest_path.len > root_dir_path.len) {
-                rel_path = resolve_path.relative(root_dir_path, f.dest_path);
-            }
-            return rel_path;
+            // already written to disk
         },
         .buffer => |value| {
             var rel_path = f.dest_path;
@@ -270,19 +266,12 @@ pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u
                     .string = JSC.PathString.init(rel_path),
                 } },
             }).unwrap();
-
-            return rel_path;
         },
         .move => |value| {
             try f.moveTo(root_dir_path, value.pathname, bun.toFD(root_dir.fd));
-            return value.pathname;
         },
         .copy => |value| {
             try f.copyTo(root_dir_path, value.pathname, bun.toFD(root_dir.fd));
-            return value.pathname;
-        },
-        .noop => {
-            return f.dest_path;
         },
         .pending => unreachable,
     }

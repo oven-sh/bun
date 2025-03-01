@@ -8051,7 +8051,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var has_dev_catch_all = false;
             if (dev_server) |dev| {
                 // DevServer adds a catch-all handler to use FrameworkRouter (full stack apps)
-                has_dev_catch_all = dev.attachRoutes(this) catch bun.outOfMemory();
+                has_dev_catch_all = dev.setRoutes(this) catch bun.outOfMemory();
             }
 
             if (!has_dev_catch_all and this.config.onRequest != .zero) {

@@ -18,8 +18,6 @@ const {
   createPrivateKey,
   generateKeySync,
   generateKeyPairSync,
-  sign: nativeSign,
-  verify: nativeVerify,
   publicEncrypt,
   privateDecrypt,
   privateEncrypt,
@@ -164,30 +162,11 @@ var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
 
-function isStringOrBuffer(val) {
-  return typeof val === "string" || isArrayBufferView(val) || isAnyArrayBuffer(val);
-}
-
 function exportIfKeyObject(key) {
   if (key instanceof KeyObject) {
     key = key.export();
   } else if (key instanceof CryptoKey) {
     key = KeyObject.from(key).export();
-  }
-  return key;
-}
-function getKeyFrom(key, type) {
-  if (key instanceof KeyObject) {
-    key = key.export();
-  } else if (key instanceof CryptoKey) {
-    key = KeyObject.from(key).export();
-  } else if (!Buffer.isBuffer(key) && typeof key === "object") {
-    if ((typeof key.format === "string" || typeof key.passphrase === "string") && typeof key.key !== "undefined") {
-      key = type === "public" ? _createPublicKey(key).export() : _createPrivateKey(key).export();
-    }
-  } else if (typeof key === "string" && type === "public") {
-    // make public key from non encrypted private PEM
-    key.indexOf("PRIVATE KEY-----") !== -1 && (key = _createPublicKey(key).export());
   }
   return key;
 }
@@ -11443,16 +11422,6 @@ var require_crypto_browserify2 = __commonJS({
     var rf = require_browser11();
     exports.randomFill = rf.randomFill;
     exports.randomFillSync = rf.randomFillSync;
-    exports.createCredentials = function () {
-      throw new Error(
-        [
-          "sorry, createCredentials is not implemented yet",
-          "we accept pull requests",
-          "https://github.com/crypto-browserify/crypto-browserify",
-        ].join(`
-`),
-      );
-    };
     exports.constants = $processBindingConstants.crypto;
   },
 });
@@ -11768,90 +11737,6 @@ crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
-
-crypto_exports.sign = function (algorithm, data, key, callback) {
-  // TODO: move this to native
-  var dsaEncoding, padding, saltLength;
-  // key must be a KeyObject
-  if (!(key instanceof KeyObject)) {
-    if ($isObject(key) && key.key) {
-      padding = key.padding;
-      saltLength = key.saltLength;
-      dsaEncoding = key.dsaEncoding;
-    }
-    if (key.key instanceof KeyObject) {
-      key = key.key;
-    } else {
-      key = _createPrivateKey(key);
-    }
-  }
-  if (typeof callback === "function") {
-    try {
-      let result;
-      if (key.asymmetricKeyType === "rsa") {
-        // RSA-PSS is supported by native but other RSA algorithms are not
-        result = createSign(algorithm || "sha256")
-          .update(data)
-          .sign(key);
-      } else {
-        result = nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
-      }
-      callback(null, result);
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    if (key.asymmetricKeyType === "rsa") {
-      return createSign(algorithm || "sha256")
-        .update(data)
-        .sign(key);
-    } else {
-      return nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
-    }
-  }
-};
-
-crypto_exports.verify = function (algorithm, data, key, signature, callback) {
-  // TODO: move this to native
-  var dsaEncoding, padding, saltLength;
-  // key must be a KeyObject
-  if (!(key instanceof KeyObject)) {
-    if ($isObject(key) && key.key) {
-      padding = key.padding;
-      saltLength = key.saltLength;
-      dsaEncoding = key.dsaEncoding;
-    }
-    if (key.key instanceof KeyObject && key.key.type === "public") {
-      key = key.key;
-    } else {
-      key = _createPublicKey(key);
-    }
-  }
-  if (typeof callback === "function") {
-    try {
-      let result;
-      if (key.asymmetricKeyType === "rsa") {
-        // RSA-PSS is supported by native but other RSA algorithms are not
-        result = createVerify(algorithm || "sha256")
-          .update(data)
-          .verify(key, signature);
-      } else {
-        result = nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
-      }
-      callback(null, result);
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    if (key.asymmetricKeyType === "rsa") {
-      return createVerify(algorithm || "sha256")
-        .update(data)
-        .verify(key, signature);
-    } else {
-      return nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
-    }
-  }
-};
 
 // We are not allowed to call createPublicKey/createPrivateKey when we're already working with a
 // KeyObject/CryptoKey of the same type (public/private).

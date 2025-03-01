@@ -153,7 +153,7 @@ type ErrorSpec = string;
 
 type FileObject = Record<string, string | Buffer | BunFile>;
 
-export class Dev {
+export class Dev extends EventEmitter {
   rootDir: string;
   port: number;
   baseUrl: string;
@@ -161,6 +161,8 @@ export class Dev {
   connectedClients: Set<Client> = new Set();
   options: { files: Record<string, string> };
   nodeEnv: "development" | "production";
+
+  socket?: WebSocket;
 
   // These properties are not owned by this class
   devProcess: Subprocess<"pipe", "pipe", "pipe">;
@@ -174,6 +176,7 @@ export class Dev {
     nodeEnv: "development" | "production",
     options: DevServerTest,
   ) {
+    super();
     this.rootDir = realpathSync(root);
     this.port = port;
     this.baseUrl = `http://localhost:${port}`;
@@ -184,6 +187,23 @@ export class Dev {
       this.panicked = true;
     });
     this.nodeEnv = nodeEnv;
+  }
+
+  connectSocket() {
+    const connected = Promise.withResolvers<void>();
+    this.socket = new WebSocket(this.baseUrl + "/_bun/hmr");
+    this.socket.onmessage = (event) => {
+      const data = new Uint8Array(event.data as any);
+      if (data[0] === 'V'.charCodeAt(0)) {
+        this.socket!.send('sr');
+        connected.resolve();
+      }
+      if (data[0] === 'r'.charCodeAt(0)) {
+        this.emit("redundant_watch");
+      }
+      this.emit("hmr", data);
+    };
+    return connected.promise;
   }
 
   fetch(url: string, init?: RequestInit) {
@@ -306,8 +326,9 @@ export class Dev {
 
   async waitForHotReload() {
     if (this.nodeEnv !== "development") return Promise.resolve();
-    const err = this.output.waitForLine(/error/i);
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i);
+    const err = this.output.waitForLine(/error/i).catch(() => {});
+    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i).catch(() => {});
+    const ctrl = new AbortController();
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
       // bundling error, and a success came in.
@@ -316,7 +337,9 @@ export class Dev {
         () => {},
       ),
       success,
+      EventEmitter.once(this, "redundant_watch", { signal: ctrl.signal }),
     ]);
+    ctrl.abort();
   }
 
   async client(
@@ -1397,6 +1420,8 @@ function testImpl<T extends DevServerTest>(
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
           // BUN_DEBUG_SERVER: "1",
+          BUN_DEBUG_DEVSERVER: "1",
+          BUN_DEBUG_WATCHER: "1",
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1414,6 +1439,9 @@ function testImpl<T extends DevServerTest>(
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     // @ts-expect-error
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
+    if (dev.nodeEnv === "development") {
+      await dev.connectSocket();
+    }
 
     await maybeWaitInteractive("start");
 

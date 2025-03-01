@@ -67,7 +67,27 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         if (!allowWebSocketMessages) {
-          console.error("[E] WebSocket message received while messages are not allowed");
+          const data = new Uint8Array(event.data);
+          console.error(
+            "[E] WebSocket message received while messages are not allowed. Event type",
+            JSON.stringify(String.fromCharCode(data[0])),
+          );
+          let hexDump = "";
+          for (let i = 0; i < data.length; i += 16) {
+            // Print offset
+            hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
+            // Print hex values
+            const chunk = data.slice(i, i + 16);
+            const hexValues = Array.from(chunk).map(b => b.toString(16).padStart(2, "0")).join(" ");
+            hexDump += hexValues.padEnd(48, " ");
+            // Print ASCII
+            hexDump += "\x1b[2m| \x1b[0m";
+            for (const byte of chunk) {
+              hexDump += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
+            }
+            hexDump += "\n";
+          }
+          console.error(hexDump);
           process.exit(2);
         }
       });

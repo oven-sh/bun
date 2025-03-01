@@ -255,8 +255,8 @@ devTest("deleting imported file shows error then recovers", {
       await dev.write(
         "other.ts",
         `
-        export const value = 456;
-      `,
+          export const value = 456;
+        `,
       );
     });
     await c.expectMessage(456);

@@ -1271,8 +1271,10 @@ pub const BundleV2 = struct {
         // gets its content set after the scan+parse phase, but before linking.
         //
         // The dev server does not use these, as it is implement in the HMR runtime.
-        if (this.transpiler.options.dev_server == null) {
+        if (variant != .dev_server) {
             try this.reserveSourceIndexesForBake();
+        } else {
+            bun.assert(this.transpiler.options.dev_server != null);
         }
 
         {
@@ -1298,8 +1300,18 @@ pub const BundleV2 = struct {
                 },
                 .dev_server => {
                     for (data.files.set.keys(), data.files.set.values()) |abs_path, flags| {
-                        const resolved = this.transpiler.resolveEntryPoint(abs_path) catch
+                        const resolved = this.transpiler.resolveEntryPoint(abs_path) catch |err| {
+                            const dev = this.transpiler.options.dev_server orelse unreachable;
+                            dev.handleParseTaskFailure(
+                                err,
+                                if (flags.client) .client else .server,
+                                abs_path,
+                                this.transpiler.log,
+                                this,
+                            ) catch bun.outOfMemory();
+                            this.transpiler.log.reset();
                             continue;
+                        };
 
                         if (flags.client) brk: {
                             const source_index = try this.enqueueEntryItem(null, resolved, true, .browser) orelse break :brk;

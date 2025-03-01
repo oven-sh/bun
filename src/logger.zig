@@ -863,8 +863,10 @@ pub const Log = struct {
         return self.appendToWithRecycled(other, source.contents_is_recycled);
     }
 
-    pub fn deinit(self: *Log) void {
-        self.msgs.clearAndFree();
+    pub fn deinit(log: *Log) void {
+        log.msgs.clearAndFree();
+        log.warnings = 0;
+        log.errors = 0;
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it

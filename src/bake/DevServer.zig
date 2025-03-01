@@ -225,8 +225,6 @@ pub const RouteBundle = struct {
     pub const Framework = struct {
         route_index: Route.Index,
 
-        // TODO: micro-opt: use a singular strong
-
         /// Cached to avoid re-creating the array every request.
         /// TODO: Invalidated when a layout is added or removed from this route.
         cached_module_list: JSC.Strong,
@@ -255,7 +253,7 @@ pub const RouteBundle = struct {
         /// and css information. Invalidated when:
         /// - The HTML file itself modified.
         /// - The list of CSS files changes.
-        /// - TODO: Any downstream file is rebundled.
+        /// - Any downstream file is rebundled.
         cached_response: ?*StaticRoute,
 
         const ByteOffset = bun.GenericIndex(u32, u8);
@@ -739,6 +737,7 @@ pub fn deinit(dev: *DevServer) void {
         .watcher_atomics = for (&dev.watcher_atomics.events) |*event| {
             event.aligned.dirs.deinit(dev.allocator);
             event.aligned.files.deinit(dev.allocator);
+            event.aligned.extra_files.deinit(dev.allocator);
         },
     };
     dev.allocation_scope.deinit();
@@ -939,8 +938,7 @@ fn scanInitialRoutes(dev: *DevServer) !void {
 }
 
 /// Returns true if a catch-all handler was attached.
-// TODO: rename to setRoutes to match server.zig
-pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
+pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     // TODO: all paths here must be prefixed with publicPath if set.
     dev.server = bun.JSC.API.AnyServer.from(server);
     const app = server.app.?;
@@ -2652,7 +2650,7 @@ pub fn handleParseTaskFailure(
         log.msgs.items.len,
     });
 
-    if (err == error.FileNotFound) {
+    if (err == error.FileNotFound or err == error.ModuleNotFound) {
         // Special-case files being deleted. Note that if a file had never
         // existed, resolution would fail first.
         switch (graph) {
@@ -4368,15 +4366,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // Additionally, clear the cached entry of the file from the path to
             // source index map.
             const hash = bun.hash(abs_path);
-            var any_found = false;
             for ([_]*bun.bundle_v2.PathToSourceIndexMap{
                 &bv2.graph.path_to_source_index_map,
                 &bv2.graph.client_path_to_source_index_map,
                 &bv2.graph.ssr_path_to_source_index_map,
             }) |map| {
-                any_found = map.remove(hash) or any_found;
+                _ = map.remove(hash);
             }
-            bun.debugAssert(any_found);
         }
 
         pub fn ensureStaleBitCapacity(g: *@This(), are_new_files_stale: bool) !void {
@@ -5766,6 +5762,9 @@ pub const MessageId = enum(u8) {
     /// Sent in response to `set_url`.
     /// - `u32`: Route index
     set_url_response = 'n',
+    /// Used for syncronization in dev server tests, to identify when a update was
+    /// acknowledged by the watcher but intentionally took no action.
+    redundant_watch = 'r',
 
     pub inline fn char(id: MessageId) u8 {
         return @intFromEnum(id);
@@ -5789,6 +5788,7 @@ const HmrTopic = enum(u8) {
     errors = 'e',
     browser_error = 'E',
     visualizer = 'v',
+    redundant_watch = 'r',
 
     /// Invalid data
     _,
@@ -5957,12 +5957,6 @@ pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
 
     event.processFileList(dev, &entry_points, temp_alloc);
     if (entry_points.set.count() == 0) {
-        // TODO: Files which become disconnected from the incremental graph
-        // should be removed from the watcher.
-        Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
-        Output.debugWarn("modified files: {s}", .{
-            bun.fmt.fmtSlice(event.files.keys(), ", "),
-        });
         return;
     }
 
@@ -6011,9 +6005,13 @@ pub const HotReloadEvent = struct {
     concurrent_task: JSC.ConcurrentTask,
     /// The watcher is not able to peek into IncrementalGraph to know what files
     /// to invalidate, so the watch events are de-duplicated and passed along.
+    /// The keys are owned by the file watcher.
     files: bun.StringArrayHashMapUnmanaged(void),
     /// Directories are watched so that resolution failures can be solved.
+    /// The keys are owned by the file watcher.
     dirs: bun.StringArrayHashMapUnmanaged(void),
+    /// Same purpose as `files` but keys do not have an owner.
+    extra_files: std.ArrayListUnmanaged(u8),
     /// Initialized by the WatcherAtomics.watcherAcquireEvent
     timer: std.time.Timer,
     /// This event may be referenced by either DevServer or Watcher thread.
@@ -6031,6 +6029,7 @@ pub const HotReloadEvent = struct {
             .timer = undefined,
             .contention_indicator = .init(0),
             .debug_mutex = if (Environment.isDebug) .{} else {},
+            .extra_files = .empty,
         };
     }
 
@@ -6040,6 +6039,7 @@ pub const HotReloadEvent = struct {
 
         ev.files.clearRetainingCapacity();
         ev.dirs.clearRetainingCapacity();
+        ev.extra_files.clearRetainingCapacity();
         ev.timer = undefined;
     }
 
@@ -6051,8 +6051,23 @@ pub const HotReloadEvent = struct {
         _ = event.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
     }
 
-    pub fn appendDir(event: *HotReloadEvent, allocator: Allocator, file_path: []const u8) void {
-        _ = event.dirs.getOrPut(allocator, file_path) catch bun.outOfMemory();
+    pub fn appendDir(event: *HotReloadEvent, allocator: Allocator, dir_path: []const u8, maybe_sub_path: ?[]const u8) void {
+        if (dir_path.len == 0) return;
+        _ = event.dirs.getOrPut(allocator, dir_path) catch bun.outOfMemory();
+
+        const sub_path = maybe_sub_path orelse return;
+        if (sub_path.len == 0) return;
+
+        const platform = bun.path.Platform.auto;
+        const ends_with_sep = platform.isSeparator(dir_path[dir_path.len - 1]);
+        const starts_with_sep = platform.isSeparator(sub_path[0]);
+        const sep_offset: i32 = if (ends_with_sep and starts_with_sep) -1 else 1;
+
+        event.extra_files.ensureUnusedCapacity(allocator, @intCast(@as(i32, @intCast(dir_path.len + sub_path.len)) + sep_offset + 1)) catch bun.outOfMemory();
+        event.extra_files.appendSliceAssumeCapacity(if (ends_with_sep) dir_path[0 .. dir_path.len - 1] else dir_path);
+        event.extra_files.appendAssumeCapacity(platform.separator());
+        event.extra_files.appendSliceAssumeCapacity(sub_path);
+        event.extra_files.appendAssumeCapacity(0);
     }
 
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`
@@ -6110,6 +6125,15 @@ pub const HotReloadEvent = struct {
             }
         }
 
+        var rest_extra = event.extra_files.items;
+        while (bun.strings.indexOfChar(rest_extra, 0)) |str| {
+            event.files.put(dev.allocator, rest_extra[0..str], {}) catch bun.outOfMemory();
+            rest_extra = rest_extra[str + 1 ..];
+        }
+        if (rest_extra.len > 0) {
+            event.files.put(dev.allocator, rest_extra, {}) catch bun.outOfMemory();
+        }
+
         const changed_file_paths = event.files.keys();
         inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
             g.invalidate(changed_file_paths, entry_points, temp_alloc) catch bun.outOfMemory();
@@ -6125,10 +6149,18 @@ pub const HotReloadEvent = struct {
         }
 
         if (entry_points.set.count() == 0) {
-            Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
-            Output.debugWarn("modified files: {s}", .{
-                bun.fmt.fmtSlice(changed_file_paths, ", "),
-            });
+            Output.debugWarn("nothing to bundle", .{});
+            if (changed_file_paths.len > 0)
+                Output.debugWarn("modified files: {s}", .{
+                    bun.fmt.fmtSlice(changed_file_paths, ", "),
+                });
+
+            if (event.dirs.count() > 0)
+                Output.debugWarn("modified dirs: {s}", .{
+                    bun.fmt.fmtSlice(event.dirs.keys(), ", "),
+                });
+
+            dev.publish(.redundant_watch, &.{MessageId.redundant_watch.char()}, .binary);
             return;
         }
     }
@@ -6351,8 +6383,6 @@ const WatcherAtomics = struct {
 
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
-    _ = changed_files;
-
     debug.log("onFileUpdate start", .{});
     defer debug.log("onFileUpdate end", .{});
 
@@ -6387,7 +6417,13 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 ev.appendFile(dev.allocator, file_path);
             },
             .directory => {
-                ev.appendDir(dev.allocator, file_path);
+                // INotifyWatcher stores sub paths into `changed_files`
+                // the other platforms do not appear to write anything into `changed_files` ever.
+                if (Environment.isLinux) {
+                    ev.appendDir(dev.allocator, file_path, if (event.name_len > 0) changed_files[event.name_off] else null);
+                } else {
+                    ev.appendDir(dev.allocator, file_path, null);
+                }
             },
         }
     }

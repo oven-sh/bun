@@ -865,8 +865,8 @@ pub const Log = struct {
 
     pub fn deinit(log: *Log) void {
         log.msgs.clearAndFree();
-        log.warnings = 0;
-        log.errors = 0;
+        // log.warnings = 0;
+        // log.errors = 0;
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it

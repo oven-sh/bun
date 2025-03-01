@@ -1577,7 +1577,7 @@ pub const E = struct {
         /// Converted from `hot_accept` to this in js_parser.zig when it is
         /// passed strings. Printed as `import.meta.hot.acceptSpecifiers`
         hot_accept_visited,
-        /// Prints the resolved specifier string for a resolved specifier.
+        /// Prints the resolved specifier string for an import record.
         resolved_specifier_string: ImportRecord.Index,
     };
 

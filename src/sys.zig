@@ -3348,7 +3348,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
             // from libuv: directories cannot be read-only
             // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
             (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY == 0 or
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
+                basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
 
         const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
             basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and

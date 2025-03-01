@@ -7811,7 +7811,7 @@ pub const Scope = struct {
         if (Symbol.isKindHoistedOrFunction(new) and
             Symbol.isKindHoistedOrFunction(existing) and
             (scope.kind == .entry or scope.kind == .function_body or scope.kind == .function_args or
-            (new == existing and Symbol.isKindHoisted(existing))))
+                (new == existing and Symbol.isKindHoisted(existing))))
         {
             return .replace_with_new;
         }

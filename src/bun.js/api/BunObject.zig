@@ -4361,10 +4361,10 @@ pub const JSZlib = struct {
         const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
-            arguments[1]
-        else if (arguments.len > 1 and !arguments[1].isUndefined()) {
-            return globalThis.throwInvalidArguments("Expected options to be an object", .{});
-        } else null;
+                arguments[1]
+            else if (arguments.len > 1 and !arguments[1].isUndefined()) {
+                return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+            } else null;
 
         if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
             return .{ buffer, options_val };

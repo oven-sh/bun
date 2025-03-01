@@ -5224,9 +5224,9 @@ fn NewPrinter(
                 // This seems silly to cache but the .items() function apparently costs 1ms according to Instruments.
                 printer.source_map_builder.line_offset_table_byte_offset_list =
                     printer
-                    .source_map_builder
-                    .line_offset_tables
-                    .items(.byte_offset_to_start_of_line);
+                        .source_map_builder
+                        .line_offset_tables
+                        .items(.byte_offset_to_start_of_line);
             }
 
             return printer;

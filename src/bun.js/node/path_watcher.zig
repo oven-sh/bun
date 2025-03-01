@@ -870,7 +870,7 @@ pub const PathWatcher = struct {
                 const time_diff = time_stamp - this.last_change_event.time_stamp;
                 if (!((this.last_change_event.time_stamp == 0 or time_diff > 1) or
                     this.last_change_event.event_type != event_type and
-                    this.last_change_event.hash != hash))
+                        this.last_change_event.hash != hash))
                 {
                     // skip consecutive duplicates
                     return;

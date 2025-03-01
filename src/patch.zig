@@ -1536,9 +1536,9 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
 fn shouldSkipLine(line: []const u8) bool {
     return line.len == 0 or
         (switch (line[0]) {
-        ' ', '-', '+' => true,
-        else => false,
-    } and
-        // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
-        (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
+            ' ', '-', '+' => true,
+            else => false,
+        } and
+            // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
+            (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
 }

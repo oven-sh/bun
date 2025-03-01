@@ -3038,7 +3038,7 @@ pub const JSGlobalObject = opaque {
             defer buf.deinit();
             var writer = buf.writer();
             writer.print(fmt, args) catch
-            // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
+                // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
                 return ZigString.static(fmt).toErrorInstance(this);
 
             // Ensure we clone it.

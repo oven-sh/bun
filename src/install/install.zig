@@ -1173,15 +1173,15 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
         ) bool {
             const verified =
                 switch (resolution.tag) {
-                .git => this.verifyGitResolution(&resolution.value.git, root_node_modules_dir),
-                .github => this.verifyGitResolution(&resolution.value.github, root_node_modules_dir),
-                .root => this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
-                .folder => if (this.lockfile.isWorkspaceTreeId(this.node_modules.tree_id))
-                    this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag)
-                else
-                    this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
-                else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag),
-            };
+                    .git => this.verifyGitResolution(&resolution.value.git, root_node_modules_dir),
+                    .github => this.verifyGitResolution(&resolution.value.github, root_node_modules_dir),
+                    .root => this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
+                    .folder => if (this.lockfile.isWorkspaceTreeId(this.node_modules.tree_id))
+                        this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag)
+                    else
+                        this.verifyTransitiveSymlinkedFolder(root_node_modules_dir),
+                    else => this.verifyPackageJSONNameAndVersion(root_node_modules_dir, resolution.tag),
+                };
             if (comptime kind == .patch) return verified;
             if (this.patch.isNull()) return verified;
             if (!verified) return false;
@@ -4322,7 +4322,7 @@ pub const PackageManager = struct {
             this.lockfile.isRootDependency(this, dependency_id) and
             // no need to do a look up if update requests are empty (`bun update` with no args)
             (this.update_requests.len == 0 or
-            this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
+                this.updating_packages.contains(dependency.name.slice(this.lockfile.buffers.string_bytes.items)));
 
         // Was this package already allocated? Let's reuse the existing one.
         if (this.lockfile.getPackageID(
@@ -7472,7 +7472,7 @@ pub const PackageManager = struct {
                         if (env.get(registry_key)) |registry_| {
                             if (registry_.len > 0 and
                                 (strings.startsWith(registry_, "https://") or
-                                strings.startsWith(registry_, "http://")))
+                                    strings.startsWith(registry_, "http://")))
                             {
                                 const prev_scope = this.scope;
                                 var api_registry = std.mem.zeroes(Api.NpmRegistry);
@@ -14553,12 +14553,12 @@ pub const PackageManager = struct {
 
         manager.options.enable.force_save_lockfile = manager.options.enable.force_save_lockfile or
             (load_result == .ok and
-            // if migrated always save a new lockfile
-            (load_result.ok.was_migrated or
+                // if migrated always save a new lockfile
+                (load_result.ok.was_migrated or
 
-            // if loaded from binary and save-text-lockfile is passed
-            (load_result.ok.format == .binary and
-            manager.options.save_text_lockfile orelse false)));
+                    // if loaded from binary and save-text-lockfile is passed
+                    (load_result.ok.format == .binary and
+                        manager.options.save_text_lockfile orelse false)));
 
         // this defaults to false
         // but we force allowing updates to the lockfile when you do bun add
@@ -15253,29 +15253,29 @@ pub const PackageManager = struct {
             // If the lockfile was frozen, we already checked it
             !manager.options.enable.frozen_lockfile and
             if (load_result.loadedFromTextLockfile())
-            !try manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator)
-        else
-            try manager.lockfile.hasMetaHashChanged(
-                PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
-                @min(packages_len_before_install, manager.lockfile.packages.len),
-            );
+                !try manager.lockfile.eql(lockfile_before_clean, packages_len_before_install, manager.allocator)
+            else
+                try manager.lockfile.hasMetaHashChanged(
+                    PackageManager.verbose_install or manager.options.do.print_meta_hash_string,
+                    @min(packages_len_before_install, manager.lockfile.packages.len),
+                );
 
         // It's unnecessary work to re-save the lockfile if there are no changes
         const should_save_lockfile =
             (load_result == .ok and ((load_result.ok.format == .binary and save_format == .text) or
 
-            // make sure old versions are updated
-            load_result.ok.format == .text and save_format == .text and manager.lockfile.text_lockfile_version != TextLockfile.Version.current)) or
+                // make sure old versions are updated
+                load_result.ok.format == .text and save_format == .text and manager.lockfile.text_lockfile_version != TextLockfile.Version.current)) or
 
             // check `save_lockfile` after checking if loaded from binary and save format is text
             // because `save_lockfile` is set to false for `--frozen-lockfile`
             (manager.options.do.save_lockfile and
-            (did_meta_hash_change or
-            had_any_diffs or
-            manager.update_requests.len > 0 or
-            (load_result == .ok and load_result.ok.serializer_result.packages_need_update) or
-            manager.lockfile.isEmpty() or
-            manager.options.enable.force_save_lockfile));
+                (did_meta_hash_change or
+                    had_any_diffs or
+                    manager.update_requests.len > 0 or
+                    (load_result == .ok and load_result.ok.serializer_result.packages_need_update) or
+                    manager.lockfile.isEmpty() or
+                    manager.options.enable.force_save_lockfile));
 
         if (should_save_lockfile) {
             try manager.saveLockfile(&load_result, save_format, had_any_diffs, lockfile_before_install, packages_len_before_install, log_level);

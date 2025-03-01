@@ -211,9 +211,9 @@ pub const PackCommand = struct {
             MissingPackageJSON,
         } ||
             if (for_publish) error{
-            RestrictedUnscopedPackage,
-            PrivatePackage,
-        } else error{};
+                RestrictedUnscopedPackage,
+                PrivatePackage,
+            } else error{};
     }
 
     const package_prefix = "package/";
@@ -320,10 +320,10 @@ pub const PackCommand = struct {
 
                     if (entry.kind == .file and
                         (eql(entry_name, "package.json") or
-                        eql(entry_name, "LICENSE") or
-                        eql(entry_name, "LICENCE") or
-                        eql(entry_name, "README") or
-                        entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.")))
+                            eql(entry_name, "LICENSE") or
+                            eql(entry_name, "LICENCE") or
+                            eql(entry_name, "README") or
+                            entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.")))
                         included = true;
                 }
 
@@ -1035,12 +1035,12 @@ pub const PackCommand = struct {
             // first, check files that can never be ignored. project root directory only
             if (entry.kind == .file and
                 (eql(entry_name, "package.json") or
-                eql(entry_name, "LICENSE") or
-                eql(entry_name, "LICENCE") or
-                eql(entry_name, "README") or
-                entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.") or
-                eql(entry_name, "CHANGELOG") or
-                entry_name.len > "CHANGELOG.".len and eql(entry_name[0.."CHANGELOG.".len], "CHANGELOG.")))
+                    eql(entry_name, "LICENSE") or
+                    eql(entry_name, "LICENCE") or
+                    eql(entry_name, "README") or
+                    entry_name.len > "README.".len and eql(entry_name[0.."README.".len], "README.") or
+                    eql(entry_name, "CHANGELOG") or
+                    entry_name.len > "CHANGELOG.".len and eql(entry_name[0.."CHANGELOG.".len], "CHANGELOG.")))
                 return null;
 
             // check default ignores that only apply to the root project directory

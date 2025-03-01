@@ -753,9 +753,9 @@ pub fn GlobWalker_(
                                                 // So for case A, we just need to check if the pattern is the last pattern.
                                                 if (is_last or
                                                     (pattern.syntax_hint == .Double and
-                                                    component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
-                                                    next_pattern.?.syntax_hint != .Double and
-                                                    this.walker.matchPatternImpl(next_pattern.?, entry_name)))
+                                                        component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
+                                                        next_pattern.?.syntax_hint != .Double and
+                                                        this.walker.matchPatternImpl(next_pattern.?, entry_name)))
                                                 {
                                                     return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                                 }

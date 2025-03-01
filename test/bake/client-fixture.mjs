@@ -78,12 +78,14 @@ function createWindow(windowUrl) {
             hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
             // Print hex values
             const chunk = data.slice(i, i + 16);
-            const hexValues = Array.from(chunk).map(b => b.toString(16).padStart(2, "0")).join(" ");
+            const hexValues = Array.from(chunk)
+              .map(b => b.toString(16).padStart(2, "0"))
+              .join(" ");
             hexDump += hexValues.padEnd(48, " ");
             // Print ASCII
             hexDump += "\x1b[2m| \x1b[0m";
             for (const byte of chunk) {
-              hexDump += (byte >= 32 && byte <= 126) ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
+              hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
             }
             hexDump += "\n";
           }

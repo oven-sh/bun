@@ -1022,6 +1022,7 @@ const Socket = (function (InternalSocket) {
       } else {
         this.destroy($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
       }
+      return this;
     }
 
     setKeepAlive(enable = false, initialDelayMsecs = 0) {

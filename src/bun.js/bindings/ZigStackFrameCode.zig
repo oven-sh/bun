@@ -1,5 +1,3 @@
-const string = @import("root").bun.string;
-
 pub const ZigStackFrameCode = enum(u8) {
     None = 0,
     /// 🏃
@@ -28,7 +26,7 @@ pub const ZigStackFrameCode = enum(u8) {
         };
     }
 
-    pub fn ansiColor(this: ZigStackFrameCode) string {
+    pub fn ansiColor(this: ZigStackFrameCode) []const u8 {
         return switch (this) {
             .Eval => "\x1b[31m",
             .Module => "\x1b[36m",

@@ -627,14 +627,9 @@ pub const ifaddrs = extern struct {
 pub extern fn getifaddrs(*?*ifaddrs) c_int;
 pub extern fn freeifaddrs(?*ifaddrs) void;
 
-const net_if_h = @cImport({
-    // TODO: remove this c import! instead of adding to it, add to
-    // c-headers-for-zig.h and use bun.c.
-    @cInclude("net/if.h");
-});
-pub const IFF_RUNNING = net_if_h.IFF_RUNNING;
-pub const IFF_UP = net_if_h.IFF_UP;
-pub const IFF_LOOPBACK = net_if_h.IFF_LOOPBACK;
+pub const IFF_RUNNING = bun.c.IFF_RUNNING;
+pub const IFF_UP = bun.c.IFF_UP;
+pub const IFF_LOOPBACK = bun.c.IFF_LOOPBACK;
 pub const sockaddr_dl = extern struct {
     sdl_len: u8, // Total length of sockaddr */
     sdl_family: u8, // AF_LINK */

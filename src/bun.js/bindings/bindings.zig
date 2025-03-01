@@ -21,6 +21,8 @@ const String = bun.String;
 const ErrorableString = JSC.ErrorableString;
 const JSError = bun.JSError;
 const OOM = bun.OOM;
+const napi = @import("../../napi/napi.zig");
+
 pub extern const JSC__JSObject__maxInlineCapacity: c_uint;
 pub const JSObject = extern struct {
     pub const shim = Shimmer("JSC", "JSObject", @This());
@@ -513,8 +515,7 @@ pub const ZigString = extern struct {
         else
             try strings.allocateLatin1IntoUTF8WithList(list, 0, []const u8, this.slice());
 
-        try list.append(0);
-        return list.items[0 .. list.items.len - 1 :0];
+        return list.toOwnedSliceSentinel(0);
     }
 
     pub fn trunc(this: ZigString, len: usize) ZigString {
@@ -1927,7 +1928,7 @@ pub const JSString = extern struct {
 
     pub const view = getZigString;
 
-    // doesn't always allocate
+    /// doesn't always allocate
     pub fn toSlice(
         this: *JSString,
         global: *JSGlobalObject,
@@ -2409,7 +2410,9 @@ pub const JSPromise = opaque {
     }
 
     pub const Strong = struct {
-        strong: JSC.Strong = .{},
+        strong: JSC.Strong = .empty,
+
+        pub const empty: Strong = .{ .strong = .empty };
 
         pub fn reject(this: *Strong, globalThis: *JSC.JSGlobalObject, val: JSC.JSValue) void {
             this.swap().reject(globalThis, val);
@@ -2463,17 +2466,13 @@ pub const JSPromise = opaque {
             return this.strong.has();
         }
 
-        pub fn globalObject(this: *const Strong) ?*JSC.JSGlobalObject {
-            return this.strong.globalThis;
-        }
-
         pub fn swap(this: *Strong) *JSC.JSPromise {
             const prom = this.strong.swap().asPromise().?;
             this.strong.deinit();
             return prom;
         }
+
         pub fn deinit(this: *Strong) void {
-            this.strong.clear();
             this.strong.deinit();
         }
     };
@@ -2887,6 +2886,7 @@ pub const JSGlobalObject = opaque {
         };
     }
 
+    /// "Expected {field} to be a {typename} for '{name}'."
     pub fn createInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2900,6 +2900,7 @@ pub const JSGlobalObject = opaque {
         return JSC.toJS(this, @TypeOf(value), value, lifetime);
     }
 
+    /// "Expected {field} to be a {typename} for '{name}'."
     pub fn throwInvalidArgumentType(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -2909,6 +2910,7 @@ pub const JSGlobalObject = opaque {
         return this.throwValue(this.createInvalidArgumentType(name_, field, typename));
     }
 
+    /// "The {argname} argument is invalid. Received {value}"
     pub fn throwInvalidArgumentValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -2917,6 +2919,25 @@ pub const JSGlobalObject = opaque {
         const actual_string_value = try determineSpecificType(this, value);
         defer actual_string_value.deref();
         return this.ERR_INVALID_ARG_VALUE("The \"{s}\" argument is invalid. Received {}", .{ argname, actual_string_value }).throw();
+    }
+
+    /// Throw an `ERR_INVALID_ARG_VALUE` when the invalid value is a property of an object.
+    /// Message depends on whether `expected` is present.
+    /// - "The property "{argname}" is invalid. Received {value}"
+    /// - "The property "{argname}" is invalid. Expected {expected}, received {value}"
+    pub fn throwInvalidArgumentPropertyValue(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        comptime expected: ?[]const u8,
+        value: JSValue,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        if (comptime expected) |_expected| {
+            return this.ERR_INVALID_ARG_VALUE("The property \"{s}\" is invalid. Expected {s}, received {}", .{ argname, _expected, actual_string_value }).throw();
+        } else {
+            return this.ERR_INVALID_ARG_VALUE("The property \"{s}\" is invalid. Received {}", .{ argname, actual_string_value }).throw();
+        }
     }
 
     extern "c" fn Bun__ErrorCode__determineSpecificType(*JSGlobalObject, JSValue) String;
@@ -2930,7 +2951,7 @@ pub const JSGlobalObject = opaque {
         return str;
     }
 
-    /// "The <argname> argument must be of type <typename>. Received <value>"
+    /// "The {argname} argument must be of type {typename}. Received {value}"
     pub fn throwInvalidArgumentTypeValue(
         this: *JSGlobalObject,
         argname: []const u8,
@@ -3093,17 +3114,22 @@ pub const JSGlobalObject = opaque {
         return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(this, fmt, args);
     }
 
-    pub fn createError(
-        this: *JSGlobalObject,
+    pub const SysErrOptions = struct {
         code: JSC.Node.ErrorCode,
-        error_name: string,
-        comptime message: string,
+        errno: ?i32 = null,
+        name: ?string = null,
+    };
+    pub fn throwSysError(
+        this: *JSGlobalObject,
+        opts: SysErrOptions,
+        comptime message: bun.stringZ,
         args: anytype,
-    ) JSValue {
+    ) JSError {
         const err = createErrorInstance(this, message, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
-        err.put(this, ZigString.static("name"), ZigString.init(error_name).toJS(this));
-        return err;
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(opts.code)).toJS(this));
+        if (opts.name) |name| err.put(this, ZigString.static("name"), ZigString.init(name).toJS(this));
+        if (opts.errno) |errno| err.put(this, ZigString.static("errno"), JSC.toJS(this, i32, errno, .temporary));
+        return this.throwValue(err);
     }
 
     pub fn throw(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSError {
@@ -3144,6 +3170,12 @@ pub const JSGlobalObject = opaque {
             if (args.len > 0) args[0] else .zero,
             if (args.len > 1) args[1] else .zero,
         );
+    }
+
+    extern fn Bun__Process__emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) void;
+    pub fn emitWarning(globalObject: *JSGlobalObject, warning: JSValue, @"type": JSValue, code: JSValue, ctor: JSValue) JSError!void {
+        Bun__Process__emitWarning(globalObject, warning, @"type", code, ctor);
+        if (globalObject.hasException()) return error.JSError;
     }
 
     extern fn JSC__JSGlobalObject__queueMicrotaskJob(JSC__JSGlobalObject__ptr: *JSGlobalObject, JSValue, JSValue, JSValue) void;
@@ -3220,7 +3252,20 @@ pub const JSGlobalObject = opaque {
         }
 
         return this.tryTakeException() orelse {
-            @panic("A JavaScript exception was thrown, however it was cleared before it could be read.");
+            @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+        };
+    }
+
+    pub fn takeError(this: *JSGlobalObject, proof: bun.JSError) JSValue {
+        switch (proof) {
+            error.JSError => {},
+            error.OutOfMemory => this.throwOutOfMemory() catch {},
+        }
+
+        return (this.tryTakeException() orelse {
+            @panic("A JavaScript exception was thrown, but it was cleared before it could be read.");
+        }).toError() orelse {
+            @panic("Couldn't convert a JavaScript exception to an Error instance.");
         };
     }
 
@@ -3305,6 +3350,12 @@ pub const JSGlobalObject = opaque {
 
     pub fn readableStreamToFormData(this: *JSGlobalObject, value: JSValue, content_type: JSValue) JSValue {
         return ZigGlobalObject__readableStreamToFormData(this, value, content_type);
+    }
+
+    extern fn ZigGlobalObject__makeNapiEnvForFFI(*JSGlobalObject) *napi.NapiEnv;
+
+    pub fn makeNapiEnvForFFI(this: *JSGlobalObject) *napi.NapiEnv {
+        return ZigGlobalObject__makeNapiEnvForFFI(this);
     }
 
     pub inline fn assertOnJSThread(this: *JSGlobalObject) void {
@@ -3418,6 +3469,12 @@ pub const JSGlobalObject = opaque {
         return NewRuntimeFunction(global, ZigString.static(display_name), argument_count, toJSHostFunction(function), false, false, null);
     }
 
+    /// Get a lazily-initialized `JSC::String` from `BunCommonStrings.h`.
+    pub inline fn commonStrings(this: *JSC.JSGlobalObject) CommonStrings {
+        JSC.markBinding(@src());
+        return .{ .globalObject = this };
+    }
+
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
 
     extern fn JSC__JSGlobalObject__bunVM(*JSGlobalObject) *VM;
@@ -3429,6 +3486,46 @@ pub const JSGlobalObject = opaque {
     extern fn JSGlobalObject__setTimeZone(this: *JSGlobalObject, timeZone: *const ZigString) bool;
     extern fn JSGlobalObject__tryTakeException(*JSGlobalObject) JSValue;
     extern fn JSGlobalObject__throwTerminationException(this: *JSGlobalObject) void;
+};
+
+/// Common strings from `BunCommonStrings.h`.
+///
+/// All getters return a `JSC::JSString`;
+pub const CommonStrings = struct {
+    globalObject: *JSC.JSGlobalObject,
+
+    pub inline fn IPv4(this: CommonStrings) JSValue {
+        return this.getString("IPv4");
+    }
+    pub inline fn IPv6(this: CommonStrings) JSValue {
+        return this.getString("IPv6");
+    }
+    pub inline fn @"127.0.0.1"(this: CommonStrings) JSValue {
+        return this.getString("IN4Loopback");
+    }
+    pub inline fn @"::"(this: CommonStrings) JSValue {
+        return this.getString("IN6Any");
+    }
+
+    inline fn getString(this: CommonStrings, comptime name: anytype) JSValue {
+        JSC.markMemberBinding("CommonStrings", @src());
+        const str: JSC.JSValue = @call(
+            .auto,
+            @field(CommonStrings, "JSC__JSGlobalObject__commonStrings__get" ++ name),
+            .{this.globalObject},
+        );
+        bun.assert(str != .zero);
+        if (comptime bun.Environment.isDebug) {
+            bun.assertWithLocation(str != .zero, @src());
+            bun.assertWithLocation(str.isStringLiteral(), @src());
+        }
+        return str;
+    }
+
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIPv4(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIPv6(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIN4Loopback(global: *JSC.JSGlobalObject) JSC.JSValue;
+    extern "C" fn JSC__JSGlobalObject__commonStrings__getIN6Any(global: *JSC.JSGlobalObject) JSC.JSValue;
 };
 
 pub const JSNativeFn = JSHostZigFunction;
@@ -3502,7 +3599,6 @@ pub const JSMap = opaque {
     }
 };
 
-// TODO: this should not need to be `pub`
 pub const JSValueReprInt = i64;
 
 /// ABI-compatible with EncodedJSValue
@@ -3513,19 +3609,24 @@ pub const JSValue = enum(i64) {
     true = FFI.TrueI64,
     false = 0x6,
 
+    // TODO: Remove
     /// Typically means an exception was thrown.
     zero = 0,
 
-    /// JSValue::ValueDeleted
+    // TODO: Remove
+    /// This corresponds to `JSValue::ValueDeleted` in C++ It is never OK to use
+    /// this value except in the return value of `JSC__JSValue__getIfPropertyExistsImpl`
+    /// and `JSC__JSValue__fastGet`
     ///
     /// Deleted is a special encoding used in JSC hash map internals used for
-    /// the null state. It is re-used here for encoding the "not present" state.
+    /// the null state. It is re-used here for encoding the "not present" state
+    /// in `JSC__JSValue__getIfPropertyExistsImpl`
     property_does_not_exist_on_object = 0x4,
     _,
 
     /// When JavaScriptCore throws something, it returns a null cell (0). The
     /// exception is set on the global object. ABI-compatible with EncodedJSValue.
-    pub const MaybeException = enum(i64) {
+    pub const MaybeException = enum(JSValueReprInt) {
         zero = 0,
         _,
 
@@ -3768,6 +3869,8 @@ pub const JSValue = enum(i64) {
                 .Float32Array => .kJSTypedArrayTypeFloat32Array,
                 .Float64Array => .kJSTypedArrayTypeFloat64Array,
                 .ArrayBuffer => .kJSTypedArrayTypeArrayBuffer,
+                .BigInt64Array => .kJSTypedArrayTypeBigInt64Array,
+                .BigUint64Array => .kJSTypedArrayTypeBigUint64Array,
                 // .DataView => .kJSTypedArrayTypeDataView,
                 else => .kJSTypedArrayTypeNone,
             };
@@ -4303,11 +4406,25 @@ pub const JSValue = enum(i64) {
         return this.jsType() == .JSDate;
     }
 
+    /// Protects a JSValue from garbage collection.
+    ///
+    /// This is useful when you want to store a JSValue in a global or on the
+    /// heap, where the garbage collector will not be able to discover your
+    /// reference to it.
+    ///
+    /// A value may be protected multiple times and must be unprotected an
+    /// equal number of times before becoming eligible for garbage collection.
     pub fn protect(this: JSValue) void {
         if (!this.isCell()) return;
         JSC.C.JSValueProtect(JSC.VirtualMachine.get().global, this.asObjectRef());
     }
 
+    /// Unprotects a JSValue from garbage collection.
+    ///
+    /// A value may be protected multiple times and must be unprotected an
+    /// equal number of times before becoming eligible for garbage collection.
+    ///
+    /// This is the inverse of `protect`.
     pub fn unprotect(this: JSValue) void {
         if (!this.isCell()) return;
         JSC.C.JSValueUnprotect(JSC.VirtualMachine.get().global, this.asObjectRef());
@@ -4711,6 +4828,14 @@ pub const JSValue = enum(i64) {
         return this.isNumber() and !this.isInt32();
     }
 
+    /// [21.1.2.2 Number.isFinite](https://tc39.es/ecma262/#sec-number.isfinite)
+    ///
+    /// Returns `false` for non-numbers, `NaN`, `Infinity`, and `-Infinity`
+    pub fn isFinite(this: JSValue) bool {
+        if (!this.isNumber()) return false;
+        return std.math.isFinite(this.asNumber());
+    }
+
     pub fn isError(this: JSValue) bool {
         if (!this.isCell())
             return false;
@@ -4875,13 +5000,7 @@ pub const JSValue = enum(i64) {
     }
 
     /// Increments the reference count, you must call `.deref()` or it will leak memory.
-    /// Returns String.Dead on error. Deprecated in favor of `toBunString2`
-    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) bun.String {
-        return bun.String.fromJS(this, globalObject);
-    }
-
-    /// Increments the reference count, you must call `.deref()` or it will leak memory.
-    pub fn toBunString2(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
+    pub fn toBunString(this: JSValue, globalObject: *JSC.JSGlobalObject) JSError!bun.String {
         return bun.String.fromJS2(this, globalObject);
     }
 
@@ -4937,7 +5056,7 @@ pub const JSValue = enum(i64) {
         });
     }
 
-    /// Deprecated: replace with 'toBunString2'
+    /// Deprecated: replace with 'toBunString'
     pub fn getZigString(this: JSValue, global: *JSGlobalObject) bun.JSError!ZigString {
         var str = ZigString.init("");
         try this.toZigString(&str, global);
@@ -5309,7 +5428,7 @@ pub const JSValue = enum(i64) {
             return global.throwInvalidPropertyTypeValue(property, "string", prop);
         }
 
-        const str = prop.toBunString(global);
+        const str = try prop.toBunString(global);
         if (global.hasException()) {
             str.deref();
             return error.JSError;
@@ -5614,6 +5733,13 @@ pub const JSValue = enum(i64) {
         return .none;
     }
 
+    /// Static cast a value into a `JSC::JSString`. Casting a non-string results
+    /// in safety-protected undefined behavior.
+    ///
+    /// - `this` is re-interpreted, so runtime casting does not occur (e.g. `this.toString()`)
+    /// - Does not allocate
+    /// - Does not increment ref count
+    /// - Make sure `this` stays on the stack. If you're method chaining, you may need to call `this.ensureStillAlive()`.
     pub fn asString(this: JSValue) *JSString {
         return cppFn("asString", .{
             this,
@@ -5639,7 +5765,7 @@ pub const JSValue = enum(i64) {
         globalObject: *JSC.JSGlobalObject,
 
         pub fn format(this: StringFormatter, comptime text: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
-            const str = this.value.toBunString(this.globalObject);
+            const str = try this.value.toBunString(this.globalObject);
             defer str.deref();
             try str.format(text, opts, writer);
         }
@@ -5868,13 +5994,6 @@ pub const JSValue = enum(i64) {
 
     pub fn isIterable(this: JSValue, globalObject: *JSGlobalObject) bool {
         return cppFn("isIterable", .{
-            this,
-            globalObject,
-        });
-    }
-
-    pub fn parseJSON(this: JSValue, globalObject: *JSGlobalObject) JSValue {
-        return cppFn("parseJSON", .{
             this,
             globalObject,
         });
@@ -6794,7 +6913,7 @@ pub const URL = opaque {
     extern fn URL__search(*URL) String;
     extern fn URL__host(*URL) String;
     extern fn URL__hostname(*URL) String;
-    extern fn URL__port(*URL) String;
+    extern fn URL__port(*URL) u32;
     extern fn URL__deinit(*URL) void;
     extern fn URL__pathname(*URL) String;
     extern fn URL__getHrefFromJS(JSValue, *JSC.JSGlobalObject) String;
@@ -6880,7 +6999,9 @@ pub const URL = opaque {
         JSC.markBinding(@src());
         return URL__hostname(url);
     }
-    pub fn port(url: *URL) String {
+    /// Returns `std.math.maxInt(u32)` if the port is not set. Otherwise, `port`
+    /// is guaranteed to be within the `u16` range.
+    pub fn port(url: *URL) u32 {
         JSC.markBinding(@src());
         return URL__port(url);
     }
@@ -7044,5 +7165,3 @@ pub const DeferredError = struct {
         return err;
     }
 };
-
-pub const JSSocketAddress = @import("./JSSocketAddress.zig").JSSocketAddress;

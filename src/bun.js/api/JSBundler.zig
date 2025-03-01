@@ -849,7 +849,7 @@ pub const JSBundler = struct {
 
                 if (this.was_file) {
                     // Faster path: skip the extra threadpool dispatch
-                    this.bv2.graph.pool.pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
+                    this.bv2.graph.pool.worker_pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
                     this.deinit();
                     return;
                 }
@@ -1092,7 +1092,7 @@ pub const BuildArtifact = struct {
     path: []const u8 = "",
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
-    sourcemap: JSC.Strong = .{},
+    sourcemap: JSC.Strong = .empty,
 
     pub const OutputKind = enum {
         chunk,

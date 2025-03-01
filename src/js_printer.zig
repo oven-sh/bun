@@ -6001,7 +6001,7 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (opts.module_type == .internal_bake_dev) {
+    if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
         printer.indent();
         printer.printIndent();
         if (!ast.top_level_await_keyword.isEmpty()) {
@@ -6053,14 +6053,22 @@ pub fn printWithWriterAndPlatform(
         }
     }
 
-    printer.writer.done() catch |err|
+    printer.writer.done() catch |err| {
+        // In bundle_v2, this is backed by an arena, but incremental uses
+        // `dev.allocator` for this buffer, so it must be freed.
+        printer.source_map_builder.source_map.ctx.data.deinit();
+
         return .{ .err = err };
+    };
 
     const written = printer.writer.ctx.getWritten();
-    const source_map: ?SourceMap.Chunk = if (generate_source_maps and written.len > 0) brk: {
-        const chunk = printer.source_map_builder.generateChunk(written);
-        if (chunk.should_ignore)
+    const source_map: ?SourceMap.Chunk = if (generate_source_maps) brk: {
+        if (written.len == 0 or printer.source_map_builder.source_map.shouldIgnore()) {
+            printer.source_map_builder.source_map.ctx.data.deinit();
             break :brk null;
+        }
+        const chunk = printer.source_map_builder.generateChunk(written);
+        assert(!chunk.should_ignore);
         break :brk chunk;
     } else null;
 

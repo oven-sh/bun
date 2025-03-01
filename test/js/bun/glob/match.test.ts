@@ -117,6 +117,9 @@ describe("Glob.match", () => {
     glob = new Glob("{a,b}/c/{d,e}/**/*est.ts");
     expect(glob.match("a/c/d/one/two/three.test.ts"));
 
+    glob = new Glob("{a,{d,e}b}/c");
+    expect(glob.match("a/c")).toBeTrue();
+
     glob = new Glob("{**/a,**/b}");
     expect(glob.match("b")).toBeTrue();
 

@@ -39,184 +39,6 @@ const DependencyIDSlice = BinaryLockfile.DependencyIDSlice;
 const Bin = Install.Bin;
 const ExternalString = Semver.ExternalString;
 
-/// A property key in the `packages` field of the lockfile
-pub const PkgPath = struct {
-    raw: string,
-    depth: u8,
-
-    /// raw must be valid
-    /// fills buf with the path to dependency in node_modules.
-    /// e.g. loose-envify/js-tokens@4.0.0 -> node_modules/loose-envify/node_modules/js-tokens
-    pub fn path(this: PkgPath, path_buf: []u8, comptime sep: u8) stringZ {
-        var buf = path_buf;
-        var remain = this.raw;
-
-        const end = loop: while (true) {
-            @memcpy(buf[0.."node_modules/".len], "node_modules" ++ [1]u8{sep});
-            buf = buf["node_modules/".len..];
-
-            var at = strings.indexOfChar(remain, '@') orelse unreachable;
-            var slash = strings.indexOfChar(remain, '/') orelse break :loop at;
-
-            if (at == 0) {
-                // scoped package, find next '@' and '/'
-                at += 1 + (strings.indexOfChar(remain[1..], '@') orelse unreachable);
-                slash += 1 + (strings.indexOfChar(remain[slash + 1 ..], '/') orelse {
-                    break :loop at;
-                });
-            }
-
-            if (at < slash) {
-                // slash is in the version
-                break :loop at;
-            }
-
-            @memcpy(buf[0..slash], remain[0..slash]);
-            buf[slash] = sep;
-            buf = buf[slash + 1 ..];
-            remain = remain[slash + 1 ..];
-        };
-
-        @memcpy(buf[0..end], remain[0..end]);
-        buf = buf[end..];
-        buf[0] = 0;
-        return path_buf[0 .. @intFromPtr(buf.ptr) - @intFromPtr(path_buf.ptr) :0];
-    }
-
-    pub fn reverseIterator(input: string) Iterator {
-        return .{
-            .input = input,
-            .i = @intCast(input.len),
-        };
-    }
-
-    pub const ReverseIterator = struct {
-        input: string,
-        i: u32,
-
-        pub fn next(this: *ReverseIterator) error{InvalidPackageKey}!?string {
-            if (this.i == 0) return null;
-
-            const remain = this.input[0..this.i];
-            if (remain.len == 0) return error.InvalidPackageKey;
-
-            const slash = strings.indexOfCharNeg(remain, '/') orelse {
-                // the end
-                const name = remain;
-                this.i = 0;
-                return name;
-            };
-
-            // if this is the second component of a scoped package an '@'
-            // will begin the next
-            const at = strings.indexOfCharNeg(remain, '@') orelse {
-                const name = this.input[slash + 1 .. this.i];
-                this.i = slash;
-                return name;
-            };
-
-            if (at < slash) {
-                return error.InvalidPackageKey;
-            }
-
-            const next_slash = strings.indexOfCharNeg(remain[0..slash]) orelse {
-                // if `@` exists there must be another slash unless the first package
-                // is a scoped package
-                if (at != 0) {
-                    return error.InvalidPackageKey;
-                }
-
-                const name = remain;
-                this.i = 0;
-                return name;
-            };
-
-            if (next_slash + 1 != at) {
-                return error.InvalidPackageKey;
-            }
-
-            const name = this.input[next_slash + 1 .. this.i];
-            this.i = next_slash;
-            return name;
-        }
-
-        pub fn first(this: *ReverseIterator) error{InvalidPackageKey}!string {
-            bun.debugAssert(this.i == this.input.len);
-
-            return this.next() orelse return error.InvalidPackageKey;
-        }
-    };
-
-    pub fn iterator(input: string) Iterator {
-        return .{
-            .input = input,
-            .i = 0,
-        };
-    }
-
-    pub const Iterator = struct {
-        input: string,
-        i: u32,
-        version_offset: ?u32 = null,
-
-        pub fn next(this: *Iterator) error{InvalidPackageKey}!?string {
-            if (this.i == this.input.len) return null;
-
-            var remain = this.input[this.i..];
-
-            var maybe_at = strings.indexOfChar(remain, '@');
-            var slash = strings.indexOfChar(remain, '/') orelse {
-                // no slashes left, it's the last dependency name.
-                // '@' will only exist if '/' exists (scoped package)
-                if (maybe_at != null) return error.InvalidPackageKey;
-                this.i = @intCast(this.input.len);
-                return remain;
-            };
-
-            if (maybe_at == null) {
-                if (slash + 1 == this.input.len) return error.InvalidPackageKey;
-                this.i += slash + 1;
-                return remain[0..slash];
-            }
-
-            if (maybe_at.? == 0) {
-                // scoped package, find next '/' and '@' if it exists
-                maybe_at = strings.indexOfChar(remain[1..], '@');
-                slash += 1 + (strings.indexOfChar(remain[slash + 1 ..], '/') orelse {
-                    if (maybe_at != null) return error.InvalidPackageKey;
-                    this.i = @intCast(this.input.len);
-                    return remain;
-                });
-            }
-
-            if (maybe_at) |at| {
-                if (at + 1 < slash) {
-                    // both '@' and '/' exist and it's not a scoped package, so
-                    // '@' must be greater than '/'
-                    return error.InvalidPackageKey;
-                }
-            }
-
-            this.i += slash + 1;
-            return remain[0..slash];
-        }
-
-        /// There will always be at least one component to this path. Return
-        /// an error if none is found (empty string)
-        pub fn first(this: *Iterator) error{InvalidPackageKey}!string {
-            bun.assertWithLocation(this.i == 0, @src());
-            return try this.next() orelse error.InvalidPackageKey;
-        }
-    };
-
-    pub fn fromLockfile(input: string) PkgPath {
-        return .{
-            .raw = input,
-            .depth = 0,
-        };
-    }
-};
-
 pub const Version = enum(u32) {
     v0 = 0,
 
@@ -1180,20 +1002,17 @@ const ParseError = OOM || error{
     UnexpectedResolution,
 };
 
-const PkgMapEntry = struct {
-    pkg_id: PackageID,
-    bundled: bool,
-};
+const PkgPathSet = PkgMap(void);
 
 fn PkgMap(comptime T: type) type {
     return struct {
-        map: bun.StringArrayHashMap(T),
+        map: bun.StringHashMap(T),
 
         pub const Entry = T;
 
         pub fn init(allocator: std.mem.Allocator) @This() {
             return .{
-                .map = bun.StringArrayHashMap(T).init(allocator),
+                .map = bun.StringHashMap(T).init(allocator),
             };
         }
 
@@ -1216,6 +1035,10 @@ fn PkgMap(comptime T: type) type {
 
         pub fn get(this: *const @This(), name: string) ?T {
             return this.map.get(name);
+        }
+
+        pub fn contains(this: *const @This(), path: string) bool {
+            return this.map.contains(path);
         }
 
         pub fn findResolution(this: *const @This(), pkg_path: string, dep: *const Dependency, string_buf: string, path_buf: []u8) ResolveError!T {
@@ -1488,6 +1311,9 @@ pub fn parseIntoBinaryLockfile(
     var optional_peers_buf: std.AutoHashMapUnmanaged(u64, void) = .{};
     defer optional_peers_buf.deinit(allocator);
 
+    var bundled_pkgs = PkgPathSet.init(allocator);
+    defer bundled_pkgs.deinit();
+
     const root_pkg_exr = maybe_root_pkg orelse {
         try log.addError(source, workspaces_obj.loc, "Expected root package");
         return error.InvalidWorkspaceObject;
@@ -1499,7 +1325,7 @@ pub fn parseIntoBinaryLockfile(
             return error.InvalidWorkspaceObject;
         } else null;
 
-        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg_exr, &string_buf, log, source, &optional_peers_buf);
+        const off, var len = try parseAppendDependencies(lockfile, allocator, &root_pkg_exr, &string_buf, log, source, &optional_peers_buf, false, {}, {});
 
         var root_pkg: BinaryLockfile.Package = .{};
 
@@ -1545,7 +1371,7 @@ pub fn parseIntoBinaryLockfile(
         try lockfile.getOrPutID(0, root_pkg.name_hash);
     }
 
-    var pkg_map = PkgMap(PkgMapEntry).init(allocator);
+    var pkg_map = PkgMap(PackageID).init(allocator);
     defer pkg_map.deinit();
 
     const workspace_pkgs_off: u32 = 1;
@@ -1573,7 +1399,7 @@ pub fn parseIntoBinaryLockfile(
                 pkg.name = try string_buf.appendWithHash(name, name_hash);
                 pkg.name_hash = name_hash;
 
-                const off, const len = try parseAppendDependencies(lockfile, allocator, &value, &string_buf, log, source, &optional_peers_buf);
+                const off, const len = try parseAppendDependencies(lockfile, allocator, &value, &string_buf, log, source, &optional_peers_buf, false, {}, {});
 
                 pkg.dependencies = .{ .off = off, .len = len };
                 pkg.resolutions = .{ .off = off, .len = len };
@@ -1585,7 +1411,7 @@ pub fn parseIntoBinaryLockfile(
                 }
 
                 // there should be no duplicates
-                const pkg_id = try lockfile.appendPackageNoDedupe(&pkg, string_buf.bytes.items);
+                const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
                 const entry = try pkg_map.getOrPut(name);
                 if (entry.found_existing) {
@@ -1593,12 +1419,7 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidWorkspaceObject;
                 }
 
-                entry.value_ptr.* = .{
-                    .pkg_id = pkg_id,
-
-                    // direct dependencies of workspaces are never bundled
-                    .bundled = false,
-                };
+                entry.value_ptr.* = pkg_id;
 
                 workspace_pkgs_len += 1;
                 continue :workspaces;
@@ -1620,7 +1441,42 @@ pub fn parseIntoBinaryLockfile(
             return error.InvalidPackagesObject;
         }
 
+        // find the bundle roots.
+        //
+        // Resolving bundled dependencies:
+        // bun.lock marks package keys with { bundled: true } if they originate
+        // from a bundled dependency. Transitive dependencies of bundled dependencies
+        // will not have a bundled property, and `bun install` expects them to not
+        // have bundled behavior set. In order to resolve these dependencies correctly,
+        // first loop through each key here and add the key to a map if it's bundled.
+        // Then when parsing the dependencies, lookup the package key + dep name from
+        // the bundled map, and mark the dependency bundled if it exists. This works
+        // because package's direct bundled dependencies can only exist at the top
+        // level of it's node_modules.
         for (pkgs_expr.data.e_object.properties.slice()) |prop| {
+            const key = prop.key.?;
+            const value = prop.value.?;
+
+            const pkg_path = key.asString(allocator) orelse {
+                try log.addError(source, key.loc, "Expected a string");
+                return error.InvalidPackageKey;
+            };
+
+            if (!value.isArray()) {
+                try log.addError(source, value.loc, "Expected an array");
+                return error.InvalidPackageInfo;
+            }
+
+            const pkg_info = value.data.e_array.items;
+            if (pkg_info.len < 3) continue;
+            const maybe_info_obj = pkg_info.at(2);
+            const bundled_expr = maybe_info_obj.get("bundled") orelse continue;
+            const bundled = bundled_expr.asBool() orelse continue;
+            if (!bundled) continue;
+            try bundled_pkgs.put(pkg_path, {});
+        }
+
+        next_pkg_key: for (pkgs_expr.data.e_object.properties.slice()) |prop| {
             const key = prop.key.?;
             const value = prop.value.?;
 
@@ -1717,10 +1573,25 @@ pub fn parseIntoBinaryLockfile(
                             if (comptime Environment.isDebug) {
                                 bun.assertWithLocation(!strings.eqlLong(pkg_path, pkg_names[workspace_pkg_id].slice(string_buf.bytes.items), true), @src());
                             }
-                            entry.value_ptr.* = .{
-                                .pkg_id = workspace_pkg_id,
-                                .bundled = false,
-                            };
+
+                            // found the workspace this key belongs to. for example both `pkg1` and `another-pkg1` should map
+                            // to the same package id:
+                            //
+                            // "workspaces": {
+                            //   "": {},
+                            //   "packages/pkg1": {
+                            //     "name": "pkg1",
+                            //   },
+                            // },
+                            // "overrides": {
+                            //   "some-pkg": "workspace:packages/pkg1",
+                            // },
+                            // "packages": {
+                            //   "pkg1": "workspace:packages/pkg1",
+                            //   "another-pkg1": "workspaces:packages/pkg1",
+                            // },
+                            entry.value_ptr.* = workspace_pkg_id;
+                            continue :next_pkg_key;
                         }
                     }
 
@@ -1730,7 +1601,6 @@ pub fn parseIntoBinaryLockfile(
             }
 
             var pkg: BinaryLockfile.Package = .{};
-            var bundled = false;
 
             // dependencies, os, cpu, libc
             switch (res.tag) {
@@ -1751,16 +1621,18 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     }
 
-                    if (deps_os_cpu_libc_bin_bundle_obj.get("bundled")) |bundled_expr| {
-                        if (!bundled_expr.isBoolean()) {
-                            try log.addError(source, bundled_expr.loc, "Expected a boolean");
-                            return error.InvalidPackageInfo;
-                        }
-
-                        bundled = bundled_expr.data.e_boolean.value;
-                    }
-
-                    const off, const len = try parseAppendDependencies(lockfile, allocator, deps_os_cpu_libc_bin_bundle_obj, &string_buf, log, source, &optional_peers_buf);
+                    const off, const len = try parseAppendDependencies(
+                        lockfile,
+                        allocator,
+                        deps_os_cpu_libc_bin_bundle_obj,
+                        &string_buf,
+                        log,
+                        source,
+                        &optional_peers_buf,
+                        true,
+                        pkg_path,
+                        &bundled_pkgs,
+                    );
 
                     pkg.dependencies = .{ .off = off, .len = len };
                     pkg.resolutions = .{ .off = off, .len = len };
@@ -1845,7 +1717,7 @@ pub fn parseIntoBinaryLockfile(
             pkg.name_hash = name_hash;
             pkg.resolution = res;
 
-            const pkg_id = try lockfile.appendPackageNoDedupe(&pkg, string_buf.bytes.items);
+            const pkg_id = try lockfile.appendPackageDedupe(&pkg, string_buf.bytes.items);
 
             const entry = try pkg_map.getOrPut(pkg_path);
             if (entry.found_existing) {
@@ -1853,10 +1725,7 @@ pub fn parseIntoBinaryLockfile(
                 return error.InvalidPackageKey;
             }
 
-            entry.value_ptr.* = .{
-                .pkg_id = pkg_id,
-                .bundled = bundled,
-            };
+            entry.value_ptr.* = pkg_id;
         }
 
         try lockfile.buffers.resolutions.ensureTotalCapacityPrecise(allocator, lockfile.buffers.dependencies.items.len);
@@ -1878,7 +1747,7 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
 
-                const entry = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
+                const res_id = pkg_map.get(dep.name.slice(lockfile.buffers.string_bytes.items)) orelse {
                     if (dep.behavior.optional) {
                         continue;
                     }
@@ -1886,7 +1755,7 @@ pub fn parseIntoBinaryLockfile(
                     return error.InvalidPackageInfo;
                 };
 
-                mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
+                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
             }
         }
 
@@ -1909,7 +1778,7 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     };
 
-                    const entry = pkg_map.get(workspace_node_modules) orelse pkg_map.get(dep_name) orelse {
+                    const res_id = pkg_map.get(workspace_node_modules) orelse pkg_map.get(dep_name) orelse {
                         if (dep.behavior.optional) {
                             continue;
                         }
@@ -1917,7 +1786,7 @@ pub fn parseIntoBinaryLockfile(
                         return error.InvalidPackageInfo;
                     };
 
-                    mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
+                    mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
                 }
             }
         }
@@ -1928,9 +1797,9 @@ pub fn parseIntoBinaryLockfile(
 
             const pkg_path = key.asString(allocator).?;
 
-            const pkg_id = (pkg_map.get(pkg_path) orelse {
+            const pkg_id = pkg_map.get(pkg_path) orelse {
                 return error.InvalidPackagesObject;
-            }).pkg_id;
+            };
 
             // find resolutions. iterate up to root through the pkg path.
             const deps = pkg_deps[pkg_id];
@@ -1938,7 +1807,7 @@ pub fn parseIntoBinaryLockfile(
                 const dep_id: DependencyID = @intCast(_dep_id);
                 const dep = &lockfile.buffers.dependencies.items[dep_id];
 
-                const entry = pkg_map.findResolution(pkg_path, dep, lockfile.buffers.string_bytes.items, &path_buf) catch |err| switch (err) {
+                const res_id = pkg_map.findResolution(pkg_path, dep, lockfile.buffers.string_bytes.items, &path_buf) catch |err| switch (err) {
                     error.InvalidPackageKey => {
                         try log.addError(source, key.loc, "Invalid package path");
                         return error.InvalidPackageKey;
@@ -1952,7 +1821,7 @@ pub fn parseIntoBinaryLockfile(
                     },
                 };
 
-                mapDepToPkg(dep, dep_id, &entry, lockfile, pkg_resolutions);
+                mapDepToPkg(dep, dep_id, res_id, lockfile, pkg_resolutions);
             }
         }
 
@@ -1967,10 +1836,8 @@ pub fn parseIntoBinaryLockfile(
     }
 }
 
-fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_map_entry: *const PkgMapEntry, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution) void {
-    const pkg_id = pkg_map_entry.pkg_id;
+fn mapDepToPkg(dep: *Dependency, dep_id: DependencyID, pkg_id: PackageID, lockfile: *BinaryLockfile, pkg_resolutions: []const Resolution) void {
     lockfile.buffers.resolutions.items[dep_id] = pkg_id;
-    dep.behavior.bundled = pkg_map_entry.bundled;
 
     if (lockfile.text_lockfile_version != .v0) {
         const res = &pkg_resolutions[pkg_id];
@@ -2018,6 +1885,9 @@ fn parseAppendDependencies(
     log: *logger.Log,
     source: *const logger.Source,
     optional_peers_buf: *std.AutoHashMapUnmanaged(u64, void),
+    comptime check_for_bundled: bool,
+    pkg_path: if (check_for_bundled) string else void,
+    bundled_pkgs: if (check_for_bundled) *const PkgPathSet else void,
 ) ParseError!struct { u32, u32 } {
     defer optional_peers_buf.clearRetainingCapacity();
 
@@ -2036,6 +1906,8 @@ fn parseAppendDependencies(
             try optional_peers_buf.put(allocator, name_hash, {});
         }
     }
+
+    var path_buf: if (check_for_bundled) bun.PathBuffer else void = undefined;
 
     const off = lockfile.buffers.dependencies.items.len;
     inline for (workspace_dependency_groups) |dependency_group| {
@@ -2066,7 +1938,7 @@ fn parseAppendDependencies(
                 const version = try buf.append(version_str);
                 const version_sliced = version.sliced(buf.bytes.items);
 
-                const dep: Dependency = .{
+                var dep: Dependency = .{
                     .name = name.value,
                     .name_hash = name.hash,
                     .behavior = if (group_behavior.peer and optional_peers_buf.contains(name.hash))
@@ -2086,6 +1958,18 @@ fn parseAppendDependencies(
                         return error.InvalidDependencyVersion;
                     },
                 };
+
+                if (comptime check_for_bundled) {
+                    @memcpy(path_buf[0..pkg_path.len], pkg_path);
+                    var remain = path_buf[pkg_path.len..];
+                    remain[0] = '/';
+                    remain = remain[1..];
+                    @memcpy(remain[0..name_str.len], name_str);
+                    const bundled_location = path_buf[0 .. pkg_path.len + 1 + name_str.len];
+                    if (bundled_pkgs.contains(bundled_location)) {
+                        dep.behavior.bundled = true;
+                    }
+                }
 
                 try lockfile.buffers.dependencies.append(allocator, dep);
             }

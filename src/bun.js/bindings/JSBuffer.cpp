@@ -649,8 +649,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
             ZigString str = Zig::toZigString(view);
 
             if (UNLIKELY(!Bun__Buffer_fill(&str, startPtr, end - start, encoding))) {
-                throwTypeError(lexicalGlobalObject, scope, "Failed to decode value"_s);
-                return {};
+                return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
             }
         } else if (auto* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(value)) {
             if (UNLIKELY(view->isDetached())) {
@@ -660,8 +659,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
 
             size_t length = view->byteLength();
             if (UNLIKELY(length == 0)) {
-                throwTypeError(lexicalGlobalObject, scope, "Buffer cannot be empty"_s);
-                return {};
+                return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
             }
 
             auto* start = uint8Array->typedVector();
@@ -1425,7 +1423,9 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
         return WTF::reverseFind(span, byteValue);
     }
     span = span.subspan(byteOffset);
-    return WTF::find<uint8_t>(span, byteValue);
+    auto result = WTF::find<uint8_t>(span, byteValue);
+    if (result == WTF::notFound) return -1;
+    return result + byteOffset;
 }
 
 static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last, const uint8_t* typedVector, size_t byteLength, double byteOffsetD, JSString* str, BufferEncodingType encoding)
@@ -1734,7 +1734,11 @@ static JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* le
     switch (encoding) {
     case WebCore::BufferEncodingType::latin1: {
         std::span<LChar> data;
-        auto str = String::createUninitialized(length, data);
+        auto str = String::tryCreateUninitialized(length, data);
+        if (UNLIKELY(str.isNull())) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return JSValue::encode({});
+        }
         memcpy(data.data(), reinterpret_cast<const char*>(castedThis->vector()) + offset, length);
         return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
     }
@@ -1746,7 +1750,11 @@ static JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* le
         if (u16length == 0) {
             return JSC::JSValue::encode(JSC::jsEmptyString(vm));
         } else {
-            auto str = String::createUninitialized(u16length, data);
+            auto str = String::tryCreateUninitialized(u16length, data);
+            if (UNLIKELY(str.isNull())) {
+                throwOutOfMemoryError(lexicalGlobalObject, scope);
+                return JSValue::encode({});
+            }
             memcpy(reinterpret_cast<void*>(data.data()), reinterpret_cast<const char*>(castedThis->vector()) + offset, u16length * 2);
             return JSC::JSValue::encode(JSC::jsString(vm, str));
         }
@@ -1758,7 +1766,11 @@ static JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* le
         // ascii: we always know the length
         // so we might as well allocate upfront
         std::span<LChar> data;
-        auto str = String::createUninitialized(length, data);
+        auto str = String::tryCreateUninitialized(length, data);
+        if (UNLIKELY(str.isNull())) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return JSValue::encode({});
+        }
         Bun__encoding__writeLatin1(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, data.data(), length, static_cast<uint8_t>(encoding));
         return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
     }
@@ -2405,7 +2417,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
 
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
-    return JSValue::encode(jsNumber(offset));
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2437,7 +2449,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
 
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
-    return JSValue::encode(jsNumber(offset));
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2467,7 +2479,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
 
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
-    return JSValue::encode(jsNumber(offset));
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2497,7 +2509,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
 
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
-    return JSValue::encode(jsNumber(offset));
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 /* */

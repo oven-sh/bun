@@ -542,7 +542,7 @@ pub const TablePrinter = struct {
             var properties_iter = JSC.JSArrayIterator.init(this.properties, globalObject);
             while (properties_iter.next()) |value| {
                 try columns.append(.{
-                    .name = value.toBunString(globalObject),
+                    .name = try value.toBunString(globalObject),
                 });
             }
         }
@@ -2589,18 +2589,25 @@ pub const Formatter = struct {
 
                     // this case should never happen
                     return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
-                } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
-                    this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
-                    if (timer.kind == .setInterval) {
-                        this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
+                } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
+                    this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
+                    if (timer.internals.kind == .setInterval) {
+                        this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
                         writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
-                            timer.id,
+                            timer.internals.id,
                         });
                     } else {
                         writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
-                            timer.id,
+                            timer.internals.id,
                         });
                     }
+
+                    return;
+                } else if (value.as(JSC.API.Bun.Timer.ImmediateObject)) |immediate| {
+                    this.addForNewLine("Immediate(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(immediate.internals.id, 0)))));
+                    writer.print(comptime Output.prettyFmt("<r><blue>Immediate<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
+                        immediate.internals.id,
+                    });
 
                     return;
                 } else if (value.as(JSC.BuildMessage)) |build_log| {

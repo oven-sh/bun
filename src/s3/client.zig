@@ -133,23 +133,21 @@ pub fn writableStream(
     const Wrapper = struct {
         pub fn callback(result: S3UploadResult, sink: *JSC.WebCore.NetworkSink) void {
             if (sink.endPromise.hasValue()) {
-                if (sink.endPromise.globalObject()) |globalObject| {
-                    const event_loop = globalObject.bunVM().eventLoop();
-                    event_loop.enter();
-                    defer event_loop.exit();
-                    switch (result) {
-                        .success => {
-                            sink.endPromise.resolve(globalObject, JSC.jsNumber(0));
-                        },
-                        .failure => |err| {
-                            if (!sink.done) {
-                                sink.abort();
-                                return;
-                            }
+                const event_loop = sink.globalThis.bunVM().eventLoop();
+                event_loop.enter();
+                defer event_loop.exit();
+                switch (result) {
+                    .success => {
+                        sink.endPromise.resolve(sink.globalThis, JSC.jsNumber(0));
+                    },
+                    .failure => |err| {
+                        if (!sink.done) {
+                            sink.abort();
+                            return;
+                        }
 
-                            sink.endPromise.reject(globalObject, err.toJS(globalObject, sink.path()));
-                        },
-                    }
+                        sink.endPromise.reject(sink.globalThis, err.toJS(sink.globalThis, sink.path()));
+                    },
                 }
             }
             sink.finalize();
@@ -202,22 +200,22 @@ const S3UploadStreamWrapper = struct {
     callback_context: *anyopaque,
     ref_count: u32 = 1,
     path: []const u8, // this is owned by the task not by the wrapper
+    global: *JSC.JSGlobalObject,
+
     pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub fn resolve(result: S3UploadResult, self: *@This()) void {
         const sink = self.sink;
         defer self.deref();
         if (sink.endPromise.hasValue()) {
-            if (sink.endPromise.globalObject()) |globalObject| {
-                switch (result) {
-                    .success => sink.endPromise.resolve(globalObject, JSC.jsNumber(0)),
-                    .failure => |err| {
-                        if (!sink.done) {
-                            sink.abort();
-                            return;
-                        }
-                        sink.endPromise.reject(globalObject, err.toJS(globalObject, self.path));
-                    },
-                }
+            switch (result) {
+                .success => sink.endPromise.resolve(self.global, JSC.jsNumber(0)),
+                .failure => |err| {
+                    if (!sink.done) {
+                        sink.abort();
+                        return;
+                    }
+                    sink.endPromise.reject(self.global, err.toJS(self.global, self.path));
+                },
             }
         }
         if (self.callback) |callback| {
@@ -239,7 +237,7 @@ pub fn onUploadStreamResolveRequestStream(globalThis: *JSC.JSGlobalObject, callf
     var this = args.ptr[args.len - 1].asPromisePtr(S3UploadStreamWrapper);
     defer this.deref();
 
-    if (this.readable_stream_ref.get()) |stream| {
+    if (this.readable_stream_ref.get(globalThis)) |stream| {
         stream.done(globalThis);
     }
     this.readable_stream_ref.deinit();
@@ -258,7 +256,7 @@ pub fn onUploadStreamRejectRequestStream(globalThis: *JSC.JSGlobalObject, callfr
         this.sink.endPromise.reject(globalThis, err);
     }
 
-    if (this.readable_stream_ref.get()) |stream| {
+    if (this.readable_stream_ref.get(globalThis)) |stream| {
         stream.cancel(globalThis);
         this.readable_stream_ref.deinit();
     }
@@ -364,6 +362,7 @@ pub fn uploadStream(
         .callback_context = callback_context,
         .path = task.path,
         .task = task,
+        .global = globalThis,
     });
     task.callback_context = @ptrCast(ctx);
     // keep the task alive until we are done configuring the signal
@@ -575,40 +574,34 @@ pub fn readableStream(
     const readable_value = reader.toReadableStream(globalThis);
 
     const S3DownloadStreamWrapper = struct {
+        pub usingnamespace bun.New(@This());
+
         readable_stream_ref: JSC.WebCore.ReadableStream.Strong,
         path: []const u8,
-        pub usingnamespace bun.New(@This());
+        global: *JSC.JSGlobalObject,
 
         pub fn callback(chunk: bun.MutableString, has_more: bool, request_err: ?Error.S3Error, self: *@This()) void {
             defer if (!has_more) self.deinit();
 
-            if (self.readable_stream_ref.get()) |readable| {
+            if (self.readable_stream_ref.get(self.global)) |readable| {
                 if (readable.ptr == .Bytes) {
                     if (request_err) |err| {
                         readable.ptr.Bytes.onData(
-                            .{
-                                .err = .{
-                                    .JSValue = err.toJS(self.readable_stream_ref.globalThis().?, self.path),
-                                },
-                            },
+                            .{ .err = .{ .JSValue = err.toJS(self.global, self.path) } },
                             bun.default_allocator,
                         );
                         return;
                     }
                     if (has_more) {
                         readable.ptr.Bytes.onData(
-                            .{
-                                .temporary = bun.ByteList.initConst(chunk.list.items),
-                            },
+                            .{ .temporary = bun.ByteList.initConst(chunk.list.items) },
                             bun.default_allocator,
                         );
                         return;
                     }
 
                     readable.ptr.Bytes.onData(
-                        .{
-                            .temporary_and_done = bun.ByteList.initConst(chunk.list.items),
-                        },
+                        .{ .temporary_and_done = bun.ByteList.initConst(chunk.list.items) },
                         bun.default_allocator,
                     );
                     return;
@@ -621,14 +614,28 @@ pub fn readableStream(
             bun.default_allocator.free(self.path);
             self.destroy();
         }
+
+        pub fn opaqueCallback(chunk: bun.MutableString, has_more: bool, err: ?Error.S3Error, opaque_self: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(opaque_self));
+            callback(chunk, has_more, err, self);
+        }
     };
 
-    downloadStream(this, path, offset, size, proxy_url, @ptrCast(&S3DownloadStreamWrapper.callback), S3DownloadStreamWrapper.new(.{
-        .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(.{
-            .ptr = .{ .Bytes = &reader.context },
-            .value = readable_value,
-        }, globalThis),
-        .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
-    }));
+    downloadStream(
+        this,
+        path,
+        offset,
+        size,
+        proxy_url,
+        S3DownloadStreamWrapper.opaqueCallback,
+        S3DownloadStreamWrapper.new(.{
+            .readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(.{
+                .ptr = .{ .Bytes = &reader.context },
+                .value = readable_value,
+            }, globalThis),
+            .path = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
+            .global = globalThis,
+        }),
+    );
     return readable_value;
 }

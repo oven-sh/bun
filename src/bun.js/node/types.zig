@@ -986,7 +986,7 @@ pub const PathLike = union(enum) {
             .StringObject,
             .DerivedStringObject,
             => {
-                var str = try arg.toBunString2(ctx);
+                var str = try arg.toBunString(ctx);
                 defer str.deref();
 
                 arguments.eat();
@@ -1638,7 +1638,7 @@ pub fn StatType(comptime big: bool) type {
             if (big) {
                 const sec: i64 = tv_sec;
                 const nsec: i64 = tv_nsec;
-                return @as(i64, sec * std.time.ms_per_s) +
+                return @as(i64, sec * std.time.ms_per_s) +|
                     @as(i64, @divTrunc(nsec, std.time.ns_per_ms));
             } else {
                 return @floatFromInt(bun.timespec.ms(&bun.timespec{
@@ -1656,20 +1656,24 @@ pub fn StatType(comptime big: bool) type {
             return if (big) Bun__JSBigIntStatsObjectConstructor(globalObject) else Bun__JSStatsObjectConstructor(globalObject);
         }
 
+        fn clampedInt64(value: anytype) i64 {
+            return @intCast(@min(@max(value, 0), std.math.maxInt(i64)));
+        }
+
         fn statToJS(stat_: *const bun.Stat, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
             const aTime = stat_.atime();
             const mTime = stat_.mtime();
             const cTime = stat_.ctime();
-            const dev: i64 = @intCast(@max(stat_.dev, 0));
-            const ino: i64 = @intCast(@max(stat_.ino, 0));
-            const mode: i64 = @truncate(@as(i64, @intCast(stat_.mode)));
-            const nlink: i64 = @truncate(@as(i64, @intCast(stat_.nlink)));
-            const uid: i64 = @truncate(@as(i64, @intCast(stat_.uid)));
-            const gid: i64 = @truncate(@as(i64, @intCast(stat_.gid)));
-            const rdev: i64 = @truncate(@as(i64, @intCast(stat_.rdev)));
-            const size: i64 = @truncate(@as(i64, @intCast(stat_.size)));
-            const blksize: i64 = @truncate(@as(i64, @intCast(stat_.blksize)));
-            const blocks: i64 = @truncate(@as(i64, @intCast(stat_.blocks)));
+            const dev: i64 = clampedInt64(stat_.dev);
+            const ino: i64 = clampedInt64(stat_.ino);
+            const mode: i64 = clampedInt64(stat_.mode);
+            const nlink: i64 = clampedInt64(stat_.nlink);
+            const uid: i64 = clampedInt64(stat_.uid);
+            const gid: i64 = clampedInt64(stat_.gid);
+            const rdev: i64 = clampedInt64(stat_.rdev);
+            const size: i64 = clampedInt64(stat_.size);
+            const blksize: i64 = clampedInt64(stat_.blksize);
+            const blocks: i64 = clampedInt64(stat_.blocks);
             const atime_ms: Float = toTimeMS(aTime);
             const mtime_ms: Float = toTimeMS(mTime);
             const ctime_ms: Float = toTimeMS(cTime);
@@ -1994,8 +1998,12 @@ pub const Process = struct {
             );
         }
 
-        if (vm.main.len > 0)
+        if (vm.main.len > 0 and
+            !strings.endsWithComptime(vm.main, bun.pathLiteral("/[eval]")) and
+            !strings.endsWithComptime(vm.main, bun.pathLiteral("/[stdin]")))
+        {
             args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+        }
 
         defer allocator.free(args);
 

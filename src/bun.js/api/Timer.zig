@@ -1129,26 +1129,27 @@ pub const EventLoopTimer = struct {
     heap: heap.IntrusiveField(EventLoopTimer) = .{},
 
     pub fn less(_: void, a: *const EventLoopTimer, b: *const EventLoopTimer) bool {
-        // ignore sub-millisecond precision
         const sec_order = std.math.order(a.next.sec, b.next.sec);
         if (sec_order != .eq) return sec_order == .lt;
-        const order = std.math.order(
-            @divTrunc(a.next.nsec, std.time.ns_per_ms),
-            @divTrunc(b.next.nsec, std.time.ns_per_ms),
-        );
+
+        // collapse sub-millisecond precision for JavaScript timers
+        const maybe_a_internals = a.jsTimerInternals();
+        const maybe_b_internals = b.jsTimerInternals();
+        var a_ns = a.next.nsec;
+        var b_ns = b.next.nsec;
+        if (maybe_a_internals != null) a_ns = std.time.ns_per_ms * @divTrunc(a_ns, std.time.ns_per_ms);
+        if (maybe_b_internals != null) b_ns = std.time.ns_per_ms * @divTrunc(b_ns, std.time.ns_per_ms);
+
+        const order = std.math.order(a_ns, b_ns);
         if (order == .eq) {
-            if (a.jsTimerInternals()) |a_internals| {
-                if (b.jsTimerInternals()) |b_internals| {
+            if (maybe_a_internals) |a_internals| {
+                if (maybe_b_internals) |b_internals| {
                     // try to still maintain the order if epoch overflowed
                     // if the difference is greater than half u32 range, it more likely got that way
                     // because b has overflowed and a hasn't than because b is really so much newer
                     // than a
                     return b_internals.epoch -% a_internals.epoch < std.math.maxInt(u32) / 2;
                 }
-            }
-
-            if (b.tag == .TimeoutObject or b.tag == .ImmediateObject) {
-                return false;
             }
         }
         return order == .lt;

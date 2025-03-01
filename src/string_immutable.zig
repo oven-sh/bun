@@ -5583,7 +5583,7 @@ pub fn moveSlice(slice: string, from: string, to: string) string {
     return result;
 }
 
-pub usingnamespace @import("exact_size_matcher.zig");
+pub const ExactSizeMatcher = @import("exact_size_matcher.zig").ExactSizeMatcher;
 
 pub const unicode_replacement = 0xFFFD;
 pub const unicode_replacement_str = brk: {

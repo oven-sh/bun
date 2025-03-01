@@ -1,4 +1,4 @@
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const bun = @import("root").bun;
 const ZigString = JSC.ZigString;
 const std = @import("std");

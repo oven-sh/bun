@@ -73,7 +73,7 @@ const uws = bun.uws;
 const Fallback = Runtime.Fallback;
 const MimeType = HTTP.MimeType;
 const Blob = JSC.WebCore.Blob;
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const Arena = @import("../../allocators/mimalloc_arena.zig").Arena;
 const SendfileContext = struct {
     fd: bun.FileDescriptor,
@@ -8101,7 +8101,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const globalThis = this.globalThis;
             var route_list_value = JSC.JSValue.zero;
             if (ssl_enabled) {
-                BoringSSL.load();
+                bun.BoringSSL.load();
                 const ssl_config = this.config.ssl_config orelse @panic("Assertion failure: ssl_config");
                 const ssl_options = ssl_config.asUSockets();
 

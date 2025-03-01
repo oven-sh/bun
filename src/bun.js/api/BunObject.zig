@@ -1055,7 +1055,8 @@ pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
 
-    const BoringSSL = bun.BoringSSL;
+    const BoringSSL = bun.BoringSSL.c;
+
     pub const HMAC = struct {
         ctx: BoringSSL.HMAC_CTX,
         algorithm: EVP.Algorithm,
@@ -1479,7 +1480,7 @@ pub const Crypto = struct {
         };
 
         pub fn init(algorithm: Algorithm, md: *const BoringSSL.EVP_MD, engine: *BoringSSL.ENGINE) EVP {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             var ctx: BoringSSL.EVP_MD_CTX = undefined;
             BoringSSL.EVP_MD_CTX_init(&ctx);
@@ -1567,7 +1568,7 @@ pub const Crypto = struct {
     };
 
     pub fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
-        return BoringSSL.ERR_toJS(globalThis, err_code);
+        return bun.BoringSSL.ERR_toJS(globalThis, err_code);
     }
     const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 
@@ -4622,7 +4623,7 @@ pub const JSZlib = struct {
     }
 };
 
-pub usingnamespace @import("./bun/subprocess.zig");
+pub const Subprocess = @import("./bun/subprocess.zig");
 
 const InternalTestingAPIs = struct {
     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

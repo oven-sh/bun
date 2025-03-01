@@ -1217,13 +1217,13 @@ pub fn spawnProcessPosix(
     var attr = try PosixSpawn.Attr.init();
     defer attr.deinit();
 
-    var flags: i32 = bun.C.POSIX_SPAWN_SETSIGDEF | bun.C.POSIX_SPAWN_SETSIGMASK;
+    var flags: i32 = bun.c.POSIX_SPAWN_SETSIGDEF | bun.c.POSIX_SPAWN_SETSIGMASK;
 
     if (comptime Environment.isMac) {
-        flags |= bun.C.POSIX_SPAWN_CLOEXEC_DEFAULT;
+        flags |= bun.c.POSIX_SPAWN_CLOEXEC_DEFAULT;
 
         if (options.use_execve_on_macos) {
-            flags |= bun.C.POSIX_SPAWN_SETEXEC;
+            flags |= bun.c.POSIX_SPAWN_SETEXEC;
 
             if (options.stdin == .buffer or options.stdout == .buffer or options.stderr == .buffer) {
                 Output.panic("Internal error: stdin, stdout, and stderr cannot be buffered when use_execve_on_macos is true", .{});
@@ -1232,7 +1232,7 @@ pub fn spawnProcessPosix(
     }
 
     if (options.detached) {
-        flags |= bun.C.POSIX_SPAWN_SETSID;
+        flags |= bun.c.POSIX_SPAWN_SETSID;
     }
 
     if (options.cwd.len > 0) {

@@ -12,7 +12,7 @@ pub const short = u16;
 pub const PostgresShort = u16;
 const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
-const BoringSSL = @import("../boringssl.zig");
+const BoringSSL = bun.BoringSSL;
 pub const AnyPostgresError = error{
     ConnectionClosed,
     ExpectedRequest,
@@ -1340,7 +1340,7 @@ pub const PostgresSQLConnection = struct {
         };
 
         fn hmac(password: []const u8, data: []const u8) ?[32]u8 {
-            var buf = std.mem.zeroes([bun.BoringSSL.EVP_MAX_MD_SIZE]u8);
+            var buf = std.mem.zeroes([bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8);
 
             // TODO: I don't think this is failable.
             const result = bun.hmac.generate(password, data, .sha256, &buf) orelse return null;
@@ -1713,8 +1713,8 @@ pub const PostgresSQLConnection = struct {
                             return;
                         }
 
-                        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
-                        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
+                        if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                             const hostname = servername[0..bun.len(servername)];
                             if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                                 this.failWithJSValue(ssl_error.toJS(this.globalObject));

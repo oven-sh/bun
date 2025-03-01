@@ -371,23 +371,23 @@ pub fn Channel(
         const Self = @This();
         const Buffer = std.fifo.LinearFifo(T, buffer_type);
 
-        pub usingnamespace switch (buffer_type) {
-            .Static => struct {
-                pub inline fn init() Self {
-                    return Self.withBuffer(Buffer.init());
-                }
-            },
-            .Slice => struct {
-                pub inline fn init(buf: []T) Self {
-                    return Self.withBuffer(Buffer.init(buf));
-                }
-            },
-            .Dynamic => struct {
-                pub inline fn init(allocator: std.mem.Allocator) Self {
-                    return Self.withBuffer(Buffer.init(allocator));
-                }
-            },
+        pub const init = switch (buffer_type) {
+            .Static => initStatic,
+            .Slice => initSlice,
+            .Dynamic => initDynamic,
         };
+
+        pub inline fn initStatic() Self {
+            return .withBuffer(Buffer.init());
+        }
+
+        pub inline fn initSlice(buf: []T) Self {
+            return .withBuffer(Buffer.init(buf));
+        }
+
+        pub inline fn initDynamic(allocator: std.mem.Allocator) Self {
+            return .withBuffer(Buffer.init(allocator));
+        }
 
         fn withBuffer(buffer: Buffer) Self {
             return Self{

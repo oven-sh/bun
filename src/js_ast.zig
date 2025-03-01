@@ -2845,7 +2845,7 @@ pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
 
-    pub const Batcher = bun.Batcher(Stmt);
+    pub const Batcher = NewBatcher(Stmt);
 
     pub fn assign(a: Expr, b: Expr) Stmt {
         return Stmt.alloc(
@@ -8940,3 +8940,41 @@ const ToJSError = error{
 };
 
 const writeAnyToHasher = bun.writeAnyToHasher;
+
+/// Say you need to allocate a bunch of tiny arrays
+/// You could just do separate allocations for each, but that is slow
+/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
+/// So a better idea is to batch up your allocations into one larger allocation
+/// and then just make all the arrays point to different parts of the larger allocation
+pub fn NewBatcher(comptime Type: type) type {
+    return struct {
+        head: []Type,
+
+        pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
+            const all = try allocator.alloc(Type, count);
+            return @This(){ .head = all };
+        }
+
+        pub fn done(this: *@This()) void {
+            bun.assert(this.head.len == 0); // count to init() was too large, overallocation
+        }
+
+        pub fn eat(this: *@This(), value: Type) *Type {
+            return @as(*Type, @ptrCast(&this.head.eat1(value).ptr));
+        }
+
+        pub fn eat1(this: *@This(), value: Type) []Type {
+            var prev = this.head[0..1];
+            prev[0] = value;
+            this.head = this.head[1..];
+            return prev;
+        }
+
+        pub fn next(this: *@This(), values: anytype) []Type {
+            this.head[0..values.len].* = values;
+            const prev = this.head[0..values.len];
+            this.head = this.head[values.len..];
+            return prev;
+        }
+    };
+}

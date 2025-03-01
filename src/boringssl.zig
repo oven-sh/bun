@@ -1,5 +1,9 @@
+// TODO: move all custom functions from the translated file into this file, then
+// the translated file can be provided by `zig translate-c`
 const boring = @import("./deps/boringssl.translated.zig");
-pub usingnamespace boring;
+/// BoringSSL's translated C API
+pub const c = boring;
+
 const std = @import("std");
 const bun = @import("root").bun;
 const c_ares = @import("./deps/c_ares.zig");

@@ -72,7 +72,7 @@ var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const On
 // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
 var before_crash_handlers_mutex: bun.Mutex = .{};
 
-const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
+const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
 
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
@@ -905,10 +905,8 @@ pub fn printMetadata(writer: anytype) !void {
             try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
         }
 
-        if (comptime bun.Environment.isX64) {
-            if (!cpu_features.avx and !cpu_features.avx2 and !cpu_features.avx512) {
-                is_ancient_cpu = true;
-            }
+        if (bun.Environment.isX64) {
+            is_ancient_cpu = !cpu_features.hasAnyAVX();
         }
 
         if (!cpu_features.isEmpty()) {

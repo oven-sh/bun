@@ -361,7 +361,7 @@ pub const Prompt = struct {
 
 pub const Crypto = struct {
     garbage: i32 = 0,
-    const BoringSSL = bun.BoringSSL;
+    const BoringSSL = bun.BoringSSL.c;
 
     pub const doScryptSync = JSC.wrapInstanceMethod(Crypto, "scryptSync", false);
 
@@ -560,7 +560,7 @@ pub const Crypto = struct {
         if (b.len != len) {
             return globalThis.throw("Input buffers must have the same byte length", .{});
         }
-        return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
+        return JSC.jsBoolean(len == 0 or bun.BoringSSL.c.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
 
     pub fn timingSafeEqualWithoutTypeChecks(
@@ -577,7 +577,7 @@ pub const Crypto = struct {
             return globalThis.throw("Input buffers must have the same byte length", .{});
         }
 
-        return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
+        return JSC.jsBoolean(len == 0 or bun.BoringSSL.c.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
 
     pub fn getRandomValues(

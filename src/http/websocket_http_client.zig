@@ -425,8 +425,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                         this.fail(ErrorCode.tls_handshake_failed);
                         return;
                     }
-                    const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
-                    if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                    const ssl_ptr = @as(*BoringSSL.c.SSL, @ptrCast(socket.getNativeHandle()));
+                    if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                         const hostname = servername[0..bun.len(servername)];
                         if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                             this.fail(ErrorCode.tls_handshake_failed);
@@ -1113,8 +1113,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
                 if (authorized) {
                     if (reject_unauthorized) {
-                        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
-                        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const ssl_ptr = @as(*BoringSSL.c.SSL, @ptrCast(socket.getNativeHandle()));
+                        if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                             const hostname = servername[0..bun.len(servername)];
                             if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                                 this.outgoing_websocket = null;

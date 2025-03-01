@@ -1,5 +1,7 @@
 if(DEBUG)
   set(bun bun-debug)
+elseif(ENABLE_SAFE)
+  set(bun bun-safe)
 elseif(ENABLE_SMOL)
   set(bun bun-smol-profile)
   set(bunStrip bun-smol)

@@ -35,7 +35,7 @@ import {
  * @typedef {"musl"} Abi
  * @typedef {"debian" | "ubuntu" | "alpine" | "amazonlinux"} Distro
  * @typedef {"latest" | "previous" | "oldest" | "eol"} Tier
- * @typedef {"release" | "assert" | "debug"} Profile
+ * @typedef {"release" | "safe" | "assert" | "debug"} Profile
  */
 
 /**
@@ -380,6 +380,7 @@ function getTestAgent(platform, options) {
 function getBuildEnv(target, options) {
   const { profile, baseline, abi } = target;
   const release = !profile || profile === "release";
+  const safe = profile === "safe";
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
@@ -389,7 +390,7 @@ function getBuildEnv(target, options) {
     ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
     CANARY_REVISION: revision,
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
-    ENABLE_LOGS: release ? "OFF" : "ON",
+    ENABLE_LOGS: release || safe ? "OFF" : "ON",
     ABI: abi === "musl" ? "musl" : undefined,
 
     CMAKE_TLS_VERIFY: "0",
@@ -818,6 +819,10 @@ function getOptionsStep() {
             value: "assert",
           },
           {
+            label: `${getEmoji("safe")} Release with Runtime Safety Checks`,
+            value: "safe",
+          },
+          {
             label: `${getEmoji("debug")} Debug`,
             value: "debug",
           },
@@ -997,6 +1002,8 @@ async function getPipelineOptions() {
     return false;
   };
 
+  const isOnMain = isMainBranch();
+
   const isCanary =
     !parseBoolean(getEnv("RELEASE", false) || "false") &&
     !/\[(release|build release|release build)\]/i.test(commitMessage);
@@ -1011,7 +1018,7 @@ async function getPipelineOptions() {
     publishImages: parseOption(/\[(publish images?)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
-    buildProfiles: ["release"],
+    buildProfiles: isOnMain ? ["release"] : ["safe"],
   };
 }
 

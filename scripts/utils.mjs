@@ -2777,6 +2777,7 @@ const emojiMap = {
   false: ["❌", "x"],
   debug: ["🐞", "bug"],
   assert: ["🔍", "mag"],
+  safe: ["🔒", "lock"],
   release: ["🏆", "trophy"],
   gear: ["⚙️", "gear"],
   clipboard: ["📋", "clipboard"],

@@ -3404,7 +3404,7 @@ noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) nor
 }
 
 /// Like `assert`, but checks only run in debug builds.
-/// 
+///
 /// Please wrap expensive checks in an `if` statement.
 /// ```zig
 /// if (comptime bun.Environment.isDebug) {
@@ -3423,21 +3423,21 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
 }
 
 /// Asserts that some condition holds. Assertions are stripped in release builds.
-/// 
+///
 /// Please use `assertf` in new code.
-/// 
+///
 /// Be careful what expressions you pass to this function; if the compiler cannot
 /// determine that `ok` has no side effects, the argument expression may not be removed
 /// from the binary. This includes calls to extern functions.
-/// 
+///
 /// Wrap expensive checks in an `if` statement.
 /// ```zig
 /// if (comptime bun.Environment.allow_assert) {
 ///   const expensive = doExpensiveCheck();
-///   bun.assert(expensive);  
+///   bun.assert(expensive);
 /// }
 /// ```
-/// 
+///
 /// Use `assertRelease` for assertions that should not be stripped in release builds.
 pub fn assert(ok: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
@@ -3451,21 +3451,21 @@ pub fn assert(ok: bool) callconv(callconv_inline) void {
 }
 
 /// Asserts that some condition holds. Assertions are stripped in release builds.
-/// 
+///
 /// Please note that messages will be shown to users in crash reports.
-/// 
+///
 /// Be careful what expressions you pass to this function; if the compiler cannot
 /// determine that `ok` has no side effects, the argument expression may not be removed
 /// from the binary. This includes calls to extern functions.
-/// 
+///
 /// Wrap expensive checks in an `if` statement.
 /// ```zig
 /// if (comptime bun.Environment.allow_assert) {
 ///   const expensive = doExpensiveCheck();
-///   bun.assert(expensive, "Something happened: {}", .{ expensive });  
+///   bun.assert(expensive, "Something happened: {}", .{ expensive });
 /// }
 /// ```
-/// 
+///
 /// Use `assertRelease` for assertions that should not be stripped in release builds.
 pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {

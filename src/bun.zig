@@ -544,7 +544,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
     return try allocator.dupe(Child, item);
 }
 
-pub const StringBuilder = @import("./string.zig").StringBuilder;
+pub const StringBuilder = @import("./modules/string.zig").StringBuilder;
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
@@ -2085,7 +2085,7 @@ pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
-const _string = @import("./string.zig");
+const _string = @import("modules/string.zig");
 pub const strings = @import("string_immutable.zig");
 pub const String = _string.String;
 pub const StringJoiner = _string.StringJoiner;

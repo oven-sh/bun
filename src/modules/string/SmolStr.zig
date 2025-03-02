@@ -1,5 +1,5 @@
 const std = @import("std");
-const BabyList = @import("../baby_list.zig").BabyList;
+const BabyList = @import("../../baby_list.zig").BabyList;
 const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
 

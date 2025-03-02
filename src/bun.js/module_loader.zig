@@ -160,6 +160,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 specifier,
                 std.math.maxInt(u64),
             ) catch "";
+            defer bun.default_allocator.free(source_file);
 
             var bufw = std.io.bufferedWriter(file.writer());
             const w = bufw.writer();
@@ -271,7 +272,7 @@ pub const RuntimeTranspilerStore = struct {
         non_threadsafe_input_specifier: String,
         non_threadsafe_referrer: String,
         loader: options.Loader,
-        promise: JSC.Strong = .{},
+        promise: JSC.Strong = .empty,
         vm: *VirtualMachine,
         globalThis: *JSGlobalObject,
         fetcher: Fetcher,
@@ -751,7 +752,7 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        promise: JSC.Strong = .{},
+        promise: JSC.Strong = .empty,
         path: Fs.Path,
         specifier: string = "",
         referrer: string = "",
@@ -1055,11 +1056,10 @@ pub const ModuleLoader = struct {
         };
 
         pub fn init(opts: anytype, globalObject: *JSGlobalObject) !AsyncModule {
-            var promise = JSC.Strong{};
             // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
             // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
             const this_promise = JSValue.createInternalPromise(globalObject);
-            promise.set(globalObject, this_promise);
+            const promise = JSC.Strong.create(this_promise, globalObject);
 
             var buf = bun.StringBuilder{};
             buf.count(opts.referrer);

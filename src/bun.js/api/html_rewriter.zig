@@ -391,7 +391,7 @@ pub const HTMLRewriter = struct {
         rewriter: ?*LOLHTML.HTMLRewriter = null,
         context: *LOLHTMLContext,
         response: *Response,
-        response_value: JSC.Strong = .{},
+        response_value: JSC.Strong = .empty,
         bodyValueBufferer: ?JSC.WebCore.BodyValueBufferer = null,
         tmp_sync_error: ?*JSC.JSValue = null,
         ref_count: u32 = 1,

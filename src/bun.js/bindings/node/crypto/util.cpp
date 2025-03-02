@@ -6,7 +6,7 @@
 #include "BunString.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
-
+#include "JSBufferEncodingType.h"
 namespace Bun {
 
 using namespace JSC;
@@ -309,7 +309,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
+        auto encoding = WebCore::validateBufferEncoding<true>(*globalObject, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
 
         if (encoding == WebCore::BufferEncodingType::hex && dataString->length() % 2 != 0) {
@@ -317,7 +317,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
             return {};
         }
 
-        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataString, encoding));
+        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataString, *encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);

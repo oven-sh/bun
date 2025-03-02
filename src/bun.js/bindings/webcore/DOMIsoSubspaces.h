@@ -927,6 +927,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForJSVerify;
     std::unique_ptr<IsoSubspace> m_subspaceForServerRouteList;
     std::unique_ptr<IsoSubspace> m_subspaceForBunRequest;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellman;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSDiffieHellmanGroup;
 };
 } // namespace WebCore
 

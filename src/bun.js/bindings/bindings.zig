@@ -61,6 +61,7 @@ pub const WTF = @import("./WTF.zig").WTF;
 pub const ScriptExecutionStatus = @import("./ScriptExecutionStatus.zig").ScriptExecutionStatus;
 pub const DeferredError = @import("./DeferredError.zig").DeferredError;
 pub const Sizes = @import("./sizes.zig");
+pub const JSRef = @import("./JSRef.zig").JSRef;
 
 // TODO(@paperdave): delete and inline these functions
 pub fn NewGlobalObject(comptime Type: type) type {

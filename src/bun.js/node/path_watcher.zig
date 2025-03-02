@@ -513,7 +513,7 @@ pub const PathWatcherManager = struct {
 
         fn run(this: *DirectoryRegisterTask) void {
             if (comptime Environment.isWindows) {
-                return bun.todo(@src(), {});
+                return bun.debug.todo(@src(), {});
             }
 
             var buf: bun.PathBuffer = undefined;

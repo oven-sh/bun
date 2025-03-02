@@ -502,7 +502,7 @@ pub const BuildCommand = struct {
                     continue;
                 };
 
-                bun.debugAssert(!std.fs.path.isAbsolute(f.dest_path));
+                bun.debug.debugAssert(!std.fs.path.isAbsolute(f.dest_path));
 
                 const rel_path = bun.strings.trimPrefixComptime(u8, f.dest_path, "./");
 

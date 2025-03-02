@@ -182,13 +182,13 @@ pub fn Calc(comptime V: type) type {
                 Angle => return switch (this) {
                     .value => |v| v.*,
                     // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    else => bun.debug.unreachablePanic("", .{}),
                 },
                 CSSNumber => return switch (this) {
                     .value => |v| v.*,
                     .number => |n| n,
                     // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    else => bun.debug.unreachablePanic("", .{}),
                 },
                 Length => return Length{
                     .calc = bun.create(allocator, Calc(Length), this),
@@ -196,12 +196,12 @@ pub fn Calc(comptime V: type) type {
                 Percentage => return switch (this) {
                     .value => |v| v.*,
                     // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    else => bun.debug.unreachablePanic("", .{}),
                 },
                 Time => return switch (this) {
                     .value => |v| v.*,
                     // TODO: give a better error message
-                    else => bun.unreachablePanic("", .{}),
+                    else => bun.debug.unreachablePanic("", .{}),
                 },
                 DimensionPercentage(LengthValue) => return DimensionPercentage(LengthValue){ .calc = bun.create(
                     allocator,
@@ -766,7 +766,7 @@ pub fn Calc(comptime V: type) type {
                                         // sign() alwasy resolves to a number.
                                         return .{
                                             .result = This{
-                                                // .number = css.generic.trySign(V, &new_v) orelse bun.unreachablePanic("sign always resolved to a number.", .{}),
+                                                // .number = css.generic.trySign(V, &new_v) orelse bun.debug.unreachablePanic("sign always resolved to a number.", .{}),
                                                 .number = css.generic.trySign(V, &new_v) orelse @panic("sign() always resolves to a number."),
                                             },
                                         };

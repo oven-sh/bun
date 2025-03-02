@@ -1057,7 +1057,7 @@ pub fn QueryFeature(comptime FeatureId: type) type {
                     .result => |v| v,
                 };
                 _ = blah;
-                bun.debugAssert(feature_name.eql(&name));
+                bun.debug.debugAssert(feature_name.eql(&name));
             }
 
             if (!name.valueType().allowsRanges() or !value.checkType(name.valueType())) {

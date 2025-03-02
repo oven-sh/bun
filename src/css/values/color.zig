@@ -389,7 +389,7 @@ pub const CssColor = union(enum) {
 
         const check_converted = struct {
             fn run(color: *const CssColor) bool {
-                bun.debugAssert(color.* != .light_dark and color.* != .current_color and color.* != .system);
+                bun.debug.debugAssert(color.* != .light_dark and color.* != .current_color and color.* != .system);
                 return switch (color.*) {
                     .rgba => T == RGBA,
                     .lab => |lab| switch (lab.*) {
@@ -488,7 +488,7 @@ pub const CssColor = union(enum) {
             ColorFallbackKind.RGB.asBits() => this.toRGB(allocator).?,
             ColorFallbackKind.P3.asBits() => this.toP3(allocator).?,
             ColorFallbackKind.LAB.asBits() => this.toLAB(allocator).?,
-            else => bun.unreachablePanic("Expected RGBA, P3, LAB fallback. This is a bug in Bun.", .{}),
+            else => bun.debug.unreachablePanic("Expected RGBA, P3, LAB fallback. This is a bug in Bun.", .{}),
         };
     }
 
@@ -2731,7 +2731,7 @@ pub const ColorFallbackKind = packed struct(u8) {
         const s = switch (this.asBits()) {
             ColorFallbackKind.P3.asBits() => "color(display-p3 0 0 0)",
             ColorFallbackKind.LAB.asBits() => "lab(0% 0 0)",
-            else => bun.unreachablePanic("Expected P3 or LAB. This is a bug in Bun.", .{}),
+            else => bun.debug.unreachablePanic("Expected P3 or LAB. This is a bug in Bun.", .{}),
         };
 
         return css.SupportsCondition{

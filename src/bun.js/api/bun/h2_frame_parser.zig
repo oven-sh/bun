@@ -3010,7 +3010,7 @@ pub const H2FrameParser = struct {
         }
         pub fn write(this: *MemoryWriter, data: []const u8) !usize {
             const pending = this.buffer[this.offset..];
-            bun.debugAssert(pending.len >= data.len);
+            bun.debug.debugAssert(pending.len >= data.len);
             @memcpy(pending[0..data.len], data);
             this.offset += data.len;
             return data.len;

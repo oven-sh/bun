@@ -211,7 +211,7 @@ pub const Async = struct {
                         if (mode == 0) mode = 0o644;
 
                         const rc = uv.uv_fs_open(loop, &task.req, path.ptr, flags, mode, &uv_callback);
-                        bun.debugAssert(rc == .zero);
+                        bun.debug.debugAssert(rc == .zero);
                         log("uv open({s}, {d}, {d}) = scheduled", .{ path, flags, mode });
                     },
                     .close => {
@@ -226,7 +226,7 @@ pub const Async = struct {
                         }
 
                         const rc = uv.uv_fs_close(loop, &task.req, fd, &uv_callback);
-                        bun.debugAssert(rc == .zero);
+                        bun.debug.debugAssert(rc == .zero);
                         log("uv close({d}) = scheduled", .{fd});
                     },
                     .read => {
@@ -239,7 +239,7 @@ pub const Async = struct {
                         buf = buf[0..@min(buf.len, args.length)];
 
                         const rc = uv.uv_fs_read(loop, &task.req, fd, &.{B(buf)}, 1, args.position orelse -1, &uv_callback);
-                        bun.debugAssert(rc == .zero);
+                        bun.debug.debugAssert(rc == .zero);
                         log("uv read({d}) = scheduled", .{fd});
                     },
                     .write => {
@@ -252,7 +252,7 @@ pub const Async = struct {
                         buf = buf[0..@min(buf.len, args.length)];
 
                         const rc = uv.uv_fs_write(loop, &task.req, fd, &.{B(buf)}, 1, args.position orelse -1, &uv_callback);
-                        bun.debugAssert(rc == .zero);
+                        bun.debug.debugAssert(rc == .zero);
                         log("uv write({d}) = scheduled", .{fd});
                     },
                     .readv => {
@@ -265,7 +265,7 @@ pub const Async = struct {
                         for (bufs) |b| sum += b.slice().len;
 
                         const rc = uv.uv_fs_read(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
-                        bun.debugAssert(rc == .zero);
+                        bun.debug.debugAssert(rc == .zero);
                         log("uv readv({d}, {*}, {d}, {d}, {d} total bytes) = scheduled", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
                     .writev => {
@@ -285,14 +285,14 @@ pub const Async = struct {
                         for (bufs) |b| sum += b.slice().len;
 
                         const rc = uv.uv_fs_write(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
-                        bun.debugAssert(rc == .zero);
+                        bun.debug.debugAssert(rc == .zero);
                         log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = scheduled", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
                     .statfs => {
                         const args_: Arguments.StatFS = task.args;
                         const path = args_.path.sliceZ(&this.node_fs.sync_error_buf);
                         const rc = uv.uv_fs_statfs(loop, &task.req, path.ptr, &uv_callbackreq);
-                        bun.debugAssert(rc == .zero);
+                        bun.debug.debugAssert(rc == .zero);
                         log("uv statfs({s}) = ~~", .{path});
                     },
                     else => comptime unreachable,

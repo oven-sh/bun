@@ -460,7 +460,7 @@ pub const StandaloneModuleGraph = struct {
                 graph.files.deinit();
             }
 
-            bun.assert_eql(graph.files.count(), modules.items.len);
+            bun.debug.assert_eql(graph.files.count(), modules.items.len);
         }
 
         return output_bytes;

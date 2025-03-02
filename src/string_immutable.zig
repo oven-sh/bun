@@ -520,7 +520,7 @@ pub inline fn indexOf(self: string, str: string) ?usize {
     const start = bun.C.memmem(self_ptr, self_len, str_ptr, str_len) orelse return null;
 
     const i = @intFromPtr(start) - @intFromPtr(self_ptr);
-    bun.unsafeAssert(i < self_len);
+    bun.debug.unsafeAssert(i < self_len);
     return @as(usize, @intCast(i));
 }
 
@@ -547,7 +547,7 @@ pub const SplitIterator = struct {
     /// Returns a slice of the first field. This never fails.
     /// Call this only to get the first field and then use `next` to get all subsequent fields.
     pub fn first(self: *Self) []const u8 {
-        bun.unsafeAssert(self.index.? == 0);
+        bun.debug.unsafeAssert(self.index.? == 0);
         return self.next().?;
     }
 
@@ -635,7 +635,7 @@ pub const StringOrTinyString = struct {
     } = .{},
 
     comptime {
-        bun.unsafeAssert(@sizeOf(@This()) == 32);
+        bun.debug.unsafeAssert(@sizeOf(@This()) == 32);
     }
 
     pub inline fn slice(this: *const StringOrTinyString) []const u8 {
@@ -1118,8 +1118,8 @@ pub fn eqlCaseInsensitiveASCII(a: string, b: string, comptime check_len: bool) b
         if (a.len == 0) return true;
     }
 
-    bun.unsafeAssert(b.len > 0);
-    bun.unsafeAssert(a.len > 0);
+    bun.debug.unsafeAssert(b.len > 0);
+    bun.debug.unsafeAssert(a.len > 0);
 
     return bun.C.strncasecmp(a.ptr, b.ptr, a.len) == 0;
 }
@@ -1869,14 +1869,14 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
 /// this is used for an assertion, and PosixToWinNormalizer can help make
 /// an absolute path contain a drive letter.
 pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const T) bool {
-    bun.unsafeAssert(bun.path.Platform.windows.isAbsoluteT(T, chars));
-    bun.unsafeAssert(chars.len > 0);
+    bun.debug.unsafeAssert(bun.path.Platform.windows.isAbsoluteT(T, chars));
+    bun.debug.unsafeAssert(chars.len > 0);
 
     // 'C:\hello' -> false
     // This is the most common situation, so we check it first
     if (!(chars[0] == '/' or chars[0] == '\\')) {
-        bun.unsafeAssert(chars.len > 2);
-        bun.unsafeAssert(chars[1] == ':');
+        bun.debug.unsafeAssert(chars.len > 2);
+        bun.debug.unsafeAssert(chars[1] == ':');
         return false;
     }
 
@@ -1904,10 +1904,10 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
 }
 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {
-    bun.unsafeAssert(buf.len > 0);
+    bun.debug.unsafeAssert(buf.len > 0);
     const to_copy = trimPrefixComptime(u16, utf16, bun.windows.long_path_prefix);
     const encode_into_result = copyUTF16IntoUTF8(buf[0 .. buf.len - 1], []const u16, to_copy, false);
-    bun.unsafeAssert(encode_into_result.written < buf.len);
+    bun.debug.unsafeAssert(encode_into_result.written < buf.len);
     buf[encode_into_result.written] = 0;
     return buf[0..encode_into_result.written :0];
 }
@@ -2021,7 +2021,7 @@ pub fn addNTPathPrefixIfNeeded(wbuf: []u16, utf16: []const u16) [:0]u16 {
 pub const toNTDir = toNTPath;
 
 pub fn toExtendedPathNormalized(wbuf: []u16, utf8: []const u8) [:0]const u16 {
-    bun.unsafeAssert(wbuf.len > 4);
+    bun.debug.unsafeAssert(wbuf.len > 4);
     wbuf[0..4].* = bun.windows.long_path_prefix;
     return wbuf[0 .. toWPathNormalized(wbuf[4..], utf8).len + 4 :0];
 }
@@ -2076,7 +2076,7 @@ pub fn toPathNormalized(buf: []u8, utf8: []const u8) [:0]const u8 {
 }
 
 pub fn normalizeSlashesOnlyT(comptime T: type, buf: []T, path: []const T, comptime desired_slash: u8, comptime always_copy: bool) []const T {
-    comptime bun.unsafeAssert(desired_slash == '/' or desired_slash == '\\');
+    comptime bun.debug.unsafeAssert(desired_slash == '/' or desired_slash == '\\');
     const undesired_slash = if (desired_slash == '/') '\\' else '/';
 
     if (bun.strings.containsCharT(T, path, undesired_slash)) {
@@ -2175,7 +2175,7 @@ pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
 }
 
 pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u16 {
-    bun.unsafeAssert(wbuf.len > 0);
+    bun.debug.unsafeAssert(wbuf.len > 0);
 
     var result = bun.simdutf.convert.utf8.to.utf16.with_errors.le(
         utf8,
@@ -2200,7 +2200,7 @@ pub fn toWPathMaybeDir(wbuf: []u16, utf8: []const u8, comptime add_trailing_lash
     return wbuf[0..result.count :0];
 }
 pub fn toPathMaybeDir(buf: []u8, utf8: []const u8, comptime add_trailing_lash: bool) [:0]u8 {
-    bun.unsafeAssert(buf.len > 0);
+    bun.debug.unsafeAssert(buf.len > 0);
 
     var len = utf8.len;
     @memcpy(buf[0..len], utf8[0..len]);
@@ -2296,7 +2296,7 @@ pub fn toUTF8ListWithType(list_: std.ArrayList(u8), comptime Type: type, utf16: 
         // which uses 3 bytes for invalid surrogates, causing the length to not
         // match from simdutf.
         // if (Environment.allow_assert) {
-        //     bun.unsafeAssert(buf.items.len == length);
+        //     bun.debug.unsafeAssert(buf.items.len == length);
         // }
 
         return buf;
@@ -4166,8 +4166,8 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
 
         if (comptime Environment.enableSIMD) {
             // these assertions exist more so for LLVM
-            bun.unsafeAssert(remaining.len < ascii_vector_size);
-            bun.unsafeAssert(@intFromPtr(remaining.ptr + ascii_vector_size) > @intFromPtr(remaining_end));
+            bun.debug.unsafeAssert(remaining.len < ascii_vector_size);
+            bun.debug.unsafeAssert(@intFromPtr(remaining.ptr + ascii_vector_size) > @intFromPtr(remaining_end));
         }
 
         if (remaining.len >= size) {
@@ -4180,9 +4180,9 @@ pub fn firstNonASCIIWithType(comptime Type: type, slice: Type) ?u32 {
                     remaining.len -= @intFromPtr(remaining.ptr) - @intFromPtr(remaining_start);
                     const first_set_byte = @ctz(mask) / 8;
                     if (comptime Environment.isDebug) {
-                        bun.unsafeAssert(remaining[first_set_byte] > 127);
+                        bun.debug.unsafeAssert(remaining[first_set_byte] > 127);
                         for (0..first_set_byte) |j| {
-                            bun.unsafeAssert(remaining[j] <= 127);
+                            bun.debug.unsafeAssert(remaining[j] <= 127);
                         }
                     }
 
@@ -4606,8 +4606,8 @@ fn byte2hex(char: u8) u8 {
 
 pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
     if (comptime Environment.allow_assert) {
-        bun.unsafeAssert(destination.len > 0);
-        bun.unsafeAssert(source.len > 0);
+        bun.debug.unsafeAssert(destination.len > 0);
+        bun.debug.unsafeAssert(source.len > 0);
     }
     const to_write = if (destination.len < source.len * 2)
         destination.len - destination.len % 2
@@ -4914,7 +4914,7 @@ pub fn firstNonASCII16(comptime Slice: type, slice: Slice) ?u32 {
             remaining.len -= (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
         }
 
-        bun.unsafeAssert(remaining.len < ascii_u16_vector_size);
+        bun.debug.unsafeAssert(remaining.len < ascii_u16_vector_size);
     }
 
     var i: usize = (@intFromPtr(remaining.ptr) - @intFromPtr(remaining_start)) / 2;
@@ -5565,14 +5565,14 @@ pub fn moveAllSlices(comptime Type: type, container: *Type, from: string, to: st
 
 pub fn moveSlice(slice: string, from: string, to: string) string {
     if (comptime Environment.allow_assert) {
-        bun.unsafeAssert(from.len <= to.len and from.len >= slice.len);
+        bun.debug.unsafeAssert(from.len <= to.len and from.len >= slice.len);
         // assert we are in bounds
-        bun.unsafeAssert(
+        bun.debug.unsafeAssert(
             (@intFromPtr(from.ptr) + from.len) >=
                 @intFromPtr(slice.ptr) + slice.len and
                 (@intFromPtr(from.ptr) <= @intFromPtr(slice.ptr)),
         );
-        bun.unsafeAssert(eqlLong(from, to[0..from.len], false)); // data should be identical
+        bun.debug.unsafeAssert(eqlLong(from, to[0..from.len], false)); // data should be identical
     }
 
     const ptr_offset = @intFromPtr(slice.ptr) - @intFromPtr(from.ptr);
@@ -5688,7 +5688,7 @@ pub fn concatWithLength(
         @memcpy(remain[0..arg.len], arg);
         remain = remain[arg.len..];
     }
-    bun.unsafeAssert(remain.len == 0); // all bytes should be used
+    bun.debug.unsafeAssert(remain.len == 0); // all bytes should be used
     return out;
 }
 
@@ -5762,7 +5762,7 @@ pub fn concatIfNeeded(
 
         remain = remain[arg.len..];
     }
-    bun.unsafeAssert(remain.len == 0);
+    bun.debug.unsafeAssert(remain.len == 0);
 }
 
 /// This will simply ignore invalid UTF-8 and just do it

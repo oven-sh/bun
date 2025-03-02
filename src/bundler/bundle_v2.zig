@@ -1409,7 +1409,7 @@ pub const BundleV2 = struct {
                 const keys = named_exports_array[source_id].keys();
                 const client_manifest_items = try alloc.alloc(G.Property, keys.len);
 
-                if (!sc.separate_ssr_graph) bun.todoPanic(@src(), "separate_ssr_graph=false", .{});
+                if (!sc.separate_ssr_graph) bun.debug.todoPanic(@src(), "separate_ssr_graph=false", .{});
 
                 const client_path = server.newExpr(E.String{
                     .data = try std.fmt.allocPrint(alloc, "{}S{d:0>8}", .{
@@ -1461,7 +1461,7 @@ pub const BundleV2 = struct {
                     }),
                 });
             } else {
-                bun.todoPanic(@src(), "\"use server\"", .{});
+                bun.debug.todoPanic(@src(), "\"use server\"", .{});
             }
         }
 
@@ -3568,7 +3568,7 @@ pub const BundleV2 = struct {
                     ((result.use_directive == .client) != (result.ast.target == .browser)))
                 {
                     if (result.use_directive == .server)
-                        bun.todoPanic(@src(), "\"use server\"", .{});
+                        bun.debug.todoPanic(@src(), "\"use server\"", .{});
 
                     const reference_source_index, const ssr_index = if (this.framework.?.server_components.?.separate_ssr_graph) brk: {
                         // Enqueue two files, one in server graph, one in ssr graph.
@@ -3842,7 +3842,7 @@ pub const DeferredBatchTask = struct {
     const AnyTask = JSC.AnyTask.New(@This(), runOnJSThread);
 
     pub fn init(this: *DeferredBatchTask) void {
-        if (comptime Environment.isDebug) bun.debugAssert(!this.running);
+        if (comptime Environment.isDebug) bun.debug.debugAssert(!this.running);
         this.* = .{
             .running = if (comptime Environment.isDebug) false else 0,
         };
@@ -4732,7 +4732,7 @@ pub const ParseTask = struct {
 
             pub fn getWrapper(result: *OnBeforeParseResult) *OnBeforeParseResultWrapper {
                 const wrapper: *OnBeforeParseResultWrapper = @fieldParentPtr("result", result);
-                bun.debugAssert(wrapper.check == 42069);
+                bun.debug.debugAssert(wrapper.check == 42069);
                 return wrapper;
             }
         };
@@ -5106,7 +5106,7 @@ pub const ParseTask = struct {
             task.side_effects = .no_side_effects__empty_ast;
         }
 
-        // bun.debugAssert(ast.parts.len > 0); // when parts.len == 0, it is assumed to be pending/failed. empty ast has at least 1 part.
+        // bun.debug.debugAssert(ast.parts.len > 0); // when parts.len == 0, it is assumed to be pending/failed. empty ast has at least 1 part.
 
         step.* = .resolve;
 
@@ -6089,7 +6089,7 @@ const LinkerGraph = struct {
                             this.is_scb_bitset.set(ref_id);
                         },
                         .server => {
-                            bun.todoPanic(@src(), "um", .{});
+                            bun.debug.todoPanic(@src(), "um", .{});
                         },
                     }
                 }
@@ -9785,7 +9785,7 @@ pub const LinkerContext = struct {
                         }
                     },
                     else => {},
-                    // else => bun.unreachablePanic("Unexpected output format", .{}),
+                    // else => bun.debug.unreachablePanic("Unexpected output format", .{}),
                 }
             }
         }
@@ -10600,7 +10600,7 @@ pub const LinkerContext = struct {
         conditions: *const BabyList(bun.css.ImportConditions),
     ) void {
         var dummy_import_records = bun.BabyList(bun.ImportRecord){};
-        defer bun.debugAssert(dummy_import_records.len == 0);
+        defer bun.debug.debugAssert(dummy_import_records.len == 0);
 
         var i: usize = conditions.len;
         while (i > 0) {
@@ -12955,7 +12955,7 @@ pub const LinkerContext = struct {
                                             stmt.data.s_class.class.class_name = s.default_name;
                                         },
 
-                                        else => bun.unreachablePanic(
+                                        else => bun.debug.unreachablePanic(
                                             "Unexpected type {any} in source file {s}",
                                             .{
                                                 stmt2.data,
@@ -13173,7 +13173,7 @@ pub const LinkerContext = struct {
         if (c.options.output_format == .internal_bake_dev) brk: {
             if (part_range.source_index.isRuntime()) {
                 @branchHint(.cold);
-                bun.debugAssert(c.dev_server == null);
+                bun.debug.debugAssert(c.dev_server == null);
                 break :brk; // this is from `bun build --format=internal_bake_dev`
             }
 

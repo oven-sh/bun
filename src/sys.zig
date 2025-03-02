@@ -357,12 +357,12 @@ pub const Error = struct {
         // because we're intending to pass them to writer.print()
         // which will convert them back into UTF*.
         var that = self.withoutPath().toShellSystemError();
-        bun.debugAssert(that.path.tag != .WTFStringImpl);
-        bun.debugAssert(that.dest.tag != .WTFStringImpl);
+        bun.debug.debugAssert(that.path.tag != .WTFStringImpl);
+        bun.debug.debugAssert(that.dest.tag != .WTFStringImpl);
         that.path = bun.String.fromUTF8(self.path);
         that.dest = bun.String.fromUTF8(self.dest);
-        bun.debugAssert(that.path.tag != .WTFStringImpl);
-        bun.debugAssert(that.dest.tag != .WTFStringImpl);
+        bun.debug.debugAssert(that.path.tag != .WTFStringImpl);
+        bun.debug.debugAssert(that.dest.tag != .WTFStringImpl);
 
         return that.format(fmt, opts, writer);
     }

@@ -23344,13 +23344,13 @@ fn NewParser_(
             bun.assert(p.current_scope == p.module_scope);
 
             if (p.options.features.server_components == .wrap_exports_for_server_reference)
-                bun.todoPanic(@src(), "registerServerReference", .{});
+                bun.debug.todoPanic(@src(), "registerServerReference", .{});
 
             const module_path = p.newExpr(E.String{
                 .data = if (p.options.jsx.development)
                     p.source.path.pretty
                 else
-                    bun.todoPanic(@src(), "TODO: unique_key here", .{}),
+                    bun.debug.todoPanic(@src(), "TODO: unique_key here", .{}),
             }, logger.Loc.Empty);
 
             // registerClientReference(

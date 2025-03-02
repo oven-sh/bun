@@ -1573,7 +1573,7 @@ pub fn parseItems(comptime D: type, input: *css.Parser) Result(ArrayList(Gradien
 
         if (input.next().asValue()) |tok| {
             if (tok.* == .comma) continue;
-            bun.unreachablePanic("expected a comma after parsing a gradient", .{});
+            bun.debug.unreachablePanic("expected a comma after parsing a gradient", .{});
         } else {
             break;
         }

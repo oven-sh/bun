@@ -496,7 +496,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         pub fn appendAssumeCapacity(this: *@This(), item: T) void {
             var ptr, const len_ptr, const capp = this.tripleMut();
-            bun.debugAssert(len_ptr.* < capp);
+            bun.debug.debugAssert(len_ptr.* < capp);
             ptr[len_ptr.*] = item;
             len_ptr.* += 1;
         }

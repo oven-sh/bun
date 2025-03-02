@@ -295,7 +295,7 @@ pub const String = extern struct {
     pub fn initInline(
         in: string,
     ) String {
-        bun.assertWithLocation(canInline(in), @src());
+        bun.debug.assertWithLocation(canInline(in), @src());
         return switch (in.len) {
             0 => .{},
             1 => .{ .bytes = .{ in[0], 0, 0, 0, 0, 0, 0, 0 } },

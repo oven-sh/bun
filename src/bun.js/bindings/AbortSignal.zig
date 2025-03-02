@@ -105,7 +105,7 @@ pub const AbortSignal = extern opaque {
         var reason: u8 = 0;
         const js_reason = WebCore__AbortSignal__reasonIfAborted(this, global, &reason);
         if (reason > 0) {
-            bun.debugAssert(js_reason == .undefined);
+            bun.debug.debugAssert(js_reason == .undefined);
             return .{ .common = @enumFromInt(reason) };
         }
         if (js_reason == .zero) {

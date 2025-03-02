@@ -543,7 +543,7 @@ pub const serialize = struct {
         var first = true;
         var combinators_exhausted = false;
         while (compound_selectors.next()) |_compound_| {
-            bun.debugAssert(!combinators_exhausted);
+            bun.debug.debugAssert(!combinators_exhausted);
             var compound = _compound_;
 
             // Skip implicit :scope in relative selectors (e.g. :has(:scope > foo) -> :has(> foo))
@@ -1226,7 +1226,7 @@ pub const tocss_servo = struct {
 
         var combinators_exhausted = false;
         while (compound_selectors.next()) |compound| {
-            bun.debugAssert(!combinators_exhausted);
+            bun.debug.debugAssert(!combinators_exhausted);
 
             // https://drafts.csswg.org/cssom/#serializing-selectors
             if (compound.len == 0) continue;
@@ -1416,12 +1416,12 @@ pub const tocss_servo = struct {
                 const nth_data = nth_of_data.nthData();
                 try nth_data.writeStart(W, dest, true);
                 // A selector must be a function to hold An+B notation
-                bun.debugAssert(nth_data.is_function);
+                bun.debug.debugAssert(nth_data.is_function);
                 try nth_data.writeAffine(W, dest);
                 // Only :nth-child or :nth-last-child can be of a selector list
-                bun.debugAssert(nth_data.ty == .child or nth_data.ty == .last_child);
+                bun.debug.debugAssert(nth_data.ty == .child or nth_data.ty == .last_child);
                 // The selector list should not be empty
-                bun.debugAssert(nth_of_data.selectors.len != 0);
+                bun.debug.debugAssert(nth_of_data.selectors.len != 0);
                 try dest.writeStr(" of ");
                 try tocss_servo.toCss_SelectorList(nth_of_data.selectors, W, dest);
                 try dest.writeChar(')');

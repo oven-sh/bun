@@ -2319,8 +2319,8 @@ fn NewSocket(comptime ssl: bool) type {
                     } else {
                         // Otherwise, let's move the temporary buffer back.
                         const len = @as(usize, @intCast(this.buffered_data_for_node_net.len)) - wrote;
-                        bun.debugAssert(len <= this.buffered_data_for_node_net.len);
-                        bun.debugAssert(len <= this.buffered_data_for_node_net.cap);
+                        bun.debug.debugAssert(len <= this.buffered_data_for_node_net.len);
+                        bun.debug.debugAssert(len <= this.buffered_data_for_node_net.cap);
                         bun.C.memmove(this.buffered_data_for_node_net.ptr, this.buffered_data_for_node_net.ptr[wrote..], len);
                         this.buffered_data_for_node_net.len = @truncate(len);
                     }
@@ -2346,7 +2346,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .{ .success = .{} };
             }
 
-            bun.debugAssert(this.buffered_data_for_node_net.len == 0);
+            bun.debug.debugAssert(this.buffered_data_for_node_net.len == 0);
             var encoding_value: JSC.JSValue = args[3];
             if (args[2].isString()) {
                 encoding_value = args[2];

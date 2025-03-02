@@ -1834,7 +1834,7 @@ pub const Error = enum(i32) {
             .MEMORY => Error.ENOMEM,
             .SERVICE => Error.ESERVICE,
             .SYSTEM => Error.ESERVFAIL,
-            else => bun.todo(@src(), Error.ENOTIMP),
+            else => bun.debug.todo(@src(), Error.ENOTIMP),
         };
     }
 

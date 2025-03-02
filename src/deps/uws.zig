@@ -2620,7 +2620,7 @@ pub const create_bun_socket_error_t = enum(c_int) {
     pub fn toJS(this: create_bun_socket_error_t, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this) {
             .none => brk: {
-                bun.debugAssert(false);
+                bun.debug.debugAssert(false);
                 break :brk .null;
             },
             .load_ca_file => globalObject.ERR_BORINGSSL("Failed to load CA file", .{}).toJS(),

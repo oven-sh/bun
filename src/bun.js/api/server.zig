@@ -153,7 +153,7 @@ fn getContentType(headers: ?*JSC.FetchHeaders, blob: *const JSC.WebCore.AnyBlob,
 
 fn validateRouteName(global: *JSC.JSGlobalObject, path: []const u8) !void {
     // Already validated by the caller
-    bun.debugAssert(path.len > 0 and path[0] == '/');
+    bun.debug.debugAssert(path.len > 0 and path[0] == '/');
 
     // For now, we don't support params that start with a number.
     // Mostly because it makes the params object more complicated to implement and it's easier to cut scope this way for now.
@@ -1501,7 +1501,7 @@ pub const ServerConfig = struct {
                         init_ctx.arena.deinit();
                     }
                 } else {
-                    bun.debugAssert(init_ctx.arena.state.end_index == 0 and
+                    bun.debug.debugAssert(init_ctx.arena.state.end_index == 0 and
                         init_ctx.arena.state.buffer_list.first == null);
                     init_ctx.arena.deinit();
                 }
@@ -4493,7 +4493,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onRequestBodyReadableStreamAvailable(ptr: *anyopaque, globalThis: *JSC.JSGlobalObject, readable: JSC.WebCore.ReadableStream) void {
             var this = bun.cast(*RequestContext, ptr);
-            bun.debugAssert(this.request_body_readable_stream_ref.held.impl == null);
+            bun.debug.debugAssert(this.request_body_readable_stream_ref.held.impl == null);
             this.request_body_readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(readable, globalThis);
         }
 
@@ -6478,9 +6478,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         pub fn jsValueAssertAlive(server: *ThisServer) JSC.JSValue {
-            bun.debugAssert(server.listener != null); // this assertion is only valid while listening
+            bun.debug.debugAssert(server.listener != null); // this assertion is only valid while listening
             return server.js_value.get() orelse brk: {
-                bun.debugAssert(false);
+                bun.debug.debugAssert(false);
                 break :brk .undefined; // safe-ish
             };
         }

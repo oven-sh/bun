@@ -717,7 +717,7 @@ pub const Stringifier = struct {
         }
 
         if (optional_peers_buf.items.len > 0) {
-            bun.debugAssert(any);
+            bun.debug.debugAssert(any);
             try writer.writeAll(
                 \\, "optionalPeers": [
             );
@@ -919,7 +919,7 @@ pub const Stringifier = struct {
             }
         }
         if (optional_peers_buf.items.len > 0) {
-            bun.debugAssert(any);
+            bun.debug.debugAssert(any);
             try writer.writeAll(
                 \\,
                 \\
@@ -1571,7 +1571,7 @@ pub fn parseIntoBinaryLockfile(
                         const workspace_pkg_id: PackageID = @intCast(_workspace_pkg_id);
                         if (res.eql(&pkg_resolutions[workspace_pkg_id], string_buf.bytes.items, string_buf.bytes.items)) {
                             if (comptime Environment.isDebug) {
-                                bun.assertWithLocation(!strings.eqlLong(pkg_path, pkg_names[workspace_pkg_id].slice(string_buf.bytes.items), true), @src());
+                                bun.debug.assertWithLocation(!strings.eqlLong(pkg_path, pkg_names[workspace_pkg_id].slice(string_buf.bytes.items), true), @src());
                             }
 
                             // found the workspace this key belongs to. for example both `pkg1` and `another-pkg1` should map

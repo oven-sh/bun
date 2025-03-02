@@ -44,8 +44,8 @@ pub fn myersDiff(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     const expected_str = try expected_arg.toBunString(global);
     defer expected_str.deref();
 
-    bun.assertWithLocation(actual_str.tag != .Dead, @src());
-    bun.assertWithLocation(expected_str.tag != .Dead, @src());
+    bun.debug.assertWithLocation(actual_str.tag != .Dead, @src());
+    bun.debug.assertWithLocation(expected_str.tag != .Dead, @src());
 
     return assert.myersDiff(
         allocator,

@@ -278,7 +278,7 @@ pub const Bin = extern struct {
         writer: anytype,
         writeIndent: *const fn (anytype, *u32) @TypeOf(writer).Error!void,
     ) @TypeOf(writer).Error!void {
-        bun.debugAssert(this.tag != .none);
+        bun.debug.debugAssert(this.tag != .none);
         if (comptime style == .single_line) {
             switch (this.tag) {
                 .none => {},
@@ -614,10 +614,10 @@ pub const Bin = extern struct {
         }
 
         fn linkBinOrCreateShim(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
-            bun.assertWithLocation(std.fs.path.isAbsolute(abs_target), @src());
-            bun.assertWithLocation(std.fs.path.isAbsolute(abs_dest), @src());
-            bun.assertWithLocation(abs_target[abs_target.len - 1] != std.fs.path.sep, @src());
-            bun.assertWithLocation(abs_dest[abs_dest.len - 1] != std.fs.path.sep, @src());
+            bun.debug.assertWithLocation(std.fs.path.isAbsolute(abs_target), @src());
+            bun.debug.assertWithLocation(std.fs.path.isAbsolute(abs_dest), @src());
+            bun.debug.assertWithLocation(abs_target[abs_target.len - 1] != std.fs.path.sep, @src());
+            bun.debug.assertWithLocation(abs_dest[abs_dest.len - 1] != std.fs.path.sep, @src());
 
             if (this.seen) |seen| {
                 // Skip seen destinations for this tree
@@ -707,7 +707,7 @@ pub const Bin = extern struct {
             defer bunx_file.close();
 
             const rel_target = path.relativeBufZ(this.rel_buf, path.dirname(abs_dest, .auto), abs_target);
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, "..\\"), @src());
+            bun.debug.assertWithLocation(strings.hasPrefixComptime(rel_target, "..\\"), @src());
 
             const rel_target_w = strings.toWPathNormalized(&target_buf, rel_target["..\\".len..]);
 
@@ -775,7 +775,7 @@ pub const Bin = extern struct {
             const abs_dest_dir = path.dirname(abs_dest, .auto);
             const rel_target = path.relativeBufZ(this.rel_buf, abs_dest_dir, abs_target);
 
-            bun.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
+            bun.debug.assertWithLocation(strings.hasPrefixComptime(rel_target, ".."), @src());
 
             switch (bun.sys.symlink(rel_target, abs_dest)) {
                 .err => |err| {
@@ -807,7 +807,7 @@ pub const Bin = extern struct {
                     }
 
                     // beyond this error can only be `.EXIST`
-                    bun.assertWithLocation(err.getErrno() == .EXIST, @src());
+                    bun.debug.assertWithLocation(err.getErrno() == .EXIST, @src());
                 },
                 .result => return,
             }
@@ -865,7 +865,7 @@ pub const Bin = extern struct {
             const package_dir = this.buildTargetPackageDir();
             var abs_dest_buf_remain = this.buildDestinationDir(global);
 
-            bun.assertWithLocation(this.bin.tag != .none, @src());
+            bun.debug.assertWithLocation(this.bin.tag != .none, @src());
 
             switch (this.bin.tag) {
                 .none => {},
@@ -973,7 +973,7 @@ pub const Bin = extern struct {
             const package_dir = this.buildTargetPackageDir();
             var abs_dest_buf_remain = this.buildDestinationDir(global);
 
-            bun.assertWithLocation(this.bin.tag != .none, @src());
+            bun.debug.assertWithLocation(this.bin.tag != .none, @src());
 
             switch (this.bin.tag) {
                 .none => {},

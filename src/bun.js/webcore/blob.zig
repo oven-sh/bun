@@ -5159,7 +5159,7 @@ pub const Blob = struct {
         // TODO: remove this field, make it a boolean.
         if (this.allocator) |alloc| {
             this.allocator = null;
-            bun.debugAssert(alloc.vtable == bun.default_allocator.vtable);
+            bun.debug.debugAssert(alloc.vtable == bun.default_allocator.vtable);
             this.destroy();
         }
     }

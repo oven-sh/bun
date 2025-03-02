@@ -148,7 +148,7 @@ pub const Size = union(enum) {
                 } else if (vp.eql(css.VendorPrefix{ .moz = true })) {
                     try dest.writeStr("-moz-available");
                 } else {
-                    bun.unreachablePanic("Unexpected vendor prefixes", .{});
+                    bun.debug.unreachablePanic("Unexpected vendor prefixes", .{});
                 }
             },
             .fit_content_function => |l| {
@@ -308,7 +308,7 @@ pub const MaxSize = union(enum) {
                 } else if (css.VendorPrefix.eql(vp, css.VendorPrefix{ .moz = true })) {
                     try dest.writeStr("-moz-available");
                 } else {
-                    bun.unreachablePanic("Unexpected vendor prefixes", .{});
+                    bun.debug.unreachablePanic("Unexpected vendor prefixes", .{});
                 }
             },
             .fit_content_function => |l| {

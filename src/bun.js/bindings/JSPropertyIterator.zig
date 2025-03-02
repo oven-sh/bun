@@ -50,7 +50,7 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
                 return error.JSError;
             }
             if (iter.len > 0) {
-                bun.debugAssert(iter.impl != null);
+                bun.debug.debugAssert(iter.impl != null);
             }
             return iter;
         }

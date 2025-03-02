@@ -660,7 +660,7 @@ pub const NumberRenamer = struct {
 
     pub fn nameForSymbol(renamer: *NumberRenamer, ref: Ref) string {
         if (ref.isSourceContentsSlice()) {
-            bun.unreachablePanic("Unexpected unbound symbol!\n{any}", .{ref});
+            bun.debug.unreachablePanic("Unexpected unbound symbol!\n{any}", .{ref});
         }
 
         const resolved = renamer.symbols.follow(ref);

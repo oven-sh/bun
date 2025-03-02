@@ -196,7 +196,7 @@ pub fn Printer(comptime Writer: type) type {
             kind: css.PrinterErrorKind,
             maybe_loc: ?css.dependencies.Location,
         ) PrintErr!void {
-            bun.debugAssert(this.error_kind == null);
+            bun.debug.debugAssert(this.error_kind == null);
             this.error_kind = css.PrinterError{
                 .kind = kind,
                 .loc = if (maybe_loc) |loc| css.ErrorLocation{
@@ -530,7 +530,7 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         fn writeIndent(this: *This) PrintErr!void {
-            bun.debugAssert(!this.minify);
+            bun.debug.debugAssert(!this.minify);
             if (this.indent_amt > 0) {
                 // try this.writeStr(this.getIndent(this.ident));
                 this.dest.writeByteNTimes(' ', this.indent_amt) catch return this.addFmtError();

@@ -537,7 +537,7 @@ pub fn GlobWalker_(
 
             pub fn deinit(this: *Iterator) void {
                 defer {
-                    bun.debugAssert(this.fds_open == 0);
+                    bun.debug.debugAssert(this.fds_open == 0);
                 }
                 this.closeCwdFd();
                 switch (this.iter_state) {
@@ -556,7 +556,7 @@ pub fn GlobWalker_(
                 }
 
                 if (comptime count_fds) {
-                    bun.debugAssert(this.fds_open == 0);
+                    bun.debug.debugAssert(this.fds_open == 0);
                 }
             }
 
@@ -576,7 +576,7 @@ pub fn GlobWalker_(
                 if (comptime count_fds) {
                     this.fds_open += 1;
                     // If this is over 2 then this means that there is a bug in the iterator code
-                    bun.debugAssert(this.fds_open <= 2);
+                    bun.debug.debugAssert(this.fds_open <= 2);
                 }
             }
 

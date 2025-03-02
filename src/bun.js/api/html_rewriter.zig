@@ -885,7 +885,7 @@ fn HandlerCallback(
             // All of these start with a ref_count of 2.
             // 1. For this scope.
             // 2. For the JS value.
-            bun.debugAssert(wrapper.ref_count == 2);
+            bun.debug.debugAssert(wrapper.ref_count == 2);
 
             defer {
                 @field(wrapper, field_name) = null;

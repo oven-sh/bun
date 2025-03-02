@@ -250,7 +250,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
         pub fn deinit(this: *HTTPClient) void {
             this.clearData();
-            bun.debugAssert(this.tcp.isDetached());
+            bun.debug.debugAssert(this.tcp.isDetached());
             this.destroy();
         }
 

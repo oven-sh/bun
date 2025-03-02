@@ -1265,6 +1265,6 @@ pub const SliceWithUnderlyingString = struct {
 };
 
 comptime {
-    bun.assert_eql(@sizeOf(bun.String), 24);
-    bun.assert_eql(@alignOf(bun.String), 8);
+    bun.debug.assert_eql(@sizeOf(bun.String), 24);
+    bun.debug.assert_eql(@alignOf(bun.String), 8);
 }

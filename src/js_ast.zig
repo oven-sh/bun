@@ -3200,7 +3200,7 @@ pub const Stmt = struct {
             pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
                     if (instance == null and memory_allocator == null)
-                        bun.unreachablePanic("Store must be init'd", .{});
+                        bun.debug.unreachablePanic("Store must be init'd", .{});
                 }
             }
 
@@ -3410,7 +3410,7 @@ pub const Expr = struct {
     /// Sets the value of a property, creating it if it doesn't exist.
     /// `expr` must be an object.
     pub fn set(expr: *Expr, allocator: std.mem.Allocator, name: string, value: Expr) OOM!void {
-        bun.assertWithLocation(expr.isObject(), @src());
+        bun.debug.assertWithLocation(expr.isObject(), @src());
         for (0..expr.data.e_object.properties.len) |i| {
             const prop = &expr.data.e_object.properties.ptr[i];
             const key = prop.key orelse continue;
@@ -3435,7 +3435,7 @@ pub const Expr = struct {
     /// Sets the value of a property to a string, creating it if it doesn't exist.
     /// `expr` must be an object.
     pub fn setString(expr: *Expr, allocator: std.mem.Allocator, name: string, value: string) OOM!void {
-        bun.assertWithLocation(expr.isObject(), @src());
+        bun.debug.assertWithLocation(expr.isObject(), @src());
         for (0..expr.data.e_object.properties.len) |i| {
             const prop = &expr.data.e_object.properties.ptr[i];
             const key = prop.key orelse continue;
@@ -3602,7 +3602,7 @@ pub const Expr = struct {
 
     pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {
         if (expr.data == .e_string) {
-            bun.debugAssert(expr.data.e_string.next == null);
+            bun.debug.debugAssert(expr.data.e_string.next == null);
             return expr.data.e_string.data;
         }
         return null;
@@ -5290,7 +5290,7 @@ pub const Expr = struct {
         e_inlined_enum: *E.InlinedEnum,
 
         comptime {
-            bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
+            bun.debug.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
         }
 
         pub fn as(data: Data, comptime tag: Tag) ?@FieldType(Data, @tagName(tag)) {
@@ -6280,7 +6280,7 @@ pub const Expr = struct {
             pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
                     if (instance == null and memory_allocator == null)
-                        bun.unreachablePanic("Store must be init'd", .{});
+                        bun.debug.unreachablePanic("Store must be init'd", .{});
                 }
             }
 
@@ -8679,7 +8679,7 @@ pub const ServerComponentBoundary = struct {
                     real_source_index,
                     Adapter{ .list = l.list },
                 ) orelse return null;
-                bun.unsafeAssert(l.list.capacity > 0); // optimize MultiArrayList.Slice.items
+                bun.debug.unsafeAssert(l.list.capacity > 0); // optimize MultiArrayList.Slice.items
                 return l.list.items(.reference_source_index)[i];
             }
 
@@ -8700,7 +8700,7 @@ pub const ServerComponentBoundary = struct {
             }
 
             pub fn eql(adapt: Adapter, a: Index.Int, _: void, b_index: usize) bool {
-                bun.unsafeAssert(adapt.list.capacity > 0); // optimize MultiArrayList.Slice.items
+                bun.debug.unsafeAssert(adapt.list.capacity > 0); // optimize MultiArrayList.Slice.items
                 return a == adapt.list.items(.source_index)[b_index];
             }
         };

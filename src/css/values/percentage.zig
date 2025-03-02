@@ -16,7 +16,7 @@ pub const Percentage = struct {
         if (input.tryParse(Calc(Percentage).parse, .{}).asValue()) |calc_value| {
             if (calc_value == .value) return .{ .result = calc_value.value.* };
             // Percentages are always compatible, so they will always compute to a value.
-            bun.unreachablePanic("Percentages are always compatible, so they will always compute to a value.", .{});
+            bun.debug.unreachablePanic("Percentages are always compatible, so they will always compute to a value.", .{});
         }
 
         const percent = switch (input.expectPercentage()) {

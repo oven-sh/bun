@@ -95,7 +95,7 @@ pub const LinuxMemFdAllocator = struct {
         var size = len;
 
         // size rounded up to nearest page
-        size += (size + std.mem.page_size - 1) & std.mem.page_size;
+        size = std.mem.alignForward(usize, size, bun.page_size);
 
         var flags_mut = flags;
         flags_mut.TYPE = .SHARED;

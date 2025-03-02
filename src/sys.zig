@@ -2766,26 +2766,26 @@ pub fn getFdPath(fd: bun.FileDescriptor, out_buffer: *[MAX_PATH_BYTES]u8) Maybe(
 /// * SIGSEGV - Attempted write into a region mapped as read-only.
 /// * SIGBUS - Attempted  access to a portion of the buffer that does not correspond to the file
 pub fn mmap(
-    ptr: ?[*]align(mem.page_size) u8,
+    ptr: ?[*]align(bun.page_size) u8,
     length: usize,
     prot: u32,
     flags: std.posix.MAP,
     fd: bun.FileDescriptor,
     offset: u64,
-) Maybe([]align(mem.page_size) u8) {
+) Maybe([]align(bun.page_size) u8) {
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     const rc = std.c.mmap(ptr, length, prot, flags, fd.cast(), ioffset);
     const fail = std.c.MAP_FAILED;
     if (rc == fail) {
-        return Maybe([]align(mem.page_size) u8){
+        return Maybe([]align(bun.page_size) u8){
             .err = .{ .errno = @as(Syscall.Error.Int, @truncate(@intFromEnum(bun.C.getErrno(@as(i64, @bitCast(@intFromPtr(fail))))))), .syscall = .mmap },
         };
     }
 
-    return Maybe([]align(mem.page_size) u8){ .result = @as([*]align(mem.page_size) u8, @ptrCast(@alignCast(rc)))[0..length] };
+    return Maybe([]align(bun.page_size) u8){ .result = @as([*]align(bun.page_size) u8, @ptrCast(@alignCast(rc)))[0..length] };
 }
 
-pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(mem.page_size) u8) {
+pub fn mmapFile(path: [:0]const u8, flags: std.c.MAP, wanted_size: ?usize, offset: usize) Maybe([]align(bun.page_size) u8) {
     assertIsValidWindowsPath(u8, path);
     const fd = switch (open(path, bun.O.RDWR, 0)) {
         .result => |fd| fd,
@@ -2945,7 +2945,7 @@ pub fn socketpair(domain: socketpair_t, socktype: socketpair_t, protocol: socket
     return Maybe([2]bun.FileDescriptor){ .result = .{ bun.toFD(fds_i[0]), bun.toFD(fds_i[1]) } };
 }
 
-pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
+pub fn munmap(memory: []align(bun.page_size) const u8) Maybe(void) {
     if (Maybe(void).errnoSys(syscall.munmap(memory.ptr, memory.len), .munmap)) |err| {
         return err;
     } else return Maybe(void).success;

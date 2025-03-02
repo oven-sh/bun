@@ -13311,7 +13311,7 @@ fn NewParser_(
                             ) catch unreachable;
 
                             block.* = G.ClassStaticBlock{
-                                .stmts = js_ast.BabyList(Stmt).init(stmts),
+                                .stmts = bun.BabyList(Stmt).init(stmts),
                                 .loc = loc,
                             };
 
@@ -21872,7 +21872,7 @@ fn NewParser_(
 
                         var list = property.class_static_block.?.stmts.listManaged(p.allocator);
                         p.visitStmts(&list, .fn_body) catch unreachable;
-                        property.class_static_block.?.stmts = js_ast.BabyList(Stmt).fromList(list);
+                        property.class_static_block.?.stmts = bun.BabyList(Stmt).fromList(list);
                         p.popScope();
 
                         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;

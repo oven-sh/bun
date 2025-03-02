@@ -3724,7 +3724,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, bun.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             .INTR => continue,
@@ -6464,7 +6464,7 @@ pub const NodeFS = struct {
                 while (true) {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, std.mem.page_size, 0);
+                    const written = linux.copy_file_range(src_fd.cast(), &off_in_copy, dest_fd.cast(), &off_out_copy, bun.page_size, 0);
                     if (ret.errnoSysP(written, .copy_file_range, dest)) |err| {
                         return switch (err.getErrno()) {
                             inline .XDEV, .NOSYS => |errno| brk: {

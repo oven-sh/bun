@@ -21,7 +21,7 @@ const JSLexer = bun.js_lexer;
 const logger = bun.logger;
 
 const js_parser = bun.js_parser;
-const Expr = @import("../js_ast.zig").Expr;
+const Expr = bun.JSAst.Expr;
 const JSON = bun.JSON;
 const JSPrinter = bun.js_printer;
 

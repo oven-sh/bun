@@ -5121,7 +5121,7 @@ pub const PackageManager = struct {
 
         var file = tmpfile.file();
         const file_writer = file.writer();
-        var buffered_writer = std.io.BufferedWriter(std.mem.page_size, @TypeOf(file_writer)){
+        var buffered_writer = std.io.BufferedWriter(bun.page_size, @TypeOf(file_writer)){
             .unbuffered_writer = file_writer,
         };
         const writer = buffered_writer.writer();

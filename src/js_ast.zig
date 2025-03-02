@@ -1567,6 +1567,20 @@ pub const E = struct {
         inverted: bool = false,
     };
 
+    pub const Special = union(enum) {
+        /// emits `exports` or `module.exports` depending on `commonjs_named_exports_deoptimized`
+        module_exports,
+        /// `import.meta.hot`
+        hot,
+        /// `import.meta.hot.accept`
+        hot_accept,
+        /// Converted from `hot_accept` to this in js_parser.zig when it is
+        /// passed strings. Printed as `import.meta.hot.acceptSpecifiers`
+        hot_accept_visited,
+        /// Prints the resolved specifier string for an import record.
+        resolved_specifier_string: ImportRecord.Index,
+    };
+
     pub const Call = struct {
         // Node:
         target: ExprNodeIndex,
@@ -2764,7 +2778,7 @@ pub const E = struct {
     };
 
     pub const RequireResolveString = struct {
-        import_record_index: u32 = 0,
+        import_record_index: u32,
 
         // close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
@@ -4099,18 +4113,7 @@ pub const Expr = struct {
                     },
                 };
             },
-            E.TemplatePart => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_template_part = brk: {
-                            const item = allocator.create(Type) catch unreachable;
-                            item.* = st;
-                            break :brk item;
-                        },
-                    },
-                };
-            },
+
             E.Template => {
                 return Expr{
                     .loc = loc,
@@ -4461,14 +4464,7 @@ pub const Expr = struct {
                     },
                 };
             },
-            E.TemplatePart => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_template_part = Data.Store.append(Type, st),
-                    },
-                };
-            },
+
             E.Template => {
                 return Expr{
                     .loc = loc,
@@ -4577,7 +4573,6 @@ pub const Expr = struct {
         e_jsx_element,
         e_object,
         e_spread,
-        e_template_part,
         e_template,
         e_reg_exp,
         e_await,
@@ -4588,7 +4583,6 @@ pub const Expr = struct {
         e_import_identifier,
         e_private_identifier,
         e_commonjs_export_identifier,
-        e_module_dot_exports,
         e_boolean,
         e_number,
         e_big_int,
@@ -4606,6 +4600,7 @@ pub const Expr = struct {
         e_import_meta,
         e_import_meta_main,
         e_require_main,
+        e_special,
         e_inlined_enum,
 
         // object, regex and array may have had side effects
@@ -4656,7 +4651,6 @@ pub const Expr = struct {
                 .e_big_int => writer.writeAll("BigInt"),
                 .e_object => writer.writeAll("object"),
                 .e_spread => writer.writeAll("..."),
-                .e_template_part => writer.writeAll("template_part"),
                 .e_template => writer.writeAll("template"),
                 .e_reg_exp => writer.writeAll("regexp"),
                 .e_await => writer.writeAll("await"),
@@ -4945,16 +4939,7 @@ pub const Expr = struct {
                 },
             }
         }
-        pub fn isTemplatePart(self: Tag) bool {
-            switch (self) {
-                .e_template_part => {
-                    return true;
-                },
-                else => {
-                    return false;
-                },
-            }
-        }
+
         pub fn isTemplate(self: Tag) bool {
             switch (self) {
                 .e_template => {
@@ -5265,7 +5250,6 @@ pub const Expr = struct {
         e_jsx_element: *E.JSXElement,
         e_object: *E.Object,
         e_spread: *E.Spread,
-        e_template_part: *E.TemplatePart,
         e_template: *E.Template,
         e_reg_exp: *E.RegExp,
         e_await: *E.Await,
@@ -5277,7 +5261,6 @@ pub const Expr = struct {
         e_import_identifier: E.ImportIdentifier,
         e_private_identifier: E.PrivateIdentifier,
         e_commonjs_export_identifier: E.CommonJSExportIdentifier,
-        e_module_dot_exports,
 
         e_boolean: E.Boolean,
         e_number: E.Number,
@@ -5299,6 +5282,10 @@ pub const Expr = struct {
 
         e_import_meta_main: E.ImportMetaMain,
         e_require_main,
+
+        /// Covers some exotic AST node types under one namespace, since the
+        /// places this is found it all follows similar handling.
+        e_special: E.Special,
 
         e_inlined_enum: *E.InlinedEnum,
 
@@ -5376,11 +5363,6 @@ pub const Expr = struct {
                     const item = try allocator.create(std.meta.Child(@TypeOf(this.e_spread)));
                     item.* = el.*;
                     return .{ .e_spread = item };
-                },
-                .e_template_part => |el| {
-                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_template_part)));
-                    item.* = el.*;
-                    return .{ .e_template_part = item };
                 },
                 .e_template => |el| {
                     const item = try allocator.create(std.meta.Child(@TypeOf(this.e_template)));
@@ -5568,14 +5550,6 @@ pub const Expr = struct {
                     });
                     return .{ .e_spread = item };
                 },
-                .e_template_part => |el| {
-                    const item = bun.create(allocator, E.TemplatePart, .{
-                        .value = try el.value.deepClone(allocator),
-                        .tail_loc = el.tail_loc,
-                        .tail = el.tail,
-                    });
-                    return .{ .e_template_part = item };
-                },
                 .e_template => |el| {
                     const item = bun.create(allocator, E.Template, .{
                         .tag = if (el.tag) |tag| try tag.deepClone(allocator) else null,
@@ -5709,9 +5683,6 @@ pub const Expr = struct {
                     if (e.value) |value|
                         value.data.writeToHasher(hasher, symbol_table);
                 },
-                .e_template_part => {
-                    // TODO: delete e_template_part as hit has zero usages
-                },
                 .e_template => |e| {
                     _ = e; // autofix
                 },
@@ -5772,7 +5743,7 @@ pub const Expr = struct {
                 .e_new_target,
                 .e_require_main,
                 .e_import_meta,
-                .e_module_dot_exports,
+                .e_special,
                 => {},
             }
         }
@@ -7331,7 +7302,7 @@ pub const TSNamespaceMember = struct {
 /// Inlined enum values can only be numbers and strings
 /// This type special cases an encoding similar to JSValue, where nan-boxing is used
 /// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
-pub const InlinedEnumValue = packed struct {
+pub const InlinedEnumValue = struct {
     raw_data: u64,
 
     pub const Decoded = union(enum) {
@@ -7403,27 +7374,22 @@ pub const ExportsKind = enum {
     // module.
     esm_with_dynamic_fallback_from_cjs,
 
-    const dynamic = std.EnumSet(ExportsKind).init(.{
-        .esm_with_dynamic_fallback = true,
-        .esm_with_dynamic_fallback_from_cjs = true,
-        .cjs = true,
-    });
-
-    const with_dynamic_fallback = std.EnumSet(ExportsKind).init(.{
-        .esm_with_dynamic_fallback = true,
-        .esm_with_dynamic_fallback_from_cjs = true,
-    });
-
     pub fn isDynamic(self: ExportsKind) bool {
-        return dynamic.contains(self);
+        return switch (self) {
+            .cjs, .esm_with_dynamic_fallback, .esm_with_dynamic_fallback_from_cjs => true,
+            .none, .esm => false,
+        };
+    }
+
+    pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
+        return switch (self) {
+            .none, .cjs, .esm => false,
+            .esm_with_dynamic_fallback, .esm_with_dynamic_fallback_from_cjs => true,
+        };
     }
 
     pub fn jsonStringify(self: @This(), writer: anytype) !void {
         return try writer.write(@tagName(self));
-    }
-
-    pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
-        return with_dynamic_fallback.contains(self);
     }
 };
 

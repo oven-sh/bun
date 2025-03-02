@@ -635,7 +635,7 @@ bool JSX509Certificate::checkEmail(JSGlobalObject* globalObject, std::span<const
     return handleMatchResult(globalObject, "Invalid email"_s, scope, result);
 }
 
-bool JSX509Certificate::checkIP(JSGlobalObject* globalObject, std::span<const char> ip)
+bool JSX509Certificate::checkIP(JSGlobalObject* globalObject, const char* ip)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

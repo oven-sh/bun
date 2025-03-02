@@ -807,14 +807,6 @@ pub fn addImportMetaDefines(
         "import.meta.env.STATIC",
         Define.Data.initBoolean(mode == .production_static),
     );
-
-    if (mode != .development) {
-        try define.insert(
-            allocator,
-            "import.meta.hot",
-            Define.Data.initBoolean(false),
-        );
-    }
 }
 
 pub const server_virtual_source: bun.logger.Source = .{

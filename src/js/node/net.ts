@@ -27,7 +27,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction } = require("internal/validators");
+const { validateFunction, validateNumber } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -658,9 +658,9 @@ const Socket = (function (InternalSocket) {
         host,
         path,
         socket,
-        // TODOs
         localAddress,
         localPort,
+        // TODOs
         family,
         hints,
         lookup,
@@ -674,6 +674,13 @@ const Socket = (function (InternalSocket) {
         checkServerIdentity,
         session,
       } = options;
+
+      if (localAddress && !isIP(localAddress)) {
+        throw $ERR_INVALID_IP_ADDRESS(localAddress);
+      }
+      if (localPort) {
+        validateNumber(localPort, "options.localPort");
+      }
 
       this.servername = servername;
 
@@ -1403,6 +1410,14 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     hostname = hostname || "::";
   }
 
+  if (this._handle) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
+  if (onListen != null) {
+    this.once("listening", onListen);
+  }
+
   try {
     var tls = undefined;
     var TLSSocketClass = undefined;
@@ -1497,7 +1512,7 @@ Server.prototype[kRealListen] = function realListen(
   // That leads to all sorts of confusion.
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this, onListen?.bind(this));
+  setTimeout(emitListeningNextTick, 1, this);
 };
 
 Server.prototype.getsockname = function getsockname(out) {
@@ -1524,14 +1539,8 @@ class ConnResetException extends Error {
   }
 }
 
-function emitListeningNextTick(self, onListen) {
-  if (typeof onListen === "function") {
-    try {
-      onListen.$call(self);
-    } catch (err) {
-      self.emit("error", err);
-    }
-  }
+function emitListeningNextTick(self) {
+  if (!self._handle) return;
   self.emit("listening");
 }
 

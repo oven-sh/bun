@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "bun",
-  "version": "1.2.3",
+  "version": "1.2.5",
   "workspaces": [
     "./packages/bun-types"
   ],
@@ -53,7 +53,7 @@
     "lint:fix": "oxlint --config oxlint.json --fix",
     "test": "node scripts/runner.node.mjs --exec-path ./build/debug/bun-debug",
     "test:release": "node scripts/runner.node.mjs --exec-path ./build/release/bun",
-    "banned": "bun packages/bun-internal-test/src/linter.ts",
+    "banned": "bun test test/internal/ban-words.test.ts",
     "zig": "vendor/zig/zig.exe",
     "zig:fmt": "bun run zig-format",
     "zig:check": "bun run zig build check --summary new",

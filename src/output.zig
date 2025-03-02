@@ -788,6 +788,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
                 return;
             }
 
+            if (bun.crash_handler.isPanicking()) return;
+
             if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
             defer {
                 if (Environment.enable_logs)
@@ -835,6 +837,13 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
         tag,
         disabled,
     ).log;
+}
+
+pub fn up(n: usize) void {
+    print("\x1B[{d}A", .{n});
+}
+pub fn clearToEnd() void {
+    print("\x1B[0J", .{});
 }
 
 // Valid "colors":

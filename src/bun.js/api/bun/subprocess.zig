@@ -121,7 +121,7 @@ pub const ResourceUsage = struct {
     }
 };
 
-pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) !void {
+pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, envp: *std.ArrayList(?[*:0]const u8), PATH: *[]const u8) bun.JSError!void {
     var object_iter = try JSC.JSPropertyIterator(.{ .skip_empty_name = false, .include_value = true }).init(globalThis, object);
     defer object_iter.deinit();
 
@@ -133,7 +133,7 @@ pub fn appendEnvpFromJS(globalThis: *JSC.JSGlobalObject, object: JSC.JSValue, en
         var value = object_iter.value;
         if (value == .undefined) continue;
 
-        const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, value.getZigString(globalThis) });
+        const line = try std.fmt.allocPrintZ(envp.allocator, "{}={}", .{ key, try value.getZigString(globalThis) });
 
         if (key.eqlComptime("PATH")) {
             PATH.* = bun.asByteSlice(line["PATH=".len..]);
@@ -175,9 +175,9 @@ pub const Subprocess = struct {
     stdio_pipes: if (Environment.isWindows) std.ArrayListUnmanaged(StdioResult) else std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
     pid_rusage: ?Rusage = null,
 
-    exit_promise: JSC.Strong = .{},
-    on_exit_callback: JSC.Strong = .{},
-    on_disconnect_callback: JSC.Strong = .{},
+    exit_promise: JSC.Strong = .empty,
+    on_exit_callback: JSC.Strong = .empty,
+    on_disconnect_callback: JSC.Strong = .empty,
 
     globalThis: *JSC.JSGlobalObject,
     observable_getters: std.enums.EnumSet(enum {
@@ -192,7 +192,7 @@ pub const Subprocess = struct {
 
     /// `null` indicates all of the IPC data is uninitialized.
     ipc_data: ?IPC.IPCData,
-    ipc_callback: JSC.Strong = .{},
+    ipc_callback: JSC.Strong = .empty,
     flags: Flags = .{},
 
     weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
@@ -1486,7 +1486,8 @@ pub const Subprocess = struct {
             if (JSC.Codegen.JSSubprocess.stdinGetCached(this_jsvalue)) |existing_value| {
                 if (existing_stdin_value.isCell()) {
                     if (stdin == null) {
-                        stdin = @as(?*JSC.WebCore.FileSink, @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(globalThis, existing_value))));
+                        // TODO: review this cast
+                        stdin = @alignCast(@ptrCast(JSC.WebCore.FileSink.JSSink.fromJS(existing_value)));
                     }
 
                     existing_stdin_value = existing_value;
@@ -1781,13 +1782,9 @@ pub const Subprocess = struct {
         argv.appendAssumeCapacity(argv0_result.arg0.ptr);
 
         while (cmds_array.next()) |value| {
-            const arg = try value.toBunString2(globalThis);
+            const arg = try value.toBunString(globalThis);
             defer arg.deref();
 
-            // if the string is empty, ignore it, don't add it to the argv
-            if (arg.isEmpty()) {
-                continue;
-            }
             argv.appendAssumeCapacity(try arg.toOwnedSliceZ(allocator));
         }
 
@@ -1876,7 +1873,7 @@ pub const Subprocess = struct {
 
             if (args.isObject()) {
                 if (try args.getTruthy(globalThis, "argv0")) |argv0_| {
-                    const argv0_str = argv0_.getZigString(globalThis);
+                    const argv0_str = try argv0_.getZigString(globalThis);
                     if (argv0_str.len > 0) {
                         argv0 = try argv0_str.toOwnedSliceZ(allocator);
                     }
@@ -1884,7 +1881,7 @@ pub const Subprocess = struct {
 
                 // need to update `cwd` before searching for executable with `Which.which`
                 if (try args.getTruthy(globalThis, "cwd")) |cwd_| {
-                    const cwd_str = cwd_.getZigString(globalThis);
+                    const cwd_str = try cwd_.getZigString(globalThis);
                     if (cwd_str.len > 0) {
                         cwd = try cwd_str.toOwnedSliceZ(allocator);
                     }
@@ -2188,10 +2185,10 @@ pub const Subprocess = struct {
             .stdout = .{ .ignore = {} },
             .stderr = .{ .ignore = {} },
             .stdio_pipes = .{},
-            .on_exit_callback = .{},
-            .on_disconnect_callback = .{},
+            .on_exit_callback = .empty,
+            .on_disconnect_callback = .empty,
             .ipc_data = null,
-            .ipc_callback = .{},
+            .ipc_callback = .empty,
             .flags = .{
                 .is_sync = is_sync,
             },
@@ -2238,15 +2235,15 @@ pub const Subprocess = struct {
             // 2. Process.
             .ref_count = 2,
             .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
-            .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
-            .on_disconnect_callback = if (on_disconnect_callback != .zero) JSC.Strong.create(on_disconnect_callback, globalThis) else .{},
+            .on_exit_callback = JSC.Strong.create(on_exit_callback, globalThis),
+            .on_disconnect_callback = JSC.Strong.create(on_disconnect_callback, globalThis),
             .ipc_data = if (!is_sync and comptime Environment.isWindows)
                 if (maybe_ipc_mode) |ipc_mode| .{
                     .mode = ipc_mode,
                 } else null
             else
                 null,
-            .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else .{},
+            .ipc_callback = JSC.Strong.create(ipc_callback, globalThis),
             .flags = .{
                 .is_sync = is_sync,
             },

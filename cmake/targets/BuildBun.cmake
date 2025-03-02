@@ -432,6 +432,7 @@ set(BUN_OBJECT_LUT_SOURCES
   ${CWD}/src/bun.js/bindings/BunProcess.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingBuffer.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingConstants.cpp
+  ${CWD}/src/bun.js/bindings/ProcessBindingFs.cpp
   ${CWD}/src/bun.js/bindings/ProcessBindingNatives.cpp
   ${CWD}/src/bun.js/modules/NodeModuleModule.cpp
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.txt
@@ -444,6 +445,7 @@ set(BUN_OBJECT_LUT_OUTPUTS
   ${CODEGEN_PATH}/BunProcess.lut.h
   ${CODEGEN_PATH}/ProcessBindingBuffer.lut.h
   ${CODEGEN_PATH}/ProcessBindingConstants.lut.h
+  ${CODEGEN_PATH}/ProcessBindingFs.lut.h
   ${CODEGEN_PATH}/ProcessBindingNatives.lut.h
   ${CODEGEN_PATH}/NodeModuleModule.lut.h
   ${CODEGEN_PATH}/ZigGeneratedClasses.lut.h
@@ -620,6 +622,7 @@ file(GLOB BUN_CXX_SOURCES ${CONFIGURE_DEPENDS}
   ${CWD}/src/bun.js/bindings/sqlite/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*.cpp
   ${CWD}/src/bun.js/bindings/webcrypto/*/*.cpp
+  ${CWD}/src/bun.js/bindings/node/crypto/*.cpp
   ${CWD}/src/bun.js/bindings/v8/*.cpp
   ${CWD}/src/bun.js/bindings/v8/shim/*.cpp
   ${CWD}/src/bake/*.cpp
@@ -757,6 +760,7 @@ target_include_directories(${bun} PRIVATE
   ${CWD}/src/bun.js/bindings
   ${CWD}/src/bun.js/bindings/webcore
   ${CWD}/src/bun.js/bindings/webcrypto
+  ${CWD}/src/bun.js/bindings/node/crypto
   ${CWD}/src/bun.js/bindings/sqlite
   ${CWD}/src/bun.js/bindings/v8
   ${CWD}/src/bun.js/modules

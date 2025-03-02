@@ -51,7 +51,13 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
-  window.fetch = fetch;
+  window.fetch = async function (url, options) {
+    if (typeof url === "string") {
+      url = new URL(url, windowUrl).href;
+    }
+    const response = await fetch(url, options);
+    return response;
+  };
 
   // Provide WebSocket
   window.WebSocket = class extends WebSocket {
@@ -61,7 +67,29 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         if (!allowWebSocketMessages) {
-          console.error("[E] WebSocket message received while messages are not allowed");
+          const data = new Uint8Array(event.data);
+          console.error(
+            "[E] WebSocket message received while messages are not allowed. Event type",
+            JSON.stringify(String.fromCharCode(data[0])),
+          );
+          let hexDump = "";
+          for (let i = 0; i < data.length; i += 16) {
+            // Print offset
+            hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
+            // Print hex values
+            const chunk = data.slice(i, i + 16);
+            const hexValues = Array.from(chunk)
+              .map(b => b.toString(16).padStart(2, "0"))
+              .join(" ");
+            hexDump += hexValues.padEnd(48, " ");
+            // Print ASCII
+            hexDump += "\x1b[2m| \x1b[0m";
+            for (const byte of chunk) {
+              hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
+            }
+            hexDump += "\n";
+          }
+          console.error(hexDump);
           process.exit(2);
         }
       });
@@ -72,9 +100,6 @@ function createWindow(windowUrl) {
     }
   };
 
-  // Add fetch support
-  window.fetch = fetch;
-
   // Intercept console messages
   const originalConsole = window.console;
   window.console = {
@@ -84,6 +109,7 @@ function createWindow(windowUrl) {
     error: (...args) => {
       console.error("[E]", ...args);
       originalConsole.error(...args);
+      process.exit(4);
     },
     warn: (...args) => {
       console.warn("[W]", ...args);
@@ -293,20 +319,19 @@ process.on("message", async message => {
       }
 
       const errors = [];
-      const messages = overlay.shadowRoot.querySelectorAll(".message");
-
+      const messages = overlay.shadowRoot.querySelectorAll(".b-msg");
       for (const message of messages) {
-        const fileName = message.closest(".message-group").querySelector(".file-name").textContent;
+        const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
         const label = message.querySelector(".log-label").textContent;
         const text = message.querySelector(".log-text").textContent;
 
-        const lineNumElem = message.querySelector(".line-num");
+        const lineNumElem = message.querySelector(".gutter");
         const spaceElem = message.querySelector(".highlight-wrap > .space");
 
         let formatted;
         if (lineNumElem && spaceElem) {
           const line = lineNumElem.textContent;
-          const col = spaceElem.textContent.length;
+          const col = spaceElem.textContent.length + 1;
           formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
         } else {
           formatted = `${fileName}: ${label}: ${text}`;

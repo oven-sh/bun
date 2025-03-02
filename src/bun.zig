@@ -315,10 +315,6 @@ pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
-pub const PathString = StringTypes.PathString;
-pub const HashedString = StringTypes.HashedString;
-pub const strings = @import("string_immutable.zig");
-pub const MutableString = @import("string_mutable.zig").MutableString;
 pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
@@ -548,7 +544,7 @@ pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
     return try allocator.dupe(Child, item);
 }
 
-pub const StringBuilder = @import("./string_builder.zig");
+pub const StringBuilder = @import("./string.zig").StringBuilder;
 
 pub const LinearFifo = @import("./linear_fifo.zig").LinearFifo;
 pub const linux = struct {
@@ -757,7 +753,8 @@ pub fn isHeapMemory(memory: anytype) bool {
     return false;
 }
 
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
+pub const Mimalloc = @import("allocators/mimalloc.zig");
+pub const AllocationScope = @import("allocators/AllocationScope.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -1595,7 +1592,6 @@ pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
-pub const StringJoiner = @import("./StringJoiner.zig");
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
@@ -2089,12 +2085,18 @@ pub const zstd = @import("./deps/zstd.zig");
 pub const StringPointer = Schema.Api.StringPointer;
 pub const StandaloneModuleGraph = @import("./StandaloneModuleGraph.zig").StandaloneModuleGraph;
 
-pub const String = @import("./string.zig").String;
-pub const SliceWithUnderlyingString = @import("./string.zig").SliceWithUnderlyingString;
+const _string = @import("./string.zig");
+pub const strings = @import("string_immutable.zig");
+pub const String = _string.String;
+pub const StringJoiner = _string.StringJoiner;
+pub const SliceWithUnderlyingString = _string.SliceWithUnderlyingString;
+pub const PathString = _string.PathString;
+pub const HashedString = _string.HashedString;
+pub const MutableString = _string.MutableString;
 
 pub const WTF = struct {
     /// The String type from WebKit's WTF library.
-    pub const StringImpl = @import("./string.zig").WTFStringImpl;
+    pub const StringImpl = _string.WTFStringImpl;
 };
 
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
@@ -2354,25 +2356,12 @@ pub const win32 = struct {
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
 
-    /// Returns the original mode
-    pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
-        const fd = stdio(i);
-        var original_mode: w.DWORD = 0;
-        if (windows.kernel32.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.kernel32.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
-                return windows.getLastError();
-            }
-        } else return windows.getLastError();
-
-        return original_mode;
-    }
-
-    /// Returns the original mode
-    pub fn setStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+    /// Returns the original mode, or null on failure
+    pub fn updateStdioModeFlags(i: anytype, opts: struct { set: w.DWORD = 0, unset: w.DWORD = 0 }) !w.DWORD {
         const fd = stdio(i);
         var original_mode: w.DWORD = 0;
         if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.SetConsoleMode(fd.cast(), original_mode | flags) == 0) {
+            if (windows.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
                 return windows.getLastError();
             }
         } else return windows.getLastError();
@@ -3114,132 +3103,8 @@ pub fn New(comptime T: type) type {
     };
 }
 
-/// Reference-counted heap-allocated instance value.
-///
-/// `ref_count` is expected to be defined on `T` with a default value set to `1`
-pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
-    if (!@hasField(T, "ref_count")) {
-        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-    }
-
-    for (std.meta.fields(T)) |field| {
-        if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-            }
-        }
-    }
-
-    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
-    const log = Output.scoped(output_name, true);
-
-    return struct {
-        pub fn destroy(self: *T) void {
-            if (Environment.allow_assert) {
-                assert(self.ref_count == 0);
-            }
-
-            bun.destroy(self);
-        }
-
-        pub fn ref(self: *T) void {
-            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
-
-            self.ref_count += 1;
-        }
-
-        pub fn deref(self: *T) void {
-            const ref_count = self.ref_count;
-            if (Environment.isDebug) {
-                if (ref_count == 0 or ref_count == std.math.maxInt(@TypeOf(ref_count))) {
-                    @panic("Use after-free detected on " ++ output_name);
-                }
-            }
-
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-
-            self.ref_count = ref_count - 1;
-
-            if (ref_count == 1) {
-                if (comptime deinit_fn) |deinit| {
-                    deinit(self);
-                } else {
-                    self.destroy();
-                }
-            }
-        }
-
-        pub inline fn new(t: T) *T {
-            const ptr = bun.new(T, t);
-
-            if (Environment.enable_logs) {
-                if (ptr.ref_count == 0) {
-                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
-                }
-            }
-
-            return ptr;
-        }
-    };
-}
-
-pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
-    if (!@hasField(T, "ref_count")) {
-        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-    }
-
-    for (std.meta.fields(T)) |field| {
-        if (strings.eqlComptime(field.name, "ref_count")) {
-            if (field.default_value_ptr == null) {
-                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
-            }
-        }
-    }
-
-    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
-    const log = Output.scoped(output_name, true);
-
-    return struct {
-        pub fn destroy(self: *T) void {
-            if (Environment.allow_assert) {
-                assert(self.ref_count.load(.seq_cst) == 0);
-            }
-
-            bun.destroy(self);
-        }
-
-        pub fn ref(self: *T) void {
-            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
-            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-            bun.debugAssert(ref_count > 0);
-        }
-
-        pub fn deref(self: *T) void {
-            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
-            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
-
-            if (ref_count == 1) {
-                if (comptime deinit_fn) |deinit| {
-                    deinit(self);
-                } else {
-                    self.destroy();
-                }
-            }
-        }
-
-        pub inline fn new(t: T) *T {
-            const ptr = bun.new(T, t);
-
-            if (Environment.enable_logs) {
-                if (ptr.ref_count.load(.seq_cst) != 1) {
-                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
-                }
-            }
-
-            return ptr;
-        }
-    };
-}
+pub const NewRefCounted = @import("ref_count.zig").NewRefCounted;
+pub const NewThreadSafeRefCounted = @import("ref_count.zig").NewThreadSafeRefCounted;
 
 pub fn exitThread() noreturn {
     const exiter = struct {
@@ -3704,12 +3569,13 @@ pub const timespec = extern struct {
 
     // TODO: this is wrong!
     pub fn duration(this: *const timespec, other: *const timespec) timespec {
-        var sec_diff = this.sec - other.sec;
-        var nsec_diff = this.nsec - other.nsec;
+        // Mimick C wrapping behavior.
+        var sec_diff = this.sec -% other.sec;
+        var nsec_diff = this.nsec -% other.nsec;
 
         if (nsec_diff < 0) {
-            sec_diff -= 1;
-            nsec_diff += std.time.ns_per_s;
+            sec_diff -%= 1;
+            nsec_diff +%= std.time.ns_per_s;
         }
 
         return timespec{
@@ -3737,11 +3603,11 @@ pub const timespec = extern struct {
         assert(this.nsec >= 0);
         const s_ns = std.math.mul(
             u64,
-            @as(u64, @intCast(this.sec)),
+            @as(u64, @intCast(@max(this.sec, 0))),
             std.time.ns_per_s,
         ) catch return std.math.maxInt(u64);
 
-        return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
+        return std.math.add(u64, s_ns, @as(u64, @intCast(@max(this.nsec, 0)))) catch
             return std.math.maxInt(i64);
     }
 
@@ -3779,12 +3645,12 @@ pub const timespec = extern struct {
 
         var new_timespec = this.*;
 
-        new_timespec.sec += sec_inc;
-        new_timespec.nsec += nsec_inc;
+        new_timespec.sec +%= sec_inc;
+        new_timespec.nsec +%= nsec_inc;
 
         if (new_timespec.nsec >= std.time.ns_per_s) {
-            new_timespec.sec += 1;
-            new_timespec.nsec -= std.time.ns_per_s;
+            new_timespec.sec +%= 1;
+            new_timespec.nsec -%= std.time.ns_per_s;
         }
 
         return new_timespec;
@@ -4373,7 +4239,8 @@ pub const CowString = CowSlice(u8);
 ///
 /// CowSlice does not support slices longer than 2^(@bitSizeOf(usize)-1).
 pub fn CowSlice(T: type) type {
-    const DebugData = if (Environment.allow_assert) struct {
+    const cow_str_assertions = Environment.isDebug;
+    const DebugData = if (cow_str_assertions) struct {
         mutex: std.Thread.Mutex,
         allocator: Allocator,
         borrows: usize,
@@ -4387,13 +4254,14 @@ pub fn CowSlice(T: type) type {
             } }),
             is_owned: bool,
         },
-        debug: if (Environment.allow_assert) ?*DebugData else void,
-
-        const cow_str_assertions = Environment.isDebug;
+        debug: if (cow_str_assertions) ?*DebugData else void,
 
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
         pub fn initOwned(data: []const T, allocator: Allocator) @This() {
+            if (AllocationScope.downcast(allocator)) |scope|
+                scope.assertOwned(data);
+
             return .{
                 .ptr = data.ptr,
                 .flags = .{
@@ -4421,7 +4289,7 @@ pub fn CowSlice(T: type) type {
                     .is_owned = false,
                     .len = @intCast(data.len),
                 },
-                .debug = null,
+                .debug = if (cow_str_assertions) null,
             };
         }
 
@@ -4450,7 +4318,6 @@ pub fn CowSlice(T: type) type {
         pub fn deinit(str: @This(), allocator: Allocator) void {
             if (cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
-                defer debug.mutex.unlock();
                 bun.assert(
                     debug.allocator.ptr == allocator.ptr and
                         debug.allocator.vtable == allocator.vtable,
@@ -4466,9 +4333,31 @@ pub fn CowSlice(T: type) type {
                 allocator.free(str.slice());
             }
         }
+
+        /// Does not include debug safety checks.
+        pub fn initUnchecked(data: []const T, is_owned: bool) @This() {
+            return .{
+                .ptr = data.ptr,
+                .flags = .{
+                    .is_owned = is_owned,
+                    .len = @intCast(data.len),
+                },
+                .debug = if (cow_str_assertions) null,
+            };
+        }
     };
 }
 
 const Allocator = std.mem.Allocator;
 
+/// Memory is typically not decommitted immediately when freed.
+/// Sensitive information that's kept in memory can be read in various ways until the OS
+/// decommits it or the memory allocator reuses it for a new allocation.
+/// So if we're about to free something sensitive, we should zero it out first.
+pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
+    @memset(@constCast(slice), 0);
+    allocator.free(slice);
+}
+
 pub const server = @import("./bun.js/api/server.zig");
+pub const macho = @import("./macho.zig");

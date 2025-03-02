@@ -148,7 +148,7 @@ const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
-const GlobalStringBuilder = @import("../string_builder.zig");
+const GlobalStringBuilder = bun.StringBuilder;
 const SlicedString = Semver.SlicedString;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Bin = @import("./bin.zig").Bin;
@@ -5204,8 +5204,9 @@ pub const PackageManager = struct {
                 }
             }
 
-            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
-            if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
+            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
+            // if it's a workspaceOnly dependency
+            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides())) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
                     name, name_hash = switch (new.tag) {
@@ -7163,6 +7164,7 @@ pub const PackageManager = struct {
 
         filter_patterns: []const string = &.{},
         pack_destination: string = "",
+        pack_filename: string = "",
         pack_gzip_level: ?string = null,
         // json_output: bool = false,
 
@@ -7576,6 +7578,7 @@ pub const PackageManager = struct {
 
                 this.filter_patterns = cli.filters;
                 this.pack_destination = cli.pack_destination;
+                this.pack_filename = cli.pack_filename;
                 this.pack_gzip_level = cli.pack_gzip_level;
                 // this.json_output = cli.json_output;
 
@@ -9642,6 +9645,7 @@ pub const PackageManager = struct {
         clap.parseParam("-a, --all") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
+        clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
@@ -9689,6 +9693,7 @@ pub const PackageManager = struct {
     const pack_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
+        clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                              ") catch unreachable,
     });
@@ -9733,6 +9738,7 @@ pub const PackageManager = struct {
         filters: []const string = &.{},
 
         pack_destination: string = "",
+        pack_filename: string = "",
         pack_gzip_level: ?string = null,
 
         development: bool = false,
@@ -10153,6 +10159,9 @@ pub const PackageManager = struct {
                 if (comptime subcommand != .publish) {
                     if (args.option("--destination")) |dest| {
                         cli.pack_destination = dest;
+                    }
+                    if (args.option("--filename")) |file| {
+                        cli.pack_filename = file;
                     }
                 }
 

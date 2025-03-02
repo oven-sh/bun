@@ -30,6 +30,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_CRYPTO_JWK_UNSUPPORTED_CURVE", Error],
   ["ERR_CRYPTO_OPERATION_FAILED", Error],
   ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error],
+  ["ERR_CRYPTO_SIGN_KEY_REQUIRED", Error],
+  ["ERR_CRYPTO_INVALID_JWK", TypeError],
+  ["ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS", Error],
+  ["ERR_MISSING_PASSPHRASE", TypeError],
   ["ERR_DLOPEN_FAILED", Error],
   ["ERR_ENCODING_INVALID_ENCODED_DATA", TypeError],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
@@ -81,7 +85,9 @@ const errors: ErrorCodeMapping = [
   ["ERR_UNKNOWN_ENCODING", TypeError],
   ["ERR_UNKNOWN_SIGNAL", TypeError],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
+  ["ERR_INVALID_CHAR", TypeError],
   ["MODULE_NOT_FOUND", Error],
+  ["ERR_SERVER_ALREADY_LISTEN", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -119,7 +125,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_INVALID_HEADER_VALUE", TypeError],
   ["ERR_HTTP2_PING_CANCEL", Error],
   ["ERR_HTTP2_STREAM_ERROR", Error],
-  ["ERR_HTTP2_INVALID_SINGLE_VALUE_HEADER", TypeError],
+  ["ERR_HTTP2_HEADER_SINGLE_VALUE", TypeError],
   ["ERR_HTTP2_SESSION_ERROR", Error],
   ["ERR_HTTP2_INVALID_SESSION", Error],
   ["ERR_HTTP2_INVALID_HEADERS", Error],
@@ -132,7 +138,13 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_SOCKET_UNBOUND", Error],
   ["ERR_HTTP2_ERROR", Error],
   ["ERR_HTTP2_OUT_OF_STREAMS", Error],
-
+  ["ERR_HTTP2_ORIGIN_LENGTH", TypeError],
+  ["ERR_HTTP2_INVALID_ORIGIN", TypeError],
+  ["ERR_HTTP2_ALTSVC_LENGTH", TypeError],
+  ["ERR_HTTP2_ALTSVC_INVALID_ORIGIN", TypeError],
+  ["ERR_HTTP2_STATUS_101", Error],
+  ["ERR_HTTP2_INVALID_INFO_STATUS", RangeError],
+  ["ERR_HTTP2_HEADERS_AFTER_RESPOND", Error],
   // AsyncHooks
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],
@@ -175,6 +187,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_INVALID_TRANSACTION_STATE", Error, "PostgresError"],
   ["ERR_POSTGRES_QUERY_CANCELLED", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSAFE_TRANSACTION", Error, "PostgresError"],
+  ["ERR_POSTGRES_NOT_TAGGED_CALL", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNKNOWN_FORMAT_CODE", Error, "PostgresError"],
   // S3
   ["ERR_S3_MISSING_CREDENTIALS", Error],
   ["ERR_S3_INVALID_METHOD", Error],

@@ -17,6 +17,8 @@ Infinity
 Symbol(Symbol Description)
 2000-06-27T02:24:34.304Z
 [String: "Hello"]
+[Number: 5]
+[Boolean: true]
 [ 123, 456, 789 ]
 {
   name: "foo",

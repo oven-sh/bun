@@ -28,6 +28,7 @@
     "aws-cdk-lib": "2.148.0",
     "axios": "1.6.8",
     "body-parser": "1.20.2",
+    "bun-plugin-yaml": "0.0.1",
     "comlink": "4.4.1",
     "commander": "12.1.0",
     "devalue": "5.1.1",

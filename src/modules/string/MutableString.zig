@@ -106,7 +106,7 @@ pub fn ensureValidIdentifier(str: string, allocator: Allocator) Allocator.Error!
 
     if (!iterator.next(&cursor)) return "_";
 
-    const JSLexerTables = @import("../js_lexer_tables.zig");
+    const JSLexerTables = @import("../../js_lexer_tables.zig");
 
     // Common case: no gap necessary. No allocation necessary.
     needs_gap = !js_lexer.isIdentifierStart(cursor.c);

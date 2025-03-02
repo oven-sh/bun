@@ -41,7 +41,7 @@ pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
 const uv = windows.libuv;
 const Maybe = JSC.Maybe;
-const WTFStringImplStruct = @import("../string.zig").WTFStringImplStruct;
+const WTFStringImplStruct = @import("../modules/string.zig").WTFStringImplStruct;
 
 const Pipe = [2]bun.FileDescriptor;
 const shell = @import("./shell.zig");

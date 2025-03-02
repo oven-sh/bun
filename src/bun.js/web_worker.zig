@@ -5,7 +5,7 @@ const log = Output.scoped(.Worker, true);
 const std = @import("std");
 const JSValue = JSC.JSValue;
 const Async = bun.Async;
-const WTFStringImpl = @import("../string.zig").WTFStringImpl;
+const WTFStringImpl = @import("../modules/string.zig").WTFStringImpl;
 
 const Bool = std.atomic.Value(bool);
 

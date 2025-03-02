@@ -278,13 +278,13 @@ pub const Mapping = struct {
             } else if (i != 0) {
                 try writer.writeByte(',');
             }
-            try vlq.encode(gen.columns - last_col).writeTo(writer);
+            try VLQ.encode(gen.columns - last_col).writeTo(writer);
             last_col = gen.columns;
-            try vlq.encode(source_index - last_src).writeTo(writer);
+            try VLQ.encode(source_index - last_src).writeTo(writer);
             last_src = source_index;
-            try vlq.encode(orig.lines - last_ol).writeTo(writer);
+            try VLQ.encode(orig.lines - last_ol).writeTo(writer);
             last_ol = orig.lines;
-            try vlq.encode(orig.columns - last_oc).writeTo(writer);
+            try VLQ.encode(orig.columns - last_oc).writeTo(writer);
             last_oc = orig.columns;
         }
     }
@@ -1146,7 +1146,7 @@ pub const SourceMapPieces = struct {
 
             const shift_column_delta = shift.after.columns - shift.before.columns;
             const vlq_value = decode_result.value + shift_column_delta - prev_shift_column_delta;
-            const encode = vlq.encode(vlq_value);
+            const encode = VLQ.encode(vlq_value);
             j.pushCloned(encode.slice());
             prev_shift_column_delta = shift_column_delta;
 
@@ -1252,13 +1252,13 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
 
     const vlqs = [_]VLQ{
         // Record the generated column (the line is recorded using ';' elsewhere)
-        vlq.encode(current_state.generated_column -| prev_state.generated_column),
+        .encode(current_state.generated_column -| prev_state.generated_column),
         // Record the generated source
-        vlq.encode(current_state.source_index -| prev_state.source_index),
+        .encode(current_state.source_index -| prev_state.source_index),
         // Record the original line
-        vlq.encode(current_state.original_line -| prev_state.original_line),
+        .encode(current_state.original_line -| prev_state.original_line),
         // Record the original column
-        vlq.encode(current_state.original_column -| prev_state.original_column),
+        .encode(current_state.original_column -| prev_state.original_column),
     };
 
     // Count exactly how many bytes we need to write
@@ -1277,7 +1277,7 @@ pub fn appendMappingToBuffer(buffer_: MutableString, last_byte: u8, prev_state: 
     }
 
     inline for (&vlqs) |item| {
-        @memcpy(writable, item.slice());
+        @memcpy(writable[0..item.len], item.slice());
         writable = writable[item.len..];
     }
 
@@ -1746,12 +1746,11 @@ pub const DebugIDFormatter = struct {
 const assert = bun.assert;
 
 pub const coverage = @import("./CodeCoverage.zig");
-pub const vlq = @import("./vlq.zig");
+pub const VLQ = @import("./VLQ.zig");
 pub const LineOffsetTable = @import("./LineOffsetTable.zig");
 
-const decodeVLQAssumeValid = vlq.decodeAssumeValid;
-const VLQ = vlq.VLQ;
-const decodeVLQ = vlq.decode;
+const decodeVLQAssumeValid = VLQ.decodeAssumeValid;
+const decodeVLQ = VLQ.decode;
 
 /// Create a SourceMap from a Chunk, properly handling the format based on selected option
 pub fn fromChunk(

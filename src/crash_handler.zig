@@ -22,6 +22,7 @@ const bun = @import("root").bun;
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
+const VLQ = SourceMap.VLQ;
 const windows = std.os.windows;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -1185,12 +1186,13 @@ const StackLine = struct {
         };
 
         if (known.object) |object| {
-            try vlq.encode(1).writeTo(writer);
-            try vlq.encode(@intCast(object.len)).writeTo(writer);
+            try VLQ.encode(1).writeTo(writer);
+            try VLQ.encode(@intCast(object.len)).writeTo(writer);
+
             try writer.writeAll(object);
         }
 
-        try vlq.encode(known.address).writeTo(writer);
+        try VLQ.encode(known.address).writeTo(writer);
     }
 
     pub fn format(line: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -1249,7 +1251,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
         try StackLine.writeEncoded(line, writer);
     }
 
-    try writer.writeAll(vlq.VLQ.zero.slice());
+    try writer.writeAll(VLQ.zero.slice());
 
     // The following switch must be kept in sync with `bun.report`'s decoder implementation.
     switch (opts.reason) {
@@ -1317,8 +1319,9 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 }
 
 fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
-    const first = vlq.encode(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
-    const second = vlq.encode(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
+    const first = VLQ.encode(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
+    const second = VLQ.encode(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
+
     try first.writeTo(writer);
     try second.writeTo(writer);
 }
@@ -1826,6 +1829,10 @@ pub fn removePreCrashHandler(ptr: *anyopaque) void {
         if (item.@"0" == ptr) break i;
     } else return;
     _ = before_crash_handlers.orderedRemove(index);
+}
+
+pub fn isPanicking() bool {
+    return panicking.load(.monotonic) > 0;
 }
 
 export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {

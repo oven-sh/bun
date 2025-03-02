@@ -230,7 +230,7 @@ pub fn on(this: *StaticRoute, resp: AnyResponse) void {
 
 fn toAsync(this: *StaticRoute, resp: AnyResponse) void {
     resp.onAborted(*StaticRoute, onAborted, this);
-    resp.onWritable(*StaticRoute, onWritableBytes, this);
+    resp.onWritable(*StaticRoute, onWritable, this);
 }
 
 fn onAborted(this: *StaticRoute, resp: AnyResponse) void {
@@ -241,11 +241,9 @@ fn onResponseComplete(this: *StaticRoute, resp: AnyResponse) void {
     resp.clearAborted();
     resp.clearOnWritable();
     resp.clearTimeout();
-
     if (this.server) |server| {
         server.onStaticRequestComplete();
     }
-
     this.deref();
 }
 
@@ -267,34 +265,26 @@ pub fn doRenderBlobCorked(this: *StaticRoute, resp: AnyResponse, did_finish: *bo
     this.renderBytes(resp, did_finish);
 }
 
-fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) void {
+fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     if (this.server) |server| {
         resp.timeout(server.config().idleTimeout);
     }
 
     if (!this.onWritableBytes(write_offset, resp)) {
-        this.toAsync(resp);
-        return;
+        return false;
     }
 
     this.onResponseComplete(resp);
+    return true;
 }
 
 fn onWritableBytes(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     const blob = this.blob;
     const all_bytes = blob.slice();
 
-    const bytes = all_bytes[@min(all_bytes.len, @as(usize, @truncate(write_offset)))..];
+    const bytes = all_bytes[@min(all_bytes.len, write_offset)..];
 
-    if (!resp.tryEnd(
-        bytes,
-        all_bytes.len,
-        resp.shouldCloseConnection(),
-    )) {
-        return false;
-    }
-
-    return true;
+    return resp.tryEnd(bytes, all_bytes.len, resp.shouldCloseConnection());
 }
 
 fn doWriteStatus(_: *StaticRoute, status: u16, resp: AnyResponse) void {

@@ -1025,6 +1025,9 @@ OutgoingMessage.prototype._implicitHeader = function () {};
 
 OutgoingMessage.prototype.appendHeader = function (name, value) {
   var headers = (this[headersSymbol] ??= new Headers());
+  if (typeof value === "number") {
+    value = String(value);
+  }
   headers.append(name, value);
 };
 
@@ -1053,6 +1056,9 @@ OutgoingMessage.prototype.removeHeader = function (name) {
 OutgoingMessage.prototype.setHeader = function (name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   var headers = this[headersSymbol];
+  if (typeof value === "number") {
+    value = String(value);
+  }
   headers.set(name, value);
   return this;
 };
@@ -1388,6 +1394,9 @@ ServerResponse.prototype.setTimeout = function (msecs, callback) {
 ServerResponse.prototype.appendHeader = function (name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   const headers = this[headersSymbol];
+  if (typeof value === "number") {
+    value = String(value);
+  }
   headers.append(name, value);
 };
 
@@ -1417,6 +1426,9 @@ ServerResponse.prototype.removeHeader = function (name) {
 ServerResponse.prototype.setHeader = function (name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   const headers = this[headersSymbol];
+  if (typeof value === "number") {
+    value = String(value);
+  }
   setHeader(headers, name, value);
   return this;
 };

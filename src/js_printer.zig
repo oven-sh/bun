@@ -3439,7 +3439,7 @@ fn NewPrinter(
 
             if (item.kind != .normal) {
                 if (comptime is_json) {
-                    bun.unreachablePanic("item.kind must be normal in json, received: {any}", .{item.kind});
+                    bun.debug.unreachablePanic("item.kind must be normal in json, received: {any}", .{item.kind});
                 }
 
                 switch (item.value.?.data) {

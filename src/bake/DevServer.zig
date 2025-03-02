@@ -701,7 +701,7 @@ pub fn deinit(dev: *DevServer) void {
         },
         .current_bundle = {
             if (dev.current_bundle) |_| {
-                bun.debugAssert(false); // impossible to de-initialize this state correctly.
+                bun.debug.debugAssert(false); // impossible to de-initialize this state correctly.
             }
         },
         .next_bundle = {
@@ -710,7 +710,7 @@ pub fn deinit(dev: *DevServer) void {
                 defer dev.deferred_request_pool.put(request);
                 // TODO: deinitializing in this state is almost certainly an assertion failure.
                 // This code is shipped in release because it is only reachable by experimenntal server components.
-                bun.debugAssert(request.data.handler != .server_handler);
+                bun.debug.debugAssert(request.data.handler != .server_handler);
                 request.data.deinit();
                 r = request.next;
             }
@@ -4035,7 +4035,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .client => {
                     if (file.flags.kind == .css) {
                         // It is only possible to find CSS roots by tracing.
-                        bun.debugAssert(file.flags.is_css_root);
+                        bun.debug.debugAssert(file.flags.is_css_root);
 
                         if (goal == .find_css) {
                             try g.current_css_files.append(g.owner().allocator, file.cssAssetId());
@@ -4698,7 +4698,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 j.pushStatic(",");
                 const quoted_slice = map.quotedContents();
                 if (quoted_slice.len == 0) {
-                    bun.debugAssert(false); // vlq without source contents!
+                    bun.debug.debugAssert(false); // vlq without source contents!
                     const ptr: bun.StringPointer = .{
                         .offset = @intCast(j.len + ",\"".len),
                         .length = 0,
@@ -5180,7 +5180,7 @@ const DirectoryWatchStore = struct {
                             },
                             .NOTDIR => return error.Ignore, // ignore
                             else => {
-                                bun.todoPanic(@src(), "log watcher error", .{});
+                                bun.debug.todoPanic(@src(), "log watcher error", .{});
                             },
                         },
                     },
@@ -5910,7 +5910,7 @@ const HmrSocket = struct {
             s.dev.routeBundlePtr(old).active_viewers -= 1;
         }
 
-        bun.debugAssert(s.dev.active_websocket_connections.remove(s));
+        bun.debug.debugAssert(s.dev.active_websocket_connections.remove(s));
         s.dev.allocator.destroy(s);
     }
 };
@@ -7419,7 +7419,7 @@ const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const assert = bun.assert;
-const assert_eql = bun.assert_eql;
+const assert_eql = bun.debug.assert_eql;
 const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 
 const bake = bun.bake;

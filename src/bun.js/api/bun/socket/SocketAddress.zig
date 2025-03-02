@@ -148,7 +148,7 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
         break :blk if (port32 > std.math.maxInt(u16)) 0 else @intCast(port32);
     };
     bun.assert(host.tag != .Dead);
-    bun.debugAssert(host.length() >= 2);
+    bun.debug.debugAssert(host.length() >= 2);
 
     // NOTE: parsed host cannot be used as presentation string. e.g.
     // - "[::1]" -> "::1"
@@ -351,8 +351,8 @@ pub fn intoDTO(this: *SocketAddress, global: *JSC.JSGlobalObject) JSC.JSValue {
 /// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
 pub fn createDTO(globalObject: *JSC.JSGlobalObject, addr_: []const u8, port_: i32, is_ipv6: bool) JSC.JSValue {
     if (comptime bun.Environment.isDebug) {
-        bun.assertWithLocation(port_ >= 0 and port_ <= std.math.maxInt(i32), @src());
-        bun.assertWithLocation(addr_.len > 0, @src());
+        bun.debug.assertWithLocation(port_ >= 0 and port_ <= std.math.maxInt(i32), @src());
+        bun.debug.assertWithLocation(addr_.len > 0, @src());
     }
 
     return JSSocketAddressDTO__create(
@@ -401,10 +401,10 @@ pub fn address(this: *SocketAddress) bun.String {
         std.debug.panic("Invariant violation: SocketAddress created with invalid IPv6 address ({any})", .{this._addr});
     });
     if (comptime bun.Environment.isDebug) {
-        bun.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
+        bun.debug.assertWithLocation(bun.strings.isAllASCII(formatted), @src());
     }
     const presentation = bun.JSC.WebCore.Encoder.toBunStringComptime(formatted, .latin1);
-    bun.debugAssert(presentation.tag != .Dead);
+    bun.debug.debugAssert(presentation.tag != .Dead);
     this._presentation = presentation;
     return presentation;
 }
@@ -502,12 +502,12 @@ fn pton(global: *JSC.JSGlobalObject, comptime af: c_int, addr: [:0]const u8, dst
 }
 
 inline fn asV4(this: *const SocketAddress) *const inet.sockaddr_in {
-    bun.debugAssert(this.family() == AF.INET);
+    bun.debug.debugAssert(this.family() == AF.INET);
     return &this._addr.sin;
 }
 
 inline fn asV6(this: *const SocketAddress) *const inet.sockaddr_in6 {
-    bun.debugAssert(this.family() == AF.INET6);
+    bun.debug.debugAssert(this.family() == AF.INET6);
     return &this._addr.sin6;
 }
 

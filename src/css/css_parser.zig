@@ -975,7 +975,7 @@ fn parse_at_rule(
                     .result => |v| v,
                     .err => break :out,
                 };
-                if (tok.* != .open_curly and tok.* != .semicolon) bun.unreachablePanic("Should have consumed these delimiters", .{});
+                if (tok.* != .open_curly and tok.* != .semicolon) bun.debug.unreachablePanic("Should have consumed these delimiters", .{});
                 break :out;
             }
             return .{ .err = e };
@@ -1022,7 +1022,7 @@ fn parse_at_rule(
             return parse_nested_block(input, P.AtRuleParser.AtRule, &another_closure, AnotherClosure.parsefn);
         },
         else => {
-            bun.unreachablePanic("", .{});
+            bun.debug.unreachablePanic("", .{});
         },
     }
 }
@@ -1193,7 +1193,7 @@ pub fn parse_until_after(
     }
     const next_byte = parser.input.tokenizer.nextByte();
     if (next_byte != null and !parser.stop_before.contains(Delimiters.fromByte(next_byte))) {
-        bun.debugAssert(delimiters.contains(Delimiters.fromByte(next_byte)));
+        bun.debug.debugAssert(delimiters.contains(Delimiters.fromByte(next_byte)));
         // We know this byte is ASCII.
         parser.input.tokenizer.advance(1);
         if (next_byte == '{') {
@@ -2414,7 +2414,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         ) catch bun.outOfMemory();
                         return .{ .result = {} };
                     },
-                    .font_feature_values => bun.unreachablePanic("", .{}),
+                    .font_feature_values => bun.debug.unreachablePanic("", .{}),
                     .unknown => {
                         this.rules.v.append(
                             input.allocator(),
@@ -3026,7 +3026,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 }
             }
 
-            // bun.debugAssert()
+            // bun.debug.debugAssert()
         }
 
         pub fn containsTailwindDirectives(this: *const @This()) bool {
@@ -3567,7 +3567,7 @@ pub const Parser = struct {
                     return .{ .result = values };
                 },
             };
-            if (tok.* != .comma) bun.unreachablePanic("", .{});
+            if (tok.* != .comma) bun.debug.unreachablePanic("", .{});
         }
     }
 
@@ -3885,7 +3885,7 @@ pub const Parser = struct {
     }
 
     pub fn position(this: *Parser) usize {
-        bun.debugAssert(bun.strings.isOnCharBoundary(this.input.tokenizer.src, this.input.tokenizer.position));
+        bun.debug.debugAssert(bun.strings.isOnCharBoundary(this.input.tokenizer.src, this.input.tokenizer.position));
         return this.input.tokenizer.position;
     }
 
@@ -3938,7 +3938,7 @@ pub const Parser = struct {
             .result => |t| .{ .err = start.sourceLocation().newUnexpectedTokenError(t.*) },
             .err => |e| brk: {
                 if (e.kind == .basic and e.kind.basic == .end_of_input) break :brk .{ .result = {} };
-                bun.unreachablePanic("Unexpected error encountered: {}", .{e.kind});
+                bun.debug.unreachablePanic("Unexpected error encountered: {}", .{e.kind});
             },
         };
         this.reset(&start);
@@ -4363,7 +4363,7 @@ const Tokenizer = struct {
     }
 
     pub fn getPosition(this: *const Tokenizer) usize {
-        bun.debugAssert(bun.strings.isOnCharBoundary(this.src, this.position));
+        bun.debug.debugAssert(bun.strings.isOnCharBoundary(this.src, this.position));
         return this.position;
     }
 
@@ -5876,7 +5876,7 @@ pub const Token = union(TokenKind) {
             .delim => |value| {
                 // See comment for this variant in declaration of Token
                 // The value of delim is only ever ascii
-                bun.debugAssert(value <= 0x7F);
+                bun.debug.debugAssert(value <= 0x7F);
                 return dest.writeChar(@truncate(value));
             },
             .number => |num| serializer.writeNumeric(num.value, num.int_value, num.has_sign, dest) catch return dest.addFmtError(),
@@ -6223,7 +6223,7 @@ pub const color = struct {
     /// <https://drafts.csswg.org/css-color/#hsl-color>
     /// except with h pre-multiplied by 3, to avoid some rounding errors.
     pub fn hslToRgb(hue: f32, saturation: f32, lightness: f32) struct { f32, f32, f32 } {
-        bun.debugAssert(saturation >= 0.0 and saturation <= 1.0);
+        bun.debug.debugAssert(saturation >= 0.0 and saturation <= 1.0);
         const Helpers = struct {
             pub fn hueToRgb(m1: f32, m2: f32, _h3: f32) f32 {
                 var h3 = _h3;
@@ -6669,14 +6669,14 @@ pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) !struct { [
     // We shouldn't receive NaN here.
     // NaN is not a valid CSS token and any inlined calculations from `calc()` we ensure
     // are not NaN.
-    bun.debugAssert(!std.math.isNan(value));
+    bun.debug.debugAssert(!std.math.isNan(value));
     const str, const notation = dtoa_short_impl(buf, value, precision);
     return .{ str, notation };
 }
 
 pub fn dtoa_short_impl(buf: *[129]u8, value: f32, comptime precision: u8) struct { []u8, Notation } {
     buf[0] = '0';
-    bun.debugAssert(std.math.isFinite(value));
+    bun.debug.debugAssert(std.math.isFinite(value));
     const buf_len = bun.fmt.FormatDouble.dtoa(@ptrCast(buf[1..].ptr), @floatCast(value)).len;
     return restrict_prec(buf[0 .. buf_len + 1], precision);
 }
@@ -6686,7 +6686,7 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
 
     // Put a leading zero to capture any carry.
     // Caller must prepare an empty byte for us;
-    bun.debugAssert(buf[0] == '0');
+    bun.debug.debugAssert(buf[0] == '0');
     buf[0] = '0';
     // Remove the sign for now. We will put it back at the end.
     const sign = switch (buf[1]) {
@@ -6704,14 +6704,14 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
     var _prec_start: ?u8 = null;
     for (1..len) |i| {
         if (buf[i] == '.') {
-            bun.debugAssert(_pos_dot == null);
+            bun.debug.debugAssert(_pos_dot == null);
             _pos_dot = @intCast(i);
         } else if (buf[i] == 'e') {
             pos_exp = @intCast(i);
             // We don't change exponent part, so stop here.
             break;
         } else if (_prec_start == null and buf[i] != '0') {
-            bun.debugAssert(buf[i] >= '1' and buf[i] <= '9');
+            bun.debug.debugAssert(buf[i] >= '1' and buf[i] <= '9');
             _prec_start = @intCast(i);
         }
     }
@@ -6794,7 +6794,7 @@ fn restrict_prec(buf: []u8, comptime prec: u8) struct { []u8, Notation } {
             buf[1] = sgn;
             break :brk buf[1..real_end];
         }
-        bun.debugAssert(buf[0] == '0');
+        bun.debug.debugAssert(buf[0] == '0');
         buf[0] = sgn;
         break :brk buf[0..real_end];
     } else brk: {

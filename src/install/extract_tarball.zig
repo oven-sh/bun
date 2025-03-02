@@ -134,7 +134,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         // Not sure where this case hits yet.
         // BUN-2WQ
         Output.warn("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", .{});
-        bun.debugAssert(false);
+        bun.debug.debugAssert(false);
         break :brk "unnamed-package";
     };
     const basename = brk: {

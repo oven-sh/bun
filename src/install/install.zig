@@ -1113,7 +1113,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
             this: *@This(),
             root_node_modules_dir: std.fs.Dir,
         ) bool {
-            bun.debugAssert(!this.patch.isNull());
+            bun.debug.debugAssert(!this.patch.isNull());
 
             // hash from the .patch file, to be checked against bun tag
             const patchfile_contents_hash = this.patch.patch_contents_hash;
@@ -2352,7 +2352,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 var buf = &PackageManager.cached_package_folder_name_buf;
 
                                 if (comptime Environment.isDebug) {
-                                    bun.assertWithLocation(bun.isSliceInBuffer(this.cache_dir_subpath, buf), @src());
+                                    bun.debug.assertWithLocation(bun.isSliceInBuffer(this.cache_dir_subpath, buf), @src());
                                 }
 
                                 const subpath_len = strings.withoutTrailingSlash(this.cache_dir_subpath).len;
@@ -2922,7 +2922,7 @@ pub const PackageManager = struct {
             abs_package_json_path: anytype,
             comptime opts: GetJSONOptions,
         ) GetResult {
-            bun.assertWithLocation(std.fs.path.isAbsolute(abs_package_json_path), @src());
+            bun.debug.assertWithLocation(std.fs.path.isAbsolute(abs_package_json_path), @src());
 
             var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
             const path = if (comptime !Environment.isWindows)
@@ -2985,7 +2985,7 @@ pub const PackageManager = struct {
             source: logger.Source,
             comptime opts: GetJSONOptions,
         ) GetResult {
-            bun.assertWithLocation(std.fs.path.isAbsolute(source.path.text), @src());
+            bun.debug.assertWithLocation(std.fs.path.isAbsolute(source.path.text), @src());
 
             var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
             const path = if (comptime !Environment.isWindows)
@@ -4044,7 +4044,7 @@ pub const PackageManager = struct {
         const cache_path = this.cachedNPMPackageFolderNamePrint(&cache_path_buf, package_name, version, null);
 
         if (comptime Environment.allow_assert) {
-            bun.assertWithLocation(cache_path[package_name.len] == '@', @src());
+            bun.debug.assertWithLocation(cache_path[package_name.len] == '@', @src());
         }
 
         cache_path_buf[package_name.len] = std.fs.path.sep;
@@ -4379,7 +4379,7 @@ pub const PackageManager = struct {
             // Do we need to download the tarball?
             .extract => extract: {
                 const task_id = Task.Id.forNPMPackage(this.lockfile.str(&name), package.resolution.value.npm.version);
-                bun.debugAssert(!this.network_dedupe_map.contains(task_id));
+                bun.debug.debugAssert(!this.network_dedupe_map.contains(task_id));
 
                 break :extract .{
                     .package = package,
@@ -8797,7 +8797,7 @@ pub const PackageManager = struct {
                 return error.MissingPackageJSON;
             };
 
-            bun.assertWithLocation(strings.eqlLong(original_package_json_path_buf.items[0..this_cwd.len], this_cwd, true), @src());
+            bun.debug.assertWithLocation(strings.eqlLong(original_package_json_path_buf.items[0..this_cwd.len], this_cwd, true), @src());
             original_package_json_path_buf.items.len = this_cwd.len;
             original_package_json_path_buf.appendSliceAssumeCapacity(std.fs.path.sep_str ++ "package.json");
             original_package_json_path_buf.appendAssumeCapacity(0);
@@ -12633,7 +12633,7 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
         ) void {
             if (comptime Environment.allow_assert) {
-                bun.assertWithLocation(tree_id != Lockfile.Tree.invalid_id, @src());
+                bun.debug.assertWithLocation(tree_id != Lockfile.Tree.invalid_id, @src());
             }
 
             const tree = &this.trees[tree_id];
@@ -12690,11 +12690,11 @@ pub const PackageManager = struct {
             const lockfile = this.lockfile;
             const string_buf = lockfile.buffers.string_bytes.items;
             while (tree.binaries.removeOrNull()) |dep_id| {
-                bun.assertWithLocation(dep_id < lockfile.buffers.dependencies.items.len, @src());
+                bun.debug.assertWithLocation(dep_id < lockfile.buffers.dependencies.items.len, @src());
                 const package_id = lockfile.buffers.resolutions.items[dep_id];
-                bun.assertWithLocation(package_id != invalid_package_id, @src());
+                bun.debug.assertWithLocation(package_id != invalid_package_id, @src());
                 const bin = this.bins[package_id];
-                bun.assertWithLocation(bin.tag != .none, @src());
+                bun.debug.assertWithLocation(bin.tag != .none, @src());
 
                 const alias = lockfile.buffers.dependencies.items[dep_id].name.slice(string_buf);
 
@@ -13065,9 +13065,9 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
         ) usize {
             if (comptime Environment.allow_assert) {
-                bun.assertWithLocation(resolution_tag != .root, @src());
-                bun.assertWithLocation(resolution_tag != .workspace, @src());
-                bun.assertWithLocation(package_id != 0, @src());
+                bun.debug.assertWithLocation(resolution_tag != .root, @src());
+                bun.debug.assertWithLocation(resolution_tag != .workspace, @src());
+                bun.debug.assertWithLocation(package_id != 0, @src());
             }
             var count: usize = 0;
             const scripts = brk: {
@@ -13103,7 +13103,7 @@ pub const PackageManager = struct {
             };
 
             if (comptime Environment.allow_assert) {
-                bun.assertWithLocation(scripts.filled, @src());
+                bun.debug.assertWithLocation(scripts.filled, @src());
             }
 
             switch (resolution_tag) {
@@ -13372,7 +13372,7 @@ pub const PackageManager = struct {
             if (needs_install) {
                 if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id, resolution.tag)) {
                     if (comptime Environment.allow_assert) {
-                        bun.assertWithLocation(resolution.canEnqueueInstallTask(), @src());
+                        bun.debug.assertWithLocation(resolution.canEnqueueInstallTask(), @src());
                     }
 
                     const context: TaskCallbackContext = .{
@@ -14162,17 +14162,17 @@ pub const PackageManager = struct {
                     if (comptime Environment.allow_assert) {
                         if (trees.len > 0) {
                             // last tree should only depend on one other
-                            bun.assertWithLocation(tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).count() == 1, @src());
+                            bun.debug.assertWithLocation(tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).count() == 1, @src());
                             // and it should be itself
-                            bun.assertWithLocation(tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).isSet(trees.len - 1), @src());
+                            bun.debug.assertWithLocation(tree_ids_to_trees_the_id_depends_on.at(trees.len - 1).isSet(trees.len - 1), @src());
 
                             // root tree should always depend on all trees
-                            bun.assertWithLocation(tree_ids_to_trees_the_id_depends_on.at(0).count() == trees.len, @src());
+                            bun.debug.assertWithLocation(tree_ids_to_trees_the_id_depends_on.at(0).count() == trees.len, @src());
                         }
 
                         // a tree should always depend on itself
                         for (0..trees.len) |j| {
-                            bun.assertWithLocation(tree_ids_to_trees_the_id_depends_on.at(j).isSet(j), @src());
+                            bun.debug.assertWithLocation(tree_ids_to_trees_the_id_depends_on.at(j).isSet(j), @src());
                         }
                     }
 
@@ -14808,7 +14808,7 @@ pub const PackageManager = struct {
                             var iter = lockfile.patched_dependencies.iterator();
                             while (iter.next()) |entry| {
                                 const pkg_name_and_version_hash = entry.key_ptr.*;
-                                bun.debugAssert(entry.value_ptr.patchfile_hash_is_null);
+                                bun.debug.debugAssert(entry.value_ptr.patchfile_hash_is_null);
                                 const gop = try manager.lockfile.patched_dependencies.getOrPut(manager.lockfile.allocator, pkg_name_and_version_hash);
                                 if (!gop.found_existing) {
                                     gop.value_ptr.* = .{

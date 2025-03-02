@@ -359,7 +359,7 @@ pub const JSGlobalObject = opaque {
         // If we're throwing JSError, that means either:
         // - We're throwing an exception while another exception is already active
         // - We're incorrectly returning JSError from a function that did not throw.
-        bun.debugAssert(err != error.JSError);
+        bun.debug.debugAssert(err != error.JSError);
 
         // Avoid tiny extra allocation
         var stack = std.heap.stackFallback(128, bun.default_allocator);

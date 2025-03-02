@@ -439,7 +439,7 @@ inline fn unescape(c: *u8, glob: []const u8, glob_index: *u32) bool {
 /// `c` must point to a u32 initialized to `glob[glob_index]`
 /// `clen` must point to a u8 initialized to 1
 inline fn getUnicode(c: *u32, clen: *u8, glob: []const u8, glob_index: *u32) bool {
-    bun.debugAssert(clen.* == 1);
+    bun.debug.debugAssert(clen.* == 1);
     switch (c.*) {
         // ascii range excluding backslash
         0x0...('\\' - 1), '\\' + 1...0x7F => {

@@ -102,7 +102,7 @@ pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: 
         pub fn ref(self: *T) void {
             const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
             if (bun.Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
-            bun.debugAssert(ref_count > 0);
+            bun.debug.debugAssert(ref_count > 0);
         }
 
         pub fn deref(self: *T) void {

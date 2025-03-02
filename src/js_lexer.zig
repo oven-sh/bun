@@ -276,9 +276,9 @@ fn NewLexer_(
             this.comments_to_preserve_before = comments_to_preserve_before;
             this.temp_buffer_u16 = temp_buffer_u16;
 
-            bun.debugAssert(all_comments.items.len >= original.all_comments.items.len);
-            bun.debugAssert(comments_to_preserve_before.items.len >= original.comments_to_preserve_before.items.len);
-            bun.debugAssert(temp_buffer_u16.items.len == 0 and original.temp_buffer_u16.items.len == 0);
+            bun.debug.debugAssert(all_comments.items.len >= original.all_comments.items.len);
+            bun.debug.debugAssert(comments_to_preserve_before.items.len >= original.comments_to_preserve_before.items.len);
+            bun.debug.debugAssert(temp_buffer_u16.items.len == 0 and original.temp_buffer_u16.items.len == 0);
 
             this.all_comments.items.len = original.all_comments.items.len;
             this.comments_to_preserve_before.items.len = original.comments_to_preserve_before.items.len;

@@ -5225,7 +5225,7 @@ pub const ByteStream = struct {
     pub fn onPull(this: *@This(), buffer: []u8, view: JSC.JSValue) StreamResult {
         JSC.markBinding(@src());
         bun.assert(buffer.len > 0);
-        bun.debugAssert(this.buffer_action == null);
+        bun.debug.debugAssert(this.buffer_action == null);
 
         if (this.buffer.items.len > 0) {
             bun.assert(this.value() == .zero);

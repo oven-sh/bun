@@ -107,7 +107,7 @@ pub const Fs = struct {
         } else if (buffer == &this.macro_shared_buffer) {
             this.macro_shared_buffer = MutableString.initEmpty(bun.default_allocator);
         } else {
-            bun.unreachablePanic("resetSharedBuffer: invalid buffer", .{});
+            bun.debug.unreachablePanic("resetSharedBuffer: invalid buffer", .{});
         }
     }
 

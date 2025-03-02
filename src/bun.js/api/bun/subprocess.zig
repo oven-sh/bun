@@ -1382,11 +1382,11 @@ pub const Subprocess = struct {
                         // unbalanced to do so, leading to a use-after-free.
                         // So, let's not do that.
                         // https://github.com/oven-sh/bun/pull/14092
-                        bun.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
+                        bun.debug.debugAssert(!subprocess.flags.deref_on_stdin_destroyed);
                         const debug_ref_count: if (Environment.isDebug) u32 else u0 = if (Environment.isDebug) subprocess.ref_count else 0;
                         pipe.onAttachedProcessExit();
                         if (comptime Environment.isDebug) {
-                            bun.debugAssert(subprocess.ref_count == debug_ref_count);
+                            bun.debug.debugAssert(subprocess.ref_count == debug_ref_count);
                         }
                         return pipe.toJS(globalThis);
                     } else {

@@ -258,7 +258,7 @@ pub const TrustCommand = struct {
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     if (comptime Environment.allow_assert) {
-                        bun.assertWithLocation(package_id != Install.invalid_package_id, @src());
+                        bun.debug.assertWithLocation(package_id != Install.invalid_package_id, @src());
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
@@ -381,7 +381,7 @@ pub const TrustCommand = struct {
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         const names = package_names_to_add.keys();
         if (comptime Environment.allow_assert) {
-            bun.assertWithLocation(names.len > 0, @src());
+            bun.debug.assertWithLocation(names.len > 0, @src());
         }
 
         // could be null if these are the first packages to be trusted
@@ -436,7 +436,7 @@ pub const TrustCommand = struct {
         pm.root_package_json_file.close();
 
         if (comptime Environment.allow_assert) {
-            bun.assertWithLocation(total_scripts_ran > 0, @src());
+            bun.debug.assertWithLocation(total_scripts_ran > 0, @src());
         }
 
         Output.pretty(" <green>{d}<r> script{s} ran across {d} package{s} ", .{

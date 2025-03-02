@@ -90,7 +90,7 @@ const ArenaRegistry = struct {
             if (entry.found_existing) {
                 const expected = entry.value_ptr.*;
                 if (expected != received) {
-                    bun.unreachablePanic("Arena created on wrong thread! Expected: {d} received: {d}", .{
+                    bun.debug.unreachablePanic("Arena created on wrong thread! Expected: {d} received: {d}", .{
                         expected,
                         received,
                     });
@@ -105,11 +105,11 @@ const ArenaRegistry = struct {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             const expected = registry.arenas.get(arena.heap.?) orelse {
-                bun.unreachablePanic("Arena not registered!", .{});
+                bun.debug.unreachablePanic("Arena not registered!", .{});
             };
             const received = std.Thread.getCurrentId();
             if (expected != received) {
-                bun.unreachablePanic("Arena accessed on wrong thread! Expected: {d} received: {d}", .{
+                bun.debug.unreachablePanic("Arena accessed on wrong thread! Expected: {d} received: {d}", .{
                     expected,
                     received,
                 });
@@ -122,7 +122,7 @@ const ArenaRegistry = struct {
             registry.mutex.lock();
             defer registry.mutex.unlock();
             if (!registry.arenas.swapRemove(arena.heap.?)) {
-                bun.unreachablePanic("Arena not registered!", .{});
+                bun.debug.unreachablePanic("Arena not registered!", .{});
             }
         }
     }

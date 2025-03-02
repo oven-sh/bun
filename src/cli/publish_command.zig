@@ -876,7 +876,7 @@ pub const PublishCommand = struct {
         shasum: sha.SHA1.Digest,
         integrity: sha.SHA512.Digest,
     ) OOM!string {
-        bun.assertWithLocation(json.isObject(), @src());
+        bun.debug.assertWithLocation(json.isObject(), @src());
 
         const registry = manager.scopeForPackageName(package_name);
 
@@ -1370,7 +1370,7 @@ pub const PublishCommand = struct {
             try buf.ensureUnusedCapacity(ctx.allocator, encoded_tarball_len);
             buf.items.len += encoded_tarball_len;
             const count = bun.simdutf.base64.encode(ctx.tarball_bytes, buf.items[buf.items.len - encoded_tarball_len ..], false);
-            bun.assertWithLocation(count == encoded_tarball_len, @src());
+            bun.debug.assertWithLocation(count == encoded_tarball_len, @src());
 
             try writer.print("\",\"length\":{d}}}}}}}", .{
                 ctx.tarball_bytes.len,

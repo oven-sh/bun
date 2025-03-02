@@ -360,7 +360,7 @@ pub const PackCommand = struct {
                     },
                     .file => {
                         const dedupe_entry = try subpath_dedupe.getOrPut(entry_subpath);
-                        bun.assertWithLocation(!dedupe_entry.found_existing, @src());
+                        bun.debug.assertWithLocation(!dedupe_entry.found_existing, @src());
                         if (dedupe_entry.found_existing) continue;
 
                         try pack_queue.add(entry_subpath);
@@ -413,7 +413,7 @@ pub const PackCommand = struct {
                 // make sure depths are in order
                 if (ignores.items.len > 0) {
                     for (1..ignores.items.len) |i| {
-                        bun.assertWithLocation(ignores.items[i - 1].depth < ignores.items[i].depth, @src());
+                        bun.debug.assertWithLocation(ignores.items[i - 1].depth < ignores.items[i].depth, @src());
                     }
                 }
             }
@@ -551,7 +551,7 @@ pub const PackCommand = struct {
                     const entry_name = try entrySubpath(ctx.allocator, _entry_name, sub_entry.name.slice());
 
                     for (ctx.bundled_deps.items) |*dep| {
-                        bun.assertWithLocation(dep.from_root_package_json, @src());
+                        bun.debug.assertWithLocation(dep.from_root_package_json, @src());
                         if (!strings.eqlLong(entry_name, dep.name, true)) continue;
 
                         const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
@@ -581,7 +581,7 @@ pub const PackCommand = struct {
             } else {
                 const entry_name = _entry_name;
                 for (ctx.bundled_deps.items) |*dep| {
-                    bun.assertWithLocation(dep.from_root_package_json, @src());
+                    bun.debug.assertWithLocation(dep.from_root_package_json, @src());
                     if (!strings.eqlLong(entry_name, dep.name, true)) continue;
 
                     const entry_subpath = try entrySubpath(ctx.allocator, "node_modules", entry_name);
@@ -613,7 +613,7 @@ pub const PackCommand = struct {
         while (additional_bundled_deps.popOrNull()) |bundled_dir_info| {
             const dir_subpath = bundled_dir_info[1];
             const maybe_slash = strings.lastIndexOfChar(dir_subpath, '/');
-            bun.assertWithLocation(maybe_slash != null, @src());
+            bun.debug.assertWithLocation(maybe_slash != null, @src());
             const dep_name: string = if (maybe_slash) |slash| dir_subpath[slash + 1 ..] else dir_subpath;
 
             try ctx.bundled_deps.append(ctx.allocator, .{
@@ -811,7 +811,7 @@ pub const PackCommand = struct {
                 // make sure depths are in order
                 if (ignores.items.len > 0) {
                     for (1..ignores.items.len) |i| {
-                        bun.assertWithLocation(ignores.items[i - 1].depth < ignores.items[i].depth, @src());
+                        bun.debug.assertWithLocation(ignores.items[i - 1].depth < ignores.items[i].depth, @src());
                     }
                 }
             }
@@ -850,7 +850,7 @@ pub const PackCommand = struct {
 
                 switch (entry.kind) {
                     .file => {
-                        bun.assertWithLocation(entry_subpath.len > 0, @src());
+                        bun.debug.assertWithLocation(entry_subpath.len > 0, @src());
                         try pack_queue.add(entry_subpath);
                     },
                     .directory => {

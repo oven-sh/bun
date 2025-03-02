@@ -867,12 +867,12 @@ pub const Fetch = struct {
 
         pub fn ref(this: *FetchTasklet) void {
             const count = this.ref_count.fetchAdd(1, .monotonic);
-            bun.debugAssert(count > 0);
+            bun.debug.debugAssert(count > 0);
         }
 
         pub fn deref(this: *FetchTasklet) void {
             const count = this.ref_count.fetchSub(1, .monotonic);
-            bun.debugAssert(count > 0);
+            bun.debug.debugAssert(count > 0);
 
             if (count == 1) {
                 this.deinit();
@@ -881,7 +881,7 @@ pub const Fetch = struct {
 
         pub fn derefFromThread(this: *FetchTasklet) void {
             const count = this.ref_count.fetchSub(1, .monotonic);
-            bun.debugAssert(count > 0);
+            bun.debug.debugAssert(count > 0);
 
             if (count == 1) {
                 // this is really unlikely to happen, but can happen

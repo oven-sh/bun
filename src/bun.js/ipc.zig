@@ -885,6 +885,11 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                         ipc.close(false);
                         return;
                     },
+                    error.OutOfMemory => {
+                        Output.printErrorln("IPC message is too long.", .{});
+                        ipc.close(false);
+                        return;
+                    },
                 };
 
                 this.handleIPCMessage(result.message);

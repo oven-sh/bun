@@ -417,8 +417,7 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
 
         throwCryptoOperationFailed(lexicalGlobalObject, scope);
         return std::nullopt;
-    } else if (maybeKey.isObject()) {
-        JSObject* optionsObj = optionsCell->getObject();
+    } else if (auto* optionsObj = maybeKey.getObject()) {
         const auto& names = WebCore::builtinNames(vm);
 
         if (auto val = optionsObj->getIfPropertyExists(lexicalGlobalObject, names.bunNativePtrPrivateName())) {
@@ -539,8 +538,7 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
             }
             throwCryptoOperationFailed(lexicalGlobalObject, scope);
             return std::nullopt;
-        } else if (key.isObject()) {
-            JSObject* keyObj = key.getObject();
+        } else if (auto* keyObj = key.getObject()) {
             if (auto keyVal = keyObj->getIfPropertyExists(lexicalGlobalObject, names.bunNativePtrPrivateName())) {
                 if (keyVal.isCell() && keyVal.inherits<WebCore::JSCryptoKey>()) {
                     auto* cryptoKey = jsCast<WebCore::JSCryptoKey*>(keyVal.asCell());

@@ -1,8 +1,6 @@
 //! Union type representing either a statement or an expression
 //! Used in contexts where either can appear (like export default)
 
-
-
 /// Union representing either a statement or an expression node
 pub const StmtOrExpr = union(enum) {
     /// Statement variant
@@ -23,7 +21,6 @@ pub const StmtOrExpr = union(enum) {
         };
     }
 };
-
 
 const js_ast = @import("js_ast.zig");
 const logger = bun.logger;

@@ -470,7 +470,7 @@ pub const StandaloneModuleGraph = struct {
         // some linux distros do 64 KB pages on aarch64
         64 * 1024
     else
-        std.mem.page_size;
+        bun.page_size;
 
     pub const InjectOptions = struct {
         windows_hide_console: bool = false,

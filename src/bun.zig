@@ -1334,7 +1334,7 @@ pub const js_parser = @import("./js_parser.zig");
 pub const js_printer = @import("./js_printer.zig");
 pub const js_lexer = @import("./js_lexer.zig");
 pub const JSON = @import("./json_parser.zig");
-pub const JSAst = @import("./js_ast.zig");
+pub const JSAst = @import("./js_ast/js_ast.zig");
 pub const bit_set = @import("./bit_set.zig");
 
 pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) [:0]const u8) {
@@ -4361,3 +4361,6 @@ pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
 
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");
+
+// To make the zig update slightly easier:
+pub const page_size = if (@hasDecl(std.heap, "page_size_max")) std.heap.page_size_max else std.mem.page_size;

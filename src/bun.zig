@@ -3394,6 +3394,15 @@ noinline fn assertionFailure() noreturn {
     }
 }
 
+noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn {
+    if (@inComptime()) {
+        @compileError(std.fmt.comptimePrint("assertion failure"));
+    } else {
+        @branchHint(.cold);
+        Output.panic(ASSERTION_FAILURE_MSG ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
+    }
+}
+
 noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) noreturn {
     if (@inComptime()) {
         @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
@@ -3495,7 +3504,7 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 
     if (!value) {
         if (comptime Environment.isDebug) unreachable;
-        assertionFailureWithMsg("{s}:{d}:{d}", .{ src.file, src.line, src.column });
+        assertionFailureAtLocation(src);
     }
 }
 

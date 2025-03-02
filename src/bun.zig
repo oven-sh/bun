@@ -3384,28 +3384,34 @@ pub const ArenaAllocator = std.heap.ArenaAllocator;
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
+const ASSERTION_FAILURE_MSG = "Internal assertion failure";
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
     } else {
         @branchHint(.cold);
-        Output.panic("Internal assertion failure", .{});
+        Output.panic(ASSERTION_FAILURE_MSG, .{});
     }
 }
 
-noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noreturn {
+noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) noreturn {
     if (@inComptime()) {
-        @compileError("assertion failure");
+        @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
     } else {
         @branchHint(.cold);
-        Output.panic("Internal assertion failure {s}:{d}:{d}", .{
-            src.file,
-            src.line,
-            src.column,
-        });
+        Output.panic(ASSERTION_FAILURE_MSG ++ ": " ++ msg, .args);
     }
 }
 
+/// Like `assert`, but checks only run in debug builds.
+/// 
+/// Please wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.isDebug) {
+///   const expensive = doExpensiveCheck();
+///   bun.debugAssert(expensive);
+/// }
+/// ```
 pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
@@ -3416,14 +3422,69 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     }
 }
 
-pub fn assert(value: bool) callconv(callconv_inline) void {
+/// Asserts that some condition holds. Assertions are stripped in release builds.
+/// 
+/// Please use `assertf` in new code.
+/// 
+/// Be careful what expressions you pass to this function; if the compiler cannot
+/// determine that `ok` has no side effects, the argument expression may not be removed
+/// from the binary. This includes calls to extern functions.
+/// 
+/// Wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.allow_assert) {
+///   const expensive = doExpensiveCheck();
+///   bun.assert(expensive);  
+/// }
+/// ```
+/// 
+/// Use `assertRelease` for assertions that should not be stripped in release builds.
+pub fn assert(ok: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
 
-    if (!value) {
+    if (!ok) {
         if (comptime Environment.isDebug) unreachable;
         assertionFailure();
+    }
+}
+
+/// Asserts that some condition holds. Assertions are stripped in release builds.
+/// 
+/// Please note that messages will be shown to users in crash reports.
+/// 
+/// Be careful what expressions you pass to this function; if the compiler cannot
+/// determine that `ok` has no side effects, the argument expression may not be removed
+/// from the binary. This includes calls to extern functions.
+/// 
+/// Wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.allow_assert) {
+///   const expensive = doExpensiveCheck();
+///   bun.assert(expensive, "Something happened: {}", .{ expensive });  
+/// }
+/// ```
+/// 
+/// Use `assertRelease` for assertions that should not be stripped in release builds.
+pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!ok) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailureWithMsg(format, args);
+    }
+}
+
+/// Asserts that some condition holds. These assertions are not stripped
+/// in any build mode. Use `assert` to have assertions stripped in release
+/// builds.
+pub fn assertRelease(ok: bool, comptime msg: []const u8, args: anytype) callconv(callconv_inline) void {
+    if (!ok) {
+        @branchHint(.unlikely);
+        Output.panic(ASSERTION_FAILURE_MSG ++ ": " ++ msg, args);
     }
 }
 
@@ -3434,11 +3495,12 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 
     if (!value) {
         if (comptime Environment.isDebug) unreachable;
-        assertionFailureWithLocation(src);
+        assertionFailureWithMsg("{s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
-/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+/// This has no effect on the real code but capturing 'a' and 'b' into
+/// parameters makes assertion failures much easier inspect in a debugger.
 pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (@inComptime()) {
         if (a != b) {
@@ -3453,7 +3515,8 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
     }
 }
 
-/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+/// This has no effect on the real code but capturing 'a' and 'b' into
+/// parameters makes assertion failures much easier inspect in a debugger.
 pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
     return assert(a != b);
 }

@@ -356,7 +356,7 @@ pub const Route = struct {
                     const blob = JSC.WebCore.AnyBlob{ .Blob = output_file.toBlob(bun.default_allocator, globalThis) catch bun.outOfMemory() };
                     var headers = JSC.WebCore.Headers{ .allocator = bun.default_allocator };
                     const content_type = blob.Blob.contentTypeOrMimeType() orelse brk: {
-                        bun.debugAssert(false); // should be populated by `output_file.toBlob`
+                        bun.debug.debugAssert(false); // should be populated by `output_file.toBlob`
                         break :brk output_file.loader.toMimeType(&.{}).value;
                     };
                     headers.append("Content-Type", content_type) catch bun.outOfMemory();
@@ -488,7 +488,7 @@ pub const Route = struct {
 
         pub fn onAborted(this: *PendingResponse, resp: HTTPResponse) void {
             _ = resp; // autofix
-            bun.debugAssert(this.is_response_pending == true);
+            bun.debug.debugAssert(this.is_response_pending == true);
             this.is_response_pending = false;
 
             // Technically, this could be the final ref count, but we don't want to risk it

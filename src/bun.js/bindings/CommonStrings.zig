@@ -26,8 +26,8 @@ pub const CommonStrings = struct {
         );
         bun.assert(str != .zero);
         if (comptime bun.Environment.isDebug) {
-            bun.assertWithLocation(str != .zero, @src());
-            bun.assertWithLocation(str.isStringLiteral(), @src());
+            bun.debug.assertWithLocation(str != .zero, @src());
+            bun.debug.assertWithLocation(str.isStringLiteral(), @src());
         }
         return str;
     }

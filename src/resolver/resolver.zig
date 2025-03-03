@@ -2347,7 +2347,7 @@ pub const Resolver = struct {
             }
         }
 
-        bun.unreachablePanic("TODO: implement enqueueDependencyToResolve for non-root packages", .{});
+        bun.debug.unreachablePanic("TODO: implement enqueueDependencyToResolve for non-root packages", .{});
     }
 
     fn handleESMResolution(r: *ThisResolver, esm_resolution_: ESModule.Resolution, abs_package_path: string, kind: ast.ImportKind, package_json: *PackageJSON, package_subpath: string) ?MatchResult {
@@ -2616,7 +2616,7 @@ pub const Resolver = struct {
             if ((input_path.len == 2 and input_path[1] == ':') or
                 (input_path.len == 3 and input_path[1] == ':' and input_path[2] == '.'))
             {
-                bun.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
+                bun.debug.unsafeAssert(input_path.ptr == &win32_normalized_dir_info_cache_buf);
                 win32_normalized_dir_info_cache_buf[2] = '\\';
                 input_path.len = 3;
             }

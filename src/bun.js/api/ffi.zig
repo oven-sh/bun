@@ -334,7 +334,7 @@ pub const FFI = struct {
             }, true) catch |e| switch (e) {
                 error.OutOfMemory => return error.OutOfMemory,
                 else => {
-                    bun.debugAssert(this.hasDeferredErrors());
+                    bun.debug.debugAssert(this.hasDeferredErrors());
                     return error.DeferredErrors;
                 },
             };
@@ -412,7 +412,7 @@ pub const FFI = struct {
 
             for (this.include_dirs.items) |include_dir| {
                 state.addSysIncludePath(include_dir) catch {
-                    bun.debugAssert(this.hasDeferredErrors());
+                    bun.debug.debugAssert(this.hasDeferredErrors());
                     return error.DeferredErrors;
                 };
             }
@@ -466,7 +466,7 @@ pub const FFI = struct {
             try this.errorCheck();
 
             const relocation_size = state.relocate(null) catch {
-                bun.debugAssert(this.hasDeferredErrors());
+                bun.debug.debugAssert(this.hasDeferredErrors());
                 return error.DeferredErrors;
             };
 
@@ -476,7 +476,7 @@ pub const FFI = struct {
             _ = dangerouslyRunWithoutJitProtections(TCC.Error!usize, TCC.State.relocate, .{ state, bytes.ptr }) catch return error.DeferredErrors;
 
             // if errors got added, we would have returned in the relocation catch.
-            bun.debugAssert(this.deferred_errors.items.len == 0);
+            bun.debug.debugAssert(this.deferred_errors.items.len == 0);
 
             for (this.symbols.map.keys(), this.symbols.map.values()) |symbol, *function| {
                 // FIXME: why are we duping here? can we at least use a stack
@@ -531,7 +531,7 @@ pub const FFI = struct {
         pub fn deinit(this: *StringArray) void {
             for (this.items) |item| {
                 // Attempting to free an empty null-terminated slice will crash if it was a default value
-                bun.debugAssert(item.len > 0);
+                bun.debug.debugAssert(item.len > 0);
 
                 bun.default_allocator.free(@constCast(item));
             }
@@ -1557,7 +1557,7 @@ pub const FFI = struct {
 
             CompilerRT.inject(state);
             state.addSymbol(this.base_name.?, this.symbol_from_dynamic_library.?) catch {
-                bun.debugAssert(this.step == .failed);
+                bun.debug.debugAssert(this.step == .failed);
                 return;
             };
 

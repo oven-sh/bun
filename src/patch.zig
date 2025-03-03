@@ -282,7 +282,7 @@ pub const PatchFile = struct {
             while (iter.next()) |line| : (i += 1) {
                 lines.append(bun.default_allocator, line) catch bun.outOfMemory();
             }
-            bun.debugAssert(i == file_line_count);
+            bun.debug.debugAssert(i == file_line_count);
         }
 
         for (patch.hunks.items) |*hunk| {
@@ -1003,7 +1003,7 @@ const PatchLinesParser = struct {
         // index 2de83dd..842652c 100644
         //       ^
         //       we expect that we are here
-        bun.debugAssert(!bun.strings.hasPrefix(line, "index "));
+        bun.debug.debugAssert(!bun.strings.hasPrefix(line, "index "));
 
         // From @pnpm/patch-package the regex is this:
         // const match = line.match(/(\w+)\.\.(\w+)/)

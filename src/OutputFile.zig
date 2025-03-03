@@ -113,7 +113,7 @@ pub const Value = union(enum) {
                 );
             },
             .pending => unreachable,
-            else => |tag| bun.todoPanic(@src(), "handle .{s}", .{@tagName(tag)}),
+            else => |tag| bun.debug.todoPanic(@src(), "handle .{s}", .{@tagName(tag)}),
         };
     }
 };

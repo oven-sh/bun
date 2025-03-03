@@ -61,7 +61,7 @@ pub fn writableNBytes(self: *MutableString, amount: usize) Allocator.Error![]u8 
 }
 
 pub fn write(self: *MutableString, bytes: anytype) Allocator.Error!usize {
-    bun.debugAssert(bytes.len == 0 or !bun.isSliceInBuffer(bytes, self.list.allocatedSlice()));
+    bun.debug.debugAssert(bytes.len == 0 or !bun.isSliceInBuffer(bytes, self.list.allocatedSlice()));
     try self.list.appendSlice(self.allocator, bytes);
     return bytes.len;
 }

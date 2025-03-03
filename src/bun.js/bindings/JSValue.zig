@@ -730,7 +730,7 @@ pub const JSValue = enum(i64) {
     /// If the object is a subclass of the type or has mutated the structure, return null.
     /// Note: this may return null for direct instances of the type if the user adds properties to the object.
     pub fn asDirect(value: JSValue, comptime ZigType: type) ?*ZigType {
-        bun.debugAssert(value.isCell()); // you must have already checked this.
+        bun.debug.debugAssert(value.isCell()); // you must have already checked this.
 
         return ZigType.fromJSDirect(value);
     }

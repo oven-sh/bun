@@ -493,7 +493,7 @@ pub const TextEncoderStreamEncoder = struct {
 
         if (comptime Environment.isDebug) {
             // wrap in comptime if so simdutf isn't called in a release build here.
-            bun.debugAssert(buffer.items.len == (bun.simdutf.length.utf8.from.latin1(input) + prepend_replacement_len));
+            bun.debug.debugAssert(buffer.items.len == (bun.simdutf.length.utf8.from.latin1(input) + prepend_replacement_len));
         }
 
         return JSC.JSUint8Array.fromBytes(globalObject, buffer.items);
@@ -525,7 +525,7 @@ pub const TextEncoderStreamEncoder = struct {
                     const converted = strings.utf16CodepointWithFFFD([]const u16, &.{ lead, maybe_trail });
                     // shouldn't fail because `u16IsTrail` is true and `pending_lead_surrogate` is always
                     // a valid lead.
-                    bun.debugAssert(!converted.fail);
+                    bun.debug.debugAssert(!converted.fail);
 
                     const sequence = strings.wtf8Sequence(converted.code_point);
 
@@ -736,7 +736,7 @@ pub const TextDecoder = struct {
         if (remain.len != 0 and i == remain.len - 1) {
             this.lead_byte = remain[i];
         } else {
-            bun.assertWithLocation(i == remain.len, @src());
+            bun.debug.assertWithLocation(i == remain.len, @src());
         }
 
         if (comptime flush) {
@@ -852,7 +852,7 @@ pub const TextDecoder = struct {
                     return ZigString.toExternalU16(decoded.ptr, decoded.len, globalThis);
                 }
 
-                bun.debugAssert(input.len == 0 or !deinit);
+                bun.debug.debugAssert(input.len == 0 or !deinit);
 
                 // Experiment: using mimalloc directly is slightly slower
                 return ZigString.init(input).toJS(globalThis);

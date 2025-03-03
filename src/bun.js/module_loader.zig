@@ -338,8 +338,8 @@ pub const RuntimeTranspilerStore = struct {
                 const out = this.non_threadsafe_input_specifier;
                 this.non_threadsafe_input_specifier = String.empty;
 
-                bun.debugAssert(resolved_source.source_url.isEmpty());
-                bun.debugAssert(resolved_source.specifier.isEmpty());
+                bun.debug.debugAssert(resolved_source.source_url.isEmpty());
+                bun.debug.debugAssert(resolved_source.specifier.isEmpty());
                 resolved_source.source_url = out.createIfDifferent(this.path.text);
                 resolved_source.specifier = out.dupeRef();
                 break :brk out;

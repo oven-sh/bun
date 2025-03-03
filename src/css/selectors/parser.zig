@@ -269,7 +269,7 @@ fn compute_simple_selector_specifity(
 ) void {
     switch (simple_selector.*) {
         .combinator => {
-            bun.unreachablePanic("Found combinator in simple selectors vector?", .{});
+            bun.debug.unreachablePanic("Found combinator in simple selectors vector?", .{});
         },
         .part, .pseudo_element, .local_name => {
             specifity.element_selectors += 1;
@@ -1624,7 +1624,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                     if (input.next().asValue()) |tok| {
                         if (tok.* == .comma) break;
                         // Shouldn't have got a selector if getting here.
-                        bun.debugAssert(!was_ok);
+                        bun.debug.debugAssert(!was_ok);
                     }
                     return .{ .result = .{ .v = values } };
                 }
@@ -1684,7 +1684,7 @@ pub fn GenericSelectorList(comptime Impl: type) type {
                     if (input.next().asValue()) |tok| {
                         if (tok.* == .comma) break;
                         // Shouldn't have got a selector if getting here.
-                        bun.debugAssert(!was_ok);
+                        bun.debug.debugAssert(!was_ok);
                     }
                     return .{ .result = .{ .v = values } };
                 }
@@ -2708,7 +2708,7 @@ pub fn parse_type_selector(
             sink.pushSimpleSelector(.explicit_any_namespace);
         },
         .implicit_no_namespace => {
-            bun.unreachablePanic("Should not be returned with in_attr_selector = false", .{});
+            bun.debug.unreachablePanic("Should not be returned with in_attr_selector = false", .{});
         },
     }
 
@@ -2982,7 +2982,7 @@ pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, in
             .none => |t| return .{ .err = input.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .no_qualified_name_in_attribute_selector = t })) },
             .some => |qname| {
                 if (qname[1] == null) {
-                    bun.unreachablePanic("", .{});
+                    bun.debug.unreachablePanic("", .{});
                 }
                 const ns: QNamePrefix(Impl) = qname[0];
                 const ln = qname[1].?;
@@ -2992,7 +2992,7 @@ pub fn parse_attribute_selector(comptime Impl: type, parser: *SelectorParser, in
                         .explicit_namespace => |x| .{ .specific = .{ .prefix = x[0], .url = x[1] } },
                         .explicit_any_namespace => .any,
                         .implicit_any_namespace, .implicit_default_namespace => {
-                            bun.unreachablePanic("Not returned with in_attr_selector = true", .{});
+                            bun.debug.unreachablePanic("Not returned with in_attr_selector = true", .{});
                         },
                     },
                     ln,
@@ -3350,7 +3350,7 @@ pub fn parse_is_or_where(
     comptime func: anytype,
     args_: anytype,
 ) Result(GenericComponent(Impl)) {
-    bun.debugAssert(parser.parseIsAndWhere());
+    bun.debug.debugAssert(parser.parseIsAndWhere());
     // https://drafts.csswg.org/selectors/#matches-pseudo:
     //
     //     Pseudo-elements cannot be represented by the matches-any

@@ -86,7 +86,7 @@ pub const Source = struct {
 
     pub fn configureThread() void {
         if (source_set) return;
-        bun.debugAssert(stdout_stream_set);
+        bun.debug.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
         bun.StackCheck.configureThread();
     }
@@ -491,23 +491,23 @@ pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
 // TODO: investigate migrating this to the buffered one.
 pub fn errorWriter() WriterType {
-    bun.debugAssert(source_set);
+    bun.debug.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
 pub fn errorWriterBuffered() Source.BufferedStream.Writer {
-    bun.debugAssert(source_set);
+    bun.debug.debugAssert(source_set);
     return source.buffered_error_stream.writer();
 }
 
 // TODO: investigate returning the buffered_error_stream
 pub fn errorStream() Source.StreamType {
-    bun.debugAssert(source_set);
+    bun.debug.debugAssert(source_set);
     return source.error_stream;
 }
 
 pub fn writer() WriterType {
-    bun.debugAssert(source_set);
+    bun.debug.debugAssert(source_set);
     return source.stream.quietWriter();
 }
 
@@ -670,7 +670,7 @@ pub fn debug(comptime fmt: string, args: anytype) void {
 }
 
 pub inline fn _debug(comptime fmt: string, args: anytype) void {
-    bun.debugAssert(source_set);
+    bun.debug.debugAssert(source_set);
     println(fmt, args);
 }
 
@@ -681,7 +681,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        bun.debugAssert(source_set);
+        bun.debug.debugAssert(source_set);
 
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
@@ -1182,7 +1182,7 @@ pub fn enableScopedDebugWriter() void {
 extern "c" fn getpid() c_int;
 
 pub fn initScopedDebugWriterAtStartup() void {
-    bun.debugAssert(source_set);
+    bun.debug.debugAssert(source_set);
 
     if (bun.getenvZ("BUN_DEBUG")) |path| {
         if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {

@@ -87,7 +87,7 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
             return globalObject.takeException(globalObject.throwOutOfMemory());
         },
         error.ShortRead => {
-            bun.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in postgres", .{});
+            bun.debug.unreachablePanic("Assertion failed: ShortRead should be handled by the caller in postgres", .{});
         },
     };
     if (message) |msg| {
@@ -1165,7 +1165,7 @@ pub const PostgresRequest = struct {
                 'd' => try connection.on(.CopyData, Context, reader),
                 'S' => {
                     if (connection.tls_status == .message_sent) {
-                        bun.debugAssert(connection.tls_status.message_sent == 8);
+                        bun.debug.debugAssert(connection.tls_status.message_sent == 8);
                         connection.tls_status = .ssl_ok;
                         connection.setupTLS();
                         return;

@@ -407,7 +407,7 @@ pub const Parser = struct {
     ///
     /// npm/ini uses a regex pattern that will select the inner most ${...}
     fn parseEnvSubstitution(this: *Parser, val: []const u8, start: usize, i: usize, unesc: *std.ArrayList(u8)) OOM!?usize {
-        bun.debugAssert(val[i] == '$');
+        bun.debug.debugAssert(val[i] == '$');
         var esc = false;
         if (i + "{}".len < val.len and val[i + 1] == '{') {
             var found_closing = false;

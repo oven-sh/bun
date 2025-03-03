@@ -2217,7 +2217,7 @@ pub fn StatFSType(comptime big: bool) type {
 
                     const result = JSC.JSValue.jsDoubleNumber(@as(f64, @floatFromInt(value)));
                     if (Environment.isDebug) {
-                        bun.assert_eql(result.asNumber(), @as(f64, @floatFromInt(value)));
+                        bun.debug.assert_eql(result.asNumber(), @as(f64, @floatFromInt(value)));
                     }
                     return result;
                 }

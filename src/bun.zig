@@ -42,7 +42,7 @@ pub extern "c" fn pow(x: f64, y: f64) f64;
 
 /// Restrict a value to a certain interval unless it is a float and NaN.
 pub inline fn clamp(self: anytype, min: @TypeOf(self), max: @TypeOf(self)) @TypeOf(self) {
-    bun.debugAssert(min <= max);
+    bun.debug.debugAssert(min <= max);
     if (comptime (@TypeOf(self) == f32 or @TypeOf(self) == f64)) {
         return clampFloat(self, min, max);
     }
@@ -697,16 +697,6 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         if (polls[0].revents & std.posix.POLL.ERR != 0) " ERR " else "",
     });
     return rc;
-}
-
-/// Do not use this function, call std.debug.panic directly.
-///
-/// This function used to panic in debug, and be `unreachable` in release
-/// however, if something is possibly reachable, it should not be marked unreachable.
-/// It now panics in all release modes.
-pub inline fn unreachablePanic(comptime fmts: []const u8, args: anytype) noreturn {
-    // if (comptime !Environment.allow_assert) unreachable;
-    std.debug.panic(fmts, args);
 }
 
 pub fn StringEnum(comptime Type: type, comptime Map: anytype, value: []const u8) ?Type {
@@ -1642,14 +1632,14 @@ pub fn DebugOnlyDisabler(comptime Type: type) type {
 const FailingAllocator = struct {
     fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
         if (comptime Environment.allow_assert) {
-            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
+            debug.unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
         }
         return null;
     }
 
     fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
         if (comptime Environment.allow_assert) {
-            unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
+            debug.unreachablePanic("FailingAllocator should never be reached. This means some memory was not defined", .{});
         }
         return false;
     }
@@ -2102,20 +2092,6 @@ pub const WTF = struct {
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
-
-pub inline fn assertComptime() void {
-    var x = 0; // if you hit an error on this line, you are not in a comptime context
-    _ = &x;
-}
-
-const TODO_LOG = Output.scoped(.TODO, false);
-pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
-    if (comptime Environment.allow_assert) {
-        TODO_LOG("{s}() at {s}:{d}:{d}", .{ src.fn_name, src.file, src.line, src.column });
-    }
-
-    return value;
-}
 
 /// Converts a native file descriptor into a `bun.FileDescriptor`
 ///
@@ -3022,12 +2998,6 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
-pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args: anytype) noreturn {
-    @branchHint(.cold);
-    bun.Analytics.Features.todo_panic = 1;
-    Output.panic("TODO: " ++ format ++ " ({s}:{d})", args ++ .{ src.file, src.line });
-}
-
 /// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
 /// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
@@ -3384,155 +3354,8 @@ pub const ArenaAllocator = std.heap.ArenaAllocator;
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
-const ASSERTION_FAILURE_MSG = "Internal assertion failure";
-noinline fn assertionFailure() noreturn {
-    if (@inComptime()) {
-        @compileError("assertion failure");
-    } else {
-        @branchHint(.cold);
-        Output.panic(ASSERTION_FAILURE_MSG, .{});
-    }
-}
-
-noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn {
-    if (@inComptime()) {
-        @compileError(std.fmt.comptimePrint("assertion failure"));
-    } else {
-        @branchHint(.cold);
-        Output.panic(ASSERTION_FAILURE_MSG ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
-    }
-}
-
-noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) noreturn {
-    if (@inComptime()) {
-        @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
-    } else {
-        @branchHint(.cold);
-        Output.panic(ASSERTION_FAILURE_MSG ++ ": " ++ msg, .args);
-    }
-}
-
-/// Like `assert`, but checks only run in debug builds.
-///
-/// Please wrap expensive checks in an `if` statement.
-/// ```zig
-/// if (comptime bun.Environment.isDebug) {
-///   const expensive = doExpensiveCheck();
-///   bun.debugAssert(expensive);
-/// }
-/// ```
-pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
-    if (comptime !Environment.isDebug) {
-        return;
-    }
-
-    if (!cheap_value_only_plz) {
-        unreachable;
-    }
-}
-
-/// Asserts that some condition holds. Assertions are stripped in release builds.
-///
-/// Please use `assertf` in new code.
-///
-/// Be careful what expressions you pass to this function; if the compiler cannot
-/// determine that `ok` has no side effects, the argument expression may not be removed
-/// from the binary. This includes calls to extern functions.
-///
-/// Wrap expensive checks in an `if` statement.
-/// ```zig
-/// if (comptime bun.Environment.allow_assert) {
-///   const expensive = doExpensiveCheck();
-///   bun.assert(expensive);
-/// }
-/// ```
-///
-/// Use `assertRelease` for assertions that should not be stripped in release builds.
-pub fn assert(ok: bool) callconv(callconv_inline) void {
-    if (comptime !Environment.allow_assert) {
-        return;
-    }
-
-    if (!ok) {
-        if (comptime Environment.isDebug) unreachable;
-        assertionFailure();
-    }
-}
-
-/// Asserts that some condition holds. Assertions are stripped in release builds.
-///
-/// Please note that messages will be shown to users in crash reports.
-///
-/// Be careful what expressions you pass to this function; if the compiler cannot
-/// determine that `ok` has no side effects, the argument expression may not be removed
-/// from the binary. This includes calls to extern functions.
-///
-/// Wrap expensive checks in an `if` statement.
-/// ```zig
-/// if (comptime bun.Environment.allow_assert) {
-///   const expensive = doExpensiveCheck();
-///   bun.assert(expensive, "Something happened: {}", .{ expensive });
-/// }
-/// ```
-///
-/// Use `assertRelease` for assertions that should not be stripped in release builds.
-pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
-    if (comptime !Environment.allow_assert) {
-        return;
-    }
-
-    if (!ok) {
-        if (comptime Environment.isDebug) unreachable;
-        assertionFailureWithMsg(format, args);
-    }
-}
-
-/// Asserts that some condition holds. These assertions are not stripped
-/// in any build mode. Use `assert` to have assertions stripped in release
-/// builds.
-pub fn assertRelease(ok: bool, comptime msg: []const u8, args: anytype) callconv(callconv_inline) void {
-    if (!ok) {
-        @branchHint(.unlikely);
-        Output.panic(ASSERTION_FAILURE_MSG ++ ": " ++ msg, args);
-    }
-}
-
-pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv(callconv_inline) void {
-    if (comptime !Environment.allow_assert) {
-        return;
-    }
-
-    if (!value) {
-        if (comptime Environment.isDebug) unreachable;
-        assertionFailureAtLocation(src);
-    }
-}
-
-/// This has no effect on the real code but capturing 'a' and 'b' into
-/// parameters makes assertion failures much easier inspect in a debugger.
-pub inline fn assert_eql(a: anytype, b: anytype) void {
-    if (@inComptime()) {
-        if (a != b) {
-            @compileLog(a);
-            @compileLog(b);
-            @compileError("A != B");
-        }
-    }
-    if (!Environment.allow_assert) return;
-    if (a != b) {
-        Output.panic("Assertion failure: {any} != {any}", .{ a, b });
-    }
-}
-
-/// This has no effect on the real code but capturing 'a' and 'b' into
-/// parameters makes assertion failures much easier inspect in a debugger.
-pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
-    return assert(a != b);
-}
-
-pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
-    if (!condition) unreachable;
-}
+pub const debug = @import("modules/debug.zig");
+pub const assert = debug.assert;
 
 pub const dns = @import("./dns.zig");
 
@@ -3818,7 +3641,7 @@ pub const WeakPtrData = packed struct(u32) {
     finalized: bool = false,
 
     pub fn onFinalize(this: *WeakPtrData) bool {
-        bun.debugAssert(!this.finalized);
+        debug.debugAssert(!this.finalized);
         this.finalized = true;
         return this.reference_count == 0;
     }
@@ -3830,7 +3653,7 @@ pub fn WeakPtr(comptime T: type, comptime weakable_field: std.meta.FieldEnum(T))
 
         value: ?*T = null,
         pub fn create(req: *T) WeakRef {
-            bun.debugAssert(!@field(req, @tagName(weakable_field)).finalized);
+            debug.debugAssert(!@field(req, @tagName(weakable_field)).finalized);
             @field(req, @tagName(weakable_field)).reference_count += 1;
             return .{ .value = req };
         }
@@ -4372,10 +4195,10 @@ pub fn CowSlice(T: type) type {
         /// Returns a new string. The borrowed string should be deinitialized
         /// so that debug assertions that perform.
         pub fn borrow(str: @This()) @This() {
-            if (cow_str_assertions) if (str.debug) |debug| {
-                debug.mutex.lock();
-                defer debug.mutex.unlock();
-                debug.borrows += 1;
+            if (cow_str_assertions) if (str.debug) |dbg| {
+                dbg.mutex.lock();
+                defer dbg.mutex.unlock();
+                dbg.borrows += 1;
             };
             return .{
                 .ptr = str.ptr,
@@ -4388,18 +4211,18 @@ pub fn CowSlice(T: type) type {
         }
 
         pub fn deinit(str: @This(), allocator: Allocator) void {
-            if (cow_str_assertions) if (str.debug) |debug| {
-                debug.mutex.lock();
+            if (cow_str_assertions) if (str.debug) |dbg| {
+                dbg.mutex.lock();
                 bun.assert(
-                    debug.allocator.ptr == allocator.ptr and
-                        debug.allocator.vtable == allocator.vtable,
+                    dbg.allocator.ptr == allocator.ptr and
+                        dbg.allocator.vtable == allocator.vtable,
                 );
                 if (str.flags.is_owned) {
-                    bun.assert(debug.borrows == 0); // active borrows become invalid data
+                    bun.assert(dbg.borrows == 0); // active borrows become invalid data
                 } else {
-                    debug.borrows -= 1; // double deinit of a borrowed string
+                    dbg.borrows -= 1; // double deinit of a borrowed string
                 }
-                bun.destroy(debug);
+                bun.destroy(dbg);
             };
             if (str.flags.is_owned) {
                 allocator.free(str.slice());

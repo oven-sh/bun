@@ -378,6 +378,14 @@ pub const JunitReporter = struct {
                 //     try this.contents.appendSlice(bun.default_allocator, "\"");
                 // }
             },
+            .fail_because_failing_test_passed => {
+                this.testcases_metrics.failures += 1;
+                try this.contents.writer(bun.default_allocator).print(
+                    \\>
+                    \\      <failure message="test marked with .failing() did not throw" type="AssertionError"/>
+                    \\    </testcase>
+                , .{});
+            },
             .fail_because_expected_assertion_count => {
                 this.testcases_metrics.failures += 1;
                 // TODO: add the failure message

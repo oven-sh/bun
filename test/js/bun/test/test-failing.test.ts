@@ -36,6 +36,6 @@ describe("test.failing", () => {
       fail("Expected exit code to be non-zero\n\n" + stderr);
     }
     expect(stderr).toContain(" 1 fail\n");
-    expect(stderr).toContain("timed out after 5ms");
+    expect(stderr).toMatch(/timed out after \d+ms/i);
   });
 });

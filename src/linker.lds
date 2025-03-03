@@ -6,6 +6,7 @@ BUN_1.2 {
 
 	uv_os_getpid;
 	uv_os_getppid;
+	uv_hrtime;
 
 	extern "C++" {
 		v8::*;

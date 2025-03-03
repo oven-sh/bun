@@ -40,6 +40,8 @@
 #include "ncrypto.h"
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
+#include "JSSign.h"
+#include "JSVerify.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -114,7 +116,9 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     if (keyBuffer.hasException())
         return JSValue::encode(jsUndefined());
 
-    if (keyBuffer.returnValue().isEmpty())
+    auto buffer = keyBuffer.releaseReturnValue();
+
+    if (buffer.size() == 0)
         return JSValue::encode(JSC::jsEmptyString(vm));
 
     auto curveName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
@@ -133,8 +137,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     if (!point)
         return throwVMError(lexicalGlobalObject, scope, "Failed to create EC_POINT"_s);
 
-    const unsigned char* key_data = keyBuffer.returnValue().data();
-    size_t key_length = keyBuffer.returnValue().size();
+    const unsigned char* key_data = buffer.data();
+    size_t key_length = buffer.size();
 
     if (!EC_POINT_oct2point(group, point, key_data, key_length, nullptr))
         return throwVMError(lexicalGlobalObject, scope, "Failed to convert Buffer to EC_POINT"_s);
@@ -236,12 +240,17 @@ JSC_DEFINE_HOST_FUNCTION(jsCertVerifySpkac, (JSC::JSGlobalObject * lexicalGlobal
         return JSValue::encode(jsUndefined());
     }
 
-    auto buffer = input.returnValue();
+    auto buffer = input.releaseReturnValue();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    bool result = ncrypto::VerifySpkac(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::Buffer<const char> buf {
+        .data = reinterpret_cast<const char*>(buffer.data()),
+        .len = buffer.size()
+    };
+
+    bool result = ncrypto::VerifySpkac(buf);
     return JSValue::encode(JSC::jsBoolean(result));
 }
 
@@ -255,12 +264,17 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportPublicKey, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto buffer = input.returnValue();
+    auto buffer = input.releaseReturnValue();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto bio = ncrypto::ExportPublicKey(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+    ncrypto::Buffer<const char> buf {
+        .data = reinterpret_cast<const char*>(buffer.data()),
+        .len = buffer.size()
+    };
+
+    auto bio = ncrypto::ExportPublicKey(buf);
     if (!bio) {
         return JSValue::encode(jsEmptyString(vm));
     }
@@ -284,22 +298,27 @@ JSC_DEFINE_HOST_FUNCTION(jsCertExportChallenge, (JSC::JSGlobalObject * lexicalGl
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto buffer = input.returnValue();
+    auto buffer = input.releaseReturnValue();
     if (buffer.size() > std::numeric_limits<int32_t>().max()) {
         return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "spkac"_s, 0, std::numeric_limits<int32_t>().max(), jsNumber(buffer.size()));
     }
 
-    auto cert = ncrypto::ExportChallenge(reinterpret_cast<const char*>(buffer.data()), buffer.size());
-    if (!cert.data || cert.len == 0) {
+    ncrypto::Buffer<const char> buf {
+        .data = reinterpret_cast<const char*>(buffer.data()),
+        .len = buffer.size()
+    };
+
+    auto cert = ncrypto::ExportChallenge(buf);
+    if (!cert || cert.size() == 0) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.data), cert.len });
+    auto result = JSC::ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(cert.get()), cert.size() });
     if (!result) {
         return JSValue::encode(jsEmptyString(vm));
     }
 
-    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(result), 0, cert.len);
+    auto* bufferResult = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(result), 0, cert.size());
 
     return JSValue::encode(bufferResult);
 }
@@ -323,9 +342,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     // Get cipher from name or nid
     ncrypto::Cipher cipher;
     if (callFrame->argument(1).isString()) {
-        auto cipherName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
+        JSString* cipherName = callFrame->argument(1).toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        cipher = ncrypto::Cipher::FromName(cipherName.utf8().data());
+        cipher = ncrypto::Cipher::FromName(cipherName->view(lexicalGlobalObject));
     } else if (callFrame->argument(1).isInt32()) {
         int nid = callFrame->argument(1).asInt32();
         cipher = ncrypto::Cipher::FromNid(nid);
@@ -376,17 +395,17 @@ JSC_DEFINE_HOST_FUNCTION(jsGetCipherInfo, (JSC::JSGlobalObject * lexicalGlobalOb
     }
 
     // Set mode if available
-    auto mode_label = cipher.getModeLabel();
-    if (!mode_label.empty()) {
+    WTF::ASCIILiteral mode_label = cipher.getModeLabel();
+    if (!mode_label.isEmpty()) {
         info->putDirect(vm, PropertyName(Identifier::fromString(vm, "mode"_s)),
-            jsString(vm, String::fromUTF8({ mode_label.data(), mode_label.length() })));
+            jsString(vm, String::fromUTF8(mode_label)));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
     // Set name
-    auto name = cipher.getName();
+    WTF::String name = cipher.getName();
     info->putDirect(vm, vm.propertyNames->name,
-        jsString(vm, String::fromUTF8({ name.data(), name.length() })));
+        jsString(vm, name));
     RETURN_IF_EXCEPTION(scope, {});
 
     // Set nid
@@ -427,7 +446,7 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         JSFunction::create(vm, globalObject, 3, "ecdhConvertKey"_s, jsECDHConvertKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certVerifySpkac"_s)),
-        JSFunction::create(vm, globalObject, 1, "verifySpkac"_s, jsCertVerifySpkac, ImplementationVisibility::Public, NoIntrinsic), 1);
+        JSFunction::create(vm, globalObject, 1, "verifySpkac"_s, jsCertVerifySpkac, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certExportPublicKey"_s)),
         JSFunction::create(vm, globalObject, 1, "certExportPublicKey"_s, jsCertExportPublicKey, ImplementationVisibility::Public, NoIntrinsic), 1);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certExportChallenge"_s)),
@@ -438,7 +457,16 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "getCiphers"_s)),
         JSFunction::create(vm, globalObject, 0, "getCiphers"_s, jsGetCiphers, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "_getCipherInfo"_s)),
-        JSFunction::create(vm, globalObject, 1, "_getCipherInfo"_s, jsGetCipherInfo, ImplementationVisibility::Public, NoIntrinsic), 4);
+        JSFunction::create(vm, globalObject, 1, "_getCipherInfo"_s, jsGetCipherInfo, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Sign"_s)),
+        globalObject->m_JSSignClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "sign"_s)),
+        JSFunction::create(vm, globalObject, 4, "sign"_s, jsSignOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Verify"_s)),
+        globalObject->m_JSVerifyClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "verify"_s)),
+        JSFunction::create(vm, globalObject, 4, "verify"_s, jsVerifyOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

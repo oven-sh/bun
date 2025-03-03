@@ -142,7 +142,7 @@ Some methods are not optimized yet.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `MIMEParams` `MIMEType` `debug` `getSystemErrorMap` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
+🟡 Missing `getCallSite` `getCallSites` `getSystemErrorMap` `getSystemErrorMessage` `transferableAbortSignal` `transferableAbortController` `MIMEType` `MIMEParams`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 

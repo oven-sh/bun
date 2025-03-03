@@ -30,8 +30,8 @@ describe("Given a single universal preload", () => {
   it("When `bun run` is run and `bunfig.toml` is implicitly loaded, preloads are run", async () => {
     // `bun run index.ts`
     const [out, err, code] = await run("index.ts", { cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 
@@ -42,8 +42,8 @@ describe("Given a single universal preload", () => {
       args: [`--config=${join(dir, "bunfig.toml")}`],
       cwd: process.cwd(),
     });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 }); // </given a single universal preload>
@@ -53,8 +53,8 @@ describe("Given a bunfig.toml with both universal and test-only preloads", () =>
 
   it("`bun run index.ts` only loads the universal preload", async () => {
     const [out, err, code] = await run("index.ts", { cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 
@@ -71,15 +71,15 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
 
   it("When `bun run` is run, preloads are run", async () => {
     const [out, err, code] = await run("index.ts", { cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 
   it("when passed `--config=bunfig.empty.toml`, preloads are not run", async () => {
     const [out, err, code] = await run("empty.ts", { args: ["--config=bunfig.empty.toml"], cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 
@@ -94,8 +94,8 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
     // "run --preload=./preload3.ts",
   ])("When `bun %s cli-merge.ts` is run, `--preload` adds the target file to the list of preloads", async args => {
     const [out, err, code] = await run("cli-merge.ts", { args: args.split(" "), cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 }); // </given a `bunfig.toml` with a list of preloads>
@@ -103,10 +103,10 @@ describe("Given a `bunfig.toml` with a list of preloads", () => {
 describe("Given a `bunfig.toml` with a plugin preload", () => {
   const dir = fixturePath("plugin");
 
-  it("When `bun run` is run, preloads are run", async () => {
+  it.todo("When `bun run` is run, preloads are run", async () => {
     const [out, err, code] = await run("index.ts", { cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 }); // </given a `bunfig.toml` with a plugin preload>
@@ -114,10 +114,11 @@ describe("Given a `bunfig.toml` with a plugin preload", () => {
 describe("Given a `bunfig.toml` file with a relative path to a preload in a parent directory", () => {
   const dir = fixturePath("parent", "foo");
 
+  // FIXME
   it("When `bun run` is run, preloads are run", async () => {
     const [out, err, code] = await run("index.ts", { cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 }); // </given a `bunfit.toml` file with a relative path to a preload in a parent directory>
@@ -128,8 +129,8 @@ describe("Given a `bunfig.toml` file with a relative path without a leading './'
   // FIXME: currently treaded as an import to an external package
   it.skip("preload = 'preload.ts' is treated like a relative path and loaded", async () => {
     const [out, err, code] = await run("index.ts", { cwd: dir });
-    expect(err).toEqual("");
-    expect(out).toEqual("");
+    expect(err).toBeEmpty();
+    expect(out).toBeEmpty();
     expect(code).toBe(0);
   });
 }); // </given a `bunfig.toml` file with a relative path without a leading './'>

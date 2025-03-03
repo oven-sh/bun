@@ -540,7 +540,7 @@ pub const Feature = enum {
             },
             .element => {
                 if (browsers.firefox) |version| {
-                    if (version >= 131072) {
+                    if (version >= 131072 and version <= 8650752) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
                     }
                 }
@@ -641,7 +641,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.ios_saf) |version| {
-                    if (version >= 197120) {
+                    if (version >= 197120 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -651,7 +651,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.safari) |version| {
-                    if (version >= 196864) {
+                    if (version >= 196864 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1146,17 +1146,17 @@ pub const Feature = enum {
             },
             .fill, .fill_available => {
                 if (browsers.chrome) |version| {
-                    if (version >= 1441792) {
+                    if (version >= 1441792 and version <= 8519680) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version >= 263168) {
+                    if (version >= 263168 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.edge) |version| {
-                    if (version >= 5177344) {
+                    if (version >= 5177344 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1181,7 +1181,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.samsung) |version| {
-                    if (version >= 262144) {
+                    if (version >= 262144 and version <= 1638400) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1225,27 +1225,27 @@ pub const Feature = enum {
             },
             .stretch => {
                 if (browsers.chrome) |version| {
-                    if (version >= 1441792) {
+                    if (version >= 1441792 and version <= 8519680) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.firefox) |version| {
-                    if (version >= 196608) {
+                    if (version >= 196608 and version <= 8650752) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version >= 263168) {
+                    if (version >= 263168 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.edge) |version| {
-                    if (version >= 5177344) {
+                    if (version >= 5177344 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.ios_saf) |version| {
-                    if (version >= 458752) {
+                    if (version >= 458752 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1255,12 +1255,12 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.safari) |version| {
-                    if (version >= 458752) {
+                    if (version >= 458752 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.samsung) |version| {
-                    if (version >= 327680) {
+                    if (version >= 327680 and version <= 1638400) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1330,7 +1330,7 @@ pub const Feature = enum {
             },
             .text_decoration_skip, .text_decoration_skip_ink => {
                 if (browsers.ios_saf) |version| {
-                    if (version >= 524288) {
+                    if (version >= 524288 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1342,12 +1342,12 @@ pub const Feature = enum {
             },
             .text_decoration => {
                 if (browsers.ios_saf) |version| {
-                    if (version >= 524288) {
+                    if (version >= 524288 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.safari) |version| {
-                    if (version >= 524288) {
+                    if (version >= 524288 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1370,8 +1370,10 @@ pub const Feature = enum {
                 }
             },
             .text_size_adjust => {
-                if (browsers.firefox != null) {
-                    prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                if (browsers.firefox) |version| {
+                    if (version <= 8323072) {
+                        prefixes = prefixes.bitwiseOr(VendorPrefix{ .moz = true });
+                    }
                 }
                 if (browsers.edge) |version| {
                     if (version >= 786432 and version <= 1179648) {
@@ -1384,7 +1386,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.ios_saf) |version| {
-                    if (version >= 327680) {
+                    if (version >= 327680 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1460,22 +1462,22 @@ pub const Feature = enum {
             },
             .box_decoration_break => {
                 if (browsers.chrome) |version| {
-                    if (version >= 1441792) {
+                    if (version >= 1441792 and version <= 8519680) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version >= 263168) {
+                    if (version >= 263168 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.edge) |version| {
-                    if (version >= 5177344) {
+                    if (version >= 5177344 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.ios_saf) |version| {
-                    if (version >= 458752) {
+                    if (version >= 458752 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1485,12 +1487,12 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.safari) |version| {
-                    if (version >= 393472) {
+                    if (version >= 393472 and version <= 1179648) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.samsung) |version| {
-                    if (version >= 262144) {
+                    if (version >= 262144 and version <= 1638400) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1848,17 +1850,17 @@ pub const Feature = enum {
             },
             .cross_fade => {
                 if (browsers.chrome) |version| {
-                    if (version >= 1114112) {
+                    if (version >= 1114112 and version <= 8519680) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version >= 263168) {
+                    if (version >= 263168 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.edge) |version| {
-                    if (version >= 5177344) {
+                    if (version >= 5177344 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -1878,7 +1880,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.samsung) |version| {
-                    if (version >= 262144) {
+                    if (version >= 262144 and version <= 1638400) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -2065,17 +2067,17 @@ pub const Feature = enum {
             },
             .print_color_adjust, .color_adjust => {
                 if (browsers.chrome) |version| {
-                    if (version >= 1114112) {
+                    if (version >= 1114112 and version <= 8519680) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.android) |version| {
-                    if (version >= 263168) {
+                    if (version >= 263168 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
                 if (browsers.edge) |version| {
-                    if (version >= 5177344) {
+                    if (version >= 5177344 and version <= 8323072) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }
@@ -2100,7 +2102,7 @@ pub const Feature = enum {
                     }
                 }
                 if (browsers.samsung) |version| {
-                    if (version >= 262144) {
+                    if (version >= 262144 and version <= 1638400) {
                         prefixes = prefixes.bitwiseOr(VendorPrefix{ .webkit = true });
                     }
                 }

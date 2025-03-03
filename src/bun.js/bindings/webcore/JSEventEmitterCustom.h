@@ -35,7 +35,7 @@ public:
     using Operation = JSC::EncodedJSValue(JSC::JSGlobalObject*, JSC::CallFrame*, ClassParameter);
 
     template<Operation operation, CastedThisErrorBehavior = CastedThisErrorBehavior::Throw>
-    static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char* operationName)
+    static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, ASCIILiteral operationName)
     {
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);

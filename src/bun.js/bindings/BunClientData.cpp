@@ -70,6 +70,8 @@ JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
     return singleton;
 }
 
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
+
 JSVMClientData::~JSVMClientData()
 {
     ASSERT(m_normalWorld->hasOneRef());

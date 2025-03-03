@@ -33,7 +33,7 @@ using PathFunction = JSC::EncodedJSValue (*SYSV_ABI)(JSGlobalObject*, bool, Enco
 template<bool isWindows, PathFunction Function>
 static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBufferWithSize<8> args = MarkedArgumentBufferWithSize<8>();
     for (unsigned i = 0, size = callFrame->argumentCount(); i < size; ++i) {
@@ -77,7 +77,7 @@ DEFINE_PATH_FUNCTION(jsFunctionPath_toNamespacedPathWindows, Bun__Path__toNamesp
 
 static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 {
-    JSC::VM& vm = globalThis->vm();
+    auto& vm = JSC::getVM(globalThis);
     auto* path = JSC::constructEmptyObject(globalThis);
     auto builtinNames = WebCore::builtinNames(vm);
 

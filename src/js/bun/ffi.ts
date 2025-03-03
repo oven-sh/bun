@@ -433,7 +433,7 @@ function normalizePath(path) {
       // This is mostly for import.meta.resolve()
       // https://github.com/oven-sh/bun/issues/10304
       path = Bun.fileURLToPath(path as URL);
-    } else if (path instanceof Blob) {
+    } else if ($inheritsBlob(path)) {
       // must be a Bun.file() blob
       // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
       path = path.name;
@@ -447,7 +447,7 @@ function dlopen(path, options) {
   path = normalizePath(path);
 
   const result = nativeDLOpen(path, options);
-  if (result instanceof Error) throw result;
+  if (Error.isError(result)) throw result;
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
@@ -495,7 +495,7 @@ function cc(options) {
   options.source = path;
 
   const result = ccFn(options);
-  if (result instanceof Error) throw result;
+  if (Error.isError(result)) throw result;
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];

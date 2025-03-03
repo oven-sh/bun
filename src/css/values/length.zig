@@ -22,19 +22,30 @@ pub const LengthOrNumber = union(enum) {
     pub usingnamespace css.DeriveParse(@This());
     pub usingnamespace css.DeriveToCss(@This());
 
+    pub fn deinit(this: *const LengthOrNumber, allocator: std.mem.Allocator) void {
+        switch (this.*) {
+            .number => {},
+            .length => |*l| l.deinit(allocator),
+        }
+    }
+
     pub fn default() LengthOrNumber {
         return .{ .number = 0.0 };
     }
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .number => |*n| n.* == other.number,
-            .length => |*l| l.eql(&other.length),
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
         return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    pub fn isCompatible(this: *const @This(), browsers: css.targets.Browsers) bool {
+        return switch (this.*) {
+            .length => |*l| l.isCompatible(browsers),
+            .number => true,
+        };
     }
 };
 
@@ -297,6 +308,10 @@ pub const LengthValue = union(enum) {
         unreachable;
     }
 
+    pub fn deepClone(this: *const @This(), _: std.mem.Allocator) @This() {
+        return this.*;
+    }
+
     pub fn zero() LengthValue {
         return .{ .px = 0.0 };
     }
@@ -340,7 +355,7 @@ pub const LengthValue = union(enum) {
     }
 
     pub fn sign(this: *const @This()) f32 {
-        const enum_fields = @typeInfo(@typeInfo(@This()).Union.tag_type.?).Enum.fields;
+        const enum_fields = @typeInfo(@typeInfo(@This()).@"union".tag_type.?).@"enum".fields;
         inline for (std.meta.fields(@This()), 0..) |field, i| {
             if (enum_fields[i].value == @intFromEnum(this.*)) {
                 return css.signfns.signF32(@field(this, field.name));
@@ -364,7 +379,7 @@ pub const LengthValue = union(enum) {
     }
 
     pub fn toUnitValue(this: *const @This()) struct { CSSNumber, []const u8 } {
-        const enum_fields = @typeInfo(@typeInfo(@This()).Union.tag_type.?).Enum.fields;
+        const enum_fields = @typeInfo(@typeInfo(@This()).@"union".tag_type.?).@"enum".fields;
         inline for (std.meta.fields(@This()), 0..) |field, i| {
             if (enum_fields[i].value == @intFromEnum(this.*)) {
                 return .{ @field(this, field.name), field.name };
@@ -509,6 +524,10 @@ pub const Length = union(enum) {
     /// A computed length value using `calc()`.
     calc: *Calc(Length),
 
+    pub fn zero() Length {
+        return .{ .value = LengthValue.zero() };
+    }
+
     pub fn deepClone(this: *const Length, allocator: Allocator) Length {
         return switch (this.*) {
             .value => |v| .{ .value = v },
@@ -555,10 +574,7 @@ pub const Length = union(enum) {
     }
 
     pub fn eql(this: *const @This(), other: *const @This()) bool {
-        return switch (this.*) {
-            .value => |a| other.* == .value and a.eql(&other.value),
-            .calc => |a| other.* == .calc and a.eql(other.calc),
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn px(p: CSSNumber) Length {
@@ -601,12 +617,12 @@ pub const Length = union(enum) {
         return res;
     }
 
-    fn addInternal(this: Length, allocator: Allocator, other: Length) Length {
+    pub fn addInternal(this: Length, allocator: Allocator, other: Length) Length {
         if (this.tryAdd(allocator, &other)) |r| return r;
         return this.add__(allocator, other);
     }
 
-    fn intoCalc(this: Length, allocator: Allocator) Calc(Length) {
+    pub fn intoCalc(this: Length, allocator: Allocator) Calc(Length) {
         return switch (this) {
             .calc => |c| c.*,
             else => |v| Calc(Length){ .value = bun.create(allocator, Length, v) },

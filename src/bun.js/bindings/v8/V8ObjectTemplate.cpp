@@ -12,7 +12,7 @@ Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTempla
 {
     RELEASE_ASSERT(constructor.IsEmpty());
     auto* globalObject = isolate->globalObject();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* globalInternals = globalObject->V8GlobalInternals();
     auto* structure = globalInternals->objectTemplateStructure(globalObject);
     // TODO pass constructor

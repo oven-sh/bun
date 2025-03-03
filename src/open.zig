@@ -39,7 +39,7 @@ pub fn openURL(url: stringZ) void {
 
             .windows = if (Environment.isWindows) .{
                 .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(null)),
-            } else {},
+            },
         }) catch break :maybe_fallback) {
             // don't fallback:
             .result => |*result| if (result.isOK()) return,

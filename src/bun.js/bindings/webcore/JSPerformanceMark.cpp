@@ -90,7 +90,7 @@ using JSPerformanceMarkDOMConstructor = JSDOMConstructor<JSPerformanceMark>;
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSPerformanceMarkDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -178,7 +178,7 @@ JSValue JSPerformanceMark::getConstructor(VM& vm, const JSGlobalObject* globalOb
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMarkConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSPerformanceMarkPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

@@ -8,7 +8,7 @@ VSCode extension support is currently buggy. We recommend the [Web Debugger](htt
 
 {% /note %}
 
-Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-vscode/types/jsc.d.ts) so you can debug your code with an interactive debugger.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts) so you can debug your code with an interactive debugger.
 
 ---
 

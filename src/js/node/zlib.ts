@@ -24,7 +24,6 @@ const isArrayBufferView = ArrayBufferIsView;
 const isAnyArrayBuffer = b => b instanceof ArrayBuffer || b instanceof SharedArrayBuffer;
 const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
-const { ERR_BROTLI_INVALID_PARAM, ERR_BUFFER_TOO_LARGE, ERR_OUT_OF_RANGE } = require("internal/errors");
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
 const {
@@ -91,7 +90,7 @@ function zlibBufferOnData(chunk) {
   if (this.nread > this._maxOutputLength) {
     this.close();
     this.removeAllListeners("end");
-    this.cb(ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
+    this.cb($ERR_BUFFER_TOO_LARGE(this._maxOutputLength));
   }
 }
 
@@ -165,7 +164,7 @@ function ZlibBase(opts, mode, handle, { flush, finishFlush, fullFlush }) {
     if (!validateFiniteNumber(chunkSize, "options.chunkSize")) {
       chunkSize = Z_DEFAULT_CHUNK;
     } else if (chunkSize < Z_MIN_CHUNK) {
-      throw ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
+      throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
     }
 
     // prettier-ignore
@@ -358,7 +357,7 @@ function processChunkSync(self, chunk, flushFlag) {
 
       if (nread > self._maxOutputLength) {
         _close(self);
-        throw ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
+        throw $ERR_BUFFER_TOO_LARGE(self._maxOutputLength);
       }
     } else {
       assert(have === 0, "have should not go down");
@@ -675,7 +674,7 @@ function Brotli(opts, mode) {
     ArrayPrototypeForEach.$call(ObjectKeys(opts.params), origKey => {
       const key = +origKey;
       if (NumberIsNaN(key) || key < 0 || key > kMaxBrotliParam || (brotliInitParamsArray[key] | 0) !== -1) {
-        throw ERR_BROTLI_INVALID_PARAM(origKey);
+        throw $ERR_BROTLI_INVALID_PARAM(origKey);
       }
 
       const value = opts.params[origKey];

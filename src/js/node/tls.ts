@@ -1,5 +1,5 @@
 // Hardcoded module "node:tls"
-const { isArrayBufferView, isTypedArray } = require("node:util/types");
+const { isArrayBufferView, isArrayBuffer, isTypedArray } = require("node:util/types");
 const { addServerName } = require("../internal/net");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
@@ -7,6 +7,12 @@ const { Duplex } = require("node:stream");
 const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
 
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
+
+const {
+  ERR_TLS_CERT_ALTNAME_INVALID,
+  ERR_TLS_CERT_ALTNAME_FORMAT,
+  ERR_TLS_SNI_FROM_SERVER,
+} = require("internal/errors");
 
 const SymbolReplace = Symbol.replace;
 const RegExpPrototypeSymbolReplace = RegExp.prototype[SymbolReplace];
@@ -38,12 +44,11 @@ function parseCertString() {
 const rejectUnauthorizedDefault =
   process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "0" && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== "false";
 function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
+  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
-        return false;
+      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
     }
     return true;
   }
@@ -134,9 +139,7 @@ function splitEscapedAltNames(altNames) {
       currentToken += StringPrototypeSubstring.$call(altNames, offset, nextQuote);
       const match = RegExpPrototypeExec.$call(jsonStringPattern, StringPrototypeSubstring.$call(altNames, nextQuote));
       if (!match) {
-        let error = new SyntaxError("ERR_TLS_CERT_ALTNAME_FORMAT: Invalid subject alternative name string");
-        error.code = "ERR_TLS_CERT_ALTNAME_FORMAT";
-        throw error;
+        throw $ERR_TLS_CERT_ALTNAME_FORMAT("Invalid subject alternative name string");
       }
       currentToken += JSON.parse(match[0]);
       offset = nextQuote + match[0].length;
@@ -203,8 +206,7 @@ function checkServerIdentity(hostname, cert) {
     reason = "Cert does not contain a DNS name";
   }
   if (!valid) {
-    let error = new Error(`ERR_TLS_CERT_ALTNAME_INVALID: Hostname/IP does not match certificate's altnames: ${reason}`);
-    error.name = "ERR_TLS_CERT_ALTNAME_INVALID";
+    let error = $ERR_TLS_CERT_ALTNAME_INVALID(`Hostname/IP does not match certificate's altnames: ${reason}`);
     error.reason = reason;
     error.host = hostname;
     error.cert = cert;
@@ -281,28 +283,6 @@ function createSecureContext(options) {
 // javascript object representations before passing them back to the user.  Can
 // be used on any cert object, but changing the name would be semver-major.
 function translatePeerCertificate(c) {
-  if (!c) return null;
-
-  if (c.issuerCertificate != null && c.issuerCertificate !== c) {
-    c.issuerCertificate = translatePeerCertificate(c.issuerCertificate);
-  }
-  if (c.infoAccess != null) {
-    const info = c.infoAccess;
-    c.infoAccess = { __proto__: null };
-    // XXX: More key validation?
-    RegExpPrototypeSymbolReplace.$call(/([^\n:]*):([^\n]*)(?:\n|$)/g, info, (all, key, val) => {
-      if (val.charCodeAt(0) === 0x22) {
-        // The translatePeerCertificate function is only
-        // used on internally created legacy certificate
-        // objects, and any value that contains a quote
-        // will always be a valid JSON string literal,
-        // so this should never throw.
-        val = JSONParse(val);
-      }
-      if (key in c.infoAccess) ArrayPrototypePush.$call(c.infoAccess[key], val);
-      else c.infoAccess[key] = [val];
-    });
-  }
   return c;
 }
 
@@ -469,9 +449,7 @@ const TLSSocket = (function (InternalTLSSocket) {
 
     setServername(name) {
       if (this.isServer) {
-        let error = new Error("ERR_TLS_SNI_FROM_SERVER: Cannot issue SNI from a TLS server-side socket");
-        error.name = "ERR_TLS_SNI_FROM_SERVER";
-        throw error;
+        throw $ERR_TLS_SNI_FROM_SERVER("Cannot issue SNI from a TLS server-side socket");
       }
       // if the socket is detached we can't set the servername but we set this property so when open will auto set to it
       this.servername = name;
@@ -498,10 +476,10 @@ const TLSSocket = (function (InternalTLSSocket) {
       }
     }
     getPeerX509Certificate() {
-      throw Error("Not implented in Bun yet");
+      return this._handle?.getPeerX509Certificate?.();
     }
     getX509Certificate() {
-      throw Error("Not implented in Bun yet");
+      return this._handle?.getX509Certificate?.();
     }
 
     [buntls](port, host) {
@@ -520,23 +498,27 @@ const TLSSocket = (function (InternalTLSSocket) {
 );
 let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
-class Server extends NetServer {
-  key;
-  cert;
-  ca;
-  passphrase;
-  secureOptions;
-  _rejectUnauthorized = rejectUnauthorizedDefault;
-  _requestCert;
-  servername;
-  ALPNProtocols;
-  #contexts: Map<string, typeof InternalSecureContext> | null = null;
 
-  constructor(options, secureConnectionListener) {
-    super(options, secureConnectionListener);
-    this.setSecureContext(options);
+function Server(options, secureConnectionListener): void {
+  if (!(this instanceof Server)) {
+    return new Server(options, secureConnectionListener);
   }
-  addContext(hostname: string, context: typeof InternalSecureContext | object) {
+
+  NetServer.$apply(this, [options, secureConnectionListener]);
+
+  this.key = undefined;
+  this.cert = undefined;
+  this.ca = undefined;
+  this.passphrase = undefined;
+  this.secureOptions = undefined;
+  this._rejectUnauthorized = rejectUnauthorizedDefault;
+  this._requestCert = undefined;
+  this.servername = undefined;
+  this.ALPNProtocols = undefined;
+
+  let contexts: Map<string, typeof InternalSecureContext> | null = null;
+
+  this.addContext = function (hostname, context) {
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }
@@ -546,11 +528,12 @@ class Server extends NetServer {
     if (this._handle) {
       addServerName(this._handle, hostname, context);
     } else {
-      if (!this.#contexts) this.#contexts = new Map();
-      this.#contexts.set(hostname, context as typeof InternalSecureContext);
+      if (!contexts) contexts = new Map();
+      contexts.set(hostname, context);
     }
-  }
-  setSecureContext(options) {
+  };
+
+  this.setSecureContext = function (options) {
     if (options instanceof InternalSecureContext) {
       options = options.context;
     }
@@ -619,17 +602,17 @@ class Server extends NetServer {
         this._rejectUnauthorized = rejectUnauthorized;
       } else this._rejectUnauthorized = rejectUnauthorizedDefault;
     }
-  }
+  };
 
-  getTicketKeys() {
+  Server.prototype.getTicketKeys = function () {
     throw Error("Not implented in Bun yet");
-  }
+  };
 
-  setTicketKeys() {
+  Server.prototype.setTicketKeys = function () {
     throw Error("Not implented in Bun yet");
-  }
+  };
 
-  [buntls](port, host, isClient) {
+  this[buntls] = function (port, host, isClient) {
     return [
       {
         serverName: this.servername || host || "localhost",
@@ -643,12 +626,15 @@ class Server extends NetServer {
         ALPNProtocols: this.ALPNProtocols,
         clientRenegotiationLimit: CLIENT_RENEG_LIMIT,
         clientRenegotiationWindow: CLIENT_RENEG_WINDOW,
-        contexts: this.#contexts,
+        contexts: contexts,
       },
       SocketClass,
     ];
-  }
+  };
+
+  this.setSecureContext(options);
 }
+$toClass(Server, "Server", NetServer);
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

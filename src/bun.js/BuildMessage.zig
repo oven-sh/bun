@@ -91,7 +91,7 @@ pub const BuildMessage = struct {
                 return JSC.JSValue.jsNull();
             }
 
-            const str = args[0].getZigString(globalThis);
+            const str = try args[0].getZigString(globalThis);
             if (str.eqlComptime("default") or str.eqlComptime("string")) {
                 return this.toStringFn(globalThis);
             }

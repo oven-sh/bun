@@ -377,6 +377,11 @@ class AssertionError extends Error {
       this.operator = operator;
     }
     ErrorCaptureStackTrace(this, stackStartFn || stackStartFunction);
+    // JSC::Interpreter::getStackTrace() sometimes short-circuits without creating a .stack property.
+    // e.g.: https://github.com/oven-sh/WebKit/blob/e32c6356625cfacebff0c61d182f759abf6f508a/Source/JavaScriptCore/interpreter/Interpreter.cpp#L501
+    if ($isUndefinedOrNull(this.stack)) {
+      ErrorCaptureStackTrace(this, AssertionError);
+    }
     // Create error message including the error code in the name.
     this.stack; // eslint-disable-line no-unused-expressions
     // Reset the name.

@@ -37,11 +37,6 @@ const kHeaders = Symbol("kHeaders");
 const kBody = Symbol("kBody");
 const HeadersPrototype = Headers.prototype;
 
-var BodyReadable;
-function loadBodyReadable() {
-  ({ _ReadableFromWebForUndici: BodyReadable } = require("node:stream")[Symbol.for("::bunternal::")]);
-}
-
 class Response extends WebResponse {
   [kBody]: any;
   [kHeaders];
@@ -60,8 +55,7 @@ class Response extends WebResponse {
     if (!body) {
       var web = super.body;
       if (!web) return null;
-      if (!BodyReadable) loadBodyReadable();
-      body = this[kBody] = new BodyReadable({}, web);
+      body = this[kBody] = new (require("internal/webstreams_adapters")._ReadableFromWeb)({}, web);
     }
 
     return body;

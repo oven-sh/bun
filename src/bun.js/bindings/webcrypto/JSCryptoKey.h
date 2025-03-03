@@ -44,6 +44,8 @@ public:
     static CryptoKey* toWrapped(JSC::VM&, JSC::JSValue);
     static void destroy(JSC::JSCell*);
 
+    static JSCryptoKey* fromJS(JSGlobalObject* globalObject, JSValue value);
+
     DECLARE_INFO;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

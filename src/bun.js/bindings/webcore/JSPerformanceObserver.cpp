@@ -59,7 +59,7 @@ using namespace JSC;
 
 template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
@@ -158,7 +158,7 @@ static const HashTableValue JSPerformanceObserverConstructorTableValues[] = {
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSPerformanceObserverDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -257,7 +257,7 @@ void JSPerformanceObserver::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSPerformanceObserverPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

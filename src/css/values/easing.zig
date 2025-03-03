@@ -46,14 +46,44 @@ pub const EasingFunction = union(enum) {
         x2: CSSNumber,
         /// The y-position of the second point in the curve.
         y2: CSSNumber,
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn __generateDeepClone() void {}
     },
     /// A step easing function.
     steps: struct {
         /// The number of intervals in the function.
         count: CSSInteger,
         /// The step position.
-        position: StepPosition = StepPosition.default,
+        position: StepPosition = StepPosition.default(),
+
+        pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+            return css.implementEql(@This(), lhs, rhs);
+        }
+
+        pub fn __generateDeepClone() void {}
     },
+
+    pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
+        return css.implementEql(@This(), lhs, rhs);
+    }
+
+    pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
+        return css.implementDeepClone(@This(), this, allocator);
+    }
+
+    const Map = bun.ComptimeEnumMap(enum {
+        linear,
+        ease,
+        @"ease-in",
+        @"ease-out",
+        @"ease-in-out",
+        @"step-start",
+        @"step-end",
+    });
 
     pub fn parse(input: *css.Parser) Result(EasingFunction) {
         const location = input.currentSourceLocation();
@@ -62,23 +92,16 @@ pub const EasingFunction = union(enum) {
                 return i.expectIdent();
             }
         }.parse, .{}).asValue()) |ident| {
-            // todo_stuff.match_ignore_ascii_case
-            const keyword = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "linear"))
-                EasingFunction.linear
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "ease"))
-                EasingFunction.ease
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "ease-in"))
-                EasingFunction.ease_in
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "ease-out"))
-                EasingFunction.ease_out
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "ease-in-out"))
-                EasingFunction.ease_in_out
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "step-start"))
-                EasingFunction{ .steps = .{ .count = 1, .position = .start } }
-            else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "step-end"))
-                EasingFunction{ .steps = .{ .count = 1, .position = .end } }
-            else
-                return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+            const keyword = if (Map.getASCIIICaseInsensitive(ident)) |e| switch (e) {
+                .linear => EasingFunction.linear,
+                .ease => EasingFunction.ease,
+                .@"ease-in" => EasingFunction.ease_in,
+                .@"ease-out" => EasingFunction.ease_out,
+                .@"ease-in-out" => EasingFunction.ease_in_out,
+                .@"step-start" => EasingFunction{ .steps = .{ .count = 1, .position = .start } },
+                .@"step-end" => EasingFunction{ .steps = .{ .count = 1, .position = .end } },
+            } else return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+
             return .{ .result = keyword };
         }
 
@@ -86,12 +109,13 @@ pub const EasingFunction = union(enum) {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
+        const Closure = struct { loc: css.SourceLocation, function: []const u8 };
         return input.parseNestedBlock(
             EasingFunction,
-            .{ .loc = location, .function = function },
+            &Closure{ .loc = location, .function = function },
             struct {
                 fn parse(
-                    closure: *const struct { loc: css.SourceLocation, function: []const u8 },
+                    closure: *const Closure,
                     i: *css.Parser,
                 ) Result(EasingFunction) {
                     if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(closure.function, "cubic-bezier")) {
@@ -125,10 +149,10 @@ pub const EasingFunction = union(enum) {
                                 if (p.expectComma().asErr()) |e| return .{ .err = e };
                                 return StepPosition.parse(p);
                             }
-                        }.parse, .{}).unwrapOr(StepPosition.default);
+                        }.parse, .{}).unwrapOr(StepPosition.default());
                         return .{ .result = EasingFunction{ .steps = .{ .count = count, .position = position } } };
                     } else {
-                        return closure.loc.newUnexpectedTokenError(.{ .ident = closure.function });
+                        return .{ .err = closure.loc.newUnexpectedTokenError(.{ .ident = closure.function }) };
                     }
                 }
             }.parse,
@@ -145,21 +169,21 @@ pub const EasingFunction = union(enum) {
             else => {
                 if (this.isEase()) {
                     return dest.writeStr("ease");
-                } else if (this == .cubic_bezier and std.meta.eql(this.cubic_bezier, .{
+                } else if (this.* == .cubic_bezier and this.cubic_bezier.eql(&.{
                     .x1 = 0.42,
                     .y1 = 0.0,
                     .x2 = 1.0,
                     .y2 = 1.0,
                 })) {
                     return dest.writeStr("ease-in");
-                } else if (this == .cubic_bezier and std.meta.eql(this.cubic_bezier, .{
+                } else if (this.* == .cubic_bezier and this.cubic_bezier.eql(&.{
                     .x1 = 0.0,
                     .y1 = 0.0,
                     .x2 = 0.58,
                     .y2 = 1.0,
                 })) {
                     return dest.writeStr("ease-out");
-                } else if (this == .cubic_bezier and std.meta.eql(this.cubic_bezier, .{
+                } else if (this.* == .cubic_bezier and this.cubic_bezier.eql(&.{
                     .x1 = 0.42,
                     .y1 = 0.0,
                     .x2 = 0.58,
@@ -171,13 +195,13 @@ pub const EasingFunction = union(enum) {
                 switch (this.*) {
                     .cubic_bezier => |cb| {
                         try dest.writeStr("cubic-bezier(");
-                        try css.generic.toCss(cb.x1, W, dest);
+                        try css.generic.toCss(CSSNumber, &cb.x1, W, dest);
                         try dest.writeChar(',');
-                        try css.generic.toCss(cb.y1, W, dest);
+                        try css.generic.toCss(CSSNumber, &cb.y1, W, dest);
                         try dest.writeChar(',');
-                        try css.generic.toCss(cb.x2, W, dest);
+                        try css.generic.toCss(CSSNumber, &cb.x2, W, dest);
                         try dest.writeChar(',');
-                        try css.generic.toCss(cb.y2, W, dest);
+                        try css.generic.toCss(CSSNumber, &cb.y2, W, dest);
                         try dest.writeChar(')');
                     },
                     .steps => {
@@ -187,7 +211,6 @@ pub const EasingFunction = union(enum) {
                         if (this.steps.count == 1 and this.steps.position == .end) {
                             return try dest.writeStr("step-end");
                         }
-                        try dest.writeStr("steps(");
                         try dest.writeFmt("steps({d}", .{this.steps.count});
                         try dest.delim(',', false);
                         try this.steps.position.toCss(W, dest);
@@ -199,10 +222,15 @@ pub const EasingFunction = union(enum) {
         };
     }
 
+    /// Returns whether the given string is a valid easing function name.
+    pub fn isIdent(s: []const u8) bool {
+        return Map.getASCIIICaseInsensitive(s) != null;
+    }
+
     /// Returns whether the easing function is equivalent to the `ease` keyword.
     pub fn isEase(this: *const EasingFunction) bool {
         return this.* == .ease or
-            (this.* == .cubic_bezier and std.meta.eql(this.cubic_bezier == .{
+            (this.* == .cubic_bezier and this.cubic_bezier.eql(&.{
             .x1 = 0.25,
             .y1 = 0.1,
             .x2 = 0.25,
@@ -218,18 +246,20 @@ pub const StepPosition = enum {
     /// The last rise occurs at input progress value of 1.
     end,
     /// All rises occur within the range (0, 1).
-    jump_none,
+    @"jump-none",
     /// The first rise occurs at input progress value of 0 and the last rise occurs at input progress value of 1.
-    jump_both,
+    @"jump-both",
 
-    // TODO: implement this
-    // pub usingnamespace css.DeriveToCss(@This());
+    pub usingnamespace css.DeriveToCss(@This());
 
-    pub fn toCss(this: *const StepPosition, comptime W: type, dest: *css.Printer(W)) css.PrintErr!void {
-        _ = this; // autofix
-        _ = dest; // autofix
-        @compileError(css.todo_stuff.depth);
-    }
+    const Map = bun.ComptimeEnumMap(enum {
+        start,
+        end,
+        @"jump-none",
+        @"jump-both",
+        @"jump-start",
+        @"jump-end",
+    });
 
     pub fn parse(input: *css.Parser) Result(StepPosition) {
         const location = input.currentSourceLocation();
@@ -237,21 +267,19 @@ pub const StepPosition = enum {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
-        // todo_stuff.match_ignore_ascii_case
-        const keyword = if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "start"))
-            StepPosition.start
-        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "end"))
-            StepPosition.end
-        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-start"))
-            StepPosition.start
-        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-end"))
-            StepPosition.end
-        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-none"))
-            StepPosition.jump_none
-        else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(ident, "jump-both"))
-            StepPosition.jump_both
-        else
-            return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+        const keyword = if (Map.getASCIIICaseInsensitive(ident)) |e| switch (e) {
+            .start => StepPosition.start,
+            .end => StepPosition.end,
+            .@"jump-start" => StepPosition.start,
+            .@"jump-end" => StepPosition.end,
+            .@"jump-none" => StepPosition.@"jump-none",
+            .@"jump-both" => StepPosition.@"jump-both",
+        } else return .{ .err = location.newUnexpectedTokenError(.{ .ident = ident }) };
+
         return .{ .result = keyword };
+    }
+
+    pub fn default() StepPosition {
+        return .end;
     }
 };

@@ -1,6 +1,6 @@
 name: Issue Labeled
 env:
-  BUN_VERSION: 1.1.13
+  BUN_VERSION: 1.1.44
 
 on:
   issues:
@@ -23,7 +23,7 @@ jobs:
   #     - name: Setup Bun
   #       uses: ./.github/actions/setup-bun
   #       with:
-  #         bun-version: "1.1.24"
+  #         bun-version: ${{ env.BUN_VERSION }}
   #     - name: "categorize bug"
   #       id: add-labels
   #       env:
@@ -59,7 +59,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.1.13"
+          bun-version: ${{ env.BUN_VERSION }}
       - name: "add platform and command label"
         id: add-labels
         if: github.event.label.name == 'crash'
@@ -72,7 +72,7 @@ jobs:
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
           bun scripts/is-outdated.ts
 
-          if [[ -f "is-outdated.txt" ]]; then 
+          if [[ -f "is-outdated.txt" ]]; then
             echo "is-outdated=true" >> $GITHUB_OUTPUT
           fi
 
@@ -154,7 +154,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           issue-number: ${{ github.event.issue.number }}
           body: |
-            Thank you for reporting this crash. 
+            Thank you for reporting this crash.
 
             For Bun's internal tracking, this issue is [${{ steps.generate-comment-text.outputs.sentry-id }}](${{ steps.generate-comment-text.outputs.sentry-link }}).
 

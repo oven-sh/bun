@@ -4,7 +4,7 @@ import { rmSync } from "fs";
 import { itBundled } from "./expectBundled";
 import { isFlaky, isWindows } from "harness";
 
-describe.todoIf(isFlaky && isWindows)("bundler", () => {
+describe("bundler", () => {
   itBundled("compile/HelloWorld", {
     compile: true,
     files: {
@@ -440,6 +440,10 @@ describe.todoIf(isFlaky && isWindows)("bundler", () => {
         fs.readFileSync(big).toString("hex");
         await Bun.file(big).arrayBuffer();
         fs.readFileSync(small).toString("hex");
+        if ((await fs.promises.readFile(small)).length !== 31) throw "fail readFile";
+        if (fs.statSync(small).size !== 31) throw "fail statSync";
+        if (fs.statSync(big).size !== (4096 + (32 - 2))) throw "fail statSync";
+        if (((await fs.promises.stat(big)).size) !== (4096 + (32 - 2))) throw "fail stat";
         await Bun.file(small).arrayBuffer();
         console.log("PASS");
       `,

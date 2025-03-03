@@ -7,3 +7,4 @@ src/react-refresh.js
 *.min.js
 test/snippets
 test/js/node/test
+bun.lock

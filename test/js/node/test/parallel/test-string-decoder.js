@@ -196,7 +196,7 @@ assert.throws(
   {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',
-    message: 'The "buf" argument must be an instance of Buffer, TypedArray,' +
+    message: 'The "buf" argument must be of type Buffer, TypedArray,' +
       ' or DataView. Received null'
   }
 );

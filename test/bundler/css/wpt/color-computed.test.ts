@@ -3,7 +3,6 @@ import { itBundled } from "../../expectBundled";
 
 const runTest = (input: string, expected: string) => {
   itBundled(input, {
-    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
 h1 {

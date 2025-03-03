@@ -20,13 +20,14 @@ using namespace JSC;
             init.set(jsOwnedString(init.vm, name.string()));                       \
         });
 
-#define BUN_COMMON_STRINGS_LAZY_PROPERTY_DEFINITION_NOT_BUILTIN_NAMES(jsName)      \
-    this->m_commonString_##jsName.initLater(                                       \
-        [](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) { \
-            init.set(jsOwnedString(init.vm, #jsName##_s));                         \
+#define BUN_COMMON_STRINGS_LAZY_PROPERTY_DEFINITION_NOT_BUILTIN_NAMES(methodName, stringLiteral) \
+    this->m_commonString_##methodName.initLater(                                                 \
+        [](const JSC::LazyProperty<JSGlobalObject, JSString>::Initializer& init) {               \
+            init.set(jsOwnedString(init.vm, stringLiteral##_s));                                 \
         });
 
 #define BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR(name) this->m_commonString_##name.visit(visitor);
+#define BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR_NOT_BUILTIN_NAMES(name, literal) this->m_commonString_##name.visit(visitor);
 
 void CommonStrings::initialize()
 {
@@ -38,7 +39,7 @@ template<typename Visitor>
 void CommonStrings::visit(Visitor& visitor)
 {
     BUN_COMMON_STRINGS_EACH_NAME(BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR)
-    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR)
+    BUN_COMMON_STRINGS_EACH_NAME_NOT_BUILTIN_NAMES(BUN_COMMON_STRINGS_LAZY_PROPERTY_VISITOR_NOT_BUILTIN_NAMES)
 }
 
 template void CommonStrings::visit(JSC::AbstractSlotVisitor&);

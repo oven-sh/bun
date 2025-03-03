@@ -4071,6 +4071,7 @@ it("should handle GitHub URL with existing lockfile", async () => {
     `
 [install]
 cache = false
+saveTextLockfile = false
 `,
   );
   await writeFile(
@@ -4976,6 +4977,7 @@ it("should handle Git URL with existing lockfile", async () => {
     `
 [install]
 cache = false
+saveTextLockfile = false
 `,
   );
   await writeFile(
@@ -6261,6 +6263,7 @@ it("should perform bin-linking across multiple dependencies", async () => {
     },
   });
   await writeFile(join(package_dir, "package.json"), foo_package);
+  await cp(join(import.meta.dir, "bun.lockb.bin-linking"), join(package_dir, "bun.lockb"));
   await writeFile(
     join(package_dir, "bunfig.toml"),
     `
@@ -6282,7 +6285,6 @@ cache = false
   });
   const err1 = await new Response(stderr1).text();
   expect(err1).not.toContain("error:");
-  expect(err1).toContain("Saved lockfile");
   const out1 = await new Response(stdout1).text();
   expect(out1.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     `bun install ${Bun.version_with_sha}`,
@@ -6566,7 +6568,6 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
     env,
   });
   const err2 = await new Response(stderr2).text();
-  expect(err2).not.toContain("Saved lockfile");
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
@@ -6577,7 +6578,7 @@ it("should handle `workspaces:*` and `workspace:*` gracefully", async () => {
   ]);
   expect(await exited2).toBe(0);
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["bar"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar"]);
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "bar"));
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);
   await access(join(package_dir, "bun.lockb"));
@@ -8008,7 +8009,6 @@ it("should handle `workspace:*` on both root & child", async () => {
   });
   const err2 = await new Response(stderr2).text();
   expect(err2).not.toContain("error:");
-  expect(err2).not.toContain("Saved lockfile");
   const out2 = await new Response(stdout2).text();
   expect(out2.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
@@ -8020,7 +8020,7 @@ it("should handle `workspace:*` on both root & child", async () => {
   expect(await exited2).toBe(0);
   expect(urls.sort()).toBeEmpty();
   expect(requested).toBe(0);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual(["bar", "baz"]);
+  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "bar", "baz"]);
   expect(await readlink(join(package_dir, "node_modules", "bar"))).toBeWorkspaceLink(join("..", "packages", "bar"));
   expect(await readdirSorted(join(package_dir, "node_modules", "bar"))).toEqual(["package.json"]);
   expect(await file(join(package_dir, "node_modules", "bar", "package.json")).text()).toEqual(bar_package);

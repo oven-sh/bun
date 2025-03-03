@@ -2,7 +2,7 @@ import type { CryptoHashInterface, DigestEncoding, Hash } from 'bun';
 import nodecrypto from 'node:crypto';
 import os from 'node:os';
 import md4, { Md4 } from 'js-md4';
-import { wyhash, adler32, crc32, cityhash32, cityhash64, murmur32v3, murmur64v2, murmur32v2 } from '../../../lib/zighash/index.mjs';
+import { wyhash, adler32, crc32, cityhash32, cityhash64, xxhash32, xxhash64, xxhash3, murmur32v3, murmur64v2, murmur32v2 } from '../../../lib/zighash/index.mjs';
 
 export const bunHash = ((data, seed = 0): bigint => wyhash(data, BigInt(seed))) as typeof Bun.hash;
 export const bunHashProto: Hash = {
@@ -11,6 +11,9 @@ export const bunHashProto: Hash = {
     crc32(data) { return crc32(data); },
     cityHash32(data) { return cityhash32(data); },
     cityHash64(data, seed = 0n) { return cityhash64(data, seed); },
+    xxHash32(data, seed = 0) { return xxhash32(data, seed); },
+    xxHash64(data, seed = 0n) { return xxhash64(data, seed); },
+    xxHash3(data, seed = 0n) { return xxhash3(data, seed); },
     murmur32v3(data, seed = 0) { return murmur32v3(data, seed); },
     murmur32v2(data, seed = 0) { return murmur32v2(data, seed); },
     murmur64v2(data, seed = 0n) { return murmur64v2(data, seed); },

@@ -64,7 +64,7 @@ DEFINE_VISIT_CHILDREN(JSNextTickQueue);
 
 JSNextTickQueue* JSNextTickQueue::create(JSC::JSGlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* obj = create(vm, createStructure(vm, globalObject, jsNull()));
     return obj;
 }

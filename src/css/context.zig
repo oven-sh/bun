@@ -81,6 +81,10 @@ pub const PropertyHandlerContext = struct {
         };
     }
 
+    pub fn addDarkRule(this: *@This(), allocator: Allocator, property: css.Property) void {
+        this.dark.append(allocator, property) catch bun.outOfMemory();
+    }
+
     pub fn addLogicalRule(this: *@This(), allocator: Allocator, ltr: css.Property, rtl: css.Property) void {
         this.ltr.append(allocator, ltr) catch unreachable;
         this.rtl.append(allocator, rtl) catch unreachable;
@@ -171,7 +175,7 @@ pub const PropertyHandlerContext = struct {
                                     .feature = MediaFeature{
                                         .plain = .{
                                             .name = .{ .standard = MediaFeatureId.@"prefers-color-scheme" },
-                                            .value = .{ .ident = .{ .v = "dark " } },
+                                            .value = .{ .ident = .{ .v = "dark" } },
                                         },
                                     },
                                 },

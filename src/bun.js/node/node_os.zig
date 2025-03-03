@@ -88,7 +88,7 @@ fn cpusImplLinux(globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         // Read each CPU line
         while (line_iter.next()) |line| {
             // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
-            var toks = std.mem.tokenize(u8, line, " \t");
+            var toks = std.mem.tokenizeAny(u8, line, " \t");
             const cpu_name = toks.next();
             if (cpu_name == null or !std.mem.startsWith(u8, cpu_name.?, "cpu")) break; // done with CPUs
 

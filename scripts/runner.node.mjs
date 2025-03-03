@@ -48,6 +48,7 @@ const testsPath = join(cwd, "test");
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+const napiTimeout = 10 * 60_000;
 
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) {
@@ -199,7 +200,7 @@ async function runTests() {
       failure ||= result;
       flaky ||= true;
 
-      if (attempt >= maxAttempts) {
+      if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;
         failedResults.push(failure);
       }
@@ -256,7 +257,8 @@ async function runTests() {
       const absoluteTestPath = join(testsPath, testPath);
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeParallelTest(testPath)) {
-        const subcommand = title.includes("needs-test") ? "test" : "run";
+        const runWithBunTest = title.includes("needs-test") || readFileSync(absoluteTestPath, "utf-8").includes('bun:test');
+        const subcommand = runWithBunTest ? "test" : "run";
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
@@ -678,6 +680,9 @@ async function spawnBunTest(execPath, testPath, options = { cwd }) {
 function getTestTimeout(testPath) {
   if (/integration|3rd_party|docker|bun-install-registry|v8/i.test(testPath)) {
     return integrationTimeout;
+  }
+  if (/napi/i.test(testPath)) {
+    return napiTimeout;
   }
   return testTimeout;
 }
@@ -1550,6 +1555,13 @@ function getExitCode(outcome) {
     return 3;
   }
   return 1;
+}
+
+// A flaky segfault, sigtrap, or sigill must never be ignored.
+// If it happens in CI, it will happen to our users.
+function isAlwaysFailure(error) {
+  error = ((error || "") + "").toLowerCase().trim();
+  return error.includes("segmentation fault") || error.includes("sigill") || error.includes("sigtrap");
 }
 
 /**

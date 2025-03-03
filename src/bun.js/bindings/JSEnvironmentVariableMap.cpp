@@ -254,6 +254,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * global
     return true;
 }
 
+#if OS(WINDOWS)
 extern "C" void Bun__Process__editWindowsEnvVar(BunString, BunString);
 
 JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::CallFrame* callFrame))
@@ -274,6 +275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
+#endif
 
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {

@@ -400,11 +400,11 @@ struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
     us_internal_ssl_socket_context_r context, const char *path,
     size_t pathlen, int options, int socket_ext_size, int* error);
 
-struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
+struct us_socket_t *us_internal_ssl_socket_context_connect(
     us_internal_ssl_socket_context_r context, const char *host,
     int port, int options, int socket_ext_size, int* is_resolved);
 
-struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
+struct us_socket_t *us_internal_ssl_socket_context_connect_unix(
     us_internal_ssl_socket_context_r context, const char *server_path,
     size_t pathlen, int options, int socket_ext_size);
 

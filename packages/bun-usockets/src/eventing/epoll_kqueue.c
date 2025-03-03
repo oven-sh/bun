@@ -247,7 +247,7 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern int Bun__JSC_onBeforeWait(void*);
+extern void Bun__JSC_onBeforeWait(void*);
 extern void Bun__JSC_onAfterWait(void*);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
@@ -265,10 +265,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* Emit pre callback */
     us_internal_loop_pre(loop);
 
-    int needs_after_wait = 0;
-    if (loop->data.jsc_vm) {
-        needs_after_wait = Bun__JSC_onBeforeWait(loop->data.jsc_vm);
-    }
+    /* Safe if jsc_vm is NULL */
+    Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -280,9 +278,7 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
-    if (needs_after_wait) {
-        Bun__JSC_onAfterWait(loop->data.jsc_vm);
-    }
+    Bun__JSC_onAfterWait(loop->data.jsc_vm);
 
     /* Iterate ready polls, dispatching them by type */
     for (loop->current_ready_poll = 0; loop->current_ready_poll < loop->num_ready_polls; loop->current_ready_poll++) {

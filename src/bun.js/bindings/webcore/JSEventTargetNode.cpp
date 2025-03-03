@@ -16,7 +16,7 @@ using namespace JSC;
 using namespace WebCore;
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsGetEventListeners, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     if (callFrame->argumentCount() < 2) {

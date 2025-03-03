@@ -171,3 +171,53 @@ test.skipIf(!isWindows)("should be able to handle pretty path on windows #13897"
   });
   expect(buildOut?.success).toBe(true);
 });
+
+test("you can use --outfile=... and --sourcemap", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const outFile = path.join(tmpdir, "out.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  const originalContent = fs.readFileSync(inputFile, "utf8");
+
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outfile=" + path.relative(tmpdir, outFile), "--sourcemap", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+
+  expect(exitCode).toBe(0);
+
+  // Verify that the input file wasn't overwritten
+  expect(fs.readFileSync(inputFile, "utf8")).toBe(originalContent);
+
+  // Verify that the output file was created
+  expect(fs.existsSync(outFile)).toBe(true);
+
+  // Verify that the sourcemap file was created
+  expect(fs.existsSync(outFile + ".map")).toBe(true);
+
+  // Verify that the output file contains sourceMappingURL comment
+  const outputContent = fs.readFileSync(outFile, "utf8");
+  expect(outputContent).toContain("//# sourceMappingURL=out.js.map");
+
+  expect(stdout.toString()).toMatchInlineSnapshot();
+});
+
+test("some log cases", () => {
+  const tmpdir = tmpdirSync();
+  const inputFile = path.join(tmpdir, "input.js");
+  const outFile = path.join(tmpdir, "out.js");
+
+  writeFileSync(inputFile, 'console.log("Hello, world!");');
+
+  // absolute path
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--outfile=" + outFile, "--sourcemap", inputFile],
+    env: bunEnv,
+    cwd: tmpdir,
+  });
+  expect(exitCode).toBe(0);
+  expect(stdout.toString()).toMatchInlineSnapshot();
+});

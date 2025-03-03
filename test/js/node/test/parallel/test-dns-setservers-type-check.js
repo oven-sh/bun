@@ -20,7 +20,7 @@ const promiseResolver = new dns.promises.Resolver();
     const errObj = {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      message: /^The "servers" argument must be an instance of Array\./
+      message: /^The "servers" argument must be of type Array\./
     };
     assert.throws(
       () => {

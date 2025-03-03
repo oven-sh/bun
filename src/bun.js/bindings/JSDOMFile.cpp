@@ -66,7 +66,7 @@ public:
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
     {
         auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-        JSC::VM& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         JSObject* newTarget = asObject(callFrame->newTarget());
         auto* constructor = globalObject->JSDOMFileConstructor();
         Structure* structure = globalObject->JSBlobStructure();

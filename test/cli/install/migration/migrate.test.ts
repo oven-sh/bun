@@ -113,6 +113,7 @@ test("migrate from npm lockfile that is missing `resolved` properties", async ()
 
 test("npm lockfile with relative workspaces", async () => {
   const testDir = tmpdirSync();
+  console.log(join(import.meta.dir, "lockfile-with-workspaces"), testDir, { recursive: true });
   fs.cpSync(join(import.meta.dir, "lockfile-with-workspaces"), testDir, { recursive: true });
   const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install"], {
     env: bunEnv,

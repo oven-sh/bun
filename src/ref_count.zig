@@ -1,81 +1,133 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const Output = @import("./output.zig");
 
-pub fn RefCount(comptime TypeName: type, comptime deinit_on_zero: bool) type {
+const strings = bun.strings;
+const meta = bun.meta;
+
+/// Reference-counted heap-allocated instance value.
+///
+/// `ref_count` is expected to be defined on `T` with a default value set to `1`
+pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+    }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value_ptr == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
+    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
+    const log = Output.scoped(output_name, true);
+
     return struct {
-        const AllocatorType = if (deinit_on_zero) std.mem.Allocator else void;
-
-        value: Type,
-        count: i32 = 1,
-        allocator: AllocatorType = undefined,
-
-        pub inline fn ref(this: *@This()) void {
-            this.count += 1;
-        }
-
-        /// Create a new reference counted value.
-        pub inline fn init(
-            value: Type,
-            allocator: std.mem.Allocator,
-        ) !*@This() {
-            var ptr = try allocator.create(@This());
-            ptr.create(value, allocator);
-            return ptr;
-        }
-
-        /// Get the value & increment the reference count.
-        pub inline fn get(this: *@This()) *Type {
-            bun.assert(this.count >= 0);
-
-            this.count += 1;
-            return this.leak();
-        }
-
-        /// Get the value without incrementing the reference count.
-        pub inline fn leak(this: *@This()) *Type {
-            return &this.value;
-        }
-
-        pub inline fn getRef(this: *@This()) *@This() {
-            this.count += 1;
-            return this;
-        }
-
-        pub inline fn create(
-            this: *@This(),
-            value: Type,
-            allocator: AllocatorType,
-        ) void {
-            this.* = .{
-                .value = value,
-                .allocator = allocator,
-                .count = 1,
-            };
-        }
-
-        pub inline fn deinit(this: *@This()) void {
-            if (comptime @hasDecl(Type, "deinit")) {
-                this.value.deinit();
+        pub fn destroy(self: *T) void {
+            if (bun.Environment.allow_assert) {
+                bun.assert(self.ref_count == 0);
             }
 
-            if (comptime deinit_on_zero) {
-                var allocator = this.allocator;
-                allocator.destroy(this);
-            }
+            bun.destroy(self);
         }
 
-        pub inline fn deref(this: *@This()) void {
-            this.count -= 1;
+        pub fn ref(self: *T) void {
+            if (bun.Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
 
-            bun.assert(this.count >= 0);
+            self.ref_count += 1;
+        }
 
-            if (comptime deinit_on_zero) {
-                if (this.count <= 0) {
-                    this.deinit();
+        pub fn deref(self: *T) void {
+            const ref_count = self.ref_count;
+            if (bun.Environment.isDebug) {
+                if (ref_count == 0 or ref_count == std.math.maxInt(@TypeOf(ref_count))) {
+                    @panic("Use after-free detected on " ++ output_name);
+                }
+            }
+
+            if (bun.Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
+
+            self.ref_count = ref_count - 1;
+
+            if (ref_count == 1) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
                 }
             }
         }
 
-        pub const Type = TypeName;
+        pub inline fn new(t: T) *T {
+            const ptr = bun.new(T, t);
+
+            if (bun.Environment.enable_logs) {
+                if (ptr.ref_count == 0) {
+                    Output.panic("Expected ref_count to be > 0, got {d}", .{ptr.ref_count});
+                }
+            }
+
+            return ptr;
+        }
+    };
+}
+
+pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void, debug_name: ?[:0]const u8) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+    }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value_ptr == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
+    const output_name = debug_name orelse meta.typeBaseName(@typeName(T));
+    const log = Output.scoped(output_name, true);
+
+    return struct {
+        pub fn destroy(self: *T) void {
+            if (bun.Environment.allow_assert) {
+                bun.assert(self.ref_count.load(.seq_cst) == 0);
+            }
+
+            bun.destroy(self);
+        }
+
+        pub fn ref(self: *T) void {
+            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
+            if (bun.Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
+            bun.debugAssert(ref_count > 0);
+        }
+
+        pub fn deref(self: *T) void {
+            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
+            if (bun.Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
+
+            if (ref_count == 1) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            const ptr = bun.new(T, t);
+
+            if (bun.Environment.enable_logs) {
+                if (ptr.ref_count.load(.seq_cst) != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
+                }
+            }
+
+            return ptr;
+        }
     };
 }

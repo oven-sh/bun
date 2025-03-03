@@ -1,6 +1,6 @@
 // This implements error deserialization from the WebSocket protocol
 import { BundlerMessageLevel } from "../enums";
-import { DataViewReader } from "./reader";
+import { DataViewReader } from "./data-view";
 
 export interface DeserializedFailure {
   // If not specified, it is a client-side error.

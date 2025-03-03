@@ -38,3 +38,5 @@ If you pass `-y` or `--yes`, it will assume you want to continue without asking 
 At the end, it runs `bun install` to install `@types/bun`.
 
 {% /details %}
+
+{% bunCLIUsage command="init" /%}

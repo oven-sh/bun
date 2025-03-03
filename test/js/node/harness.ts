@@ -315,12 +315,27 @@ if (normalized.includes("node/test/parallel")) {
       return (activeSuite = contexts[key] ??= createContext(key));
     }
 
-    async function test(label: string | Function, fn?: Function | undefined) {
+    async function test(
+      label: string | Function,
+      optionsOrFn: Record<string, any> | Function,
+      fn?: Function | undefined,
+    ) {
+      let options = optionsOrFn;
+      if (arguments.length === 2) {
+        assertNode.equal(typeof optionsOrFn, "function", "Second argument to test() must be a function.");
+        fn = optionsOrFn as Function;
+        options = {};
+      }
       if (typeof fn !== "function" && typeof label === "function") {
         fn = label;
         label = fn.name;
+        options = {};
       }
+
       const ctx = getContext();
+      const { skip } = options;
+
+      if (skip) return;
       try {
         ctx.testStack.push(label as string);
         await fn();
@@ -333,8 +348,9 @@ if (normalized.includes("node/test/parallel")) {
       }
     }
 
-    function describe(labelOrFn: string | Function, maybeFn?: Function) {
-      const [label, fn] = typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn];
+    function describe(labelOrFn: string | Function, maybeFnOrOptions?: Function, maybeFn?: Function) {
+      const [label, fn] =
+        typeof labelOrFn == "function" ? [labelOrFn.name, labelOrFn] : [labelOrFn, maybeFn ?? maybeFnOrOptions];
       if (typeof fn !== "function") throw new TypeError("Second argument to describe() must be a function.");
 
       getContext().testStack.push(label);
@@ -357,7 +373,9 @@ if (normalized.includes("node/test/parallel")) {
 
     return {
       test,
+      it: test,
       describe,
+      suite: describe,
     };
   }
 

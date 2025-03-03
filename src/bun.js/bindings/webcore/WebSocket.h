@@ -52,7 +52,7 @@ namespace WebCore {
 
 // class Blob;
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED(WebSocket);
+    WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
 public:
     static ASCIILiteral subprotocolSeparator();

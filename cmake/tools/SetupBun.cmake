@@ -9,6 +9,14 @@ find_command(
     >=1.1.26
 )
 
+if (NOT CI)
+  # If node.js is not installed, it is extremely easy to make this path point to
+  # a tempdir such as /private/tmp/bun-node-ce532901c/bun, which may cause this
+  # CMake configuration break after tempdir is cleaned up (ex. after reboot).
+  get_filename_component(BUN_EXECUTABLE ${BUN_EXECUTABLE} REALPATH)
+  set(BUN_EXECUTABLE ${BUN_EXECUTABLE} CACHE FILEPATH "Bun executable" FORCE)
+endif()
+
 # If this is not set, some advanced features are not checked.
 # https://github.com/oven-sh/bun/blob/cd7f6a1589db7f1e39dc4e3f4a17234afbe7826c/src/bun.js/javascript.zig#L1069-L1072
 setenv(BUN_GARBAGE_COLLECTOR_LEVEL 1)

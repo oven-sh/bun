@@ -511,7 +511,7 @@ pub const ShellSubprocess = struct {
         return this.process.kill(@intCast(sig));
     }
 
-    // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.EnumLiteral)) bool {
+    // fn hasCalledGetter(this: *Subprocess, comptime getter: @Type(.enum_literal)) bool {
     //     return this.observable_getters.contains(getter);
     // }
 
@@ -528,7 +528,7 @@ pub const ShellSubprocess = struct {
         // this.ipc_mode = .none;
     }
 
-    pub fn closeIO(this: *@This(), comptime io: @Type(.EnumLiteral)) void {
+    pub fn closeIO(this: *@This(), comptime io: @Type(.enum_literal)) void {
         if (this.closed.contains(io)) return;
         log("close IO {s}", .{@tagName(io)});
         this.closed.insert(io);
@@ -830,7 +830,7 @@ pub const ShellSubprocess = struct {
             .windows = if (Environment.isWindows) bun.spawn.WindowsSpawnOptions.WindowsOptions{
                 .hide_window = true,
                 .loop = event_loop,
-            } else {},
+            },
         };
 
         spawn_args.argv.append(allocator, null) catch {
@@ -848,7 +848,7 @@ pub const ShellSubprocess = struct {
         ) catch |err| {
             return .{ .err = .{ .custom = std.fmt.allocPrint(bun.default_allocator, "Failed to spawn process: {s}", .{@errorName(err)}) catch bun.outOfMemory() } };
         }) {
-            .err => |err| return .{ .err = .{ .sys = err.toSystemError() } },
+            .err => |err| return .{ .err = .{ .sys = err.toShellSystemError() } },
             .result => |result| result,
         };
 
@@ -1020,7 +1020,7 @@ pub const PipeReader = struct {
         }
     };
 
-    pub usingnamespace bun.NewRefCounted(PipeReader, deinit);
+    pub usingnamespace bun.NewRefCounted(PipeReader, deinit, null);
 
     pub const CapturedWriter = struct {
         dead: bool = true,

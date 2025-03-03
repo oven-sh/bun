@@ -157,7 +157,7 @@ void JSWritableStreamDefaultController::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamDefaultControllerConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSWritableStreamDefaultControllerPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

@@ -24,16 +24,17 @@ using namespace JSC;
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
     auto name = callFrame->argument(1);
     auto min = callFrame->argument(2);
     auto max = callFrame->argument(3);
-    return Bun::V::validateInteger(scope, globalObject, value, name, min, max);
+    ssize_t unused;
+    return Bun::V::validateInteger(scope, globalObject, value, name, min, max, &unused);
 }
-JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max)
+template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, T* out)
 {
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
@@ -49,9 +50,10 @@ JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObje
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
 
+    *out = value_num;
     return JSValue::encode(jsUndefined());
 }
-JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max)
+template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, T* out)
 {
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
     if (min.isUndefined()) min = jsDoubleNumber(JSC::minSafeInteger());
@@ -67,12 +69,13 @@ JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& scope, JSC::JSGlobalObje
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
 
+    *out = value_num;
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -128,7 +131,7 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateString, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -154,7 +157,7 @@ JSC::EncodedJSValue V::validateString(JSC::ThrowScope& scope, JSC::JSGlobalObjec
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFiniteNumber, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto number = callFrame->argument(0);
@@ -181,7 +184,7 @@ JSC::EncodedJSValue V::validateFiniteNumber(JSC::ThrowScope& scope, JSC::JSGloba
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto number = callFrame->argument(0);
@@ -210,9 +213,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObjec
     return JSValue::encode(number);
 }
 
+JSC::EncodedJSValue V::validateFunction(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    if (JSC::getCallData(value).type == JSC::CallData::Type::None) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "function"_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -226,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateFunction, (JSC::JSGlobalObject * glo
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBoolean, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -240,7 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBoolean, (JSC::JSGlobalObject * glob
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto port = callFrame->argument(0);
@@ -306,7 +318,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto signal = callFrame->argument(0);
@@ -329,7 +341,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * 
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateArray, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -339,7 +351,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateArray, (JSC::JSGlobalObject * global
 }
 JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue minLength)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 
@@ -358,7 +370,7 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
 }
 JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue minLength)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     if (minLength.isUndefined()) minLength = jsNumber(0);
 
@@ -376,9 +388,22 @@ JSC::EncodedJSValue V::validateArray(JSC::ThrowScope& scope, JSC::JSGlobalObject
     return JSValue::encode(jsUndefined());
 }
 
+JSC::EncodedJSValue V::validateArrayBufferView(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value,
+    ASCIILiteral name)
+{
+    if (value.isCell()) {
+        auto type = value.asCell()->type();
+        if (type >= Int8ArrayType && type <= DataViewType) {
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, value);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -404,7 +429,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * global
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUint32, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -445,7 +470,7 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateSignalName, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto signal = callFrame->argument(0);
@@ -467,7 +492,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateSignalName, (JSC::JSGlobalObject * g
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto encoding = callFrame->argument(1);
@@ -501,7 +526,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateEncoding, (JSC::JSGlobalObject * glo
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePlainFunction, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -515,7 +540,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePlainFunction, (JSC::JSGlobalObject 
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUndefined, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
@@ -528,7 +553,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateUndefined, (JSC::JSGlobalObject * gl
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto buffer = callFrame->argument(0);
@@ -543,4 +568,92 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_validateOneOf, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = callFrame->argument(0);
+
+    JSValue arrayValue = callFrame->argument(2);
+
+    if (JSArray* array = jsDynamicCast<JSArray*>(arrayValue)) {
+        unsigned length = array->length();
+        for (size_t i = 0; i < length; i++) {
+            JSValue element = array->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+            if (JSC::sameValue(globalObject, value, element)) {
+                return JSValue::encode(jsUndefined());
+            }
+        }
+
+        JSValue name = callFrame->argument(1);
+
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, value, "must be one of: "_s, array);
+    }
+
+    return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "values"_s, "Array"_s, arrayValue);
+}
+
+JSC::EncodedJSValue V::validateOneOf(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, ASCIILiteral name, JSValue value, const WTF::Vector<ASCIILiteral>& oneOf)
+{
+    if (!value.isString()) {
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
+    }
+
+    JSC::JSString* valueStr = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+    WTF::StringView valueView = valueStr->view(globalObject);
+
+    for (ASCIILiteral oneOfStr : oneOf) {
+
+        if (valueView == oneOfStr) {
+            return JSValue::encode(jsUndefined());
+        }
+    }
+
+    return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, name, "must be one of: "_s, value, oneOf);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto value = callFrame->argument(0);
+
+    if (value.isNull() || JSC::isArray(globalObject, value)) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+    }
+
+    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC::EncodedJSValue V::validateObject(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    if (value.isNull() || JSC::isArray(globalObject, value)) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
+    }
+
+    if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
+    }
+
+    return JSValue::encode(jsUndefined());
+}
+
+//
+//
+
+template JSC::EncodedJSValue V::validateInteger<size_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, size_t* out);
+template JSC::EncodedJSValue V::validateInteger<ssize_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, ssize_t* out);
+template JSC::EncodedJSValue V::validateInteger<uint32_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, JSC::JSValue name, JSC::JSValue min, JSC::JSValue max, uint32_t* out);
+
+template JSC::EncodedJSValue V::validateInteger<size_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, size_t* out);
+template JSC::EncodedJSValue V::validateInteger<ssize_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, ssize_t* out);
+template JSC::EncodedJSValue V::validateInteger<uint32_t>(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSC::JSValue value, ASCIILiteral name, JSC::JSValue min, JSC::JSValue max, uint32_t* out);
 }

@@ -8,7 +8,6 @@ describe("defer", () => {
     let state: string = "Should not see this!";
 
     itBundled("works", {
-      experimentalCss: true,
       minifyWhitespace: true,
       files: {
         "/entry.css": /* css */ `
@@ -47,7 +46,6 @@ describe("defer", () => {
     let actions: Action[] = [];
 
     itBundled("executes before everything", {
-      experimentalCss: true,
       minifyWhitespace: true,
       files: {
         "/entry.css": /* css */ `
@@ -86,7 +84,6 @@ describe("defer", () => {
   {
     let action: string[] = [];
     itBundled("executes after all plugins have been setup", {
-      experimentalCss: true,
       minifyWhitespace: true,
       files: {
         "/entry.css": /* css */ `
@@ -146,7 +143,6 @@ describe("defer", () => {
       try {
         const result = await Bun.build({
           entrypoints: [path.join(folder, "index.ts")],
-          experimentalCss: true,
           minify: true,
           plugins: [
             {
@@ -179,7 +175,6 @@ describe("defer", () => {
               },
             },
           ],
-          throw: true,
         });
         console.log(result);
       } catch (err: any) {
@@ -207,7 +202,6 @@ describe("defer", () => {
     }
 
     itBundled("basic", {
-      experimentalCss: true,
       files: {
         "/index.ts": /* ts */ `
           import { lmao } from "./lmao.ts";
@@ -287,7 +281,6 @@ describe("defer", () => {
   }
 
   itBundled("edgecase", {
-    experimentalCss: true,
     minifyWhitespace: true,
     files: {
       "/entry.css": /* css */ `
@@ -319,7 +312,6 @@ describe("defer", () => {
 
   // encountered double free when CSS build has error
   itBundled("shouldn't crash on CSS parse error", {
-    experimentalCss: true,
     files: {
       "/index.ts": /* ts */ `
 import { lmao } from "./lmao.ts";
@@ -373,7 +365,6 @@ console.log("FOOOO", foo);
   });
 
   itBundled("works as expected when onLoad error occurs after defer", {
-    experimentalCss: true,
     files: {
       "/index.ts": /* ts */ `
 import { lmao } from "./lmao.ts";
@@ -425,7 +416,6 @@ console.log("FOOOO", foo);
   });
 
   itBundled("calling defer more than once errors", {
-    experimentalCss: true,
     files: {
       "/index.ts": /* ts */ `
 import { lmao } from "./lmao.ts";
@@ -517,7 +507,7 @@ return \`Hello \${name}!\`;
 export function formatDate(date: Date): string {
 return date.toLocaleDateString("en-US", {
 weekday: "long",
-year: "numeric", 
+year: "numeric",
 month: "long",
 day: "numeric"
 });

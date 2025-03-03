@@ -1,8 +1,11 @@
 #pragma once
 
+#include "stdint.h"
+
 namespace WebCore {
 
-enum class BufferEncodingType {
+// must match src/bun.js/node/types.zig#Encoding
+enum class BufferEncodingType : uint8_t {
     utf8 = 0,
     ucs2 = 1,
     utf16le = 2,

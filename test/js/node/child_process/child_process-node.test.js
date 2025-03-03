@@ -447,8 +447,6 @@ describe("child_process double pipe", () => {
       }),
     );
 
-    // TODO(Derrick): We don't implement the full API for this yet,
-    // So stdin has no 'drain' event.
     // TODO(@jasnell): This does not appear to ever be
     // emitted. It's not clear if it is necessary.
     fakeGrep.stdin.on("drain", () => {
@@ -659,7 +657,7 @@ describe("fork", () => {
             code: "ERR_INVALID_ARG_TYPE",
             name: "TypeError",
             message: expect.stringContaining(
-              `The "modulePath" argument must be of type string, Buffer or URL. Received `,
+              `The "modulePath" argument must be of type string, Buffer, or URL. Received `,
             ),
           }),
         );

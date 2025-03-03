@@ -1,5 +1,7 @@
 import { describe } from "bun:test";
 import { itBundled } from "../expectBundled";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go
@@ -8,7 +10,6 @@ import { itBundled } from "../expectBundled";
 
 describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `
         body {
@@ -28,7 +29,6 @@ body {
   });
 
   itBundled("css/CSSEntryPointEmpty", {
-    experimentalCss: true,
     files: {
       "/entry.css": /* css */ `\n`,
     },
@@ -40,7 +40,6 @@ body {
   });
 
   itBundled("css/CSSNesting", {
-    experimentalCss: true,
     target: "bun",
     files: {
       "/entry.css": /* css */ `
@@ -64,7 +63,6 @@ body {
   });
 
   itBundled("css/CSSAtImportMissing", {
-    experimentalCss: true,
     files: {
       "/entry.css": `@import "./missing.css";`,
     },
@@ -74,7 +72,6 @@ body {
   });
 
   itBundled("css/CSSAtImportSimple", {
-    experimentalCss: true,
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -97,7 +94,6 @@ body {
   });
 
   itBundled("css/CSSAtImportDiamond", {
-    experimentalCss: true,
     // GENERATED
     files: {
       "/a.css": /* css */ `
@@ -141,7 +137,6 @@ body {
   });
 
   itBundled("css/CSSAtImportCycle", {
-    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
         @import "./a.css";
@@ -160,7 +155,6 @@ body {
   });
 
   itBundled("css/CSSUrlImport", {
-    experimentalCss: true,
     files: {
       "/a.css": /* css */ `
         .hello {
@@ -185,7 +179,7 @@ body {
   });
 });
 
-describe.todo("bundler", () => {
+describe("esbuild-bundler", () => {
   itBundled("css/CSSEntryPoint", {
     // GENERATED
     files: {
@@ -201,10 +195,11 @@ describe.todo("bundler", () => {
       "/entry.css": `@import "./missing.css";`,
     },
     bundleErrors: {
-      "/entry.css": ['Could not resolve "./missing.css"'],
+      "/entry.css": ['Could not resolve: "./missing.css"'],
     },
   });
   itBundled("css/CSSAtImportExternal", {
+    external: ["./external1.css", "./external2.css", "./external3.css", "./external4.css", "./external5.css"],
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -238,6 +233,35 @@ describe.todo("bundler", () => {
         .after { color: blue }
       `,
     },
+    outfile: "/out/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out/out.css").toEqualIgnoringWhitespace(/* css */ `@import "./external1.css";
+@import "./external2.css";
+@import "./external4.css";
+@import "./external5.css";
+@import "https://www.example.com/style2.css";
+@import "./external3.css";
+@import "https://www.example.com/style1.css";
+@import "https://www.example.com/style3.css";
+@import "./external5.css" screen;
+
+/* internal.css */
+.before {
+  color: red;
+}
+
+/* charset1.css */
+.middle {
+  color: green;
+}
+
+/* charset2.css */
+.after {
+  color: #00f;
+}
+
+/* entry.css */`);
+    },
   });
   itBundled("css/CSSAtImport", {
     // GENERATED
@@ -267,11 +291,12 @@ describe.todo("bundler", () => {
       `,
       "/a.css": `.a { color: red }`,
     },
-    /* TODO FIX expectedCompileLog: `entry.js: ERROR: No matching export in "a.css" for import "missing"
-  `, */
+    bundleErrors: {
+      "/entry.js": ['No matching export in "a.css" for import "missing"'],
+    },
   });
   itBundled("css/CSSFromJSMissingStarImport", {
-    // GENERATED
+    outdir: "/out",
     files: {
       "/entry.js": /* js */ `
         import * as ns from "./a.css"
@@ -279,9 +304,18 @@ describe.todo("bundler", () => {
       `,
       "/a.css": `.a { color: red }`,
     },
+    bundleWarnings: {
+      "/entry.js": ['Import "missing" will always be undefined because there is no matching export in "a.css"'],
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `/* a.css */
+        .a{
+          color: red;
+        }`);
+    },
   });
   itBundled("css/ImportCSSFromJS", {
-    // GENERATED
+    outdir: "/out",
     files: {
       "/entry.js": /* js */ `
         import "./a.js"
@@ -299,25 +333,25 @@ describe.todo("bundler", () => {
       "/b.css": `.b { color: blue }`,
     },
   });
-  itBundled("css/ImportCSSFromJSWriteToStdout", {
-    // GENERATED
-    files: {
-      "/entry.js": `import "./entry.css"`,
-      "/entry.css": `.entry { color: red }`,
-    },
-    /* TODO FIX expectedScanLog: `entry.js: ERROR: Cannot import "entry.css" into a JavaScript file without an output path configured
-  `, */
-  });
+  // itBundled("css/ImportCSSFromJSWriteToStdout", {
+  //   files: {
+  //     "/entry.js": `import "./entry.css"`,
+  //     "/entry.css": `.entry { color: red }`,
+  //   },
+  //   bundleErrors: {
+  //     "/entry.js": ['Cannot import "entry.css" into a JavaScript file without an output path configured'],
+  //   },
+  // });
   itBundled("css/ImportJSFromCSS", {
-    // GENERATED
+    outdir: "/out",
     files: {
-      "/entry.js": `export default 123`,
-      "/entry.css": `@import "./entry.js";`,
+      "/entry.ts": `export default 123`,
+      "/entry.css": `@import "./entry.ts";`,
     },
     entryPoints: ["/entry.css"],
-    /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot import "entry.js" into a CSS file
-  NOTE: An "@import" rule can only be used to import another CSS file, and "entry.js" is not a CSS file (it was loaded with the "js" loader).
-  `, */
+    bundleErrors: {
+      "/entry.css": ['Cannot import a ".ts" file into a CSS file'],
+    },
   });
   itBundled("css/ImportJSONFromCSS", {
     // GENERATED
@@ -326,9 +360,9 @@ describe.todo("bundler", () => {
       "/entry.css": `@import "./entry.json";`,
     },
     entryPoints: ["/entry.css"],
-    /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot import "entry.json" into a CSS file
-  NOTE: An "@import" rule can only be used to import another CSS file, and "entry.json" is not a CSS file (it was loaded with the "json" loader).
-  `, */
+    bundleErrors: {
+      "/entry.css": ['Cannot import a ".json" file into a CSS file'],
+    },
   });
   itBundled("css/MissingImportURLInCSS", {
     // GENERATED
@@ -338,12 +372,13 @@ describe.todo("bundler", () => {
         b { background: url("./two.png"); }
       `,
     },
-    /* TODO FIX expectedScanLog: `src/entry.css: ERROR: Could not resolve "./one.png"
-  src/entry.css: ERROR: Could not resolve "./two.png"
-  `, */
+    bundleErrors: {
+      "/src/entry.css": ['Could not resolve: "./one.png"', 'Could not resolve: "./two.png"'],
+    },
   });
+
+  // Skipping for now
   itBundled("css/ExternalImportURLInCSS", {
-    // GENERATED
     files: {
       "/src/entry.css": /* css */ `
         div:after {
@@ -359,7 +394,9 @@ describe.todo("bundler", () => {
         path { fill: url(#filter) }
       `,
     },
+    external: ["./src/external.png"],
   });
+
   itBundled("css/InvalidImportURLInCSS", {
     // GENERATED
     files: {
@@ -380,6 +417,15 @@ describe.todo("bundler", () => {
       "/json.json": `{ "test": true }`,
       "/css.css": `a { color: red }`,
     },
+    bundleErrors: {
+      "/entry.css": [
+        'Cannot import a ".jsx" file into a CSS file',
+        'Cannot import a ".jsx" file into a CSS file',
+        'Cannot import a ".ts" file into a CSS file',
+        'Cannot import a ".tsx" file into a CSS file',
+        'Cannot import a ".json" file into a CSS file',
+      ],
+    },
     /* TODO FIX expectedScanLog: `entry.css: ERROR: Cannot use "js.js" as a URL
   NOTE: You can't use a "url()" token to reference the file "js.js" because it was loaded with the "js" loader, which doesn't provide a URL to embed in the resulting CSS.
   entry.css: ERROR: Cannot use "jsx.jsx" as a URL
@@ -395,7 +441,7 @@ describe.todo("bundler", () => {
   `, */
   });
   itBundled("css/TextImportURLInCSSText", {
-    // GENERATED
+    outfile: "/out.css",
     files: {
       "/entry.css": /* css */ `
         a {
@@ -404,8 +450,17 @@ describe.todo("bundler", () => {
       `,
       "/example.txt": `This is some text.`,
     },
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+a {
+  background: url("data:text/plain;base64,VGhpcyBpcyBzb21lIHRleHQu");
+}
+`);
+    },
   });
-  itBundled("css/DataURLImportURLInCSS", {
+  itBundled("css/Png", {
+    outfile: "/out.css",
     // GENERATED
     files: {
       "/entry.css": /* css */ `
@@ -413,33 +468,80 @@ describe.todo("bundler", () => {
           background: url(./example.png);
         }
       `,
-      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
+      "/example.png": Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* entry.css */
+a {
+  background: url("data:image/png;base64,iVBORw0KGgo=");
+}
+`);
     },
   });
-  itBundled("css/BinaryImportURLInCSS", {
-    // GENERATED
-    files: {
-      "/entry.css": /* css */ `
-        a {
-          background: url(./example.png);
-        }
-      `,
-      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
-    },
-  });
-  itBundled("css/Base64ImportURLInCSS", {
-    // GENERATED
-    files: {
-      "/entry.css": /* css */ `
-        a {
-          background: url(./example.png);
-        }
-      `,
-      "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
-    },
-  });
+
+  // We don't support dataurl rn
+  //   itBundled("css/DataURLImportURLInCSS", {
+  //     outfile: "/out.css",
+  //     // GENERATED
+  //     files: {
+  //       "/entry.css": /* css */ `
+  //         a {
+  //           background: url(./example.png);
+  //         }
+  //       `,
+  //       "/example.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  //     },
+  //     loader: {
+  //       ".png": "dataurl",
+  //     },
+  //     onAfterBundle(api) {
+  //       api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+  // /* entry.css */
+  // a {
+  //   background: url("data:image/png;base64,iVBORw0KGgo=");
+  // }
+  // `);
+  //     },
+  //   });
+
+  // We don't support binary loader rn
+  //   itBundled("css/BinaryImportURLInCSS", {
+
+  //     // GENERATED
+  //     files: {
+  //       "/entry.css": /* css */ `
+  //         a {
+  //           background: url(./example.png);
+  //         }
+  //       `,
+  //       "/example.png": new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  //     },
+  //     onAfterBundle(api) {
+  //       api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+  // /* entry.css */
+  // a {
+  //   background: url("data:image/png;base64,iVBORw0KGgo=");
+  // }
+  // `);
+  //     },
+  //   });
+
+  // We don't support base64 loader rn
+  // itBundled("css/Base64ImportURLInCSS", {
+
+  //   // GENERATED
+  //   files: {
+  //     "/entry.css": /* css */ `
+  //       a {
+  //         background: url(./example.png);
+  //       }
+  //     `,
+  //     "/example.png": `\x89\x50\x4E\x47\x0D\x0A\x1A\x0A`,
+  //   },
+  // });
+
   itBundled("css/FileImportURLInCSS", {
-    // GENERATED
     files: {
       "/entry.css": /* css */ `
         @import "./one.css";
@@ -447,9 +549,31 @@ describe.todo("bundler", () => {
       `,
       "/one.css": `a { background: url(./example.data) }`,
       "/two.css": `b { background: url(./example.data) }`,
-      "/example.data": `This is some data.`,
+      "/example.data": new Array(128 * 1024 + 1).fill("Z".charCodeAt(0)).join(""),
+    },
+    loader: {
+      ".data": "file",
+    },
+    outdir: "/out",
+    async onAfterBundle(api) {
+      api.expectFile("/out/example-ra0pdz4b.data").toEqual(new Array(128 * 1024 + 1).fill("Z".charCodeAt(0)).join(""));
+
+      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `
+/* one.css */
+a {
+  background: url("./example-ra0pdz4b.data");
+}
+
+/* two.css */
+b {
+  background: url("./example-ra0pdz4b.data");
+}
+
+/* entry.css */
+`);
     },
   });
+
   itBundled("css/IgnoreURLsInAtRulePrelude", {
     // GENERATED
     files: {
@@ -461,11 +585,11 @@ describe.todo("bundler", () => {
       `,
     },
   });
+
   itBundled("css/PackageURLsInCSS", {
-    // GENERATED
     files: {
       "/entry.css": /* css */ `
-        @import "test.css";
+        @import "./test.css";
 
         a { background: url(a/1.png); }
         b { background: url(b/2.png); }
@@ -477,18 +601,52 @@ describe.todo("bundler", () => {
       "/c/3.png": `c-3`,
       "/node_modules/c/3.png": `c-3-node_modules`,
     },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* test.css */
+.css {
+  color: red;
+}
+
+/* entry.css */
+a {
+  background: url("data:image/png;base64,YS0x");
+}
+b {
+  background: url("data:image/png;base64,Yi0yLW5vZGVfbW9kdWxlcw==");
+}
+c {
+  background: url("data:image/png;base64,Yy0z");
+}
+`);
+    },
   });
+
   itBundled("css/CSSAtImportExtensionOrderCollision", {
-    // GENERATED
     files: {
+      // This should avoid picking ".js" because it's explicitly configured as non-CSS
       "/entry.css": `@import "./test";`,
       "/test.js": `console.log('js')`,
       "/test.css": `.css { color: red }`,
     },
     outfile: "/out.css",
-    extensionOrder: [".js", ".css"],
+    // extensionOrder: [".js", ".css"],
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* test.css */
+.css {
+  color: red;
+}
+
+/* entry.css */
+`);
+    },
   });
+
+  /* We don't support `extensionOrder`/`--resolve-extensions` rn
   itBundled("css/CSSAtImportExtensionOrderCollisionUnsupported", {
+
     // GENERATED
     files: {
       "/entry.css": `@import "./test";`,
@@ -501,36 +659,784 @@ describe.todo("bundler", () => {
       "/entry.css": ['ERROR: No loader is configured for ".sass" files: test.sass'],
     },
   });
-  itBundled("css/CSSAtImportConditionsNoBundle", {
-    // GENERATED
-    files: {
-      "/entry.css": `@import "./print.css" print;`,
-    },
-    mode: "passthrough",
-  });
+  */
+
+  // itBundled("css/CSSAtImportConditionsNoBundle", {
+  //   files: {
+  //     "/entry.css": `@import "./print.css" print;`,
+  //   },
+  // });
+
   itBundled("css/CSSAtImportConditionsBundleExternal", {
-    // GENERATED
     files: {
-      "/entry.css": `@import "https://example.com/print.css" print;`,
+      "/entry.css": /* css */ `@import "https://example.com/print.css" print;`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+@import "https://example.com/print.css" print;
+
+/* entry.css */
+`);
     },
   });
+
   itBundled("css/CSSAtImportConditionsBundleExternalConditionWithURL", {
-    // GENERATED
     files: {
-      "/entry.css": `@import "https://example.com/foo.css" (foo: url("foo.png")) and (bar: url("bar.png"));`,
+      "/entry.css": /* css */ `@import "https://example.com/foo.css" supports(background: url("foo.png"));`,
     },
   });
-  itBundled("css/CSSAtImportConditionsBundle", {
-    // GENERATED
+
+  itBundled("css/CSSAtImportConditionsBundleLOL", {
+    outfile: "/out.css",
     files: {
-      "/entry.css": `@import "./print.css" print;`,
-      "/print.css": `body { color: red }`,
+      "/entry.css": /* css */ `
+@import url(http://example.com/foo.css);
+@import url(http://example.com/foo.css) layer;
+@import url(http://example.com/foo.css) layer(layer-name);
+@import url(http://example.com/foo.css) layer(layer-name) supports(display: flex);
+@import url(http://example.com/foo.css) layer(layer-name) supports(display: flex) (min-width: 768px) and
+  (max-width: 1024px);
+@import url(http://example.com/foo.css) layer(layer-name) (min-width: 768px) and (max-width: 1024px);
+@import url(http://example.com/foo.css) supports(display: flex);
+@import url(http://example.com/foo.css) supports(display: flex) (min-width: 768px) and (max-width: 1024px);
+@import url(http://example.com/foo.css) (min-width: 768px) and (max-width: 1024px);
+
+@import url(./foo.css);
+@import url(./foo.css) layer;
+@import url(./foo.css) layer(layer-name);
+@import url(./foo.css) layer(layer-name) supports(display: flex);
+@import url(./foo.css) layer(layer-name) supports(display: flex) (min-width: 768px) and (max-width: 1024px);
+@import url(./foo.css) layer(layer-name) (min-width: 768px) and (max-width: 1024px);
+@import url(./foo.css) supports(display: flex);
+@import url(./foo.css) supports(display: flex) (min-width: 768px) and (max-width: 1024px);
+@import url(./foo.css) (min-width: 768px) and (max-width: 1024px);
+
+@import url(./empty-1.css) layer(empty-1);
+@import url(./empty-2.css) supports(empty: 2);
+@import url(./empty-3.css) (empty: 3);
+
+@import "./nested-layer.css" layer(outer);
+@import "./nested-layer.css" supports(outer: true);
+@import "./nested-layer.css" (outer: true);
+@import "./nested-supports.css" layer(outer);
+@import "./nested-supports.css" supports(outer: true);
+@import "./nested-supports.css" (outer: true);
+@import "./nested-media.css" layer(outer);
+@import "./nested-media.css" supports(outer: true);
+@import "./nested-media.css" (outer: true);
+			`,
+
+      "/foo.css": /* css */ `body { color: red }`,
+
+      "/empty-1.css": ``,
+      "/empty-2.css": ``,
+      "/empty-3.css": ``,
+
+      "/nested-layer.css": /* css */ `@import "./foo.css" layer(inner);`,
+      "/nested-supports.css": /* css */ `@import "./foo.css" supports(inner: true);`,
+      "/nested-media.css": /* css */ `@import "./foo.css" (inner: true);`,
     },
-    /* TODO FIX expectedScanLog: `entry.css: ERROR: Bundling with conditional "@import" rules is not currently supported
-  `, */
+    onAfterBundle(api) {
+      // api.expectFile("/out.css").toMatchSnapshot();
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `@import "http://example.com/foo.css";
+        @import "http://example.com/foo.css" layer;
+        @import "http://example.com/foo.css" layer(layer-name);
+        @import "http://example.com/foo.css" layer(layer-name) supports(display: flex);
+        @import "http://example.com/foo.css" layer(layer-name) (min-width: 768px) and (max-width: 1024px);
+        @import "http://example.com/foo.css" supports(display: flex);
+        @import "http://example.com/foo.css" (min-width: 768px) and (max-width: 1024px);
+
+        /* foo.css */
+        body {
+          color: red;
+        }
+
+        /* foo.css */
+        @layer {
+          body {
+            color: red;
+          }
+        }
+
+        /* foo.css */
+        @layer layer-name {
+          body {
+            color: red;
+          }
+        }
+
+        /* foo.css */
+        @supports (display: flex) {
+          @layer layer-name {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* foo.css */
+        @media (min-width: 768px) and (max-width: 1024px) {
+          @layer layer-name {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* foo.css */
+        @supports (display: flex) {
+          body {
+            color: red;
+          }
+        }
+
+        /* foo.css */
+        @media (min-width: 768px) and (max-width: 1024px) {
+          body {
+            color: red;
+          }
+        }
+
+        /* empty-1.css */
+        @layer empty-1;
+
+        /* empty-2.css */
+
+
+        /* empty-3.css */
+
+
+        /* foo.css */
+        @layer outer {
+          @layer inner {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-layer.css */
+        @layer outer;
+
+        /* foo.css */
+        @supports (outer: true) {
+          @layer inner {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-layer.css */
+
+
+        /* foo.css */
+        @media (outer: true) {
+          @layer inner {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-layer.css */
+
+
+        /* foo.css */
+        @layer outer {
+          @supports (inner: true) {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-supports.css */
+        @layer outer;
+
+        /* foo.css */
+        @supports (outer: true) {
+          @supports (inner: true) {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-supports.css */
+
+
+        /* foo.css */
+        @media (outer: true) {
+          @supports (inner: true) {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-supports.css */
+
+
+        /* foo.css */
+        @layer outer {
+          @media (inner: true) {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-media.css */
+        @layer outer;
+
+        /* foo.css */
+        @supports (outer: true) {
+          @media (inner: true) {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-media.css */
+
+
+        /* foo.css */
+        @media (outer: true) {
+          @media (inner: true) {
+            body {
+              color: red;
+            }
+          }
+        }
+
+        /* nested-media.css */
+
+
+        /* entry.css */
+        `);
+    },
   });
+
+  // This tests that bun correctly clones the import records for all import
+  // condition tokens. If they aren't cloned correctly, then something will
+  // likely crash with an out-of-bounds error.
+  itBundled("css/CSSAtImportConditionsWithImportRecordsBundle", {
+    files: {
+      "/entry.css": /* css */ `
+        @import url(./foo.css) supports(background: url(./a.png));
+        @import url(./foo.css) supports(background: url(./b.png)) list-of-media-queries;
+        @import url(./foo.css) layer(layer-name) supports(background: url(./a.png));
+        @import url(./foo.css) layer(layer-name) supports(background: url(./b.png)) list-of-media-queries;
+      `,
+      "/foo.css": /* css */ `body { color: red }`,
+      "/a.png": `A`,
+      "/b.png": `B`,
+    },
+    outfile: "/out.css",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(/* css */ `
+/* foo.css */
+@supports (background: url(./a.png)) {
+  body {
+    color: red;
+  }
+}
+
+/* foo.css */
+@media list-of-media-queries {
+  @supports (background: url(./b.png)) {
+    body {
+      color: red;
+    }
+  }
+}
+
+/* foo.css */
+@supports (background: url(./a.png)) {
+  @layer layer-name {
+    body {
+      color: red;
+    }
+  }
+}
+
+/* foo.css */
+@media list-of-media-queries {
+  @supports (background: url(./b.png)) {
+    @layer layer-name {
+      body {
+        color: red;
+      }
+    }
+  }
+}
+
+/* entry.css */
+`);
+    },
+  });
+
+  const files = [
+    "/001/default/style.css",
+    "/001/relative-url/style.css",
+    "/at-charset/001/style.css",
+    "/at-keyframes/001/style.css",
+    "/at-layer/001/style.css",
+    "/at-layer/002/style.css",
+    "/at-layer/003/style.css",
+    "/at-layer/004/style.css",
+    "/at-layer/005/style.css",
+    "/at-layer/006/style.css",
+    "/at-layer/007/style.css",
+    "/at-layer/008/style.css",
+    "/at-media/001/default/style.css",
+    "/at-media/002/style.css",
+    "/at-media/003/style.css",
+    "/at-media/004/style.css",
+    "/at-media/005/style.css",
+    "/at-media/006/style.css",
+    "/at-media/007/style.css",
+    "/at-media/008/style.css",
+    "/at-supports/001/style.css",
+    "/at-supports/002/style.css",
+    "/at-supports/003/style.css",
+    "/at-supports/004/style.css",
+    "/at-supports/005/style.css",
+    "/cycles/001/style.css",
+    "/cycles/002/style.css",
+    "/cycles/003/style.css",
+    "/cycles/004/style.css",
+    "/cycles/005/style.css",
+    "/cycles/006/style.css",
+    "/cycles/007/style.css",
+    "/cycles/008/style.css",
+    "/data-urls/002/style.css",
+    "/data-urls/003/style.css",
+    "/duplicates/001/style.css",
+    "/duplicates/002/style.css",
+    "/empty/001/style.css",
+    "/relative-paths/001/style.css",
+    "/relative-paths/002/style.css",
+    "/subresource/001/style.css",
+    "/subresource/002/style.css",
+    "/subresource/004/style.css",
+    "/subresource/005/style.css",
+    "/subresource/007/style.css",
+    "/url-format/001/default/style.css",
+    "/url-format/001/relative-url/style.css",
+    "/url-format/002/default/style.css",
+    "/url-format/002/relative-url/style.css",
+    "/url-format/003/default/style.css",
+    "/url-format/003/relative-url/style.css",
+    "/url-fragments/001/style.css",
+    "/url-fragments/002/style.css",
+  ];
+
+  // From: https://github.com/romainmenke/css-import-tests. These test cases just
+  // serve to document any changes in bun's behavior. Any changes in behavior
+  // should be tested to ensure they don't cause any regressions. The easiest way
+  // to test the changes is to bundle https://github.com/evanw/css-import-tests
+  // and visually inspect a browser's rendering of the resulting CSS file.
+  itBundled("css/CSSAtImportConditionsFromExternalRepo", {
+    files: {
+      "/001/default/a.css": `.box { background-color: green; }`,
+      "/001/default/style.css": `@import url("a.css");`,
+
+      "/001/relative-url/a.css": `.box { background-color: green; }`,
+      "/001/relative-url/style.css": `@import url("./a.css");`,
+
+      "/at-charset/001/a.css": `@charset "utf-8"; .box { background-color: red; }`,
+      "/at-charset/001/b.css": `@charset "utf-8"; .box { background-color: green; }`,
+      "/at-charset/001/style.css": `@charset "utf-8"; @import url("a.css"); @import url("b.css");`,
+
+      "/at-keyframes/001/a.css": `
+        .box { animation: BOX; animation-duration: 0s; animation-fill-mode: both; }
+        @keyframes BOX { 0%, 100% { background-color: green; } }
+      `,
+      "/at-keyframes/001/b.css": `
+        .box { animation: BOX; animation-duration: 0s; animation-fill-mode: both; }
+        @keyframes BOX { 0%, 100% { background-color: red; } }
+      `,
+      "/at-keyframes/001/style.css": `@import url("a.css") screen; @import url("b.css") print;`,
+
+      "/at-layer/001/a.css": `.box { background-color: red; }`,
+      "/at-layer/001/b.css": `.box { background-color: green; }`,
+      "/at-layer/001/style.css": `
+        @import url("a.css") layer(a);
+        @import url("b.css") layer(b);
+        @import url("a.css") layer(a);
+      `,
+
+      "/at-layer/002/a.css": `.box { background-color: green; }`,
+      "/at-layer/002/b.css": `.box { background-color: red; }`,
+      "/at-layer/002/style.css": `
+        @import url("a.css") layer(a) print;
+        @import url("b.css") layer(b);
+        @import url("a.css") layer(a);
+      `,
+
+      "/at-layer/003/a.css": `@layer a { .box { background-color: red; } }`,
+      "/at-layer/003/b.css": `@layer b { .box { background-color: green; } }`,
+      "/at-layer/003/style.css": `@import url("a.css"); @import url("b.css"); @import url("a.css");`,
+
+      "/at-layer/004/a.css": `@layer { .box { background-color: green; } }`,
+      "/at-layer/004/b.css": `@layer { .box { background-color: red; } }`,
+      "/at-layer/004/style.css": `@import url("a.css"); @import url("b.css"); @import url("a.css");`,
+
+      "/at-layer/005/a.css": `@import url("b.css") layer(b) (width: 1px);`,
+      "/at-layer/005/b.css": `.box { background-color: red; }`,
+      "/at-layer/005/style.css": `
+        @import url("a.css") layer(a) (min-width: 1px);
+        @layer a.c { .box { background-color: red; } }
+        @layer a.b { .box { background-color: green; } }
+      `,
+
+      "/at-layer/006/a.css": `@import url("b.css") layer(b) (min-width: 1px);`,
+      "/at-layer/006/b.css": `.box { background-color: red; }`,
+      "/at-layer/006/style.css": `
+        @import url("a.css") layer(a) (min-width: 1px);
+        @layer a.c { .box { background-color: green; } }
+        @layer a.b { .box { background-color: red; } }
+      `,
+
+      "/at-layer/007/style.css": `
+        @layer foo {}
+        @layer bar {}
+        @layer bar { .box { background-color: green; } }
+        @layer foo { .box { background-color: red; } }
+      `,
+
+      "/at-layer/008/a.css": `@import "b.css" layer; .box { background-color: green; }`,
+      "/at-layer/008/b.css": `.box { background-color: red; }`,
+      "/at-layer/008/style.css": `@import url("a.css") layer;`,
+
+      "/at-media/001/default/a.css": `.box { background-color: green; }`,
+      "/at-media/001/default/style.css": `@import url("a.css") screen;`,
+
+      "/at-media/002/a.css": `.box { background-color: green; }`,
+      "/at-media/002/b.css": `.box { background-color: red; }`,
+      "/at-media/002/style.css": `@import url("a.css") screen; @import url("b.css") print;`,
+
+      "/at-media/003/a.css": `@import url("b.css") (min-width: 1px);`,
+      "/at-media/003/b.css": `.box { background-color: green; }`,
+      "/at-media/003/style.css": `@import url("a.css") screen;`,
+
+      "/at-media/004/a.css": `@import url("b.css") print;`,
+      "/at-media/004/b.css": `.box { background-color: red; }`,
+      "/at-media/004/c.css": `.box { background-color: green; }`,
+      "/at-media/004/style.css": `@import url("c.css"); @import url("a.css") print;`,
+
+      "/at-media/005/a.css": `@import url("b.css") (max-width: 1px);`,
+      "/at-media/005/b.css": `.box { background-color: red; }`,
+      "/at-media/005/c.css": `.box { background-color: green; }`,
+      "/at-media/005/style.css": `@import url("c.css"); @import url("a.css") (max-width: 1px);`,
+
+      "/at-media/006/a.css": `@import url("b.css") (min-width: 1px);`,
+      "/at-media/006/b.css": `.box { background-color: green; }`,
+      "/at-media/006/style.css": `@import url("a.css") (min-height: 1px);`,
+
+      "/at-media/007/a.css": `@import url("b.css") screen;`,
+      "/at-media/007/b.css": `.box { background-color: green; }`,
+      "/at-media/007/style.css": `@import url("a.css") all;`,
+
+      "/at-media/008/a.css": `@import url("green.css") layer(alpha) print;`,
+      "/at-media/008/b.css": `@import url("red.css") layer(beta) print;`,
+      "/at-media/008/green.css": `.box { background-color: green; }`,
+      "/at-media/008/red.css": `.box { background-color: red; }`,
+      "/at-media/008/style.css": `
+        @import url("a.css") layer(alpha) all;
+        @import url("b.css") layer(beta) all;
+        @layer beta { .box { background-color: green; } }
+        @layer alpha { .box { background-color: red; } }
+      `,
+
+      "/at-supports/001/a.css": `.box { background-color: green; }`,
+      "/at-supports/001/style.css": `@import url("a.css") supports(display: block);`,
+
+      "/at-supports/002/a.css": `@import url("b.css") supports(width: 10px);`,
+      "/at-supports/002/b.css": `.box { background-color: green; }`,
+      "/at-supports/002/style.css": `@import url("a.css") supports(display: block);`,
+
+      "/at-supports/003/a.css": `@import url("b.css") supports(width: 10px);`,
+      "/at-supports/003/b.css": `.box { background-color: green; }`,
+      "/at-supports/003/style.css": `@import url("a.css") supports((display: block) or (display: inline));`,
+
+      "/at-supports/004/a.css": `@import url("b.css") layer(b) supports(width: 10px);`,
+      "/at-supports/004/b.css": `.box { background-color: green; }`,
+      "/at-supports/004/style.css": `@import url("a.css") layer(a) supports(display: block);`,
+
+      "/at-supports/005/a.css": `@import url("green.css") layer(alpha) supports(foo: bar);`,
+      "/at-supports/005/b.css": `@import url("red.css") layer(beta) supports(foo: bar);`,
+      "/at-supports/005/green.css": `.box { background-color: green; }`,
+      "/at-supports/005/red.css": `.box { background-color: red; }`,
+      "/at-supports/005/style.css": `
+        @import url("a.css") layer(alpha) supports(display: block);
+        @import url("b.css") layer(beta) supports(display: block);
+        @layer beta { .box { background-color: green; } }
+        @layer alpha { .box { background-color: red; } }
+      `,
+
+      "/cycles/001/style.css": `@import url("style.css"); .box { background-color: green; }`,
+
+      "/cycles/002/a.css": `@import url("red.css"); @import url("b.css");`,
+      "/cycles/002/b.css": `@import url("green.css"); @import url("a.css");`,
+      "/cycles/002/green.css": `.box { background-color: green; }`,
+      "/cycles/002/red.css": `.box { background-color: red; }`,
+      "/cycles/002/style.css": `@import url("a.css");`,
+
+      "/cycles/003/a.css": `@import url("b.css"); .box { background-color: green; }`,
+      "/cycles/003/b.css": `@import url("a.css"); .box { background-color: red; }`,
+      "/cycles/003/style.css": `@import url("a.css");`,
+
+      "/cycles/004/a.css": `@import url("b.css"); .box { background-color: red; }`,
+      "/cycles/004/b.css": `@import url("a.css"); .box { background-color: green; }`,
+      "/cycles/004/style.css": `@import url("a.css"); @import url("b.css");`,
+
+      "/cycles/005/a.css": `@import url("b.css"); .box { background-color: green; }`,
+      "/cycles/005/b.css": `@import url("a.css"); .box { background-color: red; }`,
+      "/cycles/005/style.css": `@import url("a.css"); @import url("b.css"); @import url("a.css");`,
+
+      "/cycles/006/a.css": `@import url("red.css"); @import url("b.css");`,
+      "/cycles/006/b.css": `@import url("green.css"); @import url("a.css");`,
+      "/cycles/006/c.css": `@import url("a.css");`,
+      "/cycles/006/green.css": `.box { background-color: green; }`,
+      "/cycles/006/red.css": `.box { background-color: red; }`,
+      "/cycles/006/style.css": `@import url("b.css"); @import url("c.css");`,
+
+      "/cycles/007/a.css": `@import url("red.css"); @import url("b.css") screen;`,
+      "/cycles/007/b.css": `@import url("green.css"); @import url("a.css") all;`,
+      "/cycles/007/c.css": `@import url("a.css") not print;`,
+      "/cycles/007/green.css": `.box { background-color: green; }`,
+      "/cycles/007/red.css": `.box { background-color: red; }`,
+      "/cycles/007/style.css": `@import url("b.css"); @import url("c.css");`,
+
+      "/cycles/008/a.css": `@import url("red.css") layer; @import url("b.css");`,
+      "/cycles/008/b.css": `@import url("green.css") layer; @import url("a.css");`,
+      "/cycles/008/c.css": `@import url("a.css") layer;`,
+      "/cycles/008/green.css": `.box { background-color: green; }`,
+      "/cycles/008/red.css": `.box { background-color: red; }`,
+      "/cycles/008/style.css": `@import url("b.css"); @import url("c.css");`,
+
+      "/data-urls/002/style.css": `@import url('data:text/css;plain,.box%20%7B%0A%09background-color%3A%20green%3B%0A%7D%0A');`,
+
+      "/data-urls/003/style.css": `@import url('data:text/css,.box%20%7B%0A%09background-color%3A%20green%3B%0A%7D%0A');`,
+
+      "/duplicates/001/a.css": `.box { background-color: green; }`,
+      "/duplicates/001/b.css": `.box { background-color: red; }`,
+      "/duplicates/001/style.css": `@import url("a.css"); @import url("b.css"); @import url("a.css");`,
+
+      "/duplicates/002/a.css": `.box { background-color: green; }`,
+      "/duplicates/002/b.css": `.box { background-color: red; }`,
+      "/duplicates/002/style.css": `@import url("a.css"); @import url("b.css"); @import url("a.css"); @import url("b.css"); @import url("a.css");`,
+
+      "/empty/001/empty.css": ``,
+      "/empty/001/style.css": `@import url("./empty.css"); .box { background-color: green; }`,
+
+      "/relative-paths/001/a/a.css": `@import url("../b/b.css")`,
+      "/relative-paths/001/b/b.css": `.box { background-color: green; }`,
+      "/relative-paths/001/style.css": `@import url("./a/a.css");`,
+
+      "/relative-paths/002/a/a.css": `@import url("./../b/b.css")`,
+      "/relative-paths/002/b/b.css": `.box { background-color: green; }`,
+      "/relative-paths/002/style.css": `@import url("./a/a.css");`,
+
+      "/subresource/001/something/images/green.png": `...`,
+      "/subresource/001/something/styles/green.css": `.box { background-image: url("../images/green.png"); }`,
+      "/subresource/001/style.css": `@import url("./something/styles/green.css");`,
+
+      "/subresource/002/green.png": `...`,
+      "/subresource/002/style.css": `@import url("./styles/green.css");`,
+      "/subresource/002/styles/green.css": `.box { background-image: url("../green.png"); }`,
+
+      "/subresource/004/style.css": `@import url("./styles/green.css");`,
+      "/subresource/004/styles/green.css": `.box { background-image: url("green.png"); }`,
+      "/subresource/004/styles/green.png": `...`,
+
+      "/subresource/005/style.css": `@import url("./styles/green.css");`,
+      "/subresource/005/styles/green.css": `.box { background-image: url("./green.png"); }`,
+      "/subresource/005/styles/green.png": `...`,
+
+      "/subresource/007/green.png": `...`,
+      "/subresource/007/style.css": `.box { background-image: url("./green.png"); }`,
+
+      "/url-format/001/default/a.css": `.box { background-color: green; }`,
+      "/url-format/001/default/style.css": `@import url(a.css);`,
+
+      "/url-format/001/relative-url/a.css": `.box { background-color: green; }`,
+      "/url-format/001/relative-url/style.css": `@import url(./a.css);`,
+
+      "/url-format/002/default/a.css": `.box { background-color: green; }`,
+      "/url-format/002/default/style.css": `@import "a.css";`,
+
+      "/url-format/002/relative-url/a.css": `.box { background-color: green; }`,
+      "/url-format/002/relative-url/style.css": `@import "./a.css";`,
+
+      "/url-format/003/default/a.css": `.box { background-color: green; }`,
+      "/url-format/003/default/style.css": `@import url("a.css"`,
+
+      "/url-format/003/relative-url/a.css": `.box { background-color: green; }`,
+      "/url-format/003/relative-url/style.css": `@import url("./a.css"`,
+
+      "/url-fragments/001/a.css": `.box { background-color: green; }`,
+      "/url-fragments/001/style.css": `@import url("./a.css#foo");`,
+
+      "/url-fragments/002/a.css": `.box { background-color: green; }`,
+      "/url-fragments/002/b.css": `.box { background-color: red; }`,
+      "/url-fragments/002/style.css": `@import url("./a.css#1"); @import url("./b.css#2"); @import url("./a.css#3");`,
+    },
+    entryPoints: files,
+    outputPaths: files,
+    outdir: "/out",
+    onAfterBundle(api) {
+      for (const file of files) {
+        console.log("Checking snapshot:", file);
+        api.expectFile(join(file)).toMatchSnapshot(file);
+      }
+    },
+  });
+
+  itBundled("css/CSSAtImportConditionsAtLayerBundle", {
+    files: {
+      "/case1.css": /* css */ `
+        @import url(case1-foo.css) layer(first.one);
+        @import url(case1-foo.css) layer(last.one);
+        @import url(case1-foo.css) layer(first.one);
+      `,
+      "/case1-foo.css": `body { color: red }`,
+
+      "/case2.css": /* css */ `
+        @import url(case2-foo.css);
+        @import url(case2-bar.css);
+        @import url(case2-foo.css);
+      `,
+      "/case2-foo.css": `@layer first.one { body { color: red } }`,
+      "/case2-bar.css": `@layer last.one { body { color: green } }`,
+
+      "/case3.css": /* css */ `
+        @import url(case3-foo.css);
+        @import url(case3-bar.css);
+        @import url(case3-foo.css);
+      `,
+      "/case3-foo.css": `@layer { body { color: red } }`,
+      "/case3-bar.css": `@layer only.one { body { color: green } }`,
+
+      "/case4.css": /* css */ `
+        @import url(case4-foo.css) layer(first);
+        @import url(case4-foo.css) layer(last);
+        @import url(case4-foo.css) layer(first);
+      `,
+      "/case4-foo.css": `@layer one { @layer two, three.four; body { color: red } }`,
+
+      "/case5.css": /* css */ `
+        @import url(case5-foo.css) layer;
+        @import url(case5-foo.css) layer(middle);
+        @import url(case5-foo.css) layer;
+      `,
+      "/case5-foo.css": `@layer one { @layer two, three.four; body { color: red } }`,
+
+      // Note: There was a bug that only showed up in this case. We need at least this many cases.
+      "/case6.css": /* css */ `
+        @import url(case6-foo.css) layer(first);
+        @import url(case6-foo.css) layer(last);
+        @import url(case6-foo.css) layer(first);
+      `,
+      "/case6-foo.css": `@layer { @layer two, three.four; body { color: red } }`,
+    },
+    entryPoints: ["/case1.css", "/case2.css", "/case3.css", "/case4.css", "/case5.css", "/case6.css"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const snapshotFiles = ["case1.css", "case2.css", "case3.css", "case4.css", "case5.css", "case6.css"];
+      for (const file of snapshotFiles) {
+        console.log("Checking snapshot:", file);
+        api.expectFile(join("/out", file)).toMatchSnapshot(file);
+      }
+    },
+  });
+
+  itBundled("css/CSSAtImportConditionsAtLayerBundleAlternatingLayerInFile", {
+    files: {
+      "/a.css": `@layer first { body { color: red } }`,
+      "/b.css": `@layer last { body { color: green } }`,
+
+      "/case1.css": /* css */ `
+        @import url(a.css);
+        @import url(a.css);
+      `,
+
+      "/case2.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+      `,
+
+      "/case3.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+      `,
+
+      "/case4.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+      `,
+
+      "/case5.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+      `,
+
+      "/case6.css": /* css */ `
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+        @import url(b.css);
+        @import url(a.css);
+      `,
+    },
+    entryPoints: ["/case1.css", "/case2.css", "/case3.css", "/case4.css", "/case5.css", "/case6.css"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const snapshotFiles = ["case1.css", "case2.css", "case3.css", "case4.css", "case5.css", "case6.css"];
+      for (const file of snapshotFiles) {
+        console.log("Checking snapshot:", file);
+        api.expectFile(join("/out", file)).toMatchSnapshot(file);
+      }
+    },
+  });
+
+  itBundled("css/CSSAtImportConditionsChainExternal", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "a.css" layer(a) not print;
+      `,
+      "/a.css": /* css */ `
+        @import "http://example.com/external1.css";
+        @import "b.css" layer(b) not tv;
+        @import "http://example.com/external2.css" layer(a2);
+      `,
+      "/b.css": /* css */ `
+        @import "http://example.com/external3.css";
+        @import "http://example.com/external4.css" layer(b2);
+      `,
+    },
+    outfile: "/out.css",
+  });
+
+  // This test mainly just makes sure that this scenario doesn't crash
   itBundled("css/CSSAndJavaScriptCodeSplittingESBuildIssue1064", {
-    // GENERATED
     files: {
       "/a.js": /* js */ `
         import shared from './shared.js'
@@ -554,9 +1460,15 @@ describe.todo("bundler", () => {
     entryPoints: ["/a.js", "/b.js", "/c.css", "/d.css"],
     format: "esm",
     splitting: true,
+    onAfterBundle(api) {
+      const files = ["/a.js", "/b.js", "/c.css", "/d.css"];
+      for (const file of files) {
+        api.expectFile(file).toMatchSnapshot(file);
+      }
+    },
   });
+
   itBundled("css/CSSExternalQueryAndHashNoMatchESBuildIssue1822", {
-    // GENERATED
     files: {
       "/entry.css": /* css */ `
         a { background: url(foo/bar.png?baz) }
@@ -564,21 +1476,12 @@ describe.todo("bundler", () => {
       `,
     },
     outfile: "/out.css",
-    /* TODO FIX expectedScanLog: `entry.css: ERROR: Could not resolve "foo/bar.png?baz"
-  NOTE: You can mark the path "foo/bar.png?baz" as external to exclude it from the bundle, which will remove this error.
-  entry.css: ERROR: Could not resolve "foo/bar.png#baz"
-  NOTE: You can mark the path "foo/bar.png#baz" as external to exclude it from the bundle, which will remove this error.
-  `, */
-  });
-  itBundled("css/CSSExternalQueryAndHashMatchESBuildIssue1822", {
-    // GENERATED
-    files: {
-      "/entry.css": /* css */ `
-        a { background: url(foo/bar.png?baz) }
-        b { background: url(foo/bar.png#baz) }
-      `,
+    bundleErrors: {
+      "/entry.css": [
+        `Could not resolve: "foo/bar.png?baz". Maybe you need to "bun install"?`,
+        `Could not resolve: "foo/bar.png#baz". Maybe you need to "bun install"?`,
+      ],
     },
-    outfile: "/out.css",
   });
   itBundled("css/CSSNestingOldBrowser", {
     // GENERATED
@@ -628,7 +1531,7 @@ describe.todo("bundler", () => {
       "/toplevel-plus.css",
       "/toplevel-tilde.css",
     ],
-    unsupportedCSSFeatures: "Nesting",
+    unsupportedCSSFeatures: ["Nesting"],
     /* TODO FIX expectedScanLog: `nested-@layer.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
   nested-@media.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)
   nested-ampersand-first.css: WARNING: CSS nesting syntax is not supported in the configured target environment (chrome10)

@@ -12,8 +12,11 @@ Options for the `pack` command:
 
 - `--dry-run`: Perform all tasks except writing the tarball to disk.
 - `--destination`: Specify the directory where the tarball will be saved.
+- `--filename`: Specify an exact file name for the tarball to be saved at.
 - `--ignore-scripts`: Skip running pre/postpack and prepare scripts.
 - `--gzip-level`: Set a custom compression level for gzip, ranging from 0 to 9 (default is 9).
+
+> Note `--filename` and `--destination` cannot be used at the same time
 
 ## bin
 

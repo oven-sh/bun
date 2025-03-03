@@ -86,10 +86,11 @@ const CAllocator = struct {
 };
 
 pub const c_allocator = Allocator{
-    .ptr = undefined,
-    .vtable = &c_allocator_vtable,
+    // This ptr can be anything. But since it's not nullable, we should set it to something.
+    .ptr = @constCast(c_allocator_vtable),
+    .vtable = c_allocator_vtable,
 };
-const c_allocator_vtable = Allocator.VTable{
+const c_allocator_vtable = &Allocator.VTable{
     .alloc = &CAllocator.alloc,
     .resize = &CAllocator.resize,
     .free = &CAllocator.free,

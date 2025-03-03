@@ -286,7 +286,7 @@ template<> struct Converter<IDLFloat> : DefaultConverter<IDLFloat> {
 
     static float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         double number = value.toNumber(&lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, 0.0);
@@ -318,7 +318,7 @@ template<> struct Converter<IDLUnrestrictedFloat> : DefaultConverter<IDLUnrestri
 
     static float convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         double number = value.toNumber(&lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, 0.0);
@@ -353,7 +353,7 @@ template<> struct Converter<IDLDouble> : DefaultConverter<IDLDouble> {
 
     static double convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         double number = value.toNumber(&lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, 0.0);

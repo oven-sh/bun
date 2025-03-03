@@ -216,12 +216,14 @@ pub const TSConfigJSON = struct {
                     defer allocator.free(str_lower);
                     _ = strings.copyLowercase(str, str_lower);
                     // - We don't support "preserve" yet
-                    // - We rely on NODE_ENV for "jsx" or "jsxDEV"
-                    // - We treat "react-jsx" and "react-jsxDEV" identically
-                    //   because it is too easy to auto-import the wrong one.
                     if (options.JSX.RuntimeMap.get(str_lower)) |runtime| {
-                        result.jsx.runtime = runtime;
+                        result.jsx.runtime = runtime.runtime;
                         result.jsx_flags.insert(.runtime);
+
+                        if (runtime.development) |dev| {
+                            result.jsx.development = dev;
+                            result.jsx_flags.insert(.development);
+                        }
                     }
                 }
             }
@@ -424,7 +426,7 @@ pub const TSConfigJSON = struct {
             return parts.items;
         }
 
-        var iter = std.mem.tokenize(u8, text, ".");
+        var iter = std.mem.tokenizeScalar(u8, text, '.');
 
         while (iter.next()) |part| {
             if (!js_lexer.isIdentifier(part)) {

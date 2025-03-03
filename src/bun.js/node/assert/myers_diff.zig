@@ -255,7 +255,7 @@ pub fn DifferWithEql(comptime Line: type, comptime opts: Options, comptime areLi
                 try result.ensureUnusedCapacity(u(@max(x - prev_x, y - prev_y)));
                 while (x > prev_x and y > prev_y) {
                     const line: Line = blk: {
-                        if (@typeInfo(Line) == .Pointer and comptime opts.check_comma_disparity) {
+                        if (@typeInfo(Line) == .pointer and comptime opts.check_comma_disparity) {
                             const actual_el = actual[u(x) - 1];
                             // actual[x-1].endsWith(',')
                             break :blk if (actual_el[actual_el.len - 1] == ',')
@@ -347,7 +347,7 @@ fn areStrLinesEqual(comptime T: type, a: T, b: T, comptime check_comma_disparity
 
     // []const u8 -> u8
     const info = @typeInfo(T);
-    const ChildType = info.Pointer.child;
+    const ChildType = info.pointer.child;
 
     if (comptime !check_comma_disparity) {
         return mem.eql(ChildType, a, b);
@@ -498,7 +498,7 @@ test StrDiffer {
             \\  4,
             \\  5,
             \\  6,
-            \\  7  
+            \\  7
             \\]
             ,
             // expected
@@ -509,7 +509,7 @@ test StrDiffer {
             \\  4,
             \\  5,
             \\  9,
-            \\  7  
+            \\  7
             \\]
         },
         // // remove line

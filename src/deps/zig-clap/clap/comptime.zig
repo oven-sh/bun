@@ -67,7 +67,7 @@ pub fn ComptimeClap(
                 .passthrough_positionals = undefined,
             };
 
-            var stream = clap.StreamingClap(usize, @typeInfo(@TypeOf(iter)).Pointer.child){
+            var stream = clap.StreamingClap(usize, @typeInfo(@TypeOf(iter)).pointer.child){
                 .params = converted_params,
                 .iter = iter,
                 .diagnostic = opt.diagnostic,

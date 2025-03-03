@@ -67,6 +67,7 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/SortedArrayMap.h>
 #include <wtf/URL.h>
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -249,7 +250,7 @@ void JSSubtleCrypto::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsSubtleCryptoConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSSubtleCryptoPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
@@ -378,7 +379,10 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_digestBody(JSC
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, {});
+    if (UNLIKELY(throwScope.exception())) {
+        throwScope.clearException();
+        return Bun::ERR::INVALID_ARG_TYPE(throwScope, lexicalGlobalObject, "data"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, argument1.value());
+    }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.digest(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(algorithm), WTFMove(data), WTFMove(promise)); })));
 }
 

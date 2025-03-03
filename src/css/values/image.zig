@@ -95,24 +95,7 @@ pub const Image = union(enum) {
     }
 
     pub inline fn eql(this: *const Image, other: *const Image) bool {
-        return switch (this.*) {
-            .none => switch (other.*) {
-                .none => true,
-                else => false,
-            },
-            .url => |*a| switch (other.*) {
-                .url => a.eql(&other.url),
-                else => false,
-            },
-            .image_set => |*a| switch (other.*) {
-                .image_set => a.eql(&other.image_set),
-                else => false,
-            },
-            .gradient => |a| switch (other.*) {
-                .gradient => a.eql(other.gradient),
-                else => false,
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -127,6 +110,70 @@ pub const Image = union(enum) {
             .gradient => |gradient| Image{ .gradient = bun.create(allocator, Gradient, gradient.getLegacyWebkit(allocator) orelse return null) },
             else => this.deepClone(allocator),
         };
+    }
+
+    pub fn getFallbacks(this: *@This(), allocator: Allocator, targets: css.targets.Targets) css.SmallList(Image, 6) {
+        const ColorFallbackKind = css.ColorFallbackKind;
+        // Determine which prefixes and color fallbacks are needed.
+        const prefixes = this.getNecessaryPrefixes(targets);
+        const fallbacks = this.getNecessaryFallbacks(targets);
+        var res = css.SmallList(Image, 6){};
+
+        // Get RGB fallbacks if needed.
+        const rgb = if (fallbacks.contains(ColorFallbackKind.RGB))
+            this.getFallback(allocator, ColorFallbackKind.RGB)
+        else
+            null;
+
+        // Prefixed properties only support RGB.
+        const prefix_image = if (rgb) |r| &r else this;
+
+        // Legacy -webkit-gradient()
+        if (prefixes.contains(VendorPrefix.WEBKIT) and
+            if (targets.browsers) |browsers| css.prefixes.Feature.isWebkitGradient(browsers) else false and
+            prefix_image.* == .gradient)
+        {
+            if (prefix_image.getLegacyWebkit(allocator)) |legacy| {
+                res.append(allocator, legacy);
+            }
+        }
+
+        // Standard syntax, with prefixes.
+        if (prefixes.contains(VendorPrefix.WEBKIT)) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.WEBKIT));
+        }
+
+        if (prefixes.contains(VendorPrefix.MOZ)) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.MOZ));
+        }
+
+        if (prefixes.contains(VendorPrefix.O)) {
+            res.append(allocator, prefix_image.getPrefixed(allocator, css.VendorPrefix.O));
+        }
+
+        if (prefixes.contains(VendorPrefix.NONE)) {
+            // Unprefixed, rgb fallback.
+            if (rgb) |r| {
+                res.append(allocator, r);
+            }
+
+            // P3 fallback.
+            if (fallbacks.contains(ColorFallbackKind.P3)) {
+                res.append(allocator, this.getFallback(allocator, ColorFallbackKind.P3));
+            }
+
+            // Convert original to lab if needed (e.g. if oklab is not supported but lab is).
+            if (fallbacks.contains(ColorFallbackKind.LAB)) {
+                this.* = this.getFallback(allocator, ColorFallbackKind.LAB);
+            }
+        } else if (res.pop()) |last| {
+            // Prefixed property with no unprefixed version.
+            // Replace self with the last prefixed version so that it doesn't
+            // get duplicated when the caller pushes the original value.
+            this.* = last;
+        }
+
+        return res;
     }
 
     pub fn getFallback(this: *const @This(), allocator: Allocator, kind: css.ColorFallbackKind) Image {
@@ -230,7 +277,7 @@ pub const ImageSet = struct {
     }
 
     pub fn eql(this: *const ImageSet, other: *const ImageSet) bool {
-        return this.vendor_prefix.eql(other.vendor_prefix) and css.generic.eqlList(ImageSetOption, &this.options, &other.options);
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) @This() {
@@ -347,12 +394,7 @@ pub const ImageSetOption = struct {
     }
 
     pub fn eql(lhs: *const ImageSetOption, rhs: *const ImageSetOption) bool {
-        return lhs.image.eql(&rhs.image) and lhs.resolution.eql(&rhs.resolution) and (brk: {
-            if (lhs.file_type != null and rhs.file_type != null) {
-                break :brk bun.strings.eql(lhs.file_type.?, rhs.file_type.?);
-            }
-            break :brk false;
-        });
+        return css.implementEql(@This(), lhs, rhs);
     }
 };
 

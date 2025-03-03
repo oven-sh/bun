@@ -97,7 +97,7 @@ using JSWritableStreamDOMConstructor = JSDOMConstructor<JSWritableStream>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSWritableStreamDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -196,7 +196,7 @@ void JSWritableStream::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsWritableStreamConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSWritableStreamPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

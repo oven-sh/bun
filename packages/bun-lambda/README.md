@@ -7,7 +7,8 @@ A custom runtime layer that runs Bun on AWS Lambda.
 First, you will need to deploy the layer to your AWS account. Clone this repository and run the `publish-layer` script to get started. Note: the `publish-layer` script also builds the layer.
 
 ```sh
-git clone git@github.com:oven-sh/bun.git
+git clone --filter=blob:none --sparse https://github.com/oven-sh/bun.git
+git -C bun sparse-checkout set packages/bun-lambda
 cd bun/packages/bun-lambda
 bun install
 bun run publish-layer

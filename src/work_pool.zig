@@ -11,7 +11,7 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
         var loaded: bool = false;
 
         fn create() *ThreadPool {
-            @setCold(true);
+            @branchHint(.cold);
 
             pool = ThreadPool.init(.{
                 .max_threads = max_threads orelse bun.getThreadCount(),

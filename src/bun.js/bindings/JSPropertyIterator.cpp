@@ -38,7 +38,7 @@ public:
 
 extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, size_t* count, bool own_properties_only, bool only_non_index_properties)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSC::JSValue value = JSValue::decode(encodedValue);
     JSC::JSObject* object = value.getObject();
 
@@ -47,6 +47,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
 
     if (UNLIKELY(object->hasNonReifiedStaticProperties())) {
         object->reifyAllStaticProperties(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
 #if OS(WINDOWS)
@@ -94,36 +95,6 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     return JSPropertyIterator::create(vm, array.releaseData());
 }
 
-// The only non-own property that we sometimes want to get is the code property.
-extern "C" EncodedJSValue Bun__JSPropertyIterator__getCodeProperty(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
-{
-    if (UNLIKELY(!iter)) {
-        return {};
-    }
-
-    auto& vm = iter->vm;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (UNLIKELY(object->type() == JSC::ProxyObjectType)) {
-        return {};
-    }
-
-    auto& builtinNames = WebCore::builtinNames(vm);
-
-    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, vm.ptr());
-    if (!object->getNonIndexPropertySlot(globalObject, builtinNames.codePublicName(), slot)) {
-        return {};
-    }
-
-    if (slot.isAccessor() || slot.isCustom()) {
-        return {};
-    }
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return JSValue::encode(slot.getPureResult());
-}
-
 extern "C" size_t Bun__JSPropertyIterator__getLongestPropertyName(JSPropertyIterator* iter, JSC::JSGlobalObject* globalObject, JSC::JSObject* object)
 {
     size_t longest = 0;
@@ -164,8 +135,10 @@ extern "C" EncodedJSValue Bun__JSPropertyIterator__getNameAndValue(JSPropertyIte
 
     auto& vm = iter->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-    if (!object->methodTable()->getOwnPropertySlot(object, globalObject, prop, slot)) {
+    // This has to be get because we may need to call on prototypes
+    // If we meant for this to only run for own keys, the property name would not be included in the array.
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    if (!object->getPropertySlot(globalObject, prop, slot)) {
         return {};
     }
     RETURN_IF_EXCEPTION(scope, {});

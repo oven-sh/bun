@@ -42,7 +42,7 @@ const InputType = if (Environment.isWindows) bun.OSPathSliceZ else posix.fd_t;
 /// This means that it cannot work with TTYs and some special devices
 /// But it can work with two ordinary files
 ///
-/// on macoS and other platforms, sendfile() only works when one of the ends is a socket
+/// on macOS and other platforms, sendfile() only works when one of the ends is a socket
 /// and in general on macOS, it doesn't seem to have much performance impact.
 const LinuxCopyFileState = packed struct {
     /// This is the most important flag for reducing the system call count
@@ -60,7 +60,7 @@ const CopyFileReturnType = bun.sys.Maybe(void);
 
 pub fn copyFileWithState(in: InputType, out: InputType, copy_file_state: *CopyFileState) CopyFileReturnType {
     if (comptime Environment.isMac) {
-        const rc = posix.system.fcopyfile(in, out, null, posix.system.COPYFILE_DATA);
+        const rc = posix.system.fcopyfile(in, out, null, posix.system.COPYFILE{ .DATA = true });
 
         switch (posix.errno(rc)) {
             .SUCCESS => return CopyFileReturnType.success,

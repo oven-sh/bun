@@ -43,7 +43,7 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     JSObject* object = localToObjectPointer<JSObject>();
     JSValue k = key->localToJSValue();
     JSValue v = value->localToJSValue();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
     PutPropertySlot slot(object, false);

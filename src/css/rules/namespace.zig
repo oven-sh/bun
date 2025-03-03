@@ -32,7 +32,7 @@ pub const NamespaceRule = struct {
         }
 
         try css.css_values.string.CSSStringFns.toCss(&this.url, W, dest);
-        try dest.writeChar(':');
+        try dest.writeChar(';');
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

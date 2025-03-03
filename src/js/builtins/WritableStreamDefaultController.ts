@@ -40,7 +40,7 @@ export function initializeWritableStreamDefaultController(this) {
 
 export function error(this, e) {
   if ($getByIdDirectPrivate(this, "abortSteps") === undefined)
-    throw $makeThisTypeError("WritableStreamDefaultController", "error");
+    throw $ERR_INVALID_THIS("WritableStreamDefaultController");
 
   const stream = $getByIdDirectPrivate(this, "stream");
   if ($getByIdDirectPrivate(stream, "state") !== "writable") return;

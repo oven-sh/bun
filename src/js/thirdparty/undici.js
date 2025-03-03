@@ -1,7 +1,7 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const { Readable } = StreamModule;
-const { _ReadableFromWebForUndici: ReadableFromWeb } = StreamModule[Symbol.for("::bunternal::")];
+const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);

@@ -29,7 +29,7 @@ pub const FallbackModule = struct {
                     return @embedFile(code_path);
                 }
 
-                return bun.runtimeEmbedFile(.codegen_eager, code_path);
+                return bun.runtimeEmbedFile(.codegen, code_path);
             }
         };
 

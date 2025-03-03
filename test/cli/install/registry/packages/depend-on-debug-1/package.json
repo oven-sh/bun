@@ -1,0 +1,41 @@
+{
+	"name": "depend-on-debug-1",
+	"versions": {
+		"1.0.0": {
+			"name": "depend-on-debug-1",
+			"version": "1.0.0",
+			"dependencies": {
+				"debug-1": "4.4.0"
+			},
+			"_id": "depend-on-debug-1@1.0.0",
+			"_nodeVersion": "23.5.0",
+			"_npmVersion": "10.9.2",
+			"dist": {
+				"integrity": "sha512-YJ2QMT2DANZs7GKXqAmPg5oOSZJfo0QyieQ/fW5mXrdYz7l0A/mTu9tr+vBjMdPOshN0bJeD13K2vQRHETbX7w==",
+				"shasum": "c75fc566964c13d191a6eaf5112892f229e8a9bb",
+				"tarball": "http://localhost:4873/depend-on-debug-1/-/depend-on-debug-1-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2025-02-01T03:15:00.358Z",
+		"created": "2025-02-01T03:15:00.358Z",
+		"1.0.0": "2025-02-01T03:15:00.358Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"depend-on-debug-1-1.0.0.tgz": {
+			"shasum": "c75fc566964c13d191a6eaf5112892f229e8a9bb",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "depend-on-debug-1",
+	"readme": "ERROR: No README data found!"
+}

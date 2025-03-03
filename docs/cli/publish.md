@@ -105,3 +105,4 @@ $ bun publish --otp 123456
 ### `--gzip-level`
 
 Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).
+{% bunCLIUsage command="publish" /%}

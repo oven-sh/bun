@@ -37,7 +37,7 @@ Once this is added, run a fresh install. Bun will re-install your dependencies a
 
 ```sh
 $ rm -rf node_modules
-$ rm bun.lockb
+$ rm bun.lock
 $ bun install
 ```
 

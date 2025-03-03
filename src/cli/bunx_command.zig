@@ -252,7 +252,7 @@ pub const BunxCommand = struct {
                     }
                 } else {
                     const stat = target_package_json.stat().unwrap() catch break :is_stale true;
-                    break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+                    break :is_stale std.time.timestamp() - stat.mtime().sec > seconds_cache_valid;
                 }
             };
 
@@ -568,7 +568,7 @@ pub const BunxCommand = struct {
                             if (rc != 0) {
                                 break :is_stale true;
                             }
-                            break :is_stale std.time.timestamp() - stat.mtime().tv_sec > seconds_cache_valid;
+                            break :is_stale std.time.timestamp() - stat.mtime().sec > seconds_cache_valid;
                         }
                     };
 
@@ -715,7 +715,7 @@ pub const BunxCommand = struct {
 
             .windows = if (Environment.isWindows) .{
                 .loop = bun.JSC.EventLoopHandle.init(bun.JSC.MiniEventLoop.initGlobal(this_transpiler.env)),
-            } else {},
+            },
         }) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: bunx failed to install <b>{s}<r> due to error <b>{s}<r>", .{ install_param, @errorName(err) });
             Global.exit(1);

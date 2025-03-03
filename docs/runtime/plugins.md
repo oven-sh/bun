@@ -324,7 +324,6 @@ await Bun.build({
       },
     },
   ],
-  throw: true,
 });
 ```
 
@@ -351,7 +350,6 @@ await Bun.build({
       },
     },
   ],
-  throw: true,
 });
 ```
 

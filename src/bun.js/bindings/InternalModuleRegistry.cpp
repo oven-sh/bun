@@ -156,7 +156,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
 // so we want to write it to the internal field when loaded.
 JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 

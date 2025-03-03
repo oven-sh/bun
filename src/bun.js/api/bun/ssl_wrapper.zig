@@ -97,8 +97,9 @@ pub fn SSLWrapper(comptime T: type) type {
             BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            var err: uws.create_bun_socket_error_t = .none;
             // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts, &err) orelse return error.InvalidOptions; // invalid options
             errdefer BoringSSL.SSL_CTX_free(ctx);
             return try This.initWithCTX(ctx, is_client, handlers);
         }

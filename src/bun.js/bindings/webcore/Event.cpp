@@ -33,13 +33,13 @@
 // #include "UserGestureIndicator.h"
 // #include "WorkerGlobalScope.h"
 #include <wtf/HexNumber.h>
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/TextStream.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(Event);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Event);
 
 ALWAYS_INLINE Event::Event(MonotonicTime createTime, const AtomString& type, IsTrusted isTrusted, CanBubble canBubble, IsCancelable cancelable, IsComposed composed)
     : m_isInitialized { !type.isNull() }

@@ -38,7 +38,7 @@ void addValueIterableMethods(JSC::JSGlobalObject& globalObject, JSC::JSObject& p
 
     JSC::JSGlobalObject* lexicalGlobalObject = &globalObject;
     ASSERT(lexicalGlobalObject);
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
 
     auto copyProperty = [&](const JSC::Identifier& arrayIdentifier, const JSC::Identifier& otherIdentifier, unsigned attributes = 0) {
         JSC::JSValue value = arrayPrototype->getDirect(vm, arrayIdentifier);

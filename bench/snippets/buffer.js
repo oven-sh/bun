@@ -1,7 +1,7 @@
 // import { Buffer } from "buffer";
 var buf = new Buffer(1024);
 var view = new DataView(buf.buffer);
-var INTERVAL = 9999999;
+var INTERVAL = 9_999_999;
 var time = (name, fn) => {
   for (let i = 0; i < INTERVAL; i++) fn();
 

@@ -232,7 +232,7 @@ describe("bunshell", () => {
       });
     }
 
-    // funny/crazy edgecases thanks to @paperdave and @Electroid
+    // funny/crazy edgecases thanks to @paperclover and @Electroid
     doTest(`echo "$(echo 1; echo 2)"`, "1\n2\n");
     doTest(`echo "$(echo "1" ; echo "2")"`, "1\n2\n");
     doTest(`echo $(echo 1; echo 2)`, "1 2\n");
@@ -781,7 +781,7 @@ booga"
 
     test("error without recursive option", async () => {
       const { stderr } = await $`rm -v ${temp_dir}`;
-      expect(stderr.toString()).toEqual(`rm: ${temp_dir}: is a directory\n`);
+      expect(stderr.toString()).toEqual(`rm: ${temp_dir}: Is a directory\n`);
     });
 
     test("recursive", async () => {

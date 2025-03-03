@@ -13,7 +13,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsUTF16String,
     (JSGlobalObject * globalObject,
         CallFrame* callframe))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue value = callframe->argument(0);
     if (value.isString()) {
@@ -33,7 +33,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLatin1String,
     (JSGlobalObject * globalObject,
         CallFrame* callframe))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSValue value = callframe->argument(0);
     if (value.isString()) {
@@ -51,7 +51,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsLatin1String,
 
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = JSC::constructEmptyObject(globalObject);
 

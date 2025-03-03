@@ -30,13 +30,12 @@
 #include "EventTarget.h"
 #include "EventTargetInterfaces.h"
 #include "ScriptExecutionContext.h"
-// #include <wtf/IsoMallocInlines.h>
 #include <wtf/RefCounted.h>
 
 namespace WebCore {
 
 class EventTargetConcrete final : public RefCounted<EventTargetConcrete>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED(EventTargetConcrete);
+    WTF_MAKE_TZONE_ALLOCATED(EventTargetConcrete);
 
 public:
     static Ref<EventTargetConcrete> create(ScriptExecutionContext&);

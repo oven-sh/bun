@@ -84,6 +84,6 @@ else
         }
     };
 
-extern "C" fn bun_cpu_features() u8;
+extern "c" fn bun_cpu_features() u8;
 
 const assert = bun.debugAssert;

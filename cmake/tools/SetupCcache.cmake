@@ -46,5 +46,6 @@ if(CI)
   # FIXME: Does not work on Ubuntu 18.04
   # setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,clang_index_store,gcno_cwd,include_file_ctime,include_file_mtime")
 else()
+  setenv(CCACHE_MAXSIZE 100G)
   setenv(CCACHE_SLOPPINESS "pch_defines,time_macros,locale,random_seed,clang_index_store,gcno_cwd")
 endif()

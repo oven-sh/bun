@@ -2,9 +2,96 @@
 **Note** — You don’t need `bun create` to use Bun. You don’t need any configuration at all. This command exists to make getting started a bit quicker and easier.
 {% /callout %}
 
-Template a new Bun project with `bun create`. This is a flexible command that can be used to create a new project with a `create-<template>` npm package, a GitHub repo, or a local template.
+Template a new Bun project with `bun create`. This is a flexible command that can be used to create a new project from a React component, a `create-<template>` npm package, a GitHub repo, or a local template.
 
 If you're looking to create a brand new empty project, use [`bun init`](https://bun.sh/docs/cli/init).
+
+## From a React component
+
+`bun create ./MyComponent.tsx` turns an existing React component into a complete dev environment with hot reload and production builds in one command.
+
+```bash
+$ bun create ./MyComponent.jsx # .tsx also supported
+```
+
+{% raw %}
+
+<video style="aspect-ratio: 2062 / 1344; width: 100%; height: 100%; object-fit: contain;"  loop autoplay muted playsinline>
+  <source src="/bun-create-shadcn.mp4" style="width: 100%; height: 100%; object-fit: contain;" type="video/mp4">
+</video>
+
+{% /raw %}
+
+{% callout %}
+🚀 **Create React App Successor** — `bun create <component>` provides everything developers loved about Create React App, but with modern tooling, faster builds, and backend support.
+{% /callout %}
+
+#### How this works
+
+When you run `bun create <component>`, Bun:
+
+1. Uses [Bun's JavaScript bundler](https://bun.sh/docs/bundler) to analyze your module graph.
+2. Collects all the dependencies needed to run the component.
+3. Scans the exports of the entry point for a React component.
+4. Generates a `package.json` file with the dependencies and scripts needed to run the component.
+5. Installs any missing dependencies using [`bun install --only-missing`](https://bun.sh/docs/cli/install).
+6. Generates the following files:
+   - `${component}.html`
+   - `${component}.client.tsx` (entry point for the frontend)
+   - `${component}.css` (css file)
+7. Starts a frontend dev server automatically.
+
+### Using TailwindCSS with Bun
+
+[TailwindCSS](https://tailwindcss.com/) is an extremely popular utility-first CSS framework used to style web applications.
+
+When you run `bun create <component>`, Bun scans your JSX/TSX file for TailwindCSS class names (and any files it imports). If it detects TailwindCSS class names, it will add the following dependencies to your `package.json`:
+
+```json#package.json
+{
+  "dependencies": {
+    "tailwindcss": "^4",
+    "bun-plugin-tailwind": "latest"
+  }
+}
+```
+
+We also configure `bunfig.toml` to use Bun's TailwindCSS plugin with `Bun.serve()`
+
+```toml#bunfig.toml
+[serve.static]
+plugins = ["bun-plugin-tailwind"]
+```
+
+And a `${component}.css` file with `@import "tailwindcss";` at the top:
+
+```css#MyComponent.css
+@import "tailwindcss";
+```
+
+### Using `shadcn/ui` with Bun
+
+[`shadcn/ui`](https://ui.shadcn.com/) is an extremely popular component library tool for building web applications.
+
+`bun create <component>` scans for any shadcn/ui components imported from `@/components/ui`.
+
+If it finds any, it runs:
+
+```bash
+# Assuming bun detected imports to @/components/ui/accordion and @/components/ui/button
+$ bunx shadcn@canary add accordion button # and any other components
+```
+
+Since `shadcn/ui` itself uses TailwindCSS, `bun create` also adds the necessary TailwindCSS dependencies to your `package.json` and configures `bunfig.toml` to use Bun's TailwindCSS plugin with `Bun.serve()` as described above.
+
+Additionally, we setup the following:
+
+- `tsconfig.json` to alias `"@/*"` to `"src/*"` or `.` (depending on if there is a `src/` directory)
+- `components.json` so that shadcn/ui knows its a shadcn/ui project
+- `styles/globals.css` file that configures Tailwind v4 in the way that shadcn/ui expects
+- `${component}.build.ts` file that builds the component for production with `bun-plugin-tailwind` configured
+
+`bun create ./MyComponent.jsx` is one of the easiest ways to run code generated from LLMs like [Claude](https://claude.ai) or ChatGPT locally.
 
 ## From `npm`
 

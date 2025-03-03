@@ -35,4 +35,9 @@ if (cluster.isPrimary) {
   });
 
   socket.bind(common.mustNotCall('Socket should not bind.'));
+
+  setTimeout(() => {
+    console.error("Timed out");
+    process.exit(1);
+  }, 5000).unref();
 }

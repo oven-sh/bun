@@ -457,6 +457,7 @@ struct us_socket_t* us_socket_open(int ssl, struct us_socket_t * s, int is_clien
     return s;
 }
 
+
 int us_socket_raw_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {

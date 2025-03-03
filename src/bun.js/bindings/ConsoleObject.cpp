@@ -39,7 +39,7 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
             client->messageWithTypeAndLevel(type, level, globalObject, arguments.copyRef());
         }
     }
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto args = arguments.ptr();
     JSC__JSValue jsArgs[255];
 

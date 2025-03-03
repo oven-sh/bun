@@ -42,8 +42,8 @@
 #endif
 
 #ifdef BUN_DEBUG
-#define nonnull_fn_decl 
-#else 
+#define nonnull_fn_decl
+#else
 #ifndef nonnull_fn_decl
 #define nonnull_fn_decl __attribute__((nonnull))
 #endif
@@ -98,8 +98,10 @@ enum {
     LIBUS_SOCKET_ALLOW_HALF_OPEN = 2,
     /* Setting reusePort allows multiple sockets on the same host to bind to the same port. Incoming connections are distributed by the operating system to listening sockets. This option is available only on some platforms, such as Linux 3.9+, DragonFlyBSD 3.6+, FreeBSD 12.0+, Solaris 11.4, and AIX 7.2.5+*/
     LIBUS_LISTEN_REUSE_PORT = 4,
-    /* etting ipv6Only will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound.*/
+    /* Setting ipv6Only will disable dual-stack support, i.e., binding to host :: won't make 0.0.0.0 be bound.*/
     LIBUS_SOCKET_IPV6_ONLY = 8,
+    LIBUS_LISTEN_REUSE_ADDR = 16,
+    LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE = 32,
 };
 
 /* Library types publicly available */
@@ -153,9 +155,11 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, void *user);
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), const char *host, unsigned short port, int flags, int *err, void *user);
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
+
+int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -223,11 +227,11 @@ struct us_bun_socket_context_options_t {
     const char *ssl_ciphers;
     int ssl_prefer_low_memory_usage; /* Todo: rename to prefer_low_memory_usage and apply for TCP as well */
     const char **key;
-    unsigned int key_count; 
+    unsigned int key_count;
     const char **cert;
-    unsigned int cert_count; 
+    unsigned int cert_count;
     const char **ca;
-    unsigned int ca_count; 
+    unsigned int ca_count;
     unsigned int secure_options;
     int reject_unauthorized;
     int request_cert;
@@ -310,7 +314,7 @@ struct us_listen_socket_t *us_socket_context_listen_unix(int ssl, us_socket_cont
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /*
-    Returns one of 
+    Returns one of
     - struct us_socket_t * - indicated by the value at on_connecting being set to 1
       This is the fast path where the DNS result is available immediately and only a single remote
       address is available

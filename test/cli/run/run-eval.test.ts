@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -42,6 +42,27 @@ for (const flag of ["-e", "--print"]) {
       });
       expect(stderr.toString("utf8")).toInclude('"hi" as 2');
       expect(stderr.toString("utf8")).toInclude("Unexpected throw");
+    });
+
+    test("process.argv", async () => {
+      function testProcessArgv(args: string[], expected: string[]) {
+        const input = flag === "--print" ? "process.argv" : "console.log(process.argv)";
+        let { stdout, stderr, exitCode } = Bun.spawnSync({
+          cmd: [bunExe(), flag, input, ...args],
+          env: bunEnv,
+        });
+
+        expect(stderr.toString("utf8")).toBe("");
+        expect(JSON.parse(stdout.toString("utf8"))).toEqual(expected);
+        expect(exitCode).toBe(0);
+      }
+
+      // replace the trailin
+      const exe = isWindows ? bunExe().replaceAll("/", "\\") : bunExe();
+      testProcessArgv([], [exe]);
+      testProcessArgv(["abc", "def"], [exe, "abc", "def"]);
+      testProcessArgv(["--", "abc", "def"], [exe, "abc", "def"]);
+      // testProcessArgv(["--", "abc", "--", "def"], [exe, "abc", "--", "def"]);
     });
   });
 }
@@ -112,6 +133,12 @@ function group(run: (code: string) => SyncSubprocess<"pipe", "inherit">) {
         console.log(process.platform);
       `);
     expect(stdout.toString("utf8")).toEqual(process.platform + "\n");
+  });
+
+  test("process.argv", async () => {
+    const { stdout } = run("console.log(process.argv)");
+    const exe = isWindows ? bunExe().replaceAll("/", "\\") : bunExe();
+    expect(JSON.parse(stdout.toString("utf8"))).toEqual([exe, "-"]);
   });
 }
 

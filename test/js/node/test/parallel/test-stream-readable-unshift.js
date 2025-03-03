@@ -156,9 +156,9 @@ const { Readable } = require('stream');
       // Remove the 'readable' listener before unshifting
       stream.removeListener('readable', onRead);
       stream.unshift('a');
-      stream.on('data', (chunk) => {
-        console.log(chunk.length);
-      });
+      stream.on('data', common.mustCall((chunk) => {
+        // console.log(chunk.length);
+      }, 50));
       break;
     }
   }

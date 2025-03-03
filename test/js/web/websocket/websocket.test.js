@@ -817,3 +817,11 @@ describe("websocket in subprocess", () => {
     expect(await subprocess.exited).toBe(0);
   });
 });
+
+it("#16995", async () => {
+  const publicAddress = new URL("https://1.1.1.1:3000");
+  for (let i = 0; i < 4096; i++) {
+    const socket = new WebSocket(publicAddress.toString());
+    socket.close();
+  }
+});

@@ -12,10 +12,11 @@
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(EventEmitter);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(EventEmitter);
 
 Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
 {

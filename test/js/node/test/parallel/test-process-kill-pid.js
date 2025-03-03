@@ -39,13 +39,7 @@ const assert = require('assert');
 //
 // process.pid, String(process.pid): ourself
 
-assert.throws(() => process.kill('SIGTERM'), {
-  code: 'ERR_INVALID_ARG_TYPE',
-  name: 'TypeError',
-  message: 'The "pid" argument must be of type number. Received type string ("SIGTERM")'
-});
-
-[null, undefined, NaN, Infinity, -Infinity].forEach((val) => {
+[null, undefined, NaN, Infinity, -Infinity, 'SIGTERM'].forEach((val) => {
   assert.throws(() => process.kill(val), {
     code: 'ERR_INVALID_ARG_TYPE',
     name: 'TypeError',

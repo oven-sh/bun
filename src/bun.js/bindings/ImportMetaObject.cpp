@@ -55,7 +55,7 @@ using namespace WebCore;
 
 static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const WTF::String& fromStr)
 {
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     switch (callFrame->argumentCount()) {
@@ -183,7 +183,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireResolve, (JSC::JSGlobalObject * global
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     JSValue thisValue = callFrame->thisValue();
@@ -275,7 +275,7 @@ extern "C" bool Bun__isBunMain(JSC::JSGlobalObject* global, const BunString*);
 
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
@@ -346,7 +346,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
     auto thisValue = callFrame->thisValue();

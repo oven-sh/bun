@@ -8,7 +8,6 @@ const String = bun.String;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
 const strings = bun.strings;
-const is_bindgen = JSC.is_bindgen;
 const ZigException = JSC.ZigException;
 const ZigString = JSC.ZigString;
 const VirtualMachine = JSC.VirtualMachine;
@@ -104,10 +103,6 @@ fn messageWithTypeAndLevel_(
     vals: [*]const JSValue,
     len: usize,
 ) bun.JSError!void {
-    if (comptime is_bindgen) {
-        return;
-    }
-
     var console = global.bunVM().console;
     defer console.default_indent +|= @as(u16, @intFromBool(message_type == .StartGroup));
 
@@ -185,6 +180,11 @@ fn messageWithTypeAndLevel_(
         .add_newline = true,
         .flush = true,
         .default_indent = console.default_indent,
+        .error_display_level = switch (level) {
+            .Error => .full,
+            else => .normal,
+            .Warning => .warn,
+        },
     };
 
     if (message_type == .Table and len >= 1) {
@@ -542,7 +542,7 @@ pub const TablePrinter = struct {
             var properties_iter = JSC.JSArrayIterator.init(this.properties, globalObject);
             while (properties_iter.next()) |value| {
                 try columns.append(.{
-                    .name = value.toBunString(globalObject),
+                    .name = try value.toBunString(globalObject),
                 });
             }
         }
@@ -676,6 +676,7 @@ pub fn writeTrace(comptime Writer: type, writer: Writer, global: *JSGlobalObject
         null,
         &holder.need_to_clear_parser_arena_on_deinit,
         &source_code_slice,
+        false,
     );
 
     if (Output.enable_ansi_colors_stderr)
@@ -703,6 +704,59 @@ pub const FormatOptions = struct {
     max_depth: u16 = 2,
     single_line: bool = false,
     default_indent: u16 = 0,
+    error_display_level: ErrorDisplayLevel = .full,
+    pub const ErrorDisplayLevel = enum {
+        normal,
+        warn,
+        full,
+
+        const Formatter = struct {
+            name: bun.String,
+            level: ErrorDisplayLevel,
+            enable_colors: bool,
+            colon: Colon,
+            pub fn format(this: @This(), comptime _: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+                if (this.enable_colors) {
+                    switch (this.level) {
+                        .normal => try writer.writeAll(Output.prettyFmt("<r>", true)),
+                        .warn => try writer.writeAll(Output.prettyFmt("<r><yellow>", true)),
+                        .full => try writer.writeAll(Output.prettyFmt("<r><red>", true)),
+                    }
+                }
+
+                if (!this.name.isEmpty()) {
+                    try this.name.format("", opts, writer);
+                } else if (this.level == .warn) {
+                    try writer.writeAll("warn");
+                } else {
+                    try writer.writeAll("error");
+                }
+
+                if (this.colon == .exclude_colon) {
+                    if (this.enable_colors) {
+                        try writer.writeAll(Output.prettyFmt("<r>", true));
+                    }
+                    return;
+                }
+
+                if (this.enable_colors) {
+                    try writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true));
+                } else {
+                    try writer.writeAll(": ");
+                }
+            }
+        };
+
+        pub const Colon = enum { include_colon, exclude_colon };
+        pub fn formatter(this: ErrorDisplayLevel, error_name: bun.String, enable_colors: bool, colon: Colon) ErrorDisplayLevel.Formatter {
+            return .{
+                .name = error_name,
+                .level = this,
+                .enable_colors = enable_colors,
+                .colon = colon,
+            };
+        }
+    };
 
     pub fn fromJS(formatOptions: *FormatOptions, globalThis: *JSC.JSGlobalObject, arguments: []const JSC.JSValue) bun.JSError!void {
         const arg1 = arguments[0];
@@ -730,7 +784,6 @@ pub const FormatOptions = struct {
             if (try arg1.getBooleanLoose(globalThis, "sorted")) |opt| {
                 formatOptions.ordered_properties = opt;
             }
-
             if (try arg1.getBooleanLoose(globalThis, "compact")) |opt| {
                 formatOptions.single_line = opt;
             }
@@ -785,6 +838,7 @@ pub fn format2(
             .indent = options.default_indent,
             .stack_check = bun.StackCheck.init(),
             .can_throw_stack_overflow = true,
+            .error_display_level = options.error_display_level,
         };
         defer fmt.deinit();
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
@@ -868,6 +922,7 @@ pub fn format2(
         .indent = options.default_indent,
         .stack_check = bun.StackCheck.init(),
         .can_throw_stack_overflow = true,
+        .error_display_level = options.error_display_level,
     };
     defer fmt.deinit();
     var tag: ConsoleObject.Formatter.Tag.Result = undefined;
@@ -930,11 +985,12 @@ const CustomFormattedObject = struct {
 };
 
 pub const Formatter = struct {
+    globalThis: *JSGlobalObject,
+
     remaining_values: []const JSValue = &[_]JSValue{},
     map: Visited.Map = undefined,
     map_node: ?*Visited.Pool.Node = null,
     hide_native: bool = false,
-    globalThis: *JSGlobalObject,
     indent: u32 = 0,
     depth: u16 = 0,
     max_depth: u16 = 8,
@@ -949,6 +1005,7 @@ pub const Formatter = struct {
     disable_inspect_custom: bool = false,
     stack_check: bun.StackCheck = .{ .cached_stack_end = std.math.maxInt(usize) },
     can_throw_stack_overflow: bool = false,
+    error_display_level: FormatOptions.ErrorDisplayLevel = .full,
 
     pub fn deinit(this: *Formatter) void {
         if (bun.take(&this.map_node)) |node| {
@@ -1239,10 +1296,16 @@ pub const Formatter = struct {
             // Is this a react element?
             if (js_type.isObject() and js_type != .ProxyObject) {
                 if (value.getOwnTruthy(globalThis, "$$typeof")) |typeof_symbol| {
-                    var reactElement = ZigString.init("react.element");
+                    // React 18 and below
+                    var react_element_legacy = ZigString.init("react.element");
+                    // For React 19 - https://github.com/oven-sh/bun/issues/17223
+                    var react_element_transitional = ZigString.init("react.transitional.element");
                     var react_fragment = ZigString.init("react.fragment");
 
-                    if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &reactElement), globalThis) or JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis)) {
+                    if (JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_element_legacy), globalThis) or
+                        JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_element_transitional), globalThis) or
+                        JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis))
+                    {
                         return .{ .tag = .{ .JSX = {} }, .cell = js_type };
                     }
                 }
@@ -1484,7 +1547,7 @@ pub const Formatter = struct {
                                     1;
                                 this.addForNewLine(digits);
                             } else {
-                                this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                                this.addForNewLine(std.fmt.count("{d}", .{int}));
                             }
                             writer.print("{d}", .{int});
                         },
@@ -1519,7 +1582,7 @@ pub const Formatter = struct {
 
                             const abs = @abs(converted);
                             if (abs < max_before_e_notation and abs >= min_before_e_notation) {
-                                this.addForNewLine(bun.fmt.count("{d}", .{converted}));
+                                this.addForNewLine(std.fmt.count("{d}", .{converted}));
                                 writer.print("{d}", .{converted});
                             } else if (std.math.isNan(converted)) {
                                 this.addForNewLine("NaN".len);
@@ -2036,7 +2099,7 @@ pub const Formatter = struct {
 
         switch (comptime Format) {
             .StringPossiblyFormatted => {
-                var str = value.toSlice(this.globalThis, bun.default_allocator);
+                var str = try value.toSlice(this.globalThis, bun.default_allocator);
                 defer str.deinit();
                 this.addForNewLine(str.len);
                 const slice = str.slice();
@@ -2108,12 +2171,12 @@ pub const Formatter = struct {
                         1;
                     this.addForNewLine(digits);
                 } else {
-                    this.addForNewLine(bun.fmt.count("{d}", .{int}));
+                    this.addForNewLine(std.fmt.count("{d}", .{int}));
                 }
                 writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
             },
             .BigInt => {
-                const out_str = value.getZigString(this.globalThis).slice();
+                const out_str = (try value.getZigString(this.globalThis)).slice();
                 this.addForNewLine(out_str.len);
 
                 writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
@@ -2124,7 +2187,7 @@ pub const Formatter = struct {
                     value.getClassName(this.globalThis, &number_name);
 
                     var number_value = ZigString.Empty;
-                    value.toZigString(&number_value, this.globalThis);
+                    try value.toZigString(&number_value, this.globalThis);
 
                     if (!strings.eqlComptime(number_name.slice(), "Number")) {
                         this.addForNewLine(number_name.len + number_value.len + "[Number ():]".len);
@@ -2200,7 +2263,7 @@ pub const Formatter = struct {
                     this.addForNewLine(description.len + "()".len);
                     writer.print(comptime Output.prettyFmt("<r><blue>Symbol({any})<r>", enable_ansi_colors), .{description});
                 } else {
-                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol<r>", enable_ansi_colors), .{});
+                    writer.print(comptime Output.prettyFmt("<r><blue>Symbol()<r>", enable_ansi_colors), .{});
                 }
             },
             .Error => {
@@ -2478,7 +2541,7 @@ pub const Formatter = struct {
                     response.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.WebCore.Request)) |request| {
-                    request.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
+                    request.writeFormat(value, ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
                     return;
                 } else if (value.as(JSC.API.BuildArtifact)) |build| {
                     build.writeFormat(ConsoleObject.Formatter, this, writer_, enable_ansi_colors) catch {};
@@ -2526,18 +2589,25 @@ pub const Formatter = struct {
 
                     // this case should never happen
                     return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
-                } else if (value.as(JSC.API.Bun.Timer.TimerObject)) |timer| {
-                    this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
-                    if (timer.kind == .setInterval) {
-                        this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.id, 0)))));
+                } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
+                    this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
+                    if (timer.internals.kind == .setInterval) {
+                        this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
                         writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
-                            timer.id,
+                            timer.internals.id,
                         });
                     } else {
                         writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
-                            timer.id,
+                            timer.internals.id,
                         });
                     }
+
+                    return;
+                } else if (value.as(JSC.API.Bun.Timer.ImmediateObject)) |immediate| {
+                    this.addForNewLine("Immediate(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(immediate.internals.id, 0)))));
+                    writer.print(comptime Output.prettyFmt("<r><blue>Immediate<r> <d>(#<yellow>{d}<r><d>)<r>", enable_ansi_colors), .{
+                        immediate.internals.id,
+                    });
 
                     return;
                 } else if (value.as(JSC.BuildMessage)) |build_log| {
@@ -2589,7 +2659,7 @@ pub const Formatter = struct {
                     var bool_name = ZigString.Empty;
                     value.getClassName(this.globalThis, &bool_name);
                     var bool_value = ZigString.Empty;
-                    value.toZigString(&bool_value, this.globalThis);
+                    try value.toZigString(&bool_value, this.globalThis);
 
                     if (!strings.eqlComptime(bool_name.slice(), "Boolean")) {
                         this.addForNewLine(bool_value.len + bool_name.len + "[Boolean (): ]".len);
@@ -2947,7 +3017,7 @@ pub const Formatter = struct {
                     });
 
                     if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
-                        type_value.toZigString(&tag_name_str, this.globalThis);
+                        try type_value.toZigString(&tag_name_str, this.globalThis);
                         is_tag_kind_primitive = true;
                     } else if (_tag.cell.isObject() or type_value.isCallable(this.globalThis.vm())) {
                         type_value.getNameProperty(this.globalThis, &tag_name_str);
@@ -2955,7 +3025,7 @@ pub const Formatter = struct {
                             tag_name_str = ZigString.init("NoName");
                         }
                     } else {
-                        type_value.toZigString(&tag_name_str, this.globalThis);
+                        try type_value.toZigString(&tag_name_str, this.globalThis);
                     }
 
                     tag_name_slice = tag_name_str.toSlice(default_allocator);
@@ -3077,7 +3147,7 @@ pub const Formatter = struct {
                                 print_children: {
                                     switch (tag.tag) {
                                         .String => {
-                                            const children_string = children.getZigString(this.globalThis);
+                                            const children_string = try children.getZigString(this.globalThis);
                                             if (children_string.len == 0) break :print_children;
                                             if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
@@ -3262,86 +3332,88 @@ pub const Formatter = struct {
                     else
                         bun.asByteSlice(@tagName(arrayBuffer.typed_array_type)),
                 );
+                if (slice.len == 0) {
+                    writer.print("({d}) []", .{arrayBuffer.len});
+                    return;
+                }
                 writer.print("({d}) [ ", .{arrayBuffer.len});
 
-                if (slice.len > 0) {
-                    switch (jsType) {
-                        .Int8Array => this.writeTypedArray(
+                switch (jsType) {
+                    .Int8Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i8,
+                        @alignCast(std.mem.bytesAsSlice(i8, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Int16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i16,
+                        @alignCast(std.mem.bytesAsSlice(i16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Uint16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        u16,
+                        @alignCast(std.mem.bytesAsSlice(u16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Int32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i32,
+                        @alignCast(std.mem.bytesAsSlice(i32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Uint32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        u32,
+                        @alignCast(std.mem.bytesAsSlice(u32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float16Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f16,
+                        @alignCast(std.mem.bytesAsSlice(f16, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float32Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f32,
+                        @alignCast(std.mem.bytesAsSlice(f32, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .Float64Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        f64,
+                        @alignCast(std.mem.bytesAsSlice(f64, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .BigInt64Array => this.writeTypedArray(
+                        *@TypeOf(writer),
+                        &writer,
+                        i64,
+                        @alignCast(std.mem.bytesAsSlice(i64, slice)),
+                        enable_ansi_colors,
+                    ),
+                    .BigUint64Array => {
+                        this.writeTypedArray(
                             *@TypeOf(writer),
                             &writer,
-                            i8,
-                            @as([]align(std.meta.alignment([]i8)) i8, @alignCast(std.mem.bytesAsSlice(i8, slice))),
+                            u64,
+                            @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
                             enable_ansi_colors,
-                        ),
-                        .Int16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i16,
-                            @as([]align(std.meta.alignment([]i16)) i16, @alignCast(std.mem.bytesAsSlice(i16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Uint16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            u16,
-                            @as([]align(std.meta.alignment([]u16)) u16, @alignCast(std.mem.bytesAsSlice(u16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Int32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i32,
-                            @as([]align(std.meta.alignment([]i32)) i32, @alignCast(std.mem.bytesAsSlice(i32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Uint32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            u32,
-                            @as([]align(std.meta.alignment([]u32)) u32, @alignCast(std.mem.bytesAsSlice(u32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float16Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f16,
-                            @as([]align(std.meta.alignment([]f16)) f16, @alignCast(std.mem.bytesAsSlice(f16, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float32Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f32,
-                            @as([]align(std.meta.alignment([]f32)) f32, @alignCast(std.mem.bytesAsSlice(f32, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .Float64Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            f64,
-                            @as([]align(std.meta.alignment([]f64)) f64, @alignCast(std.mem.bytesAsSlice(f64, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .BigInt64Array => this.writeTypedArray(
-                            *@TypeOf(writer),
-                            &writer,
-                            i64,
-                            @as([]align(std.meta.alignment([]i64)) i64, @alignCast(std.mem.bytesAsSlice(i64, slice))),
-                            enable_ansi_colors,
-                        ),
-                        .BigUint64Array => {
-                            this.writeTypedArray(
-                                *@TypeOf(writer),
-                                &writer,
-                                u64,
-                                @as([]align(std.meta.alignment([]u64)) u64, @alignCast(std.mem.bytesAsSlice(u64, slice))),
-                                enable_ansi_colors,
-                            );
-                        },
+                        );
+                    },
 
-                        // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
-                        else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
-                    }
+                    // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
+                    else => this.writeTypedArray(*@TypeOf(writer), &writer, u8, slice, enable_ansi_colors),
                 }
 
                 writer.writeAll(" ]");
@@ -3374,7 +3446,7 @@ pub const Formatter = struct {
             "<r><d>, ... {d} more<r>";
 
         writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{
-            if (@typeInfo(Number) == .Float) bun.fmt.double(@floatCast(slice[0])) else slice[0],
+            if (@typeInfo(Number) == .float) bun.fmt.double(@floatCast(slice[0])) else slice[0],
         });
         var leftover = slice[1..];
         const max = 512;
@@ -3384,7 +3456,7 @@ pub const Formatter = struct {
             writer.space();
 
             writer.print(comptime Output.prettyFmt(fmt_, enable_ansi_colors), .{
-                if (@typeInfo(Number) == .Float) bun.fmt.double(@floatCast(el)) else el,
+                if (@typeInfo(Number) == .float) bun.fmt.double(@floatCast(el)) else el,
             });
         }
 
@@ -3627,17 +3699,17 @@ pub fn screenshot(
 ) callconv(JSC.conv) void {}
 
 comptime {
-    @export(messageWithTypeAndLevel, .{ .name = shim.symbolName("messageWithTypeAndLevel") });
-    @export(count, .{ .name = shim.symbolName("count") });
-    @export(countReset, .{ .name = shim.symbolName("countReset") });
-    @export(time, .{ .name = shim.symbolName("time") });
-    @export(timeLog, .{ .name = shim.symbolName("timeLog") });
-    @export(timeEnd, .{ .name = shim.symbolName("timeEnd") });
-    @export(profile, .{ .name = shim.symbolName("profile") });
-    @export(profileEnd, .{ .name = shim.symbolName("profileEnd") });
-    @export(takeHeapSnapshot, .{ .name = shim.symbolName("takeHeapSnapshot") });
-    @export(timeStamp, .{ .name = shim.symbolName("timeStamp") });
-    @export(record, .{ .name = shim.symbolName("record") });
-    @export(recordEnd, .{ .name = shim.symbolName("recordEnd") });
-    @export(screenshot, .{ .name = shim.symbolName("screenshot") });
+    @export(&messageWithTypeAndLevel, .{ .name = shim.symbolName("messageWithTypeAndLevel") });
+    @export(&count, .{ .name = shim.symbolName("count") });
+    @export(&countReset, .{ .name = shim.symbolName("countReset") });
+    @export(&time, .{ .name = shim.symbolName("time") });
+    @export(&timeLog, .{ .name = shim.symbolName("timeLog") });
+    @export(&timeEnd, .{ .name = shim.symbolName("timeEnd") });
+    @export(&profile, .{ .name = shim.symbolName("profile") });
+    @export(&profileEnd, .{ .name = shim.symbolName("profileEnd") });
+    @export(&takeHeapSnapshot, .{ .name = shim.symbolName("takeHeapSnapshot") });
+    @export(&timeStamp, .{ .name = shim.symbolName("timeStamp") });
+    @export(&record, .{ .name = shim.symbolName("record") });
+    @export(&recordEnd, .{ .name = shim.symbolName("recordEnd") });
+    @export(&screenshot, .{ .name = shim.symbolName("screenshot") });
 }

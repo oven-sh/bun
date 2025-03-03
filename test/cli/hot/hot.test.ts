@@ -495,7 +495,7 @@ it(
 throw new Error('0');`,
     );
     await using bundler = spawn({
-      cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap", "--outfile", hotRunnerRoot],
+      cmd: [bunExe(), "build", "--watch", bundleIn, "--target=bun", "--sourcemap=inline", "--outfile", hotRunnerRoot],
       env: bunEnv,
       cwd,
       stdout: "inherit",
@@ -523,7 +523,8 @@ ${" ".repeat(reloadCounter * 2)}throw new Error(${reloadCounter});`,
     }
     let str = "";
     outer: for await (const chunk of runner.stderr) {
-      str += new TextDecoder().decode(chunk);
+      const s = new TextDecoder().decode(chunk);
+      str += s;
       var any = false;
       if (!/error: .*[0-9]\n.*?\n/g.test(str)) continue;
 
@@ -582,7 +583,7 @@ throw new Error('0');`,
         "--watch",
         bundleIn,
         "--target=bun",
-        "--sourcemap",
+        "--sourcemap=inline",
         "--outfile",
         hotRunnerRoot,
       ],

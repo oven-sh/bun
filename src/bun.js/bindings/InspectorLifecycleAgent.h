@@ -18,6 +18,7 @@ enum class DisconnectReason;
 
 class InspectorLifecycleAgent final : public InspectorAgentBase, public Inspector::LifecycleReporterBackendDispatcherHandler {
     WTF_MAKE_NONCOPYABLE(InspectorLifecycleAgent);
+    WTF_MAKE_TZONE_ALLOCATED(InspectorLifecycleAgent);
 
 public:
     InspectorLifecycleAgent(JSC::JSGlobalObject&);

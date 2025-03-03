@@ -156,8 +156,8 @@ pub const C_Generator = struct {
                     comptime nonnull.append(i) catch unreachable;
                 },
                 else => |info| {
-                    if (comptime info == .Pointer and @typeInfo(info.Pointer.child) == .Fn) {
-                        self.gen_closure(comptime info.Pointer.child, comptime std.fmt.comptimePrint(" ArgFn{d}", .{i}));
+                    if (comptime info == .pointer and @typeInfo(info.pointer.child) == .Fn) {
+                        self.gen_closure(comptime info.pointer.child, comptime std.fmt.comptimePrint(" ArgFn{d}", .{i}));
                         comptime nonnull.append(i) catch unreachable;
                     } else {
                         self.writeType(comptime arg.type.?);
@@ -189,7 +189,7 @@ pub const C_Generator = struct {
         defer self.write(";\n");
         // const ReturnTypeInfo: std.builtin.Type = comptime @typeInfo(func.return_type);
         // switch (comptime ReturnTypeInfo) {
-        //     .Pointer => |Pointer| {
+        //     .pointer => |Pointer| {
         //         self.write(" __attribute__((returns_nonnull))");
         //     },
         //     .Optional => |Optional| {},
@@ -226,7 +226,7 @@ pub const C_Generator = struct {
         self.write(")");
         // const ReturnTypeInfo: std.builtin.Type = comptime @typeInfo(func.return_type);
         // switch (comptime ReturnTypeInfo) {
-        //     .Pointer => |Pointer| {
+        //     .pointer => |Pointer| {
         //         self.write(" __attribute__((returns_nonnull))");
         //     },
         //     .Optional => |Optional| {},
@@ -344,16 +344,16 @@ pub const C_Generator = struct {
                     Type = OtherType;
                 }
             }
-            if (@typeInfo(Type) == .Pointer and !std.meta.isManyItemPtr(Type)) {
-                Type = @typeInfo(Type).Pointer.child;
+            if (@typeInfo(Type) == .pointer and !std.meta.isManyItemPtr(Type)) {
+                Type = @typeInfo(Type).pointer.child;
             }
 
             break :brk Type;
         };
 
         if (comptime (isCppObject(TT)) and @hasDecl(TT, "name")) {
-            if (@typeInfo(T) == .Pointer or (@hasDecl(TT, "Type") and (@TypeOf(TT.Type) == type and @typeInfo(TT.Type) == .Pointer))) {
-                if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {} else if (@typeInfo(T).Pointer.is_const) {
+            if (@typeInfo(T) == .pointer or (@hasDecl(TT, "Type") and (@TypeOf(TT.Type) == type and @typeInfo(TT.Type) == .pointer))) {
+                if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {} else if (@typeInfo(T).pointer.is_const) {
                     write(self, "const ");
                 }
             }
@@ -401,7 +401,7 @@ pub const C_Generator = struct {
                 write(self, comptime formatted_name);
             }
 
-            if (@typeInfo(T) == .Pointer or (@hasDecl(TT, "Type") and (@TypeOf(TT.Type) == type and @typeInfo(TT.Type) == .Pointer))) {
+            if (@typeInfo(T) == .pointer or (@hasDecl(TT, "Type") and (@TypeOf(TT.Type) == type and @typeInfo(TT.Type) == .pointer))) {
                 if (@hasDecl(TT, "is_pointer") and !TT.is_pointer) {} else {
                     write(self, "*");
                 }
@@ -414,7 +414,7 @@ pub const C_Generator = struct {
         } else {
             const meta = @typeInfo(T);
             switch (meta) {
-                .Pointer => |Pointer| {
+                .pointer => |Pointer| {
                     const child = Pointer.child;
                     // if (childmeta == .Struct and childmeta.Struct.layout != .Extern) {
                     //     self.write("void");
@@ -619,9 +619,9 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\//-- GENERATED FILE. Do not edit --
                 \\//
                 \\//   To regenerate this file, run:
-                \\//   
+                \\//
                 \\//      make headers
-                \\// 
+                \\//
                 \\//-- GENERATED FILE. Do not edit --
                 \\
             ) catch unreachable;
@@ -663,9 +663,9 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 \\//-- GENERATED FILE. Do not edit --
                 \\//
                 \\//   To regenerate this file, run:
-                \\//   
+                \\//
                 \\//      make headers
-                \\// 
+                \\//
                 \\//-- GENERATED FILE. Do not edit --
                 \\
             ) catch unreachable;
@@ -726,8 +726,8 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 all_types[1] = second_import;
                 var counter: usize = 2;
                 inline for (first_import.DOMCalls) |Type_| {
-                    const Type = if (@typeInfo(@TypeOf(Type_)) == .Pointer)
-                        @typeInfo(@TypeOf(Type_)).Pointer.child
+                    const Type = if (@typeInfo(@TypeOf(Type_)) == .pointer)
+                        @typeInfo(@TypeOf(Type_)).pointer.child
                     else
                         @TypeOf(Type_);
 
@@ -742,8 +742,8 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             };
 
             inline for (first_import.DOMCalls) |Type_| {
-                const Type = if (@typeInfo(@TypeOf(Type_)) == .Pointer)
-                    @typeInfo(@TypeOf(Type_)).Pointer.child
+                const Type = if (@typeInfo(@TypeOf(Type_)) == .pointer)
+                    @typeInfo(@TypeOf(Type_)).pointer.child
                 else
                     @TypeOf(Type_);
 
@@ -962,16 +962,16 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
             generated.writer().print(
                 \\ #include "root.h"
                 \\ #include "headers.h"
-                \\ 
+                \\
                 \\ #include <JavaScriptCore/DOMJITAbstractHeap.h>
                 \\ #include "DOMJITIDLConvert.h"
                 \\ #include "DOMJITIDLType.h"
                 \\ #include "DOMJITIDLTypeFilter.h"
                 \\ #include "DOMJITHelpers.h"
                 \\ #include <JavaScriptCore/DFGAbstractHeap.h>
-                \\ 
+                \\
                 \\ #include "JSDOMConvertBufferSource.h"
-                \\ 
+                \\
                 \\ using namespace JSC;
                 \\ using namespace WebCore;
                 \\

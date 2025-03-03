@@ -2,7 +2,7 @@
 name: Debugging
 ---
 
-Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-types/jsc.d.ts), so you can debug your code with an interactive debugger. For demonstration purposes, consider the following simple web server.
+Bun speaks the [WebKit Inspector Protocol](https://github.com/oven-sh/bun/blob/main/packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts), so you can debug your code with an interactive debugger. For demonstration purposes, consider the following simple web server.
 
 ## Debugging JavaScript and TypeScript
 
@@ -192,7 +192,7 @@ This prints the following to the console:
 
 Bun transpiles every file, which sounds like it would mean that the stack traces you see in the console would unhelpfully point to the transpiled output. To address this, Bun automatically generates and serves sourcemapped files for every file it transpiles. When you see a stack trace in the console, you can click on the file path and be taken to the original source code, even though it was written in TypeScript or JSX, or has some other transformation applied.
 
-<!-- TODO: uncomment once v1.1.13 regression is fixed (cc @paperdave) -->
+<!-- TODO: uncomment once v1.1.13 regression is fixed (cc @paperclover) -->
 <!-- In Bun, each `Error` object gets four additional properties:
 
 - `line` — the source-mapped line number. This number points to the input source code, not the transpiled output.

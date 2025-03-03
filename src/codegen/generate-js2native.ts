@@ -236,7 +236,7 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
       .flatMap(x => {
         const base = basename(x.filename.replace(/\.bind\.ts$/, ""));
         return [
-          `    @export(bun.gen.${base}.create${cap(x.symbol)}Callback, .{ .name = ${JSON.stringify(
+          `    @export(&bun.gen.${base}.create${cap(x.symbol)}Callback, .{ .name = ${JSON.stringify(
             `js2native_bindgen_${base}_${x.symbol}`,
           )} });`,
         ];

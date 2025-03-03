@@ -6,14 +6,15 @@ import $ from 'chalk';
 await init();
 
 enum InternalImportKind {
-    'entry-point' = 1, // entry_point
-    'import-statement' = 2, // stmt
-    'require-call' = 3, // require
-    'dynamic-import' = 4, // dynamic
-    'require-resolve' = 5, // require_resolve
-    'import-rule' = 6, // at
-    'url-token' = 7, // url
-    'internal' = 8, // internal
+    'entry-point-run' = 1, // entry_point_run
+    'entry-point-build' = 2, // entry_point_build
+    'import-statement' = 3, // stmt
+    'require-call' = 4, // require
+    'dynamic-import' = 5, // dynamic
+    'require-resolve' = 6, // require_resolve
+    'import-rule' = 7, // at
+    'url-token' = 8, // url
+    'internal' = 9, // internal
 }
 
 export type ScanImportsEntry = {

@@ -13,13 +13,14 @@ beforeEach(async () => {
 
 describe("should not crash", async () => {
   const args = [
+    [bunExe(), "create"],
     [bunExe(), "create", ""],
     [bunExe(), "create", "--"],
     [bunExe(), "create", "--", ""],
     [bunExe(), "create", "--help"],
   ];
   for (let cmd of args) {
-    it(JSON.stringify(cmd.slice(1).join(" ")), () => {
+    it(JSON.stringify(cmd.slice(1)), () => {
       const { exitCode } = spawnSync({
         cmd,
         cwd: x_dir,
@@ -28,7 +29,7 @@ describe("should not crash", async () => {
         stderr: "inherit",
         env,
       });
-      expect(exitCode).toBe(cmd.length === 3 && cmd.at(-1) === "" ? 1 : 0);
+      expect(exitCode).toBe(cmd.length === 2 ? 1 : 0);
     });
   }
 });

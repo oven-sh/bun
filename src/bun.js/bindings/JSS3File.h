@@ -11,7 +11,7 @@ class JSS3File : public WebCore::JSBlob {
     using Base = WebCore::JSBlob;
 
 public:
-    static constexpr bool needsDestruction = true;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     JSS3File(JSC::VM& vm, Structure* structure, void* ptr)

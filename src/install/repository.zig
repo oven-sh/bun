@@ -8,7 +8,7 @@ const FileSystem = @import("../fs.zig").FileSystem;
 const Install = @import("./install.zig");
 const ExtractData = Install.ExtractData;
 const PackageManager = Install.PackageManager;
-const Semver = @import("./semver.zig");
+const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
 const std = @import("std");
@@ -110,7 +110,7 @@ const SloppyGlobalGitConfig = struct {
                 }
             } else {
                 if (!found_askpass) {
-                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["sshCommand".len]) {
+                    if (line.len > "core.askpass".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.askpass".len], "core.askpass") and switch (line["core.askpass".len]) {
                         ' ', '\t', '=' => true,
                         else => false,
                     }) {
@@ -120,7 +120,7 @@ const SloppyGlobalGitConfig = struct {
                 }
 
                 if (!found_ssh_command) {
-                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["sshCommand".len]) {
+                    if (line.len > "core.sshCommand".len and strings.eqlCaseInsensitiveASCIIIgnoreLength(line[0.."core.sshCommand".len], "core.sshCommand") and switch (line["core.sshCommand".len]) {
                         ' ', '\t', '=' => true,
                         else => false,
                     }) {

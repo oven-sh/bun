@@ -258,7 +258,6 @@ await Bun.build({
   conditions: ["react-server"],
   target: "bun",
   entryPoints: ["./app/foo/route.js"],
-  throw: true,
 });
 ```
 

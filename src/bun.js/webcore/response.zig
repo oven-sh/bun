@@ -273,13 +273,13 @@ pub const Response = struct {
 
         if (js_wrapper != .zero) {
             if (cloned.body.value == .Locked) {
-                if (cloned.body.value.Locked.readable.get()) |readable| {
+                if (cloned.body.value.Locked.readable.get(globalThis)) |readable| {
                     // If we are teed, then we need to update the cached .body
                     // value to point to the new readable stream
                     // We must do this on both the original and cloned response
                     // but especially the original response since it will have a stale .body value now.
                     Response.bodySetCached(js_wrapper, globalThis, readable.value);
-                    if (this.body.value.Locked.readable.get()) |other_readable| {
+                    if (this.body.value.Locked.readable.get(globalThis)) |other_readable| {
                         Response.bodySetCached(this_value, globalThis, other_readable.value);
                     }
                 }
@@ -454,7 +454,7 @@ pub const Response = struct {
             var url_string = ZigString.init("");
 
             if (@intFromEnum(url_string_value) != 0) {
-                url_string = url_string_value.getZigString(globalThis);
+                url_string = try url_string_value.getZigString(globalThis);
             }
             url_string_slice = url_string.toSlice(getAllocator(globalThis));
             var did_succeed = false;
@@ -849,10 +849,10 @@ pub const Fetch = struct {
         has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
-        abort_reason: JSC.Strong = .{},
+        abort_reason: JSC.Strong = .empty,
 
         // custom checkServerIdentity
-        check_server_identity: JSC.Strong = .{},
+        check_server_identity: JSC.Strong = .empty,
         reject_unauthorized: bool = true,
         // Custom Hostname
         hostname: ?[]u8 = null,
@@ -898,7 +898,7 @@ pub const Fetch = struct {
 
             pub const Empty: HTTPRequestBody = .{ .AnyBlob = .{ .Blob = .{} } };
 
-            pub fn store(this: *HTTPRequestBody) ?*JSC.WebCore.Blob.Store {
+            pub fn store(this: *HTTPRequestBody) ?*Blob.Store {
                 return switch (this.*) {
                     .AnyBlob => this.AnyBlob.store(),
                     else => null,
@@ -1092,7 +1092,7 @@ pub const Fetch = struct {
                 var readable_stream_ref = this.request_body.ReadableStream;
                 this.request_body.ReadableStream = .{};
                 defer readable_stream_ref.deinit();
-                if (readable_stream_ref.get()) |stream| {
+                if (readable_stream_ref.get(globalThis)) |stream| {
                     stream.done(globalThis);
                     this.clearSink();
                 }
@@ -1110,7 +1110,7 @@ pub const Fetch = struct {
                 var readable_stream_ref = this.request_body.ReadableStream;
                 this.request_body.ReadableStream = .{};
                 defer readable_stream_ref.deinit();
-                if (readable_stream_ref.get()) |stream| {
+                if (readable_stream_ref.get(globalThis)) |stream| {
                     stream.cancel(globalThis);
                     this.clearSink();
                 }
@@ -1127,15 +1127,15 @@ pub const Fetch = struct {
         });
         comptime {
             const jsonResolveRequestStream = JSC.toJSHostFunction(onResolveRequestStream);
-            @export(jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolveRequestStream, .{ .name = Export[0].symbol_name });
             const jsonRejectRequestStream = JSC.toJSHostFunction(onRejectRequestStream);
-            @export(jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
+            @export(&jsonRejectRequestStream, .{ .name = Export[1].symbol_name });
         }
 
         pub fn startRequestStream(this: *FetchTasklet) void {
             this.is_waiting_request_stream_start = false;
             bun.assert(this.request_body == .ReadableStream);
-            if (this.request_body.ReadableStream.get()) |stream| {
+            if (this.request_body.ReadableStream.get(this.global_this)) |stream| {
                 this.ref(); // lets only unref when sink is done
 
                 const globalThis = this.global_this;
@@ -1236,7 +1236,7 @@ pub const Fetch = struct {
                 var need_deinit = true;
                 defer if (need_deinit) err.deinit();
                 // if we are streaming update with error
-                if (this.readable_stream_ref.get()) |readable| {
+                if (this.readable_stream_ref.get(globalThis)) |readable| {
                     if (readable.ptr == .Bytes) {
                         readable.ptr.Bytes.onData(
                             .{
@@ -1261,7 +1261,7 @@ pub const Fetch = struct {
                 return;
             }
 
-            if (this.readable_stream_ref.get()) |readable| {
+            if (this.readable_stream_ref.get(globalThis)) |readable| {
                 if (readable.ptr == .Bytes) {
                     readable.ptr.Bytes.size_hint = this.getSizeHint();
                     // body can be marked as used but we still need to pipe the data
@@ -1303,7 +1303,7 @@ pub const Fetch = struct {
             if (this.getCurrentResponse()) |response| {
                 var body = &response.body;
                 if (body.value == .Locked) {
-                    if (body.value.Locked.readable.get()) |readable| {
+                    if (body.value.Locked.readable.get(globalThis)) |readable| {
                         if (readable.ptr == .Bytes) {
                             readable.ptr.Bytes.size_hint = this.getSizeHint();
 
@@ -1506,7 +1506,7 @@ pub const Fetch = struct {
                 .globalObject = globalThis,
                 .task = undefined,
             };
-            this.promise.strong = .{};
+            this.promise.strong = .empty;
             holder.task = switch (success) {
                 true => JSC.AnyTask.New(Holder, Holder.resolve).init(holder),
                 false => JSC.AnyTask.New(Holder, Holder.reject).init(holder),
@@ -1522,8 +1522,8 @@ pub const Fetch = struct {
                     const cert = certificate_info.cert;
                     var cert_ptr = cert.ptr;
                     if (BoringSSL.d2i_X509(null, &cert_ptr, @intCast(cert.len))) |x509| {
-                        defer BoringSSL.X509_free(x509);
                         const globalObject = this.global_this;
+                        defer x509.free();
                         const js_cert = X509.toJS(x509, globalObject) catch |err| {
                             switch (err) {
                                 error.JSError => {},
@@ -1578,7 +1578,7 @@ pub const Fetch = struct {
                 defer this.clearAbortSignal();
                 const out = this.abort_reason;
 
-                this.abort_reason = .{};
+                this.abort_reason = .empty;
                 return Body.Value.ValueError{ .JSValue = out };
             }
 
@@ -1947,6 +1947,7 @@ pub const Fetch = struct {
                 fetch_tasklet.signals.cert_errors = null;
             }
 
+            // This task gets queued on the HTTP thread.
             fetch_tasklet.http.?.* = http.AsyncHTTP.init(
                 fetch_options.memory_reporter.allocator(),
                 fetch_options.method,
@@ -1957,6 +1958,7 @@ pub const Fetch = struct {
                 fetch_tasklet.request_body.slice(),
                 http.HTTPClientResult.Callback.New(
                     *FetchTasklet,
+                    // handles response events (on headers, on body, etc.)
                     FetchTasklet.callback,
                 ).init(fetch_tasklet),
                 fetch_options.redirect_type,
@@ -2053,7 +2055,7 @@ pub const Fetch = struct {
             // Custom Hostname
             hostname: ?[]u8 = null,
             memory_reporter: *JSC.MemoryReportingAllocator,
-            check_server_identity: JSC.Strong = .{},
+            check_server_identity: JSC.Strong = .empty,
             unix_socket_path: ZigString.Slice,
             ssl_config: ?*SSLConfig = null,
         };
@@ -2083,6 +2085,7 @@ pub const Fetch = struct {
             return node;
         }
 
+        /// Called from HTTP thread. Handles HTTP events received from socket.
         pub fn callback(task: *FetchTasklet, async_http: *http.AsyncHTTP, result: http.HTTPClientResult) void {
             // at this point only this thread is accessing result to is no race condition
             const is_done = !result.has_more;
@@ -2200,7 +2203,7 @@ pub const Fetch = struct {
 
     comptime {
         const Bun__fetchPreconnect = JSC.toJSHostFunction(Bun__fetchPreconnect_);
-        @export(Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
+        @export(&Bun__fetchPreconnect, .{ .name = "Bun__fetchPreconnect" });
     }
     pub fn Bun__fetchPreconnect_(
         globalObject: *JSC.JSGlobalObject,
@@ -2261,8 +2264,10 @@ pub const Fetch = struct {
 
     comptime {
         const Bun__fetch = JSC.toJSHostFunction(Bun__fetch_);
-        @export(Bun__fetch, .{ .name = "Bun__fetch" });
+        @export(&Bun__fetch, .{ .name = "Bun__fetch" });
     }
+
+    /// Implementation of `Bun.fetch`
     pub fn Bun__fetch_(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -2513,7 +2518,7 @@ pub const Fetch = struct {
             return .zero;
         }
 
-        // "decompression: boolean"
+        // "decompress: boolean"
         disable_decompression = extract_disable_decompression: {
             const objects_to_try = [_]JSValue{
                 options_object orelse .zero,
@@ -2733,7 +2738,7 @@ pub const Fetch = struct {
                 if (objects_to_try[i] != .zero) {
                     if (try objects_to_try[i].get(globalThis, "verbose")) |verb| {
                         if (verb.isString()) {
-                            if (verb.getZigString(globalThis).eqlComptime("curl")) {
+                            if ((try verb.getZigString(globalThis)).eqlComptime("curl")) {
                                 break :extract_verbose .curl;
                             }
                         } else if (verb.isBoolean()) {
@@ -2866,11 +2871,11 @@ pub const Fetch = struct {
 
                 if (req.body.value == .Locked) {
                     if (req.body.value.Locked.readable.has()) {
-                        break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get().?, globalThis) };
+                        break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                     }
                     const readable = req.body.value.toReadableStream(globalThis);
                     if (!readable.isEmptyOrUndefinedOrNull() and req.body.value == .Locked and req.body.value.Locked.readable.has()) {
-                        break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get().?, globalThis) };
+                        break :extract_body FetchTasklet.HTTPRequestBody{ .ReadableStream = JSC.WebCore.ReadableStream.Strong.init(req.body.value.Locked.readable.get(globalThis).?, globalThis) };
                     }
                 }
 
@@ -3243,7 +3248,7 @@ pub const Fetch = struct {
                     },
                     .result => |result| {
                         body.detach();
-                        body.AnyBlob.from(std.ArrayList(u8).fromOwnedSlice(allocator, @constCast(result.slice())));
+                        body = .{ .AnyBlob = .fromOwnedSlice(allocator, @constCast(result.slice())) };
                         http_body = .{ .AnyBlob = body.AnyBlob };
                     },
                 }
@@ -3256,6 +3261,7 @@ pub const Fetch = struct {
                 .credentials = globalThis.bunVM().transpiler.env.getS3Credentials(),
                 .options = .{},
                 .acl = null,
+                .storage_class = null,
             };
             defer {
                 credentialsWithOptions.deinit();
@@ -3265,7 +3271,7 @@ pub const Fetch = struct {
                 if (try options.getTruthyComptime(globalThis, "s3")) |s3_options| {
                     if (s3_options.isObject()) {
                         s3_options.ensureStillAlive();
-                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, globalThis);
+                        credentialsWithOptions = try s3.S3Credentials.getCredentialsWithOptions(credentialsWithOptions.credentials, .{}, s3_options, null, null, globalThis);
                     }
                 }
             }
@@ -3277,45 +3283,46 @@ pub const Fetch = struct {
                     promise: JSC.JSPromise.Strong,
                     url: ZigURL,
                     url_proxy_buffer: []const u8,
+                    global: *JSC.JSGlobalObject,
+
                     pub usingnamespace bun.New(@This());
 
                     pub fn resolve(result: s3.S3UploadResult, self: *@This()) void {
-                        if (self.promise.globalObject()) |global| {
-                            switch (result) {
-                                .success => {
-                                    const response = bun.new(Response, Response{
-                                        .body = .{ .value = .Empty },
-                                        .redirected = false,
-                                        .init = .{ .method = .PUT, .status_code = 200 },
-                                        .url = bun.String.createAtomIfPossible(self.url.href),
-                                    });
-                                    const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
-                                    response_js.ensureStillAlive();
-                                    self.promise.resolve(global, response_js);
-                                },
-                                .failure => |err| {
-                                    const response = bun.new(Response, Response{
-                                        .body = .{
-                                            .value = .{
-                                                .InternalBlob = .{
-                                                    .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.default_allocator.dupe(u8, err.message) catch bun.outOfMemory()),
-                                                    .was_string = true,
-                                                },
+                        const global = self.global;
+                        switch (result) {
+                            .success => {
+                                const response = bun.new(Response, Response{
+                                    .body = .{ .value = .Empty },
+                                    .redirected = false,
+                                    .init = .{ .method = .PUT, .status_code = 200 },
+                                    .url = bun.String.createAtomIfPossible(self.url.href),
+                                });
+                                const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                                response_js.ensureStillAlive();
+                                self.promise.resolve(global, response_js);
+                            },
+                            .failure => |err| {
+                                const response = bun.new(Response, Response{
+                                    .body = .{
+                                        .value = .{
+                                            .InternalBlob = .{
+                                                .bytes = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, bun.default_allocator.dupe(u8, err.message) catch bun.outOfMemory()),
+                                                .was_string = true,
                                             },
                                         },
-                                        .redirected = false,
-                                        .init = .{
-                                            .method = .PUT,
-                                            .status_code = 500,
-                                            .status_text = bun.String.createAtomIfPossible(err.code),
-                                        },
-                                        .url = bun.String.createAtomIfPossible(self.url.href),
-                                    });
-                                    const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
-                                    response_js.ensureStillAlive();
-                                    self.promise.resolve(global, response_js);
-                                },
-                            }
+                                    },
+                                    .redirected = false,
+                                    .init = .{
+                                        .method = .PUT,
+                                        .status_code = 500,
+                                        .status_text = bun.String.createAtomIfPossible(err.code),
+                                    },
+                                    .url = bun.String.createAtomIfPossible(self.url.href),
+                                });
+                                const response_js = Response.makeMaybePooled(@as(js.JSContextRef, global), response);
+                                response_js.ensureStillAlive();
+                                self.promise.resolve(global, response_js);
+                            },
                         }
                         bun.default_allocator.free(self.url_proxy_buffer);
                         self.destroy();
@@ -3330,6 +3337,7 @@ pub const Fetch = struct {
                     .url = url,
                     .url_proxy_buffer = url_proxy_buffer,
                     .promise = promise,
+                    .global = globalThis,
                 });
 
                 const promise_value = promise.value();
@@ -3337,10 +3345,11 @@ pub const Fetch = struct {
                 _ = bun.S3.uploadStream(
                     credentialsWithOptions.credentials.dupe(),
                     url.s3Path(),
-                    body.ReadableStream.get().?,
+                    body.ReadableStream.get(globalThis).?,
                     globalThis,
                     credentialsWithOptions.options,
                     credentialsWithOptions.acl,
+                    credentialsWithOptions.storage_class,
                     if (headers) |h| h.getContentType() else null,
                     proxy_url,
                     @ptrCast(&Wrapper.resolve),
@@ -3438,7 +3447,7 @@ pub const Fetch = struct {
                 .ssl_config = ssl_config,
                 .hostname = hostname,
                 .memory_reporter = memory_reporter,
-                .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .{} else JSC.Strong.create(check_server_identity, globalThis),
+                .check_server_identity = if (check_server_identity.isEmptyOrUndefinedOrNull()) .empty else .create(check_server_identity, globalThis),
                 .unix_socket_path = unix_socket_path,
             },
             // Pass the Strong value instead of creating a new one, or else we
@@ -3476,12 +3485,52 @@ pub const Fetch = struct {
     }
 };
 
-// https://developer.mozilla.org/en-US/docs/Web/API/Headers
+/// https://developer.mozilla.org/en-US/docs/Web/API/Headers
+// TODO: move to http.zig. this has nothing to do with JSC or WebCore
 pub const Headers = struct {
-    pub usingnamespace http.Headers;
-    entries: Headers.Entries = .{},
+    pub const Entry = struct {
+        name: Api.StringPointer,
+        value: Api.StringPointer,
+
+        pub const List = bun.MultiArrayList(Entry);
+    };
+
+    entries: Entry.List = .{},
     buf: std.ArrayListUnmanaged(u8) = .{},
     allocator: std.mem.Allocator,
+
+    pub fn memoryCost(this: *const Headers) usize {
+        return this.buf.items.len + this.entries.memoryCost();
+    }
+
+    pub fn clone(this: *Headers) !Headers {
+        return Headers{
+            .entries = try this.entries.clone(this.allocator),
+            .buf = try this.buf.clone(this.allocator),
+            .allocator = this.allocator,
+        };
+    }
+
+    pub fn append(this: *Headers, name: []const u8, value: []const u8) !void {
+        var offset: u32 = @truncate(this.buf.items.len);
+        try this.buf.ensureUnusedCapacity(this.allocator, name.len + value.len);
+        const name_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(name.len),
+        };
+        this.buf.appendSliceAssumeCapacity(name);
+        offset = @truncate(this.buf.items.len);
+        this.buf.appendSliceAssumeCapacity(value);
+
+        const value_ptr = Api.StringPointer{
+            .offset = offset,
+            .length = @truncate(value.len),
+        };
+        try this.entries.append(this.allocator, .{
+            .name = name_ptr,
+            .value = value_ptr,
+        });
+    }
 
     pub fn deinit(this: *Headers) void {
         this.entries.deinit(this.allocator);

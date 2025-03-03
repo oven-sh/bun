@@ -22,6 +22,25 @@ plugin({
       };
     });
 
+    builder.module("my-virtual-module-with-__esModule", () => {
+      return {
+        exports: {
+          default: "world",
+          __esModule: true,
+        },
+        loader: "object",
+      };
+    });
+
+    builder.module("my-virtual-module-with-default", () => {
+      return {
+        exports: {
+          default: "world",
+        },
+        loader: "object",
+      };
+    });
+
     builder.onLoad({ filter: /.*/, namespace: "rejected-promise" }, async ({ path }) => {
       throw new Error("Rejected Promise");
     });

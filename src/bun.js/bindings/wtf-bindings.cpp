@@ -175,11 +175,6 @@ extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* p
     return WTF::parseDouble({ string, length }, *position);
 }
 
-extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
-{
-    WTF::StringImpl::copyCharacters(destination, { source, length });
-}
-
 extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,
     char* __restrict destinationDataBuffer,
     size_t destinationDataBufferSize)

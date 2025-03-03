@@ -4,7 +4,7 @@ register_repository(
   REPOSITORY
     oven-sh/mimalloc
   COMMIT
-    82b2c2277a4d570187c07b376557dc5bde81d848
+    7a4d7b8d18f8159a808aade63eb93ea6abd06924
 )
 
 set(MIMALLOC_CMAKE_ARGS
@@ -19,6 +19,10 @@ set(MIMALLOC_CMAKE_ARGS
   -DMI_SKIP_COLLECT_ON_EXIT=ON
 )
 
+if(ENABLE_ASAN)
+  list(APPEND MIMALLOC_CMAKE_ARGS -DMI_TRACK_ASAN=ON)
+endif()
+
 if(DEBUG)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_DEBUG_FULL=ON)
 endif()
@@ -27,13 +31,7 @@ if(ENABLE_VALGRIND)
   list(APPEND MIMALLOC_CMAKE_ARGS -DMI_VALGRIND=ON)
 endif()
 
-if(WIN32)
-  if(DEBUG)
-    set(MIMALLOC_LIBRARY mimalloc-static-debug)
-  else()
-    set(MIMALLOC_LIBRARY mimalloc-static)
-  endif()
-elseif(DEBUG)
+if(DEBUG)
   set(MIMALLOC_LIBRARY mimalloc-debug)
 else()
   set(MIMALLOC_LIBRARY mimalloc)

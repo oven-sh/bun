@@ -40,7 +40,7 @@ for (let backend of ["api", "cli"] as const) {
       },
       run: {
         env: {
-          PATH: "/bar",
+          PATH: "/fail",
         },
         stdout: process.env.PATH + "\n",
       },

@@ -183,6 +183,10 @@ pub const Angle = union(Tag) {
         return map(this, opfn);
     }
 
+    pub fn addInternal(this: Angle, _: std.mem.Allocator, other: Angle) Angle {
+        return this.add(other);
+    }
+
     pub fn add(this: Angle, rhs: Angle) Angle {
         const addfn = struct {
             pub fn add(_: void, a: f32, b: f32) f32 {
@@ -240,19 +244,19 @@ pub const Angle = union(Tag) {
         comptime op_fn: *const fn (@TypeOf(ctx), a: f32, b: f32) f32,
     ) Angle {
         // PERF: not sure if this is faster
-        const self_tag: u8 = @intFromEnum(this.*);
-        const other_tag: u8 = @intFromEnum(this.*);
-        const DEG: u8 = @intFromEnum(Tag.deg);
-        const GRAD: u8 = @intFromEnum(Tag.grad);
-        const RAD: u8 = @intFromEnum(Tag.rad);
-        const TURN: u8 = @intFromEnum(Tag.turn);
+        const self_tag: u16 = @intFromEnum(this.*);
+        const other_tag: u16 = @intFromEnum(other.*);
+        const DEG: u16 = @intFromEnum(Tag.deg);
+        const GRAD: u16 = @intFromEnum(Tag.grad);
+        const RAD: u16 = @intFromEnum(Tag.rad);
+        const TURN: u16 = @intFromEnum(Tag.turn);
 
-        const switch_val: u8 = self_tag | other_tag;
+        const switch_val: u16 = self_tag | (other_tag << 8);
         return switch (switch_val) {
-            DEG | DEG => Angle{ .deg = op_fn(ctx, this.deg, other.deg) },
-            RAD | RAD => Angle{ .rad = op_fn(ctx, this.rad, other.rad) },
-            GRAD | GRAD => Angle{ .grad = op_fn(ctx, this.grad, other.grad) },
-            TURN | TURN => Angle{ .turn = op_fn(ctx, this.turn, other.turn) },
+            DEG | (DEG << 8) => Angle{ .deg = op_fn(ctx, this.deg, other.deg) },
+            RAD | (RAD << 8) => Angle{ .rad = op_fn(ctx, this.rad, other.rad) },
+            GRAD | (GRAD << 8) => Angle{ .grad = op_fn(ctx, this.grad, other.grad) },
+            TURN | (TURN << 8) => Angle{ .turn = op_fn(ctx, this.turn, other.turn) },
             else => Angle{ .deg = op_fn(ctx, this.toDegrees(), other.toDegrees()) },
         };
     }

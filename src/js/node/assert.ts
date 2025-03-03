@@ -189,9 +189,8 @@ assert.equal = function equal(actual: unknown, expected: unknown, message?: stri
   if (arguments.length < 2) {
     throw $ERR_MISSING_ARGS("actual", "expected");
   }
-  // eslint-disable-next-line eqeqeq
-  // if (actual != expected && (!NumberIsNaN(actual) || !NumberIsNaN(expected))) {
-  if (actual != expected && !(isNaN(actual) && isNaN(expected))) {
+
+  if (actual != expected && (!NumberIsNaN(actual) || !NumberIsNaN(expected))) {
     innerFail({
       actual,
       expected,
@@ -672,7 +671,7 @@ function getActual(fn) {
   return NO_EXCEPTION_SENTINEL;
 }
 
-function checkIsPromise(obj) {
+function checkIsPromise(obj): obj is Promise<unknown> {
   // Accept native ES6 promises and promises that are implemented in a similar
   // way. Do not accept thenables that use a function as `obj` and that have no
   // `catch` handler.

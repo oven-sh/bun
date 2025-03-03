@@ -874,11 +874,11 @@ pub const Archive = opaque {
                 },
                 result: T,
 
-                pub fn err(arch: *Archive, msg: []const u8) @This() {
+                pub fn initErr(arch: *Archive, msg: []const u8) @This() {
                     return .{ .err = .{ .message = msg, .archive = arch } };
                 }
 
-                pub fn res(value: T) @This() {
+                pub fn initRes(value: T) @This() {
                     return .{ .result = value };
                 }
             };
@@ -891,38 +891,38 @@ pub const Archive = opaque {
 
             switch (archive.readSupportFormatTar()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to enable tar format support");
+                    return Return.initErr(archive, "failed to enable tar format support");
                 },
                 else => {},
             }
             switch (archive.readSupportFormatGnutar()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to enable gnutar format support");
+                    return Return.initErr(archive, "failed to enable gnutar format support");
                 },
                 else => {},
             }
             switch (archive.readSupportFilterGzip()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to enable support for gzip compression");
+                    return Return.initErr(archive, "failed to enable support for gzip compression");
                 },
                 else => {},
             }
 
             switch (archive.readSetOptions("read_concatenated_archives")) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to set option `read_concatenated_archives`");
+                    return Return.initErr(archive, "failed to set option `read_concatenated_archives`");
                 },
                 else => {},
             }
 
             switch (archive.readOpenMemory(tarball_bytes)) {
                 .failed, .fatal, .warn => {
-                    return Return.err(archive, "failed to read tarball");
+                    return Return.initErr(archive, "failed to read tarball");
                 },
                 else => {},
             }
 
-            return Return.res(.{
+            return Return.initRes(.{
                 .archive = archive,
                 .filter = std.EnumSet(std.fs.File.Kind).initEmpty(),
             });
@@ -935,15 +935,15 @@ pub const Archive = opaque {
             pub fn readEntryData(this: *const @This(), allocator: std.mem.Allocator, archive: *Archive) OOM!Iterator.Result([]const u8) {
                 const Return = Iterator.Result([]const u8);
                 const size = this.entry.size();
-                if (size < 0) return Return.err(archive, "invalid archive entry size");
+                if (size < 0) return Return.initErr(archive, "invalid archive entry size");
 
                 const buf = try allocator.alloc(u8, @intCast(size));
 
                 const read = archive.readData(buf);
                 if (read < 0) {
-                    return Return.err(archive, "failed to read archive data");
+                    return Return.initErr(archive, "failed to read archive data");
                 }
-                return Return.res(buf[0..@intCast(read)]);
+                return Return.initRes(buf[0..@intCast(read)]);
             }
         };
 
@@ -954,18 +954,18 @@ pub const Archive = opaque {
             while (true) {
                 return switch (this.archive.readNextHeader(&entry)) {
                     .retry => continue,
-                    .eof => Return.res(null),
+                    .eof => Return.initRes(null),
                     .ok => {
                         const kind = bun.C.kindFromMode(entry.filetype());
 
                         if (this.filter.contains(kind)) continue;
 
-                        return Return.res(.{
+                        return Return.initRes(.{
                             .entry = entry,
                             .kind = kind,
                         });
                     },
-                    else => Return.err(this.archive, "failed to read archive header"),
+                    else => Return.initErr(this.archive, "failed to read archive header"),
                 };
             }
         }
@@ -975,18 +975,18 @@ pub const Archive = opaque {
 
             switch (this.archive.readClose()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(this.archive, "failed to close archive read");
+                    return Return.initErr(this.archive, "failed to close archive read");
                 },
                 else => {},
             }
             switch (this.archive.readFree()) {
                 .failed, .fatal, .warn => {
-                    return Return.err(this.archive, "failed to free archive read");
+                    return Return.initErr(this.archive, "failed to free archive read");
                 },
                 else => {},
             }
 
-            return Return.res({});
+            return Return.initRes({});
         }
     };
 };

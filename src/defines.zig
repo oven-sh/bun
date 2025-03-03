@@ -85,7 +85,25 @@ pub const DefineData = struct {
     }
 
     pub fn fromMergeableInputEntry(user_defines: *UserDefines, key: []const u8, value_str: []const u8, value_is_undefined: bool, method_call_must_be_replaced_with_undefined: bool, log: *logger.Log, allocator: std.mem.Allocator) !void {
-        var keySplitter = std.mem.split(u8, key, ".");
+        user_defines.putAssumeCapacity(key, try .parse(
+            key,
+            value_str,
+            value_is_undefined,
+            method_call_must_be_replaced_with_undefined,
+            log,
+            allocator,
+        ));
+    }
+
+    pub fn parse(
+        key: []const u8,
+        value_str: []const u8,
+        value_is_undefined: bool,
+        method_call_must_be_replaced_with_undefined: bool,
+        log: *logger.Log,
+        allocator: std.mem.Allocator,
+    ) !DefineData {
+        var keySplitter = std.mem.splitScalar(u8, key, '.');
         while (keySplitter.next()) |part| {
             if (!js_lexer.isIdentifier(part)) {
                 if (strings.eql(part, key)) {
@@ -98,7 +116,7 @@ pub const DefineData = struct {
         }
 
         // check for nested identifiers
-        var valueSplitter = std.mem.split(u8, value_str, ".");
+        var valueSplitter = std.mem.splitScalar(u8, value_str, '.');
         var isIdent = true;
 
         while (valueSplitter.next()) |part| {
@@ -119,17 +137,13 @@ pub const DefineData = struct {
                     .can_be_removed_if_unused = true,
                 } };
 
-            user_defines.putAssumeCapacity(
-                key,
-                DefineData{
-                    .value = value,
-                    .original_name = value_str,
-                    .can_be_removed_if_unused = true,
-                    .valueless = value_is_undefined,
-                    .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined,
-                },
-            );
-            return;
+            return .{
+                .value = value,
+                .original_name = value_str,
+                .can_be_removed_if_unused = true,
+                .valueless = value_is_undefined,
+                .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined,
+            };
         }
         const _log = log;
         var source = logger.Source{
@@ -138,12 +152,12 @@ pub const DefineData = struct {
         };
         const expr = try json_parser.parseEnvJSON(&source, _log, allocator);
         const cloned = try expr.data.deepClone(allocator);
-        user_defines.putAssumeCapacity(key, DefineData{
+        return .{
             .value = cloned,
             .can_be_removed_if_unused = expr.isPrimitiveLiteral(),
             .valueless = value_is_undefined,
             .method_call_must_be_replaced_with_undefined = method_call_must_be_replaced_with_undefined,
-        });
+        };
     }
 
     pub fn fromInput(defines: RawDefines, drop: []const []const u8, log: *logger.Log, allocator: std.mem.Allocator) !UserDefines {
@@ -217,7 +231,7 @@ pub const Define = struct {
             const remainder = key[0..last_dot];
             const count = std.mem.count(u8, remainder, ".") + 1;
             var parts = try allocator.alloc(string, count + 1);
-            var splitter = std.mem.split(u8, remainder, ".");
+            var splitter = std.mem.splitScalar(u8, remainder, '.');
             var i: usize = 0;
             while (splitter.next()) |split| : (i += 1) {
                 parts[i] = split;

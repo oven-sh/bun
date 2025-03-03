@@ -44,7 +44,7 @@ JSValue AsyncContextFrame::withAsyncContextIfNeeded(JSGlobalObject* globalObject
     }
 
     // Construct a low-overhead wrapper
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     return AsyncContextFrame::create(
         vm,
         jsCast<Zig::GlobalObject*>(globalObject)->AsyncContextFrameStructure(),

@@ -95,7 +95,7 @@ pub const TOML = struct {
 
     pub fn e(_: *TOML, t: anytype, loc: logger.Loc) Expr {
         const Type = @TypeOf(t);
-        if (@typeInfo(Type) == .Pointer) {
+        if (@typeInfo(Type) == .pointer) {
             return Expr.init(std.meta.Child(Type), t.*, loc);
         } else {
             return Expr.init(Type, t, loc);

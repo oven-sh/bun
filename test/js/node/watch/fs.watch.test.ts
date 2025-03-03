@@ -1,4 +1,4 @@
-import { pathToFileURL } from "bun";
+import { file, pathToFileURL } from "bun";
 import { bunRun, bunRunAsScript, isWindows, tempDirWithFiles } from "harness";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
@@ -259,7 +259,7 @@ describe("fs.watch", () => {
     } catch (err: any) {
       expect(err).toBeInstanceOf(Error);
       expect(err.code).toBe("ENOENT");
-      expect(err.syscall).toBe("open");
+      expect(err.syscall).toBe("watch");
       done();
     }
   });
@@ -447,9 +447,10 @@ describe("fs.watch", () => {
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message).toBe("Permission denied");
+      expect(err.message).toBe(`EACCES: permission denied, watch '${filepath}'`);
+      expect(err.path).toBe(filepath);
       expect(err.code).toBe("EACCES");
-      expect(err.syscall).toBe("open");
+      expect(err.syscall).toBe("watch");
     }
   });
 
@@ -463,9 +464,10 @@ describe("fs.watch", () => {
       watcher.close();
       expect.unreachable();
     } catch (err: any) {
-      expect(err.message).toBe("Permission denied");
+      expect(err.message).toBe(`EACCES: permission denied, watch '${filepath}'`);
+      expect(err.path).toBe(filepath);
       expect(err.code).toBe("EACCES");
-      expect(err.syscall).toBe("open");
+      expect(err.syscall).toBe("watch");
     }
   });
 });

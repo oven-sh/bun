@@ -111,6 +111,38 @@ const reader = stream.getReader();
 const { value, done } = await reader.read();
 ```
 
+### Streaming request bodies
+
+You can also stream data in request bodies using a `ReadableStream`:
+
+```ts
+const stream = new ReadableStream({
+  start(controller) {
+    controller.enqueue("Hello");
+    controller.enqueue(" ");
+    controller.enqueue("World");
+    controller.close();
+  },
+});
+
+const response = await fetch("http://example.com", {
+  method: "POST",
+  body: stream,
+});
+```
+
+When using streams with HTTP(S):
+
+- The data is streamed directly to the network without buffering the entire body in memory
+- If the connection is lost, the stream will be canceled
+- The `Content-Length` header is not automatically set unless the stream has a known size
+
+When using streams with S3:
+
+- For PUT/POST requests, Bun automatically uses multipart upload
+- The stream is consumed in chunks and uploaded in parallel
+- Progress can be monitored through the S3 options
+
 ### Fetching a URL with a timeout
 
 To fetch a URL with a timeout, use `AbortSignal.timeout`:
@@ -179,6 +211,116 @@ await fetch("https://example.com", {
 ```
 
 This is similar to how it works in Node's `net` module.
+
+#### Disable TLS validation
+
+To disable TLS validation, set `rejectUnauthorized` to `false`:
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    rejectUnauthorized: false,
+  },
+});
+```
+
+This is especially useful to avoid SSL errors when using self-signed certificates, but this disables TLS validation and should be used with caution.
+
+### Request options
+
+In addition to the standard fetch options, Bun provides several extensions:
+
+```ts
+const response = await fetch("http://example.com", {
+  // Control automatic response decompression (default: true)
+  decompress: true,
+
+  // Disable connection reuse for this request
+  keepalive: false,
+
+  // Debug logging level
+  verbose: true, // or "curl" for more detailed output
+});
+```
+
+### Protocol support
+
+Beyond HTTP(S), Bun's fetch supports several additional protocols:
+
+#### S3 URLs - `s3://`
+
+Bun supports fetching from S3 buckets directly.
+
+```ts
+// Using environment variables for credentials
+const response = await fetch("s3://my-bucket/path/to/object");
+
+// Or passing credentials explicitly
+const response = await fetch("s3://my-bucket/path/to/object", {
+  s3: {
+    accessKeyId: "YOUR_ACCESS_KEY",
+    secretAccessKey: "YOUR_SECRET_KEY",
+    region: "us-east-1",
+  },
+});
+```
+
+Note: Only PUT and POST methods support request bodies when using S3. For uploads, Bun automatically uses multipart upload for streaming bodies.
+
+You can read more about Bun's S3 support in the [S3](https://bun.sh/docs/api/s3) documentation.
+
+#### File URLs - `file://`
+
+You can fetch local files using the `file:` protocol:
+
+```ts
+const response = await fetch("file:///path/to/file.txt");
+const text = await response.text();
+```
+
+On Windows, paths are automatically normalized:
+
+```ts
+// Both work on Windows
+const response = await fetch("file:///C:/path/to/file.txt");
+const response2 = await fetch("file:///c:/path\\to/file.txt");
+```
+
+#### Data URLs - `data:`
+
+Bun supports the `data:` URL scheme:
+
+```ts
+const response = await fetch("data:text/plain;base64,SGVsbG8sIFdvcmxkIQ==");
+const text = await response.text(); // "Hello, World!"
+```
+
+#### Blob URLs - `blob:`
+
+You can fetch blobs using URLs created by `URL.createObjectURL()`:
+
+```ts
+const blob = new Blob(["Hello, World!"], { type: "text/plain" });
+const url = URL.createObjectURL(blob);
+const response = await fetch(url);
+```
+
+### Error handling
+
+Bun's fetch implementation includes several specific error cases:
+
+- Using a request body with GET/HEAD methods will throw an error (which is expected for the fetch API)
+- Attempting to use both `proxy` and `unix` options together will throw an error
+- TLS certificate validation failures when `rejectUnauthorized` is true (or undefined)
+- S3 operations may throw specific errors related to authentication or permissions
+
+### Content-Type handling
+
+Bun automatically sets the `Content-Type` header for request bodies when not explicitly provided:
+
+- For `Blob` objects, uses the blob's `type`
+- For `FormData`, sets appropriate multipart boundary
+- For JSON objects, sets `application/json`
 
 ## Debugging
 
@@ -306,3 +448,16 @@ import { write } from "bun";
 
 await write("output.txt", response);
 ```
+
+### Implementation details
+
+- Connection pooling is enabled by default but can be disabled per-request with `keepalive: false`. The `"Connection: close"` header can also be used to disable keep-alive.
+- Large file uploads are optimized using the operating system's `sendfile` syscall under specific conditions:
+  - The file must be larger than 32KB
+  - The request must not be using a proxy
+  - On macOS, only regular files (not pipes, sockets, or devices) can use `sendfile`
+  - When these conditions aren't met, or when using S3/streaming uploads, Bun falls back to reading the file into memory
+  - This optimization is particularly effective for HTTP (not HTTPS) requests where the file can be sent directly from the kernel to the network stack
+- S3 operations automatically handle signing requests and merging authentication headers
+
+Note: Many of these features are Bun-specific extensions to the standard fetch API.

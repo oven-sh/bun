@@ -32,7 +32,7 @@ public:
     using DOMWrapped = PerformanceResourceTiming;
     static JSPerformanceResourceTiming* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<PerformanceResourceTiming>&& impl)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         JSPerformanceResourceTiming* ptr = new (NotNull, JSC::allocateCell<JSPerformanceResourceTiming>(vm)) JSPerformanceResourceTiming(structure, *globalObject, WTFMove(impl));
         ptr->finishCreation(vm);
         return ptr;

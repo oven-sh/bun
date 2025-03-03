@@ -41,7 +41,20 @@ it("setPriority", () => {
 });
 
 it("loadavg", () => {
-  expect(os.loadavg().length === 3).toBe(true);
+  if (isWindows) {
+    expect(os.loadavg()).toEqual([0, 0, 0]);
+  } else {
+    const out = Bun.spawnSync(["uptime"]).stdout.toString();
+    const regex = /load averages?: ([\d\.]+),? ([\d\.]+),? ([\d\.]+)/;
+    const result = regex.exec(out);
+    const expected = [parseFloat(result[1]), parseFloat(result[2]), parseFloat(result[3])];
+    const actual = os.loadavg();
+    expect(actual).toBeArrayOfSize(3);
+    for (let i = 0; i < 3; i++) {
+      // This is quite a lenient range, just in case the load average is changing rapidly
+      expect(actual[i]).toBeWithin(expected[i] / 2 - 0.5, expected[i] * 2 + 0.5);
+    }
+  }
 });
 
 it("homedir", () => {

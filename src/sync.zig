@@ -535,7 +535,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
         pub fn deinit(self: *RwLock) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_rwlock_destroy(&self.rwlock);
@@ -634,7 +634,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
                 writer_count: i32 = 0,
                 waiters: [2]?*anyopaque = [_]?*anyopaque{ null, null },
             },
-            .kfreebsd, .freebsd, .openbsd => extern struct {
+            .freebsd, .openbsd => extern struct {
                 ptr: ?*anyopaque = null,
             },
             .hermit => extern struct {
@@ -884,7 +884,7 @@ else if (@import("builtin").link_libc)
         pub fn deinit(self: *Mutex) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_mutex_destroy(&self.mutex);
@@ -946,7 +946,7 @@ else if (@import("builtin").os.tag == .linux)
         }
 
         fn lockSlow(self: *Mutex, current_state: State) void {
-            @setCold(true);
+            @branchHint(.cold);
 
             var new_state = current_state;
             while (true) {
@@ -992,7 +992,7 @@ else if (@import("builtin").os.tag == .linux)
         }
 
         fn unlockSlow(self: *Mutex) void {
-            @setCold(true);
+            @branchHint(.cold);
 
             Futex.wake(@as(*const i32, @ptrCast(&self.state)));
         }
@@ -1078,7 +1078,7 @@ else if (@import("builtin").link_libc)
         pub fn deinit(self: *Condvar) void {
             const safe_rc = switch (@import("builtin").os.tag) {
                 .dragonfly, .netbsd => std.posix.EAGAIN,
-                else => 0,
+                else => std.c.E.SUCCESS,
             };
 
             const rc = std.c.pthread_cond_destroy(&self.cond);

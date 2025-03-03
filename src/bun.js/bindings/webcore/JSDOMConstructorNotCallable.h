@@ -36,7 +36,7 @@ public:
     using Base = JSDOMObject;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static JSDOMConstructorNotCallable* create(JSC::VM&, JSC::Structure*, JSDOMGlobalObject&);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject&, JSC::JSValue prototype);
 

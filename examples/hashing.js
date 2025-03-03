@@ -11,6 +11,9 @@ console.log(Bun.hash.adler32(input)); // number
 console.log(Bun.hash.crc32(input)); // number
 console.log(Bun.hash.cityHash32(input)); // number
 console.log(Bun.hash.cityHash64(input)); // bigint
+console.log(Bun.hash.xxHash32(input)); // number
+console.log(Bun.hash.xxHash64(input)); // bigint
+console.log(Bun.hash.xxHash3(input)); // bigint
 console.log(Bun.hash.murmur32v3(input)); // number
 console.log(Bun.hash.murmur32v2(input)); // number
 console.log(Bun.hash.murmur64v2(input)); // bigint

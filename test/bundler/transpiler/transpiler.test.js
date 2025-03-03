@@ -1673,7 +1673,7 @@ console.log(<div {...obj} key="after" />);`),
     it("import assert", () => {
       expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);
-      expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json")`);
+      expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json", { type: \"json\" })`);
     });
 
     it("import with unicode", () => {

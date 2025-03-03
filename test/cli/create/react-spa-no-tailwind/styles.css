@@ -1,0 +1,278 @@
+:root {
+  --primary-color: #fbf0ff;
+  --accent-color: #7c3aed;
+  --text-color: #1a1a1a;
+  --secondary-color: #4c1d95;
+  --gray-100: #f3f4f6;
+  --gray-200: #e5e7eb;
+  --gray-700: #374151;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, sans-serif;
+  background: var(--primary-color);
+  color: var(--text-color);
+  line-height: 1.6;
+}
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+  flex: 1;
+}
+
+/* Hero Section */
+.hero {
+  margin: 4rem 0;
+  text-align: center;
+}
+
+.logo {
+  font-size: 5rem;
+  margin-bottom: 1rem;
+  display: inline-block;
+}
+
+.animate-bounce {
+  animation: bounce 2s infinite;
+}
+
+@keyframes bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+h1 {
+  font-size: 3.5rem;
+  margin-bottom: 1rem;
+  background: linear-gradient(
+    120deg,
+    var(--accent-color),
+    var(--secondary-color)
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gradient-text {
+  background: linear-gradient(
+    120deg,
+    var(--accent-color),
+    var(--secondary-color)
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.description {
+  font-size: 1.5rem;
+  margin-bottom: 2rem;
+  color: var(--gray-700);
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* CTA Buttons */
+.cta-buttons {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+  margin-bottom: 3rem;
+}
+
+.button {
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.button:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.button.primary {
+  background: var(--accent-color);
+  color: white;
+}
+
+.button.secondary {
+  background: white;
+  color: var(--accent-color);
+  border: 2px solid var(--accent-color);
+}
+
+/* Stats */
+.stats {
+  display: flex;
+  justify-content: center;
+  gap: 3rem;
+  margin-top: 3rem;
+}
+
+.stat {
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 2.5rem;
+  font-weight: bold;
+  color: var(--accent-color);
+  display: block;
+}
+
+.stat-label {
+  color: var(--gray-700);
+  font-size: 1rem;
+}
+
+/* Features Section */
+.features-section {
+  padding: 4rem 0;
+}
+
+.features-section h2 {
+  text-align: center;
+  font-size: 2.5rem;
+  margin-bottom: 3rem;
+  color: var(--accent-color);
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+}
+
+.feature {
+  padding: 2rem;
+  background: white;
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  transition: all 0.3s ease;
+}
+
+.feature:hover {
+  transform: translateY(-5px);
+  box-shadow: var(--shadow-md);
+}
+
+.feature-icon {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+}
+
+.feature h3 {
+  color: var(--accent-color);
+  margin-bottom: 1rem;
+  font-size: 1.5rem;
+}
+
+.highlight {
+  background: linear-gradient(120deg, #7c3aed20 0%, #7c3aed10 100%);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-weight: bold;
+}
+
+/* Footer */
+.footer {
+  background: white;
+  padding: 2rem 0;
+  margin-top: 4rem;
+  border-top: 1px solid var(--gray-200);
+}
+
+.footer-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.footer-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.logo-small {
+  font-size: 1.5rem;
+}
+
+.footer-text {
+  font-weight: 500;
+  color: var(--gray-700);
+}
+
+.footer-links {
+  display: flex;
+  gap: 2rem;
+}
+
+.footer-link {
+  color: var(--gray-700);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.footer-link:hover {
+  color: var(--accent-color);
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .container {
+    padding: 1rem;
+  }
+
+  h1 {
+    font-size: 2.5rem;
+  }
+
+  .description {
+    font-size: 1.2rem;
+  }
+
+  .stats {
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  .footer-content {
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
+  }
+
+  .footer-links {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}

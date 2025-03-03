@@ -765,7 +765,7 @@ install_nodejs_headers() {
 }
 
 bun_version_exact() {
-	print "1.1.38"
+	print "1.2.0"
 }
 
 install_bun() {

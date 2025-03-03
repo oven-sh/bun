@@ -80,6 +80,24 @@ pub const Features = css.targets.Features;
 
 const Browsers = css.targets.Browsers;
 
+pub const ImportInfo = struct {
+    import_records: *const bun.BabyList(bun.ImportRecord),
+    /// bundle_v2.graph.ast.items(.url_for_css)
+    ast_urls_for_css: []const []const u8,
+    /// bundle_v2.graph.input_files.items(.unique_key_for_additional_file)
+    ast_unique_key_for_additional_file: []const []const u8,
+
+    /// Only safe to use when outside the bundler. As in, the import records
+    /// were not resolved to source indices. This will out-of-bounds otherwise.
+    pub fn initOutsideOfBundler(records: *bun.BabyList(bun.ImportRecord)) ImportInfo {
+        return .{
+            .import_records = records,
+            .ast_urls_for_css = &.{},
+            .ast_unique_key_for_additional_file = &.{},
+        };
+    }
+};
+
 /// A `Printer` represents a destination to output serialized CSS, as used in
 /// the [ToCss](super::traits::ToCss) trait. It can wrap any destination that
 /// implements [std::fmt::Write](std::fmt::Write), such as a [String](String).
@@ -114,7 +132,7 @@ pub fn Printer(comptime Writer: type) type {
         ctx: ?*const css.StyleContext = null,
         scratchbuf: std.ArrayList(u8),
         error_kind: ?css.PrinterError = null,
-        import_records: ?*const bun.BabyList(bun.ImportRecord),
+        import_info: ?ImportInfo = null,
         public_path: []const u8,
         /// NOTE This should be the same mimalloc heap arena allocator
         allocator: Allocator,
@@ -144,20 +162,32 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         /// Add an error related to std lib fmt errors
-        pub fn addFmtError(this: *This) PrintErr!void {
+        pub fn addFmtError(this: *This) PrintErr {
             this.error_kind = css.PrinterError{
                 .kind = .fmt_error,
                 .loc = null,
             };
-            return PrintErr.lol;
+            return PrintErr.CSSPrintError;
         }
 
-        pub fn addNoImportRecordError(this: *This) PrintErr!void {
+        pub fn addNoImportRecordError(this: *This) PrintErr {
             this.error_kind = css.PrinterError{
                 .kind = .no_import_records,
                 .loc = null,
             };
-            return PrintErr.lol;
+            return PrintErr.CSSPrintError;
+        }
+
+        pub fn addInvalidCssModulesPatternInGridError(this: *This) PrintErr {
+            this.error_kind = css.PrinterError{
+                .kind = .invalid_css_modules_pattern_in_grid,
+                .loc = css.ErrorLocation{
+                    .filename = this.filename(),
+                    .line = this.loc.line,
+                    .column = this.loc.column,
+                },
+            };
+            return PrintErr.CSSPrintError;
         }
 
         /// Returns an error of the given kind at the provided location in the current source file.
@@ -175,7 +205,7 @@ pub fn Printer(comptime Writer: type) type {
                     .column = loc.column,
                 } else null,
             };
-            return PrintErr.lol;
+            return PrintErr.CSSPrintError;
         }
 
         pub fn deinit(this: *This) void {
@@ -192,22 +222,22 @@ pub fn Printer(comptime Writer: type) type {
             scratchbuf: std.ArrayList(u8),
             dest: Writer,
             options: PrinterOptions,
-            import_records: ?*const bun.BabyList(bun.ImportRecord),
+            import_info: ?ImportInfo,
         ) This {
             return .{
                 .sources = null,
                 .dest = dest,
                 .minify = options.minify,
                 .targets = options.targets,
-                .dependencies = if (options.analyze_dependencies != null) ArrayList(css.Dependency){} else null,
+                .dependencies = if (options.analyze_dependencies != null) .empty else null,
                 .remove_imports = options.analyze_dependencies != null and options.analyze_dependencies.?.remove_imports,
                 .pseudo_classes = options.pseudo_classes,
-                .indentation_buf = std.ArrayList(u8).init(allocator),
-                .import_records = import_records,
+                .indentation_buf = .init(allocator),
+                .import_info = import_info,
                 .scratchbuf = scratchbuf,
                 .allocator = allocator,
                 .public_path = options.public_path,
-                .loc = Location{
+                .loc = .{
                     .source_index = 0,
                     .line = 0,
                     .column = 1,
@@ -216,14 +246,13 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         pub inline fn getImportRecords(this: *This) PrintErr!*const bun.BabyList(bun.ImportRecord) {
-            if (this.import_records) |import_records| return import_records;
-            try this.addNoImportRecordError();
-            unreachable;
+            if (this.import_info) |info| return info.import_records;
+            return this.addNoImportRecordError();
         }
 
         pub fn printImportRecord(this: *This, import_record_idx: u32) PrintErr!void {
-            if (this.import_records) |import_records| {
-                const import_record = import_records.at(import_record_idx);
+            if (this.import_info) |info| {
+                const import_record = info.import_records.at(import_record_idx);
                 const a, const b = bun.bundle_v2.cheapPrefixNormalizer(this.public_path, import_record.path.text);
                 try this.writeStr(a);
                 try this.writeStr(b);
@@ -233,13 +262,27 @@ pub fn Printer(comptime Writer: type) type {
         }
 
         pub inline fn importRecord(this: *Printer(Writer), import_record_idx: u32) PrintErr!*const bun.ImportRecord {
-            if (this.import_records) |import_records| return import_records.at(import_record_idx);
-            try this.addNoImportRecordError();
-            unreachable;
+            if (this.import_info) |info| return info.import_records.at(import_record_idx);
+            return this.addNoImportRecordError();
         }
 
         pub inline fn getImportRecordUrl(this: *This, import_record_idx: u32) PrintErr![]const u8 {
-            return (try this.importRecord(import_record_idx)).path.text;
+            const import_info = this.import_info orelse return this.addNoImportRecordError();
+            const record = import_info.import_records.at(import_record_idx);
+            if (record.source_index.isValid()) {
+                // It has an inlined url for CSS
+                const urls_for_css = import_info.ast_urls_for_css[record.source_index.get()];
+                if (urls_for_css.len > 0) {
+                    return urls_for_css;
+                }
+                // It is a chunk URL
+                const unique_key_for_additional_file = import_info.ast_unique_key_for_additional_file[record.source_index.get()];
+                if (unique_key_for_additional_file.len > 0) {
+                    return unique_key_for_additional_file;
+                }
+            }
+            // External URL stays as-is
+            return record.path.text;
         }
 
         pub fn context(this: *const Printer(Writer)) ?*const css.StyleContext {

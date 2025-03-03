@@ -14,21 +14,35 @@ if (!codegenRoot) {
 const base_dir = join(import.meta.dirname, "../bake");
 process.chdir(base_dir); // to make bun build predictable in development
 
-function convertZigEnum(zig: string) {
-  const startTrigger = "\npub const MessageId = enum(u8) {";
-  const start = zig.indexOf(startTrigger) + startTrigger.length;
-  const endTrigger = /\n    pub (inline )?fn |\n};/g;
-  const end = zig.slice(start).search(endTrigger) + start;
-  const enumText = zig.slice(start, end);
-  const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
-    return `\n  ${name} = ${value.charCodeAt(0)},`;
+function convertZigEnum(zig: string, names: string[]) {
+  let output = "/** Generated from DevServer.zig */\n";
+  for (const name of names) {
+    const startTrigger = `\npub const ${name} = enum(u8) {`;
+    const start = zig.indexOf(startTrigger) + startTrigger.length;
+    const endTrigger = /\n    pub (inline )?fn |\n};/g;
+    const end = zig.slice(start).search(endTrigger) + start;
+    const enumText = zig.slice(start, end);
+    const values = enumText.replaceAll("\n    ", "\n  ").replace(/\n\s*(\w+)\s*=\s*'(.+?)',/g, (_, name, value) => {
+      return `\n  ${name} = ${value.charCodeAt(0)},`;
+    });
+    output += `export const enum ${name} {${values}}\n`;
+  }
+  return output;
+}
+
+function css(file: string, is_development: boolean): string {
+  const { success, stdout, stderr } = Bun.spawnSync({
+    cmd: [process.execPath, "build", file, "--minify"],
+    cwd: import.meta.dir,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  return `/** Generated from DevServer.zig */\nexport const enum MessageId {${values}}`;
+  if (!success) throw new Error(stderr.toString("utf-8"));
+  return stdout.toString("utf-8");
 }
 
 async function run() {
   const devServerZig = readFileSync(join(base_dir, "DevServer.zig"), "utf-8");
-  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig));
+  writeIfNotChanged(join(base_dir, "generated.ts"), convertZigEnum(devServerZig, ["IncomingMessageId", "MessageId"]));
 
   const results = await Promise.allSettled(
     ["client", "server", "error"].map(async file => {
@@ -37,7 +51,9 @@ async function run() {
         entrypoints: [join(base_dir, `hmr-runtime-${file}.ts`)],
         define: {
           side: JSON.stringify(side),
+          IS_ERROR_RUNTIME: String(file === "error"),
           IS_BUN_DEVELOPMENT: String(!!debug),
+          OVERLAY_CSS: css("../bake/client/overlay.css", !!debug),
         },
         minify: {
           syntax: !debug,
@@ -120,7 +136,7 @@ async function run() {
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
         } else {
-          code = debug ? `((${names}) => {${code}})({\n` : `((${names})=>{${code}})({`;
+          code = debug ? `(async (${names}) => {${code}})({\n` : `(async(${names})=>{${code}})({`;
         }
       }
 
@@ -139,6 +155,7 @@ async function run() {
     { kind: ["error"], result: results[2] },
   ]
     .filter(x => x.result.status === "rejected")
+    // @ts-ignore
     .map(x => ({ kind: x.kind, err: x.result.reason })) as Err[];
   if (failed.length > 0) {
     const flattened_errors: Err[] = [];
@@ -165,6 +182,7 @@ async function run() {
       console.error(`Errors while bundling Bake ${kind.map(x => map[x]).join(" and ")}:`);
       console.error(err);
     }
+    process.exit(1);
   } else {
     console.log("-> bake.client.js, bake.server.js, bake.error.js");
 

@@ -12,7 +12,8 @@ const SupportsCondition = css.css_rules.supports.SupportsCondition;
 const Location = css.css_rules.Location;
 const Result = css.Result;
 
-// TODO: make this equivalent of SmallVec<[CowArcStr<'i>; 1]
+/// Stored as a list of strings as dot notation can be used
+/// to create sublayers
 pub const LayerName = struct {
     v: css.SmallList([]const u8, 1) = .{},
 
@@ -36,6 +37,18 @@ pub const LayerName = struct {
         }, false);
     }
 
+    pub fn hash(this: *const LayerName, hasher: anytype) void {
+        return css.implementHash(@This(), this, hasher);
+    }
+
+    pub fn cloneWithImportRecords(
+        this: *const @This(),
+        allocator: std.mem.Allocator,
+        _: *bun.BabyList(bun.ImportRecord),
+    ) @This() {
+        return LayerName{ .v = this.v.deepClone(allocator) };
+    }
+
     pub fn deepClone(this: *const LayerName, allocator: std.mem.Allocator) LayerName {
         return LayerName{
             .v = this.v.clone(allocator),
@@ -44,8 +57,8 @@ pub const LayerName = struct {
 
     pub fn eql(lhs: *const LayerName, rhs: *const LayerName) bool {
         if (lhs.v.len() != rhs.v.len()) return false;
-        for (lhs.v.slice(), 0..) |part, i| {
-            if (!bun.strings.eql(part, rhs.v.at(@intCast(i)).*)) return false;
+        for (lhs.v.slice(), rhs.v.slice()) |l, r| {
+            if (!bun.strings.eql(l, r)) return false;
         }
         return true;
     }
@@ -120,6 +133,18 @@ pub const LayerName = struct {
             css.serializer.serializeIdentifier(name, dest) catch return dest.addFmtError();
         }
     }
+
+    pub fn format(this: *const LayerName, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        var first = true;
+        for (this.v.slice()) |name| {
+            if (first) {
+                first = false;
+            } else {
+                try writer.writeAll(".");
+            }
+            try writer.writeAll(name);
+        }
+    }
 };
 
 /// A [@layer block](https://drafts.csswg.org/css-cascade-5/#layer-block) rule.
@@ -166,7 +191,7 @@ pub fn LayerBlockRule(comptime R: type) type {
 /// See also [LayerBlockRule](LayerBlockRule).
 pub const LayerStatementRule = struct {
     /// The layer names to declare.
-    names: ArrayList(LayerName),
+    names: bun.css.SmallList(LayerName, 1),
     /// The location of the rule in the source file.
     loc: Location,
 
@@ -175,9 +200,13 @@ pub const LayerStatementRule = struct {
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
-        try dest.writeStr("@layer ");
-        try css.to_css.fromList(LayerName, &this.names, W, dest);
-        try dest.writeChar(';');
+        if (this.names.len() > 0) {
+            try dest.writeStr("@layer ");
+            try css.to_css.fromList(LayerName, this.names.slice(), W, dest);
+            try dest.writeChar(';');
+        } else {
+            try dest.writeStr("@layer;");
+        }
     }
 
     pub fn deepClone(this: *const @This(), allocator: std.mem.Allocator) This {

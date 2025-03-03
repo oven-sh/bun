@@ -20,8 +20,6 @@ describe("bundler", () => {
       "/styles.css": "body { background-color: red; }",
       "/script.js": "console.log('Hello World')",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
 
     onAfterBundle(api) {
@@ -51,8 +49,6 @@ describe("bundler", () => {
       "/src/styles.css": "body { background-color: red; }",
       "/src/script.js": "console.log('Hello World')",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     root: "/src",
     entryPoints: ["/src/index.html"],
 
@@ -87,8 +83,6 @@ describe("bundler", () => {
       "/script1.js": "console.log('First script')",
       "/script2.js": "console.log('Second script')",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // Should combine CSS files into one
@@ -117,8 +111,6 @@ describe("bundler", () => {
 </html>`,
       "/image.jpg": "fake image content",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // Local image should be hashed
@@ -146,8 +138,6 @@ describe("bundler", () => {
   </body>
 </html>`,
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // External URLs should remain unchanged
@@ -179,8 +169,6 @@ describe("bundler", () => {
       "/local.js": "console.log('Local script')",
       "/local.jpg": "fake image content",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // Local assets should be hashed
@@ -222,8 +210,6 @@ export const formatDate = (date) => \`\${date.getFullYear()}-\${padZero(date.get
       "/in/utils/numbers.js": `
 export const padZero = (num) => String(num).padStart(2, '0');`,
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/in/index.html"],
     onAfterBundle(api) {
       // All JS should be bundled into one file
@@ -278,8 +264,6 @@ h1 {
   --body-font: 'Helvetica', sans-serif;
 }`,
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/in/index.html"],
     onAfterBundle(api) {
       // All CSS should be bundled into one file
@@ -345,8 +329,6 @@ initNav();`,
 export const initNav = () => console.log('Navigation initialized');`,
     },
     entryPoints: ["/in/pages/index.html", "/in/pages/about.html"],
-    experimentalHtml: true,
-    experimentalCss: true,
     onAfterBundle(api) {
       // Check index.html
       api.expectFile("out/index.html").toMatch(/href=".*\.css"/);
@@ -455,8 +437,6 @@ export const largeModule = {
 };`,
     },
     entryPoints: ["/in/pages/page1.html", "/in/pages/page2.html"],
-    experimentalHtml: true,
-    experimentalCss: true,
     splitting: true,
     onAfterBundle(api) {
       // Check both pages
@@ -519,7 +499,6 @@ console.log('Loaded HTML:', htmlContent);`,
   </body>
 </html>`,
     },
-    experimentalHtml: true,
 
     // This becomes:
     //
@@ -558,7 +537,6 @@ console.log('Loaded HTML!');`,
   </body>
 </html>`,
     },
-    experimentalHtml: true,
     // This becomes:
     // - ./template.html
     // - ./template-*.js
@@ -601,7 +579,6 @@ console.log('Loaded HTML!', badDefaultImport);`,
   </body>
 </html>`,
     },
-    experimentalHtml: true,
     entryPointsRaw: ["in/template.html", "in/entry.js"],
     bundleErrors: {
       "/in/entry.js": ['No matching export in "in/template.html" for import "default"'],
@@ -617,43 +594,6 @@ console.log('Loaded HTML!', badDefaultImport);`,
       // Verify we DID bundle the HTML file
       expect(entryBundle).not.toMatch(/\.\/template-.*\.html/);
       console.log(entryBundle);
-    },
-  });
-
-  itBundled("html/js-importing-html-and-entry-point-default-import-succeeds-html-loader-disabled", {
-    outdir: "out/",
-    target: "browser",
-    files: {
-      "/in/2nd.js": `
-console.log('2nd');`,
-      "/in/entry.js": `
-import badDefaultImport from './template.html';
-console.log('Loaded HTML!', badDefaultImport);`,
-
-      "/in/template.html": `
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>HTML Template</title>
-  </head>
-  <body>
-    <h1>HTML Template</h1>
-    <script src="./entry.js"></script>
-    <script src="./2nd.js"></script>
-  </body>
-</html>`,
-    },
-    experimentalHtml: false,
-    entryPointsRaw: ["in/template.html", "in/entry.js"],
-    onAfterBundle(api) {
-      const entryBundle = api.readFile("out/entry.js");
-
-      // Verify we DID bundle the HTML file
-      expect(entryBundle).toMatch(/\.\/template-.*\.html/);
-      const filename = entryBundle.match(/\.\/(template-.*\.html)/)?.[1];
-      expect(filename).toBeDefined();
-      const templateBundle = api.readFile("out/" + filename!);
-      expect(templateBundle).toContain("HTML Template");
     },
   });
 
@@ -676,8 +616,8 @@ console.log('Main JS loaded page:', page);`,
   </body>
 </html>`,
     },
-    experimentalHtml: true,
     entryPoints: ["/in/main.js"],
+    loader: { ".html": "file" },
     onAfterBundle(api) {
       const bundle = api.readFile("out/main.js");
 
@@ -729,8 +669,6 @@ body {
   background-color: #f5f5f5;
 }`,
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/in/page.html"],
     onAfterBundle(api) {
       const htmlBundle = api.readFile("out/page.html");
@@ -774,8 +712,6 @@ body {
       "/scripts/app.js": "console.log('App loaded')",
       "/images/logo.png": "fake image content",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       // Check that absolute paths are handled correctly
@@ -832,8 +768,6 @@ body {
 /* This is a comment */`,
       "/script.js": "console.log('Hello World')",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     sourceMap: "linked",
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
@@ -883,8 +817,6 @@ body {
 /* This is a comment */`,
       "/script.js": "console.log('Hello World')",
     },
-    experimentalHtml: true,
-    experimentalCss: true,
     sourceMap: "inline",
     entryPoints: ["/index.html"],
     onAfterBundle(api) {

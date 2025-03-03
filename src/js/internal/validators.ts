@@ -67,31 +67,28 @@ function validateLinkHeaderValue(hints) {
   );
 }
 hideFromStack(validateLinkHeaderValue);
-// TODO: do it in NodeValidator.cpp
-function validateObject(value, name) {
-  if (typeof value !== "object" || value === null) throw $ERR_INVALID_ARG_TYPE(name, "object", value);
-}
-hideFromStack(validateObject);
-
-function validateOneOf(value, name, oneOf) {
-  if (!ArrayPrototypeIncludes.$call(oneOf, value)) {
-    const allowed = ArrayPrototypeJoin.$call(
-      ArrayPrototypeMap.$call(oneOf, v => (typeof v === "string" ? `'${v}'` : String(v))),
-      ", ",
-    );
-    const reason = "must be one of: " + allowed;
-    throw $ERR_INVALID_ARG_VALUE(name, value, reason);
-  }
-}
-hideFromStack(validateOneOf);
 
 export default {
-  validateObject: validateObject,
+  /** (value, name) */
+  validateObject: $newCppFunction("NodeValidator.cpp", "jsFunction_validateObject", 2),
   validateLinkHeaderValue: validateLinkHeaderValue,
   checkIsHttpToken: checkIsHttpToken,
-  /** `(value, name, min = NumberMIN_SAFE_INTEGER, max = NumberMAX_SAFE_INTEGER)` */
+  /**
+   * @param value the value that should be an int
+   * @paran name the name of the parameter. Used when creating error codes
+   * @param min minimum value, inclusive. Defaults to {@link Number.MIN_SAFE_INTEGER}.
+   * @param max maximum value, inclusive. Defaults to {@link Number.MAX_SAFE_INTEGER}.
+   *
+   * @throws if `value` is not an int
+   * @throws if `value` is outside `[min, max]`
+   */
   validateInteger: $newCppFunction("NodeValidator.cpp", "jsFunction_validateInteger", 0),
-  /** `(value, name, min = undefined, max)` */
+  /**
+   * @param value the value that should be an int
+   * @paran name the name of the parameter. Used when creating error codes
+   * @param min minimum value, exclusive. Defaults to {@link Number.MIN_SAFE_INTEGER}.
+   * @param max maximum value, exclusive. Defaults to {@link Number.MAX_SAFE_INTEGER}.
+   */
   validateNumber: $newCppFunction("NodeValidator.cpp", "jsFunction_validateNumber", 0),
   /** `(value, name)` */
   validateString: $newCppFunction("NodeValidator.cpp", "jsFunction_validateString", 0),
@@ -124,5 +121,5 @@ export default {
   /** `(buffer, name = 'buffer')` */
   validateBuffer: $newCppFunction("NodeValidator.cpp", "jsFunction_validateBuffer", 0),
   /** `(value, name, oneOf)` */
-  validateOneOf,
+  validateOneOf: $newCppFunction("NodeValidator.cpp", "jsFunction_validateOneOf", 0),
 };

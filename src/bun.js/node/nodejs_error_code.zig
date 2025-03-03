@@ -483,6 +483,9 @@ pub const Code = enum {
     /// There was a bug in Node.js or incorrect usage of Node.js internals. To fix the error, open an issue at https://github.com/nodejs/node/issues.
     ERR_INTERNAL_ASSERTION,
 
+    /// The provided IP address was not valid for the given address family.
+    ERR_INVALID_ADDRESS,
+
     /// The provided address family is not understood by the Node.js API.
     ERR_INVALID_ADDRESS_FAMILY,
 

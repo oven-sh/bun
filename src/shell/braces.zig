@@ -4,7 +4,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;
-const SmolStr = @import("../string_types.zig").SmolStr;
+const SmolStr = @import("../string.zig").SmolStr;
 const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
 
 /// Using u16 because anymore tokens than that results in an unreasonably high

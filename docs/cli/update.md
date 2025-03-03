@@ -32,3 +32,5 @@ For example, with the following `package.json`:
 
 - `bun update` would update to a version that matches `17.x`.
 - `bun update --latest` would update to a version that matches `18.x` or later.
+
+{% bunCLIUsage command="update" /%}

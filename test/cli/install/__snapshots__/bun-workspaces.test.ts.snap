@@ -3,11 +3,11 @@
 exports[`dependency on workspace without version in package.json: version: * 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "a5d5a45555763c1040428cd33363c16438c75b23d8961e7458abe2d985fa08d1",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
-    "no-deps": 1,
+    "no-deps": 2,
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -17,11 +17,11 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     }
@@ -29,9 +29,9 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -39,9 +39,9 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -50,11 +50,8 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
     {
       "name": "no-deps",
       "literal": "*",
-      "npm": {
-        "name": "no-deps",
-        "version": ">=0.0.0"
-      },
-      "package_id": 1,
+      "workspace": "packages/mono",
+      "package_id": 2,
       "behavior": {
         "prod": true,
         "workspace": true
@@ -84,22 +81,6 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -110,6 +91,22 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -130,11 +127,11 @@ exports[`dependency on workspace without version in package.json: version: * 1`]
 exports[`dependency on workspace without version in package.json: version: *.*.* 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "a5d5a45555763c1040428cd33363c16438c75b23d8961e7458abe2d985fa08d1",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
-    "no-deps": 1,
+    "no-deps": 2,
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -144,11 +141,11 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     }
@@ -156,9 +153,9 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -166,9 +163,9 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -177,11 +174,8 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
     {
       "name": "no-deps",
       "literal": "*.*.*",
-      "npm": {
-        "name": "no-deps",
-        "version": ">=0.0.0"
-      },
-      "package_id": 1,
+      "workspace": "packages/mono",
+      "package_id": 2,
       "behavior": {
         "prod": true,
         "workspace": true
@@ -211,22 +205,6 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -237,6 +215,22 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -257,11 +251,11 @@ exports[`dependency on workspace without version in package.json: version: *.*.*
 exports[`dependency on workspace without version in package.json: version: =* 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "a5d5a45555763c1040428cd33363c16438c75b23d8961e7458abe2d985fa08d1",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
-    "no-deps": 1,
+    "no-deps": 2,
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -271,11 +265,11 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     }
@@ -283,9 +277,9 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -293,9 +287,9 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -304,11 +298,8 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
     {
       "name": "no-deps",
       "literal": "=*",
-      "npm": {
-        "name": "no-deps",
-        "version": ">=0.0.0"
-      },
-      "package_id": 1,
+      "workspace": "packages/mono",
+      "package_id": 2,
       "behavior": {
         "prod": true,
         "workspace": true
@@ -338,22 +329,6 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -364,6 +339,22 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -384,11 +375,11 @@ exports[`dependency on workspace without version in package.json: version: =* 1`
 exports[`dependency on workspace without version in package.json: version: kjwoehcojrgjoj 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "a5d5a45555763c1040428cd33363c16438c75b23d8961e7458abe2d985fa08d1",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
-    "no-deps": 1,
+    "no-deps": 2,
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -398,11 +389,11 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     }
@@ -410,9 +401,9 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -420,9 +411,9 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -431,11 +422,8 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
     {
       "name": "no-deps",
       "literal": "kjwoehcojrgjoj",
-      "dist_tag": {
-        "name": "no-deps",
-        "tag": "no-deps"
-      },
-      "package_id": 1,
+      "workspace": "packages/mono",
+      "package_id": 2,
       "behavior": {
         "prod": true,
         "workspace": true
@@ -465,22 +453,6 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -491,6 +463,22 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -511,11 +499,11 @@ exports[`dependency on workspace without version in package.json: version: kjwoe
 exports[`dependency on workspace without version in package.json: version: *.1.* 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "a5d5a45555763c1040428cd33363c16438c75b23d8961e7458abe2d985fa08d1",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
-    "no-deps": 1,
+    "no-deps": 2,
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -525,11 +513,11 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     }
@@ -537,9 +525,9 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -547,9 +535,9 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -558,11 +546,8 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
     {
       "name": "no-deps",
       "literal": "*.1.*",
-      "npm": {
-        "name": "no-deps",
-        "version": ">=0.0.0"
-      },
-      "package_id": 1,
+      "workspace": "packages/mono",
+      "package_id": 2,
       "behavior": {
         "prod": true,
         "workspace": true
@@ -592,22 +577,6 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -618,6 +587,22 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -638,11 +623,11 @@ exports[`dependency on workspace without version in package.json: version: *.1.*
 exports[`dependency on workspace without version in package.json: version: *-pre 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "a5d5a45555763c1040428cd33363c16438c75b23d8961e7458abe2d985fa08d1",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
-    "no-deps": 1,
+    "no-deps": 2,
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -652,11 +637,11 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     }
@@ -664,9 +649,9 @@ exports[`dependency on workspace without version in package.json: version: *-pre
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -674,9 +659,9 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -685,11 +670,8 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     {
       "name": "no-deps",
       "literal": "*-pre",
-      "npm": {
-        "name": "no-deps",
-        "version": ">=0.0.0"
-      },
-      "package_id": 1,
+      "workspace": "packages/mono",
+      "package_id": 2,
       "behavior": {
         "prod": true,
         "workspace": true
@@ -719,22 +701,6 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -745,6 +711,22 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -765,14 +747,14 @@ exports[`dependency on workspace without version in package.json: version: *-pre
 exports[`dependency on workspace without version in package.json: version: 1 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "80ecab0f58b4fb37bae1983a06ebd81b6573433d7f92e938ffa7854f8ff15e7c",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -782,11 +764,11 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -805,9 +787,9 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -815,9 +797,9 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -832,8 +814,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -860,22 +841,6 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -886,6 +851,22 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -922,14 +903,14 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
 exports[`dependency on workspace without version in package.json: version: 1.* 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "80ecab0f58b4fb37bae1983a06ebd81b6573433d7f92e938ffa7854f8ff15e7c",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -939,11 +920,11 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -962,9 +943,9 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -972,9 +953,9 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -989,8 +970,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -1017,22 +997,6 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -1043,6 +1007,22 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -1079,14 +1059,14 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
 exports[`dependency on workspace without version in package.json: version: 1.1.* 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "80ecab0f58b4fb37bae1983a06ebd81b6573433d7f92e938ffa7854f8ff15e7c",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -1096,11 +1076,11 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -1119,9 +1099,9 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -1129,9 +1109,9 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -1146,8 +1126,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -1174,22 +1153,6 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -1200,6 +1163,22 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -1236,14 +1215,14 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
 exports[`dependency on workspace without version in package.json: version: 1.1.0 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "80ecab0f58b4fb37bae1983a06ebd81b6573433d7f92e938ffa7854f8ff15e7c",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -1253,11 +1232,11 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -1276,9 +1255,9 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -1286,9 +1265,9 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -1303,8 +1282,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -1331,22 +1309,6 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -1357,6 +1319,22 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -1393,14 +1371,14 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
 exports[`dependency on workspace without version in package.json: version: *-pre+build 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "c881b2c8cf6783504861587208d2b08d131130ff006987d527987075b04aa921",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -1410,11 +1388,11 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -1433,9 +1411,9 @@ exports[`dependency on workspace without version in package.json: version: *-pre
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -1443,9 +1421,9 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -1460,8 +1438,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -1488,22 +1465,6 @@ exports[`dependency on workspace without version in package.json: version: *-pre
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -1514,6 +1475,22 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -1550,14 +1527,14 @@ exports[`dependency on workspace without version in package.json: version: *-pre
 exports[`dependency on workspace without version in package.json: version: *+build 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "c881b2c8cf6783504861587208d2b08d131130ff006987d527987075b04aa921",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -1567,11 +1544,11 @@ exports[`dependency on workspace without version in package.json: version: *+bui
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -1590,9 +1567,9 @@ exports[`dependency on workspace without version in package.json: version: *+bui
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -1600,9 +1577,9 @@ exports[`dependency on workspace without version in package.json: version: *+bui
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -1617,8 +1594,7 @@ exports[`dependency on workspace without version in package.json: version: *+bui
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -1645,22 +1621,6 @@ exports[`dependency on workspace without version in package.json: version: *+bui
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -1671,6 +1631,22 @@ exports[`dependency on workspace without version in package.json: version: *+bui
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -1707,14 +1683,14 @@ exports[`dependency on workspace without version in package.json: version: *+bui
 exports[`dependency on workspace without version in package.json: version: latest 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "c881b2c8cf6783504861587208d2b08d131130ff006987d527987075b04aa921",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -1724,11 +1700,11 @@ exports[`dependency on workspace without version in package.json: version: lates
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -1747,9 +1723,9 @@ exports[`dependency on workspace without version in package.json: version: lates
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -1757,9 +1733,9 @@ exports[`dependency on workspace without version in package.json: version: lates
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -1774,8 +1750,7 @@ exports[`dependency on workspace without version in package.json: version: lates
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -1802,22 +1777,6 @@ exports[`dependency on workspace without version in package.json: version: lates
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -1828,6 +1787,22 @@ exports[`dependency on workspace without version in package.json: version: lates
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -1864,14 +1839,14 @@ exports[`dependency on workspace without version in package.json: version: lates
 exports[`dependency on workspace without version in package.json: version:  1`] = `
 "{
   "format": "v2",
-  "meta_hash": "c881b2c8cf6783504861587208d2b08d131130ff006987d527987075b04aa921",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -1881,11 +1856,11 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -1904,9 +1879,9 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -1914,9 +1889,9 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -1931,8 +1906,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -1959,22 +1933,6 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -1985,6 +1943,22 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",
@@ -2021,14 +1995,14 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
 exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
 "{
   "format": "v2",
-  "meta_hash": "c881b2c8cf6783504861587208d2b08d131130ff006987d527987075b04aa921",
+  "meta_hash": "0000000000000000000000000000000000000000000000000000000000000000",
   "package_index": {
     "no-deps": [
-      1,
+      2,
       3
     ],
     "foo": 0,
-    "bar": 2
+    "bar": 1
   },
   "trees": [
     {
@@ -2038,11 +2012,11 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
       "dependencies": {
         "bar": {
           "id": 0,
-          "package_id": 2
+          "package_id": 1
         },
         "no-deps": {
           "id": 1,
-          "package_id": 1
+          "package_id": 2
         }
       }
     },
@@ -2061,9 +2035,9 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
   "dependencies": [
     {
       "name": "bar",
-      "literal": "packages/bar",
+      "literal": "",
       "workspace": "packages/bar",
-      "package_id": 2,
+      "package_id": 1,
       "behavior": {
         "workspace": true
       },
@@ -2071,9 +2045,9 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
     },
     {
       "name": "no-deps",
-      "literal": "packages/mono",
+      "literal": "",
       "workspace": "packages/mono",
-      "package_id": 1,
+      "package_id": 2,
       "behavior": {
         "workspace": true
       },
@@ -2088,8 +2062,7 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
       },
       "package_id": 3,
       "behavior": {
-        "prod": true,
-        "workspace": true
+        "prod": true
       },
       "id": 2
     }
@@ -2116,22 +2089,6 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
     },
     {
       "id": 1,
-      "name": "no-deps",
-      "name_hash": "5128161233225832376",
-      "resolution": {
-        "tag": "workspace",
-        "value": "workspace:packages/mono",
-        "resolved": "workspace:packages/mono"
-      },
-      "dependencies": [],
-      "integrity": null,
-      "man_dir": "",
-      "origin": "npm",
-      "bin": null,
-      "scripts": {}
-    },
-    {
-      "id": 2,
       "name": "bar",
       "name_hash": "11592711315645265694",
       "resolution": {
@@ -2142,6 +2099,22 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
       "dependencies": [
         2
       ],
+      "integrity": null,
+      "man_dir": "",
+      "origin": "npm",
+      "bin": null,
+      "scripts": {}
+    },
+    {
+      "id": 2,
+      "name": "no-deps",
+      "name_hash": "5128161233225832376",
+      "resolution": {
+        "tag": "workspace",
+        "value": "workspace:packages/mono",
+        "resolved": "workspace:packages/mono"
+      },
+      "dependencies": [],
       "integrity": null,
       "man_dir": "",
       "origin": "npm",

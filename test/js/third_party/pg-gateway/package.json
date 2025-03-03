@@ -1,0 +1,7 @@
+{
+  "name": "pg-gateway",
+  "dependencies": {
+    "@electric-sql/pglite": "0.2.17",
+    "pg-gateway": "0.3.0-beta.4"
+  }
+}

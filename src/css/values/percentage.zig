@@ -62,8 +62,16 @@ pub const Percentage = struct {
         return this.v == other.v;
     }
 
+    pub fn addInternal(this: Percentage, allocator: std.mem.Allocator, other: Percentage) Percentage {
+        return this.add(allocator, other);
+    }
+
     pub fn add(lhs: Percentage, _: std.mem.Allocator, rhs: Percentage) Percentage {
         return Percentage{ .v = lhs.v + rhs.v };
+    }
+
+    pub fn intoCalc(this: Percentage, allocator: std.mem.Allocator) Calc(Percentage) {
+        return Calc(Percentage){ .value = bun.create(allocator, Percentage, this) };
     }
 
     pub fn mulF32(this: Percentage, _: std.mem.Allocator, other: f32) Percentage {
@@ -267,7 +275,7 @@ pub fn DimensionPercentage(comptime D: type) type {
             };
         }
 
-        fn addInternal(this: This, allocator: std.mem.Allocator, other: This) This {
+        pub fn addInternal(this: This, allocator: std.mem.Allocator, other: This) This {
             if (this.addRecursive(allocator, &other)) |res| return res;
             return this.addImpl(allocator, other);
         }
@@ -285,12 +293,12 @@ pub fn DimensionPercentage(comptime D: type) type {
                     .sum => |sum| {
                         const left_calc = This{ .calc = sum.left };
                         if (left_calc.addRecursive(allocator, other)) |res| {
-                            return res.add(allocator, This{ .calc = sum.right });
+                            return res.addImpl(allocator, This{ .calc = sum.right });
                         }
 
                         const right_calc = This{ .calc = sum.right };
                         if (right_calc.addRecursive(allocator, other)) |res| {
-                            return (This{ .calc = sum.left }).add(allocator, res);
+                            return (This{ .calc = sum.left }).addImpl(allocator, res);
                         }
                     },
                     else => {},
@@ -301,12 +309,12 @@ pub fn DimensionPercentage(comptime D: type) type {
                     .sum => |sum| {
                         const left_calc = This{ .calc = sum.left };
                         if (this.addRecursive(allocator, &left_calc)) |res| {
-                            return res.add(allocator, This{ .calc = sum.right });
+                            return res.addImpl(allocator, This{ .calc = sum.right });
                         }
 
                         const right_calc = This{ .calc = sum.right };
                         if (this.addRecursive(allocator, &right_calc)) |res| {
-                            return (This{ .calc = sum.left }).add(allocator, res);
+                            return (This{ .calc = sum.left }).addImpl(allocator, res);
                         }
                     },
                     else => {},
@@ -331,7 +339,7 @@ pub fn DimensionPercentage(comptime D: type) type {
                 return .{ .calc = bun.create(allocator, Calc(DimensionPercentage(D)), a.calc.add(allocator, b.calc.*)) };
             } else if (a == .calc) {
                 if (a.calc.* == .value) {
-                    return a.calc.value.add(allocator, b);
+                    return a.calc.value.addImpl(allocator, b);
                 } else {
                     return .{
                         .calc = bun.create(
@@ -346,7 +354,7 @@ pub fn DimensionPercentage(comptime D: type) type {
                 }
             } else if (b == .calc) {
                 if (b.calc.* == .value) {
-                    return a.add(allocator, b.calc.value.*);
+                    return a.addImpl(allocator, b.calc.value.*);
                 } else {
                     return .{
                         .calc = bun.create(
@@ -484,16 +492,7 @@ pub const NumberOrPercentage = union(enum) {
     }
 
     pub fn eql(this: *const NumberOrPercentage, other: *const NumberOrPercentage) bool {
-        return switch (this.*) {
-            .number => |*a| switch (other.*) {
-                .number => a.* == other.number,
-                .percentage => false,
-            },
-            .percentage => |*a| switch (other.*) {
-                .number => false,
-                .percentage => a.eql(&other.percentage),
-            },
-        };
+        return css.implementEql(@This(), this, other);
     }
 
     pub fn intoF32(this: *const @This()) f32 {

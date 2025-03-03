@@ -39,7 +39,6 @@ test("bun build --target=bun outputs only ascii", async () => {
   const build_result = await Bun.build({
     entrypoints: [import.meta.dirname + "/import_target.ts"],
     target: "bun",
-    throw: true,
   });
   expect(build_result.success).toBe(true);
   expect(build_result.outputs.length).toBe(1);

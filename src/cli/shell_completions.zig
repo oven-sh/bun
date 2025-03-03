@@ -17,15 +17,15 @@ pub const Shell = enum {
     fish,
     pwsh,
 
-    const bash_completions = @import("root").completions.bash;
-    const zsh_completions = @import("root").completions.zsh;
-    const fish_completions = @import("root").completions.fish;
+    const bash_completions = @embedFile("completions-bash");
+    const zsh_completions = @embedFile("completions-zsh");
+    const fish_completions = @embedFile("completions-fish");
 
     pub fn completions(this: Shell) []const u8 {
         return switch (this) {
-            .bash => bun.asByteSlice(bash_completions),
-            .zsh => bun.asByteSlice(zsh_completions),
-            .fish => bun.asByteSlice(fish_completions),
+            .bash => bash_completions,
+            .zsh => zsh_completions,
+            .fish => fish_completions,
             else => "",
         };
     }

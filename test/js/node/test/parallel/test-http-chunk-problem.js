@@ -23,11 +23,15 @@ if (process.argv[2] === 'request') {
 if (process.argv[2] === 'shasum') {
   const crypto = require('crypto');
   const shasum = crypto.createHash('sha1');
+  let total = 0;
   process.stdin.on('data', (d) => {
+    console.warn("Chunk: " + d.length);
+    total += d.length;
     shasum.update(d);
   });
 
   process.stdin.on('close', () => {
+    console.warn("Total:", total);
     process.stdout.write(shasum.digest('hex'));
   });
 
@@ -43,18 +47,26 @@ const filename = tmpdir.resolve('big');
 let server;
 
 function executeRequest(cb) {
-  cp.exec([`"${process.execPath}"`,
-           `"${__filename}"`,
+  // The execPath might contain chars that should be escaped in a shell context.
+  // On non-Windows, we can pass the path via the env; `"` is not a valid char on
+  // Windows, so we can simply pass the path.
+  const node = `"${common.isWindows ? process.execPath : '$NODE'}"`;
+  const file = `"${common.isWindows ? __filename : '$FILE'}"`;
+  const env = common.isWindows ? process.env : { ...process.env, NODE: process.execPath, FILE: __filename };
+  cp.exec([node,
+           file,
            'request',
            server.address().port,
            '|',
-           `"${process.execPath}"`,
-           `"${__filename}"`,
+           node,
+           file,
            'shasum' ].join(' '),
+          { env },
           (err, stdout, stderr) => {
             if (stderr.trim() !== '') {
-              console.log(stderr);
+              console.error(stderr);
             }
+            console.log(stdout.toString());
             assert.ifError(err);
             assert.strictEqual(stdout.slice(0, 40),
                                '8c206a1a87599f532ce68675536f0b1546900d7a');

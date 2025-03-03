@@ -40,7 +40,7 @@ void node_module_register(void* opaque_mod)
 {
     // TODO unify this with napi_module_register
     auto* globalObject = defaultGlobalObject();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto* mod = reinterpret_cast<struct node_module*>(opaque_mod);
 
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
@@ -100,7 +100,6 @@ void node_module_register(void* opaque_mod)
     }
 
     RETURN_IF_EXCEPTION(scope, void());
-
     globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 

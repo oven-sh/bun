@@ -12,8 +12,7 @@ class GlobalObject;
 
 namespace Bun {
 
-// TODO: find a better place for this
-int getRSS(size_t* rss);
+extern "C" int getRSS(size_t* rss);
 
 using namespace JSC;
 
@@ -53,6 +52,8 @@ public:
     void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args);
     void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue);
     void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue, JSValue);
+
+    static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }

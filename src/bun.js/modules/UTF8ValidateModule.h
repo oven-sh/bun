@@ -9,7 +9,7 @@ generateNativeModule_UTF8Validate(JSC::JSGlobalObject* globalObject,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
 
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(JSC::JSFunction::create(

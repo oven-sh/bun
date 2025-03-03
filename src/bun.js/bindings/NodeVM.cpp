@@ -173,7 +173,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 
     auto* sandbox = thisObject->m_sandbox.get();
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSValue thisValue = slot.thisValue();
     bool isContextualStore = thisValue != JSValue(globalObject);
     (void)isContextualStore;
@@ -217,7 +217,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
     auto* thisObject = jsCast<NodeVMGlobalObject*>(cell);
     if (thisObject->m_sandbox) {
         auto* contextifiedObject = thisObject->m_sandbox.get();
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         slot.setThisValue(contextifiedObject);
         if (contextifiedObject->getPropertySlot(globalObject, propertyName, slot)) {
@@ -241,7 +241,7 @@ bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globa
     }
 
     auto* contextifiedObject = thisObject->m_sandbox.get();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
@@ -292,7 +292,7 @@ public:
 
     static std::optional<ScriptOptions> fromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue optionsArg, bool& failed)
     {
-        auto& vm = globalObject->vm();
+        auto& vm = JSC::getVM(globalObject);
         ScriptOptions opts;
         JSObject* options;
         bool any = false;
@@ -384,7 +384,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
 
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg)
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     // Set the contextified object before evaluating
@@ -416,14 +416,14 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetCachedDataRejected, (JSGlobalObject * globalOb
 }
 JSC_DEFINE_HOST_FUNCTION(scriptCreateCachedData, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     return throwVMError(globalObject, scope, "TODO: Script.createCachedData"_s);
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
@@ -459,7 +459,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     JSValue thisValue = callFrame->thisValue();
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -491,7 +491,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValueEncoded, PropertyName))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue thisValue = JSValue::decode(thisValueEncoded);
     auto* script = jsDynamicCast<NodeVMScript*>(thisValue);
@@ -563,7 +563,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
 JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto sourceStringValue = callFrame->argument(0);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
@@ -599,7 +599,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     NodeVMScript* script = jsDynamicCast<NodeVMScript*>(callFrame->thisValue());
     JSValue contextObjectValue = callFrame->argument(0);
     // TODO: options
@@ -862,7 +862,7 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();

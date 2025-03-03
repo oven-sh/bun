@@ -210,6 +210,8 @@ const json = struct {
                 },
             }
 
+            if (json_data.len == 0) return IPCDecodeError.NotEnoughBytes;
+
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;
 
@@ -220,6 +222,7 @@ const json = struct {
                 bun.String.createExternal(json_data, true, &was_ascii_string_freed, jsonIPCDataStringFreeCB)
             else
                 bun.String.fromUTF8(json_data);
+
             defer {
                 str.deref();
                 if (is_ascii and !was_ascii_string_freed) {
@@ -339,7 +342,7 @@ const SocketIPCData = struct {
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
             const n = this.socket.write(bytes, false);
-            if (n != bytes.len) {
+            if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
                 this.outgoing.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
             }
         }
@@ -695,8 +698,8 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             // In the VirtualMachine case, `globalThis` is an optional, in case
             // the vm is freed before the socket closes.
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .Pointer => this.globalThis,
-                .Optional => brk: {
+                .pointer => this.globalThis,
+                .optional => brk: {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }
@@ -842,8 +845,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             bun.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
 
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
-                .Pointer => this.globalThis,
-                .Optional => brk: {
+                .pointer => this.globalThis,
+                .optional => brk: {
                     if (this.globalThis) |global| {
                         break :brk global;
                     }

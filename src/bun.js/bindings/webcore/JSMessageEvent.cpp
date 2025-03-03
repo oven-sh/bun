@@ -62,7 +62,7 @@ using namespace JSC;
 
 template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
-    VM& vm = JSC::getVM(&lexicalGlobalObject);
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
@@ -219,7 +219,7 @@ using JSMessageEventDOMConstructor = JSDOMConstructor<JSMessageEvent>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSMessageEventDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -315,7 +315,7 @@ JSValue JSMessageEvent::getConstructor(VM& vm, const JSGlobalObject* globalObjec
 
 JSC_DEFINE_CUSTOM_GETTER(jsMessageEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSMessageEventPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

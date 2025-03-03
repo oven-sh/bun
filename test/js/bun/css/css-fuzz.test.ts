@@ -182,8 +182,6 @@ if (!isCI) {
         try {
           const result = await Bun.build({
             entrypoints: ["invalid.css"],
-            experimentalCss: true,
-            throw: true,
           });
 
           // We expect the parser to either throw an error or return a valid result
@@ -246,7 +244,6 @@ if (!isCI) {
       try {
         await Bun.build({
           entrypoints: ["invalid.css"],
-          experimentalCss: true,
         });
       } catch (error) {
         // Expected to throw, but shouldn't crash

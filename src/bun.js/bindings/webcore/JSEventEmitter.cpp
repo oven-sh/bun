@@ -99,7 +99,7 @@ using JSEventEmitterDOMConstructor = JSDOMConstructorCallable<JSEventEmitter>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSEventEmitterDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -127,7 +127,7 @@ JSC_ANNOTATE_HOST_FUNCTION(JSEventEmitterDOMConstructorConstruct, JSEventEmitter
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSEventEmitterDOMConstructor::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSEventEmitterDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -247,7 +247,7 @@ void JSEventEmitter::destroy(JSC::JSCell* cell)
 
 JSC_DEFINE_CUSTOM_GETTER(jsEventEmitterConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSEventEmitterPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))

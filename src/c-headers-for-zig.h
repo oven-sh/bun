@@ -18,4 +18,15 @@
 #include "pwd.h"
 // geteuid
 #include <unistd.h>
+// AI_ADDRCONFIG
+#include <netdb.h>
+#endif
+
+#if DARWIN
+#include <sys/mount.h>
+#include <sys/stat.h>
+#include <sys/sysctl.h>
+#elif LINUX
+#include <sys/statfs.h>
+#include <sys/stat.h>
 #endif

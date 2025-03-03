@@ -234,11 +234,11 @@ class Worker extends EventEmitter {
       }
       throw e;
     }
-    this.#worker.addEventListener("close", this.#onClose.bind(this));
+    this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
     this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
-    this.#worker.addEventListener("open", this.#onOpen.bind(this));
+    this.#worker.addEventListener("open", this.#onOpen.bind(this), { once: true });
 
     if (this.#urlToRevoke) {
       const url = this.#urlToRevoke;

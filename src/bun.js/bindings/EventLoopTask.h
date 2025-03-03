@@ -4,7 +4,7 @@
 namespace WebCore {
 
 class EventLoopTask {
-    WTF_MAKE_ISO_ALLOCATED(EventLoopTask);
+    WTF_MAKE_TZONE_ALLOCATED(EventLoopTask);
 
 public:
     enum CleanupTaskTag { CleanupTask };

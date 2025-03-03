@@ -11,8 +11,11 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include "ConsoleObject.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace Inspector {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(InspectorLifecycleAgent);
 
 // Zig bindings implementation
 extern "C" {

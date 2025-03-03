@@ -46,7 +46,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
 {
     JSValue functionToCall = JSValue::decode(encodedFunctionValue);
     JSValue thisValue = JSValue::decode(encodedThisValue);
-    JSC::VM& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* options = Bun::createInspectOptionsObject(vm, globalObject, max_depth, colors);

@@ -250,6 +250,8 @@
 pub use anyhow;
 pub use bun_macro::bun;
 
+pub mod sys;
+
 #[repr(transparent)]
 pub struct BunPluginName(*const c_char);
 
@@ -284,10 +286,6 @@ use std::{
     str::Utf8Error,
     sync::PoisonError,
 };
-
-pub mod sys {
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
 
 #[repr(C)]
 pub struct TaggedObject<T> {
@@ -475,6 +473,10 @@ impl<'a> OnBeforeParse<'a> {
         }
     }
 
+    /// # Safety
+    /// This is unsafe as you must ensure that no other invocation of the plugin (or JS!)
+    /// simultaneously holds a mutable reference to the external.
+    ///
     /// Get the external object from the `OnBeforeParse` arguments.
     ///
     /// The external object is set by the plugin definition inside of JS:
@@ -523,42 +525,35 @@ impl<'a> OnBeforeParse<'a> {
     ///     },
     /// };
     /// ```
-    pub unsafe fn external<T: 'static + Sync>(&self) -> PluginResult<Option<&'static T>> {
+    pub unsafe fn external<'b, T: 'static + Sync>(
+        &self,
+        from_raw: unsafe fn(*mut c_void) -> Option<&'b T>,
+    ) -> PluginResult<Option<&'b T>> {
         if unsafe { (*self.args_raw).external.is_null() } {
             return Ok(None);
         }
 
-        let external: *mut TaggedObject<T> =
-            unsafe { (*self.args_raw).external as *mut TaggedObject<T> };
+        let external = unsafe { from_raw((*self.args_raw).external as *mut _) };
 
-        unsafe {
-            if (*external).type_id != TypeId::of::<T>() {
-                return Err(Error::ExternalTypeMismatch);
-            }
-
-            Ok((*external).object.as_ref())
-        }
+        Ok(external)
     }
 
     /// The same as [`crate::bun_native_plugin::OnBeforeParse::external`], but returns a mutable reference.
     ///
-    /// This is unsafe as you must ensure that no other invocation of the plugin
+    /// # Safety
+    /// This is unsafe as you must ensure that no other invocation of the plugin (or JS!)
     /// simultaneously holds a mutable reference to the external.
-    pub unsafe fn external_mut<T: 'static + Sync>(&mut self) -> PluginResult<Option<&mut T>> {
+    pub unsafe fn external_mut<'b, T: 'static + Sync>(
+        &mut self,
+        from_raw: unsafe fn(*mut c_void) -> Option<&'b mut T>,
+    ) -> PluginResult<Option<&'b mut T>> {
         if unsafe { (*self.args_raw).external.is_null() } {
             return Ok(None);
         }
 
-        let external: *mut TaggedObject<T> =
-            unsafe { (*self.args_raw).external as *mut TaggedObject<T> };
+        let external = unsafe { from_raw((*self.args_raw).external as *mut _) };
 
-        unsafe {
-            if (*external).type_id != TypeId::of::<T>() {
-                return Err(Error::ExternalTypeMismatch);
-            }
-
-            Ok((*external).object.as_mut())
-        }
+        Ok(external)
     }
 
     /// Get the input source code for the current file.

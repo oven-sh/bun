@@ -23,7 +23,6 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-const { ERR_UNHANDLED_ERROR } = require("internal/errors");
 const {
   validateObject,
   validateInteger,
@@ -118,7 +117,7 @@ function emitError(emitter, args) {
   }
 
   // At least give some kind of context to the user
-  const err = ERR_UNHANDLED_ERROR(stringifiedEr);
+  const err = $ERR_UNHANDLED_ERROR(stringifiedEr);
   err.context = er;
   throw err; // Unhandled 'error' event
 }
@@ -424,7 +423,7 @@ function once(emitter, type, options = kEmptyObject) {
   var signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
   if (signal?.aborted) {
-    throw new AbortError(undefined, { cause: signal?.reason });
+    throw $makeAbortError(undefined, { cause: signal?.reason });
   }
   const { resolve, reject, promise } = $newPromiseCapability(Promise);
   const errorListener = err => {
@@ -452,7 +451,7 @@ function once(emitter, type, options = kEmptyObject) {
   function abortListener() {
     eventTargetAgnosticRemoveListener(emitter, type, resolver);
     eventTargetAgnosticRemoveListener(emitter, "error", errorListener);
-    reject(new AbortError(undefined, { cause: signal?.reason }));
+    reject($makeAbortError(undefined, { cause: signal?.reason }));
   }
   if (signal != null) {
     eventTargetAgnosticAddListener(signal, "abort", abortListener, { once: true });
@@ -471,7 +470,7 @@ function on(emitter, event, options = kEmptyObject) {
   validateObject(options, "options");
   const signal = options.signal;
   validateAbortSignal(signal, "options.signal");
-  if (signal?.aborted) throw new AbortError(undefined, { cause: signal?.reason });
+  if (signal?.aborted) throw $makeAbortError(undefined, { cause: signal?.reason });
   // Support both highWaterMark and highWatermark for backward compatibility
   const highWatermark = options.highWaterMark ?? options.highWatermark ?? Number.MAX_SAFE_INTEGER;
   validateInteger(highWatermark, "options.highWaterMark", 1);
@@ -578,7 +577,7 @@ function on(emitter, event, options = kEmptyObject) {
   return iterator;
 
   function abortListener() {
-    errorHandler(new AbortError(undefined, { cause: signal?.reason }));
+    errorHandler($makeAbortError(undefined, { cause: signal?.reason }));
   }
 
   function eventHandler(value) {
@@ -676,9 +675,27 @@ function listenerCount(emitter, type) {
     return emitter.listenerCount(type);
   }
 
-  return jsEventTargetGetEventListenersCount(emitter, type);
+  // EventTarget
+  const evt_count = jsEventTargetGetEventListenersCount(emitter, type);
+  if (evt_count !== undefined) return evt_count;
+
+  // EventEmitter's with no `.listenerCount`
+  return listenerCountSlow(emitter, type);
 }
 Object.defineProperty(listenerCount, "name", { value: "listenerCount" });
+
+function listenerCountSlow(emitter, type) {
+  const events = emitter._events;
+  if (events !== undefined) {
+    const evlistener = events[type];
+    if (typeof evlistener === "function") {
+      return 1;
+    } else if (evlistener !== undefined) {
+      return evlistener.length;
+    }
+  }
+  return 0;
+}
 
 function eventTargetAgnosticRemoveListener(emitter, name, listener, flags) {
   if (typeof emitter.removeListener === "function") {
@@ -701,17 +718,6 @@ function eventTargetAgnosticAddListener(emitter, name, listener, flags) {
     emitter.addEventListener(name, listener, flags);
   } else {
     throw $ERR_INVALID_ARG_TYPE("emitter", "EventEmitter", emitter);
-  }
-}
-
-class AbortError extends Error {
-  constructor(message = "The operation was aborted", options = undefined) {
-    if (options !== undefined && typeof options !== "object") {
-      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
-    }
-    super(message, options);
-    this.code = "ABORT_ERR";
-    this.name = "AbortError";
   }
 }
 

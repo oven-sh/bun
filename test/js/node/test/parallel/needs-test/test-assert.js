@@ -809,7 +809,7 @@ test('Test strict assert', () => {
       '\n' +
       '+ {}\n' +
       '- {\n' +
-      '-   [Symbol(nodejs.util.inspect.custom)]: [Function (anonymous)],\n' +
+      '-   Symbol(nodejs.util.inspect.custom): [Function (anonymous)],\n' +
       "-   loop: 'forever'\n" +
       '- }\n'
   });
@@ -1049,7 +1049,7 @@ test('Additional asserts', () => {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
       // message: 'The "error" argument must be of type Object, Error, Function or RegExp. Received: "Error message"',
-      message: 'The "error" argument must be of type Object, Error, Function or RegExp.' + invalidArgTypeHelper('Error message'),
+      message: 'The "error" argument must be of type Object, Error, Function, or RegExp.' + invalidArgTypeHelper('Error message'),
     }
   );
 
@@ -1059,7 +1059,7 @@ test('Additional asserts', () => {
       () => assert.throws(() => {}, input),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "error" argument must be of type Object, Error, Function or RegExp.' + invalidArgTypeHelper(input)
+        message: 'The "error" argument must be of type Object, Error, Function, or RegExp.' + invalidArgTypeHelper(input)
 
       }
     );
@@ -1318,7 +1318,7 @@ test('Additional assert', () => {
         '\n' +
         "+ 'test test'\n" +
         "- 'test foobar'\n" +
-        '        ^\n',
+         '        ^\n',
     }
   );
 
@@ -1597,5 +1597,3 @@ test('assert/strict exists', () => {
 
 /* eslint-enable no-restricted-syntax */
 /* eslint-enable no-restricted-properties */
-
-

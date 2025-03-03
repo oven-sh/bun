@@ -38,12 +38,12 @@ namespace WebCore {
 
 bool CryptoKeyOKP::isPlatformSupportedCurve(NamedCurve namedCurve)
 {
-    return namedCurve == NamedCurve::Ed25519;
+    return namedCurve == NamedCurve::Ed25519 || namedCurve == NamedCurve::X25519;
 }
 
 std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, bool extractable, CryptoKeyUsageBitmap usages)
 {
-    if (namedCurve != NamedCurve::Ed25519)
+    if (namedCurve != NamedCurve::Ed25519 && namedCurve != NamedCurve::X25519)
         return {};
 
     Vector<uint8_t> public_key(ED25519_PUBLIC_KEY_LEN), private_key(ED25519_PRIVATE_KEY_LEN);

@@ -6,7 +6,7 @@ const dest = process.argv.at(-1);
 const { randomUUID } = require("crypto");
 const payload = new Buffer(1024 * 1024 + 1, "A".charCodeAt(0)).toString("utf-8");
 async function writeLargeFile() {
-  const s3file = Bun.s3(randomUUID());
+  const s3file = Bun.s3.file(randomUUID());
   await s3file.write(payload);
   await s3file.unlink();
 }

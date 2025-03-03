@@ -2,8 +2,7 @@
 'use strict';
 
 require('../common');
-const { internalBinding } = require('internal/test/binding');
-const constants = internalBinding('constants');
+const constants = process.binding('constants');
 const assert = require('assert');
 
 assert.deepStrictEqual(

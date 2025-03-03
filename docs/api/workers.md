@@ -228,3 +228,17 @@ const worker = new Worker("./i-am-smol.ts", {
 {% details summary="What does `smol` mode actually do?" %}
 Setting `smol: true` sets `JSC::HeapSize` to be `Small` instead of the default `Large`.
 {% /details %}
+
+## `Bun.isMainThread`
+
+You can check if you're in the main thread by checking `Bun.isMainThread`.
+
+```ts
+if (Bun.isMainThread) {
+  console.log("I'm the main thread");
+} else {
+  console.log("I'm in a worker");
+}
+```
+
+This is useful for conditionally running code based on whether you're in the main thread or not.

@@ -291,7 +291,7 @@ One of the reasons why Bun's bundler is so fast is that it is written in native 
 
 However, one limitation of plugins written in JavaScript is that JavaScript itself is single-threaded.
 
-Native plugins are written as [NAPI](/docs/node-api) modules and can be run on multiple threads. This allows native plugins to run much faster than JavaScript plugins.
+Native plugins are written as [NAPI](https://bun.sh/docs/api/node-api) modules and can be run on multiple threads. This allows native plugins to run much faster than JavaScript plugins.
 
 In addition, native plugins can skip unnecessary work such as the UTF-8 -> UTF-16 conversion needed to pass strings to JavaScript.
 

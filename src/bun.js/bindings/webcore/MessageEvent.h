@@ -43,7 +43,7 @@ class MessageEventSource {
 };
 
 class MessageEvent final : public Event {
-    WTF_MAKE_ISO_ALLOCATED(MessageEvent);
+    WTF_MAKE_TZONE_ALLOCATED(MessageEvent);
 
 public:
     struct JSValueTag {

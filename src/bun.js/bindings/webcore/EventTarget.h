@@ -38,7 +38,6 @@
 #include <memory>
 #include <variant>
 #include <wtf/Forward.h>
-// #include <wtf/IsoMalloc.h>
 
 #include <wtf/WeakPtr.h>
 
@@ -57,7 +56,7 @@ class JSEventListener;
 
 struct EventTargetData {
     WTF_MAKE_NONCOPYABLE(EventTargetData);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(EventTargetData);
 
 public:
     EventTargetData() = default;
@@ -81,7 +80,7 @@ private:
 };
 
 class EventTarget : public ScriptWrappable, public CanMakeWeakPtrWithBitField<EventTarget, WeakPtrFactoryInitialization::Lazy, WeakPtrImplWithEventTargetData> {
-    WTF_MAKE_ISO_ALLOCATED(EventTarget);
+    WTF_MAKE_TZONE_ALLOCATED(EventTarget);
 
 public:
     static Ref<EventTarget> create(ScriptExecutionContext&);
@@ -159,7 +158,7 @@ private:
 };
 
 class EventTargetWithInlineData : public EventTarget {
-    WTF_MAKE_ISO_ALLOCATED_EXPORT(EventTargetWithInlineData, WEBCORE_EXPORT);
+    WTF_MAKE_TZONE_ALLOCATED(EventTargetWithInlineData);
 
 protected:
     EventTargetData* eventTargetData() final { return &m_eventTargetData; }

@@ -14,7 +14,7 @@ The first time you run this script, Bun will auto-install `"foo"` and cache it. 
 
 To determine which version to install, Bun follows the following algorithm:
 
-1. Check for a `bun.lockb` file in the project root. If it exists, use the version specified in the lockfile.
+1. Check for a `bun.lock` file in the project root. If it exists, use the version specified in the lockfile.
 2. Otherwise, scan up the tree for a `package.json` that includes `"foo"` as a dependency. If found, use the specified semver version or version range.
 3. Otherwise, use `latest`.
 

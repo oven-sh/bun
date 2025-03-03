@@ -164,14 +164,11 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
             sb.append(mySourceURL->getString(globalObject));
         }
 
-        if (line && column) {
+        if (line) {
             sb.append(':');
             sb.append(line.value().oneBasedInt());
             sb.append(':');
-            sb.append(column.value().oneBasedInt());
-        } else if (line) {
-            sb.append(':');
-            sb.append(line.value().oneBasedInt());
+            sb.append(column ? column.value().oneBasedInt() : 1);
         }
 
         if (functionName.length() > 0) {

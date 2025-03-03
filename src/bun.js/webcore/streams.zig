@@ -4996,7 +4996,7 @@ pub const ByteStream = struct {
         // #define LIBUS_RECV_BUFFER_LENGTH 524288
         // For HTTPS, the size is probably quite a bit lower like 64 KB due to TLS transmission.
         // We add 1 extra page size so that if there's a little bit of excess buffered data, we avoid extra allocations.
-        const page_size = std.heap.pageSize();
+        const page_size: Blob.SizeType = @intCast(std.heap.pageSize());
         return .{ .chunk_size = @min(512 * 1024 + page_size, @max(this.highWaterMark, page_size)) };
     }
 

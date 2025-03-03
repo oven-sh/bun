@@ -15,7 +15,7 @@ pub const JSObject = extern struct {
     }
 
     /// Non-objects will be runtime-coerced to objects.
-    /// 
+    ///
     /// For cells this is `toObjectSlow`, for other types it's `toObjectSlowCase`.
     pub fn fromJS(value: JSValue, globalThis: JSValue) *JSObject {
         return JSValue.toObject(value, globalThis);
@@ -128,7 +128,6 @@ pub const JSObject = extern struct {
         };
     }
     extern fn JSC__JSObject__getIfPropertyExistsImpl(object: *JSObject, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
-
 
     pub fn fastGetWithError(this: *JSObject, global: *JSGlobalObject, builtin_name: JSValue.BuiltinName) bun.JSError!?JSValue {
         return switch (JSC__JSObject__fastGet(this, global, @intFromEnum(builtin_name))) {

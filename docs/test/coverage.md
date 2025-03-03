@@ -34,11 +34,11 @@ To always enable coverage reporting by default, add the following line to your `
 coverage = true
 ```
 
-By default coverage reports will _include_ test files and _exclude_ sourcemaps. This is usually what you want, but it can be configured otherwise in `bunfig.toml`.
+By default coverage reports will _exclude_ both test files and sourcemaps. This is usually what you want, but it can be configured otherwise in `bunfig.toml`.
 
 ```toml
 [test]
-coverageSkipTestFiles = true       # default false
+coverageSkipTestFiles = false       # default true
 ```
 
 ### Coverage thresholds

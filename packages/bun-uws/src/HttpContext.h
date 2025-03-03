@@ -223,7 +223,7 @@ private:
                 }
 
                 /* Was the socket closed? */
-                if (us_socket_is_closed(SSL, (struct us_socket_t *) s)) {
+                if (us_socket_is_closed(SSL, (us_socket_t *) s)) {
                     return nullptr;
                 }
 
@@ -467,16 +467,10 @@ public:
     }
 
     /* Register an HTTP route handler acording to URL pattern */
-    void onHttp(std::string method, std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
-         HttpContextData<SSL> *httpContextData = getSocketContextData();
+    void onHttp(std::string_view method, std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
+        HttpContextData<SSL> *httpContextData = getSocketContextData();
 
-        /* Todo: This is ugly, fix */
-        std::vector<std::string> methods;
-        if (method == "*") {
-            methods = {"*"};
-        } else {
-            methods = {method};
-        }
+        std::vector<std::string> methods{std::string(method)};
 
         uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);
 
@@ -497,7 +491,6 @@ public:
                     i++;
                 }
                 parameterOffsets[std::string(pattern.data() + start, i - start)] = offset;
-                //std::cout << "<" << std::string(pattern.data() + start, i - start) << "> is offset " << offset;
                 offset++;
             }
         }

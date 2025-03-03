@@ -472,7 +472,7 @@ public:
         writeStatus(HTTP_200_OK);
 
         /* Do not allow sending 0 chunks, they mark end of response */
-        if (!data.length()) {
+        if (data.empty()) {
             if (writtenPtr) {
                 *writtenPtr = 0;
             }

@@ -87,6 +87,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP_BODY_NOT_ALLOWED", Error],
   ["ERR_HTTP_INVALID_STATUS_CODE", RangeError],
   ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
+  ["ERR_SERVER_ALREADY_LISTEN", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

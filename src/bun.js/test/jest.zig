@@ -745,7 +745,7 @@ pub const TestScope = struct {
                         .todo => .{ .todo = {} },
                         .fail => fail: {
                             promise.setHandled(vm.global.vm());
-                            
+
                             break :fail .{ .pass = expect.active_test_expectation_counter.actual };
                         },
                         else => .{ .fail = expect.active_test_expectation_counter.actual },

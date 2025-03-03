@@ -1611,7 +1611,6 @@ pub const RunCommand = struct {
         }
 
         if (log_errors) {
-            ctx.log.print(Output.errorWriter()) catch {};
             const ext = std.fs.path.extension(target_name);
             const default_loader = options.defaultLoaders.get(ext);
             if (default_loader != null and default_loader.?.isJavaScriptLikeOrJSON() or target_name.len > 0 and (target_name[0] == '.' or target_name[0] == '/' or std.fs.path.isAbsolute(target_name))) {

@@ -1829,6 +1829,10 @@ pub fn removePreCrashHandler(ptr: *anyopaque) void {
     _ = before_crash_handlers.orderedRemove(index);
 }
 
+pub fn isPanicking() bool {
+    return panicking.load(.monotonic) > 0;
+}
+
 export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
     crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress());
 }

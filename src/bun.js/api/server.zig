@@ -9094,16 +9094,47 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
         }
 
+        fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.uws_socket_context_t) void {
+            const server = this.server;
+            const index = this.id;
+
+            var should_deinit_context = false;
+            var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false) orelse return;
+            prepared.ctx.upgrade_context = upgrade_ctx; // set the upgrade context
+            const server_request_list = NamespaceType.routeListGetCached(server.jsValueAssertAlive()).?;
+            var response_value = Bun__ServerRouteList__callRoute(server.globalThis, index, prepared.request_object, server.jsValueAssertAlive(), server_request_list, &prepared.js_request, req);
+
+            if (server.globalThis.tryTakeException()) |exception| {
+                response_value = exception;
+            }
+
+            server.handleRequest(&should_deinit_context, prepared, req, response_value);
+        }
+
         pub fn onWebSocketUpgrade(
             this: *ThisServer,
             resp: *App.Response,
             req: *uws.Request,
             upgrade_ctx: *uws.uws_socket_context_t,
-            _: usize,
+            id: usize,
         ) void {
             JSC.markBinding(@src());
             if (this.config.onNodeHTTPRequest != .zero) {
                 onNodeHTTPRequestWithUpgradeCtx(this, req, resp, upgrade_ctx);
+                return;
+            }
+            if (id == 1) {
+                // user route this is actually a UserRoute its safe to cast
+                upgradeWebSocketUserRoute(@ptrCast(this), resp, req, upgrade_ctx);
+                return;
+            }
+            // only access this as *ThisServer only if id is 0
+            bun.assert(id == 0);
+            if (this.config.onRequest == .zero) {
+                // require fetch method to be set otherwise we dont know what route to call
+                // this should be the fallback in case no route is provided to upgrade
+                resp.writeStatus("403 Forbidden");
+                resp.endWithoutBody(true);
                 return;
             }
             this.pending_requests += 1;
@@ -9211,15 +9242,47 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
                 user_routes_to_build.deinit(bun.default_allocator);
             }
+            var has_any_ws = false;
+            if (this.config.websocket) |*websocket| {
+                websocket.globalObject = this.globalThis;
+                websocket.handler.app = app;
+                websocket.handler.flags.ssl = ssl_enabled;
+            }
 
             // This may get applied multiple times.
             for (this.user_routes.items) |*user_route| {
                 switch (user_route.route.method) {
                     .any => {
                         app.any(user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
+
+                        if (this.config.websocket) |*websocket| {
+                            // Setup user websocket in the route if needed.
+                            if (!has_any_ws) {
+                                // mark if the route is a catch-all so we dont override it
+                                has_any_ws = strings.eqlComptime(user_route.route.path, "/*");
+                            }
+                            app.ws(
+                                user_route.route.path,
+                                user_route,
+                                1, // id 1 means is a user route
+                                ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                            );
+                        }
                     },
                     .specific => |method| {
                         app.method(method, user_route.route.path, *UserRoute, user_route, onUserRouteRequest);
+                        // Setup user websocket in the route if needed.
+                        if (this.config.websocket) |*websocket| {
+                            // Websocket upgrade is a GET request
+                            if (method == HTTP.Method.GET) {
+                                app.ws(
+                                    user_route.route.path,
+                                    user_route,
+                                    1, // id 1 means is a user route
+                                    ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                                );
+                            }
+                        }
                     },
                 }
             }
@@ -9262,21 +9325,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 }
             };
 
-            // Setup user websocket routes.
-            if (this.config.websocket) |*websocket| {
-                websocket.globalObject = this.globalThis;
-                websocket.handler.app = app;
-                websocket.handler.flags.ssl = ssl_enabled;
-                app.ws(
-                    "/*",
-                    this,
-                    0,
-                    ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
-                );
+            // Setup user websocket fallback route aka fetch function if fetch is not provided will respond with 403.
+            if (!has_any_ws) {
+                if (this.config.websocket) |*websocket| {
+                    app.ws(
+                        "/*",
+                        this,
+                        0, // id 0 means is a fallback route and ctx is the server
+                        ServerWebSocket.behavior(ThisServer, ssl_enabled, websocket.toBehavior()),
+                    );
+                }
             }
-            if (this.dev_server) |dev| {
-                _ = dev.attachRoutes(this) catch bun.outOfMemory();
-            } else if (this.config.onNodeHTTPRequest != .zero) {
+            if (this.config.onNodeHTTPRequest != .zero) {
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
                 NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), app);
             } else if (this.config.onRequest != .zero) {
@@ -9294,7 +9354,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var has_dev_catch_all = false;
             if (dev_server) |dev| {
                 // DevServer adds a catch-all handler to use FrameworkRouter (full stack apps)
-                has_dev_catch_all = dev.attachRoutes(this) catch bun.outOfMemory();
+                has_dev_catch_all = dev.setRoutes(this) catch bun.outOfMemory();
             }
 
             const @"has /*" = brk: {

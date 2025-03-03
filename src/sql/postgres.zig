@@ -35,6 +35,7 @@ pub const AnyPostgresError = error{
     PBKDFD2,
     SASL_SIGNATURE_MISMATCH,
     SASL_SIGNATURE_INVALID_BASE64,
+    SASL_NO_KNOWN_MECHANISM,
     ShortRead,
     TLSNotAvailable,
     TLSUpgradeFailed,
@@ -67,6 +68,7 @@ pub fn postgresErrorToJS(globalObject: *JSC.JSGlobalObject, message: ?[]const u8
         error.NullsInArrayNotSupportedYet => JSC.Error.ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET,
         error.Overflow => JSC.Error.ERR_POSTGRES_OVERFLOW,
         error.PBKDFD2 => JSC.Error.ERR_POSTGRES_AUTHENTICATION_FAILED_PBKDF2,
+        error.SASL_NO_KNOWN_MECHANISM => JSC.Error.ERR_POSTGRES_SASL_NO_KNOWN_MECHANISM,
         error.SASL_SIGNATURE_MISMATCH => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_MISMATCH,
         error.SASL_SIGNATURE_INVALID_BASE64 => JSC.Error.ERR_POSTGRES_SASL_SIGNATURE_INVALID_BASE64,
         error.TLSNotAvailable => JSC.Error.ERR_POSTGRES_TLS_NOT_AVAILABLE,
@@ -1250,6 +1252,8 @@ pub const PostgresSQLConnection = struct {
     tls_config: JSC.API.ServerConfig.SSLConfig = .{},
     tls_status: TLSStatus = .none,
     ssl_mode: SSLMode = .disable,
+    tls_peer_cert_hash: [BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined,
+    tls_peer_cert_hash_size: c_uint = 0,
 
     idle_timeout_interval_ms: u32 = 0,
     connection_timeout_ms: u32 = 0,
@@ -1333,6 +1337,7 @@ pub const PostgresSQLConnection = struct {
         salted_password_created: bool = false,
 
         status: SASLStatus = .init,
+        channel_binding: bool = false,
 
         pub const SASLStatus = enum {
             init,
@@ -1702,6 +1707,26 @@ pub const PostgresSQLConnection = struct {
         debug("onHandshake: {d} {d}", .{ success, ssl_error.error_no });
         const handshake_success = if (success == 1) true else false;
         if (handshake_success) {
+            const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
+            if (BoringSSL.SSL_get_peer_certificate(ssl_ptr)) |peer_cert| {
+                const sig_NID = BoringSSL.X509_get_signature_nid(peer_cert);
+                if (sig_NID != BoringSSL.NID_undef) {
+                    var digest_NID: c_int = 0;
+                    const found_digest = BoringSSL.OBJ_find_sigid_algs(sig_NID, &digest_NID, null);
+                    if (found_digest == 1 and digest_NID != BoringSSL.NID_undef) {
+                        const digest_type = switch (digest_NID) {
+                            BoringSSL.NID_md5, BoringSSL.NID_sha1 => BoringSSL.EVP_sha256(),
+                            else => BoringSSL.EVP_get_digestbynid(digest_NID),
+                        };
+                        if (digest_type != null) {
+                            const hashed = BoringSSL.X509_digest(peer_cert, digest_type, &this.tls_peer_cert_hash, &this.tls_peer_cert_hash_size);
+                            if (hashed == 0) this.tls_peer_cert_hash_size = 0; // unnecessary?
+                        }
+                    }
+                }
+                BoringSSL.X509_free(peer_cert);
+            }
+
             if (this.tls_config.reject_unauthorized != 0) {
                 // only reject the connection if reject_unauthorized == true
                 switch (this.ssl_mode) {
@@ -1713,7 +1738,6 @@ pub const PostgresSQLConnection = struct {
                             return;
                         }
 
-                        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
                         if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
                             const hostname = servername[0..bun.len(servername)];
                             if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
@@ -3648,11 +3672,15 @@ pub const PostgresSQLConnection = struct {
                             this.authentication_state = .{ .SASL = .{} };
                         }
 
+                        const cb = auth.SASL.hasScramSha256Plus;
+                        this.authentication_state.SASL.channel_binding = cb;
+                        const mechanism_name = if (cb) "SCRAM-SHA-256-PLUS" else "SCRAM-SHA-256";
+                        const gs2_header = if (cb) "p=tls-server-end-point,," else "y,,";
                         var mechanism_buf: [128]u8 = undefined;
-                        const mechanism = std.fmt.bufPrintZ(&mechanism_buf, "n,,n=*,r={s}", .{this.authentication_state.SASL.nonce()}) catch unreachable;
+                        const mechanism = std.fmt.bufPrintZ(&mechanism_buf, "{s}n=*,r={s}", .{ gs2_header, this.authentication_state.SASL.nonce() }) catch unreachable;
                         var response = protocol.SASLInitialResponse{
                             .mechanism = .{
-                                .temporary = "SCRAM-SHA-256",
+                                .temporary = mechanism_name,
                             },
                             .data = .{
                                 .temporary = mechanism,
@@ -3660,12 +3688,12 @@ pub const PostgresSQLConnection = struct {
                         };
 
                         try response.writeInternal(PostgresSQLConnection.Writer, this.writer());
-                        debug("SASL", .{});
+                        debug("SASL, mechanism selected: {s}", .{mechanism_name});
                         this.flushData();
                     },
                     .SASLContinue => |*cont| {
                         if (this.authentication_state != .SASL) {
-                            debug("Unexpected SASLContinue for authentiation state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
+                            debug("Unexpected SASLContinue for authentication state: {s}", .{@tagName(std.meta.activeTag(this.authentication_state))});
                             return error.UnexpectedMessage;
                         }
                         var sasl = &this.authentication_state.SASL;
@@ -3687,14 +3715,22 @@ pub const PostgresSQLConnection = struct {
                         defer bun.z_allocator.free(server_salt_decoded_base64);
                         try sasl.computeSaltedPassword(server_salt_decoded_base64, iteration_count, this);
 
+                        var c: [bun.base64.encodeLenFromSize(24 + BoringSSL.EVP_MAX_MD_SIZE)]u8 = undefined;
+                        var c_length: usize = 0;
+                        const c_buffer = if (sasl.channel_binding) try std.fmt.allocPrint(bun.z_allocator, "p=tls-server-end-point,,{s}", .{this.tls_peer_cert_hash[0..this.tls_peer_cert_hash_size]}) // force wrap
+                        else try std.fmt.allocPrint(bun.z_allocator, "y,,", .{});
+                        c_length = bun.base64.encode(&c, c_buffer);
+                        bun.z_allocator.free(c_buffer);
+
                         const auth_string = try std.fmt.allocPrint(
                             bun.z_allocator,
-                            "n=*,r={s},r={s},s={s},i={s},c=biws,r={s}",
+                            "n=*,r={s},r={s},s={s},i={s},c={s},r={s}",
                             .{
                                 sasl.nonce(),
                                 cont.r,
                                 cont.s,
                                 cont.i,
+                                c[0..c_length],
                                 cont.r,
                             },
                         );
@@ -3713,8 +3749,8 @@ pub const PostgresSQLConnection = struct {
 
                         const payload = try std.fmt.allocPrint(
                             bun.z_allocator,
-                            "c=biws,r={s},p={s}",
-                            .{ cont.r, client_key_xor_base64_buf[0..xor_base64_len] },
+                            "c={s},r={s},p={s}",
+                            .{ c[0..c_length], cont.r, client_key_xor_base64_buf[0..xor_base64_len] },
                         );
                         defer bun.z_allocator.free(payload);
 

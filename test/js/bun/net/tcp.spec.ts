@@ -37,7 +37,7 @@ describe("Bun.listen(options)", () => {
 
     beforeAll(() => {
       listener = Bun.listen({
-        port: 4000,
+        port: 6543,
         hostname: "localhost",
         socket: {
           data(socket, data) {},
@@ -63,8 +63,8 @@ describe("Bun.listen(options)", () => {
       });
     });
 
-    it("is listening on localhost:4000", () => {
-      expect(listener.port).toBe(4000);
+    it("is listening on localhost:6543", () => {
+      expect(listener.port).toBe(6543);
       expect(listener.hostname).toBe("localhost");
     });
 

@@ -13,6 +13,10 @@ describe("test.failing", () => {
     expect(it.failing).toBe(test.failing);
   });
 
+  it("requires a test function (unlike test.todo)", () => {
+    expect(() => test.failing("test name")).toThrow(/expects a function/i);
+  });
+
   it("passes if an error is thrown or a promise rejects ", async () => {
     const result = await $.cwd(fixtureDir)`${bunExe()} test ./failing-test-fails.fixture.ts`.quiet();
     const stderr = result.stderr.toString();

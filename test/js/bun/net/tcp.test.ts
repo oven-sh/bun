@@ -1,4 +1,4 @@
-import { SocketHandler, TCPSocketListener } from "bun";
+import { Socket, SocketHandler, TCPSocketConnectOptions, TCPSocketListener } from "bun";
 import type { Mock } from "bun:test";
 import { jest, afterEach, test, expect } from "bun:test";
 import { isLinux } from "harness";
@@ -45,14 +45,38 @@ class MockSocket<Data = void> implements SocketHandler<Data> {
 const nextEventLoopCycle = () => new Promise(resolve => setTimeout(resolve, 0));
 const nextTick = () => new Promise(resolve => process.nextTick(resolve));
 
-const makeClient = async <Data = unknown>(handlerOverrides?: Partial<SocketHandler<Data>>, options?) => {
+interface ClientState<Data> extends Disposable {
+  socket: Socket<Data>;
+  handler: MockSocket<Data>;
+}
+
+const isServer = (value: unknown): value is TCPSocketListener<unknown> =>
+  !!value && typeof value === "object" && "stop" in value && "ref" in value && "reload" in value;
+
+function makeClient<Data = unknown>(
+  handlerOverrides?: Partial<SocketHandler<Data>>,
+  options?: TCPSocketConnectOptions<Data>,
+): Promise<ClientState<Data>>;
+function makeClient<Data = unknown>(server: TCPSocketListener<Data>): Promise<ClientState<Data>>;
+async function makeClient<Data = unknown>(
+  serverOrHandlerOverrides?: Partial<SocketHandler<Data>>,
+  options: Partial<TCPSocketConnectOptions<Data>> = {},
+) {
+  let handlerOverrides: Partial<SocketHandler<Data>> | undefined;
+  if (isServer(serverOrHandlerOverrides)) {
+    options.port = serverOrHandlerOverrides.port;
+    options.hostname = serverOrHandlerOverrides.hostname;
+  } else {
+    handlerOverrides = serverOrHandlerOverrides;
+    if (options.port == null) throw new Error("port is required");
+  }
   const handler = new MockSocket<Data>(handlerOverrides);
   const socket = await Bun.connect({
     hostname: "localhost",
-    port: 3000,
+    // port: 0,
     ...options,
     socket: handler,
-  });
+  } as any);
 
   return {
     socket,
@@ -61,13 +85,13 @@ const makeClient = async <Data = unknown>(handlerOverrides?: Partial<SocketHandl
       socket[Symbol.dispose]();
     },
   };
-};
+}
 
 const makeServer = <Data = unknown>(handlerOverrides?: Partial<SocketHandler<Data>>, options?) => {
   const handler = new MockSocket<Data>(handlerOverrides);
   const socket: TCPSocketListener<Data> = Bun.listen({
     hostname: "localhost",
-    port: 3000,
+    port: 0,
     ...options,
     socket: handler,
   });
@@ -89,7 +113,7 @@ test("open() event timing", async () => {
   const socket = { server: new MockSocket(), client: new MockSocket() };
 
   using server = Bun.listen({
-    port: 1234,
+    port: 0,
     hostname: "localhost",
     socket: socket.server,
   });
@@ -100,7 +124,7 @@ test("open() event timing", async () => {
   expect(socket.client.events).toBeEmpty();
 
   const clientPromise = Bun.connect({
-    port: 1234,
+    port: server.port,
     hostname: "localhost",
     socket: socket.client,
   });
@@ -111,7 +135,7 @@ test("open() event timing", async () => {
   // Promise resolves when client connects. Server's open only fires when
   // event loop polls for events again and finds a connection event on the
   // server socket
-  using client = await clientPromise;
+  using _client = await clientPromise;
   expect(socket.client.open).toHaveBeenCalled();
   // FIXME: server's open handler is called on linux, but not on macOS or windows.
   if (!isLinux) expect(socket.server.open).not.toHaveBeenCalled();
@@ -133,12 +157,12 @@ test("open() event timing", async () => {
  */
 test("client writes then closes the socket", async () => {
   using server = makeServer({
-    data(socket, data) {
+    data(_socket, data) {
       expect(data.toString("utf8")).toBe("hello");
       this.events.push("data");
     },
   });
-  using client = await makeClient();
+  using client = await makeClient(server.socket);
 
   server.socket;
   client.socket.end("hello");
@@ -155,7 +179,7 @@ test.skip("client writes while server closes in the same tick", async () => {
       this.events.push("open");
     },
   });
-  using client = await makeClient();
+  using client = await makeClient(server.socket);
   await nextEventLoopCycle();
   expect(server.handler.events).toEqual(["open", "close"]);
   expect(client.handler.events).toEqual(["open", "data", "end", "close"]);

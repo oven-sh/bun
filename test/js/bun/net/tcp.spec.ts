@@ -84,7 +84,7 @@ describe("Given a TCP server listening on port 1234", () => {
   beforeEach(() => {
     listener = Bun.listen({
       hostname: "localhost",
-      port: 1234,
+      port: 0,
       socket: serverHandler,
     });
   });
@@ -102,15 +102,15 @@ describe("Given a TCP server listening on port 1234", () => {
       server: [] as string[],
     };
     const clientHandler = createMockHandler();
-    const getClient = () =>
+    const getClient = (port: number) =>
       Bun.connect({
         hostname: "localhost",
-        port: 1234,
+        port,
         socket: clientHandler,
       });
 
     beforeEach(async () => {
-      client = await getClient();
+      client = await getClient(listener.port);
 
       for (const event of Object.keys(clientHandler)) {
         if (typeof clientHandler[event] === "function") {

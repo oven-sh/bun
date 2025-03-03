@@ -146,6 +146,7 @@ pub const z_allocator = Allocator{
 const z_allocator_vtable = Allocator.VTable{
     .alloc = &ZAllocator.alloc,
     .resize = &ZAllocator.resize,
+    .remap = &std.mem.Allocator.noRemap,
     .free = &ZAllocator.free,
 };
 const HugeAllocator = struct {

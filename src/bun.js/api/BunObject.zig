@@ -1801,7 +1801,10 @@ pub const Crypto = struct {
                     }
 
                     const hash_options = pwhash.bcrypt.HashOptions{
-                        .params = pwhash.bcrypt.Params{ .rounds_log = cost },
+                        .params = pwhash.bcrypt.Params{
+                            .rounds_log = cost,
+                            .silently_truncate_password = true,
+                        },
                         .allocator = allocator,
                         .encoding = .crypt,
                     };
@@ -1859,7 +1862,10 @@ pub const Crypto = struct {
                         sha_512.final(&outbuf);
                         password_to_use = &outbuf;
                     }
-                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{ .allocator = allocator }) catch |err| {
+                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{
+                        .allocator = allocator,
+                        .silently_truncate_password = true,
+                    }) catch |err| {
                         if (err == error.PasswordVerificationFailed) {
                             return false;
                         }

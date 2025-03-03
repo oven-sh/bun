@@ -140,6 +140,8 @@
 #endif
 #endif
 
+static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char name);
+
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
     return sv.substring(start, end - start);
@@ -2416,6 +2418,35 @@ void JSC__JSValue__putRecord(JSC__JSValue objectValue, JSC__JSGlobalObject* glob
     object->putDirect(global->vm(), ident, descriptor.value());
     scope.release();
 }
+// Returns empty for exception, returns deleted if not found.
+// Be careful when handling the return value.
+JSC__JSValue JSC__JSObject__getIfPropertyExistsImpl(JSC::JSObject* object,
+    JSC__JSGlobalObject* globalObject,
+    const unsigned char* arg1, uint32_t arg2)
+{
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+
+    auto& vm = JSC::getVM(globalObject);
+    ASSERT(object != nullptr);
+
+    // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
+    const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
+    const auto identifier = JSC::Identifier::fromString(vm, propertyString);
+    const auto property = JSC::PropertyName(identifier);
+
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
+}
+
+// Returns empty for exception, returns deleted if not found.
+// Be careful when handling the return value.
+JSC__JSValue JSC__JSObject__fastGet(JSC::JSObject* object, JSC__JSGlobalObject* globalObject, unsigned char arg2)
+{
+    ASSERT(object);
+    auto& vm = JSC::getVM(globalObject);
+    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
+
+    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
+}
 
 JSC__JSInternalPromise* JSC__JSValue__asInternalPromise(JSC__JSValue JSValue0)
 {
@@ -3977,18 +4008,13 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "get() must not be called on empty value");
 
-    auto& vm = JSC::getVM(globalObject);
+    // auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* object = value.getObject();
     if (UNLIKELY(!object)) {
         return JSValue::encode(JSValue::decode(JSC::JSValue::ValueDeleted));
     }
 
-    // Since Identifier might not ref the string, we need to ensure it doesn't get deref'd until this function returns
-    const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
-    const auto identifier = JSC::Identifier::fromString(vm, propertyString);
-    const auto property = JSC::PropertyName(identifier);
-
-    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
+    return JSC__JSObject__getIfPropertyExistsImpl(object, globalObject, arg1, arg2);
 }
 
 extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
@@ -4238,7 +4264,11 @@ JSC__JSValue JSC__JSValue__jsUndefined() { return JSC::JSValue::encode(JSC::jsUn
 JSC__JSObject* JSC__JSValue__toObject(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return value.toObject(arg1);
+    auto* obj = value.toObject(arg1);
+    #if BUN_DEBUG
+    ASSERT(obj);
+    #endif
+    return obj;
 }
 
 JSC__JSString* JSC__JSValue__toString(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
@@ -5477,10 +5507,7 @@ JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
 
     JSC::JSObject* object = value.getObject();
     ASSERT_WITH_MESSAGE(object, "fastGet() called on non-object. Check that the JSValue is an object before calling fastGet().");
-    auto& vm = JSC::getVM(globalObject);
-    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
-
-    return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
+    return JSC__JSObject__fastGet(object, globalObject, arg2);
 }
 
 extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, unsigned char arg2)

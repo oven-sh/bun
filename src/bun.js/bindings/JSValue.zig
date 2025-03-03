@@ -1535,8 +1535,15 @@ pub const JSValue = enum(i64) {
         };
     }
 
+    /// Non-objects will be converted to an object via `toObjectSlowCase()`
     pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
         return cppFn("toObject", .{ this, globalThis });
+    }
+
+    /// Cast `this` to a JSObject, or return null if it is not an object.
+    /// Use `toObject` to convert non-objects.
+    pub fn asObject(this: JSValue, globalThis: *JSGlobalObject) ?*JSObject {
+        return if (this.isObject()) this.toObject(globalThis) else null;
     }
 
     pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue {
@@ -1701,28 +1708,17 @@ pub const JSValue = enum(i64) {
     /// calling `fastGet`, which use a more optimal code path. This function is
     /// marked `inline` to allow Zig to determine if `fastGet` should be used
     /// per invocation.
+    ///
+    /// ## Deprecated
+    /// Cast `target` to a JSObject then use `.get()` instead.
+    /// ```zig
+    /// if (value.asObject(global)) |obj| {
+    ///   const prop = obj.get(global, "foo");
+    /// }
+    /// ```
     pub inline fn get(target: JSValue, global: *JSGlobalObject, property: anytype) JSError!?JSValue {
         if (bun.Environment.isDebug) bun.assert(target.isObject());
-        const property_slice: []const u8 = property; // must be a slice!
-
-        // This call requires `get` to be `inline`
-        if (bun.isComptimeKnown(property_slice)) {
-            if (comptime BuiltinName.get(property_slice)) |builtin_name| {
-                return target.fastGetWithError(global, builtin_name);
-            }
-        }
-
-        return switch (JSC__JSValue__getIfPropertyExistsImpl(target, global, property_slice.ptr, @intCast(property_slice.len))) {
-            .zero => error.JSError,
-            .property_does_not_exist_on_object => null,
-
-            // TODO: see bug described in ObjectBindings.cpp
-            // since there are false positives, the better path is to make them
-            // negatives, as the number of places that desire throwing on
-            // existing undefined is extremely small, but non-zero.
-            .undefined => null,
-            else => |val| val,
-        };
+        return target.toObject(global).get(global, property);
     }
 
     extern fn JSC__JSValue__getOwn(value: JSValue, globalObject: *JSGlobalObject, propertyName: *const bun.String) JSValue;

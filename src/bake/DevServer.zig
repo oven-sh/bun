@@ -225,8 +225,6 @@ pub const RouteBundle = struct {
     pub const Framework = struct {
         route_index: Route.Index,
 
-        // TODO: micro-opt: use a singular strong
-
         /// Cached to avoid re-creating the array every request.
         /// TODO: Invalidated when a layout is added or removed from this route.
         cached_module_list: JSC.Strong,
@@ -255,7 +253,7 @@ pub const RouteBundle = struct {
         /// and css information. Invalidated when:
         /// - The HTML file itself modified.
         /// - The list of CSS files changes.
-        /// - TODO: Any downstream file is rebundled.
+        /// - Any downstream file is rebundled.
         cached_response: ?*StaticRoute,
 
         const ByteOffset = bun.GenericIndex(u32, u8);
@@ -739,6 +737,7 @@ pub fn deinit(dev: *DevServer) void {
         .watcher_atomics = for (&dev.watcher_atomics.events) |*event| {
             event.aligned.dirs.deinit(dev.allocator);
             event.aligned.files.deinit(dev.allocator);
+            event.aligned.extra_files.deinit(dev.allocator);
         },
     };
     dev.allocation_scope.deinit();
@@ -939,8 +938,7 @@ fn scanInitialRoutes(dev: *DevServer) !void {
 }
 
 /// Returns true if a catch-all handler was attached.
-// TODO: rename to setRoutes to match server.zig
-pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
+pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
     // TODO: all paths here must be prefixed with publicPath if set.
     dev.server = bun.JSC.API.AnyServer.from(server);
     const app = server.app.?;
@@ -2600,17 +2598,26 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.first != null) {
         var sfb = std.heap.stackFallback(4096, dev.allocator);
         const temp_alloc = sfb.get();
-        var entry_points: EntryPointList = EntryPointList.empty;
+        var entry_points: EntryPointList = .empty;
         defer entry_points.deinit(temp_alloc);
 
-        if (dev.next_bundle.reload_event) |event| {
+        const is_reload, const timer = if (dev.next_bundle.reload_event) |event| brk: {
+            dev.next_bundle.reload_event = null;
+
+            const reload_event_timer = event.timer;
+
             event.processFileList(dev, &entry_points, temp_alloc);
 
             if (dev.watcher_atomics.recycleEventFromDevServer(event)) |second| {
+                if (Environment.isDebug) {
+                    assert(second.debug_mutex.tryLock());
+                }
                 second.processFileList(dev, &entry_points, temp_alloc);
                 dev.watcher_atomics.recycleSecondEventFromDevServer(second);
             }
-        }
+
+            break :brk .{ true, reload_event_timer };
+        } else .{ false, std.time.Timer.start() catch @panic("timers unsupported") };
 
         for (dev.next_bundle.route_queue.keys()) |route_bundle_index| {
             const rb = dev.routeBundlePtr(route_bundle_index);
@@ -2618,14 +2625,9 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
             dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch bun.outOfMemory();
         }
 
-        const is_reload, const timer = if (dev.next_bundle.reload_event) |re|
-            .{ true, re.timer }
-        else
-            .{ false, std.time.Timer.start() catch @panic("timers unsupported") };
         dev.startAsyncBundle(entry_points, is_reload, timer) catch bun.outOfMemory();
 
         dev.next_bundle.route_queue.clearRetainingCapacity();
-        dev.next_bundle.reload_event = null;
     }
 }
 
@@ -2636,6 +2638,7 @@ pub fn handleParseTaskFailure(
     graph: bake.Graph,
     abs_path: []const u8,
     log: *const Log,
+    bv2: *BundleV2,
 ) bun.OOM!void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
@@ -2647,15 +2650,12 @@ pub fn handleParseTaskFailure(
         log.msgs.items.len,
     });
 
-    if (err == error.FileNotFound) {
-        // Special-case files being deleted. Note that if a
-        // file never existed, resolution would fail first.
-        //
-        // TODO: this should walk up the graph one level, and queue all of these
-        // files for re-bundling if they aren't already in the BundleV2 graph.
+    if (err == error.FileNotFound or err == error.ModuleNotFound) {
+        // Special-case files being deleted. Note that if a file had never
+        // existed, resolution would fail first.
         switch (graph) {
-            .server, .ssr => try dev.server_graph.onFileDeleted(abs_path, log),
-            .client => try dev.client_graph.onFileDeleted(abs_path, log),
+            .server, .ssr => dev.server_graph.onFileDeleted(abs_path, bv2),
+            .client => dev.client_graph.onFileDeleted(abs_path, bv2),
         }
     } else {
         switch (graph) {
@@ -4326,15 +4326,52 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
-        pub fn onFileDeleted(g: *@This(), abs_path: []const u8, log: *const Log) !void {
+        pub fn onFileDeleted(g: *@This(), abs_path: []const u8, bv2: *bun.BundleV2) void {
             const index = g.getFileIndex(abs_path) orelse return;
 
-            if (g.first_dep.items[index.get()] == .none) {
-                g.disconnectAndDeleteFile(index);
-            } else {
-                // TODO: This is incorrect, delete it!
-                // Keep the file so others may refer to it, but mark as failed.
-                try g.insertFailure(.abs_path, abs_path, log, false);
+            const keys = g.bundled_files.keys();
+
+            // Disconnect all imports
+            var it: ?EdgeIndex = g.first_import.items[index.get()].unwrap();
+            while (it) |edge_index| {
+                const dep = g.edges.items[edge_index.get()];
+                it = dep.next_import.unwrap();
+                assert(dep.dependency == index);
+
+                g.disconnectEdgeFromDependencyList(edge_index);
+                g.freeEdge(edge_index);
+            }
+
+            // Rebuild all dependencies
+            it = g.first_dep.items[index.get()].unwrap();
+            while (it) |edge_index| {
+                const dep = g.edges.items[edge_index.get()];
+                it = dep.next_import.unwrap();
+                assert(dep.imported == index);
+
+                bv2.enqueueFileFromDevServerIncrementalGraphInvalidation(
+                    keys[dep.dependency.get()],
+                    switch (side) {
+                        .client => .browser,
+                        .server => .bun,
+                    },
+                ) catch bun.outOfMemory();
+            }
+
+            // Bust the resolution caches of the dir containing this file,
+            // so that it cannot be resolved.
+            const dirname = std.fs.path.dirname(abs_path) orelse abs_path;
+            _ = bv2.transpiler.resolver.bustDirCache(dirname);
+
+            // Additionally, clear the cached entry of the file from the path to
+            // source index map.
+            const hash = bun.hash(abs_path);
+            for ([_]*bun.bundle_v2.PathToSourceIndexMap{
+                &bv2.graph.path_to_source_index_map,
+                &bv2.graph.client_path_to_source_index_map,
+                &bv2.graph.ssr_path_to_source_index_map,
+            }) |map| {
+                _ = map.remove(hash);
             }
         }
 
@@ -5725,6 +5762,9 @@ pub const MessageId = enum(u8) {
     /// Sent in response to `set_url`.
     /// - `u32`: Route index
     set_url_response = 'n',
+    /// Used for syncronization in dev server tests, to identify when a update was
+    /// acknowledged by the watcher but intentionally took no action.
+    redundant_watch = 'r',
 
     pub inline fn char(id: MessageId) u8 {
         return @intFromEnum(id);
@@ -5748,6 +5788,7 @@ const HmrTopic = enum(u8) {
     errors = 'e',
     browser_error = 'E',
     visualizer = 'v',
+    redundant_watch = 'r',
 
     /// Invalid data
     _,
@@ -5916,12 +5957,6 @@ pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
 
     event.processFileList(dev, &entry_points, temp_alloc);
     if (entry_points.set.count() == 0) {
-        // TODO: Files which become disconnected from the incremental graph
-        // should be removed from the watcher.
-        Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
-        Output.debugWarn("modified files: {s}", .{
-            bun.fmt.fmtSlice(event.files.keys(), ", "),
-        });
         return;
     }
 
@@ -5970,14 +6005,20 @@ pub const HotReloadEvent = struct {
     concurrent_task: JSC.ConcurrentTask,
     /// The watcher is not able to peek into IncrementalGraph to know what files
     /// to invalidate, so the watch events are de-duplicated and passed along.
+    /// The keys are owned by the file watcher.
     files: bun.StringArrayHashMapUnmanaged(void),
     /// Directories are watched so that resolution failures can be solved.
+    /// The keys are owned by the file watcher.
     dirs: bun.StringArrayHashMapUnmanaged(void),
+    /// Same purpose as `files` but keys do not have an owner.
+    extra_files: std.ArrayListUnmanaged(u8),
     /// Initialized by the WatcherAtomics.watcherAcquireEvent
     timer: std.time.Timer,
     /// This event may be referenced by either DevServer or Watcher thread.
     /// 1 if referenced, 0 if unreferenced; see WatcherAtomics
     contention_indicator: std.atomic.Value(u32),
+
+    debug_mutex: if (Environment.isDebug) bun.Mutex else void,
 
     pub fn initEmpty(owner: *DevServer) HotReloadEvent {
         return .{
@@ -5987,7 +6028,19 @@ pub const HotReloadEvent = struct {
             .dirs = .empty,
             .timer = undefined,
             .contention_indicator = .init(0),
+            .debug_mutex = if (Environment.isDebug) .{} else {},
+            .extra_files = .empty,
         };
+    }
+
+    pub fn reset(ev: *HotReloadEvent) void {
+        if (Environment.isDebug)
+            ev.debug_mutex.unlock();
+
+        ev.files.clearRetainingCapacity();
+        ev.dirs.clearRetainingCapacity();
+        ev.extra_files.clearRetainingCapacity();
+        ev.timer = undefined;
     }
 
     pub fn isEmpty(ev: *const HotReloadEvent) bool {
@@ -5998,8 +6051,23 @@ pub const HotReloadEvent = struct {
         _ = event.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
     }
 
-    pub fn appendDir(event: *HotReloadEvent, allocator: Allocator, file_path: []const u8) void {
-        _ = event.dirs.getOrPut(allocator, file_path) catch bun.outOfMemory();
+    pub fn appendDir(event: *HotReloadEvent, allocator: Allocator, dir_path: []const u8, maybe_sub_path: ?[]const u8) void {
+        if (dir_path.len == 0) return;
+        _ = event.dirs.getOrPut(allocator, dir_path) catch bun.outOfMemory();
+
+        const sub_path = maybe_sub_path orelse return;
+        if (sub_path.len == 0) return;
+
+        const platform = bun.path.Platform.auto;
+        const ends_with_sep = platform.isSeparator(dir_path[dir_path.len - 1]);
+        const starts_with_sep = platform.isSeparator(sub_path[0]);
+        const sep_offset: i32 = if (ends_with_sep and starts_with_sep) -1 else 1;
+
+        event.extra_files.ensureUnusedCapacity(allocator, @intCast(@as(i32, @intCast(dir_path.len + sub_path.len)) + sep_offset + 1)) catch bun.outOfMemory();
+        event.extra_files.appendSliceAssumeCapacity(if (ends_with_sep) dir_path[0 .. dir_path.len - 1] else dir_path);
+        event.extra_files.appendAssumeCapacity(platform.separator());
+        event.extra_files.appendSliceAssumeCapacity(sub_path);
+        event.extra_files.appendAssumeCapacity(0);
     }
 
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`
@@ -6057,6 +6125,15 @@ pub const HotReloadEvent = struct {
             }
         }
 
+        var rest_extra = event.extra_files.items;
+        while (bun.strings.indexOfChar(rest_extra, 0)) |str| {
+            event.files.put(dev.allocator, rest_extra[0..str], {}) catch bun.outOfMemory();
+            rest_extra = rest_extra[str + 1 ..];
+        }
+        if (rest_extra.len > 0) {
+            event.files.put(dev.allocator, rest_extra, {}) catch bun.outOfMemory();
+        }
+
         const changed_file_paths = event.files.keys();
         inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
             g.invalidate(changed_file_paths, entry_points, temp_alloc) catch bun.outOfMemory();
@@ -6072,10 +6149,18 @@ pub const HotReloadEvent = struct {
         }
 
         if (entry_points.set.count() == 0) {
-            Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
-            Output.debugWarn("modified files: {s}", .{
-                bun.fmt.fmtSlice(changed_file_paths, ", "),
-            });
+            Output.debugWarn("nothing to bundle", .{});
+            if (changed_file_paths.len > 0)
+                Output.debugWarn("modified files: {s}", .{
+                    bun.fmt.fmtSlice(changed_file_paths, ", "),
+                });
+
+            if (event.dirs.count() > 0)
+                Output.debugWarn("modified dirs: {s}", .{
+                    bun.fmt.fmtSlice(event.dirs.keys(), ", "),
+                });
+
+            dev.publish(.redundant_watch, &.{MessageId.redundant_watch.char()}, .binary);
             return;
         }
     }
@@ -6085,7 +6170,8 @@ pub const HotReloadEvent = struct {
         defer debug.log("HMR Task end", .{});
 
         const dev = first.owner;
-        if (Environment.allow_assert) {
+        if (Environment.isDebug) {
+            assert(first.debug_mutex.tryLock());
             assert(first.contention_indicator.load(.seq_cst) == 0);
         }
 
@@ -6104,6 +6190,9 @@ pub const HotReloadEvent = struct {
         const timer = first.timer;
 
         if (dev.watcher_atomics.recycleEventFromDevServer(first)) |second| {
+            if (Environment.isDebug) {
+                assert(second.debug_mutex.tryLock());
+            }
             second.processFileList(dev, &entry_points, temp_alloc);
             dev.watcher_atomics.recycleSecondEventFromDevServer(second);
         }
@@ -6185,6 +6274,9 @@ const WatcherAtomics = struct {
 
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
+        if (Environment.isDebug)
+            assert(ev.debug_mutex.tryLock());
+
         return ev;
     }
 
@@ -6193,6 +6285,15 @@ const WatcherAtomics = struct {
     fn watcherReleaseAndSubmitEvent(state: *WatcherAtomics, ev: *HotReloadEvent) void {
         state.watcher_has_event.unlock();
         ev.owner.bun_watcher.thread_lock.assertLocked();
+
+        if (Environment.isDebug) {
+            for (std.mem.asBytes(&ev.timer)) |b| {
+                if (b != 0xAA) break;
+            } else @panic("timer is undefined memory in watcherReleaseAndSubmitEvent");
+        }
+
+        if (Environment.isDebug)
+            ev.debug_mutex.unlock();
 
         if (!ev.isEmpty()) {
             @branchHint(.likely);
@@ -6230,8 +6331,7 @@ const WatcherAtomics = struct {
     /// Called by DevServer after it receives a task callback. If this returns
     /// another event, that event must be recycled with `recycleSecondEventFromDevServer`
     fn recycleEventFromDevServer(state: *WatcherAtomics, first_event: *HotReloadEvent) ?*HotReloadEvent {
-        first_event.files.clearRetainingCapacity();
-        first_event.timer = undefined;
+        first_event.reset();
 
         // Reset the watch count to zero, while detecting if
         // the other watch event was submitted.
@@ -6269,8 +6369,7 @@ const WatcherAtomics = struct {
     }
 
     fn recycleSecondEventFromDevServer(state: *WatcherAtomics, second_event: *HotReloadEvent) void {
-        second_event.files.clearRetainingCapacity();
-        second_event.timer = undefined;
+        second_event.reset();
 
         state.dev_server_has_event.unlock();
         if (Environment.allow_assert) {
@@ -6284,8 +6383,6 @@ const WatcherAtomics = struct {
 
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
-    _ = changed_files;
-
     debug.log("onFileUpdate start", .{});
     defer debug.log("onFileUpdate end", .{});
 
@@ -6320,7 +6417,13 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
                 ev.appendFile(dev.allocator, file_path);
             },
             .directory => {
-                ev.appendDir(dev.allocator, file_path);
+                // INotifyWatcher stores sub paths into `changed_files`
+                // the other platforms do not appear to write anything into `changed_files` ever.
+                if (Environment.isLinux) {
+                    ev.appendDir(dev.allocator, file_path, if (event.name_len > 0) changed_files[event.name_off] else null);
+                } else {
+                    ev.appendDir(dev.allocator, file_path, null);
+                }
             },
         }
     }
@@ -6477,7 +6580,7 @@ pub const EntryPointList = struct {
 
     pub const empty: EntryPointList = .{ .set = .{} };
 
-    const Flags = packed struct(u8) {
+    pub const Flags = packed struct(u8) {
         client: bool = false,
         server: bool = false,
         ssr: bool = false,

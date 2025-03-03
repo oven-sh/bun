@@ -3994,9 +3994,9 @@ const SPECIAL_CHARS_TABLE: bun.bit_set.IntegerBitSet(256) = brk: {
     }
     break :brk table;
 };
-pub fn assertSpecialChar(c: u8) void {
-    bun.assert(@inComptime());
-    bun.assert(SPECIAL_CHARS_TABLE.isSet(c));
+
+pub fn assertSpecialChar(comptime c: u8) void {
+    comptime bun.assert(SPECIAL_CHARS_TABLE.isSet(c));
 }
 /// Characters that need to be backslashed inside double quotes
 const BACKSLASHABLE_CHARS = [_]u8{ '$', '`', '"', '\\' };

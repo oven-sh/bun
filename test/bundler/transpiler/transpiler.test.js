@@ -1705,6 +1705,12 @@ console.log(<div {...obj} key="after" />);`),
       expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
     });
 
+    it("tagged template literal", () => {
+      expectPrinted_("String.raw`b`", "String.raw`b`");
+      expectPrinted_("String.raw`\\n`", "String.raw`\\n`");
+      expectPrinted_("String.raw`\n`", "String.raw`\n`");
+    });
+
     it("fold string addition", () => {
       expectPrinted_(
         `

@@ -14,6 +14,18 @@ pub const JSObject = extern struct {
         return JSValue.fromCell(obj);
     }
 
+    /// Non-objects will be runtime-coerced to objects.
+    /// 
+    /// For cells this is `toObjectSlow`, for other types it's `toObjectSlowCase`.
+    pub fn fromJS(value: JSValue, globalThis: JSValue) *JSObject {
+        return JSValue.toObject(value, globalThis);
+    }
+
+    /// Returns `null` if the value is not an object.
+    pub fn tryFromJS(maybe_obj: JSValue, globalThis: *JSC.JSGlobalObject) ?*JSObject {
+        return JSValue.asObject(maybe_obj, globalThis);
+    }
+
     /// Marshall a struct instance into a JSObject, copying its properties.
     ///
     /// Each field will be encoded with `JSC.toJS`. Fields whose types have a
@@ -84,6 +96,50 @@ pub const JSObject = extern struct {
         }
     }
 
+    /// Equivalent to `target[property]`. Calls userland getters/proxies.  Can
+    /// throw. Null indicates the property does not exist. JavaScript undefined
+    /// and JavaScript null can exist as a property and is different than zig
+    /// `null` (property does not exist).
+    ///
+    /// `property` must be either `[]const u8`. A comptime slice may defer to
+    /// calling `fastGet`, which use a more optimal code path. This function is
+    /// marked `inline` to allow Zig to determine if `fastGet` should be used
+    /// per invocation.
+    pub inline fn get(target: *JSObject, global: *JSGlobalObject, property: anytype) bun.JSError!?JSValue {
+        const property_slice: []const u8 = property; // must be a slice!
+
+        // This call requires `get` to be `inline`
+        if (bun.isComptimeKnown(property_slice)) {
+            if (comptime JSValue.BuiltinName.get(property_slice)) |builtin_name| {
+                return target.fastGetWithError(global, builtin_name);
+            }
+        }
+
+        return switch (JSC__JSObject__getIfPropertyExistsImpl(target, global, property_slice.ptr, @intCast(property_slice.len))) {
+            .zero => error.JSError,
+            .property_does_not_exist_on_object => null,
+
+            // TODO: see bug described in ObjectBindings.cpp
+            // since there are false positives, the better path is to make them
+            // negatives, as the number of places that desire throwing on
+            // existing undefined is extremely small, but non-zero.
+            .undefined => null,
+            else => |val| val,
+        };
+    }
+    extern fn JSC__JSObject__getIfPropertyExistsImpl(object: *JSObject, global: *JSGlobalObject, ptr: [*]const u8, len: u32) JSValue;
+
+
+    pub fn fastGetWithError(this: *JSObject, global: *JSGlobalObject, builtin_name: JSValue.BuiltinName) bun.JSError!?JSValue {
+        return switch (JSC__JSObject__fastGet(this, global, @intFromEnum(builtin_name))) {
+            .zero => error.JSError,
+            .undefined => null,
+            .property_does_not_exist_on_object => null,
+            else => |val| val,
+        };
+    }
+    extern fn JSC__JSObject__fastGet(object: *JSObject, global: *JSGlobalObject, builtin_name: u32) JSValue;
+
     extern fn JSC__createStructure(*JSC.JSGlobalObject, *JSC.JSCell, u32, names: [*]ExternColumnIdentifier) JSC.JSValue;
 
     pub const ExternColumnIdentifier = extern struct {
@@ -106,6 +162,7 @@ pub const JSObject = extern struct {
             }
         }
     };
+
     pub fn createStructure(global: *JSGlobalObject, owner: JSC.JSValue, length: u32, names: [*]ExternColumnIdentifier) JSValue {
         JSC.markBinding(@src());
         return JSC__createStructure(global, owner.asCell(), length, names);

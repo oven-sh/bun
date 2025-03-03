@@ -145,6 +145,8 @@ typedef void* JSClassRef;
 
 CPP_DECL JSC__JSValue JSC__JSObject__create(JSC__JSGlobalObject* arg0, size_t arg1, void* arg2, void(* ArgFn3)(void* arg0, JSC__JSObject* arg1, JSC__JSGlobalObject* arg2));
 CPP_DECL size_t JSC__JSObject__getArrayLength(JSC__JSObject* arg0);
+CPP_DECL JSC__JSValue JSC__JSObject__fastGet(JSC__JSObject* object, JSC__JSGlobalObject* arg1, unsigned char arg2);
+CPP_DECL JSC__JSValue JSC__JSObject__getIfPropertyExistsImpl(JSC__JSObject* object, JSC__JSGlobalObject* arg1, const unsigned char* arg2, uint32_t arg3);
 CPP_DECL JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1, const ZigString* arg2);
 CPP_DECL JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2);
 CPP_DECL void JSC__JSObject__putRecord(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2, ZigString* arg3, size_t arg4);

@@ -1,17 +1,25 @@
 #/usr/bin/env bash
 
+if [[ "${OSTYPE}" == "darwin"* && "${BASH_VERSINFO}" -lt 4 ]]; then
+    _old_bash_version=${BASH_VERSION}
+fi
+
 _file_arguments() {
     local extensions="${1}"
-    local reset=$(shopt -p globstar)
-    shopt -s globstar
+    if [[ -z "${_old_bash_version}" ]]; then
+        local reset=$(shopt -p globstar)
+        shopt -s globstar
+    fi
 
     if [[ -z "${cur_word}" ]]; then
         COMPREPLY=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
     else
         COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
     fi
-
-    $reset
+    
+    if [[ -z "${_old_bash_version}" ]]; then
+        $reset
+    fi
 }
 
 _long_short_completion() {
@@ -46,7 +54,11 @@ _read_scripts_in_package_json() {
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
         scripts="${scripts//@(\"|\')/}";
-        readarray -td, scripts <<<"${scripts}";
+        if [[ -z "${_old_bash_version}" ]]; then
+            readarray -td, scripts <<<"${scripts}";
+        else
+            IFS= read -r -d '' -a scripts <<<"${scripts}";
+        fi
         for completion in "${scripts[@]}"; do
             package_json_compreply+=( "${completion%:*}" );
         done
@@ -78,9 +90,11 @@ _subcommand_comp_reply() {
 
 
 _bun_completions() {
-    declare -A GLOBAL_OPTIONS;
-    declare -A PACKAGE_OPTIONS;
-    declare -A PM_OPTIONS;
+    if [[ -z "${_old_bash_version}" ]]; then
+        declare -A GLOBAL_OPTIONS;
+        declare -A PACKAGE_OPTIONS;
+        declare -A PM_OPTIONS;
+    fi
 
     local SUBCOMMANDS="dev bun create run install add remove upgrade completions discord help init pm x test repl update outdated link unlink build";
 

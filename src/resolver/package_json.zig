@@ -1015,7 +1015,8 @@ pub const PackageJSON = struct {
         if (generate_hash) {
             if (package_json.name.len > 0 and package_json.version.len > 0) {
                 package_json.generateHash() catch {
-                    r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s}: Package name \"{s}...\" (truncated) is too long to generate hash. The maximum length is 214 characters", .{ package_json_path, package_json.name[0..50] }) catch unreachable;
+                    r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s}: Package name \"{s}...\" (truncated) is too long. The maximum length is 214 characters", .{ package_json_path, package_json.name[0..50] }) catch unreachable;
+                    return null;
                 };
             }
         }

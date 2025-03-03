@@ -58,7 +58,8 @@ pub const PackageJSON = struct {
 
     pub usingnamespace bun.New(@This());
 
-    pub fn generateHash(package_json: *PackageJSON) void {
+    pub fn generateHash(package_json: *PackageJSON) !void {
+        if (package_json.name.len > 214) return error.InvalidPackageName;
         var hashy: [1024]u8 = undefined;
         @memset(&hashy, 0);
         var used: usize = 0;
@@ -679,10 +680,10 @@ pub const PackageJSON = struct {
             }
         }
 
-        if (json.asProperty("name")) |version_json| {
-            if (version_json.expr.asString(allocator)) |version_str| {
-                if (version_str.len > 0) {
-                    package_json.name = allocator.dupe(u8, version_str) catch unreachable;
+        if (json.asProperty("name")) |name_json| {
+            if (name_json.expr.asString(allocator)) |name_str| {
+                if (name_str.len > 0) {
+                    package_json.name = allocator.dupe(u8, name_str) catch unreachable;
                 }
             }
         }
@@ -1013,7 +1014,9 @@ pub const PackageJSON = struct {
 
         if (generate_hash) {
             if (package_json.name.len > 0 and package_json.version.len > 0) {
-                package_json.generateHash();
+                package_json.generateHash() catch {
+                    r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s}: Package name \"{s}...\" (truncated) is too long to generate hash. The maximum length is 214 characters", .{ package_json_path, package_json.name[0..50] }) catch unreachable;
+                };
             }
         }
 

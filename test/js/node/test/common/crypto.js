@@ -157,30 +157,32 @@ module.exports = {
   },
   // opensslCli defined lazily to reduce overhead of spawnSync
   get opensslCli() {
-    if (opensslCli !== null) return opensslCli;
+    if (typeof Bun === "object") {
+      if (opensslCli !== null) return opensslCli;
+  
+      opensslCli = Bun.which('openssl');
+      
+      return opensslCli;
+    }
 
-    opensslCli = Bun.which('openssl');
-    
+    if (process.config.variables.node_shared_openssl) {
+      // Use external command
+      opensslCli = 'openssl';
+    } else {
+      const path = require('path');
+      // Use command built from sources included in Node.js repository
+      opensslCli = path.join(path.dirname(process.execPath), 'openssl-cli');
+    }
+
+    if (exports.isWindows) opensslCli += '.exe';
+
+    const { spawnSync } = require('child_process');
+
+    const opensslCmd = spawnSync(opensslCli, ['version']);
+    if (opensslCmd.status !== 0 || opensslCmd.error !== undefined) {
+      // OpenSSL command cannot be executed
+      opensslCli = false;
+    }
     return opensslCli;
-
-    // if (process.config.variables.node_shared_openssl) {
-    //   // Use external command
-    //   opensslCli = 'openssl';
-    // } else {
-    //   const path = require('path');
-    //   // Use command built from sources included in Node.js repository
-    //   opensslCli = path.join(path.dirname(process.execPath), 'openssl-cli');
-    // }
-
-    // if (exports.isWindows) opensslCli += '.exe';
-
-    // const { spawnSync } = require('child_process');
-
-    // const opensslCmd = spawnSync(opensslCli, ['version']);
-    // if (opensslCmd.status !== 0 || opensslCmd.error !== undefined) {
-    //   // OpenSSL command cannot be executed
-    //   opensslCli = false;
-    // }
-    // return opensslCli;
   },
 };

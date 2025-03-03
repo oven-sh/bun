@@ -29,7 +29,7 @@ const posix = std.posix;
 const SOCK = posix.SOCK;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
@@ -1568,7 +1568,7 @@ pub fn checkServerIdentity(
                         }
                     }
 
-                    if (BoringSSL.checkX509ServerIdentity(x509, hostname)) {
+                    if (bun.BoringSSL.checkX509ServerIdentity(x509, hostname)) {
                         return true;
                     }
                 }
@@ -1621,7 +1621,7 @@ pub fn onOpen(
     }
 
     if (comptime is_ssl) {
-        var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+        var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
             var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {

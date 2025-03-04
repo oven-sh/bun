@@ -1,0 +1,5 @@
+name        = { first = "Tom", last = "Preston-Werner" }
+point       = { x = 1, y = 2 }
+simple      = { a = 1 }
+str-key     = { "a" = 1 }
+table-array = [{ "a" = 1 }, { "b" = 2 }]

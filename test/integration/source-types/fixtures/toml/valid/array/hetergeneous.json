@@ -1,0 +1,16 @@
+{
+    "mixed": [
+        [
+            {"type": "integer", "value": "1"},
+            {"type": "integer", "value": "2"}
+        ],
+        [
+            {"type": "string", "value": "a"},
+            {"type": "string", "value": "b"}
+        ],
+        [
+            {"type": "float", "value": "1.1"},
+            {"type": "float", "value": "2.1"}
+        ]
+    ]
+}

@@ -1,0 +1,2 @@
+# time-minute     = 2DIGIT  ; 00-59
+d = 00:60:00

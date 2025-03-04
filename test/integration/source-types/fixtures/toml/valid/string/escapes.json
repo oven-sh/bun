@@ -1,0 +1,15 @@
+{
+    "backslash":     {"type": "string", "value": "|\\."},
+    "backspace":     {"type": "string", "value": "|\b."},
+    "carriage":      {"type": "string", "value": "|\r."},
+    "delete":        {"type": "string", "value": "|."},
+    "formfeed":      {"type": "string", "value": "|\f."},
+    "newline":       {"type": "string", "value": "|\n."},
+    "notunicode1":   {"type": "string", "value": "|\\u."},
+    "notunicode2":   {"type": "string", "value": "|\\u."},
+    "notunicode3":   {"type": "string", "value": "|\\u0075."},
+    "notunicode4":   {"type": "string", "value": "|\\u."},
+    "quote":         {"type": "string", "value": "|\"."},
+    "tab":           {"type": "string", "value": "|\t."},
+    "unitseparator": {"type": "string", "value": "|\u001f."}
+}

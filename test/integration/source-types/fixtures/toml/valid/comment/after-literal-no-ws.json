@@ -1,0 +1,6 @@
+{
+    "false": {"type": "bool", "value": "false"},
+    "inf":   {"type": "float", "value": "inf"},
+    "nan":   {"type": "float", "value": "nan"},
+    "true":  {"type": "bool", "value": "true"}
+}

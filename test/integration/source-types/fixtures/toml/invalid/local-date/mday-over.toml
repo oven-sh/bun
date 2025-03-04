@@ -1,0 +1,3 @@
+# date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on
+#                           ; month/year
+d = 2006-01-32

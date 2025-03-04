@@ -1,0 +1,11 @@
+{
+    "a": {
+        "key": {"type": "integer", "value": "1"},
+        "extend": {
+            "key": {"type": "integer", "value": "2"},
+            "more": {
+                "key": {"type": "integer", "value": "3"}
+            }
+        }
+    }
+}

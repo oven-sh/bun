@@ -1,0 +1,3 @@
+a={}
+# Inline tables are immutable and can't be extended
+[a.b]

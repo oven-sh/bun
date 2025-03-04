@@ -1,0 +1,7 @@
+first-offset = 0001-01-01 00:00:00Z
+first-local  = 0001-01-01 00:00:00
+first-date   = 0001-01-01
+
+last-offset = 9999-12-31 23:59:59Z
+last-local  = 9999-12-31 23:59:59
+last-date   = 9999-12-31

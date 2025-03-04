@@ -1,0 +1,43 @@
+{
+    "title": {"type": "string", "value": "TOML Example"},
+    "clients": {
+        "data": [
+            [
+                {"type": "string", "value": "gamma"},
+                {"type": "string", "value": "delta"}
+            ],
+            [
+                {"type": "integer", "value": "1"},
+                {"type": "integer", "value": "2"}
+            ]
+        ],
+        "hosts": [
+            {"type": "string", "value": "alpha"},
+            {"type": "string", "value": "omega"}
+        ]
+    },
+    "database": {
+        "connection_max": {"type": "integer", "value": "5000"},
+        "enabled":        {"type": "bool", "value": "true"},
+        "server":         {"type": "string", "value": "192.168.1.1"},
+        "ports": [
+            {"type": "integer", "value": "8001"},
+            {"type": "integer", "value": "8001"},
+            {"type": "integer", "value": "8002"}
+        ]
+    },
+    "owner": {
+        "dob":  {"type": "datetime", "value": "1979-05-27T07:32:00-08:00"},
+        "name": {"type": "string", "value": "Lance Uppercut"}
+    },
+    "servers": {
+        "alpha": {
+            "dc": {"type": "string", "value": "eqdc10"},
+            "ip": {"type": "string", "value": "10.0.0.1"}
+        },
+        "beta": {
+            "dc": {"type": "string", "value": "eqdc10"},
+            "ip": {"type": "string", "value": "10.0.0.2"}
+        }
+    }
+}

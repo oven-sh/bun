@@ -1,0 +1,15 @@
+backspace     = "|\b."
+tab           = "|\t."
+newline       = "|\n."
+formfeed      = "|\f."
+carriage      = "|\r."
+quote         = "|\"."
+backslash     = "|\\."
+delete        = "|\u007F."
+unitseparator = "|\u001F."
+
+# \u is escaped, so should NOT be interperted as a \u escape.
+notunicode1   = "|\\u."
+notunicode2   = "|\u005Cu."
+notunicode3   = "|\\u0075."
+notunicode4   = "|\\\u0075."

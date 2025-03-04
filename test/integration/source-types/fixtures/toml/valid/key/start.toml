@@ -1,0 +1,32 @@
+# Table and keys can start with any character; there is no requirement for it to
+# start with a letter.
+
+[-key]
+-key = 1
+
+[_key]
+_key = 2
+
+[1key]
+1key = 3
+
+[-]
+- = 4
+
+[_]
+_ = 5
+
+[1] 
+1 = 6
+
+[---] 
+--- = 7
+
+[___]
+___ = 8
+
+[111]
+111 = 9
+
+[inline]
+--- = {--- = 10, ___ = 11, 111 = 12}

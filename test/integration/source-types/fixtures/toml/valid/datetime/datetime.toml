@@ -1,0 +1,4 @@
+space = 1987-07-05 17:45:00Z
+
+# ABNF is case-insensitive, both "Z" and "z" must be supported.
+lower = 1987-07-05t17:45:00z

@@ -38,8 +38,14 @@ describe("toml", async () => {
   describe("valid", async () => {
     const valids = (await allCases)[0];
 
-    it.each(valids.files)("parses %s", async (_name, filePath) => {
-      expect(() => import(filePath)).not.toThrow();
+    describe.each(valids.files)("%s", async (_name, filePath) => {
+      it("importing does not throw", async () => {
+        await expect(() => import(filePath)).not.toThrow();
+      });
+
+      it("Bun.TOML.parse does not throw", async () => {
+        await expect(async () => Bun.TOML.parse(await fs.readFile(filePath, "utf8"))).not.toThrow();
+      });
     });
 
     describe.each(valids.folders)("%s", async (_name, dirpath) => {

@@ -1,0 +1,6 @@
+{
+    "utc1":  {"type": "datetime", "value": "1987-07-05T17:45:56.123Z"},
+    "utc2":  {"type": "datetime", "value": "1987-07-05T17:45:56.600Z"},
+    "wita1": {"type": "datetime", "value": "1987-07-05T17:45:56.123+08:00"},
+    "wita2": {"type": "datetime", "value": "1987-07-05T17:45:56.600+08:00"}
+}

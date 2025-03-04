@@ -1,0 +1,7 @@
+{
+    "127.0.0.1":          {"type": "string", "value": "value"},
+    "character encoding": {"type": "string", "value": "value"},
+    "key2":               {"type": "string", "value": "value"},
+    "quoted \"value\"":   {"type": "string", "value": "value"},
+    "ʎǝʞ":                {"type": "string", "value": "value"}
+}

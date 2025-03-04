@@ -1,0 +1,4 @@
+{
+    "max_float": {"type": "float", "value": "9007199254740991"},
+    "min_float": {"type": "float", "value": "-9007199254740991"}
+}

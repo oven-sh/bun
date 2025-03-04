@@ -1,0 +1,9 @@
+[fruit]
+apple.color = "red"
+apple.taste.sweet = true
+
+[fruit.apple]  # INVALID
+# [fruit.apple.taste]  # INVALID
+
+[fruit.apple.texture]  # you can add sub-tables
+smooth = true

@@ -1,0 +1,7 @@
+{
+    " c d ": {"type": "integer", "value": "2"},
+    "a b":   {"type": "integer", "value": "1"},
+    " tbl ": {
+        "\ttab\ttab\t": {"type": "string", "value": "tab"}
+    }
+}

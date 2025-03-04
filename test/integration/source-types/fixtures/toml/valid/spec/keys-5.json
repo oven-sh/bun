@@ -1,0 +1,12 @@
+{
+    "apple": {
+        "color": {"type": "string", "value": "red"},
+        "skin":  {"type": "string", "value": "thin"},
+        "type":  {"type": "string", "value": "fruit"}
+    },
+    "orange": {
+        "color": {"type": "string", "value": "orange"},
+        "skin":  {"type": "string", "value": "thick"},
+        "type":  {"type": "string", "value": "fruit"}
+    }
+}

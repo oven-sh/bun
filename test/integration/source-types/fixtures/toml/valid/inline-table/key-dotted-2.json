@@ -1,0 +1,20 @@
+{
+    "many": {
+        "dots": {
+            "here": {
+                "dot": {
+                    "dot": {
+                        "dot": {
+                            "a": {
+                                "b": {
+                                    "c": {"type": "integer", "value": "1"},
+                                    "d": {"type": "integer", "value": "2"}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

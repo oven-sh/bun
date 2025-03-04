@@ -1,0 +1,37 @@
+# NOTE: this file includes some literal tab characters.
+
+equivalent_one = "The quick brown fox jumps over the lazy dog."
+equivalent_two = """
+The quick brown \
+
+
+  fox jumps over \
+    the lazy dog."""
+
+equivalent_three = """\
+       The quick brown \
+       fox jumps over \
+       the lazy dog.\
+       """
+
+whitespace-after-bs = """\
+       The quick brown \
+       fox jumps over \   
+       the lazy dog.\	
+       """
+
+no-space = """a\
+    b"""
+
+# Has tab character.
+keep-ws-before = """a   	\
+   b"""
+
+escape-bs-1 = """a \\
+b"""
+
+escape-bs-2 = """a \\\
+b"""
+
+escape-bs-3 = """a \\\\
+  b"""

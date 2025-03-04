@@ -1,0 +1,13 @@
+{
+    "\b":         {"type": "string", "value": "bell"},
+    "\n":         {"type": "string", "value": "newline"},
+    "\"":         {"type": "string", "value": "just a quote"},
+    "backsp\b\b": {},
+    "À":          {"type": "string", "value": "latin capital letter A with grave"},
+    "\"quoted\"": {
+        "quote": {"type": "bool", "value": "true"}
+    },
+    "a.b": {
+        "À": {}
+    }
+}

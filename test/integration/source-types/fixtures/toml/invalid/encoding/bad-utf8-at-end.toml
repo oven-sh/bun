@@ -1,0 +1,5 @@
+# There is a 0xda at after the quotes, and no EOL at the end of the file.
+#
+# This is a bit of an edge case: This indicates there should be two bytes
+# (0b1101_1010) but there is no byte to follow because it's the end of the file.
+x = """"""Ú

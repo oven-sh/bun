@@ -1,0 +1,7 @@
+{
+    "firstnl":                  {"type": "string", "value": "This string has a ' quote character."},
+    "multiline":                {"type": "string", "value": "This string\nhas ' a quote character\nand more than\none newline\nin it."},
+    "multiline_with_tab":       {"type": "string", "value": "First line\n\t Followed by a tab"},
+    "oneline":                  {"type": "string", "value": "This string has a ' quote character."},
+    "this-str-has-apostrophes": {"type": "string", "value": "' there's one already\n'' two more\n''"}
+}

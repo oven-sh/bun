@@ -1,0 +1,15 @@
+# Note: this file contains literal tab characters.
+
+# Space are ignored, and key parts can be quoted.
+count.a       = 1
+count . b     = 2
+"count"."c"   = 3
+"count" . "d" = 4
+'count'.'e'   = 5
+'count' . 'f' = 6
+"count".'g'   = 7
+"count" . 'h' = 8
+count.'i'     = 9
+count 	.	 'j'	   = 10
+"count".k     = 11
+"count" . l   = 12

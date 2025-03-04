@@ -1,0 +1,5 @@
+{
+    "apos15": {"type": "string", "value": "Here are fifteen apostrophes: '''''''''''''''"},
+    "quot15": {"type": "string", "value": "Here are fifteen quotation marks: \"\"\"\"\"\"\"\"\"\"\"\"\"\"\""},
+    "str":    {"type": "string", "value": "'That,' she said, 'is still pointless.'"}
+}

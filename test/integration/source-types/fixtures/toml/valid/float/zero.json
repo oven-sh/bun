@@ -1,0 +1,9 @@
+{
+    "exponent":            {"type": "float", "value": "0"},
+    "exponent-signed-neg": {"type": "float", "value": "-0"},
+    "exponent-signed-pos": {"type": "float", "value": "0"},
+    "exponent-two-0":      {"type": "float", "value": "0"},
+    "signed-neg":          {"type": "float", "value": "-0"},
+    "signed-pos":          {"type": "float", "value": "0"},
+    "zero":                {"type": "float", "value": "0"}
+}

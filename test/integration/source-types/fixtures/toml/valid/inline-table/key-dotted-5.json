@@ -1,0 +1,40 @@
+{
+    "arr-1": [{
+        "a": {
+            "b": {"type": "integer", "value": "1"}
+        }
+    }],
+    "arr-2": [
+        {"type": "string", "value": "str"},
+        {
+            "a": {
+                "b": {"type": "integer", "value": "1"}
+            }
+        }
+    ],
+    "arr-3": [
+        {
+            "a": {
+                "b": {"type": "integer", "value": "1"}
+            }
+        },
+        {
+            "a": {
+                "b": {"type": "integer", "value": "2"}
+            }
+        }
+    ],
+    "arr-4": [
+        {"type": "string", "value": "str"},
+        {
+            "a": {
+                "b": {"type": "integer", "value": "1"}
+            }
+        },
+        {
+            "a": {
+                "b": {"type": "integer", "value": "2"}
+            }
+        }
+    ]
+}

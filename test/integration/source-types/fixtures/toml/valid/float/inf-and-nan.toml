@@ -1,0 +1,8 @@
+# We don't encode +nan and -nan back with the signs; many languages don't
+# support a sign on NaN (it doesn't really make much sense).
+nan = nan
+nan_neg = -nan
+nan_plus = +nan
+infinity = inf
+infinity_neg = -inf
+infinity_plus = +inf

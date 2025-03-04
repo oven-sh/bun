@@ -1516,7 +1516,7 @@ fn getJavaScriptCodeForHTMLFile(
                 continue; // ignore non-JavaScript imports
         } else {
             // Find the in-graph import.
-            const file = dev.client_graph.bundled_files.get(import.path.pretty) orelse
+            const file = dev.client_graph.bundled_files.get(import.path.text) orelse
                 continue;
             if (file.flags.kind != .js)
                 continue;
@@ -1526,7 +1526,7 @@ fn getJavaScriptCodeForHTMLFile(
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
         try w.writeAll("),\n  ");
     }
-    try w.writeAll("  ]);\n  ");
+    try w.writeAll("    ]);\n  ");
     try w.writeAll("},\n");
 
     // Avoid-recloning if it is was moved to the hap

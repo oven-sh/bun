@@ -549,7 +549,7 @@ pub fn GlobWalker_(
                     else => {},
                 }
 
-                while (this.walker.workbuf.popOrNull()) |work_item| {
+                while (this.walker.workbuf.pop()) |work_item| {
                     if (work_item.fd) |fd| {
                         this.closeDisallowingCwd(fd);
                     }
@@ -715,7 +715,7 @@ pub fn GlobWalker_(
                         .get_next => {
                             // Done
                             if (this.walker.workbuf.items.len == 0) return .{ .result = null };
-                            const work_item = this.walker.workbuf.pop();
+                            const work_item = this.walker.workbuf.pop().?;
                             switch (work_item.kind) {
                                 .directory => {
                                     switch (try this.transitionToDirIterState(work_item, false)) {
@@ -753,9 +753,9 @@ pub fn GlobWalker_(
                                                 // So for case A, we just need to check if the pattern is the last pattern.
                                                 if (is_last or
                                                     (pattern.syntax_hint == .Double and
-                                                    component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
-                                                    next_pattern.?.syntax_hint != .Double and
-                                                    this.walker.matchPatternImpl(next_pattern.?, entry_name)))
+                                                        component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
+                                                        next_pattern.?.syntax_hint != .Double and
+                                                        this.walker.matchPatternImpl(next_pattern.?, entry_name)))
                                                 {
                                                     return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                                 }

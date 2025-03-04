@@ -396,7 +396,7 @@ pub fn PosixStreamingWriter(
         }
 
         // TODO: configurable?
-        const chunk_size: usize = std.mem.page_size;
+        const chunk_size: usize = std.heap.page_size_min;
 
         pub fn memoryCost(this: *const @This()) usize {
             return @sizeOf(@This()) + this.outgoing.memoryCost();
@@ -1064,10 +1064,10 @@ pub const StreamBuffer = struct {
     }
 
     pub fn maybeShrink(this: *StreamBuffer) void {
-        if (this.list.capacity > std.mem.page_size) {
+        if (this.list.capacity > std.heap.pageSize()) {
             // workaround insane zig decision to make it undefined behavior to resize .len < .capacity
             this.list.expandToCapacity();
-            this.list.shrinkAndFree(std.mem.page_size);
+            this.list.shrinkAndFree(std.heap.pageSize());
         }
     }
 

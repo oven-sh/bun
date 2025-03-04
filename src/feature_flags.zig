@@ -110,8 +110,6 @@ pub const unwrap_commonjs_to_esm = true;
 /// https://github.com/source-map/source-map-rfc/pull/20
 pub const source_map_debug_id = true;
 
-pub const alignment_tweak = false;
-
 pub const export_star_redirect = false;
 
 pub const streaming_file_uploads_for_http_client = true;

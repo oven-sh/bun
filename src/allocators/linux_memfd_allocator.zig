@@ -62,19 +62,15 @@ pub const LinuxMemFdAllocator = struct {
     }
 
     const AllocatorInterface = struct {
-        fn alloc(_: *anyopaque, _: usize, _: u8, _: usize) ?[*]u8 {
+        fn alloc(_: *anyopaque, _: usize, _: std.mem.Alignment, _: usize) ?[*]u8 {
             // it should perform no allocations or resizes
             return null;
-        }
-
-        fn resize(_: *anyopaque, _: []u8, _: u8, _: usize, _: usize) bool {
-            return false;
         }
 
         fn free(
             ptr: *anyopaque,
             buf: []u8,
-            _: u8,
+            _: std.mem.Alignment,
             _: usize,
         ) void {
             var this: *LinuxMemFdAllocator = @alignCast(@ptrCast(ptr));
@@ -86,7 +82,8 @@ pub const LinuxMemFdAllocator = struct {
 
         pub const VTable = &std.mem.Allocator.VTable{
             .alloc = &AllocatorInterface.alloc,
-            .resize = &resize,
+            .resize = &std.mem.Allocator.noResize,
+            .remap = &std.mem.Allocator.noRemap,
             .free = &free,
         };
     };
@@ -95,7 +92,7 @@ pub const LinuxMemFdAllocator = struct {
         var size = len;
 
         // size rounded up to nearest page
-        size += (size + std.mem.page_size - 1) & std.mem.page_size;
+        size = std.mem.alignForward(usize, size, std.heap.pageSize());
 
         var flags_mut = flags;
         flags_mut.TYPE = .SHARED;

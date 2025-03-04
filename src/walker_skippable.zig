@@ -111,7 +111,7 @@ pub fn next(self: *Walker) !?WalkerEntry {
                         .kind = base.kind,
                     };
                 } else {
-                    var item = self.stack.pop();
+                    var item = self.stack.pop().?;
                     if (self.stack.items.len != 0) {
                         item.iter.iter.dir.close();
                     }

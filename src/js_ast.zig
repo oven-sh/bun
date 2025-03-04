@@ -7777,7 +7777,7 @@ pub const Scope = struct {
         if (Symbol.isKindHoistedOrFunction(new) and
             Symbol.isKindHoistedOrFunction(existing) and
             (scope.kind == .entry or scope.kind == .function_body or scope.kind == .function_args or
-            (new == existing and Symbol.isKindHoisted(existing))))
+                (new == existing and Symbol.isKindHoisted(existing))))
         {
             return .replace_with_new;
         }
@@ -8498,7 +8498,7 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
-    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size));
+    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.heap.page_size_min));
 
     stack_allocator: SFA = undefined,
     bump_allocator: std.mem.Allocator = undefined,

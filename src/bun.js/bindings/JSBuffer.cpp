@@ -1714,38 +1714,39 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
     return JSC::JSValue::encode(castedThis);
 }
 
-JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue constructFromEncoding(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, std::span<const uint8_t> input, WebCore::BufferEncodingType encoding)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (UNLIKELY(length == 0)) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
-    }
-    if (length > WTF::String::MaxLength) {
-        return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
-    }
-    if (length > castedThis->byteLength()) {
-        length = castedThis->byteLength();
-    }
 
     JSC::EncodedJSValue ret = 0;
 
     switch (encoding) {
+    case WebCore::BufferEncodingType::buffer: {
+        auto* buffer = createUninitializedBuffer(lexicalGlobalObject, input.size());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (UNLIKELY(!buffer)) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return JSValue::encode({});
+        }
+        memcpy(buffer->vector(), input.data(), input.size());
+        return JSC::JSValue::encode(buffer);
+    }
+
     case WebCore::BufferEncodingType::latin1: {
         std::span<LChar> data;
-        auto str = String::tryCreateUninitialized(length, data);
+        auto str = String::tryCreateUninitialized(input.size(), data);
         if (UNLIKELY(str.isNull())) {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return JSValue::encode({});
         }
-        memcpy(data.data(), reinterpret_cast<const char*>(castedThis->vector()) + offset, length);
+        memcpy(data.data(), input.data(), input.size());
         return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
     }
 
     case WebCore::BufferEncodingType::ucs2:
     case WebCore::BufferEncodingType::utf16le: {
         std::span<UChar> data;
-        size_t u16length = length / 2;
+        size_t u16length = input.size() / 2;
         if (u16length == 0) {
             return JSC::JSValue::encode(JSC::jsEmptyString(vm));
         } else {
@@ -1754,7 +1755,7 @@ JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGl
                 throwOutOfMemoryError(lexicalGlobalObject, scope);
                 return JSValue::encode({});
             }
-            memcpy(reinterpret_cast<void*>(data.data()), reinterpret_cast<const char*>(castedThis->vector()) + offset, u16length * 2);
+            memcpy(data.data(), input.data(), input.size());
             return JSC::JSValue::encode(JSC::jsString(vm, str));
         }
 
@@ -1765,21 +1766,20 @@ JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGl
         // ascii: we always know the length
         // so we might as well allocate upfront
         std::span<LChar> data;
-        auto str = String::tryCreateUninitialized(length, data);
+        auto str = String::tryCreateUninitialized(input.size(), data);
         if (UNLIKELY(str.isNull())) {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return JSValue::encode({});
         }
-        Bun__encoding__writeLatin1(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, data.data(), length, static_cast<uint8_t>(encoding));
+        Bun__encoding__writeLatin1(reinterpret_cast<const unsigned char*>(input.data()), input.size(), data.data(), input.size(), static_cast<uint8_t>(encoding));
         return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
     }
 
-    case WebCore::BufferEncodingType::buffer:
     case WebCore::BufferEncodingType::utf8:
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
-        ret = Bun__encoding__toString(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, lexicalGlobalObject, static_cast<uint8_t>(encoding));
+        ret = Bun__encoding__toString(reinterpret_cast<const unsigned char*>(input.data()), input.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding));
         RETURN_IF_EXCEPTION(scope, {});
         break;
     }
@@ -1796,6 +1796,23 @@ JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGl
     }
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(retValue));
+}
+
+JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (UNLIKELY(length == 0)) {
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
+    }
+    if (length > WTF::String::MaxLength) {
+        return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
+    }
+    if (length > castedThis->byteLength()) {
+        length = castedThis->byteLength();
+    }
+
+    return constructFromEncoding(vm, lexicalGlobalObject, castedThis->span().first(length), encoding);
 }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L208-L233
@@ -2650,6 +2667,7 @@ void JSBufferPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalThis)
 
     this->putDirect(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)), this->getDirect(vm, Identifier::fromString(vm, "inspect"_s)), PropertyAttribute::Builtin | 0);
 }
+#undef ALIAS
 
 const ClassInfo JSBufferPrototype::s_info = {
     // In Node.js, Object.prototype.toString.call(new Buffer(0)) returns "[object Uint8Array]".

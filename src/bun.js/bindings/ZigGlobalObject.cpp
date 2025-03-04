@@ -33,7 +33,7 @@
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMicrotask.h"
-
+#include "DiffieHellmanClassSetup.h"
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
@@ -2827,6 +2827,16 @@ void GlobalObject::finishCreation(VM& vm)
             setupJSVerifyClassStructure(init);
         });
 
+    m_JSDiffieHellmanClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupDiffieHellmanClassStructure(init);
+        });
+
+    m_JSDiffieHellmanGroupClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupDiffieHellmanGroupClassStructure(init);
+        });
+
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -4015,6 +4025,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
     thisObject->m_JSSignClassStructure.visit(visitor);
     thisObject->m_JSVerifyClassStructure.visit(visitor);
+    thisObject->m_JSDiffieHellmanClassStructure.visit(visitor);
+    thisObject->m_JSDiffieHellmanGroupClassStructure.visit(visitor);
     thisObject->m_statValues.visit(visitor);
     thisObject->m_bigintStatValues.visit(visitor);
     thisObject->m_statFsValues.visit(visitor);

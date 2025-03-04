@@ -339,6 +339,10 @@ pub const PosixSpawn = struct {
         attr: ?Attr,
         argv: [*:null]?[*:0]const u8,
         envp: [*:null]?[*:0]const u8,
+        set_uid: bool,
+        set_gid: bool,
+        uid: std.c.uid_t,
+        gid: std.c.gid_t,
     ) Maybe(pid_t) {
         if (comptime Environment.isLinux) {
             return bun_spawn_request_t.spawn(
@@ -353,6 +357,10 @@ pub const PosixSpawn = struct {
                     },
                     .chdir_buf = if (actions) |a| a.chdir_buf else null,
                     .detached = if (attr) |a| a.detached else false,
+                    .set_uid = set_uid,
+                    .set_gid = set_gid,
+                    .uid = uid,
+                    .gid = gid,
                 },
                 argv,
                 envp,

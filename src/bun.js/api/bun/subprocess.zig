@@ -1899,6 +1899,8 @@ pub fn spawnMaybeSync(
     var ipc_channel: i32 = -1;
     var timeout: ?i32 = null;
     var killSignal: SignalCode = SignalCode.default;
+    var uid: ?std.c.uid_t = null;
+    var gid: ?std.c.gid_t = null;
 
     var windows_hide: bool = false;
     var windows_verbatim_arguments: bool = false;
@@ -2101,6 +2103,22 @@ pub fn spawnMaybeSync(
             if (try args.get(globalThis, "killSignal")) |val| {
                 killSignal = try parseSignal(val, globalThis);
             }
+
+            if (try args.get(globalThis, "uid")) |val| {
+                if (val.isNumber()) {
+                    uid = std.math.cast(std.c.uid_t, val.coerce(i64, globalThis)) orelse return globalThis.throwInvalidArguments("uid must be a number", .{});
+                } else {
+                    return globalThis.throwInvalidArgumentType("spawn", "uid", "number");
+                }
+            }
+
+            if (try args.get(globalThis, "gid")) |val| {
+                if (val.isNumber()) {
+                    gid = std.math.cast(std.c.gid_t, val.coerce(i64, globalThis)) orelse return globalThis.throwInvalidArguments("gid must be a number", .{});
+                } else {
+                    return globalThis.throwInvalidArgumentType("spawn", "gid", "number");
+                }
+            }
         } else {
             try getArgv(globalThis, cmd_value, PATH, cwd, &argv0, allocator, &argv);
         }
@@ -2185,6 +2203,12 @@ pub fn spawnMaybeSync(
         }
     }
 
+    if (Environment.isWindows) {
+        if (uid != null or gid != null) {
+            // ENOTSUP
+            return globalThis.throwInvalidArguments("uid and gid are not supported on Windows", .{});
+        }
+    }
     const spawn_options = bun.spawn.SpawnOptions{
         .cwd = cwd,
         .detached = detached,
@@ -2207,6 +2231,11 @@ pub fn spawnMaybeSync(
             .hide_window = windows_hide,
             .verbatim_arguments = windows_verbatim_arguments,
             .loop = JSC.EventLoopHandle.init(jsc_vm),
+        },
+
+        .posix = if (!Environment.isWindows) .{
+            .uid = uid,
+            .gid = gid,
         },
     };
 

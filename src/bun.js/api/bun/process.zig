@@ -981,6 +981,11 @@ pub const PosixSpawnOptions = struct {
     /// featureful execve(2).
     use_execve_on_macos: bool = false,
 
+    posix: struct {
+        uid: ?std.c.uid_t = null,
+        gid: ?std.c.gid_t = null,
+    } = .{},
+
     pub const Stdio = union(enum) {
         path: []const u8,
         inherit: void,
@@ -1047,6 +1052,7 @@ pub const WindowsSpawnOptions = struct {
     argv0: ?[*:0]const u8 = null,
     stream: bool = true,
     use_execve_on_macos: bool = false,
+    posix: void = {},
 
     pub const WindowsOptions = struct {
         verbatim_arguments: bool = false,
@@ -1442,6 +1448,10 @@ pub fn spawnProcessPosix(
         attr,
         argv,
         envp,
+        options.posix.uid != null,
+        options.posix.gid != null,
+        options.posix.uid orelse 0,
+        options.posix.gid orelse 0,
     );
     var failed_after_spawn = false;
     defer {

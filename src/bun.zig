@@ -1816,7 +1816,7 @@ pub fn reloadProcess(
                 C.translated.POSIX_SPAWN_SETEXEC |
                 C.translated.POSIX_SPAWN_SETSIGDEF | C.translated.POSIX_SPAWN_SETSIGMASK,
         ) catch unreachable;
-        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
+        switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)), false, false, 0, 0)) {
             .err => |err| {
                 if (may_return) {
                     Output.errGeneric("Failed to reload process: {s}", .{@tagName(err.getErrno())});

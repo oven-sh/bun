@@ -1515,7 +1515,10 @@ fn getJavaScriptCodeForHTMLFile(
             if (!loaders[import.source_index.get()].isJavaScriptLike())
                 continue; // ignore non-JavaScript imports
         } else {
-            if (!import.path.is_disabled)
+            // Find the in-graph import.
+            const file = dev.client_graph.bundled_files.get(import.path.pretty) orelse
+                continue;
+            if (file.flags.kind != .js)
                 continue;
         }
 
@@ -5055,6 +5058,7 @@ fn initGraphTraceState(dev: *const DevServer, sfa: Allocator, extra_client_bits:
 ///
 /// This structure manages those watchers, including releasing them once
 /// import resolution failures are solved.
+// TODO: when a file fixes its resolution, there is no code specifically to remove the watchers.
 const DirectoryWatchStore = struct {
     /// List of active watchers. Can be re-ordered on removal
     watches: bun.StringArrayHashMapUnmanaged(Entry),
@@ -5072,25 +5076,52 @@ const DirectoryWatchStore = struct {
         return @alignCast(@fieldParentPtr("directory_watchers", store));
     }
 
-    pub fn trackResolutionFailure(
-        store: *DirectoryWatchStore,
-        import_source: []const u8,
-        specifier: []const u8,
-        renderer: bake.Graph,
-    ) bun.OOM!void {
-        // When it does not resolve to a file path, there is
-        // nothing to track. Bake does not watch node_modules.
-        if (!(bun.strings.startsWith(specifier, "./") or
-            bun.strings.startsWith(specifier, "../"))) return;
+    pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []const u8, specifier: []const u8, renderer: bake.Graph, loader: bun.options.Loader) bun.OOM!void {
+        // When it does not resolve to a file path, there is nothing to track.
+        if (specifier.len == 0) return;
         if (!std.fs.path.isAbsolute(import_source)) return;
+
+        const specifier_to_use = switch (loader) {
+            .tsx, .ts, .jsx, .js => specifier_to_use: {
+                if (!(bun.strings.startsWith(specifier, "./") or
+                    bun.strings.startsWith(specifier, "../"))) return;
+
+                break :specifier_to_use specifier;
+            },
+
+            // Imports in HTML and CSS can resolve to relative paths.
+            .html, .css => if (bun.path.Platform.auto.isSeparator(specifier[0]))
+                specifier[1..]
+            else
+                specifier,
+
+            // Multiple parts of DevServer rely on the fact that these
+            // loaders do not depend on importing other files.
+            .file,
+            .json,
+            .toml,
+            .wasm,
+            .napi,
+            .base64,
+            .dataurl,
+            .text,
+            .bunsh,
+            .sqlite,
+            .sqlite_embedded,
+            => {
+                bun.debugAssert(false);
+                return;
+            },
+        };
 
         const buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(buf);
-        const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier}, .auto);
+        const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier_to_use}, .auto);
         const dir = bun.path.dirname(joined, .auto);
 
-        // `import_source` is not a stable string. let's share memory with the file graph.
-        // this requires that
+        // The `import_source` parameter is not a stable string. Since the
+        // import source will be added to IncrementalGraph anyways, this is a
+        // great place to share memory.
         const dev = store.owner();
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
@@ -5099,7 +5130,7 @@ const DirectoryWatchStore = struct {
             .server, .ssr => (try dev.server_graph.insertEmpty(import_source, .unknown)).key,
         };
 
-        store.insert(dir, owned_file_path, specifier) catch |err| switch (err) {
+        store.insert(dir, owned_file_path, specifier_to_use) catch |err| switch (err) {
             error.Ignore => {}, // ignoring watch errors.
             error.OutOfMemory => |e| return e,
         };
@@ -5114,6 +5145,7 @@ const DirectoryWatchStore = struct {
         file_path: []const u8,
         specifier: []const u8,
     ) !void {
+        assert(specifier.len > 0);
         // TODO: watch the parent dir too.
         const dev = store.owner();
 
@@ -5127,12 +5159,13 @@ const DirectoryWatchStore = struct {
             try store.dependencies.ensureUnusedCapacity(dev.allocator, 1);
 
         const gop = try store.watches.getOrPut(dev.allocator, bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
+        const specifier_cloned = if (specifier[0] == '.')
+            try dev.allocator.dupe(u8, specifier)
+        else
+            try std.fmt.allocPrint(dev.allocator, "./{s}", .{specifier});
+        errdefer dev.allocator.free(specifier_cloned);
+
         if (gop.found_existing) {
-            const specifier_cloned = try dev.allocator.dupe(u8, specifier);
-            errdefer dev.allocator.free(specifier_cloned);
-
-            // TODO: check for dependency
-
             const dep = store.appendDepAssumeCapacity(.{
                 .next = gop.value_ptr.first_dep.toOptional(),
                 .source_file_path = file_path,
@@ -5150,44 +5183,35 @@ const DirectoryWatchStore = struct {
             break :fd if (fd == .zero) null else fd;
         } else null;
 
-        const fd, const owned_fd = if (Watcher.requires_file_descriptors)
-            if (cache_fd) |fd|
-                .{ fd, false }
-            else
-                .{
-                    switch (bun.sys.open(
-                        &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
-                            error.NameTooLong => return, // wouldn't be able to open, ignore
-                        }),
-                        // pass
-                        bun.O.DIRECTORY,
-                        0,
-                    )) {
-                        .result => |fd| fd,
-                        .err => |err| switch (err.getErrno()) {
-                            // If this directory doesn't exist, a watcher should be
-                            // placed on the parent directory. Then, if this
-                            // directory is later created, the watcher can be
-                            // properly initialized. This would happen if you write
-                            // an import path like `./dir/whatever/hello.tsx` and
-                            // `dir` does not exist, Bun must place a watcher on
-                            // `.`, see the creation of `dir`, and repeat until it
-                            // can open a watcher on `whatever` to see the creation
-                            // of `hello.tsx`
-                            .NOENT => {
-                                // TODO: implement that. for now it ignores
-                                return;
-                            },
-                            .NOTDIR => return error.Ignore, // ignore
-                            else => {
-                                bun.todoPanic(@src(), "log watcher error", .{});
-                            },
-                        },
-                    },
-                    true,
-                }
-        else
-            .{ bun.invalid_fd, false };
+        const fd, const owned_fd = if (Watcher.requires_file_descriptors) if (cache_fd) |fd|
+            .{ fd, false }
+        else switch (bun.sys.open(
+            &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
+                error.NameTooLong => return error.Ignore, // wouldn't be able to open, ignore
+            }),
+            // O_EVTONLY is the flag to indicate that only watches will be used.
+            bun.O.DIRECTORY | bun.c.O_EVTONLY,
+            0,
+        )) {
+            .result => |fd| .{ fd, true },
+            .err => |err| switch (err.getErrno()) {
+                // If this directory doesn't exist, a watcher should be placed
+                // on the parent directory. Then, if this directory is later
+                // created, the watcher can be properly initialized. This would
+                // happen if a specifier like `./dir/whatever/hello.tsx` and
+                // `dir` does not exist, Bun must place a watcher on `.`, see
+                // the creation of `dir`, and repeat until it can open a watcher
+                // on `whatever` to see the creation of `hello.tsx`
+                .NOENT => {
+                    // TODO: implement that. for now it ignores
+                    return error.Ignore;
+                },
+                .NOTDIR => return error.Ignore, // ignore
+                else => {
+                    bun.todoPanic(@src(), "log watcher error", .{});
+                },
+            },
+        } else .{ bun.invalid_fd, false };
         errdefer _ = if (Watcher.requires_file_descriptors) if (owned_fd) bun.sys.close(fd);
         if (Watcher.requires_file_descriptors)
             debug.log("-> fd: {} ({s})", .{
@@ -5199,9 +5223,6 @@ const DirectoryWatchStore = struct {
         errdefer dev.allocator.free(dir_name);
 
         gop.key_ptr.* = bun.strings.withoutTrailingSlashWindowsPath(dir_name);
-
-        const specifier_cloned = try dev.allocator.dupe(u8, specifier);
-        errdefer dev.allocator.free(specifier_cloned);
 
         const watch_index = switch (dev.bun_watcher.addDirectory(fd, dir_name, bun.Watcher.getHash(dir_name), false)) {
             .err => return error.Ignore,

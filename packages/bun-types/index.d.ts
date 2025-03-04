@@ -3,16 +3,16 @@
 // Definitions: https://github.com/DefinitelyTyped/DefinitelyTyped
 
 /// <reference lib="esnext" />
-/// <reference types="node" />
 /// <reference types="ws" />
+/// <reference types="node" />
 
 // contributors: uncomment this to detect conflicts with lib.dom.d.ts
-//// <reference lib="dom" />
+// /// <reference lib="dom" />
 
-/// <reference path="./globals.d.ts" />
 /// <reference path="./bun.d.ts" />
-/// <reference path="./overrides.d.ts" />
+/// <reference path="./globals.d.ts" />
 /// <reference path="./fetch.d.ts" />
+/// <reference path="./overrides.d.ts" />
 /// <reference path="./ffi.d.ts" />
 /// <reference path="./test.d.ts" />
 /// <reference path="./html-rewriter.d.ts" />
@@ -21,3 +21,4 @@
 /// <reference path="./wasm.d.ts" />
 /// <reference path="./deprecated.d.ts" />
 /// <reference path="./ambient.d.ts" />
+/// <reference path="./devserver.d.ts" />

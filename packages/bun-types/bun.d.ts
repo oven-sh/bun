@@ -2603,9 +2603,15 @@ declare module "bun" {
     kind: ImportKind;
   }
 
+  /**
+   * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
+   */
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
+    /**
+     * @default "browser"
+     */
     target?: Target; // default: "browser"
     /**
      * Output module format. Top-level await is only supported for `"esm"`.
@@ -2649,7 +2655,25 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
+    /**
+     * Specifies if and how to generate source maps.
+     * 
+     * - `"none"` - No source maps are generated
+     * - `"linked"` - A separate `*.ext.map` file is generated alongside each
+     *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
+     *   file to link the two. Requires `outdir` to be set.
+     * - `"inline"` - an inline source map is appended to the output file.
+     * - `"external"` - Generate a separate source map file for each input file.
+     *   No `//# sourceMappingURL` comment is added to the output file.
+     * 
+     * `true` and `false` are aliasees for `"inline"` and `"none"`, respectively.
+     * 
+     * @default "none"
+     * 
+     * @see {@link outdir} required for `"linked"` maps
+     * @see {@link publicPath} to customize the base url of linked source maps
+     */
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -2678,6 +2702,14 @@ declare module "bun" {
      * ```
      */
     env?: "inline" | "disable" | `${string}*`;
+    /**
+     * Whether to enable minification.
+     * 
+     * Use `true`/`false` to enable/disable all minification options. Alternatively,
+     * you can pass an object for granular control over certain minifications.
+     * 
+     * @default false
+     */
     minify?:
       | boolean
       | {
@@ -5764,13 +5796,15 @@ declare module "bun" {
      *
      * If unspecified, it is assumed that the plugin is compatible with all targets.
      *
-     * This field is not read by Bun.plugin
+     * This field is not read by {@link Bun.plugin}
      */
     target?: Target;
     /**
      * A function that will be called when the plugin is loaded.
      *
-     * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
+     * This function may be called in the same tick that it is registered, or it
+     * may be called later. It could potentially be called multiple times for
+     * different targets.
      */
     setup(
       /**

@@ -4350,5 +4350,14 @@ pub fn CowSlice(T: type) type {
 
 const Allocator = std.mem.Allocator;
 
+/// Memory is typically not decommitted immediately when freed.
+/// Sensitive information that's kept in memory can be read in various ways until the OS
+/// decommits it or the memory allocator reuses it for a new allocation.
+/// So if we're about to free something sensitive, we should zero it out first.
+pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
+    @memset(@constCast(slice), 0);
+    allocator.free(slice);
+}
+
 pub const server = @import("./bun.js/api/server.zig");
 pub const macho = @import("./macho.zig");

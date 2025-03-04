@@ -22,10 +22,12 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { SocketAddress, addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
+const { SocketAddress, addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
+const { getTimerDuration } = require("internal/timers");
+const { validateFunction } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -108,6 +110,12 @@ function destroyNT(self, err) {
 function destroyWhenAborted(err) {
   if (!this.destroyed) {
     this.destroy(err.target.reason);
+  }
+}
+// in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
+function onSocketEnd() {
+  if (!this.allowHalfOpen) {
+    this.write = writeAfterFIN;
   }
 }
 // Provide a better error message when we call end() as a result
@@ -271,7 +279,6 @@ const Socket = (function (InternalSocket) {
       },
       binaryType: "buffer",
     };
-
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
@@ -301,7 +308,6 @@ const Socket = (function (InternalSocket) {
       Socket.#EmitEndNT(self, err);
       self.data = null;
     }
-
     static #Drain(socket) {
       const self = socket.data;
       if (!self) return;
@@ -319,7 +325,6 @@ const Socket = (function (InternalSocket) {
         self[kBytesWritten] = socket.bytesWritten;
       }
     }
-
     static [bunSocketServerHandlers] = {
       data: Socket.#Handlers.data,
       close(socket, err) {
@@ -531,6 +536,10 @@ const Socket = (function (InternalSocket) {
       this[kSetNoDelay] = Boolean(noDelay);
       this[kSetKeepAlive] = Boolean(keepAlive);
       this[kSetKeepAliveInitialDelay] = ~~(keepAliveInitialDelay / 1000);
+
+      // Shut down the socket when we're finished with it.
+      this.on("end", onSocketEnd);
+
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
@@ -1041,11 +1050,15 @@ const Socket = (function (InternalSocket) {
     }
 
     setTimeout(timeout, callback) {
+      timeout = getTimerDuration(timeout, "msecs");
       // internally or timeouts are in seconds
       // we use Math.ceil because 0 would disable the timeout and less than 1 second but greater than 1ms would be 1 second (the minimum)
       this._handle?.timeout(Math.ceil(timeout / 1000));
       this.timeout = timeout;
-      if (callback) this.once("timeout", callback);
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
       return this;
     }
     // for compatibility

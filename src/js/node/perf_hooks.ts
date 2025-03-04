@@ -1,6 +1,12 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
 
+const createFunctionThatMasqueradesAsUndefined = $newCppFunction(
+  "ZigGlobalObject.cpp",
+  "jsFunctionCreateFunctionThatMasqueradesAsUndefined",
+  2,
+);
+
 var {
   Performance,
   PerformanceEntry,
@@ -168,13 +174,9 @@ export default {
   PerformanceObserver,
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
-  monitorEventLoopDelay() {
-    // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
-    // throwNotImplemented("perf_hooks.monitorEventLoopDelay");
-  },
-  createHistogram() {
-    // TODO: node:perf_hooks.createHistogram -- https://github.com/oven-sh/bun/issues/8815
-    // throwNotImplemented("perf_hooks.createHistogram");
-  },
+  // TODO: node:perf_hooks.monitorEventLoopDelay -- https://github.com/oven-sh/bun/issues/17650
+  monitorEventLoopDelay: createFunctionThatMasqueradesAsUndefined("", 0),
+  // TODO: node:perf_hooks.createHistogram -- https://github.com/oven-sh/bun/issues/8815
+  createHistogram: createFunctionThatMasqueradesAsUndefined("", 0),
   PerformanceResourceTiming,
 };

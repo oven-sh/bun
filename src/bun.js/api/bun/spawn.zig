@@ -280,10 +280,14 @@ pub const PosixSpawn = struct {
     pub const Actions = if (Environment.isLinux) BunSpawn.Actions else PosixSpawnActions;
     pub const Attr = if (Environment.isLinux) BunSpawn.Attr else PosixSpawnAttr;
 
-    const BunSpawnRequest = extern struct {
+    const bun_spawn_request_t = extern struct {
         chdir_buf: ?[*:0]u8 = null,
         detached: bool = false,
         actions: ActionsList = .{},
+        set_uid: bool = false,
+        set_gid: bool = false,
+        uid: std.c.uid_t = 0,
+        gid: std.c.gid_t = 0,
 
         const ActionsList = extern struct {
             ptr: ?[*]const BunSpawn.Action = null,
@@ -293,14 +297,14 @@ pub const PosixSpawn = struct {
         extern fn posix_spawn_bun(
             pid: *c_int,
             path: [*:0]const u8,
-            request: *const BunSpawnRequest,
+            request: *const bun_spawn_request_t,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
         ) isize;
 
         pub fn spawn(
             path: [*:0]const u8,
-            req_: BunSpawnRequest,
+            req_: bun_spawn_request_t,
             argv: [*:null]?[*:0]const u8,
             envp: [*:null]?[*:0]const u8,
         ) Maybe(pid_t) {
@@ -337,7 +341,7 @@ pub const PosixSpawn = struct {
         envp: [*:null]?[*:0]const u8,
     ) Maybe(pid_t) {
         if (comptime Environment.isLinux) {
-            return BunSpawnRequest.spawn(
+            return bun_spawn_request_t.spawn(
                 path,
                 .{
                     .actions = if (actions) |act| .{

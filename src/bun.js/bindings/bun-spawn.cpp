@@ -45,6 +45,10 @@ typedef struct bun_spawn_request_t {
     const char* chdir;
     bool detached;
     bun_spawn_file_action_list_t actions;
+    bool set_uid;
+    bool set_gid;
+    uid_t uid;
+    gid_t gid;
 } bun_spawn_request_t;
 
 extern "C" ssize_t posix_spawn_bun(
@@ -158,6 +162,19 @@ extern "C" ssize_t posix_spawn_bun(
                 __builtin_unreachable();
                 break;
             }
+            }
+        }
+
+        if (request->set_uid) {
+            setuid(request->uid);
+            if (errno != 0) {
+                return childFailed();
+            }
+        }
+        if (request->set_gid) {
+            setgid(request->gid);
+            if (errno != 0) {
+                return childFailed();
             }
         }
 

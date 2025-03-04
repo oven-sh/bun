@@ -30,6 +30,10 @@ if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
   setx(ENABLE_SMOL ON)
 endif()
 
+if(CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
+  setx(ENABLE_SAFE ON)
+endif()
+
 if(APPLE)
   setx(OS "darwin")
 elseif(WIN32)
@@ -86,6 +90,7 @@ optionx(ENABLE_LTO BOOL "If LTO (link-time optimization) should be used" DEFAULT
 if(LINUX)
   optionx(ENABLE_VALGRIND BOOL "If Valgrind support should be enabled" DEFAULT OFF)
 endif()
+
 if(DEBUG AND APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
   optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT ON)
 else()
@@ -109,6 +114,7 @@ else()
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
   )
+
   if(NOT DEFAULT_REVISION AND NOT DEFINED ENV{GIT_SHA} AND NOT DEFINED ENV{GITHUB_SHA})
     set(DEFAULT_REVISION "unknown")
   endif()
@@ -139,6 +145,7 @@ if(CMAKE_HOST_LINUX AND NOT WIN32 AND NOT APPLE)
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
   )
+
   if(LINUX_DISTRO MATCHES "NAME=\"(Arch|Manjaro|Artix) Linux( ARM)?\"|NAME=\"openSUSE Tumbleweed\"")
     set(DEFAULT_STATIC_LIBATOMIC OFF)
   endif()

@@ -3072,6 +3072,9 @@ pub fn start(this: *HTTPClient, body: HTTPRequestBody, body_out_str: *MutableStr
 
 fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     if (comptime Environment.allow_assert) {
+        // Comparing `ptr` is safe here because it is only done if the vtable pointers are equal,
+        // which means they are both mimalloc arenas and therefore have non-undefined context
+        // pointers.
         if (this.allocator.vtable == default_allocator.vtable and this.allocator.ptr != default_allocator.ptr) {
             @panic("HTTPClient used with threadlocal allocator belonging to another thread. This will cause crashes.");
         }

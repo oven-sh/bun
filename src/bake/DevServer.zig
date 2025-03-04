@@ -5081,18 +5081,16 @@ const DirectoryWatchStore = struct {
         if (specifier.len == 0) return;
         if (!std.fs.path.isAbsolute(import_source)) return;
 
-        const specifier_to_use = switch (loader) {
-            .tsx, .ts, .jsx, .js => specifier_to_use: {
+        switch (loader) {
+            .tsx, .ts, .jsx, .js => {
                 if (!(bun.strings.startsWith(specifier, "./") or
                     bun.strings.startsWith(specifier, "../"))) return;
-
-                break :specifier_to_use specifier;
             },
 
             // Imports in CSS can resolve to relative files without './'
             // Imports in HTML can resolve to project-relative paths by
             // prefixing with '/', but that is done in HTMLScanner.
-            .css, .html => specifier,
+            .css, .html => {},
 
             // Multiple parts of DevServer rely on the fact that these
             // loaders do not depend on importing other files.
@@ -5107,15 +5105,12 @@ const DirectoryWatchStore = struct {
             .bunsh,
             .sqlite,
             .sqlite_embedded,
-            => {
-                bun.debugAssert(false);
-                return;
-            },
-        };
+            => bun.debugAssert(false),
+        }
 
         const buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(buf);
-        const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier_to_use}, .auto);
+        const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier}, .auto);
         const dir = bun.path.dirname(joined, .auto);
 
         // The `import_source` parameter is not a stable string. Since the
@@ -5129,7 +5124,7 @@ const DirectoryWatchStore = struct {
             .server, .ssr => (try dev.server_graph.insertEmpty(import_source, .unknown)).key,
         };
 
-        store.insert(dir, owned_file_path, specifier_to_use) catch |err| switch (err) {
+        store.insert(dir, owned_file_path, specifier) catch |err| switch (err) {
             error.Ignore => {}, // ignoring watch errors.
             error.OutOfMemory => |e| return e,
         };

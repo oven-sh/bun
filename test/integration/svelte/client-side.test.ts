@@ -1,14 +1,24 @@
 import path from "node:path";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { SveltePlugin } from "bun-plugin-svelte";
-import { promises as fs } from "node:fs";
+import { promises as fs, statSync } from "node:fs";
 import { Subprocess } from "bun";
 
 const fixturePath = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", ...segs);
 
+beforeAll(async () => {
+  const pluginDir = path.resolve(import.meta.dirname, "..", "..", "..", "packages", "bun-plugin-svelte");
+  expect(statSync(pluginDir).isDirectory()).toBeTrue();
+  Bun.spawnSync([bunExe(), "install"], {
+    cwd: pluginDir,
+    stdio: ["ignore", "ignore", "ignore"],
+    env: bunEnv,
+  });
+});
+
 describe("generating client-side code", () => {
   test("Bundling Svelte components", async () => {
     const outdir = tmpdirSync("bun-svelte-client-side");
+    const { SveltePlugin } = await import("bun-plugin-svelte");
     try {
       const result = await Bun.build({
         entrypoints: [fixturePath("app/index.ts")],
@@ -32,9 +42,9 @@ describe("generating client-side code", () => {
 
     beforeAll(async () => {
       server = Bun.spawn([bunExe(), "./index.html"], {
-        env:{
+        env: {
           ...bunEnv,
-          NODE_ENV: "development"
+          NODE_ENV: "development",
         },
         cwd: fixturePath("app"),
         stdio: ["ignore", "inherit", "inherit"],

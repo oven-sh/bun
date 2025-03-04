@@ -20,11 +20,3 @@ for (let key in harness.bunEnv) {
 }
 
 if (Bun.$?.env) Bun.$.env(process.env);
-
-const pluginDir = path.resolve(import.meta.dirname, "..", "packages", "bun-plugin-svelte");
-expect(statSync(pluginDir).isDirectory()).toBeTrue();
-Bun.spawnSync([harness.bunExe(), "install"], {
-  cwd: pluginDir,
-  stdio: ["ignore", "ignore", "ignore"],
-  env: harness.bunEnv,
-});

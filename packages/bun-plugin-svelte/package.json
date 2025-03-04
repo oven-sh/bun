@@ -23,6 +23,8 @@
   "files": [
     "README.md",
     "bunfig.toml",
+    "tsconfig.json",
+    "modules.d.ts",
     "dist",
     "src",
     "!src/**/*.spec.ts"

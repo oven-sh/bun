@@ -79,8 +79,6 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
     generate: forceSide,
     preserveWhitespace: !minifyWhitespace,
     preserveComments: !shouldMinify,
-    // TODO: pass hmr flag via builder
-    hmr: true,
     dev: development,
     cssHash({ css }) {
       // same prime number seed used by svelte/compiler.

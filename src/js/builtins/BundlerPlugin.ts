@@ -63,10 +63,9 @@ export function loadAndResolvePluginsForServe(
 
   class InvalidBundlerPluginError extends TypeError {
     pluginName: string;
-    constructor(name: string, reason: string) {
-      super(`"${name}" is not a valid bundler plugin: ${reason}`);
-      this.name = "InvalidBundlerPluginError";
-      this.pluginName = name;
+    constructor(pluginName: string, reason: string) {
+      super(`"${pluginName}" is not a valid bundler plugin: ${reason}`);
+      this.pluginName = pluginName;
     }
   }
 

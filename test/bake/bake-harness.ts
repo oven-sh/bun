@@ -265,12 +265,12 @@ export class Dev extends EventEmitter {
    * @param options Options for handling errors after deletion
    * @returns Promise that resolves when the file is deleted and hot reload is complete (if applicable)
    */
-  delete(file: string, options: { errors?: null | ErrorSpec[] } = {}) {
+  delete(file: string, options: { errors?: null | ErrorSpec[]; wait?: boolean } = {}) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && this.waitForHotReload();
+      const wait = isDev && options.wait && this.waitForHotReload();
 
       const filePath = this.join(file);
       if (!fs.existsSync(filePath)) {
@@ -281,7 +281,7 @@ export class Dev extends EventEmitter {
       await wait;
 
       let errors = options.errors;
-      if (isDev && errors !== null) {
+      if (isDev && options.wait && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
           await client.expectErrorOverlay(errors, snapshot);
@@ -328,7 +328,7 @@ export class Dev extends EventEmitter {
   async waitForHotReload() {
     if (this.nodeEnv !== "development") return Promise.resolve();
     const err = this.output.waitForLine(/error/i).catch(() => {});
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i).catch(() => {});
+    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, 100).catch(() => {});
     const ctrl = new AbortController();
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
@@ -392,6 +392,10 @@ export class Dev extends EventEmitter {
         `DevServer exited with code ${this.devProcess.exitCode ?? `Signal ${this.devProcess.signalCode}`}`,
       );
     }
+  }
+
+  mkdir(dir: string) {
+    return fs.mkdirSync(path.join(this.rootDir, dir), { recursive: true });
   }
 }
 
@@ -1203,7 +1207,7 @@ class OutputLineStream extends EventEmitter {
 
   waitForLine(
     regex: RegExp,
-    timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
+    timeout = interactive ? interactive_timeout : (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
   ): Promise<RegExpMatchArray> {
     if (this.panicked) {
       return new Promise((_, reject) => {

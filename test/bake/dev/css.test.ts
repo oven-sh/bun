@@ -450,6 +450,59 @@ devTest("css import before create", {
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });
+devTest("css import before create project relative", {
+  files: {
+    "html/index.html": emptyHtmlFile({
+      styles: ["/style/styles.css"],
+      body: `
+        <div>HELLO</div>
+      `,
+    }),
+  },
+  async test(dev) {
+    dev.mkdir("style"); // (See DevServer.zig "BUN-10968")
+    await using c = await dev.client("/", {
+      errors: ['html/index.html: error: Could not resolve: "/style/styles.css"'],
+    });
+    await dev.fetch("/").expect.not.toContain("HELLO");
+    await dev.write(
+      "style/styles.css",
+      `
+        body {
+          background-image: url(/assets/bun.png);
+        }
+      `,
+      {
+        errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
+      },
+    );
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("assets/bun.png", imageFixtures.bun, {
+        errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
+      });
+      await dev.delete("assets/bun.png", { wait: false });
+    });
+    await dev.fetch("/").expect.not.toContain("HELLO");
+    await dev.write(
+      "style/styles.css",
+      `
+        body {
+          background-image: url(../assets/bun.png);
+        }
+      `,
+      {
+        errors: ['style/styles.css:2:21: error: Could not resolve: "../assets/bun.png"'],
+      },
+    );
+    await c.expectReload(async () => {
+      await dev.write("assets/bun.png", imageFixtures.bun);
+    });
+    const backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
 
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);

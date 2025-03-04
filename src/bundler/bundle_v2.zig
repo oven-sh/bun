@@ -3158,7 +3158,7 @@ pub const BundleV2 = struct {
                                         "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
                                         .{ import_record.kind.errorLabel(), import_record.path.text },
                                         import_record.kind,
-                                    ) catch @panic("unexpected log error");
+                                    ) catch bun.outOfMemory();
                                 } else {
                                     addError(
                                         log,
@@ -3168,7 +3168,7 @@ pub const BundleV2 = struct {
                                         "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
                                         .{import_record.path.text},
                                         import_record.kind,
-                                    ) catch @panic("unexpected log error");
+                                    ) catch bun.outOfMemory();
                                 }
                             } else {
                                 addError(
@@ -3177,9 +3177,12 @@ pub const BundleV2 = struct {
                                     import_record.range,
                                     this.graph.allocator,
                                     "Could not resolve: \"{s}\"",
-                                    .{import_record.path.text},
+                                    .{if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir))
+                                        import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..]
+                                    else
+                                        import_record.path.text},
                                     import_record.kind,
-                                ) catch @panic("unexpected log error");
+                                ) catch bun.outOfMemory();
                             }
                         }
                     },

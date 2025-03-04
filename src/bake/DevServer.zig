@@ -5089,11 +5089,10 @@ const DirectoryWatchStore = struct {
                 break :specifier_to_use specifier;
             },
 
-            // Imports in HTML and CSS can resolve to relative paths.
-            .html, .css => if (bun.path.Platform.auto.isSeparator(specifier[0]))
-                specifier[1..]
-            else
-                specifier,
+            // Imports in CSS can resolve to relative files without './'
+            // Imports in HTML can resolve to project-relative paths by
+            // prefixing with '/', but that is done in HTMLScanner.
+            .css, .html => specifier,
 
             // Multiple parts of DevServer rely on the fact that these
             // loaders do not depend on importing other files.
@@ -5159,7 +5158,7 @@ const DirectoryWatchStore = struct {
             try store.dependencies.ensureUnusedCapacity(dev.allocator, 1);
 
         const gop = try store.watches.getOrPut(dev.allocator, bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
-        const specifier_cloned = if (specifier[0] == '.')
+        const specifier_cloned = if (specifier[0] == '.' or std.fs.path.isAbsolute(specifier))
             try dev.allocator.dupe(u8, specifier)
         else
             try std.fmt.allocPrint(dev.allocator, "./{s}", .{specifier});
@@ -5203,7 +5202,7 @@ const DirectoryWatchStore = struct {
                 // the creation of `dir`, and repeat until it can open a watcher
                 // on `whatever` to see the creation of `hello.tsx`
                 .NOENT => {
-                    // TODO: implement that. for now it ignores
+                    // TODO: implement that. for now it ignores (BUN-10968)
                     return error.Ignore;
                 },
                 .NOTDIR => return error.Ignore, // ignore
@@ -6102,16 +6101,15 @@ pub const HotReloadEvent = struct {
         defer dev.graph_safety_lock.unlock();
 
         // First handle directories, because this may mutate `event.files`
-        for (event.dirs.keys()) |changed_dir_with_slash| {
+        if (dev.directory_watchers.watches.count() > 0) for (event.dirs.keys()) |changed_dir_with_slash| {
             const changed_dir = bun.strings.withoutTrailingSlashWindowsPath(changed_dir_with_slash);
 
             // Bust resolution cache, but since Bun does not watch all
             // directories in a codebase, this only targets the following resolutions
             _ = dev.server_transpiler.resolver.bustDirCache(changed_dir);
 
-            // if a directory watch exists for resolution
-            // failures, check those now.
-            if (dev.directory_watchers.watches.getIndex(bun.strings.withoutTrailingSlashWindowsPath(changed_dir))) |watcher_index| {
+            // if a directory watch exists for resolution failures, check those now.
+            if (dev.directory_watchers.watches.getIndex(changed_dir)) |watcher_index| {
                 const entry = &dev.directory_watchers.watches.values()[watcher_index];
                 var new_chain: DirectoryWatchStore.Dep.Index.Optional = .none;
                 var it: ?DirectoryWatchStore.Dep.Index = entry.first_dep;
@@ -6125,9 +6123,9 @@ pub const HotReloadEvent = struct {
                         dep.specifier,
                         .stmt,
                     ) catch null) != null) {
-                        // the resolution result is not preserved as safely
-                        // transferring it into BundleV2 is too complicated. the
-                        // resolution is cached, anyways.
+                        // this resolution result is not preserved as passing it
+                        // into BundleV2 is too complicated. the resolution is
+                        // cached, anyways.
                         event.appendFile(dev.allocator, dep.source_file_path);
                         dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch bun.outOfMemory();
                     } else {
@@ -6144,7 +6142,7 @@ pub const HotReloadEvent = struct {
                     dev.directory_watchers.freeEntry(dev.allocator, watcher_index);
                 }
             }
-        }
+        };
 
         var rest_extra = event.extra_files.items;
         while (bun.strings.indexOfChar(rest_extra, 0)) |str| {
@@ -6258,8 +6256,8 @@ const WatcherAtomics = struct {
     pub fn init(dev: *DevServer) WatcherAtomics {
         return .{
             .events = .{
-                .{ .aligned = HotReloadEvent.initEmpty(dev) },
-                .{ .aligned = HotReloadEvent.initEmpty(dev) },
+                .{ .aligned = .initEmpty(dev) },
+                .{ .aligned = .initEmpty(dev) },
             },
             .current = 0,
             .watcher_events_emitted = .init(0),

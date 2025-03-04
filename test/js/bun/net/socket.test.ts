@@ -5,6 +5,19 @@ import { expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tls } from "harness";
 
+const stripMimallocLogs = (logs: string) =>
+  logs
+    .split("\n")
+    .filter(line => !line.startsWith("mimalloc:"))
+    .join("\n");
+
+function withoutMimalloc(out: string): string;
+function withoutMimalloc(out: ReadableStream): Promise<string>;
+function withoutMimalloc(out) {
+  if (typeof out === "string") return stripMimallocLogs(out);
+  else return new Response(out).text().then(stripMimallocLogs);
+}
+
 it("should throw when a socket from a file descriptor has a bad file descriptor", async () => {
   const open = jest.fn();
   const close = jest.fn();
@@ -140,7 +153,7 @@ it("should keep process alive only when active", async () => {
   });
 
   expect(await exited).toBe(0);
-  expect(await new Response(stderr).text()).toBe("");
+  expect(await withoutMimalloc(stderr)).toBe("");
   var lines = (await new Response(stdout).text()).split(/\r?\n/);
   expect(
     lines.filter(function (line) {
@@ -188,7 +201,7 @@ it("connect() should return the socket object", async () => {
   });
 
   expect(await exited).toBe(0);
-  expect(await new Response(stderr).text()).toBe("");
+  expect(await withoutMimalloc(stderr)).toBe("");
 });
 
 it("listen() should throw connection error for invalid host", () => {

@@ -1,0 +1,14 @@
+{
+    "a2": {"type": "integer", "value": "0"},
+    "a3": {"type": "integer", "value": "0"},
+    "b1": {"type": "integer", "value": "0"},
+    "b2": {"type": "integer", "value": "0"},
+    "b3": {"type": "integer", "value": "0"},
+    "d1": {"type": "integer", "value": "0"},
+    "d2": {"type": "integer", "value": "0"},
+    "d3": {"type": "integer", "value": "0"},
+    "h1": {"type": "integer", "value": "0"},
+    "h2": {"type": "integer", "value": "0"},
+    "h3": {"type": "integer", "value": "0"},
+    "o1": {"type": "integer", "value": "0"}
+}

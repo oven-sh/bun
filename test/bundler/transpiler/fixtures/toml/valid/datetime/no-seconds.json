@@ -1,0 +1,6 @@
+{
+    "without-seconds-1": {"type": "time-local", "value": "13:37:00"},
+    "without-seconds-2": {"type": "datetime", "value": "1979-05-27T07:32:00Z"},
+    "without-seconds-3": {"type": "datetime", "value": "1979-05-27T07:32:00-07:00"},
+    "without-seconds-4": {"type": "datetime-local", "value": "1979-05-27T07:32:00"}
+}

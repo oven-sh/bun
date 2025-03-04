@@ -1,0 +1,4 @@
+{
+    "kilo": {"type": "integer", "value": "1000"},
+    "x":    {"type": "integer", "value": "1111"}
+}

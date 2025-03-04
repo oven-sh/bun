@@ -1,0 +1,3 @@
+# Minute must be 00-59; we allow 60 too because some people do write offsets of
+# 60 minutes
+d = 1985-06-18 17:04:07+12:61

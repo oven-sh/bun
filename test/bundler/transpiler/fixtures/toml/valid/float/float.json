@@ -1,0 +1,6 @@
+{
+    "negpi":        {"type": "float", "value": "-3.14"},
+    "pi":           {"type": "float", "value": "3.14"},
+    "pospi":        {"type": "float", "value": "3.14"},
+    "zero-intpart": {"type": "float", "value": "0.123"}
+}

@@ -1,0 +1,7 @@
+{
+    "lit_nl_end": {"type": "string", "value": "value\\n"},
+    "lit_nl_mid": {"type": "string", "value": "val\\nue"},
+    "lit_nl_uni": {"type": "string", "value": "val\\ue"},
+    "nl_end":     {"type": "string", "value": "value\n"},
+    "nl_mid":     {"type": "string", "value": "val\nue"}
+}

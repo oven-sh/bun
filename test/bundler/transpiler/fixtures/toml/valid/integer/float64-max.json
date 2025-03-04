@@ -1,0 +1,4 @@
+{
+    "max_int": {"type": "integer", "value": "9007199254740991"},
+    "min_int": {"type": "integer", "value": "-9007199254740991"}
+}

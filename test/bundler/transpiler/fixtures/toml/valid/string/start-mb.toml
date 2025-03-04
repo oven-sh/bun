@@ -1,0 +1,13 @@
+# Start first line with a multibyte character.
+#
+# https://github.com/marzer/tomlplusplus/issues/190
+s1 = "§"
+s2 = '§'
+s3 = """\
+§"""
+s4 = """
+§"""
+s5 = """§"""
+s6 = '''
+§'''
+s7 = '''§'''

@@ -1,0 +1,7 @@
+{
+    "black": {
+        "allow_prereleases": {"type": "bool", "value": "true"},
+        "python":            {"type": "string", "value": "\u003e3.6"},
+        "version":           {"type": "string", "value": "\u003e=18.9b0"}
+    }
+}

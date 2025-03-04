@@ -1,0 +1,5 @@
+{
+    "after":    {"type": "float", "value": "3141.5927"},
+    "before":   {"type": "float", "value": "3141.5927"},
+    "exponent": {"type": "float", "value": "3.0e14"}
+}

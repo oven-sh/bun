@@ -1,0 +1,9 @@
+{
+    "parent-table": {
+        "not-arr": {"type": "integer", "value": "1"},
+        "arr": [
+            {},
+            {}
+        ]
+    }
+}

@@ -1,0 +1,8 @@
+{
+    "first-date":   {"type": "date-local", "value": "0001-01-01"},
+    "first-local":  {"type": "datetime-local", "value": "0001-01-01T00:00:00"},
+    "first-offset": {"type": "datetime", "value": "0001-01-01T00:00:00Z"},
+    "last-date":    {"type": "date-local", "value": "9999-12-31"},
+    "last-local":   {"type": "datetime-local", "value": "9999-12-31T23:59:59"},
+    "last-offset":  {"type": "datetime", "value": "9999-12-31T23:59:59Z"}
+}

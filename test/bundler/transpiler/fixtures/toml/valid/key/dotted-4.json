@@ -1,0 +1,23 @@
+{
+    "arr": [
+        {
+            "a": {
+                "b": {
+                    "c": {"type": "integer", "value": "1"},
+                    "d": {"type": "integer", "value": "2"}
+                }
+            }
+        },
+        {
+            "a": {
+                "b": {
+                    "c": {"type": "integer", "value": "3"},
+                    "d": {"type": "integer", "value": "4"}
+                }
+            }
+        }
+    ],
+    "top": {
+        "key": {"type": "integer", "value": "1"}
+    }
+}

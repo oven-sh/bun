@@ -1,0 +1,4 @@
+{
+    "lt1": {"type": "time-local", "value": "07:32:00"},
+    "lt2": {"type": "time-local", "value": "00:32:00.999"}
+}

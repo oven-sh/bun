@@ -1,0 +1,25 @@
+{
+    "fruits": [
+        {
+            "name": {"type": "string", "value": "apple"},
+            "physical": {
+                "color": {"type": "string", "value": "red"},
+                "shape": {"type": "string", "value": "round"}
+            },
+            "varieties": [
+                {
+                    "name": {"type": "string", "value": "red delicious"}
+                },
+                {
+                    "name": {"type": "string", "value": "granny smith"}
+                }
+            ]
+        },
+        {
+            "name":      {"type": "string", "value": "banana"},
+            "varieties": [{
+                "name": {"type": "string", "value": "plantain"}
+            }]
+        }
+    ]
+}

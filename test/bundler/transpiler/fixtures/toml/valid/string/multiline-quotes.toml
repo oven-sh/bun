@@ -1,0 +1,26 @@
+# Make sure that quotes inside multiline strings are allowed, including right
+# after the opening '''/""" and before the closing '''/"""
+
+lit_one = ''''one quote''''
+lit_two = '''''two quotes'''''
+lit_one_space = ''' 'one quote' '''
+lit_two_space = ''' ''two quotes'' '''
+
+one = """"one quote""""
+two = """""two quotes"""""
+one_space = """ "one quote" """
+two_space = """ ""two quotes"" """
+
+mismatch1 = """aaa'''bbb"""
+mismatch2 = '''aaa"""bbb'''
+
+# Three opening """, then one escaped ", then two "" (allowed), and then three
+# closing """
+escaped = """lol\""""""
+
+five-quotes = """
+Closing with five quotes
+"""""
+four-quotes = """
+Closing with four quotes
+""""

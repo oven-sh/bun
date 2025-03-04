@@ -1,0 +1,30 @@
+{
+    "arr_arr_tbl_empty": [[{}]],
+    "arr_arr_tbl_val":   [[{
+        "one": {"type": "integer", "value": "1"}
+    }]],
+    "arr_arr_tbls":      [[
+        {
+            "one": {"type": "integer", "value": "1"}
+        },
+        {
+            "two": {"type": "integer", "value": "2"}
+        }
+    ]],
+    "arr_tbl_tbl":       [{
+        "tbl": {
+            "one": {"type": "integer", "value": "1"}
+        }
+    }],
+    "tbl_arr_tbl":       {"arr_tbl": [{
+        "one": {"type": "integer", "value": "1"}
+    }]},
+    "tbl_tbl_empty": {
+        "tbl_0": {}
+    },
+    "tbl_tbl_val": {
+        "tbl_1": {
+            "one": {"type": "integer", "value": "1"}
+        }
+    }
+}

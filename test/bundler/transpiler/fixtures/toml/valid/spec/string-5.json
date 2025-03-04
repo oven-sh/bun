@@ -1,0 +1,6 @@
+{
+    "quoted":   {"type": "string", "value": "Tom \"Dubs\" Preston-Werner"},
+    "regex":    {"type": "string", "value": "\u003c\\i\\c*\\s*\u003e"},
+    "winpath":  {"type": "string", "value": "C:\\Users\\nodejs\\templates"},
+    "winpath2": {"type": "string", "value": "\\\\ServerX\\admin$\\system32\\"}
+}

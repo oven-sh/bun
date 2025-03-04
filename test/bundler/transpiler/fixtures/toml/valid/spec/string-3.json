@@ -1,0 +1,5 @@
+{
+    "str1": {"type": "string", "value": "The quick brown fox jumps over the lazy dog."},
+    "str2": {"type": "string", "value": "The quick brown fox jumps over the lazy dog."},
+    "str3": {"type": "string", "value": "The quick brown fox jumps over the lazy dog."}
+}

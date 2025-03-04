@@ -1,0 +1,4 @@
+# Set implicit "b", overwrite "b" (illegal!) and then set another implicit.
+#
+# Caused panic: https://github.com/BurntSushi/toml/issues/403
+a = {b.a = 1, b = 2, b.c = 3}

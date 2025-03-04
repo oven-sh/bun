@@ -1,0 +1,10 @@
+{
+    "bs":                {"type": "string", "value": ""},
+    "hello":             {"type": "string", "value": "hello\n"},
+    "higher-than-127":   {"type": "string", "value": "Sørmirbæren"},
+    "literal":           {"type": "string", "value": "\\x20 \\x09 \\x0d\\x0a"},
+    "multiline":         {"type": "string", "value": "  \t \u001b \r\n\n\n\u0000\nhello\n\nSørmirbæren\n"},
+    "multiline-literal": {"type": "string", "value": "\\x20 \\x09 \\x0d\\x0a\n"},
+    "nul":               {"type": "string", "value": "\u0000"},
+    "whitespace":        {"type": "string", "value": "  \t \u001b \r\n"}
+}

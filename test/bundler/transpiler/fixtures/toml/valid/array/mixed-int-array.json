@@ -1,0 +1,6 @@
+{
+    "arrays-and-ints": [
+        {"type": "integer", "value": "1"},
+        [{"type": "string", "value": "Arrays are not integers."}]
+    ]
+}

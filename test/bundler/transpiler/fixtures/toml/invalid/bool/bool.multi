@@ -1,0 +1,15 @@
+almost-false-with-extra = falsify
+almost-false            = fals
+almost-true-with-extra  = truthy
+almost-true             = tru
+just-f                  = f
+just-t                  = t
+mixed-case              = valid   = False
+starting-same-false     = falsey
+starting-same-true      = truer
+wrong-case-false        = FALSE
+wrong-case-true         = TRUE
+mixed-case-false        = falsE
+mixed-case-true         = trUe
+capitalized-false        = False
+capitalized-true         = True

@@ -1,0 +1,2 @@
+# The following line contains an invalid UTF-8 sequence.
+bad = '''Ã'''

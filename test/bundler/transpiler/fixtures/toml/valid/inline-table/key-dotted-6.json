@@ -1,0 +1,22 @@
+{
+    "top": {
+        "dot": {
+            "dot": [
+                {
+                    "dot": {
+                        "dot": {
+                            "dot": {"type": "integer", "value": "1"}
+                        }
+                    }
+                },
+                {
+                    "dot": {
+                        "dot": {
+                            "dot": {"type": "integer", "value": "2"}
+                        }
+                    }
+                }
+            ]
+        }
+    }
+}

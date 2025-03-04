@@ -1,0 +1,7 @@
+
+"\u0000" = "null"
+'\u0000' = "different key"
+"\u0008 \u000c \U00000041 \u007f \u0080 \u00ff \ud7ff \ue000 \uffff \U00010000 \U0010ffff" = "escaped key"
+
+"~  ÿ ퟿  ￿ 𐀀 􏿿" = "basic key"
+'l ~  ÿ ퟿  ￿ 𐀀 􏿿' = "literal key"

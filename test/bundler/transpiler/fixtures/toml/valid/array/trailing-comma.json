@@ -1,0 +1,12 @@
+{
+    "arr-1": [{"type": "integer", "value": "1"}],
+    "arr-3": [{"type": "integer", "value": "4"}],
+    "arr-2": [
+        {"type": "integer", "value": "2"},
+        {"type": "integer", "value": "3"}
+    ],
+    "arr-4": [
+        {"type": "integer", "value": "5"},
+        {"type": "integer", "value": "6"}
+    ]
+}

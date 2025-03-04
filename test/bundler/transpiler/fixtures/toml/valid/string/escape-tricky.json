@@ -1,0 +1,9 @@
+{
+    "end_esc":                   {"type": "string", "value": "String does not end here\" but ends here\\"},
+    "lit_end_esc":               {"type": "string", "value": "String ends here\\"},
+    "lit_multiline_end":         {"type": "string", "value": "There is no escape\\"},
+    "lit_multiline_not_unicode": {"type": "string", "value": "\\u007f"},
+    "multiline_end_esc":         {"type": "string", "value": "When will it end? \"\"\"...\"\"\" should be here\""},
+    "multiline_not_unicode":     {"type": "string", "value": "\\u0041"},
+    "multiline_unicode":         {"type": "string", "value": " "}
+}

@@ -1,0 +1,1 @@
+table1 = { table2.dupe = 1, table2.dupe = 2 }

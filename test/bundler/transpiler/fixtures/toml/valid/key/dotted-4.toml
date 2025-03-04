@@ -1,0 +1,10 @@
+top.key = 1
+
+[[arr]]
+a.b.c=1
+a.b.d=2
+
+[[arr]]
+a.b.c=3
+a.b.d=4
+

@@ -1,0 +1,11 @@
+{
+    "bin1": {"type": "integer", "value": "214"},
+    "bin2": {"type": "integer", "value": "5"},
+    "hex1": {"type": "integer", "value": "3735928559"},
+    "hex2": {"type": "integer", "value": "3735928559"},
+    "hex3": {"type": "integer", "value": "3735928559"},
+    "hex4": {"type": "integer", "value": "2439"},
+    "oct1": {"type": "integer", "value": "342391"},
+    "oct2": {"type": "integer", "value": "493"},
+    "oct3": {"type": "integer", "value": "501"}
+}

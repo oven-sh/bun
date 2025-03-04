@@ -1,0 +1,17 @@
+{
+    "contributors": [
+        {"type": "string", "value": "Foo Bar \u003cfoo@example.com\u003e"},
+        {
+            "email": {"type": "string", "value": "bazqux@example.com"},
+            "name":  {"type": "string", "value": "Baz Qux"},
+            "url":   {"type": "string", "value": "https://example.com/bazqux"}
+        }
+    ],
+    "mixed": [
+        {
+            "k": {"type": "string", "value": "a"}
+        },
+        {"type": "string", "value": "b"},
+        {"type": "integer", "value": "1"}
+    ]
+}

@@ -1,0 +1,15 @@
+{
+    "escaped":       {"type": "string", "value": "lol\"\"\""},
+    "five-quotes":   {"type": "string", "value": "Closing with five quotes\n\"\""},
+    "four-quotes":   {"type": "string", "value": "Closing with four quotes\n\""},
+    "lit_one":       {"type": "string", "value": "'one quote'"},
+    "lit_one_space": {"type": "string", "value": " 'one quote' "},
+    "lit_two":       {"type": "string", "value": "''two quotes''"},
+    "lit_two_space": {"type": "string", "value": " ''two quotes'' "},
+    "mismatch1":     {"type": "string", "value": "aaa'''bbb"},
+    "mismatch2":     {"type": "string", "value": "aaa\"\"\"bbb"},
+    "one":           {"type": "string", "value": "\"one quote\""},
+    "one_space":     {"type": "string", "value": " \"one quote\" "},
+    "two":           {"type": "string", "value": "\"\"two quotes\"\""},
+    "two_space":     {"type": "string", "value": " \"\"two quotes\"\" "}
+}

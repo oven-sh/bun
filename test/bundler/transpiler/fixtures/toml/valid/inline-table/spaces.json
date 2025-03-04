@@ -1,0 +1,23 @@
+{
+    "clap-1": {
+        "version": {"type": "string", "value": "4"},
+        "features": [
+            {"type": "string", "value": "derive"},
+            {"type": "string", "value": "cargo"}
+        ]
+    },
+    "clap-2": {
+        "version": {"type": "string", "value": "4"},
+        "features": [
+            {"type": "string", "value": "derive"},
+            {"type": "string", "value": "cargo"}
+        ],
+        "nest": {
+            "a": {"type": "string", "value": "x"},
+            "b": [
+                {"type": "float", "value": "1.5"},
+                {"type": "float", "value": "9"}
+            ]
+        }
+    }
+}

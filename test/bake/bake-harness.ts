@@ -240,7 +240,7 @@ export class Dev extends EventEmitter {
       if (isDev && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -284,7 +284,7 @@ export class Dev extends EventEmitter {
       if (isDev && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -315,7 +315,7 @@ export class Dev extends EventEmitter {
       if (errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });

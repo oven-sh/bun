@@ -427,7 +427,7 @@ devTest("css import before create", {
   },
   async test(dev) {
     await using c = await dev.client("/", {
-      errors: ['index.html: error: Could not resolve: "./styles.css"'],
+      errors: ['index.html: error: Could not resolve: "styles.css". Maybe you need to "bun install"?'],
     });
     await dev.fetch("/").expect.not.toContain("HELLO");
     await dev.write(
@@ -444,7 +444,9 @@ devTest("css import before create", {
     await c.expectReload(async () => {
       await dev.write("bun.png", imageFixtures.bun);
     });
-    await c.style("body").backgroundImage.expect.toBe("url(./bun.png)");
+    const backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
   },
 });

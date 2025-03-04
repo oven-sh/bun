@@ -230,13 +230,22 @@ describe("clear", () => {
 });
 
 describe("setImmediate", () => {
-  it("has reasonable performance when nested with no other timers running", async () => {
-    const process = Bun.spawn({
-      cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts")],
-      stdout: "pipe",
-      env: bunEnv,
-    });
+  it.each(["with", "without"])(
+    "has reasonable performance when nested %s timers running",
+    async mode => {
+      const process = Bun.spawn({
+        cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts"), mode + "-interval"],
+        stdout: "pipe",
+        env: bunEnv,
+      });
 
-    expect(await new Response(process.stdout).text()).toBe("callback\n".repeat(5000));
-  }, 5000);
+      await process.exited;
+      const out = await new Response(process.stdout).text();
+      expect(process.exitCode).toBe(0);
+      // if this fails, there will be a nicer error than printing out the entire string
+      expect((out.match(/\n/g) ?? []).length).toBe(5000);
+      expect(out).toBe("callback\n".repeat(5000));
+    },
+    5000,
+  );
 });

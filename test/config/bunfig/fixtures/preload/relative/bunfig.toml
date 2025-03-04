@@ -1,0 +1,2 @@
+# no "./", should be treated as a relative path
+preload = "preload.ts"

@@ -110,7 +110,7 @@ function parseTestFlags(filename = process.argv[1]) {
 // `worker_threads`) and child processes.
 // If the binary was built without-ssl then the crypto flags are
 // invalid (bad option). The test itself should handle this case.
-if ((process.argv.length === 2 || process.argv.length === 3) &&
+if (process.argv.length === 2 &&
     !process.env.NODE_SKIP_FLAG_CHECK &&
     isMainThread &&
     hasCrypto &&
@@ -259,15 +259,13 @@ const PIPE = (() => {
 // `$node --abort-on-uncaught-exception $file child`
 // the process aborts.
 function childShouldThrowAndAbort() {
-  let testCmd = '';
+  const escapedArgs = escapePOSIXShell`"${process.argv[0]}" --abort-on-uncaught-exception "${process.argv[1]}" child`;
   if (!isWindows) {
     // Do not create core files, as it can take a lot of disk space on
     // continuous testing and developers' machines
-    testCmd += 'ulimit -c 0 && ';
+    escapedArgs[0] = 'ulimit -c 0 && ' + escapedArgs[0];
   }
-  testCmd += `"${process.argv[0]}" --abort-on-uncaught-exception `;
-  testCmd += `"${process.argv[1]}" child`;
-  const child = exec(testCmd);
+  const child = exec(...escapedArgs);
   child.on('exit', function onExit(exitCode, signal) {
     const errMsg = 'Test should have aborted ' +
                    `but instead exited with exit code ${exitCode}` +
@@ -397,57 +395,6 @@ if (global.Storage) {
     global.localStorage,
     global.sessionStorage,
     global.Storage,
-  );
-}
-
-if (global.Bun) {
-  knownGlobals.push(
-    global.addEventListener,
-    global.alert,
-    global.confirm,
-    global.dispatchEvent,
-    global.postMessage,
-    global.prompt,
-    global.removeEventListener,
-    global.reportError,
-    global.Bun,
-    global.File,
-    global.process,
-    global.Blob,
-    global.Buffer,
-    global.BuildError,
-    global.BuildMessage,
-    global.HTMLRewriter,
-    global.Request,
-    global.ResolveError,
-    global.ResolveMessage,
-    global.Response,
-    global.TextDecoder,
-    global.AbortSignal,
-    global.BroadcastChannel,
-    global.CloseEvent,
-    global.DOMException,
-    global.ErrorEvent,
-    global.Event,
-    global.EventTarget,
-    global.FormData,
-    global.Headers,
-    global.MessageChannel,
-    global.MessageEvent,
-    global.MessagePort,
-    global.PerformanceEntry,
-    global.PerformanceObserver,
-    global.PerformanceObserverEntryList,
-    global.PerformanceResourceTiming,
-    global.PerformanceServerTiming,
-    global.PerformanceTiming,
-    global.TextEncoder,
-    global.URL,
-    global.URLSearchParams,
-    global.WebSocket,
-    global.Worker,
-    global.onmessage,
-    global.onerror
   );
 }
 
@@ -1251,15 +1198,6 @@ const common = {
    */
   get checkoutEOL() {
     return fs.readFileSync(__filename).includes('\r\n') ? '\r\n' : '\n';
-  },
-
-  get isInsideDirWithUnusualChars() {
-    return __dirname.includes('%') ||
-           (!isWindows && __dirname.includes('\\')) ||
-           __dirname.includes('$') ||
-           __dirname.includes('\n') ||
-           __dirname.includes('\r') ||
-           __dirname.includes('\t');
   },
 };
 

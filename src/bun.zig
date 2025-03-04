@@ -3459,7 +3459,7 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
 /// }
 /// ```
 ///
-/// Use `assertRelease` for assertions that should not be stripped in release builds.
+/// Use `releaseAssert` for assertions that should not be stripped in release builds.
 pub fn assert(ok: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
@@ -3487,7 +3487,7 @@ pub fn assert(ok: bool) callconv(callconv_inline) void {
 /// }
 /// ```
 ///
-/// Use `assertRelease` for assertions that should not be stripped in release builds.
+/// Use `releaseAssert` for assertions that should not be stripped in release builds.
 pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;

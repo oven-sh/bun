@@ -1593,7 +1593,7 @@ pub const EventLoop = struct {
             this.processGCTimer();
             var timespec: bun.timespec = undefined;
 
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
+            loop.tickWithTimeout(if (this.immediate_tasks.count == 0 and ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
         } else {
             loop.tickWithoutIdle();
         }

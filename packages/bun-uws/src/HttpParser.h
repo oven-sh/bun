@@ -692,7 +692,6 @@ namespace uWS
                     consumedTotal += consumed;
                 }
             } else if (contentLengthStringLen) {
-
                 if constexpr (!ConsumeMinimally) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);

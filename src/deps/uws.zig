@@ -39,7 +39,8 @@ pub const CloseCode = enum(i32) {
     failure = 1,
 };
 
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
+
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
         return BoringSSL.SSL;

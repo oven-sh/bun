@@ -480,6 +480,7 @@ public:
 
     LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
     LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
+
     JSC::LazyClassStructure m_JSStatsClassStructure;
     JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
     JSC::LazyClassStructure m_JSDirentClassStructure;

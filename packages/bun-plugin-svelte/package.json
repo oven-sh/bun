@@ -1,0 +1,32 @@
+{
+  "name": "bun-plugin-svelte",
+  "version": "0.0.1",
+  "type": "module",
+  "module": "src/index.ts",
+  "index": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "oxlint .",
+    "check:types": "tsc --noEmit",
+    "build:types": "tsc --emitDeclarationOnly --declaration --declarationDir ./dist"
+  },
+  "devDependencies": {
+    "bun-types": "canary",
+    "svelte": "^5.20.4"
+  },
+  "peerDependencies": {
+    "typescript": "^5",
+    "svelte": "^5"
+  },
+  "files": [
+    "README.md",
+    "bunfig.toml",
+    "tsconfig.json",
+    "modules.d.ts",
+    "dist",
+    "src",
+    "!src/**/*.spec.ts"
+  ]
+}

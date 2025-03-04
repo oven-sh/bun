@@ -3671,8 +3671,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_redirect.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_redirect.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 this.next();
@@ -4089,8 +4088,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_args.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_args.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 child.deinit();
@@ -4691,8 +4689,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_assigns.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_assigns.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
 
@@ -4715,8 +4712,7 @@ pub const Interpreter = struct {
                         else => @panic("Invalid state"),
                     };
                     defer err.deinit(bun.default_allocator);
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 // Handling this case from the shell spec:
@@ -4936,12 +4932,11 @@ pub const Interpreter = struct {
                 .buffered_closed = buffered_closed,
             } };
             const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
+                // FIXME: There's a race condition where this could change variants before spawnAsync returns.
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.exec = .none;
-                    const msg = e.fmt();
-                    defer bun.default_allocator.free(msg);
-                    this.writeFailingError("{s}", .{msg});
+                    this.writeFailingError("{}\n", .{e});
                     return;
                 },
             };

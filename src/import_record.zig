@@ -107,8 +107,6 @@ pub const ImportRecord = struct {
 
     source_index: bun.JSAst.Index = .invalid,
 
-    print_mode: PrintMode = .normal,
-
     /// True for the following cases:
     ///
     ///   try { require('x') } catch { handle }

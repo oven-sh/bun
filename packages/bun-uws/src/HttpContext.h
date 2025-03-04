@@ -66,14 +66,14 @@ private:
 
     /* Init the HttpContext by registering libusockets event handlers */
     HttpContext<SSL> *init() {
-        
+
         if(SSL) {
             // if we are SSL we need to handle the handshake properly
             us_socket_context_on_handshake(SSL, getSocketContext(), [](us_socket_t *s, int success,  struct us_bun_verify_error_t verify_error, void* custom_data) {
                 // if we are closing or already closed, we don't need to do anything
-                if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {        
+                if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {
                     HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-                    
+
                     if(httpContextData->rejectUnauthorized) {
                         if(!success || verify_error.error != 0) {
                             // we failed to handshake, close the socket
@@ -92,7 +92,7 @@ private:
                 }
             }, nullptr);
         }
-            
+
         /* Handle socket connections */
         us_socket_context_on_open(SSL, getSocketContext(), [](us_socket_t *s, int /*is_client*/, char */*ip*/, int /*ip_length*/) {
             /* Init socket ext */
@@ -115,7 +115,7 @@ private:
         us_socket_context_on_close(SSL, getSocketContext(), [](us_socket_t *s, int /*code*/, void */*reason*/) {
             ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
-           
+
             /* Get socket ext */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
 
@@ -129,7 +129,7 @@ private:
             if (httpResponseData->onAborted) {
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
-            
+
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();
@@ -221,7 +221,7 @@ private:
                 }
 
                 /* Was the socket closed? */
-                if (us_socket_is_closed(SSL, (struct us_socket_t *) s)) {
+                if (us_socket_is_closed(SSL, (us_socket_t *) s)) {
                     return nullptr;
                 }
 
@@ -377,7 +377,7 @@ private:
                     return s;
                 }
 
-                /* We need to drain any remaining buffered data if success == true*/    
+                /* We need to drain any remaining buffered data if success == true*/
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
@@ -441,7 +441,7 @@ public:
             return nullptr;
         }
         // for servers this is only valid when request cert is enabled
-        
+
         /* Init socket context data */
         auto* httpContextData = new ((HttpContextData<SSL> *) us_socket_context_ext(SSL, (us_socket_context_t *) httpContext)) HttpContextData<SSL>();
         if(options.request_cert && options.reject_unauthorized) {
@@ -465,16 +465,10 @@ public:
     }
 
     /* Register an HTTP route handler acording to URL pattern */
-    void onHttp(std::string method, std::string pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
-         HttpContextData<SSL> *httpContextData = getSocketContextData();
+    void onHttp(std::string_view method, std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler, bool upgrade = false) {
+        HttpContextData<SSL> *httpContextData = getSocketContextData();
 
-        /* Todo: This is ugly, fix */
-        std::vector<std::string> methods;
-        if (method == "*") {
-            methods = {"*"};
-        } else {
-            methods = {method};
-        }
+        std::vector<std::string> methods{std::string(method)};
 
         uint32_t priority = method == "*" ? httpContextData->currentRouter->LOW_PRIORITY : (upgrade ? httpContextData->currentRouter->HIGH_PRIORITY : httpContextData->currentRouter->MEDIUM_PRIORITY);
 
@@ -495,7 +489,6 @@ public:
                     i++;
                 }
                 parameterOffsets[std::string(pattern.data() + start, i - start)] = offset;
-                //std::cout << "<" << std::string(pattern.data() + start, i - start) << "> is offset " << offset;
                 offset++;
             }
         }
@@ -529,7 +522,7 @@ public:
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
           us_socket_unref(&socket->s);
-        } 
+        }
         return socket;
     }
 

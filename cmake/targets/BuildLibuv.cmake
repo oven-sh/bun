@@ -8,7 +8,7 @@ register_repository(
 )
 
 if(WIN32)
-  set(LIBUV_CMAKE_C_FLAGS "/DWIN32 /D_WINDOWS -Wno-int-conversion")
+  set(LIBUV_CMAKE_C_FLAGS /DWIN32 /D_WINDOWS -Wno-int-conversion)
 endif()
 
 register_cmake_command(
@@ -20,10 +20,11 @@ register_cmake_command(
     -DLIBUV_BUILD_SHARED=OFF
     -DLIBUV_BUILD_TESTS=OFF
     -DLIBUV_BUILD_BENCH=OFF
-    -DCMAKE_C_FLAGS=${LIBUV_CMAKE_C_FLAGS}
   LIBRARIES
     libuv WIN32
     uv UNIX
   INCLUDES
     include
+  ADDITIONAL_CMAKE_C_FLAGS
+    ${LIBUV_CMAKE_C_FLAGS}
 )

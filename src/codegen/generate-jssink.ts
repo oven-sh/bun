@@ -916,15 +916,15 @@ extern "C" JSC__JSValue ${name}__createObject(JSC__JSGlobalObject* arg0, void* s
     return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr, destructor));
 }
 
-extern "C" void* ${name}__fromJS(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
+extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
 {
-    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(JSValue1)))
+    if (auto* sink = JSC::jsDynamicCast<WebCore::JS${name}*>(JSC::JSValue::decode(value)))
         return sink->wrapped();
 
-    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(JSValue1)))
+    if (auto* controller = JSC::jsDynamicCast<WebCore::${controller}*>(JSC::JSValue::decode(value)))
         return controller->wrapped();
 
-    return nullptr;
+    return (void*)1;
 }
 
 extern "C" void ${name}__detachPtr(JSC__JSValue JSValue0)

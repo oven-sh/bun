@@ -1093,7 +1093,7 @@ pub const BuildArtifact = struct {
     path: []const u8 = "",
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
-    sourcemap: JSC.Strong = .{},
+    sourcemap: JSC.Strong = .empty,
 
     pub const OutputKind = enum {
         chunk,

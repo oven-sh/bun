@@ -24,117 +24,22 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
     *EventLoopTimer,
 );
 
-/// Array of linked lists of EventLoopTimers. Each list holds all the timers that will fire in the
-/// same millisecond, in the order they will fire.
-const TimerList = struct {
-    const log = bun.Output.scoped(.TimerList, true);
-    // there might be a better data structure we could use here (the current one has some O(n) cases
-    // to remove and add new lists), but cursory testing showed similar performance to the old
-    // heap implementation
-    lists: std.ArrayListUnmanaged(List),
-
-    pub const empty: TimerList = .{ .lists = .empty };
-
-    /// Add a new timer into the list
-    pub fn insert(self: *TimerList, timer: *EventLoopTimer.Node) void {
-        log("insert {*}", .{timer});
-        const target_list_index = std.sort.lowerBound(List, self.lists.items, &timer.data.next, List.compare);
-        if (target_list_index == self.lists.items.len) {
-            // suitable insertion point not found so insert at the end
-            log("new list at end", .{});
-            self.lists.append(bun.default_allocator, .init(timer.data.next)) catch bun.outOfMemory();
-            // now target_list_index is a valid index and points to the right list
-        } else if (List.compare(&timer.data.next, self.lists.items[target_list_index]) != .eq) {
-            // lowerBound did not find an exact match, so target_list_index is really the index of
-            // the first list *after* the one we want to use.
-            // so we need to add a new list in the middle, before the list currently at target_list_index
-            log("new list in middle", .{});
-            self.lists.insert(bun.default_allocator, target_list_index, .init(timer.data.next)) catch bun.outOfMemory();
-            // now target_list_index points to the list we just inserted
-        }
-        const list = &self.lists.items[target_list_index];
-        list.timers.append(timer);
-    }
-
-    /// Remove the given timer
-    pub fn remove(self: *TimerList, timer: *EventLoopTimer.Node) void {
-        log("remove {*}", .{timer});
-        const maybe_list_containing_index = std.sort.binarySearch(List, self.lists.items, &timer.data.next, List.compare);
-        // in safe builds, assert we found the list. in unsafe builds, do not remove anything
-        assert(maybe_list_containing_index != null);
-        const list_containing_index = maybe_list_containing_index orelse return;
-        const list_containing = &self.lists.items[list_containing_index].timers;
-        list_containing.remove(timer);
-        if (list_containing.len == 0) {
-            log("delete list", .{});
-            _ = self.lists.orderedRemove(list_containing_index);
-        }
-    }
-
-    /// Get the timer that will fire next, but don't remove it
-    pub fn peek(self: *const TimerList) ?*EventLoopTimer.Node {
-        if (self.lists.items.len == 0) {
-            return null;
-        } else {
-            assert(self.lists.items[0].timers.len > 0);
-            return self.lists.items[0].timers.first;
-        }
-    }
-
-    /// Remove and return the next timer to fire
-    pub fn deleteMin(self: *TimerList) ?*EventLoopTimer.Node {
-        if (self.lists.items.len == 0) {
-            // empty
-            return null;
-        } else {
-            const list = &self.lists.items[0].timers;
-            const timer = list.popFirst();
-            // if this list contains no timers it should have been removed
-            assert(timer != null);
-            // if it is now empty then we remove it from the list of lists
-            if (list.len == 0) {
-                _ = self.lists.orderedRemove(0);
-            }
-            return timer;
-        }
-    }
-
-    const List = struct {
-        absolute_time: struct {
-            sec: isize,
-            msec: i16,
-        },
-        timers: std.DoublyLinkedList(EventLoopTimer),
-
-        pub fn init(time: bun.timespec) List {
-            return .{
-                .absolute_time = .{
-                    .sec = time.sec,
-                    .msec = @intCast(@divTrunc(time.nsec, std.time.ns_per_ms)),
-                },
-                .timers = .{},
-            };
-        }
-
-        pub fn compare(context: *const bun.timespec, item: List) std.math.Order {
-            const sec_order = std.math.order(context.sec, item.absolute_time.sec);
-            if (sec_order != .eq) return sec_order;
-            return std.math.order(@divTrunc(context.nsec, std.time.ns_per_ms), item.absolute_time.msec);
-        }
-    };
-};
+const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
 
 pub const All = struct {
     last_id: i32 = 1,
     lock: bun.Mutex = .{},
     thread_id: std.Thread.Id,
-    timers: TimerList = .empty,
+    timers: TimerHeap = .{ .context = {} },
     active_timer_count: i32 = 0,
     uv_timer: if (Environment.isWindows) uv.Timer else void = if (Environment.isWindows) std.mem.zeroes(uv.Timer),
     /// Whether we have emitted a warning for passing a negative timeout duration
     warned_negative_number: bool = false,
     /// Whether we have emitted a warning for passing NaN for the timeout duration
     warned_not_number: bool = false,
+    /// Incremented when timers are scheduled or rescheduled. See doc comment on
+    /// TimerObjectInternals.epoch.
+    epoch: u32 = 0,
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -157,40 +62,45 @@ pub const All = struct {
         };
     }
 
-    pub fn insert(this: *All, timer: *EventLoopTimer.Node) void {
+    pub fn insert(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
         this.timers.insert(timer);
-        timer.data.state = .ACTIVE;
+        timer.state = .ACTIVE;
 
         if (Environment.isWindows) {
             this.ensureUVTimer(@alignCast(@fieldParentPtr("timer", this)));
         }
     }
 
-    pub fn remove(this: *All, timer: *EventLoopTimer.Node) void {
+    pub fn remove(this: *All, timer: *EventLoopTimer) void {
         this.lock.lock();
         defer this.lock.unlock();
         this.timers.remove(timer);
 
-        timer.data.state = .CANCELLED;
+        timer.state = .CANCELLED;
     }
 
     /// Remove the EventLoopTimer if necessary.
-    pub fn update(this: *All, timer: *EventLoopTimer.Node, time: *const timespec) void {
+    pub fn update(this: *All, timer: *EventLoopTimer, time: *const timespec) void {
         this.lock.lock();
         defer this.lock.unlock();
-        if (timer.data.state == .ACTIVE) {
+        if (timer.state == .ACTIVE) {
             this.timers.remove(timer);
         }
 
-        timer.data.state = .ACTIVE;
+        timer.state = .ACTIVE;
         if (comptime Environment.isDebug) {
-            if (&timer.data.next == time) {
+            if (&timer.next == time) {
                 @panic("timer.next == time. For threadsafety reasons, time and timer.next must always be a different pointer.");
             }
         }
-        timer.data.next = time.*;
+
+        timer.next = time.*;
+        if (timer.jsTimerInternals()) |internals| {
+            this.epoch +%= 1;
+            internals.epoch = this.epoch;
+        }
 
         this.timers.insert(timer);
         if (Environment.isWindows) {
@@ -208,8 +118,8 @@ pub const All = struct {
         if (this.timers.peek()) |timer| {
             uv.uv_update_time(vm.uvLoop());
             const now = timespec.now();
-            const wait = if (timer.data.next.greater(&now))
-                timer.data.next.duration(&now)
+            const wait = if (timer.next.greater(&now))
+                timer.next.duration(&now)
             else
                 timespec{ .nsec = 0, .sec = 0 };
 
@@ -269,12 +179,11 @@ pub const All = struct {
 
         var now: timespec = undefined;
         var has_set_now: bool = false;
-        while (this.timers.peek()) |min_node| {
+        while (this.timers.peek()) |min| {
             if (!has_set_now) {
                 now = timespec.now();
                 has_set_now = true;
             }
-            const min = &min_node.data;
 
             switch (now.order(&min.next)) {
                 .gt, .eq => {
@@ -313,7 +222,7 @@ pub const All = struct {
     // And when we do call it, we want to be sure we only call it once.
     // and we do NOT want to hold the lock while the timer is running it's code.
     // This function has to be thread-safe.
-    fn next(this: *All, has_set_now: *bool, now: *timespec) ?*EventLoopTimer.Node {
+    fn next(this: *All, has_set_now: *bool, now: *timespec) ?*EventLoopTimer {
         this.lock.lock();
         defer this.lock.unlock();
 
@@ -322,7 +231,7 @@ pub const All = struct {
                 now.* = timespec.now();
                 has_set_now.* = true;
             }
-            if (timer.data.next.greater(now)) {
+            if (timer.next.greater(now)) {
                 return null;
             }
 
@@ -340,7 +249,7 @@ pub const All = struct {
         var has_set_now: bool = false;
 
         while (this.next(&has_set_now, &now)) |t| {
-            switch (t.data.fire(
+            switch (t.fire(
                 &now,
                 vm,
             )) {
@@ -513,12 +422,10 @@ pub const All = struct {
     fn removeTimerById(this: *All, id: i32) ?*TimeoutObject {
         if (this.maps.setTimeout.fetchSwapRemove(id)) |entry| {
             bun.assert(entry.value.tag == .TimeoutObject);
-            const node: *EventLoopTimer.Node = @fieldParentPtr("data", entry.value);
-            return @fieldParentPtr("event_loop_timer", node);
+            return @fieldParentPtr("event_loop_timer", entry.value);
         } else if (this.maps.setInterval.fetchSwapRemove(id)) |entry| {
             bun.assert(entry.value.tag == .TimeoutObject);
-            const node: *EventLoopTimer.Node = @fieldParentPtr("data", entry.value);
-            return @fieldParentPtr("event_loop_timer", node);
+            return @fieldParentPtr("event_loop_timer", entry.value);
         } else return null;
     }
 
@@ -634,10 +541,10 @@ pub const All = struct {
 const uws = bun.uws;
 
 pub const TimeoutObject = struct {
-    event_loop_timer: EventLoopTimer.Node = .{ .data = .{
+    event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .TimeoutObject,
-    } },
+    },
     internals: TimerObjectInternals,
     ref_count: u32 = 1,
 
@@ -719,10 +626,10 @@ pub const TimeoutObject = struct {
 };
 
 pub const ImmediateObject = struct {
-    event_loop_timer: EventLoopTimer.Node = .{ .data = .{
+    event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .ImmediateObject,
-    } },
+    },
     internals: TimerObjectInternals,
     ref_count: u32 = 1,
 
@@ -798,7 +705,15 @@ pub const ImmediateObject = struct {
 
 /// Data that TimerObject and ImmediateObject have in common
 const TimerObjectInternals = struct {
+    /// Identifier for this timer that is exposed to JavaScript (by `+timer`)
     id: i32 = -1,
+    /// Whenever a timer is inserted into the heap (which happen on creation or refresh), the global
+    /// epoch is incremented and the new epoch is set on the timer. For timers created by
+    /// JavaScript, the epoch is used to break ties between timers scheduled for the same
+    /// millisecond. This ensures that if you set two timers for the same amount of time, and
+    /// refresh the first one, the first one will fire last. This mimics Node.js's behavior where
+    /// the refreshed timer will be inserted at the end of a list, which makes it fire later.
+    epoch: u32,
     kind: Kind = .setTimeout,
     interval: u31 = 0,
     // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
@@ -808,7 +723,7 @@ const TimerObjectInternals = struct {
     // if they never access the timer by integer, don't create a hashmap entry.
     has_accessed_primitive: bool = false,
 
-    strong_this: JSC.Strong = .{},
+    strong_this: JSC.Strong = .empty,
 
     has_js_ref: bool = true,
 
@@ -817,19 +732,15 @@ const TimerObjectInternals = struct {
     in_callback: bool = false,
 
     fn eventLoopTimer(this: *TimerObjectInternals) *EventLoopTimer {
-        return &this.node().data;
-    }
-
-    fn node(this: *TimerObjectInternals) *EventLoopTimer.Node {
         switch (this.kind) {
             .setImmediate => {
                 const parent: *ImmediateObject = @fieldParentPtr("internals", this);
-                assert(parent.event_loop_timer.data.tag == .ImmediateObject);
+                assert(parent.event_loop_timer.tag == .ImmediateObject);
                 return &parent.event_loop_timer;
             },
             .setTimeout, .setInterval => {
                 const parent: *TimeoutObject = @fieldParentPtr("internals", this);
-                assert(parent.event_loop_timer.data.tag == .TimeoutObject);
+                assert(parent.event_loop_timer.tag == .TimeoutObject);
                 return &parent.event_loop_timer;
             },
         }
@@ -867,7 +778,7 @@ const TimerObjectInternals = struct {
             }
             return;
         };
-        const globalThis = this.strong_this.globalThis.?;
+        const globalThis = vm.global;
         this.strong_this.deinit();
         this.eventLoopTimer().state = .FIRED;
         this.setEnableKeepingEventLoopAlive(vm, false);
@@ -897,11 +808,11 @@ const TimerObjectInternals = struct {
 
         this.eventLoopTimer().state = .FIRED;
 
+        const globalThis = vm.global;
+
         if (has_been_cleared) {
             if (vm.isInspectorEnabled()) {
-                if (this.strong_this.globalThis) |globalThis| {
-                    Debugger.didCancelAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }));
-                }
+                Debugger.didCancelAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }));
             }
 
             this.has_cleared_timer = true;
@@ -911,12 +822,11 @@ const TimerObjectInternals = struct {
             return .disarm;
         }
 
-        const globalThis = this.strong_this.globalThis.?;
         const this_object = this.strong_this.get().?;
         var time_before_call: timespec = undefined;
 
         if (kind != .setInterval) {
-            this.strong_this.clear();
+            this.strong_this.clearWithoutDeallocation();
         } else {
             time_before_call = timespec.msFromNow(this.interval);
         }
@@ -937,7 +847,7 @@ const TimerObjectInternals = struct {
                 switch (this.eventLoopTimer().state) {
                     .FIRED => {
                         // If we didn't clear the setInterval, reschedule it starting from
-                        vm.timer.update(this.node(), &time_before_call);
+                        vm.timer.update(this.eventLoopTimer(), &time_before_call);
 
                         if (this.has_js_ref) {
                             this.setEnableKeepingEventLoopAlive(vm, true);
@@ -947,7 +857,7 @@ const TimerObjectInternals = struct {
                     },
                     .ACTIVE => {
                         // The developer called timer.refresh() synchronously in the callback.
-                        vm.timer.update(this.node(), &time_before_call);
+                        vm.timer.update(this.eventLoopTimer(), &time_before_call);
 
                         // Balance out the ref count.
                         // the transition from "FIRED" -> "ACTIVE" caused it to increment.
@@ -1003,6 +913,7 @@ const TimerObjectInternals = struct {
             .id = id,
             .kind = kind,
             .interval = interval,
+            .epoch = globalThis.bunVM().timer.epoch,
         };
 
         if (kind == .setImmediate) {
@@ -1083,7 +994,7 @@ const TimerObjectInternals = struct {
         this.strong_this.deinit();
 
         if (was_active) {
-            vm.timer.remove(this.node());
+            vm.timer.remove(this.eventLoopTimer());
             this.deref();
         }
     }
@@ -1094,12 +1005,12 @@ const TimerObjectInternals = struct {
         const now = timespec.msFromNow(this.interval);
         const was_active = this.eventLoopTimer().state == .ACTIVE;
         if (was_active) {
-            vm.timer.remove(this.node());
+            vm.timer.remove(this.eventLoopTimer());
         } else {
             this.ref();
         }
 
-        vm.timer.update(this.node(), &now);
+        vm.timer.update(this.eventLoopTimer(), &now);
         this.has_cleared_timer = false;
 
         if (this.has_js_ref) {
@@ -1158,7 +1069,7 @@ const TimerObjectInternals = struct {
         const vm = VirtualMachine.get();
 
         if (this.eventLoopTimer().state == .ACTIVE) {
-            vm.timer.remove(this.node());
+            vm.timer.remove(this.eventLoopTimer());
         }
 
         if (this.has_accessed_primitive) {
@@ -1214,10 +1125,35 @@ pub const EventLoopTimer = struct {
     next: timespec,
     state: State = .PENDING,
     tag: Tag,
+    /// Internal heap fields.
+    heap: heap.IntrusiveField(EventLoopTimer) = .{},
 
-    /// A linked list node containing an EventLoopTimer. This is the type that specific kinds of
-    /// timers should store, as these timers need to be stoerd in linked lists.
-    pub const Node = std.DoublyLinkedList(EventLoopTimer).Node;
+    pub fn less(_: void, a: *const EventLoopTimer, b: *const EventLoopTimer) bool {
+        const sec_order = std.math.order(a.next.sec, b.next.sec);
+        if (sec_order != .eq) return sec_order == .lt;
+
+        // collapse sub-millisecond precision for JavaScript timers
+        const maybe_a_internals = a.jsTimerInternals();
+        const maybe_b_internals = b.jsTimerInternals();
+        var a_ns = a.next.nsec;
+        var b_ns = b.next.nsec;
+        if (maybe_a_internals != null) a_ns = std.time.ns_per_ms * @divTrunc(a_ns, std.time.ns_per_ms);
+        if (maybe_b_internals != null) b_ns = std.time.ns_per_ms * @divTrunc(b_ns, std.time.ns_per_ms);
+
+        const order = std.math.order(a_ns, b_ns);
+        if (order == .eq) {
+            if (maybe_a_internals) |a_internals| {
+                if (maybe_b_internals) |b_internals| {
+                    // try to still maintain the order if epoch overflowed
+                    // if the difference is greater than half u32 range, it more likely got that way
+                    // because b has overflowed and a hasn't than because b is really so much newer
+                    // than a
+                    return b_internals.epoch -% a_internals.epoch < std.math.maxInt(u32) / 2;
+                }
+            }
+        }
+        return order == .lt;
+    }
 
     pub const Tag = if (Environment.isWindows) enum {
         TimerCallback,
@@ -1278,7 +1214,7 @@ pub const EventLoopTimer = struct {
     const TimerCallback = struct {
         callback: *const fn (*TimerCallback) Arm,
         ctx: *anyopaque,
-        event_loop_timer: EventLoopTimer.Node,
+        event_loop_timer: EventLoopTimer,
     };
 
     pub const State = enum {
@@ -1297,10 +1233,18 @@ pub const EventLoopTimer = struct {
 
     /// If self was created by set{Immediate,Timeout,Interval}, get a pointer to the common data
     /// for all those kinds of timers
-    fn jsTimerInternals(self: *const EventLoopTimer) ?*const TimerObjectInternals {
+    fn jsTimerInternals(self: anytype) switch (@TypeOf(self)) {
+        *EventLoopTimer => ?*TimerObjectInternals,
+        *const EventLoopTimer => ?*const TimerObjectInternals,
+        else => |T| @compileError("wrong type " ++ @typeName(T) ++ " passed to jsTimerInternals"),
+    } {
         switch (self.tag) {
             inline .TimeoutObject, .ImmediateObject => |tag| {
-                const parent: *const tag.Type() = @fieldParentPtr("event_loop_timer", self);
+                const parent: switch (@TypeOf(self)) {
+                    *EventLoopTimer => *tag.Type(),
+                    *const EventLoopTimer => *const tag.Type(),
+                    else => unreachable,
+                } = @fieldParentPtr("event_loop_timer", self);
                 return &parent.internals;
             },
             else => return null,
@@ -1317,15 +1261,14 @@ pub const EventLoopTimer = struct {
     };
 
     pub fn fire(this: *EventLoopTimer, now: *const timespec, vm: *VirtualMachine) Arm {
-        const node: *EventLoopTimer.Node = @fieldParentPtr("data", this);
         switch (this.tag) {
-            .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", node))).onConnectionTimeout(),
-            .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", node))).onMaxLifetimeTimeout(),
+            .PostgresSQLConnectionTimeout => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("timer", this))).onConnectionTimeout(),
+            .PostgresSQLConnectionMaxLifetime => return @as(*JSC.Postgres.PostgresSQLConnection, @alignCast(@fieldParentPtr("max_lifetime_timer", this))).onMaxLifetimeTimeout(),
             inline else => |t| {
-                if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer.Node) {
+                if (@FieldType(t.Type(), "event_loop_timer") != EventLoopTimer) {
                     @compileError(@typeName(t.Type()) ++ " has wrong type for 'event_loop_timer'");
                 }
-                var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", node));
+                var container: *t.Type() = @alignCast(@fieldParentPtr("event_loop_timer", this));
                 if (comptime t.Type() == TimeoutObject or t.Type() == ImmediateObject) {
                     return container.internals.fire(now, vm);
                 }
@@ -1372,7 +1315,7 @@ pub const WTFTimer = struct {
 
     vm: *VirtualMachine,
     run_loop_timer: *RunLoopTimer,
-    event_loop_timer: EventLoopTimer.Node,
+    event_loop_timer: EventLoopTimer,
     imminent: *std.atomic.Value(?*WTFTimer),
     repeat: bool,
     lock: bun.Mutex = .{},
@@ -1384,14 +1327,12 @@ pub const WTFTimer = struct {
             .vm = js_vm,
             .imminent = &js_vm.eventLoop().imminent_gc_timer,
             .event_loop_timer = .{
-                .data = .{
-                    .next = .{
-                        .sec = std.math.maxInt(i64),
-                        .nsec = 0,
-                    },
-                    .tag = .WTFTimer,
-                    .state = .CANCELLED,
+                .next = .{
+                    .sec = std.math.maxInt(i64),
+                    .nsec = 0,
                 },
+                .tag = .WTFTimer,
+                .state = .CANCELLED,
             },
             .run_loop_timer = run_loop_timer,
             .repeat = false,
@@ -1405,7 +1346,7 @@ pub const WTFTimer = struct {
     }
 
     pub fn run(this: *WTFTimer, vm: *VirtualMachine) void {
-        if (this.event_loop_timer.data.state == .ACTIVE) {
+        if (this.event_loop_timer.state == .ACTIVE) {
             vm.timer.remove(&this.event_loop_timer);
         }
         this.runWithoutRemoving();
@@ -1440,17 +1381,17 @@ pub const WTFTimer = struct {
         this.lock.lock();
         defer this.lock.unlock();
         this.imminent.store(null, .seq_cst);
-        if (this.event_loop_timer.data.state == .ACTIVE) {
+        if (this.event_loop_timer.state == .ACTIVE) {
             this.vm.timer.remove(&this.event_loop_timer);
         }
     }
 
     pub fn fire(this: *WTFTimer, _: *const bun.timespec, _: *VirtualMachine) EventLoopTimer.Arm {
-        this.event_loop_timer.data.state = .FIRED;
+        this.event_loop_timer.state = .FIRED;
         this.imminent.store(null, .seq_cst);
         this.runWithoutRemoving();
         return if (this.repeat)
-            .{ .rearm = this.event_loop_timer.data.next }
+            .{ .rearm = this.event_loop_timer.next }
         else
             .disarm;
     }
@@ -1477,7 +1418,7 @@ pub const WTFTimer = struct {
     }
 
     export fn WTFTimer__isActive(this: *const WTFTimer) bool {
-        return this.event_loop_timer.data.state == .ACTIVE or (this.imminent.load(.seq_cst) orelse return false) == this;
+        return this.event_loop_timer.state == .ACTIVE or (this.imminent.load(.seq_cst) orelse return false) == this;
     }
 
     export fn WTFTimer__cancel(this: *WTFTimer) void {
@@ -1487,8 +1428,8 @@ pub const WTFTimer = struct {
     export fn WTFTimer__secondsUntilTimer(this: *WTFTimer) f64 {
         this.lock.lock();
         defer this.lock.unlock();
-        if (this.event_loop_timer.data.state == .ACTIVE) {
-            const until = this.event_loop_timer.data.next.duration(&bun.timespec.now());
+        if (this.event_loop_timer.state == .ACTIVE) {
+            const until = this.event_loop_timer.next.duration(&bun.timespec.now());
             const sec: f64, const nsec: f64 = .{ @floatFromInt(until.sec), @floatFromInt(until.nsec) };
             return sec + nsec / std.time.ns_per_s;
         }

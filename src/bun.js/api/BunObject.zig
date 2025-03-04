@@ -1055,7 +1055,8 @@ pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
 
-    const BoringSSL = bun.BoringSSL;
+    const BoringSSL = bun.BoringSSL.c;
+
     pub const HMAC = struct {
         ctx: BoringSSL.HMAC_CTX,
         algorithm: EVP.Algorithm,
@@ -1318,7 +1319,7 @@ pub const Crypto = struct {
                         return;
                     }
 
-                    const globalThis = this.promise.strong.globalThis orelse this.vm.global;
+                    const globalThis = this.vm.global;
                     const promise = this.promise.swap();
                     if (this.err) |err| {
                         promise.reject(globalThis, createCryptoError(globalThis, err));
@@ -1479,7 +1480,7 @@ pub const Crypto = struct {
         };
 
         pub fn init(algorithm: Algorithm, md: *const BoringSSL.EVP_MD, engine: *BoringSSL.ENGINE) EVP {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             var ctx: BoringSSL.EVP_MD_CTX = undefined;
             BoringSSL.EVP_MD_CTX_init(&ctx);
@@ -1567,7 +1568,7 @@ pub const Crypto = struct {
     };
 
     pub fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
-        return BoringSSL.ERR_toJS(globalThis, err_code);
+        return bun.BoringSSL.ERR_toJS(globalThis, err_code);
     }
     const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 
@@ -1992,9 +1993,10 @@ pub const Crypto = struct {
                     .global = this.global,
                     .ref = this.ref,
                 });
+                this.promise = .empty;
+
                 result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
-                this.promise.strong = .{};
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
@@ -2208,9 +2210,10 @@ pub const Crypto = struct {
                     .global = this.global,
                     .ref = this.ref,
                 });
+                this.promise = .empty;
+
                 result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
-                this.promise.strong = .{};
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
@@ -3107,22 +3110,22 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPServer)) => {
                         var server: *JSC.API.HTTPServer = entry.as(JSC.API.HTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPServer)) => {
                         var server: *JSC.API.DebugHTTPServer = entry.as(JSC.API.DebugHTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPSServer)) => {
                         var server: *JSC.API.DebugHTTPSServer = entry.as(JSC.API.DebugHTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPSServer)) => {
                         var server: *JSC.API.HTTPSServer = entry.as(JSC.API.HTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     else => {},
                 }
@@ -3157,9 +3160,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     if (route_list_object != .zero) {
                         ServerType.routeListSetCached(obj, globalObject, route_list_object);
                     }
-                    obj.protect();
-
-                    server.thisObject = obj;
+                    server.js_value.set(globalObject, obj);
 
                     if (config.allow_hot) {
                         if (globalObject.bunVM().hotMap()) |hot| {
@@ -4581,7 +4582,7 @@ pub const JSZlib = struct {
                     defer reader.deinit();
                     return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
-                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
+                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch bun.outOfMemory() };
                 reader.list.capacity = reader.list.items.len;
                 reader.list_ptr = &reader.list;
 
@@ -4622,7 +4623,7 @@ pub const JSZlib = struct {
     }
 };
 
-pub usingnamespace @import("./bun/subprocess.zig");
+pub const Subprocess = @import("./bun/subprocess.zig");
 
 const InternalTestingAPIs = struct {
     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

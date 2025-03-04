@@ -24,6 +24,7 @@
         "axios": "1.6.8",
         "body-parser": "1.20.2",
         "bun-plugin-svelte": "file:../packages/bun-plugin-svelte",
+        "bun-plugin-yaml": "0.0.1",
         "comlink": "4.4.1",
         "commander": "12.1.0",
         "devalue": "5.1.1",
@@ -870,6 +871,7 @@
     "bun-plugin-svelte": ["bun-plugin-svelte@file:../packages/bun-plugin-svelte", { "dependencies": { "svelte": "^5.20.4", "svelte-hmr": "^0.16.0" }, "devDependencies": { "bun-types": "canary" }, "peerDependencies": { "typescript": "^5" } }],
 
     "bun-types": ["bun-types@1.2.4-canary.20250226T140704", "", { "dependencies": { "@types/node": "*", "@types/ws": "~8.5.10" } }, "sha512-P8b2CGLtbvi/kQ4dPHBhU5qkguIjHMYCjNqjWDTKSnodWDTbcv9reBdktZJ7m5SF4m15JLthfFq2PtwKpA9a+w=="],
+    "bun-plugin-yaml": ["bun-plugin-yaml@0.0.1", "", { "dependencies": { "js-yaml": "^4.1.0" } }, "sha512-dAqe0eJu+SGtrwp75hrtDHWRnmMUdBJK365PPeM0skwFqWu6FYouVzaluG2FVVgs0NsKd+sXiWyGqvs0cilrkA=="],
 
     "busboy": ["busboy@1.6.0", "", { "dependencies": { "streamsearch": "^1.1.0" } }, "sha512-8SFQbg/0hQ9xy3UNTB0YEnsNBbWfhf7RtnzpL7TkBiTBRfrQ9Fxcnz7VJsleJpyp6rVLvXiuORqjlHi5q+PYuA=="],
 

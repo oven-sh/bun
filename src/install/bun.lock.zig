@@ -1476,7 +1476,7 @@ pub fn parseIntoBinaryLockfile(
             try bundled_pkgs.put(pkg_path, {});
         }
 
-        for (pkgs_expr.data.e_object.properties.slice()) |prop| {
+        next_pkg_key: for (pkgs_expr.data.e_object.properties.slice()) |prop| {
             const key = prop.key.?;
             const value = prop.value.?;
 
@@ -1573,7 +1573,25 @@ pub fn parseIntoBinaryLockfile(
                             if (comptime Environment.isDebug) {
                                 bun.assertWithLocation(!strings.eqlLong(pkg_path, pkg_names[workspace_pkg_id].slice(string_buf.bytes.items), true), @src());
                             }
+
+                            // found the workspace this key belongs to. for example both `pkg1` and `another-pkg1` should map
+                            // to the same package id:
+                            //
+                            // "workspaces": {
+                            //   "": {},
+                            //   "packages/pkg1": {
+                            //     "name": "pkg1",
+                            //   },
+                            // },
+                            // "overrides": {
+                            //   "some-pkg": "workspace:packages/pkg1",
+                            // },
+                            // "packages": {
+                            //   "pkg1": "workspace:packages/pkg1",
+                            //   "another-pkg1": "workspaces:packages/pkg1",
+                            // },
                             entry.value_ptr.* = workspace_pkg_id;
+                            continue :next_pkg_key;
                         }
                     }
 

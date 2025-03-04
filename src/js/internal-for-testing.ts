@@ -182,3 +182,5 @@ export const decodeURIComponentSIMD = $newCppFunction(
   "jsFunctionDecodeURIComponentSIMD",
   1,
 );
+
+export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");

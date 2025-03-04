@@ -98,12 +98,14 @@ pub const ImportKind = enum(u8) {
 };
 
 pub const ImportRecord = struct {
+    pub const Index = bun.GenericIndex(u32, ImportRecord);
+
     range: logger.Range,
     path: fs.Path,
     kind: ImportKind,
     tag: Tag = .none,
 
-    source_index: Index = Index.invalid,
+    source_index: bun.JSAst.Index = .invalid,
 
     print_mode: PrintMode = .normal,
 

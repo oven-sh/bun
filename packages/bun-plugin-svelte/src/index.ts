@@ -71,7 +71,6 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
           // TODO: support layered sourcemaps
         })
         .onResolve({ filter: /^bun-svelte:/ }, args => {
-          const [ns, name] = args.path.split(":");
           return {
             path: args.path,
             namespace: "bun-svelte",

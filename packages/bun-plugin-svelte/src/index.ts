@@ -12,7 +12,13 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
   /**
    * import specifier -> CSS source code
    */
-  const virtualCssModules = new Map<string, string>();
+  const virtualCssModules = new Map<string, VirtualCSSModule>();
+  type VirtualCSSModule = {
+    /** Path to the svelte file whose css this is for */
+    sourcePath: string;
+    /** Source code  */
+    source: string;
+  };
 
   return {
     name: "bun-plugin-svelte",
@@ -51,7 +57,7 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
           if (css?.code && generate != "server") {
             const uid = `${basename(path)}-${hash(path)}-style`.replaceAll(`"`, `'`);
             const virtualName = virtualNamespace + ":" + uid + ".css";
-            virtualCssModules.set(virtualName, css.code);
+            virtualCssModules.set(virtualName, { sourcePath: path, source: css.code });
             js.code += `\nimport "${virtualName}";`;
           }
 
@@ -71,11 +77,16 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
         })
         .onLoad({ filter: /\.css$/, namespace: virtualNamespace }, args => {
           const { path } = args;
-          const code = virtualCssModules.get(path);
+
+          const mod = virtualCssModules.get(path);
+          if (!mod) throw new Error("Virtual CSS module not found: " + path);
+          const { sourcePath, source } = mod;
           virtualCssModules.delete(path);
+
           return {
-            contents: code,
+            contents: source,
             loader: "css",
+            watchFiles: [sourcePath],
           };
         });
     },

@@ -882,7 +882,7 @@ pub const Resolver = struct {
         // Fragments in URLs in CSS imports are technically expected to work
         if (tmp == .not_found and kind.isFromCSS()) try_without_suffix: {
             // If resolution failed, try again with the URL query and/or hash removed
-            const maybe_suffix = std.mem.indexOfAny(u8, import_path, "?#");
+            const maybe_suffix = bun.strings.indexOfAny(import_path, "?#");
             if (maybe_suffix == null or maybe_suffix.? < 1)
                 break :try_without_suffix;
 

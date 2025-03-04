@@ -3748,6 +3748,7 @@ pub const libdeflate = @import("./deps/libdeflate.zig");
 pub const bake = @import("bake/bake.zig");
 
 /// like std.enums.tagName, except it doesn't lose the sentinel value.
+/// delete this if https://github.com/ziglang/zig/pull/23083 lands
 pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
     return inline for (@typeInfo(Enum).@"enum".fields) |f| {
         if (@intFromEnum(value) == f.value) break f.name;

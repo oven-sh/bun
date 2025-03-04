@@ -57,6 +57,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
     std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
     std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSNodeHTTPServerSocket;
     std::unique_ptr<IsoSubspace> m_subspaceForNodeVMGlobalObject;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3Bucket;
     std::unique_ptr<IsoSubspace> m_subspaceForJSS3File;

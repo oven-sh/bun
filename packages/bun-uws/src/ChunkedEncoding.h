@@ -42,9 +42,9 @@ namespace uWS {
     /* Reads hex number until CR or out of data to consume. Updates state. Returns bytes consumed. */
     inline void consumeHexNumber(std::string_view &data, uint64_t &state) {
         /* Consume everything higher than 32 */
-        while (data.length() && data.data()[0] > 32) {
+        while (data.length() && data[0] > 32) {
 
-            unsigned char digit = (unsigned char)data.data()[0];
+            unsigned char digit = (unsigned char)data[0];
             if (digit >= 'a') {
                 digit = (unsigned char) (digit - ('a' - ':'));
             } else if (digit >= 'A') {
@@ -67,7 +67,7 @@ namespace uWS {
             data.remove_prefix(1);
         }
         /* Consume everything not /n */
-        while (data.length() && data.data()[0] != '\n') {
+        while (data.length() && data[0] != '\n') {
             data.remove_prefix(1);
         }
         /* Now we stand on \n so consume it and enable size */

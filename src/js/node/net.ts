@@ -1232,11 +1232,13 @@ Object.defineProperty(Server.prototype, "listening", {
 });
 
 Server.prototype.ref = function ref() {
+  this._unref = false;
   this._handle?.ref();
   return this;
 };
 
 Server.prototype.unref = function unref() {
+  this._unref = true;
   this._handle?.unref();
   return this;
 };
@@ -1504,6 +1506,9 @@ Server.prototype[kRealListen] = function realListen(
       addServerName(this._handle, name, context);
     }
   }
+
+  // Unref the handle if the server was unref'ed prior to listening
+  if (this._unref) this.unref();
 
   // We must schedule the emitListeningNextTick() only after the next run of
   // the event loop's IO queue. Otherwise, the server may not actually be listening

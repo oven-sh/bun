@@ -1,0 +1,42 @@
+leading-zero-1 = 01
+leading-zero-2 = 00
+leading-zero-3 = 0_0
+leading-zero-sign-1 = -01
+leading-zero-sign-2 = +01
+leading-zero-sign-3 = +0_1
+
+double-sign-plus = ++99
+double-sign-nex = --99
+
+negative-hex = -0xff
+negative-bin = -0b11010110
+negative-oct = -0o755
+
+positive-hex = +0xff
+positive-bin = +0b11010110
+positive-oct = +0o755
+
+trailing-us = 123_
+leading-us = _123
+double-us = 1__23
+
+us-after-hex = 0x_1
+us-after-oct = 0o_1
+us-after-bin = 0b_1
+
+trailing-us-hex = 0x1_
+trailing-us-oct = 0o1_
+trailing-us-bin = 0b1_
+
+leading-us-hex = _0x1
+leading-us-oct = _0o1
+leading-us-bin = _0b1
+
+invalid-hex-1 = 0xaafz
+invalid-hex-2 = 0xgabba00f1
+invalid-oct = 0o778
+invalid-bin = 0b0012
+
+capital-hex = 0X1
+capital-oct = 0O0
+capital-bin = 0B0

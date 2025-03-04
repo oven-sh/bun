@@ -1,0 +1,14 @@
+{
+    "plain":    {"type": "integer", "value": "1"},
+    "with.dot": {"type": "integer", "value": "2"},
+    "plain_table": {
+        "plain":    {"type": "integer", "value": "3"},
+        "with.dot": {"type": "integer", "value": "4"}
+    },
+    "table": {
+        "withdot": {
+            "key.with.dots": {"type": "integer", "value": "6"},
+            "plain":         {"type": "integer", "value": "5"}
+        }
+    }
+}

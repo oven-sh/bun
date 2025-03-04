@@ -1,0 +1,8 @@
+{
+    "2000-date":           {"type": "date-local", "value": "2000-02-29"},
+    "2000-datetime":       {"type": "datetime", "value": "2000-02-29T15:15:15Z"},
+    "2000-datetime-local": {"type": "datetime-local", "value": "2000-02-29T15:15:15"},
+    "2024-date":           {"type": "date-local", "value": "2024-02-29"},
+    "2024-datetime":       {"type": "datetime", "value": "2024-02-29T15:15:15Z"},
+    "2024-datetime-local": {"type": "datetime-local", "value": "2024-02-29T15:15:15"}
+}

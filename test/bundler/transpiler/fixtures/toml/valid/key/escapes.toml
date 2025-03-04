@@ -1,0 +1,11 @@
+"\n" = "newline"
+"\b" = "bell"
+"\u00c0" = "latin capital letter A with grave"
+"\"" = "just a quote"
+
+["backsp\b\b"]
+
+["\"quoted\""]
+quote = true
+
+["a.b"."\u00c0"]

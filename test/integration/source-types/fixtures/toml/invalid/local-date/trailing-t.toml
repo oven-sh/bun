@@ -1,0 +1,2 @@
+# Date cannot end with trailing T
+d = 2006-01-30T

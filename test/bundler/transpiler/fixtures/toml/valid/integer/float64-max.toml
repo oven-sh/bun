@@ -1,0 +1,4 @@
+# Maximum and minimum safe float64 natural numbers. Mainly here for
+# -int-as-float.
+max_int =  9_007_199_254_740_991
+min_int = -9_007_199_254_740_991

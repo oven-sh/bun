@@ -1,0 +1,31 @@
+[section]#attached comment
+#[notsection]
+one = "11"#cmt
+two = "22#"
+three = '#'
+
+four = """# no comment
+# nor this
+#also not comment"""#is_comment
+
+five = 5.5#66
+six = 6#7
+8 = "eight"
+#nine = 99
+ten = 10e2#1
+eleven = 1.11e1#23
+
+["hash#tag"]
+"#!" = "hash bang"
+arr3 = [ "#", '#', """###""" ]
+arr4 = [ 1,# 9, 9,
+2#,9
+,#9
+3#]
+,4]
+arr5 = [[[[#["#"],
+["#"]]]]#]
+]
+tbl1 = { "#" = '}#'}#}}
+
+

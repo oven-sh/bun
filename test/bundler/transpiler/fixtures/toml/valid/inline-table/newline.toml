@@ -1,0 +1,24 @@
+# TOML 1.1 supports newlines in inline tables and trailing commas.
+
+trailing-comma-1 = {
+	c = 1,
+}
+trailing-comma-2 = { c = 1, }
+
+tbl-1 = {
+	hello = "world",
+	1     = 2,
+	arr   = [1,
+	         2,
+	         3,
+	        ],
+	tbl = {
+		 k = 1,
+	}
+}
+
+tbl-2 = {
+	k = """
+	Hello
+	"""
+}

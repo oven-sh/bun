@@ -1,0 +1,10 @@
+{
+    "backslash":     {"type": "string", "value": "This string has a \\\\ backslash character."},
+    "backspace":     {"type": "string", "value": "This string has a \\b backspace character."},
+    "carriage":      {"type": "string", "value": "This string has a \\r carriage return character."},
+    "formfeed":      {"type": "string", "value": "This string has a \\f form feed character."},
+    "newline":       {"type": "string", "value": "This string has a \\n new line character."},
+    "slash":         {"type": "string", "value": "This string has a \\/ slash character."},
+    "tab":           {"type": "string", "value": "This string has a \\t tab character."},
+    "unescaped_tab": {"type": "string", "value": "This string has an \t unescaped tab character."}
+}

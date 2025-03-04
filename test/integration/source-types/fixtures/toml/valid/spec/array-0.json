@@ -1,0 +1,56 @@
+{
+    "colors": [
+        {"type": "string", "value": "red"},
+        {"type": "string", "value": "yellow"},
+        {"type": "string", "value": "green"}
+    ],
+    "contributors": [
+        {"type": "string", "value": "Foo Bar \u003cfoo@example.com\u003e"},
+        {
+            "email": {"type": "string", "value": "bazqux@example.com"},
+            "name":  {"type": "string", "value": "Baz Qux"},
+            "url":   {"type": "string", "value": "https://example.com/bazqux"}
+        }
+    ],
+    "integers": [
+        {"type": "integer", "value": "1"},
+        {"type": "integer", "value": "2"},
+        {"type": "integer", "value": "3"}
+    ],
+    "nested_arrays_of_ints": [
+        [
+            {"type": "integer", "value": "1"},
+            {"type": "integer", "value": "2"}
+        ],
+        [
+            {"type": "integer", "value": "3"},
+            {"type": "integer", "value": "4"},
+            {"type": "integer", "value": "5"}
+        ]
+    ],
+    "nested_mixed_array": [
+        [
+            {"type": "integer", "value": "1"},
+            {"type": "integer", "value": "2"}
+        ],
+        [
+            {"type": "string", "value": "a"},
+            {"type": "string", "value": "b"},
+            {"type": "string", "value": "c"}
+        ]
+    ],
+    "numbers": [
+        {"type": "float", "value": "0.1"},
+        {"type": "float", "value": "0.2"},
+        {"type": "float", "value": "0.5"},
+        {"type": "integer", "value": "1"},
+        {"type": "integer", "value": "2"},
+        {"type": "integer", "value": "5"}
+    ],
+    "string_array": [
+        {"type": "string", "value": "all"},
+        {"type": "string", "value": "strings"},
+        {"type": "string", "value": "are the same"},
+        {"type": "string", "value": "type"}
+    ]
+}

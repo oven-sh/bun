@@ -1,0 +1,11 @@
+{
+    "group": {
+        "answer": {"type": "integer", "value": "42"},
+        "d":      {"type": "date-local", "value": "1979-05-27"},
+        "dt":     {"type": "datetime", "value": "1979-05-27T07:32:12-07:00"},
+        "more": [
+            {"type": "integer", "value": "42"},
+            {"type": "integer", "value": "42"}
+        ]
+    }
+}

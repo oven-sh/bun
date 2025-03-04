@@ -1,0 +1,19 @@
+{
+    "points": [
+        {
+            "x": {"type": "integer", "value": "1"},
+            "y": {"type": "integer", "value": "2"},
+            "z": {"type": "integer", "value": "3"}
+        },
+        {
+            "x": {"type": "integer", "value": "7"},
+            "y": {"type": "integer", "value": "8"},
+            "z": {"type": "integer", "value": "9"}
+        },
+        {
+            "x": {"type": "integer", "value": "2"},
+            "y": {"type": "integer", "value": "4"},
+            "z": {"type": "integer", "value": "8"}
+        }
+    ]
+}

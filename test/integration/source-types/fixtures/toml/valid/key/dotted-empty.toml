@@ -1,0 +1,4 @@
+''.x = "empty.x"
+x."" = "x.empty"
+[a]
+"".'' = "empty.empty"

@@ -2530,7 +2530,10 @@ function ClientRequest(input, options, cb) {
   const onAbort = (err?: Error) => {
     this[kClearTimeout]?.();
     socketCloseListener();
-    process.nextTick(emitAbortNextTick, this);
+    if (!this[abortedSymbol]) {
+      process.nextTick(emitAbortNextTick, this);
+      this[abortedSymbol] = true;
+    }
   };
 
   const startFetch = (customBody?) => {

@@ -2120,11 +2120,6 @@ pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 
-pub inline fn assertComptime() void {
-    var x = 0; // if you hit an error on this line, you are not in a comptime context
-    _ = &x;
-}
-
 const TODO_LOG = Output.scoped(.TODO, false);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
@@ -3401,13 +3396,13 @@ pub const ArenaAllocator = std.heap.ArenaAllocator;
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
-const ASSERTION_FAILURE_MSG = "Internal assertion failure";
+const assertionFailureMsg = "Internal assertion failure";
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
     } else {
         @branchHint(.cold);
-        Output.panic(ASSERTION_FAILURE_MSG, .{});
+        Output.panic(assertionFailureMsg, .{});
     }
 }
 
@@ -3416,7 +3411,7 @@ noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn
         @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic(ASSERTION_FAILURE_MSG ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
+        Output.panic(assertionFailureMsg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
@@ -3425,7 +3420,7 @@ noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) nor
         @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
     } else {
         @branchHint(.cold);
-        Output.panic(ASSERTION_FAILURE_MSG ++ ": " ++ msg, .args);
+        Output.panic(assertionFailureMsg ++ ": " ++ msg, .args);
     }
 }
 
@@ -3507,10 +3502,10 @@ pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(ca
 /// Asserts that some condition holds. These assertions are not stripped
 /// in any build mode. Use `assert` to have assertions stripped in release
 /// builds.
-pub fn assertRelease(ok: bool, comptime msg: []const u8, args: anytype) callconv(callconv_inline) void {
+pub fn releaseAssert(ok: bool, comptime msg: []const u8, args: anytype) callconv(callconv_inline) void {
     if (!ok) {
         @branchHint(.unlikely);
-        Output.panic(ASSERTION_FAILURE_MSG ++ ": " ++ msg, args);
+        Output.panic(assertionFailureMsg ++ ": " ++ msg, args);
     }
 }
 

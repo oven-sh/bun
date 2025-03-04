@@ -2375,7 +2375,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
+    fn refCountedStringWithWasNew(this: *VirtualMachine, new: *bool, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {
         JSC.markBinding(@src());
         bun.assert(input_.len > 0);
         const hash = hash_ orelse JSC.RefString.computeHash(input_);
@@ -2394,7 +2394,7 @@ pub const VirtualMachine = struct {
                 .allocator = this.allocator,
                 .ptr = input.ptr,
                 .len = input.len,
-                .impl = bun.String.createExternal(input, true, ref, &JSC.RefString.RefString__free).value.WTFStringImpl,
+                .impl = bun.String.createExternal(*JSC.RefString, input, true, ref, &freeRefString).value.WTFStringImpl,
                 .hash = hash,
                 .ctx = this,
                 .onBeforeDeinit = VirtualMachine.clearRefString,
@@ -2403,6 +2403,10 @@ pub const VirtualMachine = struct {
         }
         new.* = !entry.found_existing;
         return entry.value_ptr.*;
+    }
+
+    fn freeRefString(str: *JSC.RefString, _: *anyopaque, _: u32) callconv(.C) void {
+        str.deinit();
     }
 
     pub fn refCountedString(this: *VirtualMachine, input_: []const u8, hash_: ?u32, comptime dupe: bool) *JSC.RefString {

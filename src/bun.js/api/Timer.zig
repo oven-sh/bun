@@ -202,8 +202,6 @@ pub const All = struct {
                     return true;
                 },
             }
-
-            unreachable;
         }
 
         return false;

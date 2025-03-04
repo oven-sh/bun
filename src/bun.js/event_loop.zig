@@ -1507,7 +1507,7 @@ pub const EventLoop = struct {
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
             // for the printer, this is defined:
             var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
+            loop.tickWithTimeout(if (this.immediate_tasks.count == 0 and ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
 
             if (comptime Environment.isDebug) {
                 log("tick {}, timeout: {}", .{ std.fmt.fmtDuration(event_loop_sleep_timer.read()), std.fmt.fmtDuration(timespec.ns()) });

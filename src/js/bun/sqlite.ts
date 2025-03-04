@@ -48,6 +48,8 @@ const constants = {
   SQLITE_PREPARE_NORMALIZE: 0x02,
   SQLITE_PREPARE_NO_VTAB: 0x04,
 
+  SQLITE_DESERIALIZE_READONLY: 0x00000004 /* Ok for sqlite3_deserialize() */,
+
   SQLITE_FCNTL_LOCKSTATE: 1,
   SQLITE_FCNTL_GET_LOCKPROXYFILE: 2,
   SQLITE_FCNTL_SET_LOCKPROXYFILE: 3,
@@ -284,6 +286,7 @@ class Database {
     if (typeof filenameGiven === "undefined") {
     } else if (typeof filenameGiven !== "string") {
       if (isTypedArray(filenameGiven)) {
+        let deserializeFlags = 0;
         if (options && typeof options === "object") {
           if (options.strict) {
             this.#internalFlags |= kStrictFlag;
@@ -292,13 +295,17 @@ class Database {
           if (options.safeIntegers) {
             this.#internalFlags |= kSafeIntegersFlag;
           }
+
+          if (options.readonly) { 
+            deserializeFlags |= constants.SQLITE_DESERIALIZE_READONLY;
+          }
         }
 
         this.#handle = Database.#deserialize(
           filenameGiven,
-          typeof options === "object" && options
-            ? !!options.readonly
-            : ((options | 0) & constants.SQLITE_OPEN_READONLY) != 0,
+          this.#internalFlags,
+          deserializeFlags
+
         );
         this.filename = ":memory:";
 
@@ -385,16 +392,23 @@ class Database {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized, isReadOnly = false) {
+  static #deserialize(serialized, openFlags, deserializeFlags) {
     if (!SQL) {
       initializeSQL();
     }
 
-    return SQL.deserialize(serialized, isReadOnly);
+    return SQL.deserialize(serialized, openFlags, deserializeFlags);
   }
 
-  static deserialize(serialized, isReadOnly = false) {
-    return new Database(serialized, isReadOnly ? constants.SQLITE_OPEN_READONLY : 0);
+  static deserialize(serialized, options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false) {
+    if (typeof options === "boolean") {
+      // Maintain backward compatibility with existing API
+      return new Database(serialized, { readonly: options });
+    } else if (options && typeof options === "object") {
+      return new Database(serialized, options);
+    } else {
+      return new Database(serialized, 0);
+    }
   }
 
   [Symbol.dispose]() {

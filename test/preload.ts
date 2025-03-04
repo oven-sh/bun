@@ -1,6 +1,3 @@
-import path from "node:path";
-import { statSync } from "node:fs";
-import { expect } from "bun:test";
 import * as harness from "./harness";
 
 // We make Bun.env read-only

@@ -45,6 +45,7 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
             args && "side" in args // "side" only passed when run from dev server
               ? (args as { side: "client" | "server" }).side
               : "server";
+          const hmr = Boolean((args as { hmr?: boolean })["hmr"] ?? process.env.NODE_ENV !== "production");
           const generate = baseCompileOptions.generate ?? side;
 
           const compileFn = isModule ? compileModule : compile;
@@ -52,6 +53,7 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
             ...baseCompileOptions,
             generate,
             filename: args.path,
+            hmr,
           });
           var { js, css } = result;
           if (css?.code && generate != "server") {

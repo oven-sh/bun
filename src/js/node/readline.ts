@@ -1485,6 +1485,7 @@ var _Interface = class Interface extends InterfaceConstructor {
       this[kSetRawMode](false);
     }
     this.closed = true;
+    this.input.close?.();
     this.emit("close");
   }
 

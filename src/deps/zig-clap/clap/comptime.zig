@@ -78,12 +78,7 @@ pub fn ComptimeClap(
                 if (param.names.long == null and param.names.short == null) {
                     try pos.append(arg.value.?);
                     if (opt.stop_after_positional_at > 0 and pos.items.len >= opt.stop_after_positional_at) {
-                        var remaining_ = stream.iter.remain;
-                        const first: []const u8 = if (remaining_.len > 0) bun.span(remaining_[0]) else "";
-                        if (first.len > 0 and std.mem.eql(u8, first, "--")) {
-                            remaining_ = remaining_[1..];
-                        }
-
+                        const remaining_ = stream.iter.remain;
                         try passthrough_positionals.ensureTotalCapacityPrecise(remaining_.len);
                         for (remaining_) |arg_| {
                             // use bun.span due to the optimization for long strings

@@ -36,13 +36,13 @@ ref_count: u32 = 1,
 abort_signal: ?*JSC.AbortSignal = null,
 
 event_loop_timer_refd: bool = false,
-event_loop_timer: JSC.BunTimer.EventLoopTimer.Node = .{ .data = .{
+event_loop_timer: JSC.API.Bun.Timer.EventLoopTimer = .{
     .tag = .SubprocessTimeout,
     .next = .{
         .sec = 0,
         .nsec = 0,
     },
-} },
+},
 killSignal: SignalCode,
 
 pub const Flags = packed struct {
@@ -608,14 +608,14 @@ fn setEventLoopTimerRefd(this: *Subprocess, refd: bool) void {
     }
 }
 
-pub fn timeoutCallback(this: *Subprocess) JSC.BunTimer.EventLoopTimer.Arm {
+pub fn timeoutCallback(this: *Subprocess) JSC.API.Bun.Timer.EventLoopTimer.Arm {
     this.setEventLoopTimerRefd(false);
-    if (this.event_loop_timer.data.state == .CANCELLED) return .disarm;
+    if (this.event_loop_timer.state == .CANCELLED) return .disarm;
     if (this.hasExited()) {
-        this.event_loop_timer.data.state = .CANCELLED;
+        this.event_loop_timer.state = .CANCELLED;
         return .disarm;
     }
-    this.event_loop_timer.data.state = .FIRED;
+    this.event_loop_timer.state = .FIRED;
     _ = this.tryKill(this.killSignal);
     return .disarm;
 }
@@ -1487,7 +1487,7 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     defer this.deref();
     defer this.disconnectIPC(true);
 
-    if (this.event_loop_timer.data.state == .ACTIVE) {
+    if (this.event_loop_timer.state == .ACTIVE) {
         jsc_vm.timer.remove(&this.event_loop_timer);
     }
     this.setEventLoopTimerRefd(false);
@@ -1666,7 +1666,7 @@ pub fn finalize(this: *Subprocess) callconv(.C) void {
     this.process.detach();
     this.process.deref();
 
-    if (this.event_loop_timer.data.state == .ACTIVE) {
+    if (this.event_loop_timer.state == .ACTIVE) {
         this.globalThis.bunVM().timer.remove(&this.event_loop_timer);
     }
     this.setEventLoopTimerRefd(false);
@@ -2377,7 +2377,7 @@ pub fn spawnMaybeSync(
     should_close_memfd = false;
 
     if (timeout) |timeout_val| {
-        subprocess.event_loop_timer.data.next = bun.timespec.msFromNow(timeout_val);
+        subprocess.event_loop_timer.next = bun.timespec.msFromNow(timeout_val);
         globalThis.bunVM().timer.insert(&subprocess.event_loop_timer);
         subprocess.setEventLoopTimerRefd(true);
     }
@@ -2451,7 +2451,7 @@ pub fn spawnMaybeSync(
     const stdout = try subprocess.stdout.toBufferedValue(globalThis);
     const stderr = try subprocess.stderr.toBufferedValue(globalThis);
     const resource_usage: JSValue = if (!globalThis.hasException()) subprocess.createResourceUsageObject(globalThis) else .zero;
-    const exitedDueToTimeout = subprocess.event_loop_timer.data.state == .FIRED;
+    const exitedDueToTimeout = subprocess.event_loop_timer.state == .FIRED;
     const resultPid = JSC.JSValue.jsNumberFromInt32(subprocess.pid());
     subprocess.finalize();
 

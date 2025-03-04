@@ -2123,7 +2123,7 @@ pub const ModuleLoader = struct {
                                 if (bun.Watcher.requires_file_descriptors) {
                                     switch (bun.sys.open(
                                         &(std.posix.toPosixPath(path.text) catch break :auto_watch),
-                                        bun.C.O_EVTONLY,
+                                        bun.c.O_EVTONLY,
                                         0,
                                     )) {
                                         .err => break :auto_watch,

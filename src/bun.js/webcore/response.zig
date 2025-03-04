@@ -52,7 +52,7 @@ const Request = JSC.WebCore.Request;
 const Blob = JSC.WebCore.Blob;
 const Async = bun.Async;
 
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("../api/bun/x509.zig");
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 const s3 = bun.S3;

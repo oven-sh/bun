@@ -14,7 +14,8 @@
       "@faasjs/larger/*": ["js/bun/resolve/*/larger-index.js"]
     },
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
+    "emitDecoratorMetadata": true,
+    "types": ["../packages/bun-types"]
   },
   "include": [
     //

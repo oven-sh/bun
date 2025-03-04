@@ -682,6 +682,8 @@ const Socket = (function (InternalSocket) {
         session,
       } = options;
 
+      if (options.port == undefined && options.path == null) throw $ERR_MISSING_ARGS(["options", "port", "path"]);
+
       if (localAddress && !isIP(localAddress)) {
         throw $ERR_INVALID_IP_ADDRESS(localAddress);
       }
@@ -1608,7 +1610,6 @@ function createServer(options, connectionListener) {
 }
 
 function normalizeArgs(args) {
-  while (args[args.length - 1] == null) args.pop();
   let arr;
 
   if (args.length === 0) {

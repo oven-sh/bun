@@ -3396,13 +3396,13 @@ pub const ArenaAllocator = std.heap.ArenaAllocator;
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
-const assertionFailureMsg = "Internal assertion failure";
+const assertion_failure_msg = "Internal assertion failure";
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
     } else {
         @branchHint(.cold);
-        Output.panic(assertionFailureMsg, .{});
+        Output.panic(assertion_failure_msg, .{});
     }
 }
 
@@ -3411,7 +3411,7 @@ noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn
         @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic(assertionFailureMsg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
+        Output.panic(assertion_failure_msg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
@@ -3420,7 +3420,7 @@ noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) nor
         @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
     } else {
         @branchHint(.cold);
-        Output.panic(assertionFailureMsg ++ ": " ++ msg, .args);
+        Output.panic(assertion_failure_msg ++ ": " ++ msg, .args);
     }
 }
 
@@ -3505,7 +3505,7 @@ pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(ca
 pub fn releaseAssert(ok: bool, comptime msg: []const u8, args: anytype) callconv(callconv_inline) void {
     if (!ok) {
         @branchHint(.unlikely);
-        Output.panic(assertionFailureMsg ++ ": " ++ msg, args);
+        Output.panic(assertion_failure_msg ++ ": " ++ msg, args);
     }
 }
 

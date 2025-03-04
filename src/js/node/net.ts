@@ -517,6 +517,13 @@ const Socket = (function (InternalSocket) {
         ...opts
       } = options || {};
 
+      if (options?.objectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.objectMode", options.objectMode, "is not supported");
+      if (options?.readableObjectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.readableObjectMode", options.readableObjectMode, "is not supported");
+      if (options?.writableObjectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
+
       super({
         ...opts,
         allowHalfOpen,

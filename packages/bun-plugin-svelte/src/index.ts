@@ -1,5 +1,4 @@
 import type { BunPlugin, BuildConfig, OnLoadResult } from "bun";
-import { strict as assert } from "node:assert";
 import { basename } from "node:path";
 import { compile, compileModule } from "svelte/compiler";
 import { getBaseCompileOptions, validateOptions, type SvelteOptions, hash } from "./options";
@@ -23,9 +22,7 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
 
       builder
         .onLoad({ filter: /\.svelte(?:\.[tj]s)?$/ }, async args => {
-          assert(args && typeof args === "object");
           const { path } = args;
-          assert(typeof path === "string");
 
           var isModule = false;
 
@@ -67,7 +64,6 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
         })
         .onResolve({ filter: /^bun-svelte:/ }, args => {
           const [ns, name] = args.path.split(":");
-          assert(ns === "bun-svelte" && !!name);
           return {
             path: args.path,
             namespace: "bun-svelte",
@@ -76,7 +72,6 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
         .onLoad({ filter: /\.css$/, namespace: virtualNamespace }, args => {
           const { path } = args;
           const code = virtualCssModules.get(path);
-          assert(code != null, `bun-svelte-plugin: CSS not found for virtual css module "${path}"`);
           virtualCssModules.delete(path);
           return {
             contents: code,

@@ -2388,30 +2388,18 @@ function ClientRequest(input, options, cb) {
       callback = undefined;
     }
 
-    return createStream(chunk, encoding, callback);
+    return write_(chunk, encoding, callback);
   };
 
-  const createStream = (chunk, encoding, callback) => {
-    if (!this[kStream]) {
-      const self = this;
+  let writeCount = 0;
+  let resolveNextChunk = () => {};
 
-      this[kStream] = new ReadableStream({
-        type: "direct",
-        pull(controller) {
-          self[kController] = controller;
-          for (let chunk of self[kBodyChunks]) {
-            if (chunk === null) {
-              controller.close();
-            } else {
-              controller.write(chunk);
-            }
-          }
-          self[kBodyChunks] = null;
-        },
-      });
+  const pushChunk = chunk => {
+    this[kBodyChunks].push(chunk);
+    if (writeCount > 1) {
+      startFetch();
     }
-
-    return write_(chunk, encoding, callback);
+    resolveNextChunk?.();
   };
 
   const write_ = (chunk, encoding, callback) => {
@@ -2426,9 +2414,11 @@ function ClientRequest(input, options, cb) {
       chunk = Buffer.from(chunk, encoding);
     }
     bodySize = chunk.length;
+    writeCount++;
 
     if (!this[kBodyChunks]) {
-      this[kBodyChunks] = [chunk];
+      this[kBodyChunks] = [];
+      pushChunk(chunk);
 
       if (callback) callback();
       return true;
@@ -2444,7 +2434,7 @@ function ClientRequest(input, options, cb) {
         break;
       }
     }
-    this[kBodyChunks].push(chunk);
+    pushChunk(chunk);
 
     if (callback) callback();
     return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
@@ -2543,16 +2533,17 @@ function ClientRequest(input, options, cb) {
     process.nextTick(emitAbortNextTick, this);
   };
 
-  const send = () => {
-    this[finishedSymbol] = true;
-    const controller = new AbortController();
-    this[kAbortController] = controller;
-    controller.signal.addEventListener("abort", onAbort, { once: true });
+  const startFetch = (customBody?) => {
+    if (this[kFetchRequest] !== undefined) {
+      return false;
+    }
 
-    var method = this[kMethod],
-      body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
-    if (body) {
-      this[kBodyChunks] = [];
+    const method = this[kMethod];
+
+    let keepalive = true;
+    const agentKeepalive = this[kAgent]?.keepalive;
+    if (agentKeepalive !== undefined) {
+      keepalive = agentKeepalive;
     }
 
     let url: string;
@@ -2573,55 +2564,85 @@ function ClientRequest(input, options, cb) {
       } catch {}
     }
 
-    let keepalive = true;
-    const agentKeepalive = this[kAgent]?.keepalive;
-    if (agentKeepalive !== undefined) {
-      keepalive = agentKeepalive;
-    }
     const tls = protocol === "https:" && this[kTls] ? { ...this[kTls], serverName: this[kTls].servername } : undefined;
-    try {
-      const fetchOptions: any = {
-        method,
-        headers: this.getHeaders(),
-        redirect: "manual",
-        signal: this[kAbortController].signal,
-        // Timeouts are handled via this.setTimeout.
-        timeout: false,
-        // Disable auto gzip/deflate
-        decompress: false,
-        keepalive,
-      };
 
-      if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
-        fetchOptions.body = body;
-      }
+    const fetchOptions: any = {
+      method,
+      headers: this.getHeaders(),
+      redirect: "manual",
+      signal: this[kAbortController]?.signal,
+      // Timeouts are handled via this.setTimeout.
+      timeout: false,
+      // Disable auto gzip/deflate
+      decompress: false,
+      keepalive,
+    };
 
-      if (tls) {
-        fetchOptions.tls = tls;
-      }
+    let keepOpen = false;
 
-      if (!!$debug) {
-        fetchOptions.verbose = true;
-      }
+    if (customBody === undefined) {
+      fetchOptions.duplex = "half";
+      keepOpen = true;
+    }
 
-      if (proxy) {
-        fetchOptions.proxy = proxy;
-      }
-
-      const socketPath = this[kSocketPath];
-
-      if (socketPath) {
-        fetchOptions.unix = socketPath;
-      }
-
-      //@ts-ignore
-      this[kFetchRequest] = fetch(url, fetchOptions)
-        .then(response => {
-          if (this.aborted) {
-            maybeEmitClose();
-            return;
+    if (method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
+      const self = this;
+      if (customBody !== undefined) {
+        fetchOptions.body = customBody;
+      } else {
+        fetchOptions.body = async function* () {
+          while (self[kBodyChunks]?.length > 0) {
+            yield self[kBodyChunks].shift();
           }
 
+          while (!self[finishedSymbol]) {
+            yield await new Promise(resolve => {
+              resolveNextChunk = end => {
+                resolveNextChunk = undefined;
+                if (end) {
+                  resolve(undefined);
+                } else {
+                  resolve(self[kBodyChunks].shift());
+                }
+              };
+            });
+          }
+
+          handleResponse?.();
+        };
+      }
+    }
+
+    if (tls) {
+      fetchOptions.tls = tls;
+    }
+
+    if (!!$debug) {
+      fetchOptions.verbose = true;
+    }
+
+    if (proxy) {
+      fetchOptions.proxy = proxy;
+    }
+
+    const socketPath = this[kSocketPath];
+
+    if (socketPath) {
+      fetchOptions.unix = socketPath;
+    }
+
+    //@ts-ignore
+    this[kFetchRequest] = fetch(url, fetchOptions)
+      .then(response => {
+        if (this.aborted) {
+          maybeEmitClose();
+          return;
+        }
+
+        handleResponse = () => {
+          this[kFetchRequest] = null;
+          this[kClearTimeout]();
+          handleResponse = undefined;
           const prevIsHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = response.url.startsWith("https:");
           var res = (this.res = new IncomingMessage(response, {
@@ -2648,22 +2669,51 @@ function ClientRequest(input, options, cb) {
             maybeEmitClose();
             return;
           }
-        })
-        .catch(err => {
-          // Node treats AbortError separately.
-          // The "abort" listener on the abort controller should have called this
-          if (isAbortError(err)) {
-            return;
-          }
+        };
 
-          if (!!$debug) globalReportError(err);
+        if (!keepOpen) {
+          handleResponse();
+        }
 
-          this.emit("error", err);
-        })
-        .finally(() => {
+        onEnd();
+      })
+      .catch(err => {
+        // Node treats AbortError separately.
+        // The "abort" listener on the abort controller should have called this
+        if (isAbortError(err)) {
+          return;
+        }
+
+        if (!!$debug) globalReportError(err);
+
+        this.emit("error", err);
+      })
+      .finally(() => {
+        if (!keepOpen) {
           this[kFetchRequest] = null;
           this[kClearTimeout]();
-        });
+        }
+      });
+
+    return true;
+  };
+
+  let onEnd = () => {};
+  let handleResponse = () => {};
+
+  const send = () => {
+    this[finishedSymbol] = true;
+    const controller = new AbortController();
+    this[kAbortController] = controller;
+    controller.signal.addEventListener("abort", onAbort, { once: true });
+
+    var body = this[kBodyChunks] && this[kBodyChunks].length > 1 ? new Blob(this[kBodyChunks]) : this[kBodyChunks]?.[0];
+
+    try {
+      startFetch(body);
+      onEnd = () => {
+        handleResponse?.();
+      };
     } catch (err) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);

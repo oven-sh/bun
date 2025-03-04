@@ -3504,7 +3504,7 @@ pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(ca
 /// builds.
 pub fn releaseAssert(ok: bool, comptime msg: []const u8, args: anytype) callconv(callconv_inline) void {
     if (!ok) {
-        @branchHint(.unlikely);
+        @branchHint(.cold);
         Output.panic(assertion_failure_msg ++ ": " ++ msg, args);
     }
 }

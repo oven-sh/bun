@@ -153,7 +153,10 @@ pub const WebWorker = struct {
         }
 
         var resolved_entry_point: bun.resolver.Result = parent.transpiler.resolveEntryPoint(str) catch {
-            const out = logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
+            const out = logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global) catch {
+                error_message.* = bun.String.static("unexpected exception");
+                return null;
+            };
             error_message.* = out;
             return null;
         };
@@ -328,7 +331,7 @@ pub const WebWorker = struct {
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
-        const str = err.toBunString(vm.global);
+        const str = err.toBunString(vm.global) catch @panic("unexpected exception");
         defer str.deref();
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }
@@ -475,6 +478,7 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+        // TODO(@heimskr): make WebWorker termination more immediate. Currently, console.log after process.exit will go through if in a WebWorker.
         if (this.status.load(.acquire) == .terminated) {
             return;
         }

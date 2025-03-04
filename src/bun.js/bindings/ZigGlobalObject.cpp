@@ -160,6 +160,8 @@
 #include "JSPerformanceResourceTiming.h"
 #include "JSPerformanceTiming.h"
 #include "JSX509Certificate.h"
+#include "JSSign.h"
+#include "JSVerify.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -668,18 +670,22 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
 
     for (int i = 0; i < stackTrace.size(); i++) {
         ZigStackFrame frame = {};
-
-        String sourceURLForFrame = Zig::sourceURL(vm, stackFrames.at(i));
+        auto& stackFrame = stackFrames.at(i);
+        String sourceURLForFrame = Zig::sourceURL(vm, stackFrame);
 
         // When you use node:vm, the global object can be different on a
         // per-frame basis. We should sourcemap the frames which are in Bun's
         // global object, and not sourcemap the frames which are in a different
         // global object.
         JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
-        if (stackFrames.at(i).hasLineAndColumnInfo()) {
-            auto* callee = stackFrames.at(i).callee();
-            if (auto* object = callee->getObject()) {
-                globalObjectForFrame = object->globalObject();
+
+        if (stackFrame.hasLineAndColumnInfo()) {
+            auto* callee = stackFrame.callee();
+            // https://github.com/oven-sh/bun/issues/17698
+            if (callee) {
+                if (auto* object = callee->getObject()) {
+                    globalObjectForFrame = object->globalObject();
+                }
             }
         }
 
@@ -1198,13 +1204,11 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
-    , globalEventScope(*new Bun::WorkerGlobalScope(m_scriptExecutionContext))
+    , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
-    globalEventScope.m_context = m_scriptExecutionContext;
-    // FIXME: is there a better way to do this? this event handler should always be tied to the global object
-    globalEventScope.relaxAdoptionRequirement();
+    globalEventScope->m_context = m_scriptExecutionContext;
 }
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId, const JSC::GlobalObjectMethodTable* methodTable)
@@ -1215,22 +1219,15 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_worldIsNormal(true)
     , m_builtinInternalFunctions(vm)
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
-    , globalEventScope(*new Bun::WorkerGlobalScope(m_scriptExecutionContext))
+    , globalEventScope(adoptRef(*new Bun::WorkerGlobalScope(m_scriptExecutionContext)))
 {
     // m_scriptExecutionContext = globalEventScope.m_context;
     mockModule = Bun::JSMockModule::create(this);
-    globalEventScope.m_context = m_scriptExecutionContext;
-    // FIXME: is there a better way to do this? this event handler should always be tied to the global object
-    globalEventScope.relaxAdoptionRequirement();
+    globalEventScope->m_context = m_scriptExecutionContext;
 }
 
 GlobalObject::~GlobalObject()
 {
-    if (napiInstanceDataFinalizer) {
-        napi_finalize finalizer = reinterpret_cast<napi_finalize>(napiInstanceDataFinalizer);
-        finalizer(toNapi(this), napiInstanceData, napiInstanceDataFinalizerHint);
-    }
-
     if (auto* ctx = scriptExecutionContext()) {
         ctx->removeFromContextsMap();
         ctx->deref();
@@ -1500,7 +1497,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     switch (argumentCount) {
     case 0: {
-        JSC::throwTypeError(globalObject, scope, "setTimeout requires 1 argument (a function)"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setTimeout requires 1 argument (a function)"_s);
         return {};
     }
     case 1:
@@ -1526,7 +1523,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 
     if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
-        JSC::throwTypeError(globalObject, scope, "setTimeout expects a function"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setTimeout expects a function"_s);
         return {};
     }
 
@@ -1541,7 +1538,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeout,
     }
 #endif
 
-    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
+    return Bun__Timer__setTimeout(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments), Bun::CountdownOverflowBehavior::OneMs);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
@@ -1556,7 +1553,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
 
     switch (argumentCount) {
     case 0: {
-        JSC::throwTypeError(globalObject, scope, "setInterval requires 1 argument (a function)"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setInterval requires 1 argument (a function)"_s);
         return {};
     }
     case 1: {
@@ -1585,7 +1582,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     }
 
     if (UNLIKELY(!job.isObject() || !job.getObject()->isCallable())) {
-        JSC::throwTypeError(globalObject, scope, "setInterval expects a function"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setInterval expects a function"_s);
         return {};
     }
 
@@ -1603,18 +1600,12 @@ JSC_DEFINE_HOST_FUNCTION(functionSetInterval,
     return Bun__Timer__setInterval(globalObject, JSC::JSValue::encode(job), JSC::JSValue::encode(num), JSValue::encode(arguments));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
+JSC_DEFINE_HOST_FUNCTION(functionClearImmediate,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (callFrame->argumentCount() == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "clearInterval requires 1 argument (a number)"_s);
-        return {};
-    }
-
-    JSC::JSValue num = callFrame->argument(0);
+    JSC::JSValue timer_or_num = callFrame->argument(0);
 
 #ifdef BUN_DEBUG
     /** View the file name of the JS file that called this function
@@ -1627,7 +1618,28 @@ JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
     }
 #endif
 
-    return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(num));
+    return Bun__Timer__clearImmediate(globalObject, JSC::JSValue::encode(timer_or_num));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionClearInterval,
+    (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+
+    JSC::JSValue timer_or_num = callFrame->argument(0);
+
+#ifdef BUN_DEBUG
+    /** View the file name of the JS file that called this function
+     * from a debugger */
+    SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
+    const char* fileName = sourceOrigin.string().utf8().data();
+    static const char* lastFileName = nullptr;
+    if (lastFileName != fileName) {
+        lastFileName = fileName;
+    }
+#endif
+
+    return Bun__Timer__clearInterval(globalObject, JSC::JSValue::encode(timer_or_num));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
@@ -1635,13 +1647,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (callFrame->argumentCount() == 0) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        JSC::throwTypeError(globalObject, scope, "clearTimeout requires 1 argument (a number)"_s);
-        return {};
-    }
-
-    JSC::JSValue num = callFrame->argument(0);
+    JSC::JSValue timer_or_num = callFrame->argument(0);
 
 #ifdef BUN_DEBUG
     /** View the file name of the JS file that called this function
@@ -1654,7 +1660,7 @@ JSC_DEFINE_HOST_FUNCTION(functionClearTimeout,
     }
 #endif
 
-    return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(num));
+    return Bun__Timer__clearTimeout(globalObject, JSC::JSValue::encode(timer_or_num));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionStructuredClone,
@@ -1913,7 +1919,7 @@ static inline JSC::EncodedJSValue jsFunctionAddEventListenerBody(JSC::JSGlobalOb
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<AddEventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
+    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl->addEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     return result;
@@ -1942,7 +1948,7 @@ static inline JSC::EncodedJSValue jsFunctionRemoveEventListenerBody(JSC::JSGloba
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<EventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.removeEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
+    auto result = JSValue::encode(WebCore::toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl->removeEventListenerForBindings(WTFMove(type), WTFMove(listener), WTFMove(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
     vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
     return result;
@@ -1965,7 +1971,7 @@ static inline JSC::EncodedJSValue jsFunctionDispatchEventBody(JSC::JSGlobalObjec
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto event = convert<IDLInterface<Event>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "event"_s, "EventTarget"_s, "dispatchEvent"_s, "Event"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(WebCore::toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.dispatchEventForBindings(*event))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(WebCore::toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl->dispatchEventForBindings(*event))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionDispatchEvent, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2447,7 +2453,6 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
 }
 
-extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue);
 extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC__JSValue readableStreamValue)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2466,6 +2471,11 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*
 
     auto callData = JSC::getCallData(function);
     return JSC::JSValue::encode(call(globalObject, function, callData, JSC::jsUndefined(), arguments));
+}
+
+extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
+{
+    return globalObject->makeNapiEnvForFFI();
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionReadableStreamToArrayBuffer);
@@ -2806,6 +2816,17 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSX509CertificateClassStructure.initLater([](LazyClassStructure::Initializer& init) {
         setupX509CertificateClassStructure(init);
     });
+
+    m_JSSignClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSSignClassStructure(init);
+        });
+
+    m_JSVerifyClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSVerifyClassStructure(init);
+        });
+
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -3064,12 +3085,6 @@ void GlobalObject::finishCreation(VM& vm)
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
                 Bun::NapiExternal::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
-        });
-
-    m_NAPIFunctionStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(
-                Zig::createNAPIFunctionStructure(init.vm, init.owner));
         });
 
     m_NapiPrototypeStructure.initLater(
@@ -3440,14 +3455,14 @@ JSC_DEFINE_HOST_FUNCTION(functionSetImmediate,
 
     auto argCount = callFrame->argumentCount();
     if (argCount == 0) {
-        JSC::throwTypeError(globalObject, scope, "setImmediate requires 1 argument (a function)"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setImmediate requires 1 argument (a function)"_s);
         return {};
     }
 
     auto job = callFrame->argument(0);
 
     if (!job.isObject() || !job.getObject()->isCallable()) {
-        JSC::throwTypeError(globalObject, scope, "setImmediate expects a function"_s);
+        Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_ARG_TYPE, "setImmediate expects a function"_s);
         return {};
     }
 
@@ -3962,7 +3977,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSDirentClassStructure.visit(visitor);
     thisObject->m_NapiClassStructure.visit(visitor);
     thisObject->m_NapiExternalStructure.visit(visitor);
-    thisObject->m_NAPIFunctionStructure.visit(visitor);
     thisObject->m_NapiPrototypeStructure.visit(visitor);
     thisObject->m_NapiHandleScopeImplStructure.visit(visitor);
     thisObject->m_NapiTypeTagStructure.visit(visitor);
@@ -3986,6 +4000,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_utilInspectStylizeColorFunction.visit(visitor);
     thisObject->m_utilInspectStylizeNoColorFunction.visit(visitor);
     thisObject->m_vmModuleContextMap.visit(visitor);
+    thisObject->m_napiTypeTags.visit(visitor);
     thisObject->mockModule.activeSpySetStructure.visit(visitor);
     thisObject->mockModule.mockFunctionStructure.visit(visitor);
     thisObject->mockModule.mockImplementationStructure.visit(visitor);
@@ -3998,6 +4013,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBunRequestStructure.visit(visitor);
     thisObject->m_JSBunRequestParamsPrototype.visit(visitor);
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
+    thisObject->m_JSSignClassStructure.visit(visitor);
+    thisObject->m_JSVerifyClassStructure.visit(visitor);
     thisObject->m_statValues.visit(visitor);
     thisObject->m_bigintStatValues.visit(visitor);
     thisObject->m_statFsValues.visit(visitor);
@@ -4094,7 +4111,7 @@ void GlobalObject::visitAdditionalChildren(Visitor& visitor)
     GlobalObject* thisObject = this;
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
-    thisObject->globalEventScope.visitJSEventListeners(visitor);
+    thisObject->globalEventScope->visitJSEventListeners(visitor);
 
     ScriptExecutionContext* context = thisObject->scriptExecutionContext();
     visitor.addOpaqueRoot(context);
@@ -4519,6 +4536,37 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
     }
 }
 
+napi_env GlobalObject::makeNapiEnv(const napi_module& mod)
+{
+    m_napiEnvs.append(std::make_unique<napi_env__>(this, mod));
+    return m_napiEnvs.last().get();
+}
+
+napi_env GlobalObject::makeNapiEnvForFFI()
+{
+    auto out = makeNapiEnv(napi_module {
+        .nm_version = 9,
+        .nm_flags = 0,
+        .nm_filename = "ffi://",
+        .nm_register_func = nullptr,
+        .nm_modname = "[ffi]",
+        .nm_priv = nullptr,
+        .reserved = {},
+    });
+    return out;
+}
+
+bool GlobalObject::hasNapiFinalizers() const
+{
+    for (const auto& env : m_napiEnvs) {
+        if (env->hasFinalizers()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 #include "ZigGeneratedClasses+lazyStructureImpl.h"
 #include "ZigGlobalObject.lut.h"
 
@@ -4526,3 +4574,22 @@ const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &
     CREATE_METHOD_TABLE(GlobalObject) };
 
 } // namespace Zig
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented, (JSGlobalObject * leixcalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(leixcalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return throwVMError(leixcalGlobalObject, scope, "Not implemented"_s);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined, (JSC::JSGlobalObject * leixcalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(leixcalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto name = callFrame->argument(0).toWTFString(leixcalGlobalObject);
+    scope.assertNoException();
+    auto count = callFrame->argument(1).toNumber(leixcalGlobalObject);
+    scope.assertNoException();
+    auto* func = InternalFunction::createFunctionThatMasqueradesAsUndefined(vm, leixcalGlobalObject, count, name, jsFunctionNotImplemented);
+    return JSC::JSValue::encode(func);
+}

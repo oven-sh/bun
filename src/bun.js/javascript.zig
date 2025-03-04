@@ -771,7 +771,6 @@ pub const VirtualMachine = struct {
     main_is_html_entrypoint: bool = false,
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
-    process: bun.JSC.C.JSObjectRef = null,
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
@@ -869,7 +868,7 @@ pub const VirtualMachine = struct {
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSInternalPromise = undefined,
     entry_point_result: struct {
-        value: JSC.Strong = .{},
+        value: JSC.Strong = .empty,
         cjs_set_value: bool = false,
     } = .{},
 
@@ -1021,14 +1020,21 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+    pub fn isEventLoopAliveExcludingImmediates(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
             vm.active_tasks +
             vm.event_loop.tasks.count +
-            vm.event_loop.immediate_tasks.count +
-            vm.event_loop.next_immediate_tasks.count +
             @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
+    }
+
+    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+        return vm.isEventLoopAliveExcludingImmediates() or
+            // We need to keep running in this case so that immediate tasks get run. But immediates
+            // intentionally don't make the event loop _active_ so we need to check for them
+            // separately.
+            vm.event_loop.immediate_tasks.count > 0 or
+            vm.event_loop.next_immediate_tasks.count > 0;
     }
 
     pub fn wakeup(this: *VirtualMachine) void {
@@ -1372,7 +1378,7 @@ pub const VirtualMachine = struct {
 
     pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
         if (this.module_loader.eval_source) |eval_source| {
-            var specifier_str = specifier.toBunString(this.global);
+            var specifier_str = specifier.toBunString(this.global) catch @panic("unexpected exception");
             defer specifier_str.deref();
             return specifier_str.eqlUTF8(eval_source.path.text);
         }
@@ -1403,13 +1409,18 @@ pub const VirtualMachine = struct {
 
     pub fn onExit(this: *VirtualMachine) void {
         this.exit_handler.dispatchOnExit();
+        this.is_shutting_down = true;
 
         const rare_data = this.rare_data orelse return;
-        var hooks = rare_data.cleanup_hooks;
-        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.default_allocator);
-        rare_data.cleanup_hooks = .{};
-        for (hooks.items) |hook| {
-            hook.execute();
+        defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
+        // Make sure we run new cleanup hooks introduced by running cleanup hooks
+        while (rare_data.cleanup_hooks.items.len > 0) {
+            var hooks = rare_data.cleanup_hooks;
+            defer hooks.deinit(bun.default_allocator);
+            rare_data.cleanup_hooks = .{};
+            for (hooks.items) |hook| {
+                hook.execute();
+            }
         }
     }
 
@@ -3940,7 +3951,7 @@ pub const VirtualMachine = struct {
         const code: ?[]const u8 = if (is_error_instance) code: {
             if (error_instance.uncheckedPtrCast(JSC.JSObject).getCodePropertyVMInquiry(this.global)) |code_value| {
                 if (code_value.isString()) {
-                    const code_string = code_value.toBunString2(this.global) catch {
+                    const code_string = code_value.toBunString(this.global) catch {
                         // JSC::JSString to WTF::String can only fail on out of memory.
                         bun.outOfMemory();
                     };

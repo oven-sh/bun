@@ -6,7 +6,7 @@ const RareData = @This();
 const Syscall = bun.sys;
 const JSC = bun.JSC;
 const std = @import("std");
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const bun = @import("root").bun;
 const FDImpl = bun.FDImpl;
 const Environment = bun.Environment;
@@ -50,7 +50,7 @@ temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
 aws_signature_cache: AWSSignatureCache = .{},
 
-s3_default_client: JSC.Strong = .{},
+s3_default_client: JSC.Strong = .empty,
 
 const PipeReadBuffer = [256 * 1024]u8;
 const DIGESTED_HMAC_256_LEN = 32;
@@ -429,8 +429,6 @@ pub export fn Bun__Process__getStdinFdType(vm: *JSC.VirtualMachine, fd: i32) Std
     }
 }
 
-const Subprocess = @import("./api/bun/subprocess.zig").Subprocess;
-
 pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketContext {
     if (rare.spawn_ipc_usockets_context) |ctx| {
         return ctx;
@@ -438,7 +436,7 @@ pub fn spawnIPCContext(rare: *RareData, vm: *JSC.VirtualMachine) *uws.SocketCont
 
     const opts: uws.us_socket_context_options_t = .{};
     const ctx = uws.us_create_socket_context(0, vm.event_loop_handle.?, @sizeOf(usize), opts).?;
-    IPC.Socket.configure(ctx, true, *Subprocess, Subprocess.IPCHandler);
+    IPC.Socket.configure(ctx, true, *JSC.Subprocess, JSC.Subprocess.IPCHandler);
     rare.spawn_ipc_usockets_context = ctx;
     return ctx;
 }
@@ -487,7 +485,7 @@ pub fn deinit(this: *RareData) void {
 
     this.s3_default_client.deinit();
     if (this.boring_ssl_engine) |engine| {
-        _ = bun.BoringSSL.ENGINE_free(engine);
+        _ = bun.BoringSSL.c.ENGINE_free(engine);
     }
 
     this.cleanup_hooks.clearAndFree(bun.default_allocator);

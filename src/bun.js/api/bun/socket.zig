@@ -15,7 +15,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
 const uws = bun.uws;
 const ZigString = JSC.ZigString;
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
@@ -129,7 +129,7 @@ const Handlers = struct {
     globalObject: *JSC.JSGlobalObject,
     active_connections: u32 = 0,
     is_server: bool = false,
-    promise: JSC.Strong = .{},
+    promise: JSC.Strong = .empty,
 
     protection_count: bun.DebugOnly(u32) = bun.DebugOnlyDefault(0),
 
@@ -187,10 +187,10 @@ const Handlers = struct {
         this.active_connections -= 1;
         if (this.active_connections == 0) {
             if (this.is_server) {
-                var listen_socket: *Listener = @fieldParentPtr("handlers", this);
+                const listen_socket: *Listener = @fieldParentPtr("handlers", this);
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if (listen_socket.listener == .none) {
-                    listen_socket.strong_self.clear();
+                    listen_socket.strong_self.deinit();
                 }
             } else {
                 this.unprotect();
@@ -520,8 +520,8 @@ pub const Listener = struct {
     ssl: bool = false,
     protos: ?[]const u8 = null,
 
-    strong_data: JSC.Strong = .{},
-    strong_self: JSC.Strong = .{},
+    strong_data: JSC.Strong = .empty,
+    strong_self: JSC.Strong = .empty,
 
     pub usingnamespace JSC.Codegen.JSListener;
 
@@ -968,8 +968,8 @@ pub const Listener = struct {
                 this.socket_context = null;
                 ctx.deinit(this.ssl);
             }
-            this.strong_self.clear();
-            this.strong_data.clear();
+            this.strong_self.clearWithoutDeallocation();
+            this.strong_data.clearWithoutDeallocation();
         } else {
             if (force_close) {
                 // close all connections in this context and wait for them to close
@@ -1063,7 +1063,7 @@ pub const Listener = struct {
     pub fn unref(this: *Listener, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
         this.poll_ref.unref(globalObject.bunVM());
         if (this.handlers.active_connections == 0) {
-            this.strong_self.clear();
+            this.strong_self.clearWithoutDeallocation();
         }
         return JSValue.jsUndefined();
     }
@@ -2048,11 +2048,8 @@ fn NewSocket(comptime ssl: bool) type {
             log("getAuthorized()", .{});
             return JSValue.jsBoolean(this.flags.authorized);
         }
-        pub fn timeout(
-            this: *This,
-            globalObject: *JSC.JSGlobalObject,
-            callframe: *JSC.CallFrame,
-        ) bun.JSError!JSValue {
+
+        pub fn timeout(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments_old(1);
             if (this.socket.isDetached()) return JSValue.jsUndefined();
@@ -3544,7 +3541,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
-                    return globalObject.throwValue(BoringSSL.ERR_toJS(globalObject, err));
+                    return globalObject.throwValue(bun.BoringSSL.ERR_toJS(globalObject, err));
                 }
 
                 // If BoringSSL did not give us an error code, let's throw a generic error.
@@ -3948,7 +3945,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         });
 
         if (ssl_config) |ssl_options| {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
             var err: uws.create_bun_socket_error_t = .none;

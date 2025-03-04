@@ -203,7 +203,7 @@ const LibUVBackend = struct {
         this.head.globalThis.bunVM().enqueueTask(JSC.Task.init(&holder.task));
     }
 
-    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+    pub fn lookup(this: *DNSResolver, query: GetAddrInfo, globalThis: *JSC.JSGlobalObject) !JSC.JSValue {
         const key = GetAddrInfoRequest.PendingCacheKey.init(query);
 
         var cache = this.getOrPutIntoPendingCache(key, .pending_host_cache_native);
@@ -3175,7 +3175,7 @@ pub const DNSResolver = struct {
     }
 
     fn setChannelLocalAddress(channel: *c_ares.Channel, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) bun.JSError!c_int {
-        const str = try value.toBunString2(globalThis);
+        const str = try value.toBunString(globalThis);
         defer str.deref();
 
         const slice = str.toSlice(bun.default_allocator).slice();
@@ -3246,7 +3246,7 @@ pub const DNSResolver = struct {
                 return globalThis.throwInvalidArguments("Invalid address family", .{});
             }
 
-            const addressString = try JSValue.getIndex(triple, globalThis, 1).toBunString2(globalThis);
+            const addressString = try JSValue.getIndex(triple, globalThis, 1).toBunString(globalThis);
             defer addressString.deref();
 
             const addressSlice = try addressString.toOwnedSlice(allocator);

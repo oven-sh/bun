@@ -357,27 +357,27 @@ pub const S3Credentials = struct {
 
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
-                bun.default_allocator.free(this.amz_date);
+                bun.freeSensitive(bun.default_allocator, this.amz_date);
             }
 
             if (this.session_token.len > 0) {
-                bun.default_allocator.free(this.session_token);
+                bun.freeSensitive(bun.default_allocator, this.session_token);
             }
 
             if (this.content_disposition.len > 0) {
-                bun.default_allocator.free(this.content_disposition);
+                bun.freeSensitive(bun.default_allocator, this.content_disposition);
             }
 
             if (this.host.len > 0) {
-                bun.default_allocator.free(this.host);
+                bun.freeSensitive(bun.default_allocator, this.host);
             }
 
             if (this.authorization.len > 0) {
-                bun.default_allocator.free(this.authorization);
+                bun.freeSensitive(bun.default_allocator, this.authorization);
             }
 
             if (this.url.len > 0) {
-                bun.default_allocator.free(this.url);
+                bun.freeSensitive(bun.default_allocator, this.url);
             }
         }
     };
@@ -672,8 +672,8 @@ pub const S3Credentials = struct {
 
         const authorization = brk: {
             // we hash the hash so we need 2 buffers
-            var hmac_sig_service: [bun.BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
-            var hmac_sig_service2: [bun.BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
+            var hmac_sig_service: [bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8 = undefined;
+            var hmac_sig_service2: [bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8 = undefined;
 
             const sigDateRegionServiceReq = brk_sign: {
                 const key = try std.fmt.bufPrint(&tmp_buffer, "{s}{s}{s}", .{ region, service_name, this.secretAccessKey });

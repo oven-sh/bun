@@ -986,7 +986,7 @@ pub const PathLike = union(enum) {
             .StringObject,
             .DerivedStringObject,
             => {
-                var str = try arg.toBunString2(ctx);
+                var str = try arg.toBunString(ctx);
                 defer str.deref();
 
                 arguments.eat();
@@ -1327,7 +1327,7 @@ fn timeLikeFromNow() TimeLike {
     //        timestamps are not modified, but other error conditions may still
     return .{
         .sec = 0,
-        .nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
+        .nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.c.UTIME_NOW,
     };
 }
 

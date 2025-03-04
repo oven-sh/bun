@@ -578,6 +578,7 @@ pub const JSBundler = struct {
         );
     }
 
+    /// `Bun.build(config)`
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -599,7 +600,7 @@ pub const JSBundler = struct {
             source_file: string = "",
             namespace: string = "",
             specifier: string = "",
-            importer_source_index: ?u32 = null,
+            importer_source_index: u32,
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
@@ -1092,7 +1093,7 @@ pub const BuildArtifact = struct {
     path: []const u8 = "",
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
-    sourcemap: JSC.Strong = .{},
+    sourcemap: JSC.Strong = .empty,
 
     pub const OutputKind = enum {
         chunk,

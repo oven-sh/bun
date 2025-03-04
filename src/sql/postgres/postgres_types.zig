@@ -515,7 +515,7 @@ pub const date = struct {
         else if (value.isNumber())
             value.asNumber()
         else if (value.isString()) brk: {
-            var str = value.toBunString(globalObject);
+            var str = value.toBunString(globalObject) catch @panic("unreachable");
             defer str.deref();
             break :brk str.parseDate(globalObject);
         } else return 0;

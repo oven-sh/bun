@@ -1,7 +1,5 @@
 Running `bun install` will create a lockfile called `bun.lock`.
 
-https://bun.sh/blog/bun-lock-text-lockfile
-
 #### Should it be committed to git?
 
 Yes

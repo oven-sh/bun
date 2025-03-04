@@ -85,7 +85,7 @@ pub const Body = struct {
             try formatter.writeIndent(Writer, writer);
             try Blob.writeFormatForSize(false, this.value.size(), writer, enable_ansi_colors);
         } else if (this.value == .Locked) {
-            if (this.value.Locked.readable.get()) |stream| {
+            if (this.value.Locked.readable.get(this.value.Locked.global)) |stream| {
                 try formatter.printComma(Writer, writer, enable_ansi_colors);
                 try writer.writeAll("\n");
                 try formatter.writeIndent(Writer, writer);
@@ -124,7 +124,7 @@ pub const Body = struct {
         /// If chunked encoded this will represent the total received size (ignoring the chunk headers)
         /// If the size is unknown will be 0
         fn sizeHint(this: *const PendingValue) Blob.SizeType {
-            if (this.readable.get()) |readable| {
+            if (this.readable.get(this.global)) |readable| {
                 if (readable.ptr == .Bytes) {
                     return readable.ptr.Bytes.size_hint;
                 }
@@ -152,7 +152,7 @@ pub const Body = struct {
                 return false;
             }
 
-            if (this.readable.get()) |readable| {
+            if (this.readable.get(globalObject)) |readable| {
                 return readable.isDisturbed(globalObject);
             }
 
@@ -164,7 +164,7 @@ pub const Body = struct {
                 return true;
             }
 
-            if (this.readable.get()) |readable| {
+            if (this.readable.get(globalObject)) |readable| {
                 return readable.isDisturbed(globalObject);
             }
 
@@ -192,7 +192,7 @@ pub const Body = struct {
         }
 
         pub fn toAnyBlobAllowPromise(this: *PendingValue) ?AnyBlob {
-            var stream = if (this.readable.get()) |readable| readable else return null;
+            var stream = if (this.readable.get(this.global)) |readable| readable else return null;
 
             if (stream.toAnyBlob(this.global)) |blob| {
                 this.readable.deinit();
@@ -204,7 +204,7 @@ pub const Body = struct {
 
         pub fn setPromise(value: *PendingValue, globalThis: *JSC.JSGlobalObject, action: Action) JSValue {
             value.action = action;
-            if (value.readable.get()) |readable| {
+            if (value.readable.get(globalThis)) |readable| {
                 switch (action) {
                     .getFormData, .getText, .getJSON, .getBlob, .getArrayBuffer, .getBytes => {
                         const promise = switch (action) {
@@ -348,7 +348,7 @@ pub const Body = struct {
                         if (js_ref.get()) |js_value| {
                             return .{ .JSValue = JSC.Strong.create(js_value, globalObject) };
                         }
-                        return .{ .JSValue = .{} };
+                        return .{ .JSValue = .empty };
                     },
                     .AbortReason => {},
                 }
@@ -363,7 +363,7 @@ pub const Body = struct {
                     .AbortReason => {},
                 }
                 // safe empty value after deinit
-                this.* = .{ .JSValue = .{} };
+                this.* = .{ .JSValue = .empty };
             }
         };
         pub fn toBlobIfPossible(this: *Value) void {
@@ -499,7 +499,7 @@ pub const Body = struct {
                 },
                 .Locked => {
                     var locked = &this.Locked;
-                    if (locked.readable.get()) |readable| {
+                    if (locked.readable.get(globalThis)) |readable| {
                         return readable.value;
                     }
                     if (locked.promise != null or locked.action != .none) {
@@ -540,10 +540,10 @@ pub const Body = struct {
                     }, globalThis);
 
                     if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-                        onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get().?);
+                        onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(globalThis).?);
                     }
 
-                    return locked.readable.get().?.value;
+                    return locked.readable.get(globalThis).?.value;
                 },
                 .Error => {
                     // TODO: handle error properly
@@ -564,7 +564,7 @@ pub const Body = struct {
             const js_type = value.jsType();
 
             if (js_type.isStringLike()) {
-                var str = try value.toBunString2(globalThis);
+                var str = try value.toBunString(globalThis);
                 if (str.length() == 0) {
                     return Body.Value{
                         .Empty = {},
@@ -690,7 +690,7 @@ pub const Body = struct {
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
 
-                if (locked.readable.get()) |readable| {
+                if (locked.readable.get(global)) |readable| {
                     readable.done(global);
                     locked.readable.deinit();
                 }
@@ -938,7 +938,7 @@ pub const Body = struct {
 
                 // The Promise version goes before the ReadableStream version incase the Promise version is used too.
                 // Avoid creating unnecessary duplicate JSValue.
-                if (strong_readable.get()) |readable| {
+                if (strong_readable.get(global)) |readable| {
                     if (readable.ptr == .Bytes) {
                         readable.ptr.Bytes.onData(
                             .{ .err = this.Error.toStreamError(global) },
@@ -1051,7 +1051,7 @@ pub const Body = struct {
             }, globalThis);
 
             if (locked.onReadableStreamAvailable) |onReadableStreamAvailable| {
-                onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get().?);
+                onReadableStreamAvailable(locked.task.?, globalThis, locked.readable.get(globalThis).?);
             }
 
             const teed = locked.readable.tee(globalThis) orelse return Value{ .Used = {} };
@@ -1167,7 +1167,7 @@ pub fn BodyMixin(comptime Type: type) type {
                             break :brk true;
                         }
 
-                        if (pending.readable.get()) |*stream| {
+                        if (pending.readable.get(globalObject)) |*stream| {
                             break :brk stream.isDisturbed(globalObject);
                         }
 
@@ -1635,7 +1635,7 @@ pub const BodyValueBufferer = struct {
     fn bufferLockedBodyValue(sink: *@This(), value: *JSC.WebCore.Body.Value) !void {
         assert(value.* == .Locked);
         const locked = &value.Locked;
-        if (locked.readable.get()) |stream| {
+        if (locked.readable.get(sink.global)) |stream| {
             // keep the stream alive until we're done with it
             sink.readable_stream_ref = locked.readable;
             value.* = .{ .Used = {} };

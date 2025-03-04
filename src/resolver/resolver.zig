@@ -2564,7 +2564,6 @@ pub const Resolver = struct {
                 package_id,
                 .ignore_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         } else {
             pkg = PackageJSON.parse(
@@ -2574,7 +2573,6 @@ pub const Resolver = struct {
                 package_id,
                 .include_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         }
 
@@ -3380,7 +3378,7 @@ pub const Resolver = struct {
             return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
         }
 
-        const in_str = try argument.toBunString2(globalThis);
+        const in_str = try argument.toBunString(globalThis);
         defer in_str.deref();
         const r = &globalThis.bunVM().transpiler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);

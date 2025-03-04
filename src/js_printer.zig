@@ -2055,7 +2055,7 @@ fn NewPrinter(
                     p.addSourceMapping(expr.loc);
                     if (p.options.module_type == .internal_bake_dev) {
                         p.printSymbol(p.options.commonjs_module_ref);
-                        p.print(".importMeta()");
+                        p.print(".importMeta");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
                         p.print("import.meta");
@@ -2116,21 +2116,43 @@ fn NewPrinter(
                         }
                     }
                 },
-                .e_module_dot_exports => {
-                    p.printSpaceBeforeIdentifier();
-                    p.addSourceMapping(expr.loc);
+                .e_special => |special| switch (special) {
+                    .module_exports => {
+                        p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
 
-                    if (p.options.commonjs_module_exports_assigned_deoptimized) {
-                        if (p.options.commonjs_module_ref.isValid()) {
-                            p.printSymbol(p.options.commonjs_module_ref);
+                        if (p.options.commonjs_module_exports_assigned_deoptimized) {
+                            if (p.options.commonjs_module_ref.isValid()) {
+                                p.printSymbol(p.options.commonjs_module_ref);
+                            } else {
+                                p.print("module");
+                            }
+                            p.print(".exports");
                         } else {
-                            p.print("module");
+                            p.printSymbol(p.options.commonjs_named_exports_ref);
                         }
-                        p.print(".exports");
-                    } else {
-                        p.printSymbol(p.options.commonjs_named_exports_ref);
-                    }
+                    },
+                    .hot => {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".hot");
+                    },
+                    .hot_accept => {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".hot.accept");
+                    },
+                    .hot_accept_visited => {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".hot.acceptSpecifiers");
+                    },
+                    .resolved_specifier_string => |index| {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printStringLiteralUTF8(p.importRecord(index.get()).path.pretty, true);
+                    },
                 },
+
                 .e_commonjs_export_identifier => |id| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -2275,6 +2297,8 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".main");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.print("false");
                     } else {
                         p.print("require.main");
                     }
@@ -2285,6 +2309,9 @@ fn NewPrinter(
 
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".require");
                     } else {
                         p.print("require");
                     }
@@ -2296,6 +2323,9 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                         p.print(".resolve");
+                    } else if (p.options.module_type == .internal_bake_dev) {
+                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.print(".require.resolve");
                     } else {
                         p.print("require.resolve");
                     }
@@ -3029,7 +3059,6 @@ fn NewPrinter(
 
                 .e_jsx_element,
                 .e_private_identifier,
-                .e_template_part,
                 => {
                     if (Environment.isDebug)
                         Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
@@ -4252,86 +4281,6 @@ fn NewPrinter(
                     bun.assert(s.import_record_index < p.import_records.len);
 
                     const record: *const ImportRecord = p.importRecord(s.import_record_index);
-
-                    switch (record.print_mode) {
-                        .css => {
-                            switch (p.options.css_import_behavior) {
-                                .facade => {
-                                    p.addSourceMapping(stmt.loc);
-                                    // This comment exists to let tooling authors know which files CSS originated from
-                                    // To parse this, you just look for a line that starts with //@import url("
-                                    p.print("//@import url(\"");
-                                    // We do not URL escape here.
-                                    p.print(record.path.text);
-
-                                    // If they actually use the code, then we emit a facade that just echos whatever they write
-                                    if (s.default_name) |name| {
-                                        p.print("\"); css-module-facade\nvar ");
-                                        p.printSymbol(name.ref.?);
-                                        p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
-                                    } else {
-                                        p.print("\"); css-import-facade\n");
-                                    }
-
-                                    return;
-                                },
-
-                                .auto_onimportcss, .facade_onimportcss => {
-                                    p.addSourceMapping(stmt.loc);
-                                    p.print("globalThis.document?.dispatchEvent(new CustomEvent(\"onimportcss\", {detail: ");
-                                    p.printStringLiteralUTF8(record.path.text, false);
-                                    p.print("}));\n");
-
-                                    // If they actually use the code, then we emit a facade that just echos whatever they write
-                                    if (s.default_name) |name| {
-                                        p.print("var ");
-                                        p.printSymbol(name.ref.?);
-                                        p.print(" = new Proxy({}, {get(_,className,__){return className;}});\n");
-                                    }
-                                },
-                                else => {},
-                            }
-                            return;
-                        },
-                        .import_path => {
-                            p.addSourceMapping(stmt.loc);
-                            if (s.default_name) |name| {
-                                p.print("var ");
-                                p.printSymbol(name.ref.?);
-                                p.@"print = "();
-                                p.printImportRecordPath(record);
-                                p.printSemicolonAfterStatement();
-                            } else if (record.contains_import_star) {
-                                // this case is particularly important for running files without an extension in bun's runtime
-                                p.print("var ");
-                                p.printSymbol(s.namespace_ref);
-                                p.@"print = "();
-                                p.print("{default:");
-                                p.printImportRecordPath(record);
-                                p.print("}");
-                                p.printSemicolonAfterStatement();
-                            }
-                            return;
-                        },
-                        .napi_module => {
-                            if (comptime is_bun_platform) {
-                                p.printIndent();
-                                p.printSpaceBeforeIdentifier();
-                                p.addSourceMapping(stmt.loc);
-                                p.print("var ");
-                                p.printSymbol(s.namespace_ref);
-                                p.@"print = "();
-
-                                p.print("import.meta.require(");
-                                p.printImportRecordPath(record);
-                                p.print(")");
-                                p.printSemicolonAfterStatement();
-                            }
-                            return;
-                        },
-                        else => {},
-                    }
-
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(stmt.loc);
@@ -6001,7 +5950,7 @@ pub fn printWithWriterAndPlatform(
         imported_module_ids_list = printer.imported_module_ids;
     }
 
-    if (opts.module_type == .internal_bake_dev) {
+    if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
         printer.indent();
         printer.printIndent();
         if (!ast.top_level_await_keyword.isEmpty()) {
@@ -6053,14 +6002,22 @@ pub fn printWithWriterAndPlatform(
         }
     }
 
-    printer.writer.done() catch |err|
+    printer.writer.done() catch |err| {
+        // In bundle_v2, this is backed by an arena, but incremental uses
+        // `dev.allocator` for this buffer, so it must be freed.
+        printer.source_map_builder.source_map.ctx.data.deinit();
+
         return .{ .err = err };
+    };
 
     const written = printer.writer.ctx.getWritten();
-    const source_map: ?SourceMap.Chunk = if (generate_source_maps and written.len > 0) brk: {
-        const chunk = printer.source_map_builder.generateChunk(written);
-        if (chunk.should_ignore)
+    const source_map: ?SourceMap.Chunk = if (generate_source_maps) brk: {
+        if (written.len == 0 or printer.source_map_builder.source_map.shouldIgnore()) {
+            printer.source_map_builder.source_map.ctx.data.deinit();
             break :brk null;
+        }
+        const chunk = printer.source_map_builder.generateChunk(written);
+        assert(!chunk.should_ignore);
         break :brk chunk;
     } else null;
 

@@ -98,7 +98,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom);
-static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_from);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
 static JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
 
@@ -500,7 +499,7 @@ static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObj
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
-static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1715,7 +1714,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
     return JSC::JSValue::encode(castedThis);
 }
 
-static JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2417,7 +2416,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
 
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
-    return JSValue::encode(jsNumber(offset));
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2449,7 +2448,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
 
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
-    return JSValue::encode(jsNumber(offset));
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2479,7 +2478,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
 
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
-    return JSValue::encode(jsNumber(offset));
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -2509,7 +2508,7 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     if (UNLIKELY(offset > byteLength - 8)) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, 0, byteLength - 8, offsetVal);
 
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
-    return JSValue::encode(jsNumber(offset));
+    return JSValue::encode(jsNumber(offset + 8));
 }
 
 /* */

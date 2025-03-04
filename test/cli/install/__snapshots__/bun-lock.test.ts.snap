@@ -404,3 +404,10 @@ exports[`should not change formatting unexpectedly 3`] = `
   "13 packages installed",
 ]
 `;
+
+exports[`should not deduplicate bundled packages with un-bundled packages 2`] = `
+[
+  "",
+  "Saved bun.lock (5 packages)",
+]
+`;

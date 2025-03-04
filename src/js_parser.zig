@@ -1694,31 +1694,31 @@ pub const SideEffects = enum(u1) {
                     return null;
                 }
             },
-            .e_if => |__if__| {
-                __if__.yes = simplifyUnusedExpr(p, __if__.yes) orelse __if__.yes.toEmpty();
-                __if__.no = simplifyUnusedExpr(p, __if__.no) orelse __if__.no.toEmpty();
+            .e_if => |ternary| {
+                ternary.yes = simplifyUnusedExpr(p, ternary.yes) orelse ternary.yes.toEmpty();
+                ternary.no = simplifyUnusedExpr(p, ternary.no) orelse ternary.no.toEmpty();
 
                 // "foo() ? 1 : 2" => "foo()"
-                if (__if__.yes.isEmpty() and __if__.no.isEmpty()) {
-                    return simplifyUnusedExpr(p, __if__.test_);
+                if (ternary.yes.isEmpty() and ternary.no.isEmpty()) {
+                    return simplifyUnusedExpr(p, ternary.test_);
                 }
 
                 // "foo() ? 1 : bar()" => "foo() || bar()"
-                if (__if__.yes.isEmpty()) {
+                if (ternary.yes.isEmpty()) {
                     return Expr.joinWithLeftAssociativeOp(
                         .bin_logical_or,
-                        __if__.test_,
-                        __if__.no,
+                        ternary.test_,
+                        ternary.no,
                         p.allocator,
                     );
                 }
 
                 // "foo() ? bar() : 2" => "foo() && bar()"
-                if (__if__.no.isEmpty()) {
+                if (ternary.no.isEmpty()) {
                     return Expr.joinWithLeftAssociativeOp(
                         .bin_logical_and,
-                        __if__.test_,
-                        __if__.yes,
+                        ternary.test_,
+                        ternary.yes,
                         p.allocator,
                     );
                 }
@@ -1774,7 +1774,19 @@ pub const SideEffects = enum(u1) {
                     .bin_loose_ne,
                     => {
                         if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
-                            return Expr.joinWithComma(simplifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(), simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(), p.allocator);
+                            return Expr.joinWithComma(
+                                simplifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
+                                simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
+                                p.allocator,
+                            );
+                        }
+                        // If one side is a number, the number can be printed as
+                        // `0` since the result being unused doesnt matter, we
+                        // only care to invoke the coercion.
+                        if (bin.left.data == .e_number) {
+                            bin.left.data = .{ .e_number = .{ .value = 0.0 } };
+                        } else if (bin.right.data == .e_number) {
+                            bin.right.data = .{ .e_number = .{ .value = 0.0 } };
                         }
                     },
 
@@ -1935,7 +1947,7 @@ pub const SideEffects = enum(u1) {
             result = result.joinWithComma(visited_right, p.allocator);
         }
 
-        return if (result.isMissing()) Expr.empty else result;
+        return if (result.isMissing()) null else result;
     }
 
     fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
@@ -17358,9 +17370,7 @@ fn NewParser_(
                         }
 
                         return expr;
-                    }
-
-                    if (e_.target.data == .e_require_resolve_call_target) {
+                    } else if (e_.target.data == .e_require_resolve_call_target) {
                         // Ignore calls to require.resolve() if the control flow is provably
                         // dead here. We don't want to spend time scanning the required files
                         // if they will never be used.
@@ -17388,7 +17398,11 @@ fn NewParser_(
                         }
 
                         return expr;
-                    }
+                    } else if (e_.target.data.as(.e_special)) |special|
+                        switch (special) {
+                            .hot_accept => p.handleImportMetaHotAcceptCall(e_),
+                            else => {},
+                        };
 
                     if (comptime allow_macros) {
                         if (is_macro_ref and !p.options.features.is_macro_runtime) {
@@ -18379,7 +18393,7 @@ fn NewParser_(
             name_loc: logger.Loc,
             identifier_opts: IdentifierOpts,
         ) ?Expr {
-            switch (target.data) {
+            sw: switch (target.data) {
                 .e_identifier => |id| {
                     // Rewrite property accesses on explicit namespace imports as an identifier.
                     // This lets us replace them easily in the printer to rebind them to
@@ -18614,7 +18628,7 @@ fn NewParser_(
                             }
 
                             // rewrite `module.exports` to `exports`
-                            return .{ .data = .e_module_dot_exports, .loc = name_loc };
+                            return .{ .data = .{ .e_special = .module_exports }, .loc = name_loc };
                         } else if (p.options.bundle and strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
                             // inline module.id
                             p.ignoreUsage(p.module_ref);
@@ -18681,7 +18695,6 @@ fn NewParser_(
                         return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
                     }
                 },
-                // TODO: e_inlined_enum -> .e_string -> "length" should inline the length
                 .e_string => |str| {
                     if (p.options.features.minify_syntax) {
                         // minify "long-string".length to 11
@@ -18691,6 +18704,9 @@ fn NewParser_(
                             }
                         }
                     }
+                },
+                .e_inlined_enum => |ie| {
+                    continue :sw ie.value.data;
                 },
                 .e_object => |obj| {
                     if (comptime FeatureFlags.inline_properties_in_transpiler) {
@@ -18724,6 +18740,13 @@ fn NewParser_(
                 .e_import_meta => {
                     if (strings.eqlComptime(name, "main")) {
                         return p.valueForImportMetaMain(false, target.loc);
+                    }
+
+                    if (strings.eqlComptime(name, "hot")) {
+                        if (!p.options.features.hot_module_reloading)
+                            return .{ .data = .e_undefined, .loc = loc };
+
+                        return .{ .data = .{ .e_special = .hot }, .loc = loc };
                     }
 
                     // Make all property accesses on `import.meta.url` side effect free.
@@ -18773,49 +18796,57 @@ fn NewParser_(
                         return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
                     }
                 },
-                .e_module_dot_exports => {
-                    if (p.shouldUnwrapCommonJSToESM()) {
-                        if (!p.is_control_flow_dead) {
-                            if (!p.commonjs_named_exports_deoptimized) {
-                                if (identifier_opts.is_delete_target) {
-                                    p.deoptimizeCommonJSNamedExports();
-                                    return null;
-                                }
+                .e_special => |special| switch (special) {
+                    .module_exports => {
+                        if (p.shouldUnwrapCommonJSToESM()) {
+                            if (!p.is_control_flow_dead) {
+                                if (!p.commonjs_named_exports_deoptimized) {
+                                    if (identifier_opts.is_delete_target) {
+                                        p.deoptimizeCommonJSNamedExports();
+                                        return null;
+                                    }
 
-                                const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
-                                if (!named_export_entry.found_existing) {
-                                    const new_ref = p.newSymbol(
-                                        .other,
-                                        std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
-                                    ) catch unreachable;
-                                    p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
-                                    named_export_entry.value_ptr.* = .{
-                                        .loc_ref = LocRef{
-                                            .loc = name_loc,
-                                            .ref = new_ref,
+                                    const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                                    if (!named_export_entry.found_existing) {
+                                        const new_ref = p.newSymbol(
+                                            .other,
+                                            std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
+                                        ) catch unreachable;
+                                        p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                        named_export_entry.value_ptr.* = .{
+                                            .loc_ref = LocRef{
+                                                .loc = name_loc,
+                                                .ref = new_ref,
+                                            },
+                                            .needs_decl = true,
+                                        };
+                                        if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
+                                            p.commonjs_named_exports_needs_conversion = @as(u32, @truncate(p.commonjs_named_exports.count() - 1));
+                                    }
+
+                                    const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
+                                    p.recordUsage(ref);
+
+                                    return p.newExpr(
+                                        E.CommonJSExportIdentifier{
+                                            .ref = ref,
+                                            // Record this as from module.exports
+                                            .base = .module_dot_exports,
                                         },
-                                        .needs_decl = true,
-                                    };
-                                    if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
-                                        p.commonjs_named_exports_needs_conversion = @as(u32, @truncate(p.commonjs_named_exports.count() - 1));
+                                        name_loc,
+                                    );
+                                } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
+                                    p.has_commonjs_export_names = true;
                                 }
-
-                                const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
-                                p.recordUsage(ref);
-
-                                return p.newExpr(
-                                    E.CommonJSExportIdentifier{
-                                        .ref = ref,
-                                        // Record this as from module.exports
-                                        .base = .module_dot_exports,
-                                    },
-                                    name_loc,
-                                );
-                            } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
-                                p.has_commonjs_export_names = true;
                             }
                         }
-                    }
+                    },
+                    .hot => {
+                        if (strings.eqlComptime(name, "accept")) {
+                            return .{ .data = .{ .e_special = .hot_accept }, .loc = loc };
+                        }
+                    },
+                    else => {},
                 },
                 else => {},
             }
@@ -23218,6 +23249,58 @@ fn NewParser_(
             }
         };
 
+        const import_meta_hot_accept_err = "Dependencies to `import.meta.hot.accept` must be statically analyzable module specifiers matching direct imports.";
+
+        /// The signatures for `import.meta.hot.accept` are:
+        /// `accept()`                   - self accept
+        /// `accept(Function)`           - self accept
+        /// `accept(string, Function)`   - accepting another module
+        /// `accept(string[], Function)` - accepting multiple modules
+        ///
+        /// The strings that can be passed in the first argument must be module
+        /// specifiers that were imported. We enforce that they line up exactly
+        /// with ones that were imported, so that it can share an import record.
+        ///
+        /// This function replaces all specifier strings with `e_require_resolve_string`
+        fn handleImportMetaHotAcceptCall(p: *@This(), call: *E.Call) void {
+            if (call.args.len == 0) return;
+            switch (call.args.at(0).data) {
+                .e_string => |str| {
+                    call.args.mut(0).data = p.rewriteImportMetaHotAcceptString(str, call.args.at(0).loc) orelse
+                        return;
+                },
+                .e_array => |arr| for (arr.items.slice()) |*item| {
+                    if (item.data != .e_string) {
+                        p.log.addError(p.source, item.loc, import_meta_hot_accept_err) catch bun.outOfMemory();
+                        continue;
+                    }
+                    item.data = p.rewriteImportMetaHotAcceptString(item.data.e_string, item.loc) orelse
+                        return;
+                },
+                else => return,
+            }
+
+            call.target.data.e_special = .hot_accept_visited;
+        }
+
+        fn rewriteImportMetaHotAcceptString(p: *P, str: *E.String, loc: logger.Loc) ?Expr.Data {
+            str.toUTF8(p.allocator) catch bun.outOfMemory();
+            const specifier = str.data;
+
+            const import_record_index = for (p.import_records.items, 0..) |import_record, i| {
+                if (bun.strings.eql(specifier, import_record.path.text)) {
+                    break i;
+                }
+            } else {
+                p.log.addError(p.source, loc, import_meta_hot_accept_err) catch bun.outOfMemory();
+                return null;
+            };
+
+            return .{ .e_special = .{
+                .resolved_specifier_string = .init(@intCast(import_record_index)),
+            } };
+        }
+
         const ReactRefreshExportKind = enum { named, default };
 
         pub fn handleReactRefreshRegister(p: *P, stmts: *ListManaged(Stmt), original_name: []const u8, ref: Ref, export_kind: ReactRefreshExportKind) !void {
@@ -23307,6 +23390,14 @@ fn NewParser_(
                     .user_hooks = .{},
                 };
 
+                // TODO(paperclover): fix the renamer bug. this bug
+                // theoretically affects all usages of temp refs, but i cannot
+                // find another example of it breaking (like with `using`)
+                p.declared_symbols.append(p.allocator, .{
+                    .is_top_level = true,
+                    .ref = ctx_storage.*.?.signature_cb,
+                }) catch bun.outOfMemory();
+
                 break :init &(ctx_storage.*.?);
             };
 
@@ -23327,10 +23418,13 @@ fn NewParser_(
                 inline .e_identifier,
                 .e_import_identifier,
                 .e_commonjs_export_identifier,
-                => |id| {
+                => |id, tag| {
                     const gop = ctx.user_hooks.getOrPut(p.allocator, id.ref) catch bun.outOfMemory();
                     if (!gop.found_existing) {
-                        gop.value_ptr.* = Expr.initIdentifier(id.ref, logger.Loc.Empty);
+                        gop.value_ptr.* = .{
+                            .data = @unionInit(Expr.Data, @tagName(tag), id),
+                            .loc = .Empty,
+                        };
                     }
                 },
                 else => {},
@@ -24359,10 +24453,21 @@ pub const ConvertESMExportsForHmr = struct {
                     null,
                     stmt.loc,
                 );
-                try ctx.export_star_props.append(p.allocator, .{
-                    .kind = .spread,
-                    .value = Expr.initIdentifier(namespace_ref, stmt.loc),
-                });
+
+                if (st.alias) |alias| {
+                    // 'export * as ns from' creates one named property.
+                    try ctx.export_props.append(p.allocator, .{
+                        .key = Expr.init(E.String, .{ .data = alias.original_name }, stmt.loc),
+                        .value = Expr.initIdentifier(namespace_ref, stmt.loc),
+                    });
+                } else {
+                    // 'export * from' creates a spread, hoisted at the top.
+                    // TODO: for perfect HMR, this likely needs more instrumentation
+                    try ctx.export_star_props.append(p.allocator, .{
+                        .kind = .spread,
+                        .value = Expr.initIdentifier(namespace_ref, stmt.loc),
+                    });
+                }
                 return;
             },
             // De-duplicate import statements. It is okay to disregard

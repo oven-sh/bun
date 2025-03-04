@@ -3583,7 +3583,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             bundler_index: bun.JSAst.Index,
         ) !void {
             bun.assert(bundler_index.isValid());
-            bun.assert(ctx.loaders[bundler_index.get()] == .css);
+            bun.assert(ctx.loaders[bundler_index.get()].isCSS());
 
             var sfb = std.heap.stackFallback(@sizeOf(bun.JSAst.Index) * 64, temp_alloc);
             const queue_alloc = sfb.get();

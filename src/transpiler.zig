@@ -735,7 +735,7 @@ pub const Transpiler = struct {
             .dataurl, .base64 => {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
-            .css => {
+            .css, .local_css => {
                 const alloc = transpiler.allocator;
 
                 const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
@@ -749,10 +749,15 @@ pub const Transpiler = struct {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                     return null;
                 };
+                var opts = bun.css.ParserOptions.default(alloc, transpiler.log);
+                if (loader == .local_css) {
+                    opts.filename = bun.path.basename(file_path.text);
+                    opts.css_modules = bun.css.CssModuleConfig{};
+                }
                 var sheet, var extra = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(
                     alloc,
                     entry.contents,
-                    bun.css.ParserOptions.default(alloc, transpiler.log),
+                    opts,
                     null,
                     // TODO: DO WE EVEN HAVE SOURCE INDEX IN THIS TRANSPILER.ZIG file??
                     bun.bundle_v2.Index.invalid,

@@ -1241,6 +1241,8 @@ fn parse_nested_block(parser: *Parser, comptime T: type, closure: anytype, compt
     return result;
 }
 
+/// Qualified rules are rules that apply styles to elements in a
+/// document.
 pub fn ValidQualifiedRuleParser(comptime T: type) void {
     // The intermediate representation of a qualified rule prelude.
     _ = T.QualifiedRuleParser.Prelude;
@@ -1516,6 +1518,15 @@ pub fn ValidCustomAtRuleParser(comptime T: type) void {
     _ = T.CustomAtRuleParser.bumpAnonLayerCount;
 }
 
+/// At rules are rules that basically have the `@` symbol:
+///
+/// ```css
+/// @import "foo.css";
+/// @media (min-width: 100px) {
+///     foo {
+///     }
+/// }
+/// ```
 pub fn ValidAtRuleParser(comptime T: type) void {
     _ = T.AtRuleParser.AtRule;
     _ = T.AtRuleParser.Prelude;
@@ -1639,6 +1650,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
         rules: *CssRuleList(AtRuleT),
         composes: *ComposesMap,
         composes_refs: SmallList(bun.bundle_v2.Ref, 2) = .{},
+        local_properties: *LocalPropertyUsage,
 
         const State = enum(u8) {
             start = 1,
@@ -1884,7 +1896,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
             }
         };
 
-        pub fn new(allocator: Allocator, options: *const ParserOptions, at_rule_parser: *AtRuleParserT, rules: *CssRuleList(AtRuleT), composes: *ComposesMap) @This() {
+        pub fn new(allocator: Allocator, options: *const ParserOptions, at_rule_parser: *AtRuleParserT, rules: *CssRuleList(AtRuleT), composes: *ComposesMap, local_properties: *LocalPropertyUsage) @This() {
             return .{
                 .options = options,
                 .state = .start,
@@ -1892,6 +1904,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 .rules = rules,
                 .allocator = allocator,
                 .composes = composes,
+                .local_properties = local_properties,
             };
         }
 
@@ -1907,6 +1920,7 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 .allocator = this.allocator,
                 .composes = this.composes,
                 .composes_refs = &this.composes_refs,
+                .local_properties = this.local_properties,
                 .allow_composes = false,
             };
         }
@@ -1934,6 +1948,7 @@ pub fn NestedRuleParser(comptime T: type) type {
         saw_composes: bool = false,
         composes_refs: *SmallList(bun.bundle_v2.Ref, 2),
         composes: *ComposesMap,
+        local_properties: *LocalPropertyUsage,
 
         allocator: Allocator,
 
@@ -2544,8 +2559,10 @@ pub fn NestedRuleParser(comptime T: type) type {
                 const loc = this.getLoc(start);
                 defer this.saw_composes = false;
                 defer this.composes_refs.clearRetainingCapacity();
+                var track_local_properties = false;
                 // we don't allow composes in nested style rules
                 if (input.flags.css_modules and !this.is_in_style_rule) {
+                    track_local_properties = true;
                     this.allow_composes = brk: {
                         var found_any: bool = false;
                         // store all css module export names relevant to this style rule in `this.composes_refs`
@@ -2561,6 +2578,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                         break :brk found_any;
                     };
                 }
+                const location = input.position();
                 const result = switch (this.parseNested(input, true)) {
                     .err => |e| return .{ .err = e },
                     .result => |v| v,
@@ -2568,7 +2586,13 @@ pub fn NestedRuleParser(comptime T: type) type {
                 const declarations: DeclarationBlock = result[0];
                 const rules = result[1];
 
-                if (this.allow_composes and this.composes_refs.len() > 0 and this.saw_composes) {
+                // We parsed a style rule with the `composes` property
+                //
+                // Track which properties it used so we can validate it later (it is undefined
+                // behavior when composing and properties conflict so we will warn the user
+                // about that).
+                if (track_local_properties) {
+                    const len = input.position() - location;
                     var usage = PropertyBitset.initEmpty();
                     var custom_properties = bun.BabyList([]const u8){};
                     fillPropertyBitSet(this.allocator, &usage, &declarations, &custom_properties);
@@ -2576,8 +2600,12 @@ pub fn NestedRuleParser(comptime T: type) type {
                     const custom_properties_slice = custom_properties.slice();
 
                     for (this.composes_refs.slice()) |ref| {
-                        const composes_entries = this.composes.getPtr(ref).?;
-                        composes_entries.fillPropertyUsage(&usage, custom_properties_slice);
+                        const entry = this.local_properties.getOrPut(this.allocator, ref) catch bun.outOfMemory();
+                        const property_usage: *PropertyUsage = if (!entry.found_existing) brk: {
+                            entry.value_ptr.* = PropertyUsage{ .range = bun.logger.Range{ .loc = bun.logger.Loc{ .start = @intCast(location) }, .len = @intCast(len) } };
+                            break :brk entry.value_ptr;
+                        } else entry.value_ptr;
+                        property_usage.fill(&usage, custom_properties_slice);
                     }
                 }
 
@@ -2649,6 +2677,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                 .allow_composes = this.allow_composes and !this.is_in_style_rule,
                 .composes = this.composes,
                 .composes_refs = this.composes_refs,
+                .local_properties = this.local_properties,
             };
 
             const parse_declarations = This.RuleBodyItemParser.parseDeclarations(&nested_parser);
@@ -2686,6 +2715,8 @@ pub fn NestedRuleParser(comptime T: type) type {
                     }
                 }
             }
+
+            this.saw_composes = nested_parser.saw_composes;
 
             return .{
                 .result = .{
@@ -2875,21 +2906,35 @@ pub const ParserExtra = struct {
 
 pub const CustomIdentList = css_values.ident.CustomIdentList;
 pub const Specifier = css_properties.css_modules.Specifier;
+
+/// If css modules is enabled, this maps locally scoped class names to their ref.
+///
+/// We use this ref as a layer of indirection during the bundling stage because we don't
+/// know the final generated class names for local scope until print time.
+pub const LocalScope = std.StringArrayHashMapUnmanaged(bun.bundle_v2.Ref);
+/// Local symbol renaming results go here
+pub const LocalsResultsMap = bun.bundle_v2.MangledProps;
+/// Using `compose` and having conflicting properties is undefined behavior according
+/// to the css modules spec. We should warn the user about this.
+pub const LocalPropertyUsage = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, PropertyUsage);
 pub const Composes = css_properties.css_modules.Composes;
 pub const ComposesMap = std.AutoArrayHashMapUnmanaged(bun.bundle_v2.Ref, ComposesEntry);
+
 pub const ComposesEntry = struct {
     composes: bun.BabyList(Composes) = .{},
-    property_usage: PropertyBitset = PropertyBitset.initEmpty(),
+};
+pub const PropertyUsage = struct {
+    bitset: PropertyBitset = PropertyBitset.initEmpty(),
     custom_properties: []const []const u8 = &.{},
+    range: bun.logger.Range,
 
-    pub inline fn fillPropertyUsage(this: *ComposesEntry, used: *const PropertyBitset, custom_properties: []const []const u8) void {
-        this.property_usage.setIntersection(used.*);
+    pub inline fn fill(this: *PropertyUsage, used: *const PropertyBitset, custom_properties: []const []const u8) void {
+        this.bitset.setUnion(used.*);
         this.custom_properties = custom_properties;
     }
 };
 
 // TODO: this is chonky
-// TODO: this won't work for custom properties
 pub const PropertyBitset = std.bit_set.ArrayBitSet(usize, std.math.ceilPowerOfTwo(u16, bun.meta.EnumFields(PropertyIdTag).len) catch @panic("FUCK"));
 pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: *const DeclarationBlock, custom_properties: *bun.BabyList([]const u8)) void {
     for (block.declarations.items) |*prop| {
@@ -2918,11 +2963,6 @@ pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: 
     }
 }
 
-// pub const ComposesInfo = struct {
-//     names: *const CustomIdentList,
-//     from: ?Specifier,
-// };
-
 pub fn StyleSheet(comptime AtRule: type) type {
     return struct {
         /// A list of top-level rules within the style sheet.
@@ -2933,7 +2973,8 @@ pub fn StyleSheet(comptime AtRule: type) type {
         options: ParserOptions,
         tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0 = if (AtRule == BundlerAtRule) null else 0,
         layer_names: bun.BabyList(LayerName) = .{},
-        /// Used when css modules is enabled
+
+        /// Used when css modules is enabled.
         ///
         /// Maps `local name string` -> `Ref`
         ///
@@ -2942,7 +2983,14 @@ pub fn StyleSheet(comptime AtRule: type) type {
         ///    2. `local_scope.values()[i].tag == .symbol`
         ///    3. `local_scopes.values().last().inner_index == symbols.count() - 1`
         local_scope: LocalScope = .{},
-        /// Used whenn css modules is enabled
+        /// Used when css modules is enabled.
+        ///
+        /// Track which properties are used in local scope.
+        ///
+        /// Used later to warn when using `composes` property on
+        /// two style rules which have conflicting properties.
+        local_properties: LocalPropertyUsage = .{},
+        /// Used whenn css modules is enabled.
         ///
         /// `bun.bundle_v2.Ref` => `bun.BabyList(ComposesExtended)`
         composes: ComposesMap,
@@ -3136,6 +3184,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 .symbols = .{},
                 .source_index = source_index,
             };
+            var local_properties = LocalPropertyUsage{};
 
             // Assert invariant 2
             defer if (comptime bun.Environment.isDebug) {
@@ -3176,7 +3225,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
             parser.reset(&state);
 
             var rules = CssRuleList(AtRule){};
-            var rule_parser = TopLevelRuleParser(P).new(allocator, &options, at_rule_parser, &rules, &composes);
+            var rule_parser = TopLevelRuleParser(P).new(allocator, &options, at_rule_parser, &rules, &composes, &local_properties);
             var rule_list_parser = StyleSheetParser(TopLevelRuleParser(P)).new(&parser, &rule_parser);
 
             while (rule_list_parser.next(allocator)) |result| {
@@ -3206,6 +3255,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                         .options = options,
                         .layer_names = if (comptime P == BundlerAtRuleParser) at_rule_parser.layer_names else .{},
                         .local_scope = parser_extra.local_scope,
+                        .local_properties = local_properties,
                         .composes = composes,
                     },
                     StylesheetExtra{
@@ -3642,14 +3692,6 @@ const ParseUntilErrorBehavior = enum {
 //     }
 // };
 
-/// If css modules is enabled, this maps locally scoped class names to their ref.
-///
-/// We use this ref as a layer of indirection during the bundling stage because we don't
-/// know the final generated class names for local scope until print time.
-pub const LocalScope = std.StringArrayHashMapUnmanaged(bun.bundle_v2.Ref);
-/// Local symbol renaming results go here
-pub const LocalsResultsMap = bun.bundle_v2.MangledProps;
-
 pub const Parser = struct {
     input: *ParserInput,
     at_start_of: ?BlockType = null,
@@ -3686,12 +3728,12 @@ pub const Parser = struct {
     }
 
     // TODO: dedupe import records??
-    pub fn addImportRecordForUrl(this: *Parser, url: []const u8, start_position: usize) Result(u32) {
+    pub fn addImportRecord(this: *Parser, url: []const u8, start_position: usize, kind: ImportKind) Result(u32) {
         if (this.import_records) |import_records| {
             const idx = import_records.len;
             import_records.push(this.allocator(), ImportRecord{
                 .path = bun.fs.Path.init(url),
-                .kind = .url,
+                .kind = kind,
                 .range = bun.logger.Range{
                     .loc = bun.logger.Loc{ .start = @intCast(start_position) },
                     .len = @intCast(url.len), // TODO: technically this is not correct because the url could be escaped
@@ -3710,7 +3752,7 @@ pub const Parser = struct {
     /// Create a new Parser
     ///
     /// Pass in `import_records` to track imports (`@import` rules, `url()` tokens). If this
-    /// is `null`, calling `Parser.addImportRecordForUrl` will error.
+    /// is `null`, calling `Parser.addImportRecord` will error.
     pub fn new(input: *ParserInput, import_records: ?*bun.BabyList(ImportRecord), flags: Opts, extra: ?*ParserExtra) Parser {
         return Parser{
             .input = input,

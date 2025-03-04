@@ -619,7 +619,7 @@ pub const BundleV2 = struct {
             }
 
             const is_js = v.all_loaders[source_index.get()].isJavaScriptLike();
-            const is_css = v.all_loaders[source_index.get()] == .css;
+            const is_css = v.all_loaders[source_index.get()].isCSS();
 
             const import_record_list_id = source_index;
             // when there are no import records, v index will be invalid
@@ -3115,7 +3115,7 @@ pub const BundleV2 = struct {
             }
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
-                if (loader == .css) {
+                if (loader.isCSS()) {
                     // Do not use cached files for CSS.
                     break :brk;
                 }
@@ -3418,12 +3418,12 @@ pub const BundleV2 = struct {
                 const input_file_loaders = this.graph.input_files.items(.loader);
                 const save_import_record_source_index = this.transpiler.options.dev_server == null or
                     result.loader == .html or
-                    result.loader == .css;
+                    result.loader.isCSS();
 
                 if (this.resolve_tasks_waiting_for_import_source_index.fetchSwapRemove(result.source.index.get())) |pending_entry| {
                     for (pending_entry.value.slice()) |to_assign| {
                         if (save_import_record_source_index or
-                            input_file_loaders[to_assign.to_source_index.get()] == .css)
+                            input_file_loaders[to_assign.to_source_index.get()].isCSS())
                         {
                             import_records.slice()[to_assign.import_record_index].source_index = to_assign.to_source_index;
                         }
@@ -4281,7 +4281,7 @@ pub const ParseTask = struct {
 
                 return JSAst.init(ast);
             },
-            .css => {
+            .css, .local_css => {
                 // make css ast
                 var import_records = BabyList(ImportRecord){};
                 const source_code = source.contents;
@@ -4291,8 +4291,9 @@ pub const ParseTask = struct {
                 }
 
                 const css_module_suffix = ".module.css";
-                const enable_css_modules = source.path.pretty.len > css_module_suffix.len and
+                const enable_css_modules = loader == .local_css or source.path.pretty.len > css_module_suffix.len and
                     strings.eqlComptime(source.path.pretty[source.path.pretty.len - css_module_suffix.len ..], css_module_suffix);
+                // const enable_css_modules = loader == .local_css;
                 const parser_options = if (enable_css_modules) init: {
                     var parseropts = bun.css.ParserOptions.default(allocator, &temp_log);
                     parseropts.filename = bun.path.basename(source.path.pretty);
@@ -5011,7 +5012,7 @@ pub const ParseTask = struct {
         var ast: JSAst = if (!is_empty)
             try getAST(log, transpiler, opts, allocator, resolver, source, loader, task.ctx.unique_key, &unique_key_for_additional_file, &task.ctx.linker.has_any_css_locals)
         else switch (opts.module_type == .esm) {
-            inline else => |as_undefined| if (loader == .css) try getEmptyCSSAST(
+            inline else => |as_undefined| if (loader.isCSS()) try getEmptyCSSAST(
                 log,
                 transpiler,
                 opts,
@@ -7120,6 +7121,10 @@ pub const LinkerContext = struct {
                 wrapping_conditions: *BabyList(bun.css.ImportConditions),
                 wrapping_import_records: *BabyList(ImportRecord),
             ) void {
+                debug(
+                    "Visit file: {d}={s}",
+                    .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
+                );
                 // The CSS specification strangely does not describe what to do when there
                 // is a cycle. So we are left with reverse-engineering the behavior from a
                 // real browser. Here's what the WebKit code base has to say about this:
@@ -7131,6 +7136,10 @@ pub const LinkerContext = struct {
                 // WebKit for more information.
                 for (visitor.visited.slice()) |visitedSourceIndex| {
                     if (visitedSourceIndex.get() == source_index.get()) {
+                        debug(
+                            "Skip file: {d}={s}",
+                            .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
+                        );
                         return;
                     }
                 }
@@ -7216,6 +7225,10 @@ pub const LinkerContext = struct {
                                     },
                                 ) catch bun.outOfMemory();
                             }
+                            debug(
+                                "Push external: {d}={s}",
+                                .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
+                            );
                             visitor.has_external_import = true;
                         }
                     }
@@ -7232,15 +7245,9 @@ pub const LinkerContext = struct {
 
                 if (comptime bun.Environment.isDebug) {
                     debug(
-                        "Looking at file: {d}={s}",
+                        "Push file: {d}={s}",
                         .{ source_index.get(), visitor.parse_graph.input_files.items(.source)[source_index.get()].path.pretty },
                     );
-                    for (visitor.visited.slice()) |idx| {
-                        debug(
-                            "Visit: {d}",
-                            .{idx.get()},
-                        );
-                    }
                 }
                 // Accumulate imports in depth-first postorder
                 visitor.order.push(visitor.allocator, Chunk.CssImportOrder{
@@ -7270,6 +7277,8 @@ pub const LinkerContext = struct {
         var wip_order = BabyList(Chunk.CssImportOrder).initCapacity(temp_allocator, order.len) catch bun.outOfMemory();
 
         const css_asts: []const ?*bun.css.BundlerStyleSheet = this.graph.ast.items(.css);
+
+        debugCssOrder(this, &order, .BEFORE_HOISTING);
 
         // CSS syntax unfortunately only allows "@import" rules at the top of the
         // file. This means we must hoist all external "@import" rules to the top of
@@ -7570,6 +7579,7 @@ pub const LinkerContext = struct {
     }
 
     const CssOrderDebugStep = enum {
+        BEFORE_HOISTING,
         AFTER_HOISTING,
         AFTER_REMOVING_DUPLICATES,
         WHILE_OPTIMIZING_REDUNDANT_LAYER_RULES,
@@ -7748,11 +7758,13 @@ pub const LinkerContext = struct {
 
         const all_import_records = this.graph.ast.items(.import_records);
         const all_loaders = this.parse_graph.input_files.items(.loader);
+        const all_parts = this.graph.ast.items(.parts);
 
         const visit = struct {
             fn visit(
                 c: *LinkerContext,
                 import_records: []const BabyList(ImportRecord),
+                parts: []const Part.List,
                 loaders: []const Loader,
                 temp: std.mem.Allocator,
                 visits: *BitSet,
@@ -7764,25 +7776,31 @@ pub const LinkerContext = struct {
                 visits.set(source_index.get());
 
                 const records: []ImportRecord = import_records[source_index.get()].slice();
+                const p = &parts[source_index.get()];
 
-                for (records) |record| {
-                    if (record.source_index.isValid()) {
-                        // Traverse any files imported by this part. Note that CommonJS calls
-                        // to "require()" count as imports too, sort of as if the part has an
-                        // ESM "import" statement in it. This may seem weird because ESM imports
-                        // are a compile-time concept while CommonJS imports are a run-time
-                        // concept. But we don't want to manipulate <style> tags at run-time so
-                        // this is the only way to do it.
-                        visit(
-                            c,
-                            import_records,
-                            loaders,
-                            temp,
-                            visits,
-                            o,
-                            record.source_index,
-                            loaders[record.source_index.get()] == .css,
-                        );
+                // Iterate over each part in the file in order
+                for (p.sliceConst()) |part| {
+                    // Traverse any files imported by this part. Note that CommonJS calls
+                    // to "require()" count as imports too, sort of as if the part has an
+                    // ESM "import" statement in it. This may seem weird because ESM imports
+                    // are a compile-time concept while CommonJS imports are a run-time
+                    // concept. But we don't want to manipulate <style> tags at run-time so
+                    // this is the only way to do it.
+                    for (part.import_record_indices.sliceConst()) |import_record_index| {
+                        const record = &records[import_record_index];
+                        if (record.source_index.isValid()) {
+                            visit(
+                                c,
+                                import_records,
+                                parts,
+                                loaders,
+                                temp,
+                                visits,
+                                o,
+                                record.source_index,
+                                loaders[record.source_index.get()].isCSS(),
+                            );
+                        }
                     }
                 }
 
@@ -7796,6 +7814,7 @@ pub const LinkerContext = struct {
         visit(
             this,
             all_import_records,
+            all_parts,
             all_loaders,
             temp_allocator,
             &visited,
@@ -7951,19 +7970,37 @@ pub const LinkerContext = struct {
                                                 visitor.visitName(other_file, other_name_ref, import_record.source_index.get());
                                             }
                                         }
-                                    } else {
-                                        @panic("TODO ZACK GLOBAL SCOPE COMPOSES");
+                                    } else if (compose.from.? == .global) {
+                                        // E.g.: `composes: foo from global`
+                                        //
+                                        // In this example `foo` is global and won't be rewritten to a locally scoped
+                                        // name, so we can just add it as a string.
+                                        for (compose.names.slice()) |name| {
+                                            visitor.parts.append(
+                                                E.TemplatePart{
+                                                    .value = Expr.init(
+                                                        E.String,
+                                                        E.String.init(name.v),
+                                                        visitor.loc,
+                                                    ),
+                                                    .tail = .{
+                                                        .cooked = E.String.init(" "),
+                                                    },
+                                                    .tail_loc = visitor.loc,
+                                                },
+                                            ) catch bun.outOfMemory();
+                                        }
                                     }
                                 } else {
                                     // it is from the current file
                                     for (compose.names.slice()) |name| {
                                         const name_ref = ast.local_scope.get(name.v) orelse {
-                                            visitor.log.addErrorFmt(
+                                            visitor.log.addWarningFmt(
                                                 &visitor.all_sources[idx],
                                                 compose.loc,
                                                 visitor.allocator,
-                                                "The name {s} never appears in {s} as a locally scoped name",
-                                                .{ name.v, visitor.all_sources[idx].path.pretty },
+                                                "<r>The name <b>{s}<r> never appears in <b>{s}<r> as a locally scoped name.\n      If it is a global name, use <r><cyan>`composes: {s} from global`<r> instead.",
+                                                .{ name.v, visitor.all_sources[idx].path.pretty, name.v },
                                             ) catch bun.outOfMemory();
                                             continue;
                                         };
@@ -9014,6 +9051,32 @@ pub const LinkerContext = struct {
         }
     }
 
+    /// CSS modules spec says that the following is undefined behavior:
+    ///
+    /// ```css
+    /// .foo {
+    ///     composes: bar;
+    ///     color: red;
+    /// }
+    ///
+    /// .bar {
+    ///     color: blue;
+    /// }
+    /// ```
+    ///
+    /// Specfically, composing two classes that both define the same property is undefined behavior.
+    ///
+    /// We check this by recording, at parse time, properties that classes use in the `PropertyUsage` struct.
+    /// Then here, we compare the properties of the two classes to ensure that there are no conflicts.
+    ///
+    /// There is one case we skip, which is checking the properties of composing from the global scope (`composes: X from global`).
+    ///
+    /// The reason we skip this is because it would require tracking _every_ property of _every_ class (not just CSS module local classes).
+    /// This sucks because:
+    /// 1. It introduces a performance hit even if the user did not use CSS modules
+    /// 2. Composing from the global scope is pretty rare
+    ///
+    /// We should find a way to do this without incurring performance penalties to the common cases.
     fn validateComposesFromProperties(
         this: *LinkerContext,
         index: Index.Int,
@@ -9023,8 +9086,7 @@ pub const LinkerContext = struct {
     ) void {
         const PropertyInFile = struct {
             source_index: Index.Int,
-            /// currently not used
-            loc: bun.logger.Loc,
+            range: bun.logger.Range,
         };
         const Visitor = struct {
             visited: std.AutoArrayHashMap(Ref, void),
@@ -9033,6 +9095,7 @@ pub const LinkerContext = struct {
             all_css_asts: []const ?*bun.css.BundlerStyleSheet,
             all_symbols: *const Symbol.Map,
             all_sources: []const Logger.Source,
+            temp_allocator: std.mem.Allocator,
             allocator: std.mem.Allocator,
             log: *Logger.Log,
 
@@ -9041,13 +9104,13 @@ pub const LinkerContext = struct {
                 v.properties.deinit();
             }
 
-            fn addPropertyOrWarn(v: *@This(), local: Ref, name: []const u8, source_index: Index.Int, loc: bun.logger.Loc) void {
+            fn addPropertyOrWarn(v: *@This(), local: Ref, name: []const u8, source_index: Index.Int, range: bun.logger.Range) void {
                 const entry = v.properties.getOrPut(name) catch bun.outOfMemory();
 
                 if (!entry.found_existing) {
                     entry.value_ptr.* = .{
                         .source_index = source_index,
-                        .loc = loc,
+                        .range = range,
                     };
                     return;
                 }
@@ -9057,25 +9120,31 @@ pub const LinkerContext = struct {
                 }
 
                 const local_original_name = v.all_symbols.get(local).?.original_name;
+
                 v.log.addMsg(.{
-                    .kind = .warn,
+                    .kind = .err,
                     .data = Logger.rangeData(
                         &v.all_sources[source_index],
-                        Logger.Range{ .loc = loc },
+                        range,
                         Logger.Log.allocPrint(
                             v.allocator,
-                            "The value of {s} in the class {s} is undefined.",
+                            "<r>The value of <b>{s}<r> in the class <b>{s}<r> is undefined.",
                             .{ name, local_original_name },
                         ) catch bun.outOfMemory(),
                     ).cloneLineText(v.log.clone_line_text, v.log.msgs.allocator) catch bun.outOfMemory(),
                     .notes = v.allocator.dupe(
                         Logger.Data,
                         &.{
+                            bun.logger.rangeData(
+                                &v.all_sources[entry.value_ptr.source_index],
+                                entry.value_ptr.range,
+                                Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{name}) catch bun.outOfMemory(),
+                            ),
                             .{ .text = std.fmt.allocPrint(
                                 v.allocator,
-                                "The specification of \"composes\" does not define an order when class declarations from separate files are composed together." ++
-                                    "The value of the {s} property for {s} may change unpredictably as the code is edited. " ++
-                                    "Make sure that all definitions of {s} for {s} are in a single file.",
+                                "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. " ++
+                                    "<r><blue>The value of the <b>{s}<r><blue> property for <b>{s}<r><blue> may change unpredictably as the code is edited. " ++
+                                    "Make sure that all definitions of <b>{s}<r><blue> for <b>{s}<r><blue> are in a single file.",
                                 .{ name, local_original_name, name, local_original_name },
                             ) catch bun.outOfMemory() },
                         },
@@ -9095,55 +9164,62 @@ pub const LinkerContext = struct {
                 if (v.visited.contains(ref)) return;
                 v.visited.put(ref, {}) catch unreachable;
 
-                const composes = ast.composes.getPtr(ref) orelse return;
-                for (composes.composes.sliceConst()) |*compose| {
-                    // is an import
-                    if (compose.from != null) {
-                        if (compose.from.? == .file) {
-                            const import_record_idx = compose.from.?.file;
-                            const record = v.all_import_records[idx].at(import_record_idx);
-                            if (record.source_index.isInvalid()) continue;
-                            const other_ast = v.all_css_asts[record.source_index.get()] orelse continue;
-                            for (compose.names.slice()) |name| {
-                                const other_name = other_ast.local_scope.get(name.v) orelse continue;
-                                v.visit(record.source_index.get(), other_ast, other_name);
+                // This local name was in a style rule that
+                if (ast.composes.getPtr(ref)) |composes| {
+                    for (composes.composes.sliceConst()) |*compose| {
+                        // is an import
+                        if (compose.from != null) {
+                            if (compose.from.? == .file) {
+                                const import_record_idx = compose.from.?.file;
+                                const record = v.all_import_records[idx].at(import_record_idx);
+                                if (record.source_index.isInvalid()) continue;
+                                const other_ast = v.all_css_asts[record.source_index.get()] orelse continue;
+                                for (compose.names.slice()) |name| {
+                                    const other_name = other_ast.local_scope.get(name.v) orelse continue;
+                                    v.visit(record.source_index.get(), other_ast, other_name);
+                                }
+                            } else {
+                                bun.assert(compose.from.? == .global);
+                                // Otherwise it is composed from the global scope.
+                                //
+                                // See comment above for why we are skipping checking this for now.
                             }
                         } else {
-                            // TODO: global scope
-                        }
-                    } else {
-                        // inside this file
-                        for (compose.names.slice()) |name| {
-                            const name_ref = ast.local_scope.get(name.v) orelse continue;
-                            v.visit(idx, ast, name_ref);
+                            // inside this file
+                            for (compose.names.slice()) |name| {
+                                const name_ref = ast.local_scope.get(name.v) orelse continue;
+                                v.visit(idx, ast, name_ref);
+                            }
                         }
                     }
+                }
 
-                    // Warn about cross-file composition with the same CSS properties
-                    var iter = composes.property_usage.iterator(.{});
-                    while (iter.next()) |property_tag| {
-                        const property_id_tag: bun.css.PropertyIdTag = @enumFromInt(@as(u16, @intCast(property_tag)));
-                        bun.assert(property_id_tag != .custom);
-                        bun.assert(property_id_tag != .unparsed);
-                        v.addPropertyOrWarn(ref, @tagName(property_id_tag), idx, bun.logger.Loc.Empty);
-                    }
+                const property_usage = ast.local_properties.getPtr(ref) orelse return;
+                // Warn about cross-file composition with the same CSS properties
+                var iter = property_usage.bitset.iterator(.{});
+                while (iter.next()) |property_tag| {
+                    const property_id_tag: bun.css.PropertyIdTag = @enumFromInt(@as(u16, @intCast(property_tag)));
+                    bun.assert(property_id_tag != .custom);
+                    bun.assert(property_id_tag != .unparsed);
+                    v.addPropertyOrWarn(ref, @tagName(property_id_tag), idx, property_usage.range);
+                }
 
-                    for (composes.custom_properties) |property| {
-                        v.addPropertyOrWarn(ref, property, idx, bun.logger.Loc.Empty);
-                    }
+                for (property_usage.custom_properties) |property| {
+                    v.addPropertyOrWarn(ref, property, idx, property_usage.range);
                 }
             }
         };
-        var sfb = std.heap.stackFallback(1024, this.allocator);
-        const allocator = sfb.get();
+        var sfb = std.heap.stackFallback(1024, this.graph.allocator);
+        const temp_allocator = sfb.get();
         var visitor = Visitor{
-            .visited = std.AutoArrayHashMap(Ref, void).init(allocator),
-            .properties = std.StringArrayHashMap(PropertyInFile).init(allocator),
+            .visited = std.AutoArrayHashMap(Ref, void).init(temp_allocator),
+            .properties = std.StringArrayHashMap(PropertyInFile).init(temp_allocator),
             .all_import_records = import_records_list,
             .all_css_asts = all_css_asts,
             .all_symbols = &this.graph.symbols,
             .all_sources = this.parse_graph.input_files.items(.source),
-            .allocator = allocator,
+            .temp_allocator = temp_allocator,
+            .allocator = this.graph.allocator,
             .log = this.log,
         };
         defer visitor.deinit();
@@ -9180,7 +9256,7 @@ pub const LinkerContext = struct {
                                 .{@tagName(loader)},
                             ) catch bun.outOfMemory();
                         },
-                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
+                        .css, .local_css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
                     }
                 }
             }
@@ -11046,7 +11122,7 @@ pub const LinkerContext = struct {
                 if (this.linker.dev_server != null) {
                     if (unique_key_for_additional_files.len > 0) {
                         element.setAttribute(url_attribute, unique_key_for_additional_files) catch bun.outOfMemory();
-                    } else if (import_record.path.is_disabled or loader.isJavaScriptLike() or loader == .css) {
+                    } else if (import_record.path.is_disabled or loader.isJavaScriptLike() or loader.isCSS()) {
                         element.remove();
                     } else {
                         element.setAttribute(url_attribute, import_record.path.pretty) catch bun.outOfMemory();
@@ -11059,7 +11135,7 @@ pub const LinkerContext = struct {
                     return;
                 }
 
-                if (loader.isJavaScriptLike() or loader == .css) {
+                if (loader.isJavaScriptLike() or loader.isCSS()) {
                     // Remove the original non-external tags
                     element.remove();
                     return;

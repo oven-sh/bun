@@ -151,13 +151,6 @@ pub fn Printer(comptime Writer: type) type {
 
             const final_ref = symbols.follow(ref);
             if (this.local_names) |local_names| {
-                if (comptime bun.Environment.isDebug) {
-                    std.debug.print("lookupSymbol {}:\n", .{final_ref});
-                    std.debug.print("local_names: \n", .{});
-                    for (local_names.keys(), local_names.values()) |myref, name| {
-                        std.debug.print("  {}: {s}\n", .{ myref, name });
-                    }
-                }
                 if (local_names.get(final_ref)) |local_name| return local_name;
             }
 

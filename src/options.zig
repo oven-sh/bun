@@ -633,6 +633,7 @@ pub const Loader = enum(u8) {
     ts,
     tsx,
     css,
+    local_css,
     file,
     json,
     toml,
@@ -645,6 +646,10 @@ pub const Loader = enum(u8) {
     sqlite,
     sqlite_embedded,
     html,
+
+    pub fn isCSS(this: Loader) bool {
+        return this == .css or this == .local_css;
+    }
 
     pub fn disableHTML(this: Loader) Loader {
         return switch (this) {
@@ -669,7 +674,7 @@ pub const Loader = enum(u8) {
             // TODO: loader for reading bytes and creating module or instance
             .wasm,
             => true,
-            .css => false,
+            .css, .local_css => false,
             .html => false,
             else => false,
         };
@@ -678,7 +683,7 @@ pub const Loader = enum(u8) {
     pub fn toMimeType(this: Loader, paths: []const []const u8) bun.http.MimeType {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
-            .css => bun.http.MimeType.css,
+            .css, .local_css => bun.http.MimeType.css,
             .toml, .json => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
@@ -724,6 +729,7 @@ pub const Loader = enum(u8) {
         map.set(.ts, "input.ts");
         map.set(.tsx, "input.tsx");
         map.set(.css, "input.css");
+        map.set(.local_css, "input.module.css");
         map.set(.file, "input");
         map.set(.json, "input.json");
         map.set(.toml, "input.toml");
@@ -765,6 +771,7 @@ pub const Loader = enum(u8) {
         .{ "ts", .ts },
         .{ "tsx", .tsx },
         .{ "css", .css },
+        .{ ".module.css", .local_css },
         .{ "file", .file },
         .{ "json", .json },
         .{ "jsonc", .json },
@@ -791,6 +798,7 @@ pub const Loader = enum(u8) {
         .{ "ts", .ts },
         .{ "tsx", .tsx },
         .{ "css", .css },
+        .{ "local-css", .local_css },
         .{ "file", .file },
         .{ "json", .json },
         .{ "jsonc", .json },
@@ -829,6 +837,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .local_css => .local_css,
             .html => .html,
             .file, .bunsh => .file,
             .json => .json,
@@ -850,6 +859,7 @@ pub const Loader = enum(u8) {
             .ts => .ts,
             .tsx => .tsx,
             .css => .css,
+            .local_css => .local_css,
             .file => .file,
             .json => .json,
             .toml => .toml,

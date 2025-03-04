@@ -177,6 +177,324 @@ body {
 `);
     },
   });
+
+  // TODO: re-enable these tests when we do minify local css identifiers
+  // itBundled("css/TestImportLocalCSSFromJSMinifyIdentifiersAvoidGlobalNames", {
+  //   files: {
+  //     "/entry.js": /* js */ `
+  //       import "./global.css";
+  //       import "./local.module.css";
+  //     `,
+  //     "/global.css": /* css */ `
+  //     :is(.a, .b, .c, .d, .e, .f, .g, .h, .i, .j, .k, .l, .m, .n, .o, .p, .q, .r, .s, .t, .u, .v, .w, .x, .y, .z),
+  //     :is(.A, .B, .C, .D, .E, .F, .G, .H, .I, .J, .K, .L, .M, .N, .O, .P, .Q, .R, .S, .T, .U, .V, .W, .X, .Y, .Z),
+  //     ._ { color: red }
+  //   `,
+  //     "/local.module.css": /* css */ `
+  //     .rename-this { color: blue }
+  //   `,
+  //   },
+  //   entryPoints: ["/entry.js"],
+  //   outdir: "/out",
+  //   minifyIdentifiers: true,
+  // });
+
+  // // See: https://github.com/evanw/esbuild/issues/3295
+  // itBundled("css/ImportLocalCSSFromJSMinifyIdentifiersMultipleEntryPoints", {
+  //   files: {
+  //     "/a.js": /* js */ `
+  //       import { foo, bar } from "./a.module.css";
+  //       console.log(foo, bar);
+  //     `,
+  //     "/a.module.css": /* css */ `
+  //       .foo { color: #001; }
+  //       .bar { color: #002; }
+  //     `,
+  //     "/b.js": /* js */ `
+  //       import { foo, bar } from "./b.module.css";
+  //       console.log(foo, bar);
+  //     `,
+  //     "/b.module.css": /* css */ `
+  //       .foo { color: #003; }
+  //       .bar { color: #004; }
+  //     `,
+  //   },
+  //   entryPoints: ["/a.js", "/b.js"],
+  //   outdir: "/out",
+  //   minifyIdentifiers: true,
+  // });
+
+  // TODO: some classes are commented out bc we don't support :global or :local yet
+  // itBundled("css/ImportCSSFromJSComposes", {
+  itBundled("FUCK", {
+    files: {
+      "/entry.js": /* js */ `
+        import styles from "./styles.module.css"
+        console.log(styles)
+      `,
+      "/global.css": /* css */ `
+        .GLOBAL1 {
+          color: black;
+        }
+      `,
+      "/styles.module.css": /* css */ `
+        @import "global.css";
+        /* .local0 {
+          composes: local1;
+          :global {
+            composes: GLOBAL1 GLOBAL2;
+          }
+        } */
+        .local0 {
+          composes: GLOBAL2 GLOBAL3 from global;
+          composes: local1 local2;
+          background: green;
+        }
+        /* .local0 :global {
+          composes: GLOBAL4;
+        } */
+        .local3 {
+          border: 1px solid black;
+          composes: local4;
+        }
+        .local4 {
+          opacity: 0.5;
+        }
+        .local1 {
+          color: red;
+          composes: local3;
+        }
+        .fromOtherFile {
+          composes: local0 from "other1.module.css";
+          composes: local0 from "other2.module.css";
+        }
+      `,
+      "/other1.module.css": /* css */ `
+        .local0 {
+          composes: base1 base2 from "base.module.css";
+          color: blue;
+        }
+      `,
+      "/other2.module.css": /* css */ `
+        .local0 {
+          composes: base1 base3 from "base.module.css";
+          background: purple;
+        }
+      `,
+      "/base.module.css": /* css */ `
+        .base1 {
+          cursor: pointer;
+        }
+        .base2 {
+          display: inline;
+        }
+        .base3 {
+          float: left;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: {
+      "/styles.module.css": ["The name local2 never appears in styles.module.css as a locally scoped name."],
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          local0: "GLOBAL2 GLOBAL3 local4_-MSaAA local3_-MSaAA local1_-MSaAA local0_-MSaAA",
+          local3: "local4_-MSaAA local3_-MSaAA",
+          local4: "local4_-MSaAA",
+          local1: "local4_-MSaAA local3_-MSaAA local1_-MSaAA",
+          fromOtherFile: "base1_1Cz41w base2_1Cz41w local0_qwJuwA base3_1Cz41w local0_AgBO5Q fromOtherFile_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* global.css */
+        .GLOBAL1 {
+          color: #000;
+        }
+
+        /* other1.module.css */
+        .local0_qwJuwA {
+          color: #00f;
+        }
+
+        /* base.module.css */
+        .base1_1Cz41w {
+          cursor: pointer;
+        }
+
+        .base2_1Cz41w {
+          display: inline;
+        }
+
+        .base3_1Cz41w {
+          float: left;
+        }
+
+        /* other2.module.css */
+        .local0_AgBO5Q {
+          background: purple;
+        }
+
+        /* styles.module.css */
+        .local0_-MSaAA {
+          background: green;
+        }
+
+        .local3_-MSaAA {
+          border: 1px solid #000;
+        }
+
+        .local4_-MSaAA {
+          opacity: .5;
+        }
+
+        .local1_-MSaAA {
+          color: red;
+        }
+
+        .fromOtherFile_-MSaAA {
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css/ImportCSSFromJSComposesFromMissingImport", {
+    files: {
+      "/entry.js": `
+        import styles from "./styles.module.css"
+        console.log(styles)
+      `,
+      "/styles.module.css": `
+        .foo {
+          composes: x from "file.module.css";
+          composes: y from "file.module.css";
+          composes: z from "file.module.css";
+          composes: x from "file.css";
+        }
+      `,
+      "/file.module.css": `
+        .x {
+          color: red;
+        }
+        :global(.y) {
+          color: blue;
+        }
+      `,
+      "/file.css": `
+        .x {
+          color: red;
+        }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleErrors: {
+      "/styles.module.css": [
+        'Cannot use global name "y" with "composes"',
+        'The name "z" never appears in "file.module.css"',
+        'Cannot use global name "x" with "composes"',
+      ],
+    },
+    bundleWarnings: {
+      "/styles.module.css": [
+        'The global name "y" is defined in file.module.css. Use the ":local" selector to change "y" into a local name.',
+        'The global name "x" is defined in file.css. Use the "local-css" loader for "file.css" to enable local names.',
+      ],
+    },
+  });
+
+  itBundled("css/ImportCSSFromJSComposesFromNotCSS", {
+    files: {
+      "/entry.js": `
+        import styles from "./styles.css"
+        console.log(styles)
+      `,
+      "/styles.css": `
+        .foo {
+          composes: bar from "file.txt";
+        }
+      `,
+      "/file.txt": `
+        .bar {
+          color: red;
+        }
+      `,
+    },
+    loader: {
+      ".css": "local-css",
+      ".txt": "text",
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleErrors: {
+      "/styles.css": ['Cannot use "composes" with "file.txt"'],
+    },
+    bundleWarnings: {
+      "/styles.css": [
+        'You can only use "composes" with CSS files and "file.txt" is not a CSS file (it was loaded with the "text" loader).',
+      ],
+    },
+  });
+
+  itBundled("css/ImportCSSFromJSComposesCircular", {
+    files: {
+      "/entry.js": `
+        import styles from "./styles.css"
+        console.log(styles)
+      `,
+      "/styles.css": `
+        .foo {
+          composes: bar;
+        }
+        .bar {
+          composes: foo;
+        }
+        .baz {
+          composes: baz;
+        }
+      `,
+    },
+    loader: {
+      ".css": "local-css",
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+  });
+
+  itBundled("css/ImportCSSFromJSComposesFromCircular", {
+    files: {
+      "/entry.js": `
+        import styles from "./styles.css"
+        console.log(styles)
+      `,
+      "/styles.css": `
+        .foo {
+          composes: bar from "other.css";
+        }
+        .bar {
+          composes: bar from "styles.css";
+        }
+      `,
+      "/other.css": `
+        .bar {
+          composes: foo from "styles.css";
+        }
+      `,
+    },
+    loader: {
+      ".css": "local-css",
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+  });
 });
 
 describe("esbuild-bundler", () => {

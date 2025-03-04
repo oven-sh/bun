@@ -149,6 +149,9 @@ pub const Ident = struct {
 /// If it's an `Ident`, then `__ref_bit == false` and `__len` is the length of the slice.
 ///
 /// If it's `Ref`, then `__ref_bit == true` and `__len` is the bit pattern of the `Ref`.
+///
+/// In debug mode, if it is a `Ref` we will also set the `__ptrbits` to point to the original
+/// []const u8 so we can debug the string. This should be fine since we use arena
 pub const IdentOrRef = packed struct(u128) {
     __ptrbits: u63 = 0,
     __ref_bit: bool = false,
@@ -166,9 +169,12 @@ pub const IdentOrRef = packed struct(u128) {
             @compileError("debugIdent is only available in debug mode");
         }
 
-        const ptr: *const []const u8 = @ptrFromInt(@as(usize, @intCast(this.__ptrbits)));
+        if (this.__ref_bit) {
+            const ptr: *const []const u8 = @ptrFromInt(@as(usize, @intCast(this.__ptrbits)));
+            return ptr.*;
+        }
 
-        return ptr.*;
+        return this.asIdent().?.v;
     }
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

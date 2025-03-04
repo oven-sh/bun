@@ -122,7 +122,7 @@ pub const Specifier = union(enum) {
     pub fn parse(input: *css.Parser) css.Result(Specifier) {
         const start_position = input.position();
         if (input.tryParse(css.Parser.expectUrlOrString, .{}).asValue()) |file| {
-            const import_record_idx = switch (input.addImportRecordForUrl(file, start_position)) {
+            const import_record_idx = switch (input.addImportRecord(file, start_position, .composes)) {
                 .result => |idx| idx,
                 .err => |e| return .{ .err = e },
             };

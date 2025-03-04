@@ -814,10 +814,11 @@ pub const BundleV2 = struct {
                         import_record.source_file,
                         import_record.specifier,
                         target.bakeGraph(),
+                        this.graph.input_files.items(.loader)[import_record.importer_source_index],
                     ) catch bun.outOfMemory();
 
                     // Turn this into an invalid AST, so that incremental mode skips it when printing.
-                    this.graph.ast.items(.parts)[import_record.importer_source_index.?].len = 0;
+                    this.graph.ast.items(.parts)[import_record.importer_source_index].len = 0;
                 }
             }
 
@@ -825,17 +826,15 @@ pub const BundleV2 = struct {
             var source: ?*const Logger.Source = null;
             const log = this.logForResolutionFailures(import_record.source_file, target.bakeGraph());
 
-            if (import_record.importer_source_index) |importer| {
-                var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
-                source = &this.graph.input_files.items(.source)[importer];
-                handles_import_errors = record.handles_import_errors;
+            var record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+            source = &this.graph.input_files.items(.source)[import_record.importer_source_index];
+            handles_import_errors = record.handles_import_errors;
 
-                // Disable failing packages from being printed.
-                // This may cause broken code to write.
-                // However, doing this means we tell them all the resolve errors
-                // Rather than just the first one.
-                record.path.is_disabled = true;
-            }
+            // Disable failing packages from being printed.
+            // This may cause broken code to write.
+            // However, doing this means we tell them all the resolve errors
+            // Rather than just the first one.
+            record.path.is_disabled = true;
 
             switch (err) {
                 error.ModuleNotFound => {
@@ -890,16 +889,13 @@ pub const BundleV2 = struct {
         var out_source_index: ?Index = null;
 
         var path: *Fs.Path = resolve_result.path() orelse {
-            if (import_record.importer_source_index) |importer| {
-                var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
+            var record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
 
-                // Disable failing packages from being printed.
-                // This may cause broken code to write.
-                // However, doing this means we tell them all the resolve errors
-                // Rather than just the first one.
-                record.path.is_disabled = true;
-            }
-
+            // Disable failing packages from being printed.
+            // This may cause broken code to write.
+            // However, doing this means we tell them all the resolve errors
+            // Rather than just the first one.
+            record.path.is_disabled = true;
             return;
         };
 
@@ -928,13 +924,10 @@ pub const BundleV2 = struct {
         if (!entry.found_existing) {
             path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
             const loader: Loader = (brk: {
-                if (import_record.importer_source_index) |importer| {
-                    var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
-                    if (record.loader()) |out_loader| {
-                        break :brk out_loader;
-                    }
+                var record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                if (record.loader()) |out_loader| {
+                    break :brk out_loader;
                 }
-
                 break :brk path.loader(&transpiler.options.loaders) orelse options.Loader.file;
                 // HTML is only allowed at the entry point.
             }).disableHTML();
@@ -968,10 +961,8 @@ pub const BundleV2 = struct {
         }
 
         if (out_source_index) |source_index| {
-            if (import_record.importer_source_index) |importer| {
-                var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
-                record.source_index = source_index;
-            }
+            const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+            record.source_index = source_index;
         }
     }
 
@@ -980,7 +971,7 @@ pub const BundleV2 = struct {
         path_slice: []const u8,
         target: options.Target,
     ) !void {
-        // TODO: plugins
+        // TODO: plugins with non-file namespaces
         const entry = try this.pathToSourceIndexMap(target).getOrPut(this.graph.allocator, bun.hash(path_slice));
         if (entry.found_existing) {
             return;
@@ -2344,13 +2335,13 @@ pub const BundleV2 = struct {
                 // When it's not a file, this is an error and we should report it.
                 //
                 // We have no way of loading non-files.
-                if (resolve.import_record.kind == .entry_point_build or resolve.import_record.importer_source_index == null) {
+                if (resolve.import_record.kind == .entry_point_build) {
                     log.addErrorFmt(null, Logger.Loc.Empty, bun.default_allocator, "Module not found {} in namespace {}", .{
                         bun.fmt.quote(resolve.import_record.specifier),
                         bun.fmt.quote(resolve.import_record.namespace),
                     }) catch {};
                 } else {
-                    const source = &this.graph.input_files.items(.source)[resolve.import_record.importer_source_index.?];
+                    const source = &this.graph.input_files.items(.source)[resolve.import_record.importer_source_index];
                     log.addRangeErrorFmt(
                         source,
                         resolve.import_record.range,
@@ -2440,24 +2431,25 @@ pub const BundleV2 = struct {
                 }
 
                 if (out_source_index) |source_index| {
-                    if (resolve.import_record.importer_source_index) |importer| {
-                        var source_import_records = &this.graph.ast.items(.import_records)[importer];
-                        if (source_import_records.len <= resolve.import_record.import_record_index) {
-                            var entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(this.graph.allocator, importer) catch unreachable;
-                            if (!entry.found_existing) {
-                                entry.value_ptr.* = .{};
-                            }
-                            entry.value_ptr.push(
-                                this.graph.allocator,
-                                .{
-                                    .to_source_index = source_index,
-                                    .import_record_index = resolve.import_record.import_record_index,
-                                },
-                            ) catch unreachable;
-                        } else {
-                            var import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
-                            import_record.source_index = source_index;
+                    const source_import_records = &this.graph.ast.items(.import_records)[resolve.import_record.importer_source_index];
+                    if (source_import_records.len <= resolve.import_record.import_record_index) {
+                        const entry = this.resolve_tasks_waiting_for_import_source_index.getOrPut(
+                            this.graph.allocator,
+                            resolve.import_record.importer_source_index,
+                        ) catch bun.outOfMemory();
+                        if (!entry.found_existing) {
+                            entry.value_ptr.* = .{};
                         }
+                        entry.value_ptr.push(
+                            this.graph.allocator,
+                            .{
+                                .to_source_index = source_index,
+                                .import_record_index = resolve.import_record.import_record_index,
+                            },
+                        ) catch bun.outOfMemory();
+                    } else {
+                        const import_record: *ImportRecord = &source_import_records.slice()[resolve.import_record.import_record_index];
+                        import_record.source_index = source_index;
                     }
                 }
             },
@@ -3138,6 +3130,7 @@ pub const BundleV2 = struct {
                                 source.path.text,
                                 import_record.path.text,
                                 ast.target.bakeGraph(), // use the source file target not the altered one
+                                loader,
                             ) catch bun.outOfMemory();
                         }
                     }
@@ -3165,7 +3158,7 @@ pub const BundleV2 = struct {
                                         "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
                                         .{ import_record.kind.errorLabel(), import_record.path.text },
                                         import_record.kind,
-                                    ) catch @panic("unexpected log error");
+                                    ) catch bun.outOfMemory();
                                 } else {
                                     addError(
                                         log,
@@ -3175,7 +3168,7 @@ pub const BundleV2 = struct {
                                         "Could not resolve: \"{s}\". Maybe you need to \"bun install\"?",
                                         .{import_record.path.text},
                                         import_record.kind,
-                                    ) catch @panic("unexpected log error");
+                                    ) catch bun.outOfMemory();
                                 }
                             } else {
                                 addError(
@@ -3184,9 +3177,12 @@ pub const BundleV2 = struct {
                                     import_record.range,
                                     this.graph.allocator,
                                     "Could not resolve: \"{s}\"",
-                                    .{import_record.path.text},
+                                    .{if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir))
+                                        import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..]
+                                    else
+                                        import_record.path.text},
                                     import_record.kind,
-                                ) catch @panic("unexpected log error");
+                                ) catch bun.outOfMemory();
                             }
                         }
                     },

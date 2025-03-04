@@ -718,7 +718,12 @@ test("my-test", () => {
 
       const stackLines = output.split("\n").filter(line => line.trim().startsWith("at "));
       expect(stackLines.length).toBeGreaterThan(0);
-      expect(stackLines[0]).toContain(`<dir>/my-test.test.js:5:11`.replace("<dir>", test_dir));
+      if (process.platform === "win32") {
+        expect(stackLines[0]).toContain(`<dir>\\my-test.test.js:5:11`.replace("<dir>", test_dir));
+      }
+      if (process.platform !== "win32") {
+        expect(stackLines[0]).toContain(`<dir>/my-test.test.js:5:11`.replace("<dir>", test_dir));
+      }
 
       if (stage === "beforeEach") {
         expect(output).toContain("0 pass");

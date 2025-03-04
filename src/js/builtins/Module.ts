@@ -84,7 +84,11 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
       // It only supports "true" and undefined. Anything non-truthy is treated as undefined.
       // https://github.com/oven-sh/bun/issues/14411
       if (namespace.__esModule === undefined) {
-        namespace.__esModule = true;
+        try {
+          namespace.__esModule = true;
+        } catch {
+          // https://github.com/oven-sh/bun/issues/17816
+        }
       }
 
       return (mod.exports = namespace);

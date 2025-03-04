@@ -21,6 +21,8 @@ import { dedent } from "../bundler/expectBundled.ts";
 import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 
+const isDebugBuild = Bun.version.includes("debug");
+
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {
   fileSystemRouterTypes: [
@@ -113,6 +115,7 @@ export interface DevServerTest {
 
 let interactive = false;
 let activeClient: Client | null = null;
+const interactive_timeout = 24 * 60 * 60 * 1000; // 24 hours
 
 async function maybeWaitInteractive(message: string) {
   if (interactive) {
@@ -151,7 +154,7 @@ type ErrorSpec = string;
 
 type FileObject = Record<string, string | Buffer | BunFile>;
 
-export class Dev {
+export class Dev extends EventEmitter {
   rootDir: string;
   port: number;
   baseUrl: string;
@@ -159,6 +162,8 @@ export class Dev {
   connectedClients: Set<Client> = new Set();
   options: { files: Record<string, string> };
   nodeEnv: "development" | "production";
+
+  socket?: WebSocket;
 
   // These properties are not owned by this class
   devProcess: Subprocess<"pipe", "pipe", "pipe">;
@@ -172,6 +177,7 @@ export class Dev {
     nodeEnv: "development" | "production",
     options: DevServerTest,
   ) {
+    super();
     this.rootDir = realpathSync(root);
     this.port = port;
     this.baseUrl = `http://localhost:${port}`;
@@ -182,6 +188,23 @@ export class Dev {
       this.panicked = true;
     });
     this.nodeEnv = nodeEnv;
+  }
+
+  connectSocket() {
+    const connected = Promise.withResolvers<void>();
+    this.socket = new WebSocket(this.baseUrl + "/_bun/hmr");
+    this.socket.onmessage = event => {
+      const data = new Uint8Array(event.data as any);
+      if (data[0] === "V".charCodeAt(0)) {
+        this.socket!.send("sr");
+        connected.resolve();
+      }
+      if (data[0] === "r".charCodeAt(0)) {
+        this.emit("redundant_watch");
+      }
+      this.emit("hmr", data);
+    };
+    return connected.promise;
   }
 
   fetch(url: string, init?: RequestInit) {
@@ -217,7 +240,7 @@ export class Dev {
       if (isDev && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -234,6 +257,37 @@ export class Dev {
   async writeNoChanges(file: string): Promise<void> {
     const content = this.read(file);
     await this.write(file, content, { dedent: false });
+  }
+
+  /**
+   * Deletes a file and waits for hot reload if in development mode
+   * @param file Path to the file to delete, relative to the root directory
+   * @param options Options for handling errors after deletion
+   * @returns Promise that resolves when the file is deleted and hot reload is complete (if applicable)
+   */
+  delete(file: string, options: { errors?: null | ErrorSpec[]; wait?: boolean } = {}) {
+    const snapshot = snapshotCallerLocation();
+    return withAnnotatedStack(snapshot, async () => {
+      await maybeWaitInteractive("delete " + file);
+      const isDev = this.nodeEnv === "development";
+      const wait = isDev && options.wait && this.waitForHotReload();
+
+      const filePath = this.join(file);
+      if (!fs.existsSync(filePath)) {
+        throw new Error(`File ${file} does not exist`);
+      }
+
+      fs.unlinkSync(filePath);
+      await wait;
+
+      let errors = options.errors;
+      if (isDev && options.wait && errors !== null) {
+        errors ??= [];
+        for (const client of this.connectedClients) {
+          await client.expectErrorOverlay(errors, snapshot);
+        }
+      }
+    });
   }
 
   patch(
@@ -261,7 +315,7 @@ export class Dev {
       if (errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -273,8 +327,9 @@ export class Dev {
 
   async waitForHotReload() {
     if (this.nodeEnv !== "development") return Promise.resolve();
-    const err = this.output.waitForLine(/error/i);
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i);
+    const err = this.output.waitForLine(/error/i).catch(() => {});
+    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, 100).catch(() => {});
+    const ctrl = new AbortController();
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
       // bundling error, and a success came in.
@@ -283,7 +338,9 @@ export class Dev {
         () => {},
       ),
       success,
+      EventEmitter.once(this, "redundant_watch", { signal: ctrl.signal }),
     ]);
+    ctrl.abort();
   }
 
   async client(
@@ -316,6 +373,29 @@ export class Dev {
       this.connectedClients.delete(client);
     });
     return client;
+  }
+
+  async gracefulExit() {
+    await this.fetch("/_dev_server_test_set");
+    this.devProcess.send({ type: "graceful-exit" });
+    await Promise.race([
+      //
+      this.devProcess.exited,
+      new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
+    ]);
+    if (this.output.panicked) {
+      await this.devProcess.exited;
+      throw new Error("DevServer panicked");
+    }
+    if (this.devProcess.exitCode !== 0) {
+      throw new Error(
+        `DevServer exited with code ${this.devProcess.exitCode ?? `Signal ${this.devProcess.signalCode}`}`,
+      );
+    }
+  }
+
+  mkdir(dir: string) {
+    return fs.mkdirSync(path.join(this.rootDir, dir), { recursive: true });
   }
 }
 
@@ -525,12 +605,16 @@ export class Client extends EventEmitter {
     this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
   }
 
-  hardReload() {
+  hardReload(options: { errors?: ErrorSpec[] } = {}) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       await maybeWaitInteractive("hard-reload");
       if (this.exited) throw new Error("Client is not running.");
       this.#proc.send({ type: "hard-reload" });
-      await this.output.waitForLine(hmrClientInitRegex);
+
+      if (this.hmr) {
+        await this.output.waitForLine(hmrClientInitRegex);
+        await this.expectErrorOverlay(options.errors ?? []);
+      }
     });
   }
 
@@ -577,11 +661,14 @@ export class Client extends EventEmitter {
       };
       this.once("reload", onEvent);
       this.once("exit", onEvent);
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.resolve();
-        this.expectingReload = false;
-      }, 1000);
+      let t: any = setTimeout(
+        () => {
+          t = null;
+          resolver.resolve();
+          this.expectingReload = false;
+        },
+        interactive ? interactive_timeout : 1000,
+      );
       await cb();
       await resolver.promise;
       if (t) clearTimeout(t);
@@ -608,10 +695,13 @@ export class Client extends EventEmitter {
         }
         this.once("message", onMessage);
         this.once("exit", onExit);
-        let t: any = setTimeout(() => {
-          t = null;
-          resolver.resolve();
-        }, 1000);
+        let t: any = setTimeout(
+          () => {
+            t = null;
+            resolver.resolve();
+          },
+          interactive ? interactive_timeout : 1000,
+        );
         await resolver.promise;
         if (t) clearTimeout(t);
         this.off("message", onMessage);
@@ -784,10 +874,13 @@ export class Client extends EventEmitter {
       const resolver = Promise.withResolvers();
       this.once("hmr-chunk", () => resolver.resolve());
       this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.reject(new Error("Timeout waiting for HMR chunk"));
-      }, 1000);
+      let t: any = setTimeout(
+        () => {
+          t = null;
+          resolver.reject(new Error("Timeout waiting for HMR chunk"));
+        },
+        interactive ? interactive_timeout : 1000,
+      );
       await resolver.promise;
       if (t) clearTimeout(t);
     }
@@ -1088,7 +1181,11 @@ class OutputLineStream extends EventEmitter {
           last = lines.pop()!;
           for (const line of lines) {
             this.lines.push(line);
-            if (line.includes("============================================================")) {
+            if (
+              line.includes("============================================================") ||
+              line.includes("Allocation scope leaked")
+            ) {
+              // Tell consumers to wait for the process to exit
               this.panicked = true;
               this.emit("panic");
             }
@@ -1110,7 +1207,7 @@ class OutputLineStream extends EventEmitter {
 
   waitForLine(
     regex: RegExp,
-    timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
+    timeout = interactive ? interactive_timeout : (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
   ): Promise<RegExpMatchArray> {
     if (this.panicked) {
       return new Promise((_, reject) => {
@@ -1280,10 +1377,45 @@ function testImpl<T extends DevServerTest>(
       path.join(root, "harness_start.ts"),
       dedent`
         import appConfig from "${path.join(mainDir, "bun.app.ts")}";
+        import { fullGC } from "bun:jsc";
+
+        const routes = appConfig.static ?? (appConfig.routes ??= {});
+        if (!routes) throw new Error("No routes found in bun.app.ts");
+        let extractedServer = null;
+        routes['/_dev_server_test_set'] = async (req, server) => (extractedServer = server, new Response(""));
+        
         export default {
           ...appConfig,
           port: ${interactive ? 3000 : 0},
         };
+
+        process.on("message", async(message) => {
+          if (message.type === "graceful-exit") {
+            if (!extractedServer) {
+              throw new Error("Server not found");
+            }
+            const { getDevServerDeinitCount } = require("bun:internal-for-testing")
+            const before = getDevServerDeinitCount();
+            if (!extractedServer.development) {
+              extractedServer.stop(true);
+              process.exit(0);
+              return;
+            }
+            extractedServer.stop(true);
+            extractedServer = null!;
+            let attempts = 0;
+            while (getDevServerDeinitCount() === before) {
+              Bun.gc(true);
+              await new Promise(resolve => setTimeout(resolve, 1));
+              fullGC();
+              attempts++;
+              if (attempts > 100) {
+                throw new Error("Failed to trigger deinit. Check with BUN_DEBUG_Server=1 and see why it does not free itself.");
+              }
+            }
+            process.exit(0); 
+          }
+        });
       `,
     );
 
@@ -1305,12 +1437,16 @@ function testImpl<T extends DevServerTest>(
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
+          BUN_DEBUG_DEVSERVER: isDebugBuild ? "1" : undefined,
+          BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild ? "1" : undefined,
+          BUN_DEBUG_WATCHER: isDebugBuild ? "1" : undefined,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
       onExit: (subprocess, exitCode, signalCode, error) => {
         danglingProcesses.delete(subprocess);
       },
+      ipc(message, subprocess) {},
     });
     danglingProcesses.add(devProcess);
     if (interactive) {
@@ -1321,6 +1457,9 @@ function testImpl<T extends DevServerTest>(
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     // @ts-expect-error
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
+    if (dev.nodeEnv === "development") {
+      await dev.connectSocket();
+    }
 
     await maybeWaitInteractive("start");
 
@@ -1344,15 +1483,18 @@ function testImpl<T extends DevServerTest>(
     if (interactive) {
       console.log("\x1b[32mPASS\x1b[0m");
       await maybeWaitInteractive("exit");
+      await dev.gracefulExit();
       process.exit(0);
     }
+
+    await dev.gracefulExit();
   }
 
   const name = `${
     NODE_ENV === "development" //
       ? Bun.enableANSIColors
-        ? "\x1b[35mDEV\x1b[0m"
-        : "DEV"
+        ? " \x1b[35mDEV\x1b[0m"
+        : " DEV"
       : Bun.enableANSIColors
         ? "\x1b[36mPROD\x1b[0m"
         : "PROD"
@@ -1366,7 +1508,9 @@ function testImpl<T extends DevServerTest>(
     jest.test(
       name,
       run,
-      (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
+      interactive
+        ? interactive_timeout
+        : (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
     );
     return options;
   } catch {
@@ -1412,7 +1556,10 @@ export function devTest<T extends DevServerTest>(description: string, options: T
   // Capture the caller name as part of the test tempdir
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
-  assert(caller.startsWith(devTestRoot), "dev server tests must be in test/bake/dev, not " + caller);
+  assert(
+    caller.startsWith(devTestRoot) || caller.includes("dev-and-prod"),
+    "dev server tests must be in test/bake/dev, not " + caller,
+  );
 
   return testImpl(description, options, "development", caller);
 }
@@ -1420,7 +1567,10 @@ export function devTest<T extends DevServerTest>(description: string, options: T
 export function prodTest<T extends DevServerTest>(description: string, options: T): T {
   const callerLocation = snapshotCallerLocation();
   const caller = stackTraceFileName(callerLocation);
-  assert(caller.startsWith(prodTestRoot), "dev server tests must be in test/bake/prod, not " + caller);
+  assert(
+    caller.startsWith(prodTestRoot) || caller.includes("dev-and-prod"),
+    "prod server tests must be in test/bake/prod, not " + caller,
+  );
 
   return testImpl(description, options, "production", caller);
 }

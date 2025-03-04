@@ -470,7 +470,7 @@ pub fn runScriptsWithFilter(ctx: Command.Context) !noreturn {
         const dirpath = std.fs.path.dirname(package_json_path) orelse Global.crash();
         const path = bun.strings.withoutTrailingSlash(dirpath);
 
-        const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .zero, null, .include_scripts, .main, .no_hash) orelse {
+        const pkgjson = bun.PackageJSON.parse(&this_transpiler.resolver, dirpath, .zero, null, .include_scripts, .main) orelse {
             Output.warn("Failed to read package.json\n", .{});
             continue;
         };

@@ -6,6 +6,7 @@ const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
 const { CryptoHasher } = Bun;
+
 const {
   symmetricKeySize,
   asymmetricKeyDetails,
@@ -17,8 +18,6 @@ const {
   createPrivateKey,
   generateKeySync,
   generateKeyPairSync,
-  sign: nativeSign,
-  verify: nativeVerify,
   publicEncrypt,
   privateDecrypt,
   privateEncrypt,
@@ -35,6 +34,10 @@ const {
   certExportChallenge,
   getCiphers,
   _getCipherInfo,
+  Sign: _Sign,
+  sign,
+  Verify: _Verify,
+  verify,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
@@ -47,6 +50,8 @@ const {
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString, validateInt32 } = require("internal/validators");
+
+const kHandle = Symbol("kHandle");
 
 function verifySpkac(spkac, encoding) {
   return certVerifySpkac(getArrayBufferOrView(spkac, "spkac", encoding));
@@ -165,22 +170,7 @@ function exportIfKeyObject(key) {
   }
   return key;
 }
-function getKeyFrom(key, type) {
-  if (key instanceof KeyObject) {
-    key = key.export();
-  } else if (key instanceof CryptoKey) {
-    key = KeyObject.from(key).export();
-  } else if (!Buffer.isBuffer(key) && typeof key === "object") {
-    if ((typeof key.format === "string" || typeof key.passphrase === "string") && typeof key.key !== "undefined") {
-      key = type === "public" ? _createPublicKey(key).export() : _createPrivateKey(key).export();
-    }
-  } else if (typeof key === "string" && type === "public") {
-    // make public key from non encrypted private PEM
-    key.indexOf("PRIVATE KEY-----") !== -1 && (key = _createPublicKey(key).export());
-  }
-  return key;
-}
-function getArrayBufferOrView(buffer, name, encoding) {
+function getArrayBufferOrView(buffer, name, encoding?) {
   if (buffer instanceof KeyObject) {
     if (buffer.type !== "secret") {
       const error = new TypeError(
@@ -11220,274 +11210,6 @@ var require_curves2 = __commonJS({
   },
 });
 
-// node_modules/browserify-sign/browser/sign.js
-var require_sign = __commonJS({
-  "node_modules/browserify-sign/browser/sign.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer,
-      createHmac = require_browser3(),
-      crt = require_browserify_rsa(),
-      EC = require_elliptic().ec,
-      BN = require_bn3(),
-      parseKeys = require_parse_asn1(),
-      curves = require_curves2();
-    function sign(hash, key, hashType, signType, tag) {
-      var priv = parseKeys(getKeyFrom(key, "private"));
-      if (priv.curve) {
-        if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
-        return ecSign(hash, priv);
-      } else if (priv.type === "dsa") {
-        if (signType !== "dsa") throw new Error("wrong private key type");
-        return dsaSign(hash, priv, hashType);
-      } else if (signType !== "rsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
-      hash = Buffer2.concat([tag, hash]);
-      for (var len = priv.modulus.byteLength(), pad = [0, 1]; hash.length + pad.length + 1 < len; ) pad.push(255);
-      pad.push(0);
-      for (var i = -1; ++i < hash.length; ) pad.push(hash[i]);
-      var out = crt(pad, priv);
-      return out;
-    }
-    function ecSign(hash, priv) {
-      var curveId = curves[priv.curve.join(".")];
-      if (!curveId) throw new Error("unknown curve " + priv.curve.join("."));
-      var curve = new EC(curveId),
-        key = curve.keyFromPrivate(priv.privateKey),
-        out = key.sign(hash);
-      return Buffer2.from(out.toDER());
-    }
-    function dsaSign(hash, priv, algo) {
-      for (
-        var x = priv.params.priv_key,
-          p = priv.params.p,
-          q = priv.params.q,
-          g = priv.params.g,
-          r = new BN(0),
-          k,
-          H = bits2int(hash, q).mod(q),
-          s = !1,
-          kv = getKey(x, q, hash, algo);
-        s === !1;
-
-      )
-        (k = makeKey(q, kv, algo)),
-          (r = makeR(g, k, p, q)),
-          (s = k
-            .invm(q)
-            .imul(H.add(x.mul(r)))
-            .mod(q)),
-          s.cmpn(0) === 0 && ((s = !1), (r = new BN(0)));
-      return toDER(r, s);
-    }
-    function toDER(r, s) {
-      (r = r.toArray()), (s = s.toArray()), r[0] & 128 && (r = [0].concat(r)), s[0] & 128 && (s = [0].concat(s));
-      var total = r.length + s.length + 4,
-        res = [48, total, 2, r.length];
-      return (res = res.concat(r, [2, s.length], s)), Buffer2.from(res);
-    }
-    function getKey(x, q, hash, algo) {
-      if (((x = Buffer2.from(x.toArray())), x.length < q.byteLength())) {
-        var zeros = Buffer2.alloc(q.byteLength() - x.length);
-        x = Buffer2.concat([zeros, x]);
-      }
-      var hlen = hash.length,
-        hbits = bits2octets(hash, q),
-        v = Buffer2.alloc(hlen);
-      v.fill(1);
-      var k = Buffer2.alloc(hlen);
-      return (
-        (k = createHmac(algo, k)
-          .update(v)
-          .update(Buffer2.from([0]))
-          .update(x)
-          .update(hbits)
-          .digest()),
-        (v = createHmac(algo, k).update(v).digest()),
-        (k = createHmac(algo, k)
-          .update(v)
-          .update(Buffer2.from([1]))
-          .update(x)
-          .update(hbits)
-          .digest()),
-        (v = createHmac(algo, k).update(v).digest()),
-        { k, v }
-      );
-    }
-    function bits2int(obits, q) {
-      var bits = new BN(obits),
-        shift = (obits.length << 3) - q.bitLength();
-      return shift > 0 && bits.ishrn(shift), bits;
-    }
-    function bits2octets(bits, q) {
-      (bits = bits2int(bits, q)), (bits = bits.mod(q));
-      var out = Buffer2.from(bits.toArray());
-      if (out.length < q.byteLength()) {
-        var zeros = Buffer2.alloc(q.byteLength() - out.length);
-        out = Buffer2.concat([zeros, out]);
-      }
-      return out;
-    }
-    function makeKey(q, kv, algo) {
-      var t, k;
-      do {
-        for (t = Buffer2.alloc(0); t.length * 8 < q.bitLength(); )
-          (kv.v = createHmac(algo, kv.k).update(kv.v).digest()), (t = Buffer2.concat([t, kv.v]));
-        (k = bits2int(t, q)),
-          (kv.k = createHmac(algo, kv.k)
-            .update(kv.v)
-            .update(Buffer2.from([0]))
-            .digest()),
-          (kv.v = createHmac(algo, kv.k).update(kv.v).digest());
-      } while (k.cmp(q) !== -1);
-      return k;
-    }
-    function makeR(g, k, p, q) {
-      return g.toRed(BN.mont(p)).redPow(k).fromRed().mod(q);
-    }
-    module.exports = sign;
-    module.exports.getKey = getKey;
-    module.exports.makeKey = makeKey;
-  },
-});
-
-// node_modules/browserify-sign/browser/verify.js
-var require_verify = __commonJS({
-  "node_modules/browserify-sign/browser/verify.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer,
-      BN = require_bn3(),
-      EC = require_elliptic().ec,
-      parseKeys = require_parse_asn1(),
-      curves = require_curves2();
-    function verify(sig, hash, key, signType, tag) {
-      var pub = parseKeys(getKeyFrom(key, "public"));
-      if (pub.type === "ec") {
-        if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
-        return ecVerify(sig, hash, pub);
-      } else if (pub.type === "dsa") {
-        if (signType !== "dsa") throw new Error("wrong public key type");
-        return dsaVerify(sig, hash, pub);
-      } else if (signType !== "rsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
-      hash = Buffer2.concat([tag, hash]);
-      for (var len = pub.modulus.byteLength(), pad = [1], padNum = 0; hash.length + pad.length + 2 < len; )
-        pad.push(255), padNum++;
-      pad.push(0);
-      for (var i = -1; ++i < hash.length; ) pad.push(hash[i]);
-      pad = Buffer2.from(pad);
-      var red = BN.mont(pub.modulus);
-      (sig = new BN(sig).toRed(red)),
-        (sig = sig.redPow(new BN(pub.publicExponent))),
-        (sig = Buffer2.from(sig.fromRed().toArray()));
-      var out = padNum < 8 ? 1 : 0;
-      for (len = Math.min(sig.length, pad.length), sig.length !== pad.length && (out = 1), i = -1; ++i < len; )
-        out |= sig[i] ^ pad[i];
-      return out === 0;
-    }
-    function ecVerify(sig, hash, pub) {
-      var curveId = curves[pub.data.algorithm.curve.join(".")];
-      if (!curveId) throw new Error("unknown curve " + pub.data.algorithm.curve.join("."));
-      var curve = new EC(curveId),
-        pubkey = pub.data.subjectPrivateKey.data;
-      return curve.verify(hash, sig, pubkey);
-    }
-    function dsaVerify(sig, hash, pub) {
-      var p = pub.data.p,
-        q = pub.data.q,
-        g = pub.data.g,
-        y = pub.data.pub_key,
-        unpacked = parseKeys.signature.decode(sig, "der"),
-        s = unpacked.s,
-        r = unpacked.r;
-      checkValue(s, q), checkValue(r, q);
-      var montp = BN.mont(p),
-        w = s.invm(q),
-        v = g
-          .toRed(montp)
-          .redPow(new BN(hash).mul(w).mod(q))
-          .fromRed()
-          .mul(y.toRed(montp).redPow(r.mul(w).mod(q)).fromRed())
-          .mod(p)
-          .mod(q);
-      return v.cmp(r) === 0;
-    }
-    function checkValue(b, q) {
-      if (b.cmpn(0) <= 0) throw new Error("invalid sig");
-      if (b.cmp(q) >= q) throw new Error("invalid sig");
-    }
-    module.exports = verify;
-  },
-});
-
-// node_modules/browserify-sign/browser/index.js
-var require_browser8 = __commonJS({
-  "node_modules/browserify-sign/browser/index.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer;
-    var createHash = require_browser2();
-    var inherits = require_inherits_browser();
-    var sign = require_sign();
-    var verify = require_verify();
-    var algorithms = require_algorithms();
-    Object.keys(algorithms).forEach(function (key) {
-      (algorithms[key].id = Buffer2.from(algorithms[key].id, "hex")), (algorithms[key.toLowerCase()] = algorithms[key]);
-    });
-    function Sign(algorithm) {
-      if (typeof algorithm === "string") {
-        algorithm = algorithm.toLowerCase();
-      }
-      StreamModule.Writable.$call(this);
-      var data = algorithms[algorithm];
-      if (!data) throw new Error("Unknown message digest");
-      (this._hashType = data.hash),
-        (this._hash = createHash(data.hash)),
-        (this._tag = data.id),
-        (this._signType = data.sign);
-    }
-    inherits(Sign, StreamModule.Writable);
-    Sign.prototype._write = function (data, _, done) {
-      this._hash.update(data), done();
-    };
-    Sign.prototype.update = function (data, enc) {
-      return typeof data == "string" && (data = Buffer2.from(data, enc)), this._hash.update(data), this;
-    };
-    Sign.prototype.sign = function (key, enc) {
-      this.end();
-      var hash = this._hash.digest(),
-        sig = sign(hash, key, this._hashType, this._signType, this._tag);
-      return enc ? sig.toString(enc) : sig;
-    };
-    function Verify(algorithm) {
-      StreamModule.Writable.$call(this);
-      if (typeof algorithm === "string") {
-        algorithm = algorithm.toLowerCase();
-      }
-      var data = algorithms[algorithm];
-      if (!data) throw new Error("Unknown message digest");
-      (this._hash = createHash(data.hash)), (this._tag = data.id), (this._signType = data.sign);
-    }
-    inherits(Verify, StreamModule.Writable);
-    Verify.prototype._write = function (data, _, done) {
-      this._hash.update(data), done();
-    };
-    Verify.prototype.update = function (data, enc) {
-      return typeof data == "string" && (data = Buffer2.from(data, enc)), this._hash.update(data), this;
-    };
-    Verify.prototype.verify = function (key, sig, enc) {
-      typeof sig == "string" && (sig = Buffer2.from(sig, enc)), this.end();
-      var hash = this._hash.digest();
-      return verify(sig, hash, key, this._signType, this._tag);
-    };
-    function createSign(algorithm) {
-      return new Sign(algorithm);
-    }
-    function createVerify(algorithm) {
-      return new Verify(algorithm);
-    }
-    module.exports = {
-      Sign: createSign,
-      Verify: createVerify,
-      createSign,
-      createVerify,
-    };
-  },
-});
-
 // node_modules/create-ecdh/node_modules/bn.js/lib/bn.js
 var require_bn6 = require_bn;
 
@@ -11693,11 +11415,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.createDiffieHellman = dh.createDiffieHellman;
     exports.DiffieHellman = dh.DiffieHellman;
     exports.diffieHellman = dh.diffieHellman;
-    var sign = require_browser8();
-    exports.createSign = sign.createSign;
-    exports.Sign = sign.Sign;
-    exports.createVerify = sign.createVerify;
-    exports.Verify = sign.Verify;
     const ecdh = require_browser9();
     exports.ECDH = ecdh.ECDH;
     exports.createECDH = ecdh.createECDH;
@@ -11705,16 +11422,6 @@ var require_crypto_browserify2 = __commonJS({
     var rf = require_browser11();
     exports.randomFill = rf.randomFill;
     exports.randomFillSync = rf.randomFillSync;
-    exports.createCredentials = function () {
-      throw new Error(
-        [
-          "sorry, createCredentials is not implemented yet",
-          "we accept pull requests",
-          "https://github.com/crypto-browserify/crypto-browserify",
-        ].join(`
-`),
-      );
-    };
     exports.constants = $processBindingConstants.crypto;
   },
 });
@@ -12030,92 +11737,6 @@ crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
-const _createSign = crypto_exports.createSign;
-
-crypto_exports.sign = function (algorithm, data, key, callback) {
-  // TODO: move this to native
-  var dsaEncoding, padding, saltLength;
-  // key must be a KeyObject
-  if (!(key instanceof KeyObject)) {
-    if ($isObject(key) && key.key) {
-      padding = key.padding;
-      saltLength = key.saltLength;
-      dsaEncoding = key.dsaEncoding;
-    }
-    if (key.key instanceof KeyObject) {
-      key = key.key;
-    } else {
-      key = _createPrivateKey(key);
-    }
-  }
-  if (typeof callback === "function") {
-    try {
-      let result;
-      if (key.asymmetricKeyType === "rsa") {
-        // RSA-PSS is supported by native but other RSA algorithms are not
-        result = _createSign(algorithm || "sha256")
-          .update(data)
-          .sign(key);
-      } else {
-        result = nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
-      }
-      callback(null, result);
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    if (key.asymmetricKeyType === "rsa") {
-      return _createSign(algorithm || "sha256")
-        .update(data)
-        .sign(key);
-    } else {
-      return nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
-    }
-  }
-};
-const _createVerify = crypto_exports.createVerify;
-
-crypto_exports.verify = function (algorithm, data, key, signature, callback) {
-  // TODO: move this to native
-  var dsaEncoding, padding, saltLength;
-  // key must be a KeyObject
-  if (!(key instanceof KeyObject)) {
-    if ($isObject(key) && key.key) {
-      padding = key.padding;
-      saltLength = key.saltLength;
-      dsaEncoding = key.dsaEncoding;
-    }
-    if (key.key instanceof KeyObject && key.key.type === "public") {
-      key = key.key;
-    } else {
-      key = _createPublicKey(key);
-    }
-  }
-  if (typeof callback === "function") {
-    try {
-      let result;
-      if (key.asymmetricKeyType === "rsa") {
-        // RSA-PSS is supported by native but other RSA algorithms are not
-        result = _createVerify(algorithm || "sha256")
-          .update(data)
-          .verify(key, signature);
-      } else {
-        result = nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
-      }
-      callback(null, result);
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    if (key.asymmetricKeyType === "rsa") {
-      return _createVerify(algorithm || "sha256")
-        .update(data)
-        .verify(key, signature);
-    } else {
-      return nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
-    }
-  }
-};
 
 // We are not allowed to call createPublicKey/createPrivateKey when we're already working with a
 // KeyObject/CryptoKey of the same type (public/private).
@@ -12197,5 +11818,72 @@ crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
 crypto_exports.Certificate = Certificate;
+
+function Sign(algorithm, options): void {
+  if (!(this instanceof Sign)) {
+    return new Sign(algorithm, options);
+  }
+
+  validateString(algorithm, "algorithm");
+  this[kHandle] = new _Sign();
+  this[kHandle].init(algorithm);
+
+  StreamModule.Writable.$apply(this, [options]);
+}
+
+$toClass(Sign, "Sign", StreamModule.Writable);
+
+Sign.prototype._write = function _write(chunk, encoding, callback) {
+  this.update(chunk, encoding);
+  callback();
+};
+
+Sign.prototype.update = function update(data, encoding) {
+  return this[kHandle].update(data, encoding);
+};
+
+Sign.prototype.sign = function sign(options, encoding) {
+  return this[kHandle].sign(options, encoding);
+};
+
+crypto_exports.Sign = Sign;
+crypto_exports.sign = sign;
+
+function createSign(algorithm, options?) {
+  return new Sign(algorithm, options);
+}
+
+crypto_exports.createSign = createSign;
+
+function Verify(algorithm, options): void {
+  if (!(this instanceof Verify)) {
+    return new Verify(algorithm, options);
+  }
+
+  validateString(algorithm, "algorithm");
+  this[kHandle] = new _Verify();
+  this[kHandle].init(algorithm);
+
+  StreamModule.Writable.$apply(this, [options]);
+}
+
+$toClass(Verify, "Verify", StreamModule.Writable);
+
+Verify.prototype._write = Sign.prototype._write;
+Verify.prototype.update = Sign.prototype.update;
+
+Verify.prototype.verify = function verify(options, signature, sigEncoding) {
+  return this[kHandle].verify(options, signature, sigEncoding);
+};
+
+crypto_exports.Verify = Verify;
+crypto_exports.verify = verify;
+
+function createVerify(algorithm, options?) {
+  return new Verify(algorithm, options);
+}
+
+crypto_exports.createVerify = createVerify;
+
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

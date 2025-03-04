@@ -40,10 +40,10 @@ pub const StatWatcherScheduler = struct {
     vm: *bun.JSC.VirtualMachine,
     watchers: WatcherQueue = WatcherQueue{},
 
-    event_loop_timer: EventLoopTimer.Node = .{ .data = .{
+    event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .StatWatcherScheduler,
-    } },
+    },
 
     const WatcherQueue = UnboundedQueue(StatWatcher, .next);
 
@@ -89,7 +89,7 @@ pub const StatWatcherScheduler = struct {
         // if the interval is 0 means that we stop the timer
         if (interval == 0) {
             // if the timer is active we need to remove it
-            if (this.event_loop_timer.data.state == .ACTIVE) {
+            if (this.event_loop_timer.state == .ACTIVE) {
                 this.vm.timer.remove(&this.event_loop_timer);
             }
             return;
@@ -119,9 +119,10 @@ pub const StatWatcherScheduler = struct {
     }
 
     pub fn timerCallback(this: *StatWatcherScheduler) EventLoopTimer.Arm {
-        const has_been_cleared = this.event_loop_timer.data.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
+        const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
 
-        this.event_loop_timer.data.state = .FIRED;
+        this.event_loop_timer.state = .FIRED;
+        this.event_loop_timer.heap = .{};
 
         if (has_been_cleared) {
             return .disarm;
@@ -215,7 +216,7 @@ pub const StatWatcher = struct {
             this.poll_ref.unref(this.ctx);
         }
         this.closed = true;
-        this.last_jsvalue.clear();
+        this.last_jsvalue.deinit();
 
         bun.default_allocator.free(this.path);
         bun.default_allocator.destroy(this);
@@ -310,15 +311,13 @@ pub const StatWatcher = struct {
     }
 
     /// Stops file watching but does not free the instance.
-    pub fn close(
-        this: *StatWatcher,
-    ) void {
+    pub fn close(this: *StatWatcher) void {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
         this.closed = true;
-        this.last_jsvalue.clear();
+        this.last_jsvalue.clearWithoutDeallocation();
     }
 
     pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -485,7 +484,7 @@ pub const StatWatcher = struct {
             .last_check = std.time.Instant.now() catch unreachable,
             // InitStatTask is responsible for setting this
             .last_stat = std.mem.zeroes(bun.Stat),
-            .last_jsvalue = JSC.Strong.init(),
+            .last_jsvalue = .empty,
         };
         errdefer this.deinit();
 

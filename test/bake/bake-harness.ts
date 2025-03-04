@@ -21,6 +21,8 @@ import { dedent } from "../bundler/expectBundled.ts";
 import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
 
+const isDebugBuild = Bun.version.includes("debug");
+
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {
   fileSystemRouterTypes: [
@@ -109,12 +111,11 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
-
-  deinitTesting?: boolean;
 }
 
 let interactive = false;
 let activeClient: Client | null = null;
+const interactive_timeout = 24 * 60 * 60 * 1000; // 24 hours
 
 async function maybeWaitInteractive(message: string) {
   if (interactive) {
@@ -192,13 +193,13 @@ export class Dev extends EventEmitter {
   connectSocket() {
     const connected = Promise.withResolvers<void>();
     this.socket = new WebSocket(this.baseUrl + "/_bun/hmr");
-    this.socket.onmessage = (event) => {
+    this.socket.onmessage = event => {
       const data = new Uint8Array(event.data as any);
-      if (data[0] === 'V'.charCodeAt(0)) {
-        this.socket!.send('sr');
+      if (data[0] === "V".charCodeAt(0)) {
+        this.socket!.send("sr");
         connected.resolve();
       }
-      if (data[0] === 'r'.charCodeAt(0)) {
+      if (data[0] === "r".charCodeAt(0)) {
         this.emit("redundant_watch");
       }
       this.emit("hmr", data);
@@ -239,7 +240,7 @@ export class Dev extends EventEmitter {
       if (isDev && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -264,12 +265,12 @@ export class Dev extends EventEmitter {
    * @param options Options for handling errors after deletion
    * @returns Promise that resolves when the file is deleted and hot reload is complete (if applicable)
    */
-  delete(file: string, options: { errors?: null | ErrorSpec[] } = {}) {
+  delete(file: string, options: { errors?: null | ErrorSpec[]; wait?: boolean } = {}) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && this.waitForHotReload();
+      const wait = isDev && options.wait && this.waitForHotReload();
 
       const filePath = this.join(file);
       if (!fs.existsSync(filePath)) {
@@ -280,10 +281,10 @@ export class Dev extends EventEmitter {
       await wait;
 
       let errors = options.errors;
-      if (isDev && errors !== null) {
+      if (isDev && options.wait && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -314,7 +315,7 @@ export class Dev extends EventEmitter {
       if (errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -327,7 +328,7 @@ export class Dev extends EventEmitter {
   async waitForHotReload() {
     if (this.nodeEnv !== "development") return Promise.resolve();
     const err = this.output.waitForLine(/error/i).catch(() => {});
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i).catch(() => {});
+    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, 100).catch(() => {});
     const ctrl = new AbortController();
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
@@ -380,7 +381,7 @@ export class Dev extends EventEmitter {
     await Promise.race([
       //
       this.devProcess.exited,
-      new Promise(resolve => setTimeout(resolve, 2000)),
+      new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
     ]);
     if (this.output.panicked) {
       await this.devProcess.exited;
@@ -391,6 +392,10 @@ export class Dev extends EventEmitter {
         `DevServer exited with code ${this.devProcess.exitCode ?? `Signal ${this.devProcess.signalCode}`}`,
       );
     }
+  }
+
+  mkdir(dir: string) {
+    return fs.mkdirSync(path.join(this.rootDir, dir), { recursive: true });
   }
 }
 
@@ -600,12 +605,16 @@ export class Client extends EventEmitter {
     this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
   }
 
-  hardReload() {
+  hardReload(options: { errors?: ErrorSpec[] } = {}) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       await maybeWaitInteractive("hard-reload");
       if (this.exited) throw new Error("Client is not running.");
       this.#proc.send({ type: "hard-reload" });
-      await this.output.waitForLine(hmrClientInitRegex);
+
+      if (this.hmr) {
+        await this.output.waitForLine(hmrClientInitRegex);
+        await this.expectErrorOverlay(options.errors ?? []);
+      }
     });
   }
 
@@ -652,11 +661,14 @@ export class Client extends EventEmitter {
       };
       this.once("reload", onEvent);
       this.once("exit", onEvent);
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.resolve();
-        this.expectingReload = false;
-      }, 1000);
+      let t: any = setTimeout(
+        () => {
+          t = null;
+          resolver.resolve();
+          this.expectingReload = false;
+        },
+        interactive ? interactive_timeout : 1000,
+      );
       await cb();
       await resolver.promise;
       if (t) clearTimeout(t);
@@ -683,10 +695,13 @@ export class Client extends EventEmitter {
         }
         this.once("message", onMessage);
         this.once("exit", onExit);
-        let t: any = setTimeout(() => {
-          t = null;
-          resolver.resolve();
-        }, 1000);
+        let t: any = setTimeout(
+          () => {
+            t = null;
+            resolver.resolve();
+          },
+          interactive ? interactive_timeout : 1000,
+        );
         await resolver.promise;
         if (t) clearTimeout(t);
         this.off("message", onMessage);
@@ -859,10 +874,13 @@ export class Client extends EventEmitter {
       const resolver = Promise.withResolvers();
       this.once("hmr-chunk", () => resolver.resolve());
       this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.reject(new Error("Timeout waiting for HMR chunk"));
-      }, 1000);
+      let t: any = setTimeout(
+        () => {
+          t = null;
+          resolver.reject(new Error("Timeout waiting for HMR chunk"));
+        },
+        interactive ? interactive_timeout : 1000,
+      );
       await resolver.promise;
       if (t) clearTimeout(t);
     }
@@ -1189,7 +1207,7 @@ class OutputLineStream extends EventEmitter {
 
   waitForLine(
     regex: RegExp,
-    timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
+    timeout = interactive ? interactive_timeout : (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
   ): Promise<RegExpMatchArray> {
     if (this.panicked) {
       return new Promise((_, reject) => {
@@ -1419,9 +1437,9 @@ function testImpl<T extends DevServerTest>(
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
-          // BUN_DEBUG_SERVER: "1",
-          BUN_DEBUG_DEVSERVER: "1",
-          BUN_DEBUG_WATCHER: "1",
+          BUN_DEBUG_DEVSERVER: isDebugBuild ? "1" : undefined,
+          BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild ? "1" : undefined,
+          BUN_DEBUG_WATCHER: isDebugBuild ? "1" : undefined,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1490,7 +1508,9 @@ function testImpl<T extends DevServerTest>(
     jest.test(
       name,
       run,
-      (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
+      interactive
+        ? interactive_timeout
+        : (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
     );
     return options;
   } catch {

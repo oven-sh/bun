@@ -140,7 +140,7 @@ function mountModal() {
       "left:0!important;" +
       "width:100%!important;" +
       "height:100%!important;" +
-      "background:#8883!important" +
+      "background:#8883!important;" +
       "z-index:2147483647!important",
   });
   const shadow = domShadowRoot.attachShadow({ mode: "open" });

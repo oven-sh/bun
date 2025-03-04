@@ -599,7 +599,7 @@ pub const JSBundler = struct {
             source_file: string = "",
             namespace: string = "",
             specifier: string = "",
-            importer_source_index: ?u32 = null,
+            importer_source_index: u32,
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,

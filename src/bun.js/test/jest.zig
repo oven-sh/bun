@@ -1718,16 +1718,56 @@ inline fn createScope(
     var function = if (args.len > 1) args[1] else .zero;
     var options = if (args.len > 2) args[2] else .zero;
 
-    if (description.isEmptyOrUndefinedOrNull() or !description.isString()) {
+    if (args.len == 1 and description.isFunction()) {
         function = description;
         description = .zero;
+    } else {
+        const is_valid_description =
+            description.isClass(globalThis) or
+            (description.isFunction() and !description.getName(globalThis).isEmpty()) or
+            description.isNumber() or
+            description.isString();
+
+        if (!is_valid_description) {
+            return globalThis.throwPretty("{s} expects first argument to be a named class, named function, number, or string", .{signature});
+        }
+
+        if (!function.isFunction()) {
+            if (tag != .todo and tag != .skip) {
+                return globalThis.throwPretty("{s} expects second argument to be a function", .{signature});
+            }
+        }
     }
 
-    if (function.isEmptyOrUndefinedOrNull() or !function.isCell() or !function.isCallable(globalThis.vm())) {
+    if (function == .zero or !function.isFunction()) {
         if (tag != .todo and tag != .skip) {
             return globalThis.throwPretty("{s} expects a function", .{signature});
         }
     }
+
+    const allocator = getAllocator(globalThis);
+    const parent = DescribeScope.active.?;
+    const label = brk: {
+        if (description == .zero) {
+            break :brk "";
+        }
+
+        if (description.isClass(globalThis)) {
+            const name_str = if (description.className(globalThis).toSlice(allocator).length() == 0)
+                description.getName(globalThis).toSlice(allocator).slice()
+            else
+                description.className(globalThis).toSlice(allocator).slice();
+            break :brk try allocator.dupe(u8, name_str);
+        }
+        if (description.isFunction()) {
+            var slice = description.getName(globalThis).toSlice(allocator);
+            defer slice.deinit();
+            break :brk try allocator.dupe(u8, slice.slice());
+        }
+        var slice = try description.toSlice(globalThis, allocator);
+        defer slice.deinit();
+        break :brk try allocator.dupe(u8, slice.slice());
+    };
 
     var timeout_ms: u32 = std.math.maxInt(u32);
     if (options.isNumber()) {
@@ -1755,17 +1795,6 @@ inline fn createScope(
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
-    const parent = DescribeScope.active.?;
-    const allocator = getAllocator(globalThis);
-    const label = brk: {
-        if (description == .zero) {
-            break :brk "";
-        } else {
-            var slice = try description.toSlice(globalThis, allocator);
-            defer slice.deinit();
-            break :brk try allocator.dupe(u8, slice.slice());
-        }
-    };
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {

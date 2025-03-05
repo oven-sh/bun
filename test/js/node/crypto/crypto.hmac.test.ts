@@ -25,8 +25,10 @@ describe("crypto.Hmac", () => {
   });
 
   test("createHmac should throw when using invalid options", async () => {
-    expect(() => createHmac(null)).toThrow("null is not an object");
-    expect(() => createHmac("sha1", null)).toThrow("null is not an object");
+    expect(() => createHmac(null)).toThrow('The "hmac" argument must be of type string. Received null');
+    expect(() => createHmac("sha1", null)).toThrow(
+      'The "key" argument must be of type ArrayBuffer, Buffer, TypedArray, DataView, string, CryptoKey, or KeyObject. Received null',
+    );
   });
 
   describe("test HMAC with multiple updates.", async () => {
@@ -413,7 +415,7 @@ describe("crypto.Hmac", () => {
     }
   });
   test("Invalid digest", async () => {
-    expect(() => createHmac("sha7", "key")).toThrow(/sha7 is not supported/);
+    expect(() => createHmac("sha7", "key")).toThrow("Invalid digest: sha7");
   });
 
   test("secret digest", async () => {

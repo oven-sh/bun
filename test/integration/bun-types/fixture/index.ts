@@ -1,6 +1,8 @@
 import svgpath from "cool.svg";
 svgpath satisfies `${string}.svg`;
 
+fetch;
+
 // just some APIs
 new Request("url");
 new Response();
@@ -15,7 +17,9 @@ new TransformStream();
 new AbortSignal();
 new AbortController();
 
-fetch("url");
+fetch("url", {
+  proxy: "",
+});
 
 new Bun.$.ShellError();
 

@@ -6,5 +6,5 @@ const buffer = serialize(obj);
 const clone = deserialize(buffer);
 
 if (deepEquals(obj, clone)) {
-  console.log("They are equal!");
+	console.log("They are equal!");
 }

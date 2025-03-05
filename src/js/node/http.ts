@@ -2440,7 +2440,11 @@ function ClientRequest(input, options, cb) {
     return bodySize < MAX_FAKE_BACKPRESSURE_SIZE;
   };
 
+  const oldEnd = this.end;
+
   this.end = function (chunk, encoding, callback) {
+    oldEnd?.$call(this, chunk, encoding, callback);
+
     if ($isCallable(chunk)) {
       callback = chunk;
       chunk = undefined;

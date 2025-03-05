@@ -303,8 +303,10 @@ void BunGCController::performOpportunisticGC()
     if (blockBytesAllocated > previousBlockBytesAllocated || underPressure) {
         m_hasStayedTheSameFor = 0;
 
-        // Always schedule an Eden GC if memory is growing
-        m_edenCallback->scheduleCollection(m_vm, !Bun__isBusyDoingImportantWork(bunVM));
+        if (!Bun__isBusyDoingImportantWork(bunVM)) {
+            // Always schedule an Eden GC if memory is growing
+            m_edenCallback->scheduleCollection(m_vm, true);
+        }
 
         // Only schedule full GC if under pressure or memory growing significantly
         if (underPressure && !m_fullCallback->isScheduled()) {
@@ -313,8 +315,10 @@ void BunGCController::performOpportunisticGC()
 
     } else if (m_hasStayedTheSameFor < 10) {
         // If memory usage plateaus, still do Eden collections
-        if (m_edenCallback->scheduleCollection(m_vm, !hasMoreEventLoopWorkToDo() && !Bun__isBusyDoingImportantWork(bunVM))) {
-            m_hasStayedTheSameFor++;
+        if (!hasMoreEventLoopWorkToDo() && !Bun__isBusyDoingImportantWork(bunVM)) {
+            if (m_edenCallback->scheduleCollection(m_vm, false)) {
+                m_hasStayedTheSameFor++;
+            }
         }
     } else {
         // After long plateau, occasionally do full collection to compact memory

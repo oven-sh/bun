@@ -52,6 +52,7 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
+    , m_gcController(vm)
 {
 }
 
@@ -82,6 +83,7 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     auto provider = WebCore::createBuiltinsSourceProvider();
     JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
+    clientData->m_gcController.bunVM = bunVM;
     vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
         Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTFMove(ticket), kind);
     };

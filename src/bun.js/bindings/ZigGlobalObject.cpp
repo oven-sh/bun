@@ -876,6 +876,8 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
+extern "C" void* GCController__setup(Bun::BunGCController* controller);
+
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
@@ -892,34 +894,13 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
 
-    {
-        const char* disable_stop_if_necessary_timer = getenv("BUN_DISABLE_STOP_IF_NECESSARY_TIMER");
-        // Keep stopIfNecessaryTimer enabled by default when either:
-        // - `--smol` is passed
-        // - The machine has less than 4GB of RAM
-        bool shouldDisableStopIfNecessaryTimer = !miniMode;
-        if (WTF::ramSize() < 1024ull * 1024ull * 1024ull * 4ull) {
-            shouldDisableStopIfNecessaryTimer = false;
-        }
-
-        if (disable_stop_if_necessary_timer) {
-            const char value = disable_stop_if_necessary_timer[0];
-            if (value == '0') {
-                shouldDisableStopIfNecessaryTimer = false;
-            } else if (value == '1') {
-                shouldDisableStopIfNecessaryTimer = true;
-            }
-        }
-
-        if (shouldDisableStopIfNecessaryTimer) {
-            vm.heap.disableStopIfNecessaryTimer();
-        }
-    }
-
     // Every JS VM's RunLoop should use Bun's RunLoop implementation
     ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
+
+    auto* clientData = Bun::clientData(vm);
+    clientData->gcController().initialize(miniMode);
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (UNLIKELY(executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > -1)) {

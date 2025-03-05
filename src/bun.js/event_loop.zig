@@ -592,156 +592,6 @@ pub const ConcurrentTask = struct {
     }
 };
 
-// This type must be unique per JavaScript thread
-pub const GarbageCollectionController = struct {
-    gc_timer: *uws.Timer = undefined,
-    gc_last_heap_size: usize = 0,
-    gc_last_heap_size_on_repeating_timer: usize = 0,
-    heap_size_didnt_change_for_repeating_timer_ticks_count: u8 = 0,
-    gc_timer_state: GCTimerState = GCTimerState.pending,
-    gc_repeating_timer: *uws.Timer = undefined,
-    gc_timer_interval: i32 = 0,
-    gc_repeating_timer_fast: bool = true,
-    disabled: bool = false,
-
-    pub fn init(this: *GarbageCollectionController, vm: *VirtualMachine) void {
-        const actual = uws.Loop.get();
-        this.gc_timer = uws.Timer.createFallthrough(actual, this);
-        this.gc_repeating_timer = uws.Timer.createFallthrough(actual, this);
-        actual.internal_loop_data.jsc_vm = vm.jsc;
-
-        if (comptime Environment.isDebug) {
-            if (bun.getenvZ("BUN_TRACK_LAST_FN_NAME") != null) {
-                vm.eventLoop().debug.track_last_fn_name = true;
-            }
-        }
-
-        var gc_timer_interval: i32 = 1000;
-        if (vm.transpiler.env.get("BUN_GC_TIMER_INTERVAL")) |timer| {
-            if (std.fmt.parseInt(i32, timer, 10)) |parsed| {
-                if (parsed > 0) {
-                    gc_timer_interval = parsed;
-                }
-            } else |_| {}
-        }
-        this.gc_timer_interval = gc_timer_interval;
-
-        this.disabled = vm.transpiler.env.has("BUN_GC_TIMER_DISABLE");
-
-        if (!this.disabled)
-            this.gc_repeating_timer.set(this, onGCRepeatingTimer, gc_timer_interval, gc_timer_interval);
-    }
-
-    pub fn scheduleGCTimer(this: *GarbageCollectionController) void {
-        this.gc_timer_state = .scheduled;
-        this.gc_timer.set(this, onGCTimer, 16, 0);
-    }
-
-    pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
-        return @alignCast(@fieldParentPtr("gc_controller", this));
-    }
-
-    pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
-        var this = timer.as(*GarbageCollectionController);
-        if (this.disabled) return;
-        this.gc_timer_state = .run_on_next_tick;
-    }
-
-    // We want to always run GC once in awhile
-    // But if you have a long-running instance of Bun, you don't want the
-    // program constantly using CPU doing GC for no reason
-    //
-    // So we have two settings for this GC timer:
-    //
-    //    - Fast: GC runs every 1 second
-    //    - Slow: GC runs every 30 seconds
-    //
-    // When the heap size is increasing, we always switch to fast mode
-    // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    pub fn updateGCRepeatTimer(this: *GarbageCollectionController, comptime setting: @Type(.enum_literal)) void {
-        if (setting == .fast and !this.gc_repeating_timer_fast) {
-            this.gc_repeating_timer_fast = true;
-            this.gc_repeating_timer.set(this, onGCRepeatingTimer, this.gc_timer_interval, this.gc_timer_interval);
-            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-        } else if (setting == .slow and this.gc_repeating_timer_fast) {
-            this.gc_repeating_timer_fast = false;
-            this.gc_repeating_timer.set(this, onGCRepeatingTimer, 30_000, 30_000);
-            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-        }
-    }
-
-    pub fn onGCRepeatingTimer(timer: *uws.Timer) callconv(.C) void {
-        var this = timer.as(*GarbageCollectionController);
-        const prev_heap_size = this.gc_last_heap_size_on_repeating_timer;
-        this.performGC();
-        this.gc_last_heap_size_on_repeating_timer = this.gc_last_heap_size;
-        if (prev_heap_size == this.gc_last_heap_size_on_repeating_timer) {
-            this.heap_size_didnt_change_for_repeating_timer_ticks_count +|= 1;
-            if (this.heap_size_didnt_change_for_repeating_timer_ticks_count >= 30) {
-                // make the timer interval longer
-                this.updateGCRepeatTimer(.slow);
-            }
-        } else {
-            this.heap_size_didnt_change_for_repeating_timer_ticks_count = 0;
-            this.updateGCRepeatTimer(.fast);
-        }
-    }
-
-    pub fn processGCTimer(this: *GarbageCollectionController) void {
-        if (this.disabled) return;
-        var vm = this.bunVM().jsc;
-        this.processGCTimerWithHeapSize(vm, vm.blockBytesAllocated());
-    }
-
-    fn processGCTimerWithHeapSize(this: *GarbageCollectionController, vm: *JSC.VM, this_heap_size: usize) void {
-        const prev = this.gc_last_heap_size;
-
-        switch (this.gc_timer_state) {
-            .run_on_next_tick => {
-                // When memory usage is not stable, run the GC more.
-                if (this_heap_size != prev) {
-                    this.scheduleGCTimer();
-                    this.updateGCRepeatTimer(.fast);
-                } else {
-                    this.gc_timer_state = .pending;
-                }
-                vm.collectAsync();
-                this.gc_last_heap_size = this_heap_size;
-            },
-            .pending => {
-                if (this_heap_size != prev) {
-                    this.updateGCRepeatTimer(.fast);
-
-                    if (this_heap_size > prev * 2) {
-                        this.performGC();
-                    } else {
-                        this.scheduleGCTimer();
-                    }
-                }
-            },
-            .scheduled => {
-                if (this_heap_size > prev * 2) {
-                    this.updateGCRepeatTimer(.fast);
-                    this.performGC();
-                }
-            },
-        }
-    }
-
-    pub fn performGC(this: *GarbageCollectionController) void {
-        if (this.disabled) return;
-        var vm = this.bunVM().jsc;
-        vm.collectAsync();
-        this.gc_last_heap_size = vm.blockBytesAllocated();
-    }
-
-    pub const GCTimerState = enum {
-        pending,
-        scheduled,
-        run_on_next_tick,
-    };
-};
-
 export fn Bun__tickWhilePaused(paused: *bool) void {
     JSC.markBinding(@src());
     VirtualMachine.get().eventLoop().tickWhilePaused(paused);
@@ -842,8 +692,25 @@ pub const EventLoop = struct {
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
     imminent_gc_timer: std.atomic.Value(?*JSC.BunTimer.WTFTimer) = .{ .raw = null },
-
+    is_doing_something_important: bool = false,
     signal_handler: if (Environment.isPosix) ?*PosixSignalHandle else void = if (Environment.isPosix) null,
+
+    pub fn important(this: *EventLoop) ImportantScope {
+        return .{ .previous_important = this.is_doing_something_important, .event_loop = this };
+    }
+
+    pub const ImportantScope = struct {
+        previous_important: bool = false,
+        event_loop: *EventLoop,
+
+        pub fn enter(this: *const ImportantScope) void {
+            this.event_loop.is_doing_something_important = true;
+        }
+
+        pub fn exit(this: *const ImportantScope) void {
+            this.event_loop.is_doing_something_important = this.previous_important;
+        }
+    };
 
     pub export fn Bun__ensureSignalHandler() void {
         if (Environment.isPosix) {
@@ -1478,6 +1345,19 @@ pub const EventLoop = struct {
 
         return this.virtual_machine.event_loop_handle.?;
     }
+    fn enterActiveLoop(loop: *uws.Loop, ctx: *VirtualMachine) void {
+        // Before entering loop, run opportunistic GC if we have time
+        var deadline: bun.timespec = undefined;
+
+        var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
+
+        const timeout = ctx.timer.getTimeout(&deadline, ctx);
+        loop.tickWithTimeout(if (timeout) &deadline else null);
+
+        if (comptime Environment.isDebug) {
+            log("tick {}, timeout: {}", .{ std.fmt.fmtDuration(event_loop_sleep_timer.read()), std.fmt.fmtDuration(deadline.ns()) });
+        }
+    }
 
     pub fn autoTick(this: *EventLoop) void {
         var ctx = this.virtual_machine;
@@ -1503,15 +1383,7 @@ pub const EventLoop = struct {
         this.runImminentGCTimer();
 
         if (loop.isActive()) {
-            this.processGCTimer();
-            var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;
-            // for the printer, this is defined:
-            var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
-
-            if (comptime Environment.isDebug) {
-                log("tick {}, timeout: {}", .{ std.fmt.fmtDuration(event_loop_sleep_timer.read()), std.fmt.fmtDuration(timespec.ns()) });
-            }
+            enterActiveLoop(loop, ctx);
         } else {
             loop.tickWithoutIdle();
             if (comptime Environment.isDebug) {
@@ -1590,10 +1462,7 @@ pub const EventLoop = struct {
         }
 
         if (loop.isActive()) {
-            this.processGCTimer();
-            var timespec: bun.timespec = undefined;
-
-            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec, ctx)) &timespec else null);
+            enterActiveLoop(loop, ctx);
         } else {
             loop.tickWithoutIdle();
         }
@@ -1607,7 +1476,7 @@ pub const EventLoop = struct {
     }
 
     pub fn processGCTimer(this: *EventLoop) void {
-        this.virtual_machine.gc_controller.processGCTimer();
+        this.virtual_machine.gc_controller.performOpportunisticGC();
     }
 
     pub fn tick(this: *EventLoop) void {
@@ -1708,10 +1577,6 @@ pub const EventLoop = struct {
             } else {
                 this.virtual_machine.event_loop_handle = bun.Async.Loop.get();
             }
-
-            this.virtual_machine.gc_controller.init(this.virtual_machine);
-            // _ = actual.addPostHandler(*JSC.EventLoop, this, JSC.EventLoop.afterUSocketsTick);
-            // _ = actual.addPreHandler(*JSC.VM, this.virtual_machine.jsc, JSC.VM.drainMicrotasks);
         }
         bun.uws.Loop.get().internal_loop_data.setParentEventLoop(bun.JSC.EventLoopHandle.init(this));
     }

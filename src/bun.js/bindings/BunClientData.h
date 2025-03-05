@@ -23,7 +23,7 @@ class DOMWrapperWorld;
 #include <wtf/StdLibExtras.h>
 #include "WebCoreJSBuiltins.h"
 #include "JSCTaskScheduler.h"
-
+#include "BunGCController.h"
 namespace Zig {
 }
 
@@ -113,6 +113,8 @@ public:
     void* bunVM;
     Bun::JSCTaskScheduler deferredWorkTimer;
 
+    Bun::BunGCController& gcController() { return m_gcController; }
+
 private:
     bool isWebCoreJSClientData() const final { return true; }
 
@@ -128,6 +130,8 @@ private:
 
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
     Vector<JSC::IsoSubspace*> m_outputConstraintSpaces;
+
+    Bun::BunGCController m_gcController;
 };
 
 } // namespace WebCore

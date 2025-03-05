@@ -5494,8 +5494,8 @@ pub fn NewReadyWatcher(
         }
 
         pub fn onPoll(this: *Context, sizeOrOffset: i64, _: u16) void {
-            defer JSC.VirtualMachine.get().drainMicrotasks();
             ready(this, sizeOrOffset);
+            JSC.VirtualMachine.get().drainMicrotasks();
         }
 
         pub fn unwatch(this: *Context, fd_: anytype) void {

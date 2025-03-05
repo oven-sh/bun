@@ -1838,21 +1838,31 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
     }
 
     if (WTF::startsWithIgnoringASCIICase(name, "sha-"_s)) {
-        auto remaining = name.substring(4);
-        if (WTF::equalIgnoringASCIICase(remaining, "1"_s)) {
+        auto bits = name.substring(4);
+        if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
             return EVP_sha1();
         }
-        if (WTF::equalIgnoringASCIICase(remaining, "224"_s)) {
+        if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
             return EVP_sha224();
         }
-        if (WTF::equalIgnoringASCIICase(remaining, "256"_s)) {
+        if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
             return EVP_sha256();
         }
-        if (WTF::equalIgnoringASCIICase(remaining, "384"_s)) {
+        if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
             return EVP_sha384();
         }
-        if (WTF::equalIgnoringASCIICase(remaining, "512"_s)) {
-            return EVP_sha512();
+
+        if (WTF::startsWithIgnoringASCIICase(bits, "512"_s)) {
+            auto moreBits = bits.substring(3);
+            if (moreBits.isEmpty()) {
+                return EVP_sha512();
+            }
+            if (WTF::equalIgnoringASCIICase(moreBits, "/224"_s)) {
+                return EVP_sha512_224();
+            }
+            if (WTF::equalIgnoringASCIICase(moreBits, "/256"_s)) {
+                return EVP_sha512_256();
+            }
         }
     }
 

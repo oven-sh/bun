@@ -333,7 +333,6 @@ pub const Api = struct {
         ts,
         tsx,
         css,
-        local_css,
         file,
         json,
         toml,

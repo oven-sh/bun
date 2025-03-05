@@ -4281,7 +4281,7 @@ pub const ParseTask = struct {
 
                 return JSAst.init(ast);
             },
-            .css, .local_css => {
+            .css => {
                 // make css ast
                 var import_records = BabyList(ImportRecord){};
                 const source_code = source.contents;
@@ -4291,9 +4291,8 @@ pub const ParseTask = struct {
                 }
 
                 const css_module_suffix = ".module.css";
-                const enable_css_modules = loader == .local_css or source.path.pretty.len > css_module_suffix.len and
+                const enable_css_modules = source.path.pretty.len > css_module_suffix.len and
                     strings.eqlComptime(source.path.pretty[source.path.pretty.len - css_module_suffix.len ..], css_module_suffix);
-                // const enable_css_modules = loader == .local_css;
                 const parser_options = if (enable_css_modules) init: {
                     var parseropts = bun.css.ParserOptions.default(allocator, &temp_log);
                     parseropts.filename = bun.path.basename(source.path.pretty);
@@ -7964,7 +7963,16 @@ pub const LinkerContext = struct {
                                         const import_records: *const BabyList(bun.css.ImportRecord) = &visitor.all_import_records[idx];
                                         const import_record = import_records.at(import_record_idx);
                                         if (import_record.source_index.isValid()) {
-                                            const other_file = visitor.all_css_asts[import_record.source_index.get()].?;
+                                            const other_file = visitor.all_css_asts[import_record.source_index.get()] orelse {
+                                                visitor.log.addWarningFmt(
+                                                    &visitor.all_sources[idx],
+                                                    compose.loc,
+                                                    visitor.allocator,
+                                                    "Cannot use the \"composes\" property with the \"{s}\" file (it is not a CSS file)",
+                                                    .{visitor.all_sources[import_record.source_index.get()].path.pretty},
+                                                ) catch bun.outOfMemory();
+                                                continue;
+                                            };
                                             for (compose.names.slice()) |name| {
                                                 const other_name_ref = other_file.local_scope.get(name.v) orelse continue;
                                                 visitor.visitName(other_file, other_name_ref, import_record.source_index.get());
@@ -8258,7 +8266,7 @@ pub const LinkerContext = struct {
                                         &input_files[record.source_index.get()],
                                         compose.loc,
                                         this.allocator,
-                                        "The name {s} never appears in {s}",
+                                        "The name \"{s}\" never appears in \"{s}\"",
                                         .{
                                             name.v,
                                             input_files[record.source_index.get()].path.pretty,
@@ -9256,7 +9264,7 @@ pub const LinkerContext = struct {
                                 .{@tagName(loader)},
                             ) catch bun.outOfMemory();
                         },
-                        .css, .local_css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
+                        .css, .file, .toml, .wasm, .base64, .dataurl, .text, .bunsh => {},
                     }
                 }
             }

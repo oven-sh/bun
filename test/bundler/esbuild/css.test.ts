@@ -12,19 +12,19 @@ describe("bundler", () => {
   itBundled("css/CSSEntryPoint", {
     files: {
       "/entry.css": /* css */ `
-        body {
-          background: white;
-          color: black }
-      `,
+          body {
+            background: white;
+            color: black }
+        `,
     },
     outfile: "/out.js",
     onAfterBundle(api) {
       api.expectFile("/out.js").toEqualIgnoringWhitespace(`
-/* entry.css */
-body {
-        color: #000;
-        background: #fff;
-}`);
+  /* entry.css */
+  body {
+          color: #000;
+          background: #fff;
+  }`);
     },
   });
 
@@ -35,7 +35,7 @@ body {
     outfile: "/out.js",
     onAfterBundle(api) {
       api.expectFile("/out.js").toEqualIgnoringWhitespace(`
-/* entry.css */`);
+  /* entry.css */`);
     },
   });
 
@@ -43,22 +43,22 @@ body {
     target: "bun",
     files: {
       "/entry.css": /* css */ `
-body {
-	h1 {
-		color: white;
-	}
-}`,
+  body {
+  	h1 {
+  		color: white;
+  	}
+  }`,
     },
     outfile: "/out.js",
     onAfterBundle(api) {
       api.expectFile("/out.js").toEqualIgnoringWhitespace(`
-/* entry.css */
-body {
-	&h1 {
-		color: #fff;
-	}
-}
-`);
+  /* entry.css */
+  body {
+  	&h1 {
+  		color: #fff;
+  	}
+  }
+  `);
     },
   });
 
@@ -75,21 +75,21 @@ body {
     // GENERATED
     files: {
       "/entry.css": /* css */ `
-        @import "./internal.css";
-      `,
+          @import "./internal.css";
+        `,
       "/internal.css": /* css */ `
-        .before { color: red }
-      `,
+          .before { color: red }
+        `,
     },
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* internal.css */
-.before {
-  color: red;
-}
-/* entry.css */
-`);
+  /* internal.css */
+  .before {
+    color: red;
+  }
+  /* entry.css */
+  `);
     },
   });
 
@@ -97,84 +97,84 @@ body {
     // GENERATED
     files: {
       "/a.css": /* css */ `
-        @import "./b.css";
-        @import "./c.css";
-        .last { color: red }
-      `,
+          @import "./b.css";
+          @import "./c.css";
+          .last { color: red }
+        `,
       "/b.css": /* css */ `
-        @import "./d.css";
-        .first { color: red }
-      `,
+          @import "./d.css";
+          .first { color: red }
+        `,
       "/c.css": /* css */ `
-        @import "./d.css";
-        .third { color: red }
-      `,
+          @import "./d.css";
+          .third { color: red }
+        `,
       "/d.css": /* css */ `
-        .second { color: red }
-      `,
+          .second { color: red }
+        `,
     },
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* b.css */
-.first {
-  color: red;
-}
-/* d.css */
-.second {
-  color: red;
-}
-/* c.css */
-.third {
-  color: red;
-}
-/* a.css */
-.last {
-  color: red;
-}
-`);
+  /* b.css */
+  .first {
+    color: red;
+  }
+  /* d.css */
+  .second {
+    color: red;
+  }
+  /* c.css */
+  .third {
+    color: red;
+  }
+  /* a.css */
+  .last {
+    color: red;
+  }
+  `);
     },
   });
 
   itBundled("css/CSSAtImportCycle", {
     files: {
       "/a.css": /* css */ `
-        @import "./a.css";
-        .hehe { color: red }
-      `,
+          @import "./a.css";
+          .hehe { color: red }
+        `,
     },
     outfile: "/out.css",
     onAfterBundle(api) {
       api.expectFile("/out.css").toEqualIgnoringWhitespace(`
-/* a.css */
-.hehe {
-  color: red;
-}
-`);
+  /* a.css */
+  .hehe {
+    color: red;
+  }
+  `);
     },
   });
 
   itBundled("css/CSSUrlImport", {
     files: {
       "/a.css": /* css */ `
-        .hello {
-          background-image: url(./hi.svg)
-        }
-      `,
+          .hello {
+            background-image: url(./hi.svg)
+          }
+        `,
       "/hi.svg": /* svg */ `
-<svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="50" cy="50" r="40" fill="blue" />
-</svg>
-      `,
+  <svg width="100" height="100" xmlns="http://www.w3.org/2000/svg">
+    <circle cx="50" cy="50" r="40" fill="blue" />
+  </svg>
+        `,
     },
     outdir: "/out",
     onAfterBundle(api) {
       api.expectFile("/out/a.css").toEqualIgnoringWhitespace(`
-/* a.css */
-.hello {
-  background-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iYmx1ZSIgLz4KPC9zdmc+");
-}
-`);
+  /* a.css */
+  .hello {
+    background-image: url("data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KICA8Y2lyY2xlIGN4PSI1MCIgY3k9IjUwIiByPSI0MCIgZmlsbD0iYmx1ZSIgLz4KPC9zdmc+");
+  }
+  `);
     },
   });
 
@@ -225,73 +225,72 @@ body {
   // });
 
   // TODO: some classes are commented out bc we don't support :global or :local yet
-  // itBundled("css/ImportCSSFromJSComposes", {
-  itBundled("FUCK", {
+  itBundled("css/ImportCSSFromJSComposes", {
     files: {
       "/entry.js": /* js */ `
-        import styles from "./styles.module.css"
-        console.log(styles)
-      `,
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
       "/global.css": /* css */ `
-        .GLOBAL1 {
-          color: black;
-        }
-      `,
-      "/styles.module.css": /* css */ `
-        @import "global.css";
-        /* .local0 {
-          composes: local1;
-          :global {
-            composes: GLOBAL1 GLOBAL2;
+          .GLOBAL1 {
+            color: black;
           }
-        } */
-        .local0 {
-          composes: GLOBAL2 GLOBAL3 from global;
-          composes: local1 local2;
-          background: green;
-        }
-        /* .local0 :global {
-          composes: GLOBAL4;
-        } */
-        .local3 {
-          border: 1px solid black;
-          composes: local4;
-        }
-        .local4 {
-          opacity: 0.5;
-        }
-        .local1 {
-          color: red;
-          composes: local3;
-        }
-        .fromOtherFile {
-          composes: local0 from "other1.module.css";
-          composes: local0 from "other2.module.css";
-        }
-      `,
+        `,
+      "/styles.module.css": /* css */ `
+          @import "global.css";
+          /* .local0 {
+            composes: local1;
+            :global {
+              composes: GLOBAL1 GLOBAL2;
+            }
+          } */
+          .local0 {
+            composes: GLOBAL2 GLOBAL3 from global;
+            composes: local1 local2;
+            background: green;
+          }
+          /* .local0 :global {
+            composes: GLOBAL4;
+          } */
+          .local3 {
+            border: 1px solid black;
+            composes: local4;
+          }
+          .local4 {
+            opacity: 0.5;
+          }
+          .local1 {
+            color: red;
+            composes: local3;
+          }
+          .fromOtherFile {
+            composes: local0 from "other1.module.css";
+            composes: local0 from "other2.module.css";
+          }
+        `,
       "/other1.module.css": /* css */ `
-        .local0 {
-          composes: base1 base2 from "base.module.css";
-          color: blue;
-        }
-      `,
+          .local0 {
+            composes: base1 base2 from "base.module.css";
+            color: blue;
+          }
+        `,
       "/other2.module.css": /* css */ `
-        .local0 {
-          composes: base1 base3 from "base.module.css";
-          background: purple;
-        }
-      `,
+          .local0 {
+            composes: base1 base3 from "base.module.css";
+            background: purple;
+          }
+        `,
       "/base.module.css": /* css */ `
-        .base1 {
-          cursor: pointer;
-        }
-        .base2 {
-          display: inline;
-        }
-        .base3 {
-          float: left;
-        }
-      `,
+          .base1 {
+            cursor: pointer;
+          }
+          .base2 {
+            display: inline;
+          }
+          .base3 {
+            float: left;
+          }
+        `,
     },
     entryPoints: ["/entry.js"],
     outdir: "/out",
@@ -300,113 +299,116 @@ body {
     },
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
-        "// styles.module.css
-        var styles_module_default = {
-          local0: "GLOBAL2 GLOBAL3 local4_-MSaAA local3_-MSaAA local1_-MSaAA local0_-MSaAA",
-          local3: "local4_-MSaAA local3_-MSaAA",
-          local4: "local4_-MSaAA",
-          local1: "local4_-MSaAA local3_-MSaAA local1_-MSaAA",
-          fromOtherFile: "base1_1Cz41w base2_1Cz41w local0_qwJuwA base3_1Cz41w local0_AgBO5Q fromOtherFile_-MSaAA"
-        };
+          "// styles.module.css
+          var styles_module_default = {
+            local0: "GLOBAL2 GLOBAL3 local4_-MSaAA local3_-MSaAA local1_-MSaAA local0_-MSaAA",
+            local3: "local4_-MSaAA local3_-MSaAA",
+            local4: "local4_-MSaAA",
+            local1: "local4_-MSaAA local3_-MSaAA local1_-MSaAA",
+            fromOtherFile: "base1_1Cz41w base2_1Cz41w local0_qwJuwA base3_1Cz41w local0_AgBO5Q fromOtherFile_-MSaAA"
+          };
 
-        // entry.js
-        console.log(styles_module_default);
-        "
-      `);
+          // entry.js
+          console.log(styles_module_default);
+          "
+        `);
       api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
-        "/* global.css */
-        .GLOBAL1 {
-          color: #000;
-        }
+          "/* global.css */
+          .GLOBAL1 {
+            color: #000;
+          }
 
-        /* other1.module.css */
-        .local0_qwJuwA {
-          color: #00f;
-        }
+          /* other1.module.css */
+          .local0_qwJuwA {
+            color: #00f;
+          }
 
-        /* base.module.css */
-        .base1_1Cz41w {
-          cursor: pointer;
-        }
+          /* base.module.css */
+          .base1_1Cz41w {
+            cursor: pointer;
+          }
 
-        .base2_1Cz41w {
-          display: inline;
-        }
+          .base2_1Cz41w {
+            display: inline;
+          }
 
-        .base3_1Cz41w {
-          float: left;
-        }
+          .base3_1Cz41w {
+            float: left;
+          }
 
-        /* other2.module.css */
-        .local0_AgBO5Q {
-          background: purple;
-        }
+          /* other2.module.css */
+          .local0_AgBO5Q {
+            background: purple;
+          }
 
-        /* styles.module.css */
-        .local0_-MSaAA {
-          background: green;
-        }
+          /* styles.module.css */
+          .local0_-MSaAA {
+            background: green;
+          }
 
-        .local3_-MSaAA {
-          border: 1px solid #000;
-        }
+          .local3_-MSaAA {
+            border: 1px solid #000;
+          }
 
-        .local4_-MSaAA {
-          opacity: .5;
-        }
+          .local4_-MSaAA {
+            opacity: .5;
+          }
 
-        .local1_-MSaAA {
-          color: red;
-        }
+          .local1_-MSaAA {
+            color: red;
+          }
 
-        .fromOtherFile_-MSaAA {
-        }
-        "
-      `);
+          .fromOtherFile_-MSaAA {
+          }
+          "
+        `);
     },
   });
 
   itBundled("css/ImportCSSFromJSComposesFromMissingImport", {
     files: {
       "/entry.js": `
-        import styles from "./styles.module.css"
-        console.log(styles)
-      `,
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
       "/styles.module.css": `
-        .foo {
-          composes: x from "file.module.css";
-          composes: y from "file.module.css";
-          composes: z from "file.module.css";
-          composes: x from "file.css";
-        }
-      `,
+          .foo {
+            composes: x from "file.module.css";
+            composes: y from "file.module.css";
+            composes: z from "file.module.css";
+            composes: x from "file.css";
+          }
+        `,
       "/file.module.css": `
-        .x {
-          color: red;
-        }
-        :global(.y) {
-          color: blue;
-        }
-      `,
+          .x {
+            color: red;
+          }
+          :global(.y) {
+            color: blue;
+          }
+        `,
       "/file.css": `
-        .x {
-          color: red;
-        }
-      `,
+          .x {
+            color: red;
+          }
+        `,
     },
     entryPoints: ["/entry.js"],
     outdir: "/out",
     bundleErrors: {
       "/styles.module.css": [
-        'Cannot use global name "y" with "composes"',
-        'The name "z" never appears in "file.module.css"',
-        'Cannot use global name "x" with "composes"',
+        // TODO: renable when we support :local and :global
+        // 'Cannot use global name "y" with "composes"',
+        // 'Cannot use global name "x" with "composes"',
       ],
+      "/file.module.css": ['The name "z" never appears in "file.module.css"'],
+      "/file.css": ['The name "x" never appears in "file.css"'],
     },
     bundleWarnings: {
       "/styles.module.css": [
-        'The global name "y" is defined in file.module.css. Use the ":local" selector to change "y" into a local name.',
-        'The global name "x" is defined in file.css. Use the "local-css" loader for "file.css" to enable local names.',
+        // TODO: renable when we support :local and :global
+        // 'The global name "y" is defined in file.module.css. Use the ":local" selector to change "y" into a local name.',
+        // 'The global name "x" is defined in file.css. Use the "local-css" loader for "file.css" to enable local names.',
       ],
     },
   });
@@ -414,22 +416,21 @@ body {
   itBundled("css/ImportCSSFromJSComposesFromNotCSS", {
     files: {
       "/entry.js": `
-        import styles from "./styles.css"
-        console.log(styles)
-      `,
-      "/styles.css": `
-        .foo {
-          composes: bar from "file.txt";
-        }
-      `,
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
+      "/styles.module.css": `
+          .foo {
+            composes: bar from "file.txt";
+          }
+        `,
       "/file.txt": `
-        .bar {
-          color: red;
-        }
-      `,
+          .bar {
+            color: red;
+          }
+        `,
     },
     loader: {
-      ".css": "local-css",
       ".txt": "text",
     },
     entryPoints: ["/entry.js"],
@@ -447,10 +448,10 @@ body {
   itBundled("css/ImportCSSFromJSComposesCircular", {
     files: {
       "/entry.js": `
-        import styles from "./styles.css"
+        import styles from "./styles.module.css"
         console.log(styles)
       `,
-      "/styles.css": `
+      "/styles.module.css": `
         .foo {
           composes: bar;
         }
@@ -462,38 +463,86 @@ body {
         }
       `,
     },
-    loader: {
-      ".css": "local-css",
-    },
     entryPoints: ["/entry.js"],
     outdir: "/out",
+
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          foo: "bar_-MSaAA foo_-MSaAA",
+          bar: "foo_-MSaAA bar_-MSaAA",
+          baz: "baz_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .foo_-MSaAA {
+        }
+
+        .bar_-MSaAA {
+        }
+
+        .baz_-MSaAA {
+        }
+        "
+      `);
+    },
   });
 
   itBundled("css/ImportCSSFromJSComposesFromCircular", {
     files: {
       "/entry.js": `
-        import styles from "./styles.css"
+        import styles from "./styles.module.css"
         console.log(styles)
       `,
-      "/styles.css": `
+      "/styles.module.css": `
         .foo {
-          composes: bar from "other.css";
+          composes: bar from "other.module.css";
         }
         .bar {
-          composes: bar from "styles.css";
+          composes: bar from "styles.module.css";
         }
       `,
-      "/other.css": `
+      "/other.module.css": `
         .bar {
-          composes: foo from "styles.css";
+          composes: foo from "styles.module.css";
         }
       `,
-    },
-    loader: {
-      ".css": "local-css",
     },
     entryPoints: ["/entry.js"],
     outdir: "/out",
+
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          foo: "bar_NlEjJA foo_-MSaAA",
+          bar: "bar_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* other.module.css */
+        .bar_NlEjJA {
+        }
+
+        /* styles.module.css */
+        .foo_-MSaAA {
+        }
+
+        .bar_-MSaAA {
+        }
+        "
+      `);
+    },
   });
 });
 
@@ -1121,10 +1170,8 @@ c {
 
         /* empty-2.css */
 
-
         /* empty-3.css */
 
-
         /* foo.css */
         @layer outer {
           @layer inner {
@@ -1148,7 +1195,6 @@ c {
 
         /* nested-layer.css */
 
-
         /* foo.css */
         @media (outer: true) {
           @layer inner {
@@ -1159,7 +1205,6 @@ c {
         }
 
         /* nested-layer.css */
-
 
         /* foo.css */
         @layer outer {
@@ -1184,7 +1229,6 @@ c {
 
         /* nested-supports.css */
 
-
         /* foo.css */
         @media (outer: true) {
           @supports (inner: true) {
@@ -1195,7 +1239,6 @@ c {
         }
 
         /* nested-supports.css */
-
 
         /* foo.css */
         @layer outer {
@@ -1220,7 +1263,6 @@ c {
 
         /* nested-media.css */
 
-
         /* foo.css */
         @media (outer: true) {
           @media (inner: true) {
@@ -1231,7 +1273,6 @@ c {
         }
 
         /* nested-media.css */
-
 
         /* entry.css */
         `);

@@ -735,7 +735,7 @@ pub const Transpiler = struct {
             .dataurl, .base64 => {
                 Output.panic("TODO: dataurl, base64", .{}); // TODO
             },
-            .css, .local_css => {
+            .css => {
                 const alloc = transpiler.allocator;
 
                 const entry = transpiler.resolver.caches.fs.readFileWithAllocator(
@@ -750,7 +750,10 @@ pub const Transpiler = struct {
                     return null;
                 };
                 var opts = bun.css.ParserOptions.default(alloc, transpiler.log);
-                if (loader == .local_css) {
+                const css_module_suffix = ".module.css";
+                const enable_css_modules = file_path.text.len > css_module_suffix.len and
+                    strings.eqlComptime(file_path.text[file_path.text.len - css_module_suffix.len ..], css_module_suffix);
+                if (enable_css_modules) {
                     opts.filename = bun.path.basename(file_path.text);
                     opts.css_modules = bun.css.CssModuleConfig{};
                 }

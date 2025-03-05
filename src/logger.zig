@@ -431,7 +431,7 @@ pub const Msg = struct {
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
         } else {
-            zig_exception_holder.zig_exception.message = err.toBunString(globalObject);
+            zig_exception_holder.zigException().message = err.toBunString(globalObject);
         }
 
         return Msg{

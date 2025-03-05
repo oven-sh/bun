@@ -171,11 +171,12 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
       }
 
       if (testName && testName.length) {
+        const escapedTestName = escapeRegex(testName);
         if (customScriptSetting.length) {
           // escape the quotes in the test name
-          command += ` -t "${testName}"`;
+          command += ` -t "${escapedTestName}"`;
         } else {
-          command += ` -t "${testName}"`;
+          command += ` -t "${escapedTestName}"`;
         }
       }
 
@@ -201,4 +202,15 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(runTestCommand);
   context.subscriptions.push(watchTestCommand);
+}
+
+
+/**
+ * Escape any special characters in the input string, so that regex-matching on it
+ * will work as expected.
+ * i.e `new RegExp(escapeRegex("hi (:").test("hi (:")` will return true, instead of throwing
+ * an invalid regex error.
+ */
+function escapeRegex(source: string) {
+  return source.replaceAll(/[^a-zA-Z0-9_+\-'"\ ]/g, "\\$&");
 }

@@ -771,6 +771,7 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
     if (good) {
         if (callback.isFunction()) {
             JSC.Bun__Process__queueNextTick1(zigGlobal, callback, .null);
+            // we need to wait until the send is actually completed to trigger the callback
         }
     } else {
         const ex = global.createTypeErrorInstance("process.send() failed", .{});
@@ -2361,7 +2362,7 @@ pub fn spawnMaybeSync(
             }
             subprocess.stdio_pipes.items[@intCast(ipc_channel)] = .unavailable;
         }
-        ipc_data.writeVersionPacket();
+        ipc_data.writeVersionPacket(globalThis);
     }
 
     if (subprocess.stdin == .pipe) {
@@ -2579,6 +2580,9 @@ pub fn handleIPCClose(this: *Subprocess) void {
 
 pub fn ipc(this: *Subprocess) ?*IPC.IPCData {
     return &(this.ipc_data orelse return null);
+}
+pub fn getGlobalThis(this: *Subprocess) ?*JSC.JSGlobalObject {
+    return this.globalThis;
 }
 
 pub const IPCHandler = IPC.NewIPCHandler(Subprocess);

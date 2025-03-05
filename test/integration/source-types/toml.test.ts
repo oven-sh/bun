@@ -16,7 +16,7 @@ type TestCase = {
 
 async function doTest(
   { name, needsSource = true }: { name: string; needsSource?: boolean },
-  run: () => Promise<void>,
+  run: (testCast: TestCase) => Promise<void>,
 ): Promise<void> {
   const glob = new Bun.Glob("**/*.{toml,json}"); // TODO: .multi
 
@@ -38,7 +38,7 @@ async function doTest(
     for await (const tomlFile of await glob.scan(dir)) {
       const filepath = path.resolve(dir, tomlFile);
       // const fullpath = path.resolve(import.meta.dirname, filepath);
-      const source = needsSource ? await fs.readFile(filepath) : undefined;
+      const source = needsSource ? await fs.readFile(filepath, 'utf8') : undefined;
       if (debugLogs) console.log(tomlFile);
       yield { filename: tomlFile, filepath, source };
     }
@@ -74,8 +74,6 @@ async function doTest(
   }
 
   const passTotal = metrics.valid.pass + metrics.invalid.pass;
-  const failTotal = metrics.valid.fail + metrics.invalid.fail;
-  const pct = (pass, total, precision = 2) => ((pass / total) * 100).toFixed(precision);
 
   const snapshot = [
     // "Bun.TOML.parse test suite",
@@ -88,6 +86,8 @@ async function doTest(
   ].join("\n");
   expect(snapshot).toMatchSnapshot();
 }
+const pct = (pass: number, total: number, precision = 2) => ((pass / total) * 100).toFixed(precision);
+
 
 test("Bun.TOML", async () => {
   await doTest({ name: "Bun.TOML.parse", needsSource: true }, ({ source }) => Bun.TOML.parse(source as string));

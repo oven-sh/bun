@@ -1,6 +1,6 @@
 #include "root.h"
 
-#if OS(LINUX)
+#if OS(LINUX) || OS(DARWIN)
 
 #include <fcntl.h>
 #include <cstring>
@@ -64,7 +64,12 @@ extern "C" ssize_t posix_spawn_bun(
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
+#if OS(DARWIN)
+    // use slower fork() on darwin because vfork() is not available
+    pid_t child = fork();
+#else
     pid_t child = vfork();
+#endif
 
     const auto childFailed = [&]() -> ssize_t {
         res = errno;

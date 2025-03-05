@@ -344,7 +344,7 @@ pub const PosixSpawn = struct {
         uid: std.c.uid_t,
         gid: std.c.gid_t,
     ) Maybe(pid_t) {
-        if (comptime Environment.isLinux) {
+        if ((comptime Environment.isLinux) or set_uid or set_gid) {
             return bun_spawn_request_t.spawn(
                 path,
                 .{

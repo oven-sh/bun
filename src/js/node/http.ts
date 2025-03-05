@@ -207,7 +207,7 @@ var FakeSocket = class Socket extends Duplex {
 
   #address;
   address() {
-    // Call server.requestIP() without doing any propety getter twice.
+    // Call server.requestIP() without doing any property getter twice.
     var internalData;
     return (this.#address ??=
       (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol].requestIP(internalData[2]) ?? {});
@@ -230,7 +230,7 @@ var FakeSocket = class Socket extends Duplex {
   _final(callback) {}
 
   get localAddress() {
-    return "127.0.0.1";
+    return this.address() ? "127.0.0.1" : undefined;
   }
 
   get localFamily() {
@@ -395,7 +395,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   get localAddress() {
-    return "127.0.0.1";
+    return this.address() ? "127.0.0.1" : undefined;
   }
 
   get localFamily() {

@@ -667,15 +667,6 @@ const Socket = (function (InternalSocket) {
             ($assert(args[0].length == 2 && typeof args[0][0] === "object"), args[0])
           : normalizeArgs(args);
 
-      if (
-        // TLSSocket already created a socket and is forwarding it here. This is a private API.
-        !(options.socket && $isObject(options.socket) && options.socket instanceof Duplex) &&
-        // public api for net.Socket.connect
-        options.port === undefined &&
-        options.path == null
-      ) {
-        throw $ERR_MISSING_ARGS(["options", "port", "path"]);
-      }
       let connection = this.#socket;
 
       let upgradeDuplex = false;
@@ -739,6 +730,16 @@ const Socket = (function (InternalSocket) {
 
       if (fd) {
         return this;
+      }
+
+      if (
+        // TLSSocket already created a socket and is forwarding it here. This is a private API.
+        !(socket && $isObject(socket) && socket instanceof Duplex) &&
+        // public api for net.Socket.connect
+        port === undefined &&
+        path == null
+      ) {
+        throw $ERR_MISSING_ARGS(["options", "port", "path"]);
       }
 
       this.remotePort = port;

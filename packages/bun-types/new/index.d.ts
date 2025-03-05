@@ -1,4 +1,3 @@
-export {};
 declare var onmessage: never;
 
 declare var Bun: typeof import("bun");
@@ -119,9 +118,28 @@ declare interface Event {
 }
 
 declare module "bun" {
-  export function fetch(request: Request, init?: RequestInit): Promise<Response>;
-  export function fetch(url: string | URL | Request, init?: RequestInit): Promise<Response>;
-  export function fetch(input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response>;
+  interface Env {
+    [key: string]: string | undefined;
+  }
+
+  interface ProcessEnv extends Env {}
+
+  export var env: Env;
+
+  export var fetch: {
+    (request: Request, init?: RequestInit): Promise<Response>;
+    (url: string | URL | Request, init?: RequestInit): Promise<Response>;
+    (input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response>;
+    preconnect(
+      url: string | URL,
+      options?: {
+        dns?: boolean;
+        tcp?: boolean;
+        http?: boolean;
+        https?: boolean;
+      },
+    ): void;
+  };
 }
 
 declare namespace Bun {
@@ -194,6 +212,8 @@ declare interface FetchEvent extends Event {
   respondWith(response: Response | Promise<Response>): void;
 }
 
+declare var fetch: typeof import("bun").fetch;
+
 declare interface EventMap {
   fetch: FetchEvent;
   message: MessageEvent;
@@ -246,23 +266,12 @@ declare interface ImportMeta {
   };
 }
 
-declare function fetch(request: Request, init?: RequestInit): Promise<Response>;
-declare function fetch(url: string | URL | Request, init?: RequestInit): Promise<Response>;
-declare function fetch(input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response>;
-
-declare namespace Bun {
-  interface Env {
-    [key: string]: string | undefined;
-  }
-
-  interface ProcessEnv extends Env {}
-
-  export const env: Env;
-  export const fetch: typeof globalThis.fetch;
-}
-
 declare interface NodeModule {
   exports: any;
+}
+
+declare interface Headers {
+  toJSON(): Record<string, string>;
 }
 
 declare namespace NodeJS {
@@ -444,6 +453,6 @@ declare interface ArrayConstructor {
 }
 
 declare module "*.svg" {
-  const content: string;
+  const content: `${string}.svg`;
   export = content;
 }

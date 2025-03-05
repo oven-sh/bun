@@ -87,7 +87,12 @@ new ReadableStream({});
 
 const body = await fetch(req1);
 
+Bun.fetch satisfies typeof fetch;
+Bun.fetch.preconnect satisfies typeof fetch.preconnect;
+
 await body.text();
+
+fetch;
 
 fetch.preconnect(new URL(""));
 

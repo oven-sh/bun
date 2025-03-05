@@ -5,7 +5,7 @@ const channel = diagnostics_channel.channel("my-channel");
 
 // Subscribe to the channel
 channel.subscribe((message, name) => {
-	console.log("Received message:", message);
+  console.log("Received message:", message);
 });
 
 // Publish a message to the channel

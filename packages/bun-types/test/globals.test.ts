@@ -26,16 +26,14 @@ expectType<string>(new Bun.SHA512_256().update("test").digest("hex"));
 expectType<Uint8Array>(Bun.deflateSync(new Uint8Array(128)));
 expectType<Uint8Array>(Bun.gzipSync(new Uint8Array(128)));
 expectType<Uint8Array>(
-	Bun.deflateSync(new Uint8Array(128), {
-		level: -1,
-		memLevel: 8,
-		strategy: 0,
-		windowBits: 15,
-	}),
+  Bun.deflateSync(new Uint8Array(128), {
+    level: -1,
+    memLevel: 8,
+    strategy: 0,
+    windowBits: 15,
+  }),
 );
-expectType<Uint8Array>(
-	Bun.gzipSync(new Uint8Array(128), { level: 9, memLevel: 6, windowBits: 27 }),
-);
+expectType<Uint8Array>(Bun.gzipSync(new Uint8Array(128), { level: 9, memLevel: 6, windowBits: 27 }));
 expectType<Uint8Array>(Bun.inflateSync(new Uint8Array(64))); // Pretend this is DEFLATE compressed data
 expectType<Uint8Array>(Bun.gunzipSync(new Uint8Array(64))); // Pretend this is GZIP compressed data
 expectAssignable<ZlibCompressionOptions>({ windowBits: -11 });
@@ -47,9 +45,7 @@ expectType<URL>(Bun.pathToFileURL("/foo/bar.txt"));
 expectType<string>(Bun.fileURLToPath(new URL("file:///foo/bar.txt")));
 
 // Testing ../fs.d.ts
-expectType<string>(
-	fs.readFileSync("./index.d.ts", { encoding: "utf-8" }).toString(),
-);
+expectType<string>(fs.readFileSync("./index.d.ts", { encoding: "utf-8" }).toString());
 expectType<boolean>(fs.existsSync("./index.d.ts"));
 // tslint:disable-next-line:no-void-expression
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
@@ -62,9 +58,7 @@ expectType<void>(fs.appendFileSync("./index.d.ts", "test"));
 expectType<void>(fs.mkdirSync("./index.d.ts"));
 
 // Testing ^promises.d.ts
-expectType<string>(
-	(await fsPromises.readFile("./index.d.ts", { encoding: "utf-8" })).toString(),
-);
+expectType<string>((await fsPromises.readFile("./index.d.ts", { encoding: "utf-8" })).toString());
 expectType<Promise<void>>(fsPromises.access("./index.d.ts"));
 expectType<Promise<void>>(fsPromises.appendFile("./index.d.ts", "test"));
 expectType<Promise<void>>(fsPromises.mkdir("./index.d.ts"));
@@ -142,7 +136,7 @@ function stuff(arg: ReadableStreamDefaultReader): any;
 function stuff(arg: ReadableStreamDefaultController): any;
 function stuff(arg: WritableStreamDefaultWriter): any;
 function stuff(arg: any) {
-	return "asfd";
+  return "asfd";
 }
 
 stuff("asdf" as any as Blob);
@@ -163,145 +157,145 @@ const readableStream = new ReadableStream();
 const writableStream = new WritableStream();
 
 {
-	const a = new ByteLengthQueuingStrategy({ highWaterMark: 0 });
-	a.highWaterMark;
+  const a = new ByteLengthQueuingStrategy({ highWaterMark: 0 });
+  a.highWaterMark;
 }
 {
-	const a = new ReadableStreamDefaultController();
-	a.close();
+  const a = new ReadableStreamDefaultController();
+  a.close();
 }
 {
-	const a = new ReadableStreamDefaultReader(readableStream);
-	await a.cancel();
+  const a = new ReadableStreamDefaultReader(readableStream);
+  await a.cancel();
 }
 {
-	const a = new WritableStreamDefaultController();
-	a.error();
+  const a = new WritableStreamDefaultController();
+  a.error();
 }
 {
-	const a = new WritableStreamDefaultWriter(writableStream);
-	await a.close();
+  const a = new WritableStreamDefaultWriter(writableStream);
+  await a.close();
 }
 {
-	const a = new TransformStream();
-	a.readable;
+  const a = new TransformStream();
+  a.readable;
 }
 {
-	const a = new TransformStreamDefaultController();
-	a.enqueue("asdf");
+  const a = new TransformStreamDefaultController();
+  a.enqueue("asdf");
 }
 {
-	const a = new CountQueuingStrategy({ highWaterMark: 0 });
-	a.highWaterMark;
+  const a = new CountQueuingStrategy({ highWaterMark: 0 });
+  a.highWaterMark;
 }
 {
-	const a = new DOMException();
-	a.DATA_CLONE_ERR;
+  const a = new DOMException();
+  a.DATA_CLONE_ERR;
 }
 {
-	const a = new SubtleCrypto();
-	await a.decrypt("asdf", new CryptoKey(), new Uint8Array());
+  const a = new SubtleCrypto();
+  await a.decrypt("asdf", new CryptoKey(), new Uint8Array());
 }
 {
-	const a = new CryptoKey();
-	a.algorithm;
+  const a = new CryptoKey();
+  a.algorithm;
 }
 {
-	const a = new BuildError();
-	a.level;
+  const a = new BuildError();
+  a.level;
 }
 {
-	const a = new ResolveError();
-	a.level;
+  const a = new ResolveError();
+  a.level;
 }
 {
-	const a = new AbortController();
-	a;
+  const a = new AbortController();
+  a;
 }
 {
-	const a = new AbortSignal();
-	a.aborted;
+  const a = new AbortSignal();
+  a.aborted;
 }
 {
-	const a = new Request("asdf");
-	await a.json();
-	a.cache;
+  const a = new Request("asdf");
+  await a.json();
+  a.cache;
 }
 {
-	const a = new Response();
-	await a.text();
-	a.ok;
+  const a = new Response();
+  await a.text();
+  a.ok;
 }
 {
-	const a = new FormData();
-	a.delete("asdf");
+  const a = new FormData();
+  a.delete("asdf");
 }
 {
-	const a = new Headers();
-	a.append("asdf", "asdf");
+  const a = new Headers();
+  a.append("asdf", "asdf");
 }
 {
-	const a = new EventTarget();
-	a.dispatchEvent(new Event("asdf"));
+  const a = new EventTarget();
+  a.dispatchEvent(new Event("asdf"));
 }
 {
-	const a = new Event("asdf");
-	a.bubbles;
-	a.composedPath()[0];
+  const a = new Event("asdf");
+  a.bubbles;
+  a.composedPath()[0];
 }
 {
-	const a = new Blob();
-	a.size;
+  const a = new Blob();
+  a.size;
 }
 {
-	const a = new File(["asdf"], "stuff.txt ");
-	a.name;
+  const a = new File(["asdf"], "stuff.txt ");
+  a.name;
 }
 {
-	performance.now();
+  performance.now();
 }
 {
-	const a = new URL("asdf");
-	a.host;
-	a.href;
+  const a = new URL("asdf");
+  a.host;
+  a.href;
 }
 {
-	const a = new URLSearchParams();
-	a;
+  const a = new URLSearchParams();
+  a;
 }
 {
-	const a = new TextDecoder();
-	a.decode(new Uint8Array());
+  const a = new TextDecoder();
+  a.decode(new Uint8Array());
 }
 {
-	const a = new TextEncoder();
-	a.encode("asdf");
+  const a = new TextEncoder();
+  a.encode("asdf");
 }
 {
-	const a = new BroadcastChannel("stuff");
-	a.close();
+  const a = new BroadcastChannel("stuff");
+  a.close();
 }
 {
-	const a = new MessageChannel();
-	a.port1;
+  const a = new MessageChannel();
+  a.port1;
 }
 {
-	const a = new MessagePort();
-	a.close();
+  const a = new MessagePort();
+  a.close();
 }
 
 {
-	var a!: RequestInit;
-	a.mode;
-	a.credentials;
+  var a!: RequestInit;
+  a.mode;
+  a.credentials;
 }
 {
-	var b!: ResponseInit;
-	b.status;
+  var b!: ResponseInit;
+  b.status;
 }
 {
-	const ws = new WebSocket("ws://www.host.com/path");
-	ws.send("asdf");
+  const ws = new WebSocket("ws://www.host.com/path");
+  ws.send("asdf");
 }
 
 atob("asf");

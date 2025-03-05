@@ -47,6 +47,7 @@ function Socket(options) {
   return new InternalSocket(options);
 }
 Socket.prototype = InternalSocket.prototype;
+Socket.__proto__ = InternalSocket;
 Object.defineProperty(Socket, Symbol.hasInstance, {
   value(instance) {
     return instance instanceof InternalSocket;

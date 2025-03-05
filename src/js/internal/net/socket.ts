@@ -530,7 +530,14 @@ class Socket extends Duplex {
   }
 
   connect(...args) {
+    console.log("options", ...args);
     const [options, connectListener] = normalizeArgs(args);
+    console.log("options after", options);
+    if (options.port === undefined && options.path == null) {
+      const err = $ERR_MISSING_ARGS("");
+      err.message = 'The "options" or "port" or "path" argument must be specified';
+      throw err;
+    }
     let connection = this.#socket;
 
     let upgradeDuplex = false;
@@ -1205,7 +1212,7 @@ class ConnResetException extends Error {
 }
 
 function normalizeArgs(args: unknown[]) {
-  while (args[args.length - 1] == null) args.pop();
+  while (args.length > 0 && args[args.length - 1] == null) args.pop();
   let arr: [options: Record<PropertyKey, any>, cb: Function | null];
 
   if (args.length === 0) {

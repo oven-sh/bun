@@ -9339,7 +9339,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.config.onNodeHTTPRequest != .zero) {
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
                 NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), app);
-            } else if (this.config.onRequest != .zero) {
+            } else if (this.config.onRequest != .zero and !has_html_catch_all) {
                 app.any("/*", *ThisServer, this, onRequest);
             }
 

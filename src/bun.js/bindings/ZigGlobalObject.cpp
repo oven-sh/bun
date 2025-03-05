@@ -897,7 +897,11 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         // Keep stopIfNecessaryTimer enabled by default when either:
         // - `--smol` is passed
         // - The machine has less than 4GB of RAM
-        bool shouldDisableStopIfNecessaryTimer = !miniMode || WTF::ramSize() > (1024ull * 1024ull * 1024ull * 4ull);
+        bool shouldDisableStopIfNecessaryTimer = !miniMode;
+        if (WTF::ramSize() < 1024ull * 1024ull * 1024ull * 4ull) {
+            shouldDisableStopIfNecessaryTimer = false;
+        }
+
         if (disable_stop_if_necessary_timer) {
             const char value = disable_stop_if_necessary_timer[0];
             if (value == '0') {

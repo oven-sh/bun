@@ -80,7 +80,7 @@ JSC::GCClient::IsoSubspace* JSVerify::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<CellType, WebCore::UseCustomHeapCellType::No>(
+    return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForJSVerify.get(); },
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSVerify = std::forward<decltype(space)>(space); },

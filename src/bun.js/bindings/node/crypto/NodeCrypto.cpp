@@ -42,6 +42,7 @@
 #include "NodeValidator.h"
 #include "JSSign.h"
 #include "JSVerify.h"
+#include "JSHmac.h"
 
 using namespace JSC;
 using namespace Bun;
@@ -467,6 +468,9 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         globalObject->m_JSVerifyClassStructure.constructor(globalObject));
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "verify"_s)),
         JSFunction::create(vm, globalObject, 4, "verify"_s, jsVerifyOneShot, ImplementationVisibility::Public, NoIntrinsic), 0);
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Hmac"_s)),
+        globalObject->m_JSHmacClassStructure.constructor(globalObject));
 
     return obj;
 }

@@ -4,6 +4,8 @@
 #include "ncrypto.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
+#include "CryptoAlgorithmRegistry.h"
+#include "JSBufferEncodingType.h"
 
 namespace Bun {
 
@@ -18,6 +20,10 @@ enum class DSASigEnc {
 
 }
 
+namespace StringBytes {
+EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding);
+};
+
 // void CheckThrow(JSC::JSGlobalObject* globalObject, SignBase::Error error);
 std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue);
 ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalObject, JSValue formatValue, WTF::ASCIILiteral optionName, std::optional<ncrypto::EVPKeyPointer::PKFormatType> defaultFormat = std::nullopt);
@@ -30,5 +36,8 @@ int32_t getPadding(JSC::JSGlobalObject* globalObject, JSValue options, const ncr
 std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSValue options);
 NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValue options);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue);
+std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey, std::optional<WebCore::CryptoAlgorithmIdentifier> algorithmIdentifier);
+JSValue getStringOption(JSGlobalObject* globalObject, JSValue options, const WTF::ASCIILiteral& name);
+void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>& out, JSValue key, JSValue encoding, bool bufferOnly = false);
 
 }

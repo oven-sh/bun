@@ -1750,7 +1750,8 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return JSValue::encode({});
         }
-        memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), bytes.size());
+        memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), u16length * 2);
+        return JSValue::encode(jsString(vm, WTFMove(str)));
     }
     case BufferEncodingType::ascii: {
         std::span<LChar> data;

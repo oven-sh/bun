@@ -1346,7 +1346,6 @@ pub const EventLoop = struct {
         return this.virtual_machine.event_loop_handle.?;
     }
     fn enterActiveLoop(loop: *uws.Loop, ctx: *VirtualMachine) void {
-        // Before entering loop, run opportunistic GC if we have time
         var deadline: bun.timespec = undefined;
 
         var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable;

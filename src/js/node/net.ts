@@ -653,8 +653,11 @@ const Socket = (function (InternalSocket) {
       connection.destroy();
     }
 
-    connect(...args) {
+    public connect(...args) {
       const [options, connectListener] = normalizeArgs(args);
+      if (options.port === undefined && options.path == null) {
+        throw $ERR_MISSING_ARGS(["options", "port", "path"]);
+      }
       let connection = this.#socket;
 
       let upgradeDuplex = false;
@@ -1607,9 +1610,9 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
-function normalizeArgs(args) {
-  while (args[args.length - 1] == null) args.pop();
-  let arr;
+function normalizeArgs(args: unknown[]) {
+  while (args.length && args[args.length - 1] == null) args.pop();
+  let arr: [options: Record<PropertyKey, any>, cb: Function | null] | undefined;
 
   if (args.length === 0) {
     arr = [{}, null];

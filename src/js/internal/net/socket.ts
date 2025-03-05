@@ -529,10 +529,8 @@ class Socket extends Duplex {
     connection.destroy();
   }
 
-  connect(...args) {
-    console.log("options", ...args);
+  public connect(...args) {
     const [options, connectListener] = normalizeArgs(args);
-    console.log("options after", options);
     if (options.port === undefined && options.path == null) {
       const err = $ERR_MISSING_ARGS("");
       err.message = 'The "options" or "port" or "path" argument must be specified';
@@ -786,6 +784,9 @@ class Socket extends Duplex {
     } catch (error) {
       // It's possible we were destroyed while looking this up.
       if (!this.connecting) return;
+      if ("code" in error && error.code.startsWith("DNS_")) {
+        error.code = error.code.replace("DNS_", "");
+      }
       this.emit("lookup", error, undefined, undefined, hostname);
       process.nextTick(connectErrorNT, this, error);
       return;
@@ -795,11 +796,13 @@ class Socket extends Duplex {
     if (!this.connecting) return;
     $assert(lookup.length > 0);
     if (lookup.length === 0) {
+      console.log("lookup empty");
       this.emit("lookup", new Error("getaddrinfo ENOTFOUND"), undefined, undefined, hostname);
       process.nextTick(connectErrorNT, this, new Error("getaddrinfo ENOTFOUND"));
       return;
     }
 
+    throw new Error("lookup: " + lookup);
     // NOTE: Node uses all the addresses returned by dns.lookup, but our
     // Bun.connect API doesn't support this
     const { address: ip, family: addressType } = lookup[0];

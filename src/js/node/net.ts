@@ -669,7 +669,7 @@ const Socket = (function (InternalSocket) {
 
       if (
         // TLSSocket already created a socket and is forwarding it here. This is a private API.
-        !(options.socket && $isObject(options.socket) && options.socket instanceof Socket) &&
+        !(options.socket && $isObject(options.socket) && options.socket instanceof Duplex) &&
         // public api for net.Socket.connect
         options.port === undefined &&
         options.path == null

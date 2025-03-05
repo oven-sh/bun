@@ -87,7 +87,7 @@ await sql`INSERT INTO users ${sql(users)}`;
 
 ### Picking columns to insert
 
-You can use `sql(object, Array<string>)` to pick which columns to insert. Each of the columns must be defined on the object.
+You can use `sql(object, ...string)` to pick which columns to insert. Each of the columns must be defined on the object.
 
 ```ts
 const user = {
@@ -96,7 +96,7 @@ const user = {
   age: 25,
 };
 
-await sql`INSERT INTO users ${sql(user, ["name", "email"])}`;
+await sql`INSERT INTO users ${sql(user, "name", "email")}`;
 // Only inserts name and email columns, ignoring other fields
 ```
 
@@ -165,6 +165,31 @@ await sql`
 `;
 ```
 
+### Dynamic columns in updates
+
+You can use `sql(object, ...string)` to pick which columns to update. Each of the columns must be defined on the object. If the columns are not informed all keys will be used to update the row.
+
+```ts
+await sql`UPDATE users SET ${sql(user, "name", "email")} WHERE id = ${user.id}`;
+// uses all keys from the object to update the row
+await sql`UPDATE users SET ${sql(user)} WHERE id = ${user.id}`;
+```
+
+### Dynamic values and `where in`
+
+Value lists can also be created dynamically, making where in queries simple too. Optionally you can pass a array of objects and inform what key to use to create the list.
+
+```ts
+await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
+
+const users = [
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" },
+  { id: 3, name: "Charlie" },
+];
+await sql`SELECT * FROM users WHERE id IN ${sql(users, "id")}`;
+```
+
 ## `sql``.simple()`
 
 The PostgreSQL wire protocol supports two types of queries: "simple" and "extended". Simple queries can contain multiple statements but don't support parameters, while extended queries (the default) support parameters but only allow one statement.
@@ -182,6 +207,14 @@ await sql`
 Simple queries are often useful for database migrations and setup scripts.
 
 Note that simple queries cannot use parameters (`${value}`). If you need parameters, you must split your query into separate statements.
+
+### Queries in files
+
+You can use the `sql.file` method to read a query from a file and execute it, if the file includes $1, $2, etc you can pass parameters to the query. If no parameters are used it can execute multiple commands per file.
+
+```ts
+const result = await sql.file("query.sql", [1, 2, 3]);
+```
 
 ### Unsafe Queries
 
@@ -285,6 +318,21 @@ const db = new SQL({
   onclose: client => {
     console.log("Connection closed");
   },
+});
+```
+
+## Dynamic passwords
+
+When clients need to use alternative authentication schemes such as access tokens or connections to databases with rotating passwords, provide either a synchronous or asynchronous function that will resolve the dynamic password value at connection time.
+
+```ts
+import { SQL } from "bun";
+
+const sql = new SQL(url, {
+  // Other connection config
+  ...
+  // Password function for the database user
+  password: async () => await signer.getAuthToken(),
 });
 ```
 

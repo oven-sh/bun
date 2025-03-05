@@ -96,7 +96,7 @@ pub const WTFStringImplStruct = extern struct {
     pub inline fn deref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
-        bun.assert(current_count > 0);
+        bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
         Bun__WTFStringImpl__deref(self);
         if (comptime bun.Environment.allow_assert) {
             if (current_count > 1) {
@@ -108,9 +108,14 @@ pub const WTFStringImplStruct = extern struct {
     pub inline fn ref(self: WTFStringImpl) void {
         JSC.markBinding(@src());
         const current_count = self.refCount();
-        bun.assert(current_count > 0);
+        bun.assert(self.hasAtLeastOneRef()); // do not use current_count, it breaks for static strings
         Bun__WTFStringImpl__ref(self);
         bun.assert(self.refCount() > current_count or self.isStatic());
+    }
+
+    pub inline fn hasAtLeastOneRef(self: WTFStringImpl) bool {
+        // WTF::StringImpl::hasAtLeastOneRef
+        return self.m_refCount > 0;
     }
 
     pub fn toLatin1Slice(this: WTFStringImpl) ZigString.Slice {

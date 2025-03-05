@@ -41,7 +41,7 @@ pub const InitCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+            bun.win32.updateStdioModeFlags(0, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -68,21 +68,35 @@ pub const InitCommand = struct {
 
     extern fn Bun__ttySetMode(fd: i32, mode: i32) i32;
 
-    fn processRadioButton(
-        label: string,
-        comptime choices: []const []const u8,
-        comptime choices_uncolored: []const []const u8,
-        default_value: usize,
-        comptime colors: bool,
-    ) !usize {
-        // Print the question prompt
-        if (colors) {
-            Output.prettyln("<r><cyan>?<r> {s}<d> - Press return to submit.<r>", .{label});
-        } else {
-            Output.prettyln("<r><cyan>?<r> {s}<d> - Press return to submit.<r>", .{label});
-        }
+    fn processRadioButton(label: string, comptime Choices: type) !Choices {
+        const colors = Output.enable_ansi_colors;
+        const choices = switch (colors) {
+            inline else => |colors_comptime| comptime choices: {
+                const choices_fields = bun.meta.EnumFields(Choices);
+                if (choices_fields.len == 0) {
+                    @compileError("Choices must be an enum type with at least one field");
+                }
+                var expected_value = 0;
+                var choices: [choices_fields.len][]const u8 = undefined;
+                for (choices_fields, 0..) |field, i| {
+                    if (field.value != expected_value) {
+                        @compileError("Choices must be an enum type with consecutive values starting from 0");
+                    }
+                    const e: Choices = @enumFromInt(field.value);
+                    choices[i] = Output.prettyFmt(e.fmt(), colors_comptime);
+                    expected_value += 1;
+                }
+                break :choices choices;
+            },
+        };
 
-        var selected = default_value;
+        // Print the question prompt
+        Output.prettyln("<r><cyan>?<r> {s}<d> - Press return to submit.<r>", .{label});
+
+        if (colors) Output.print("\x1b[?25l", .{}); // hide cursor
+        defer if (colors) Output.print("\x1b[?25h", .{}); // show cursor
+
+        var selected: Choices = .default;
         var initial_draw = true;
         var reprint_menu = true;
         errdefer reprint_menu = false;
@@ -97,11 +111,7 @@ pub const InitCommand = struct {
 
             if (reprint_menu) {
                 // Print final selection
-                if (colors) {
-                    Output.prettyln("<r><cyan>?<r> {s} <d>› {s}<r>", .{ label, choices[selected] });
-                } else {
-                    Output.prettyln("<r><cyan>?<r> {s} <d>> {s}<r>", .{ label, choices_uncolored[selected] });
-                }
+                Output.prettyln("<r><green>✓<r> {s}<d>:<r> {s}<r>", .{ label, choices[@intFromEnum(selected)] });
             }
         }
 
@@ -112,27 +122,24 @@ pub const InitCommand = struct {
             }
             initial_draw = false;
 
-            // Clear from cursor to end of screen
-            Output.clearToEnd();
-
             // Print options vertically
-            inline for (choices, choices_uncolored, 0..) |option_colored, option_uncolored, i| {
-                const option = if (colors) option_colored else option_uncolored;
-                if (i == selected) {
+            inline for (choices, 0..) |option, i| {
+                if (i == @intFromEnum(selected)) {
                     if (colors) {
                         Output.pretty("<r><cyan>❯<r>   ", .{});
                     } else {
                         Output.pretty("<r><cyan>><r>   ", .{});
                     }
                     if (colors) {
-                        Output.print("\x1B[4m" ++ option ++ "\x1B[24m\n", .{});
+                        Output.print("\x1B[4m{s}\x1B[24m\x1B[0K\n", .{option});
                     } else {
-                        Output.print("    " ++ option ++ "\n", .{});
+                        Output.print("    {s}\x1B[0K\n", .{option});
                     }
                 } else {
-                    Output.print("    " ++ option ++ "\n", .{});
+                    Output.print("    {s}\x1B[0K\n", .{option});
                 }
             }
+            Output.clearToEnd();
 
             Output.flush();
 
@@ -147,21 +154,21 @@ pub const InitCommand = struct {
                 '1'...'9' => {
                     const choice = byte - '1';
                     if (choice < choices.len) {
-                        return choice;
+                        return @enumFromInt(choice);
                     }
                 },
                 'j' => {
-                    if (selected == choices.len - 1) {
-                        selected = 0;
+                    if (@intFromEnum(selected) == choices.len - 1) {
+                        selected = @enumFromInt(0);
                     } else {
-                        selected += 1;
+                        selected = @enumFromInt(@intFromEnum(selected) + 1);
                     }
                 },
                 'k' => {
-                    if (selected == 0) {
-                        selected = choices.len - 1;
+                    if (@intFromEnum(selected) == 0) {
+                        selected = @enumFromInt(choices.len - 1);
                     } else {
-                        selected -= 1;
+                        selected = @enumFromInt(@intFromEnum(selected) - 1);
                     }
                 },
                 27 => { // ESC sequence
@@ -173,17 +180,17 @@ pub const InitCommand = struct {
                     const arrow = std.io.getStdIn().reader().readByte() catch return error.EndOfStream;
                     switch (arrow) {
                         'A' => { // Up arrow
-                            if (selected == 0) {
-                                selected = choices.len - 1;
+                            if (@intFromEnum(selected) == 0) {
+                                selected = @enumFromInt(choices.len - 1);
                             } else {
-                                selected -= 1;
+                                selected = @enumFromInt(@intFromEnum(selected) - 1);
                             }
                         },
                         'B' => { // Down arrow
-                            if (selected == choices.len - 1) {
-                                selected = 0;
+                            if (@intFromEnum(selected) == choices.len - 1) {
+                                selected = @enumFromInt(0);
                             } else {
-                                selected += 1;
+                                selected = @enumFromInt(@intFromEnum(selected) + 1);
                             }
                         },
                         else => {},
@@ -194,17 +201,17 @@ pub const InitCommand = struct {
         }
     }
 
-    pub fn radio(
-        label: string,
-        comptime choices: []const []const u8,
-        comptime choices_uncolored: []const []const u8,
-        default_value: usize,
-        comptime colors: bool,
-    ) !usize {
+    /// `Choices` must be an enum type with the `fmt` method.
+    pub fn radio(label: string, comptime Choices: type) !Choices {
 
         // Set raw mode to read single characters without echo
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+            bun.win32.updateStdioModeFlags(0, .{
+                // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
+                .set = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT | bun.windows.ENABLE_PROCESSED_INPUT,
+                // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
+                .unset = bun.windows.ENABLE_LINE_INPUT | bun.windows.ENABLE_ECHO_INPUT,
+            }) catch null;
 
         if (Environment.isPosix)
             _ = Bun__ttySetMode(0, 1);
@@ -223,7 +230,7 @@ pub const InitCommand = struct {
             }
         }
 
-        const selection = processRadioButton(label, choices, choices_uncolored, default_value, colors) catch |err| {
+        const selection = processRadioButton(label, Choices) catch |err| {
             if (err == error.EndOfStream) {
                 Output.flush();
                 // Add an "x" cancelled
@@ -359,19 +366,45 @@ pub const InitCommand = struct {
         private: bool = true,
     };
 
-    pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
-        const print_help = brk: {
-            for (argv) |arg| {
+    pub fn exec(alloc: std.mem.Allocator, init_args: [][:0]const u8) !void {
+        // --minimal is a special preset to create only empty package.json + tsconfig.json
+        var minimal = false;
+        var auto_yes = false;
+        var parse_flags = true;
+        var initialize_in_folder: ?[]const u8 = null;
+        for (init_args) |arg_| {
+            const arg = bun.span(arg_);
+            if (parse_flags and arg.len > 0 and arg[0] == '-') {
                 if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
-                    break :brk true;
+                    CLI.Command.Tag.printHelp(.InitCommand, true);
+                    Global.exit(0);
+                } else if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
+                    minimal = true;
+                } else if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
+                    auto_yes = true;
+                } else if (strings.eqlComptime(arg, "--")) {
+                    parse_flags = false;
+                } else {
+                    // invalid flag; ignore
+                }
+            } else {
+                if (initialize_in_folder == null) {
+                    initialize_in_folder = arg;
+                } else {
+                    // invalid positional; ignore
                 }
             }
-            break :brk false;
-        };
+        }
 
-        if (print_help) {
-            CLI.Command.Tag.printHelp(.InitCommand, true);
-            Global.exit(0);
+        if (initialize_in_folder) |ifdir| {
+            std.fs.cwd().makePath(ifdir) catch |err| {
+                Output.prettyErrorln("Failed to create directory {s}: {s}", .{ ifdir, @errorName(err) });
+                Global.exit(1);
+            };
+            bun.sys.chdir("", ifdir).unwrap() catch |err| {
+                Output.prettyErrorln("Failed to change directory to {s}: {s}", .{ ifdir, @errorName(err) });
+                Global.exit(1);
+            };
         }
 
         var fs = try Fs.FileSystem.init(null);
@@ -457,25 +490,46 @@ pub const InitCommand = struct {
             }
         }
 
-        if (fields.entry_point.len == 0) {
-            infer: {
-                const paths_to_try = [_][:0]const u8{
-                    @as([:0]const u8, "index.mts"),
-                    @as([:0]const u8, "index.tsx"),
-                    @as([:0]const u8, "index.ts"),
-                    @as([:0]const u8, "index.jsx"),
-                    @as([:0]const u8, "index.mjs"),
-                    @as([:0]const u8, "index.js"),
-                };
+        if (fields.entry_point.len == 0 and !minimal) infer: {
+            fields.entry_point = "index.ts";
 
-                for (paths_to_try) |path| {
-                    if (existsZ(path)) {
-                        fields.entry_point = path;
-                        break :infer;
-                    }
+            // Prefer a file named index
+            const paths_to_try = [_][:0]const u8{
+                "index.mts",
+                "index.tsx",
+                "index.ts",
+                "index.jsx",
+                "index.mjs",
+                "index.js",
+                "src/index.mts",
+                "src/index.tsx",
+                "src/index.ts",
+                "src/index.jsx",
+                "src/index.mjs",
+                "src/index.js",
+            };
+            for (paths_to_try) |path| {
+                if (existsZ(path)) {
+                    fields.entry_point = path;
+                    break :infer;
                 }
+            }
 
-                fields.entry_point = "index.ts";
+            // Find any source file
+            var dir = std.fs.cwd().openDir(".", .{ .iterate = true }) catch break :infer;
+            defer dir.close();
+            var it = bun.DirIterator.iterate(dir, .u8);
+            while (try it.next().unwrap()) |file| {
+                if (file.kind != .file) continue;
+                const loader = bun.options.Loader.fromString(std.fs.path.extension(file.name.slice())) orelse
+                    continue;
+                if (loader.isJavaScriptLike()) {
+                    // If a non-index file is found, it might not be the "main"
+                    // file, and a generated package.json shouldn't get this
+                    // added noise.
+                    fields.entry_point = "";
+                    break;
+                }
             }
         }
 
@@ -487,45 +541,29 @@ pub const InitCommand = struct {
             ).data.e_object;
         }
 
-        const auto_yes = Output.stdout_descriptor_type != .terminal or brk: {
-            for (argv) |arg_| {
-                const arg = bun.span(arg_);
-                if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
-                    break :brk true;
-                }
-            }
-            break :brk false;
-        };
-
         var template: Template = .blank;
 
         if (!auto_yes) {
             if (!did_load_package_json) {
                 Output.pretty("\n", .{});
 
-                const choices = &[_][]const u8{
-                    "TypeScript",
-                    "React",
-                    "TypeScript Library",
-                };
-                const choices_colored = &[_][]const u8{
-                    comptime Output.prettyFmt("<blue>TypeScript<r> <d>(blank)<r>", true),
-                    comptime Output.prettyFmt("<cyan>React<r>", true),
-                    comptime Output.prettyFmt("<blue>TypeScript<r> <d>(library)<r>", true),
-                };
+                const selected = try radio("Select a project template", enum {
+                    blank,
+                    react,
+                    library,
 
-                const selected = switch (Output.enable_ansi_colors_stdout) {
-                    inline else => |colors| try radio(
-                        "Select a project",
-                        choices_colored,
-                        choices,
-                        0,
-                        colors,
-                    ),
-                };
+                    pub const default: @This() = .blank;
 
+                    pub fn fmt(self: @This()) []const u8 {
+                        return switch (self) {
+                            .blank => "<yellow>Blank<r>",
+                            .react => "<cyan>React<r>",
+                            .library => "<blue>Library<r>",
+                        };
+                    }
+                });
                 switch (selected) {
-                    2 => {
+                    .library => {
                         template = .typescript_library;
                         fields.name = prompt(
                             alloc,
@@ -546,54 +584,35 @@ pub const InitCommand = struct {
                         };
                         fields.private = false;
                     },
-                    1 => {
-                        const react_choices = &[_][]const u8{
-                            "Default (blank)",
-                            "Tailwind CSS",
-                            "Shadcn UI + Tailwind CSS",
-                        };
-                        const react_choices_colored = &[_][]const u8{
-                            "Default (blank)",
-                            // <magenta>Tailwind CSS
-                            "\x1B[36mTailwind CSS\x1B[39m",
-                            // <green>Shadcn + Tailwind CSS
-                            "\x1B[32mshadcn + Tailwind CSS\x1B[39m\x1B[0m",
-                        };
+                    .react => {
+                        const react_selected = try radio("Select a React template", enum {
+                            default,
+                            tailwind,
+                            shadcn_tailwind,
 
-                        const react_selected = switch (Output.enable_ansi_colors_stdout) {
-                            inline else => |colors| try radio(
-                                "Select a React template",
-                                react_choices_colored,
-                                react_choices,
-                                0,
-                                colors,
-                            ),
-                        };
+                            pub fn fmt(self: @This()) []const u8 {
+                                return switch (self) {
+                                    .default => "<blue>Default (blank)<r>",
+                                    .tailwind => "<magenta>TailwindCSS<r>",
+                                    .shadcn_tailwind => "<green>Shadcn + TailwindCSS<r>",
+                                };
+                            }
+                        });
 
-                        switch (react_selected) {
-                            0 => {
-                                template = .react_blank;
-                            },
-                            1 => {
-                                template = .react_tailwind;
-                            },
-                            2 => {
-                                template = .react_tailwind_shadcn;
-                            },
-                            else => unreachable,
-                        }
+                        template = switch (react_selected) {
+                            .default => .react_blank,
+                            .tailwind => .react_tailwind,
+                            .shadcn_tailwind => .react_tailwind_shadcn,
+                        };
                     },
-                    0 => {
-                        template = .blank;
-                    },
-                    else => unreachable,
+                    .blank => template = .blank,
                 }
 
                 try Output.writer().writeAll("\n");
                 Output.flush();
             } else {
-                Output.errGeneric("A package.json already exists here", .{});
-                Global.crash();
+                Output.note("package.json already exists, configuring existing project", .{});
+                template = .blank;
             }
         }
 
@@ -606,17 +625,21 @@ pub const InitCommand = struct {
         }
 
         const Steps = struct {
-            write_gitignore: bool = true,
-            write_package_json: bool = true,
-            write_tsconfig: bool = true,
-            write_readme: bool = true,
+            write_gitignore: bool,
+            write_package_json: bool,
+            write_tsconfig: bool,
+            write_readme: bool,
         };
 
-        var steps = Steps{};
+        var steps = Steps{
+            .write_package_json = true,
+            .write_tsconfig = true,
+            .write_gitignore = !minimal,
+            .write_readme = !minimal,
+        };
 
-        steps.write_gitignore = !existsZ(".gitignore");
-
-        steps.write_readme = !existsZ("README.md") and !existsZ("README") and !existsZ("README.txt") and !existsZ("README.mdx");
+        steps.write_gitignore = steps.write_gitignore and !existsZ(".gitignore");
+        steps.write_readme = steps.write_readme and !existsZ("README.md") and !existsZ("README") and !existsZ("README.txt") and !existsZ("README.mdx");
 
         steps.write_tsconfig = brk: {
             if (existsZ("tsconfig.json")) {
@@ -630,8 +653,9 @@ pub const InitCommand = struct {
             break :brk true;
         };
 
-        {
-            try fields.object.putString(alloc, "name", fields.name);
+        if (!minimal) {
+            if (fields.name.len > 0)
+                try fields.object.putString(alloc, "name", fields.name);
             if (fields.entry_point.len > 0) {
                 if (fields.object.hasProperty("module")) {
                     try fields.object.putString(alloc, "module", fields.entry_point);
@@ -648,6 +672,8 @@ pub const InitCommand = struct {
                 try fields.object.put(alloc, "private", js_ast.Expr.init(js_ast.E.Boolean, .{ .value = true }, logger.Loc.Empty));
             }
         }
+
+        var need_run_bun_install = !did_load_package_json;
         {
             const all_dependencies = template.dependencies();
             const dependencies = all_dependencies.dependencies;
@@ -681,7 +707,7 @@ pub const InitCommand = struct {
                 break :brk needed_dev_dependencies.count() > 0;
             };
 
-            const needs_typescript_dependency = brk: {
+            const needs_typescript_dependency = !minimal and brk: {
                 if (fields.object.get("devDependencies")) |deps| {
                     if (deps.hasAnyPropertyNamed(&.{"typescript"})) {
                         break :brk false;
@@ -696,6 +722,8 @@ pub const InitCommand = struct {
 
                 break :brk true;
             };
+
+            need_run_bun_install = needs_dependencies or needs_dev_dependencies or needs_typescript_dependency;
 
             if (needs_dependencies) {
                 var dependencies_object = fields.object.get("dependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
@@ -758,7 +786,7 @@ pub const InitCommand = struct {
 
         switch (template) {
             .blank, .typescript_library => {
-                if (package_json_file != null) {
+                if (package_json_file != null and !did_load_package_json) {
                     Output.prettyln(" + <r><d>package.json<r>", .{});
                     Output.flush();
                 }
@@ -798,21 +826,20 @@ pub const InitCommand = struct {
                     };
                 }
 
-                if (fields.entry_point.len > 0) {
-                    Output.pretty("\nTo get started, run:\n\n\t", .{});
-                    if (strings.containsAny(
-                        " \"'",
-                        fields.entry_point,
-                    )) {
-                        Output.prettyln("<cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                if (fields.entry_point.len > 0 and !did_load_package_json) {
+                    Output.pretty("\nTo get started, run:\n\n    ", .{});
+
+                    if (strings.containsAny(" \"'", fields.entry_point)) {
+                        Output.pretty("<cyan>bun run {any}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
                     } else {
-                        Output.prettyln("<cyan>bun run {s}<r>", .{fields.entry_point});
+                        Output.pretty("<cyan>bun run {s}<r>\n\n", .{fields.entry_point});
                     }
                 }
 
                 Output.flush();
 
-                if (existsZ("package.json")) {
+                if (existsZ("package.json") and need_run_bun_install) {
+                    Output.prettyln("", .{});
                     var process = std.process.Child.init(
                         &.{
                             try bun.selfExePath(),
@@ -820,9 +847,9 @@ pub const InitCommand = struct {
                         },
                         alloc,
                     );
-                    process.stderr_behavior = .Ignore;
-                    process.stdin_behavior = .Ignore;
-                    process.stdout_behavior = .Ignore;
+                    process.stderr_behavior = .Inherit;
+                    process.stdin_behavior = .Inherit;
+                    process.stdout_behavior = .Inherit;
                     _ = try process.spawnAndWait();
                 }
             },
@@ -884,6 +911,11 @@ const Template = enum {
     react_tailwind,
     react_tailwind_shadcn,
     typescript_library,
+    const TemplateFile = struct {
+        path: [:0]const u8,
+        contents: [:0]const u8,
+        can_skip_if_exists: bool = false,
+    };
     pub fn shouldUseSourceFileProjectGenerator(this: Template) bool {
         return switch (this) {
             .blank, .typescript_library => false,
@@ -940,8 +972,12 @@ const Template = enum {
                 "build", "bun 'REPLACE_ME_WITH_YOUR_APP_FILE_NAME.build.ts'",
             },
             .react_blank => &.{
-                "dev",    "bun ./src/",
-                "static", "bun build ./src/index.html --outdir=dist --sourcemap=linked --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+                "dev",
+                "bun --hot .",
+                "static",
+                "bun build ./src/index.html --outdir=dist --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
+                "build",
+                "NODE_ENV=production bun .",
             },
         };
 
@@ -949,104 +985,101 @@ const Template = enum {
     }
 
     const ReactBlank = struct {
-        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../create/projects/react-app/bunfig.toml") },
-            .{ "package.json", @embedFile("../create/projects/react-app/package.json") },
-            .{ "tsconfig.json", @embedFile("../create/projects/react-app/tsconfig.json") },
-            .{ "README.md", InitCommand.Assets.@"README2.md" },
-            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../create/projects/react-app/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../create/projects/react-app/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../create/projects/react-app/src/index.html") },
-            .{ "src/index.css", @embedFile("../create/projects/react-app/src/index.css") },
-            .{ "src/APITester.tsx", @embedFile("../create/projects/react-app/src/APITester.tsx") },
-            .{ "src/react.svg", @embedFile("../create/projects/react-app/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../create/projects/react-app/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../create/projects/react-app/src/logo.svg") },
+        const files: []const TemplateFile = &.{
+            .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-app/bunfig.toml") },
+            .{ .path = "package.json", .contents = @embedFile("../init/react-app/package.json") },
+            .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-app/tsconfig.json") },
+            .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
+            .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
+            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-app/src/index.tsx") },
+            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-app/src/App.tsx") },
+            .{ .path = "src/index.html", .contents = @embedFile("../init/react-app/src/index.html") },
+            .{ .path = "src/index.css", .contents = @embedFile("../init/react-app/src/index.css") },
+            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-app/src/APITester.tsx") },
+            .{ .path = "src/react.svg", .contents = @embedFile("../init/react-app/src/react.svg") },
+            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-app/src/frontend.tsx") },
+            .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-app/src/logo.svg") },
         };
     };
 
     const ReactTailwind = struct {
-        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../create/projects/react-tailwind/bunfig.toml") },
-            .{ "package.json", @embedFile("../create/projects/react-tailwind/package.json") },
-            .{ "tsconfig.json", @embedFile("../create/projects/react-tailwind/tsconfig.json") },
-            .{ "README.md", InitCommand.Assets.@"README2.md" },
-            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../create/projects/react-tailwind/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../create/projects/react-tailwind/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../create/projects/react-tailwind/src/index.html") },
-            .{ "src/index.css", @embedFile("../create/projects/react-tailwind/src/index.css") },
-            .{ "src/APITester.tsx", @embedFile("../create/projects/react-tailwind/src/APITester.tsx") },
-            .{ "src/react.svg", @embedFile("../create/projects/react-tailwind/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../create/projects/react-tailwind/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../create/projects/react-tailwind/src/logo.svg") },
+        const files: []const TemplateFile = &.{
+            .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-tailwind/bunfig.toml") },
+            .{ .path = "package.json", .contents = @embedFile("../init/react-tailwind/package.json") },
+            .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-tailwind/tsconfig.json") },
+            .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
+            .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
+            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-tailwind/src/index.tsx") },
+            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-tailwind/src/App.tsx") },
+            .{ .path = "src/index.html", .contents = @embedFile("../init/react-tailwind/src/index.html") },
+            .{ .path = "src/index.css", .contents = @embedFile("../init/react-tailwind/src/index.css") },
+            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-tailwind/src/APITester.tsx") },
+            .{ .path = "src/react.svg", .contents = @embedFile("../init/react-tailwind/src/react.svg") },
+            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-tailwind/src/frontend.tsx") },
+            .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-tailwind/src/logo.svg") },
+            .{ .path = "build.ts", .contents = @embedFile("../init/react-tailwind/build.ts") },
         };
     };
 
     const ReactShadcn = struct {
-        const files: []const struct { [:0]const u8, [:0]const u8 } = &.{
-            .{ "bunfig.toml", @embedFile("../create/projects/react-shadcn/bunfig.toml") },
-            .{ "styles/globals.css", @embedFile("../create/projects/react-shadcn/styles/globals.css") },
-            .{ "package.json", @embedFile("../create/projects/react-shadcn/package.json") },
-            .{ "components.json", @embedFile("../create/projects/react-shadcn/components.json") },
-            .{ "tsconfig.json", @embedFile("../create/projects/react-shadcn/tsconfig.json") },
-            .{ "README.md", InitCommand.Assets.@"README2.md" },
-            .{ ".gitignore", InitCommand.Assets.@".gitignore" },
-            .{ "src/index.tsx", @embedFile("../create/projects/react-shadcn/src/index.tsx") },
-            .{ "src/App.tsx", @embedFile("../create/projects/react-shadcn/src/App.tsx") },
-            .{ "src/index.html", @embedFile("../create/projects/react-shadcn/src/index.html") },
-            .{ "src/types.d.ts", @embedFile("../create/projects/react-shadcn/src/types.d.ts") },
-            .{ "src/index.css", @embedFile("../create/projects/react-shadcn/src/index.css") },
-            .{ "src/components/ui/card.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/card.tsx") },
-            .{ "src/components/ui/label.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/label.tsx") },
-            .{ "src/components/ui/button.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/button.tsx") },
-            .{ "src/components/ui/select.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/select.tsx") },
-            .{ "src/components/ui/input.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/input.tsx") },
-            .{ "src/components/ui/form.tsx", @embedFile("../create/projects/react-shadcn/src/components/ui/form.tsx") },
-            .{ "src/APITester.tsx", @embedFile("../create/projects/react-shadcn/src/APITester.tsx") },
-            .{ "src/lib/utils.ts", @embedFile("../create/projects/react-shadcn/src/lib/utils.ts") },
-            .{ "src/react.svg", @embedFile("../create/projects/react-shadcn/src/react.svg") },
-            .{ "src/frontend.tsx", @embedFile("../create/projects/react-shadcn/src/frontend.tsx") },
-            .{ "src/logo.svg", @embedFile("../create/projects/react-shadcn/src/logo.svg") },
+        const files: []const TemplateFile = &.{
+            .{ .path = "bunfig.toml", .contents = @embedFile("../init/react-shadcn/bunfig.toml") },
+            .{ .path = "styles/globals.css", .contents = @embedFile("../init/react-shadcn/styles/globals.css") },
+            .{ .path = "package.json", .contents = @embedFile("../init/react-shadcn/package.json") },
+            .{ .path = "components.json", .contents = @embedFile("../init/react-shadcn/components.json") },
+            .{ .path = "tsconfig.json", .contents = @embedFile("../init/react-shadcn/tsconfig.json") },
+            .{ .path = "README.md", .contents = InitCommand.Assets.@"README2.md" },
+            .{ .path = ".gitignore", .contents = InitCommand.Assets.@".gitignore", .can_skip_if_exists = true },
+            .{ .path = "src/index.tsx", .contents = @embedFile("../init/react-shadcn/src/index.tsx") },
+            .{ .path = "src/App.tsx", .contents = @embedFile("../init/react-shadcn/src/App.tsx") },
+            .{ .path = "src/index.html", .contents = @embedFile("../init/react-shadcn/src/index.html") },
+            .{ .path = "src/types.d.ts", .contents = @embedFile("../init/react-shadcn/src/types.d.ts") },
+            .{ .path = "src/index.css", .contents = @embedFile("../init/react-shadcn/src/index.css") },
+            .{ .path = "src/components/ui/card.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/card.tsx") },
+            .{ .path = "src/components/ui/label.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/label.tsx") },
+            .{ .path = "src/components/ui/button.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/button.tsx") },
+            .{ .path = "src/components/ui/select.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/select.tsx") },
+            .{ .path = "src/components/ui/input.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/input.tsx") },
+            .{ .path = "src/components/ui/form.tsx", .contents = @embedFile("../init/react-shadcn/src/components/ui/form.tsx") },
+            .{ .path = "src/APITester.tsx", .contents = @embedFile("../init/react-shadcn/src/APITester.tsx") },
+            .{ .path = "src/lib/utils.ts", .contents = @embedFile("../init/react-shadcn/src/lib/utils.ts") },
+            .{ .path = "src/react.svg", .contents = @embedFile("../init/react-shadcn/src/react.svg") },
+            .{ .path = "src/frontend.tsx", .contents = @embedFile("../init/react-shadcn/src/frontend.tsx") },
+            .{ .path = "src/logo.svg", .contents = @embedFile("../init/react-shadcn/src/logo.svg") },
+            .{ .path = "build.ts", .contents = @embedFile("../init/react-shadcn/build.ts") },
         };
     };
 
-    pub fn files(this: Template) []const struct { [:0]const u8, []const u8 } {
+    pub fn files(this: Template) []const TemplateFile {
         return switch (this) {
             .react_blank => ReactBlank.files,
             .react_tailwind => ReactTailwind.files,
-            .react_tailwind_shadcn => ReactTailwind.files,
+            .react_tailwind_shadcn => ReactShadcn.files,
             else => &.{.{ &.{}, &.{} }},
         };
     }
 
     pub fn @"write files and run `bun dev`"(comptime this: Template, allocator: std.mem.Allocator) !void {
         inline for (comptime this.files()) |file| {
-            const path, const contents = file;
+            const path = file.path;
+            const contents = file.contents;
 
-            if (comptime strings.eqlComptime(path, "README.md")) {
+            const result = if (comptime strings.eqlComptime(path, "README.md"))
                 InitCommand.Assets.createWithContents("README.md", contents, .{
                     .name = this.name(),
                     .bunVersion = Environment.version_string,
-                }) catch |err| {
-                    if (err == error.EEXISTS) {
-                        Output.errGeneric("'{s}' already exists", .{path});
-                    } else {
-                        Output.err(err, "failed to create file: '{s}'", .{path});
-                    }
+                })
+            else
+                InitCommand.Assets.createNew(path, contents);
+            result catch |err| {
+                if (err == error.EEXIST) {
+                    Output.prettyln(" ○ <r><yellow>{s}<r> (already exists, skipping)", .{path});
+                    Output.flush();
+                } else {
+                    Output.err(err, "failed to create file: '{s}'", .{path});
                     Global.crash();
-                };
-            } else {
-                InitCommand.Assets.createNew(path, contents) catch |err| {
-                    if (err == error.EEXISTS) {
-                        Output.errGeneric("'{s}' already exists", .{path});
-                    } else {
-                        Output.err(err, "failed to create file: '{s}'", .{path});
-                    }
-                    Global.crash();
-                };
-            }
+                }
+            };
         }
 
         Output.pretty("\n", .{});
@@ -1065,22 +1098,26 @@ const Template = enum {
 
         _ = try install.spawnAndWait();
 
-        Output.prettyln("\nTo get started, run:\n\n\t<cyan>bun dev<r>", .{});
-        Output.prettyln("\nTo run for production:\n\n\t<cyan>bun start<r>\n\n", .{});
+        Output.prettyln(
+            \\
+            \\✨ New project configured!
+            \\
+            \\<b><cyan>Development<r><d> - full-stack dev server with hot reload<r>
+            \\
+            \\    <cyan><b>bun dev<r>
+            \\
+            \\<b><yellow>Static Site<r><d> - build optimized assets to disk (no backend)<r>
+            \\
+            \\    <yellow><b>bun run build<r>
+            \\
+            \\<b><green>Production<r><d> - serve a full-stack production build<r>
+            \\
+            \\    <green><b>bun start<r>
+            \\
+            \\<blue>Happy bunning! 🐇<r>
+            \\
+        , .{});
 
         Output.flush();
-
-        var process = std.process.Child.init(
-            &.{
-                try bun.selfExePath(),
-                "dev",
-            },
-            allocator,
-        );
-        process.stderr_behavior = .Inherit;
-        process.stdin_behavior = .Inherit;
-        process.stdout_behavior = .Inherit;
-
-        _ = try process.spawnAndWait();
     }
 };

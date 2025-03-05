@@ -460,7 +460,7 @@ public:
         writeStatus(HTTP_200_OK);
 
         /* Do not allow sending 0 chunks, they mark end of response */
-        if (!data.length()) {
+        if (data.empty()) {
             /* If you called us, then according to you it was fine to call us so it's fine to still call us */
             return true;
         }

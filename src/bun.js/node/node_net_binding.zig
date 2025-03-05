@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const C = bun.c;
 const Environment = bun.Environment;
 const JSC = bun.JSC;
 const string = bun.string;
@@ -70,4 +71,13 @@ pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC
             return JSC.jsNumber(value);
         }
     }).setter, 1, .{});
+}
+
+pub fn createBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
+    const SocketAddress = bun.JSC.GeneratedClassesList.SocketAddress;
+    const net = JSC.JSValue.createEmptyObjectWithNullPrototype(global);
+
+    net.put(global, "SocketAddress", SocketAddress.getConstructor(global));
+
+    return net;
 }

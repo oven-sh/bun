@@ -426,12 +426,12 @@ pub const Msg = struct {
         return cost;
     }
 
-    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) OOM!Msg {
+    pub fn fromJS(allocator: std.mem.Allocator, globalObject: *bun.JSC.JSGlobalObject, file: string, err: bun.JSC.JSValue) bun.JSError!Msg {
         var zig_exception_holder: bun.JSC.ZigException.Holder = bun.JSC.ZigException.Holder.init();
         if (err.toError()) |value| {
             value.toZigException(globalObject, zig_exception_holder.zigException());
         } else {
-            zig_exception_holder.zig_exception.message = err.toBunString(globalObject);
+            zig_exception_holder.zig_exception.message = try err.toBunString(globalObject);
         }
 
         return Msg{
@@ -863,8 +863,10 @@ pub const Log = struct {
         return self.appendToWithRecycled(other, source.contents_is_recycled);
     }
 
-    pub fn deinit(self: *Log) void {
-        self.msgs.clearAndFree();
+    pub fn deinit(log: *Log) void {
+        log.msgs.clearAndFree();
+        // log.warnings = 0;
+        // log.errors = 0;
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it

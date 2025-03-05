@@ -170,7 +170,7 @@ pub const ExternalModules = struct {
             }
         }
 
-        result.patterns = patterns.toOwnedSlice() catch @panic("TODO");
+        result.patterns = patterns.toOwnedSlice() catch bun.outOfMemory();
 
         return result;
     }
@@ -675,14 +675,28 @@ pub const Loader = enum(u8) {
         };
     }
 
-    pub fn toMimeType(this: Loader) bun.http.MimeType {
+    pub fn toMimeType(this: Loader, paths: []const []const u8) bun.http.MimeType {
         return switch (this) {
             .jsx, .js, .ts, .tsx => bun.http.MimeType.javascript,
             .css => bun.http.MimeType.css,
             .toml, .json => bun.http.MimeType.json,
             .wasm => bun.http.MimeType.wasm,
             .html => bun.http.MimeType.html,
-            else => bun.http.MimeType.other,
+            else => {
+                for (paths) |path| {
+                    var extname = std.fs.path.extension(path);
+                    if (strings.startsWithChar(extname, '.')) {
+                        extname = extname[1..];
+                    }
+                    if (extname.len > 0) {
+                        if (bun.http.MimeType.byExtensionNoDefault(extname)) |mime| {
+                            return mime;
+                        }
+                    }
+                }
+
+                return bun.http.MimeType.other;
+            },
         };
     }
 
@@ -733,7 +747,7 @@ pub const Loader = enum(u8) {
         }
 
         var zig_str = JSC.ZigString.init("");
-        loader.toZigString(&zig_str, global);
+        try loader.toZigString(&zig_str, global);
         if (zig_str.len == 0) return null;
 
         return fromString(zig_str.slice()) orelse {

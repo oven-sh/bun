@@ -160,6 +160,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 specifier,
                 std.math.maxInt(u64),
             ) catch "";
+            defer bun.default_allocator.free(source_file);
 
             var bufw = std.io.bufferedWriter(file.writer());
             const w = bufw.writer();
@@ -271,7 +272,7 @@ pub const RuntimeTranspilerStore = struct {
         non_threadsafe_input_specifier: String,
         non_threadsafe_referrer: String,
         loader: options.Loader,
-        promise: JSC.Strong = .{},
+        promise: JSC.Strong = .empty,
         vm: *VirtualMachine,
         globalThis: *JSGlobalObject,
         fetcher: Fetcher,
@@ -474,7 +475,7 @@ pub const RuntimeTranspilerStore = struct {
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
-                .inject_jest_globals = transpiler.options.rewrite_jest_for_tests and is_main,
+                .inject_jest_globals = transpiler.options.rewrite_jest_for_tests,
                 .set_breakpoint_on_first_line = vm.debugger != null and
                     vm.debugger.?.set_breakpoint_on_first_line and
                     is_main and
@@ -751,7 +752,7 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        promise: JSC.Strong = .{},
+        promise: JSC.Strong = .empty,
         path: Fs.Path,
         specifier: string = "",
         referrer: string = "",
@@ -1055,11 +1056,10 @@ pub const ModuleLoader = struct {
         };
 
         pub fn init(opts: anytype, globalObject: *JSGlobalObject) !AsyncModule {
-            var promise = JSC.Strong{};
             // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
             // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
             const this_promise = JSValue.createInternalPromise(globalObject);
-            promise.set(globalObject, this_promise);
+            const promise = JSC.Strong.create(this_promise, globalObject);
 
             var buf = bun.StringBuilder{};
             buf.count(opts.referrer);
@@ -1623,7 +1623,7 @@ pub const ModuleLoader = struct {
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
-                    .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests and is_main,
+                    .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests,
                     .keep_json_and_toml_as_one_statement = true,
                     .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
@@ -2120,10 +2120,10 @@ pub const ModuleLoader = struct {
                             const input_fd: bun.StoredFileDescriptorType = brk: {
                                 // on macOS, we need a file descriptor to receive event notifications on it.
                                 // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
-                                if (comptime Environment.isMac) {
+                                if (bun.Watcher.requires_file_descriptors) {
                                     switch (bun.sys.open(
                                         &(std.posix.toPosixPath(path.text) catch break :auto_watch),
-                                        bun.C.O_EVTONLY,
+                                        bun.c.O_EVTONLY,
                                         0,
                                     )) {
                                         .err => break :auto_watch,

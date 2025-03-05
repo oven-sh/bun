@@ -1,17 +1,12 @@
-// Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest } from "../dev-server-harness";
+// HTML tests are tests relating to HTML files themselves.
+import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
-    "index.html": `
-      <html>
-      <head></head>
-      <body>
-        <h1>Hello</h1>
-        <script type="module" src="/script.ts"></script>
-      </body>
-      </html>
-    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Hello</h1>",
+    }),
     "script.ts": `
       console.log("hello");
     `,
@@ -95,7 +90,7 @@ devTest("image tag", {
     expect(url).not.toBe(url2);
     await dev.fetch(url2).expect.toBe("SECOND");
 
-    // await dev.fetch(url).expect404(); // TODO
+    await dev.fetch(url).expect404(); // TODO
   },
 });
 devTest("image import in JS", {
@@ -143,13 +138,20 @@ devTest("import then create", {
     `,
     "script.ts": `
       import data from "./data";
+      console.log(data);
     `,
   },
   async test(dev) {
-    const c = await dev.client("/");
+    const c = await dev.client("/", {
+      errors: ['script.ts:1:18: error: Could not resolve: "./data"'],
+    });
+    await c.expectReload(async () => {
+      await dev.write("data.ts", "export default 'data';");
+    });
+    await c.expectMessage("data");
   },
 });
-devTest("external", {
+devTest("external links", {
   files: {
     "index.html": `
       <!doctype html>
@@ -182,5 +184,18 @@ devTest("external", {
 
     const ico: string = await c.js`document.querySelector("link[rel='icon']").href`;
     expect(ico).toBe("https://bun.sh/favicon.ico");
+  },
+});
+devTest("memory leak case 1", {
+  files: {
+    "index.html": `
+      <script type="module" src="/script.ts"></script>
+    `,
+    "script.ts": `
+      import data from "./data";
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/"); // previously leaked source map
   },
 });

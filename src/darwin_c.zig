@@ -9,7 +9,6 @@ const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
 const errno = posix.errno;
 const zeroes = mem.zeroes;
-const This = @This();
 pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
 pub const COPYFILE_STATE_SRC_FD = @as(c_int, 1);
 pub const COPYFILE_STATE_SRC_FILENAME = @as(c_int, 2);
@@ -88,73 +87,6 @@ pub const stat = blk: {
     const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.C) c_int;
     break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "stat" else "stat64" });
 };
-
-// pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
-//     if (builtin.os.tag == .windows) {
-//         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-//         var info: windows.FILE_ALL_INFORMATION = undefined;
-//         const rc = windows.ntdll.NtQueryInformationFile(self.handle, &io_status_block, &info, @sizeOf(windows.FILE_ALL_INFORMATION), .FileAllInformation);
-//         switch (rc) {
-//             .SUCCESS => {},
-//             .BUFFER_OVERFLOW => {},
-//             .INVALID_PARAMETER => unreachable,
-//             .ACCESS_DENIED => return error.AccessDenied,
-//             else => return windows.unexpectedStatus(rc),
-//         }
-//         return Stat{
-//             .inode = info.InternalInformation.IndexNumber,
-//             .size = @bitCast(u64, info.StandardInformation.EndOfFile),
-//             .mode = 0,
-//             .kind = if (info.StandardInformation.Directory == 0) .File else .Directory,
-//             .atime = windows.fromSysTime(info.BasicInformation.LastAccessTime),
-//             .mtime = windows.fromSysTime(info.BasicInformation.LastWriteTime),
-//             .ctime = windows.fromSysTime(info.BasicInformation.CreationTime),
-//         };
-//     }
-
-//     var st = zeroes(libc_stat);
-//     switch (errno(stat(path.ptr, &st))) {
-//         0 => {},
-//         // .EINVAL => unreachable,
-//         .EBADF => unreachable, // Always a race condition.
-//         .ENOMEM => return error.SystemResources,
-//         .EACCES => return error.AccessDenied,
-//         else => |err| return os.unexpectedErrno(err),
-//     }
-
-//     const atime = st.atime();
-//     const mtime = st.mtime();
-//     const ctime = st.ctime();
-//     return Stat{
-//         .inode = st.ino,
-//         .size = @bitCast(u64, st.size),
-//         .mode = st.mode,
-//         .kind = switch (builtin.os.tag) {
-//             .wasi => switch (st.filetype) {
-//                 os.FILETYPE_BLOCK_DEVICE => Kind.BlockDevice,
-//                 os.FILETYPE_CHARACTER_DEVICE => Kind.CharacterDevice,
-//                 os.FILETYPE_DIRECTORY => Kind.Directory,
-//                 os.FILETYPE_SYMBOLIC_LINK => Kind.SymLink,
-//                 os.FILETYPE_REGULAR_FILE => Kind.File,
-//                 os.FILETYPE_SOCKET_STREAM, os.FILETYPE_SOCKET_DGRAM => Kind.UnixDomainSocket,
-//                 else => Kind.Unknown,
-//             },
-//             else => switch (st.mode & os.S.IFMT) {
-//                 os.S.IFBLK => Kind.BlockDevice,
-//                 os.S.IFCHR => Kind.CharacterDevice,
-//                 os.S.IFDIR => Kind.Directory,
-//                 os.S.IFIFO => Kind.NamedPipe,
-//                 os.S.IFLNK => Kind.SymLink,
-//                 os.S.IFREG => Kind.File,
-//                 os.S.IFSOCK => Kind.UnixDomainSocket,
-//                 else => Kind.Unknown,
-//             },
-//         },
-//         .atime = @as(i128, atime.sec) * std.time.ns_per_s + atime.nsec,
-//         .mtime = @as(i128, mtime.sec) * std.time.ns_per_s + mtime.nsec,
-//         .ctime = @as(i128, ctime.sec) * std.time.ns_per_s + ctime.nsec,
-//     };
-// }
 
 // benchmarking this did nothing on macOS
 // i verified it wasn't returning -1
@@ -491,7 +423,7 @@ pub fn getSystemUptime() u64 {
 }
 
 pub fn getSystemLoadavg() [3]f64 {
-    var loadavg: bun.C.translated.struct_loadavg = undefined;
+    var loadavg: bun.c.struct_loadavg = undefined;
     var size: usize = @sizeOf(@TypeOf(loadavg));
 
     std.posix.sysctlbynameZ(
@@ -695,14 +627,9 @@ pub const ifaddrs = extern struct {
 pub extern fn getifaddrs(*?*ifaddrs) c_int;
 pub extern fn freeifaddrs(?*ifaddrs) void;
 
-const net_if_h = @cImport({
-    // TODO: remove this c import! instead of adding to it, add to
-    // c-headers-for-zig.h and use bun.C.translated.
-    @cInclude("net/if.h");
-});
-pub const IFF_RUNNING = net_if_h.IFF_RUNNING;
-pub const IFF_UP = net_if_h.IFF_UP;
-pub const IFF_LOOPBACK = net_if_h.IFF_LOOPBACK;
+pub const IFF_RUNNING = bun.c.IFF_RUNNING;
+pub const IFF_UP = bun.c.IFF_UP;
+pub const IFF_LOOPBACK = bun.c.IFF_LOOPBACK;
 pub const sockaddr_dl = extern struct {
     sdl_len: u8, // Total length of sockaddr */
     sdl_family: u8, // AF_LINK */
@@ -719,17 +646,9 @@ pub const sockaddr_dl = extern struct {
     //#endif
 };
 
-pub usingnamespace @cImport({
-    // TODO: remove this c import! instead of adding to it, add to
-    // c-headers-for-zig.h and use bun.C.translated.
-    @cInclude("sys/spawn.h");
-    @cInclude("sys/fcntl.h");
-    @cInclude("sys/socket.h");
-});
-
 pub const F = struct {
-    pub const DUPFD_CLOEXEC = This.F_DUPFD_CLOEXEC;
-    pub const DUPFD = This.F_DUPFD;
+    pub const DUPFD_CLOEXEC = bun.c.F_DUPFD_CLOEXEC;
+    pub const DUPFD = bun.c.F_DUPFD;
 };
 
 // it turns out preallocating on APFS on an M1 is slower.

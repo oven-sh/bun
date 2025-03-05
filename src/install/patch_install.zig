@@ -370,7 +370,7 @@ pub const PatchTask = struct {
                 return try log.addErrorFmtOpts(
                     this.manager.allocator,
                     "failed applying patch file: {}",
-                    .{e.withoutPath()},
+                    .{e},
                     .{},
                 );
             }
@@ -471,7 +471,7 @@ pub const PatchTask = struct {
                 null,
                 Loc.Empty,
                 this.manager.allocator,
-                "patchfile <b>{s}<r> is empty, plese restore or delete it.",
+                "patchfile <b>{s}<r> is empty, please restore or delete it.",
                 .{absolute_patchfile_path},
             ) catch bun.outOfMemory();
             return null;

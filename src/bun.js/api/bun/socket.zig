@@ -15,7 +15,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
 const uws = bun.uws;
 const ZigString = JSC.ZigString;
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
@@ -3541,7 +3541,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
-                    return globalObject.throwValue(BoringSSL.ERR_toJS(globalObject, err));
+                    return globalObject.throwValue(bun.BoringSSL.ERR_toJS(globalObject, err));
                 }
 
                 // If BoringSSL did not give us an error code, let's throw a generic error.
@@ -3945,7 +3945,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         });
 
         if (ssl_config) |ssl_options| {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
             var err: uws.create_bun_socket_error_t = .none;

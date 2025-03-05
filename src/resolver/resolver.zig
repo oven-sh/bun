@@ -2564,7 +2564,6 @@ pub const Resolver = struct {
                 package_id,
                 .ignore_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         } else {
             pkg = PackageJSON.parse(
@@ -2574,7 +2573,6 @@ pub const Resolver = struct {
                 package_id,
                 .include_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         }
 

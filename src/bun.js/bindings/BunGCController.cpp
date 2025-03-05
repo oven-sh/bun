@@ -313,10 +313,8 @@ void BunGCController::performOpportunisticGC()
 
     } else if (m_hasStayedTheSameFor < 10) {
         // If memory usage plateaus, still do Eden collections
-        if (!hasMoreEventLoopWorkToDo() && !Bun__isBusyDoingImportantWork(bunVM)) {
-            if (m_edenCallback->scheduleCollection(m_vm, false)) {
-                m_hasStayedTheSameFor++;
-            }
+        if (m_edenCallback->scheduleCollection(m_vm, !hasMoreEventLoopWorkToDo() && !Bun__isBusyDoingImportantWork(bunVM))) {
+            m_hasStayedTheSameFor++;
         }
     } else {
         // After long plateau, occasionally do full collection to compact memory

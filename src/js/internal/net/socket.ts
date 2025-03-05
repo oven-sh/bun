@@ -1,6 +1,6 @@
 const Duplex: DuplexConstructor = require("internal/streams/duplex");
 const { validateNumber, validateFunction, validateUint32 } = require("internal/validators");
-const { isIP } = require("internal/net/ip");
+const { isIP } = require("internal/net/ip") as Readonly<{ isIP: (ip: string) => 0 | 4 | 6 }>;
 const { getTimerDuration } = require("internal/timers");
 const {
   upgradeDuplexToTLS,
@@ -18,12 +18,13 @@ const {
   bunSocketServerOptions: symbol;
 }>;
 
-import type { TCPSocket, TLSSocket } from "bun";
+import type { TCPSocket, TCPSocketConnectOptions, TLSSocket, UnixSocketOptions } from "bun";
 import type { Duplex as IDuplex } from "node:stream";
 
 const { connect: bunConnect } = Bun;
 
 const kServerSocket = Symbol("kServerSocket");
+const kTimeout = Symbol("kTimeout");
 const kBytesWritten = Symbol("kBytesWritten");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const kSetNoDelay = Symbol("kSetNoDelay");
@@ -362,6 +363,7 @@ class Socket extends Duplex {
   declare _requestCert?: boolean;
   declare _rejectUnauthorized?: boolean;
   timeout = 0;
+  [kTimeout]: Timer | null = null;
   #writeCallback;
   _pendingData;
   _pendingEncoding; // for compatibility
@@ -409,7 +411,7 @@ class Socket extends Duplex {
       // Handle strings directly.
       decodeStrings: false,
     });
-    this._parent = this;
+    this._parent = null;
     this._parentWrap = this;
     this.#pendingRead = undefined;
     this.#upgraded = null;
@@ -582,15 +584,14 @@ class Socket extends Duplex {
       });
     }
 
-    this.pauseOnConnect = pauseOnConnect;
-    if (!pauseOnConnect) {
-      process.nextTick(() => {
-        this.resume();
-      });
-      this.connecting = true;
-    }
+    // this.pauseOnConnect = pauseOnConnect;
 
     if (fd) {
+      // if (!pauseOnConnect) {
+      //   process.nextTick(() => {
+      //     this.resume();
+      //   });
+      // }
       return this;
     }
 
@@ -743,38 +744,106 @@ class Socket extends Duplex {
         }
       } else if (path) {
         // start using unix socket
-        bunConnect({
+        this.connecting = true;
+        this.#internalConnect({
           data: this,
           unix: path,
           socket: this.#handlers,
           tls,
           allowHalfOpen: this.allowHalfOpen,
-        }).catch(error => {
-          if (!this.destroyed) {
-            this.emit("error", error);
-            this.emit("close");
-          }
         });
       } else {
         // default start
-        bunConnect({
-          data: this,
-          hostname: host || "localhost",
-          port: port,
-          socket: this.#handlers,
-          tls,
-          allowHalfOpen: this.allowHalfOpen,
-        }).catch(error => {
-          if (!this.destroyed) {
-            this.emit("error", error);
-            this.emit("close");
-          }
-        });
+        this.#lookupAndConnect(port, family, host, tls);
       }
     } catch (error) {
       process.nextTick(emitErrorAndCloseNextTick, this, error);
     }
     return this;
+  }
+
+  async #lookupAndConnect(
+    port: number,
+    family: 4 | 6 | 0 | "IPv4" | "IPv6" | "any" | undefined,
+    hostname: string | undefined,
+    tls,
+  ) {
+    this.connecting = true;
+    try {
+      // TODO: options.lookup
+      var lookup = await Bun.dns.lookup(hostname || "localhost", {
+        family,
+        port,
+        socketType: "tcp",
+      });
+    } catch (error) {
+      // It's possible we were destroyed while looking this up.
+      if (!this.connecting) return;
+      this.emit("lookup", error, undefined, undefined, hostname);
+      process.nextTick(connectErrorNT, this, error);
+      return;
+    }
+
+    // It's possible we were destroyed while looking this up.
+    if (!this.connecting) return;
+    $assert(lookup.length > 0);
+    if (lookup.length === 0) {
+      this.emit("lookup", new Error("getaddrinfo ENOTFOUND"), undefined, undefined, hostname);
+      process.nextTick(connectErrorNT, this, new Error("getaddrinfo ENOTFOUND"));
+      return;
+    }
+
+    // NOTE: Node uses all the addresses returned by dns.lookup, but our
+    // Bun.connect API doesn't support this
+    const { address: ip, family: addressType } = lookup[0];
+    $assert(isIP(ip) == addressType);
+    this.emit("lookup", null, ip, addressType, hostname);
+    $debug("attempting to connect to %s:%d (addressType: %d)", ip, port, addressType);
+    // console.log("attempting to connect to %s:%d (addressType: %d)", ip, port, addressType);
+    this.emit("connectionAttempt", ip, port, addressType);
+    this._unrefTimer();
+    this.#internalConnect({
+      data: this,
+      port,
+      host: ip,
+      family: addressType,
+      socket: this.#handlers,
+      allowHalfOpen: this.allowHalfOpen,
+      tls,
+    });
+  }
+
+  // #lookupAndConnect(port: number, family: 4 | 6 | 0 | "IPv4" | "IPv6" | "any", hostname = "localhost") {
+  //   this.connecting = true;
+  //   try {
+  //     var lookup = await Bun.dns.lookup(hostname, {
+  //       family,
+  //       port,
+  //       socketType: "tcp",
+  //     });
+  //   } catch (error) {
+  //     if (!this.destroyed) {
+  //       this.emit("error", error);
+  //       this.emit("close");
+  //     }
+  //     return;
+  //   }
+  // }
+
+  #internalConnect(options: TCPSocketConnectOptions<this>): Promise<void>;
+  #internalConnect(options: UnixSocketOptions<this>): Promise<void>;
+  async #internalConnect(options: TCPSocketConnectOptions<this> | UnixSocketOptions<this>): Promise<void> {
+    $assert(this.connecting);
+
+    try {
+      await bunConnect(options as any);
+    } catch (error) {
+      if (!this.destroyed) {
+        this.emit("error", error);
+        this.emit("close");
+        connectErrorNT(this, error);
+      }
+    }
   }
 
   end(...args) {
@@ -886,6 +955,12 @@ class Socket extends Duplex {
     return "IPv4";
   }
 
+  private _unrefTimer() {
+    for (let socket = this; socket != null; socket = socket._parent) {
+      socket[kTimeout]?.refresh();
+    }
+  }
+
   resetAndDestroy() {
     if (this._handle) {
       if (this.connecting) {
@@ -949,8 +1024,6 @@ class Socket extends Duplex {
     }
     return this;
   }
-  // for compatibility
-  _unrefTimer() {}
   unref() {
     const socket = this._handle;
     if (!socket) {
@@ -1074,6 +1147,7 @@ function finishSocket(hasError) {
 function destroyNT(self, err) {
   self.destroy(err);
 }
+const connectErrorNT = destroyNT;
 function destroyWhenAborted(err) {
   if (!this.destroyed) {
     this.destroy(err.target.reason);

@@ -340,7 +340,9 @@ const SocketIPCData = struct {
     internal_msg_queue: node_cluster_binding.InternalMsgHolder = .{},
     disconnected: bool = false,
     is_server: bool = false,
-    pub fn writeVersionPacket(this: *SocketIPCData) void {
+    keep_alive: bun.Async.KeepAlive = .{},
+
+    pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 0);
         }
@@ -349,6 +351,8 @@ const SocketIPCData = struct {
             const n = this.socket.write(bytes, false);
             if (n >= 0 and n < @as(i32, @intCast(bytes.len))) {
                 this.outgoing.write(bytes[@intCast(n)..]) catch bun.outOfMemory();
+                // more remaining; need to ref event loop
+                this.keep_alive.ref(global.bunVM());
             }
         }
         if (Environment.allow_assert) {
@@ -375,6 +379,8 @@ const SocketIPCData = struct {
                 ipc_data.outgoing.reset();
             } else if (n > 0) {
                 ipc_data.outgoing.cursor = @intCast(n);
+                // more remaining; need to ref event loop
+                ipc_data.keep_alive.ref(global.bunVM());
             }
         }
 
@@ -400,6 +406,8 @@ const SocketIPCData = struct {
                 ipc_data.outgoing.reset();
             } else if (n > 0) {
                 ipc_data.outgoing.cursor = @intCast(n);
+                // more remaining; need to ref event loop
+                ipc_data.keep_alive.ref(global.bunVM());
             }
         }
 
@@ -501,7 +509,7 @@ const NamedPipeIPCData = struct {
         }
     }
 
-    pub fn writeVersionPacket(this: *NamedPipeIPCData) void {
+    pub fn writeVersionPacket(this: *NamedPipeIPCData, _: *JSC.JSGlobalObject) void {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 0);
         }
@@ -686,6 +694,9 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: c_int,
             _: ?*anyopaque,
         ) void {
+            const ipc = this.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
             // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
             log("NewSocketIPCHandler#onClose\n", .{});
             this.handleIPCClose();
@@ -779,25 +790,37 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             const to_write = ipc.outgoing.slice();
             if (to_write.len == 0) {
                 ipc.outgoing.reset();
+                // done sending message; unref event loop
+                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
                 return;
             }
             const n = socket.write(to_write, false);
             if (n == to_write.len) {
                 ipc.outgoing.reset();
+                // almost done sending message; unref event loop
+                ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
             } else if (n > 0) {
                 ipc.outgoing.cursor += @intCast(n);
             }
         }
 
         pub fn onTimeout(
-            _: *Context,
+            context: *Context,
             _: Socket,
-        ) void {}
+        ) void {
+            const ipc = context.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+        }
 
         pub fn onLongTimeout(
-            _: *Context,
+            context: *Context,
             _: Socket,
-        ) void {}
+        ) void {
+            const ipc = context.ipc() orelse return;
+            // unref if needed
+            ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
+        }
 
         pub fn onConnectError(
             _: *anyopaque,

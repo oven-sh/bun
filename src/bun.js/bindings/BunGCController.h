@@ -11,15 +11,15 @@ class MonotonicTime;
 
 namespace Bun {
 
-class BunEdenGCActivityCallback;
-class BunFullGCActivityCallback;
+class EdenGCActivityCallback;
+class FullGCActivityCallback;
 
 // Implemented in C++ to properly integrate with JSC's FullGCActivityCallback & EdenGCActivityCallback
 // The lifetime of this is tied to the JSVMClientData instance, which is tied to the JSC::VM instance
-class BunGCController {
+class GCController {
 public:
-    BunGCController(JSC::VM&);
-    ~BunGCController();
+    GCController(JSC::VM&);
+    ~GCController();
 
     void initialize(bool miniMode);
 
@@ -67,8 +67,8 @@ public:
 
 private:
     JSC::VM& m_vm;
-    RefPtr<BunEdenGCActivityCallback> m_edenCallback;
-    RefPtr<BunFullGCActivityCallback> m_fullCallback;
+    RefPtr<EdenGCActivityCallback> m_edenCallback;
+    RefPtr<FullGCActivityCallback> m_fullCallback;
     Metrics m_metrics = {};
     bool m_hasMoreEventLoopWorkToDo = false;
     size_t m_lastBlockBytesAllocated = 0;

@@ -876,7 +876,7 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
-extern "C" void* GCController__setup(Bun::BunGCController* controller);
+extern "C" void* GCController__setup(Bun::GCController* controller);
 
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros

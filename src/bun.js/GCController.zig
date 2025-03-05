@@ -24,9 +24,9 @@ pub export fn Bun__isBusyDoingImportantWork(vm: *JSC.VirtualMachine) bool {
     return false;
 }
 
-// Wrapper for the GCController C++ class
+// Wrapper for the Bun::GCController C++ class
 pub const GCController = opaque {
-    pub export fn GCController__setup(ptr: *GCController) void {
+    pub export fn Bun__GCController__setup(ptr: *GCController) void {
         const vm = JSC.VirtualMachine.get();
         vm.gc_controller = ptr;
     }

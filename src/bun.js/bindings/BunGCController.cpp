@@ -23,13 +23,13 @@ static size_t ramSize()
 }
 
 // Based on WebKit's WebCore::OpportunisticTaskScheduler::FullGCActivityCallback
-class BunFullGCActivityCallback final : public JSC::FullGCActivityCallback {
+class FullGCActivityCallback final : public JSC::FullGCActivityCallback {
 public:
     using Base = JSC::FullGCActivityCallback;
 
-    static RefPtr<BunFullGCActivityCallback> create(JSC::Heap& heap)
+    static RefPtr<FullGCActivityCallback> create(JSC::Heap& heap)
     {
-        return adoptRef(*new BunFullGCActivityCallback(heap));
+        return adoptRef(*new FullGCActivityCallback(heap));
     }
 
     void doCollection(JSC::VM&) final;
@@ -40,7 +40,7 @@ public:
     JSC::HeapVersion m_version { 0 };
 
 private:
-    BunFullGCActivityCallback(JSC::Heap&);
+    FullGCActivityCallback(JSC::Heap&);
 
     void* m_bunVM = nullptr;
     JSC::VM& m_vm;
@@ -50,13 +50,13 @@ private:
 };
 
 // Based on WebKit's WebCore::OpportunisticTaskScheduler::EdenGCActivityCallback
-class BunEdenGCActivityCallback final : public JSC::EdenGCActivityCallback {
+class EdenGCActivityCallback final : public JSC::EdenGCActivityCallback {
 public:
     using Base = JSC::EdenGCActivityCallback;
 
-    static RefPtr<BunEdenGCActivityCallback> create(JSC::Heap& heap)
+    static RefPtr<EdenGCActivityCallback> create(JSC::Heap& heap)
     {
-        return adoptRef(*new BunEdenGCActivityCallback(heap));
+        return adoptRef(*new EdenGCActivityCallback(heap));
     }
 
     void doCollection(JSC::VM&) final;
@@ -68,7 +68,7 @@ public:
     bool scheduleCollection(JSC::VM&, bool soon);
 
 private:
-    BunEdenGCActivityCallback(JSC::Heap&);
+    EdenGCActivityCallback(JSC::Heap&);
 
     JSC::VM& m_vm;
     void* m_bunVM = nullptr;
@@ -76,7 +76,7 @@ private:
     unsigned m_deferCount { 0 };
 };
 
-BunFullGCActivityCallback::BunFullGCActivityCallback(JSC::Heap& heap)
+FullGCActivityCallback::FullGCActivityCallback(JSC::Heap& heap)
     : Base(heap, JSC::Synchronousness::Async)
     , m_vm(heap.vm())
     , m_bunVM(bunVM(heap.vm()))
@@ -84,7 +84,7 @@ BunFullGCActivityCallback::BunFullGCActivityCallback(JSC::Heap& heap)
 }
 
 // Timer-based GC callback
-void BunFullGCActivityCallback::doCollection(JSC::VM& vm)
+void FullGCActivityCallback::doCollection(JSC::VM& vm)
 {
     auto& gcController = WebCore::clientData(vm)->gcController();
     if (gcController.hasMoreEventLoopWorkToDo() || Bun__isBusyDoingImportantWork(gcController.bunVM)) {
@@ -100,7 +100,7 @@ void BunFullGCActivityCallback::doCollection(JSC::VM& vm)
     doCollectionEvenIfBusy(vm);
 }
 
-void BunFullGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
+void FullGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
 {
     m_version = 0;
     m_deferCount = 0;
@@ -132,14 +132,14 @@ void BunFullGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
     }
 }
 
-BunEdenGCActivityCallback::BunEdenGCActivityCallback(JSC::Heap& heap)
+EdenGCActivityCallback::EdenGCActivityCallback(JSC::Heap& heap)
     : Base(heap, JSC::Synchronousness::Async)
     , m_vm(heap.vm())
     , m_bunVM(bunVM(heap.vm()))
 {
 }
 
-bool BunEdenGCActivityCallback::scheduleCollection(JSC::VM& vm, bool soon)
+bool EdenGCActivityCallback::scheduleCollection(JSC::VM& vm, bool soon)
 {
     constexpr WTF::Seconds normalDelay { 60_ms };
     constexpr WTF::Seconds aggressiveDelay { 16_ms };
@@ -165,7 +165,7 @@ bool BunEdenGCActivityCallback::scheduleCollection(JSC::VM& vm, bool soon)
     return false;
 }
 
-bool BunFullGCActivityCallback::scheduleCollectionToReclaimMemoryOnIdle(JSC::VM& vm)
+bool FullGCActivityCallback::scheduleCollectionToReclaimMemoryOnIdle(JSC::VM& vm)
 {
     constexpr WTF::Seconds delay { 3000_ms };
     constexpr unsigned deferCountThreshold = 10;
@@ -188,7 +188,7 @@ bool BunFullGCActivityCallback::scheduleCollectionToReclaimMemoryOnIdle(JSC::VM&
     return false;
 }
 
-bool BunFullGCActivityCallback::scheduleCollection(JSC::VM& vm)
+bool FullGCActivityCallback::scheduleCollection(JSC::VM& vm)
 {
     // Servers can tolerate slightly larger pauses for better overall throughput
     constexpr WTF::Seconds delay { 300_ms };
@@ -217,7 +217,7 @@ bool BunFullGCActivityCallback::scheduleCollection(JSC::VM& vm)
 }
 
 // Timer-based GC callback
-void BunEdenGCActivityCallback::doCollection(JSC::VM& vm)
+void EdenGCActivityCallback::doCollection(JSC::VM& vm)
 {
     auto& gcController = WebCore::clientData(vm)->gcController();
     if (gcController.hasMoreEventLoopWorkToDo() || Bun__isBusyDoingImportantWork(gcController.bunVM)) {
@@ -229,7 +229,7 @@ void BunEdenGCActivityCallback::doCollection(JSC::VM& vm)
     doCollectionEvenIfBusy(vm);
 }
 
-void BunEdenGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
+void EdenGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
 {
 
     m_version = 0;
@@ -237,22 +237,22 @@ void BunEdenGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
     Base::doCollection(vm);
 }
 
-BunGCController::BunGCController(JSC::VM& vm)
+GCController::GCController(JSC::VM& vm)
     : m_vm(vm)
 {
 }
 
-BunGCController::~BunGCController()
+GCController::~GCController()
 {
 }
 
-extern "C" void GCController__setup(Bun::BunGCController* controller);
+extern "C" void Bun__GCController__setup(Bun::GCController* controller);
 
-void BunGCController::initialize(bool miniMode)
+void GCController::initialize(bool miniMode)
 {
     // Create Eden and Full GC callbacks
-    m_edenCallback = BunEdenGCActivityCallback::create(m_vm.heap);
-    m_fullCallback = BunFullGCActivityCallback::create(m_vm.heap);
+    m_edenCallback = EdenGCActivityCallback::create(m_vm.heap);
+    m_fullCallback = FullGCActivityCallback::create(m_vm.heap);
 
     // Set them as active callbacks in the heap
     m_vm.heap.setEdenActivityCallback(m_edenCallback.get());
@@ -286,10 +286,10 @@ void BunGCController::initialize(bool miniMode)
     this->configureEdenGC(true, 30);
     this->configureFullGC(true, 300);
 
-    GCController__setup(this);
+    Bun__GCController__setup(this);
 }
 
-void BunGCController::performOpportunisticGC()
+void GCController::performOpportunisticGC()
 {
     // runs after an HTTP request has completed
     // note: there may be other in-flight requests
@@ -328,7 +328,7 @@ void BunGCController::performOpportunisticGC()
     }
 }
 
-void BunGCController::configureEdenGC(bool enabled, unsigned intervalMs)
+void GCController::configureEdenGC(bool enabled, unsigned intervalMs)
 {
     if (!m_edenCallback)
         return;
@@ -342,7 +342,7 @@ void BunGCController::configureEdenGC(bool enabled, unsigned intervalMs)
     }
 }
 
-void BunGCController::configureFullGC(bool enabled, unsigned intervalMs)
+void GCController::configureFullGC(bool enabled, unsigned intervalMs)
 {
     if (!m_fullCallback)
         return;
@@ -356,12 +356,12 @@ void BunGCController::configureFullGC(bool enabled, unsigned intervalMs)
     }
 }
 
-bool BunGCController::hasPendingGCWork() const
+bool GCController::hasPendingGCWork() const
 {
     return Bun__isBusyDoingImportantWork(bunVM);
 }
 
-bool BunGCController::checkMemoryPressure() const
+bool GCController::checkMemoryPressure() const
 {
 
     // vm.heap.size() is slow. It makes Express 1/3 the requests per second.
@@ -383,21 +383,21 @@ bool BunGCController::checkMemoryPressure() const
 
 extern "C" {
 
-Bun::BunGCController* Bun__GCController__create(JSC::VM* vm)
+Bun::GCController* Bun__GCController__create(JSC::VM* vm)
 {
     auto* clientData = WebCore::clientData(*vm);
     auto& gcController = clientData->gcController();
     return &gcController;
 }
 
-void Bun__GCController__performOpportunisticGC(Bun::BunGCController* controller)
+void Bun__GCController__performOpportunisticGC(Bun::GCController* controller)
 {
     controller->performOpportunisticGC();
 }
 
 // TODO: expose to JS
 void Bun__GCController__getMetrics(
-    Bun::BunGCController* controller,
+    Bun::GCController* controller,
     size_t* incrementalSweepCount,
     size_t* edenGCCount,
     size_t* fullGCCount,

@@ -211,6 +211,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         hmac->m_ctx.reset();
     }
 
+    hmac->m_finalized = true;
+
     return StringBytes::encode(
         lexicalGlobalObject,
         scope,

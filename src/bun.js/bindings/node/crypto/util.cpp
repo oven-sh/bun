@@ -12,6 +12,7 @@
 #include "KeyObject.h"
 #include "JSVerify.h"
 #include <JavaScriptCore/ArrayBuffer.h>
+#include "CryptoKeyRaw.h"
 
 namespace Bun {
 
@@ -652,51 +653,41 @@ void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<ui
     VM& vm = globalObject->vm();
 
     // Handle KeyObject (if not bufferOnly)
-    if (!bufferOnly) {
-        // TODO!!!!!
+    if (!bufferOnly && key.isObject()) {
+        JSObject* obj = key.getObject();
+        auto& names = WebCore::builtinNames(vm);
 
-        // Check if it's a CryptoKey
-        if (auto* cryptoKey = jsDynamicCast<WebCore::JSCryptoKey*>(key)) {
-            auto& wrappedKey = cryptoKey->wrapped();
-            if (wrappedKey.type() != WebCore::CryptoKeyType::Secret) {
-                throwTypeError(globalObject, scope, "Key must be a secret key for HMAC"_s);
-                return;
-            }
+        // Check for BunNativePtr on the object
+        if (auto val = obj->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
+            if (auto* cryptoKey = jsDynamicCast<JSCryptoKey*>(val.asCell())) {
 
-            // TODO!!!!
-            // Get key data from CryptoKey
-            // auto rawKey = wrappedKey.exportRaw();
-            // if (rawKey.isEmpty()) {
-            //     throwTypeError(globalObject, scope, "Failed to extract key material"_s);
-            //     return result;
-            // }
+                JSValue typeValue = obj->get(globalObject, Identifier::fromString(vm, "type"_s));
+                RETURN_IF_EXCEPTION(scope, );
 
-            // return rawKey;
-        }
+                auto wrappedKey = cryptoKey->protectedWrapped();
 
-        // Check for KeyObject with native crypto key
-        if (key.isObject()) {
-            JSObject* obj = key.getObject();
-            auto& names = WebCore::builtinNames(vm);
-
-            // Check for BunNativePtr on the object
-            if (auto val = obj->getIfPropertyExists(globalObject, names.bunNativePtrPrivateName())) {
-                if (auto* cryptoKey = jsDynamicCast<WebCore::JSCryptoKey*>(val.asCell())) {
-                    auto& wrappedKey = cryptoKey->wrapped();
-                    if (wrappedKey.type() != WebCore::CryptoKeyType::Secret) {
-                        throwTypeError(globalObject, scope, "Key must be a secret key for HMAC"_s);
-                        return;
-                    }
-
-                    // TODO!!!!
-                    // auto rawKey = wrappedKey.exportRaw();
-                    // if (rawKey.isEmpty()) {
-                    //     throwTypeError(globalObject, scope, "Failed to extract key material"_s);
-                    //     return result;
-                    // }
-
-                    // return rawKey;
+                if (!typeValue.isString()) {
+                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
+                    return;
                 }
+
+                WTF::String typeString = typeValue.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, );
+
+                if (wrappedKey->type() != CryptoKeyType::Secret || typeString != "secret"_s) {
+                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
+                    return;
+                }
+
+                auto keyData = getSymmetricKey(wrappedKey);
+
+                if (UNLIKELY(!keyData)) {
+                    Bun::ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, typeValue, "secret"_s);
+                    return;
+                }
+
+                out.append(keyData.value());
+                return;
             }
         }
     }

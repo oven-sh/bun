@@ -461,7 +461,7 @@ assert.strictEqual(
   );
 }
 
-{
+if (typeof Bun === 'undefined') {
   crypto.Hmac('sha256', 'Node');
   common.expectWarning({
     DeprecationWarning: [

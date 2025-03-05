@@ -73,16 +73,6 @@ class TestCodeLensProvider implements vscode.CodeLensProvider {
 const DEFAULT_FILE_PATTERN = "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts}";
 
 /**
- * Escape any special characters in the input string, so that regex-matching on it
- * will work as expected.
- * i.e `new Regex(escapeRegex("hi (:").test("hi (:")` will return true, instead of throwing
- * an invalid regex error.
- */
-function escapeRegex(testName: string) {
-  return testName.replaceAll(/[^a-zA-Z0-9_+\-'"\ ]/g, "\\$&");
-}
-
-/**
  * This function registers a CodeLens provider for test files. It is used to display the "Run" and "Watch" buttons.
  */
 export function registerTestCodeLens(context: vscode.ExtensionContext) {
@@ -212,4 +202,15 @@ export function registerTestRunner(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(runTestCommand);
   context.subscriptions.push(watchTestCommand);
+}
+
+
+/**
+ * Escape any special characters in the input string, so that regex-matching on it
+ * will work as expected.
+ * i.e `new RegExp(escapeRegex("hi (:").test("hi (:")` will return true, instead of throwing
+ * an invalid regex error.
+ */
+function escapeRegex(source: string) {
+  return source.replaceAll(/[^a-zA-Z0-9_+\-'"\ ]/g, "\\$&");
 }

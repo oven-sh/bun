@@ -1833,6 +1833,29 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         return EVP_sha1();
     }
 
+    if (WTF::equalIgnoringASCIICase(name, "md5"_s)) {
+        return EVP_md5();
+    }
+
+    if (WTF::startsWithIgnoringASCIICase(name, "sha-"_s)) {
+        auto remaining = name.substring(4);
+        if (WTF::equalIgnoringASCIICase(remaining, "1"_s)) {
+            return EVP_sha1();
+        }
+        if (WTF::equalIgnoringASCIICase(remaining, "224"_s)) {
+            return EVP_sha224();
+        }
+        if (WTF::equalIgnoringASCIICase(remaining, "256"_s)) {
+            return EVP_sha256();
+        }
+        if (WTF::equalIgnoringASCIICase(remaining, "384"_s)) {
+            return EVP_sha384();
+        }
+        if (WTF::equalIgnoringASCIICase(remaining, "512"_s)) {
+            return EVP_sha512();
+        }
+    }
+
     // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {
     //     return EVP_ripemd160();
     // }

@@ -22,7 +22,13 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { SocketAddress, addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("internal/net");
+const {
+  SocketAddress,
+  addServerName,
+  upgradeDuplexToTLS,
+  isNamedPipeSocket,
+  normalizedArgsSymbol,
+} = require("internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
@@ -653,8 +659,14 @@ const Socket = (function (InternalSocket) {
       connection.destroy();
     }
 
-    connect(...args) {
-      const [options, connectListener] = normalizeArgs(args);
+    public connect(...args) {
+      const [options, connectListener] =
+        $isArray(args[0]) && args[0][normalizedArgsSymbol]
+          ? // args have already been normalized.
+            // Normalized array is passed as the first and only argument.
+            ($assert(args[0].length == 2 && typeof args[0][0] === "object"), args[0])
+          : normalizeArgs(args);
+
       let connection = this.#socket;
 
       let upgradeDuplex = false;
@@ -718,6 +730,16 @@ const Socket = (function (InternalSocket) {
 
       if (fd) {
         return this;
+      }
+
+      if (
+        // TLSSocket already created a socket and is forwarding it here. This is a private API.
+        !(socket && $isObject(socket) && socket instanceof Duplex) &&
+        // public api for net.Socket.connect
+        port === undefined &&
+        path == null
+      ) {
+        throw $ERR_MISSING_ARGS(["options", "port", "path"]);
       }
 
       this.remotePort = port;
@@ -1607,12 +1629,13 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
-function normalizeArgs(args) {
-  while (args[args.length - 1] == null) args.pop();
+function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb: Function | null] {
+  while (args.length && args[args.length - 1] == null) args.pop();
   let arr;
 
   if (args.length === 0) {
     arr = [{}, null];
+    arr[normalizedArgsSymbol as symbol] = true;
     return arr;
   }
 
@@ -1632,6 +1655,7 @@ function normalizeArgs(args) {
   const cb = args[args.length - 1];
   if (typeof cb !== "function") arr = [options, null];
   else arr = [options, cb];
+  arr[normalizedArgsSymbol as symbol] = true;
 
   return arr;
 }

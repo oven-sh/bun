@@ -1043,9 +1043,9 @@ pub const SelectorParser = struct {
 
     pub const Impl = impl.Selectors;
 
-    pub fn newLocalIdentifier(_: *SelectorParser, input: *css.Parser, raw: []const u8) Impl.SelectorImpl.LocalIdentifier {
+    pub fn newLocalIdentifier(_: *SelectorParser, input: *css.Parser, tag: css.CssRef.Tag, raw: []const u8) Impl.SelectorImpl.LocalIdentifier {
         if (input.flags.css_modules) {
-            return Impl.SelectorImpl.LocalIdentifier.fromRef(input.addSymbolForName(raw), .{ raw, input.allocator() });
+            return Impl.SelectorImpl.LocalIdentifier.fromRef(input.addSymbolForName(raw, tag), .{ raw, input.allocator() });
         }
         return Impl.SelectorImpl.LocalIdentifier.fromIdent(.{ .v = raw });
     }
@@ -1891,9 +1891,9 @@ pub fn GenericComponent(comptime Impl: type) type {
             };
         }
 
-        pub fn asLocallyScoped(this: *const @This()) ?Impl.SelectorImpl.LocalIdentifier {
+        pub fn asClass(this: *const @This()) ?Impl.SelectorImpl.LocalIdentifier {
             return switch (this.*) {
-                inline .id, .class => |v| v,
+                inline .class => |v| v,
                 else => null,
             };
         }
@@ -2678,7 +2678,7 @@ pub fn parse_one_simple_selector(
             if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
                 return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .{ .idhash = id } })) };
             }
-            const component: GenericComponent(Impl) = .{ .id = parser.newLocalIdentifier(input, id) };
+            const component: GenericComponent(Impl) = .{ .id = parser.newLocalIdentifier(input, .id, id) };
             return .{ .result = S{
                 .simple_selector = component,
             } };
@@ -2869,7 +2869,7 @@ pub fn parse_one_simple_selector(
                             return .{ .err = location.newCustomError(e.intoDefaultParserError()) };
                         },
                     };
-                    return .{ .result = .{ .simple_selector = .{ .class = parser.newLocalIdentifier(input, class) } } };
+                    return .{ .result = .{ .simple_selector = .{ .class = parser.newLocalIdentifier(input, .class, class) } } };
                 },
                 '&' => {
                     if (parser.isNestingAllowed()) {

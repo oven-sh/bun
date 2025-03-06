@@ -1070,6 +1070,11 @@ pub const Log = struct {
 
     pub fn addWarningFmtLineCol(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @branchHint(.cold);
+        return log.addWarningFmtLineColWithNotes(filepath, line, col, allocator, text, args, &[_]Data{});
+    }
+
+    pub fn addWarningFmtLineColWithNotes(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype, notes: []Data) OOM!void {
+        @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;
         log.warnings += 1;
 
@@ -1077,14 +1082,19 @@ pub const Log = struct {
 
         try log.addMsg(.{
             .kind = .warn,
-            .data = try Data.cloneLineText(Data{
-                .text = try allocPrint(allocator, text, args),
-                .location = Location{
-                    .file = filepath,
-                    .line = @intCast(line),
-                    .column = @intCast(col),
+            .data = try Data.cloneLineText(
+                Data{
+                    .text = try allocPrint(allocator, text, args),
+                    .location = Location{
+                        .file = filepath,
+                        .line = @intCast(line),
+                        .column = @intCast(col),
+                    },
                 },
-            }, log.clone_line_text, allocator),
+                log.clone_line_text,
+                allocator,
+            ),
+            .notes = notes,
         });
     }
 

@@ -324,6 +324,7 @@ pub fn parse_declaration_impl(
         .property_id = property_id,
         .options = options,
     };
+    const source_location = input.currentSourceLocation();
     var property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, struct {
         pub fn parseFn(this: *Closure, input2: *css.Parser) Result(css.Property) {
             return css.Property.parse(this.property_id, input2, this.options);
@@ -340,9 +341,41 @@ pub fn parse_declaration_impl(
     }.parsefn, .{}).isOk();
     if (input.expectExhausted().asErr()) |e| return .{ .err = e };
 
-    if (@TypeOf(composes_ctx) != void and composes_ctx.allow_composes and property == .composes) {
-        bun.assert(input.flags.css_modules);
-        composes_ctx.recordComposes(input.allocator(), &property.composes);
+    if (comptime @TypeOf(composes_ctx) != void) {
+        if (input.flags.css_modules and property == .composes) {
+            switch (composes_ctx.composes_state) {
+                .disallow_entirely => {},
+                .allow => {
+                    composes_ctx.recordComposes(input.allocator(), &property.composes);
+                },
+                .disallow_nested => |info| {
+                    options.warnFmtWithNotes(
+                        "\"composes\" is not allowed inside nested selectors",
+                        .{},
+                        info.line,
+                        info.column,
+                        &[_]bun.logger.Data{},
+                    );
+                },
+                .disallow_not_single_class => |info| {
+                    options.warnFmtWithNotes(
+                        "\"composes\" only works inside single class selectors",
+                        .{},
+                        source_location.line,
+                        source_location.column,
+                        options.allocator.dupe(
+                            bun.logger.Data,
+                            &[_]bun.logger.Data{
+                                bun.logger.Data{
+                                    .text = options.allocator.dupe(u8, "The parent selector is not a single class selector because of the syntax here:") catch bun.outOfMemory(),
+                                    .location = info.toLoggerLocation(options.filename),
+                                },
+                            },
+                        ) catch bun.outOfMemory(),
+                    );
+                },
+            }
+        }
     }
     if (important) {
         important_declarations.append(input.allocator(), property) catch bun.outOfMemory();

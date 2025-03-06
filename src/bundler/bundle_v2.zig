@@ -4315,16 +4315,12 @@ pub const ParseTask = struct {
                 };
                 // Make sure the css modules local refs:
                 //  1. point to this source index
-                //  2. are all symbols
-                //  3. last ref is the last symbol so we can quickly make bitsets later
                 if (comptime bun.Environment.isDebug) {
                     if (css_ast.local_scope.count() > 0) {
                         for (css_ast.local_scope.values()) |ref| {
                             bun.assert(ref.source_index == source.index.get());
-                            bun.assert(ref.tag == .symbol);
+                            bun.assert(ref.tag != .idk);
                         }
-                        const last_ref = css_ast.local_scope.values()[css_ast.local_scope.values().len - 1];
-                        bun.assert(last_ref.inner_index == css_ast.local_scope.count() - 1);
                     }
                 }
                 if (css_ast.minify(allocator, bun.css.MinifyOptions{
@@ -7912,6 +7908,7 @@ pub const LinkerContext = struct {
                     all_import_records: []const BabyList(bun.css.ImportRecord),
                     all_css_asts: []?*bun.css.BundlerStyleSheet,
                     all_sources: []const Logger.Source,
+                    all_symbols: []const Symbol.List,
                     source_index: Index.Int,
                     log: *Logger.Log,
                     loc: Loc,
@@ -7922,10 +7919,11 @@ pub const LinkerContext = struct {
                         visitor.composes_visited.clearRetainingCapacity();
                     }
 
-                    fn visitName(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref, idx: Index.Int) void {
+                    fn visitName(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: bun.css.CssRef, idx: Index.Int) void {
+                        bun.assert(ref.canBeComposed());
                         const from_this_file = ref.sourceIndex() == visitor.source_index;
                         if ((from_this_file and visitor.inner_visited.isSet(ref.innerIndex())) or
-                            (!from_this_file and visitor.composes_visited.contains(ref)))
+                            (!from_this_file and visitor.composes_visited.contains(ref.toRealRef())))
                         {
                             return;
                         }
@@ -7935,7 +7933,7 @@ pub const LinkerContext = struct {
                             .value = Expr.init(
                                 E.NameOfSymbol,
                                 E.NameOfSymbol{
-                                    .ref = ref,
+                                    .ref = ref.toRealRef(),
                                 },
                                 visitor.loc,
                             ),
@@ -7948,13 +7946,51 @@ pub const LinkerContext = struct {
                         if (from_this_file) {
                             visitor.inner_visited.set(ref.innerIndex());
                         } else {
-                            visitor.composes_visited.put(ref, {}) catch unreachable;
+                            visitor.composes_visited.put(ref.toRealRef(), {}) catch unreachable;
                         }
                     }
 
-                    fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: Ref, idx: Index.Int) void {
+                    fn warnNonSingleClassComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, css_ref: bun.css.CssRef, idx: Index.Int, compose_loc: Loc) void {
+                        const ref = css_ref.toRealRef();
+                        _ = ast;
+                        _ = ref;
+                        const syms: *const Symbol.List = &visitor.all_symbols[css_ref.sourceIndex()];
+                        const name = syms.at(css_ref.innerIndex()).original_name;
+
+                        const FormatInvalidComposes = struct {
+                            name: []const u8,
+                            kind: bun.css.CssRef.Tag,
+
+                            pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                                switch (self.kind) {
+                                    .class => try writer.print(".{s}", .{self.name}),
+                                    .id => try writer.print("#{s}", .{self.name}),
+                                    else => try writer.print("{s}", .{self.name}),
+                                }
+                            }
+                        };
+
+                        visitor.log.addErrorFmt(
+                            &visitor.all_sources[idx],
+                            compose_loc,
+                            visitor.allocator,
+                            "The \"composes\" property cannot be used with \"{s}\", because it is not a single class name.",
+                            .{
+                                FormatInvalidComposes{
+                                    .name = name,
+                                    .kind = css_ref.tag,
+                                },
+                            },
+                        ) catch bun.outOfMemory();
+                    }
+
+                    fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, css_ref: bun.css.CssRef, idx: Index.Int) void {
+                        const ref = css_ref.toRealRef();
                         if (ast.composes.count() > 0) {
                             const composes = ast.composes.getPtr(ref) orelse return;
+                            // while parsing we check that we only allow `composes` on single class selectors
+                            bun.assert(css_ref.tag == .class);
+
                             for (composes.composes.slice()) |*compose| {
                                 // it is imported
                                 if (compose.from != null) {
@@ -7964,7 +8000,7 @@ pub const LinkerContext = struct {
                                         const import_record = import_records.at(import_record_idx);
                                         if (import_record.source_index.isValid()) {
                                             const other_file = visitor.all_css_asts[import_record.source_index.get()] orelse {
-                                                visitor.log.addWarningFmt(
+                                                visitor.log.addErrorFmt(
                                                     &visitor.all_sources[idx],
                                                     compose.loc,
                                                     visitor.allocator,
@@ -7975,7 +8011,11 @@ pub const LinkerContext = struct {
                                             };
                                             for (compose.names.slice()) |name| {
                                                 const other_name_ref = other_file.local_scope.get(name.v) orelse continue;
-                                                visitor.visitName(other_file, other_name_ref, import_record.source_index.get());
+                                                if (!other_name_ref.canBeComposed()) {
+                                                    visitor.warnNonSingleClassComposes(other_file, other_name_ref, import_record.source_index.get(), compose.loc);
+                                                } else {
+                                                    visitor.visitName(other_file, other_name_ref, import_record.source_index.get());
+                                                }
                                             }
                                         }
                                     } else if (compose.from.? == .global) {
@@ -8003,16 +8043,23 @@ pub const LinkerContext = struct {
                                     // it is from the current file
                                     for (compose.names.slice()) |name| {
                                         const name_ref = ast.local_scope.get(name.v) orelse {
-                                            visitor.log.addWarningFmt(
+                                            visitor.log.addErrorFmt(
                                                 &visitor.all_sources[idx],
                                                 compose.loc,
                                                 visitor.allocator,
-                                                "<r>The name <b>{s}<r> never appears in <b>{s}<r> as a locally scoped name.\n      If it is a global name, use <r><cyan>`composes: {s} from global`<r> instead.",
-                                                .{ name.v, visitor.all_sources[idx].path.pretty, name.v },
+                                                "The name \"{s}\" never appears in \"{s}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
+                                                .{
+                                                    name.v,
+                                                    visitor.all_sources[idx].path.pretty,
+                                                },
                                             ) catch bun.outOfMemory();
                                             continue;
                                         };
-                                        visitor.visitName(ast, name_ref, idx);
+                                        if (!name_ref.canBeComposed()) {
+                                            visitor.warnNonSingleClassComposes(ast, name_ref, idx, compose.loc);
+                                        } else {
+                                            visitor.visitName(ast, name_ref, idx);
+                                        }
                                     }
                                 }
                             }
@@ -8031,6 +8078,7 @@ pub const LinkerContext = struct {
                     .log = this.log,
                     .all_sources = all_sources,
                     .allocator = this.allocator,
+                    .all_symbols = this.graph.ast.items(.symbols),
                 };
 
                 for (values) |ref| {
@@ -8038,12 +8086,12 @@ pub const LinkerContext = struct {
                     bun.assert(ref.inner_index < symbols.len);
 
                     var template_parts = std.ArrayList(E.TemplatePart).init(this.allocator);
-                    var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref }, stmt.loc);
+                    var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref.toRealRef() }, stmt.loc);
 
                     visitor.parts = &template_parts;
                     visitor.clearAll();
                     visitor.inner_visited.set(ref.innerIndex());
-                    visitor.visitComposes(css_ast, ref, source_index);
+                    if (ref.tag == .class) visitor.visitComposes(css_ast, ref, source_index);
 
                     if (template_parts.items.len > 0) {
                         template_parts.append(E.TemplatePart{
@@ -8266,7 +8314,7 @@ pub const LinkerContext = struct {
                                         &input_files[record.source_index.get()],
                                         compose.loc,
                                         this.allocator,
-                                        "The name \"{s}\" never appears in \"{s}\"",
+                                        "The name \"{s}\" never appears in \"{s}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                         .{
                                             name.v,
                                             input_files[record.source_index.get()].path.pretty,
@@ -9112,8 +9160,8 @@ pub const LinkerContext = struct {
                 v.properties.deinit();
             }
 
-            fn addPropertyOrWarn(v: *@This(), local: Ref, name: []const u8, source_index: Index.Int, range: bun.logger.Range) void {
-                const entry = v.properties.getOrPut(name) catch bun.outOfMemory();
+            fn addPropertyOrWarn(v: *@This(), local: Ref, property_name: []const u8, source_index: Index.Int, range: bun.logger.Range) void {
+                const entry = v.properties.getOrPut(property_name) catch bun.outOfMemory();
 
                 if (!entry.found_existing) {
                     entry.value_ptr.* = .{
@@ -9137,7 +9185,7 @@ pub const LinkerContext = struct {
                         Logger.Log.allocPrint(
                             v.allocator,
                             "<r>The value of <b>{s}<r> in the class <b>{s}<r> is undefined.",
-                            .{ name, local_original_name },
+                            .{ property_name, local_original_name },
                         ) catch bun.outOfMemory(),
                     ).cloneLineText(v.log.clone_line_text, v.log.msgs.allocator) catch bun.outOfMemory(),
                     .notes = v.allocator.dupe(
@@ -9146,14 +9194,14 @@ pub const LinkerContext = struct {
                             bun.logger.rangeData(
                                 &v.all_sources[entry.value_ptr.source_index],
                                 entry.value_ptr.range,
-                                Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{name}) catch bun.outOfMemory(),
+                                Logger.Log.allocPrint(v.allocator, "The first definition of {s} is in this style rule:", .{property_name}) catch bun.outOfMemory(),
                             ),
                             .{ .text = std.fmt.allocPrint(
                                 v.allocator,
                                 "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. " ++
-                                    "<r><blue>The value of the <b>{s}<r><blue> property for <b>{s}<r><blue> may change unpredictably as the code is edited. " ++
-                                    "Make sure that all definitions of <b>{s}<r><blue> for <b>{s}<r><blue> are in a single file.",
-                                .{ name, local_original_name, name, local_original_name },
+                                    "The value of the \"{s}\" property for \"{s}\" may change unpredictably as the code is edited. " ++
+                                    "Make sure that all definitions of \"{s}\" for \"{s}\" are in a single file.",
+                                .{ property_name, local_original_name, property_name, local_original_name },
                             ) catch bun.outOfMemory() },
                         },
                     ) catch bun.outOfMemory(),
@@ -9184,7 +9232,8 @@ pub const LinkerContext = struct {
                                 const other_ast = v.all_css_asts[record.source_index.get()] orelse continue;
                                 for (compose.names.slice()) |name| {
                                     const other_name = other_ast.local_scope.get(name.v) orelse continue;
-                                    v.visit(record.source_index.get(), other_ast, other_name);
+                                    const other_name_ref = other_name.toRealRef();
+                                    v.visit(record.source_index.get(), other_ast, other_name_ref);
                                 }
                             } else {
                                 bun.assert(compose.from.? == .global);
@@ -9196,7 +9245,7 @@ pub const LinkerContext = struct {
                             // inside this file
                             for (compose.names.slice()) |name| {
                                 const name_ref = ast.local_scope.get(name.v) orelse continue;
-                                v.visit(idx, ast, name_ref);
+                                v.visit(idx, ast, name_ref.toRealRef());
                             }
                         }
                     }
@@ -9233,7 +9282,7 @@ pub const LinkerContext = struct {
         defer visitor.deinit();
         for (root_css_ast.local_scope.values()) |local| {
             visitor.clearRetainingCapacity();
-            visitor.visit(index, root_css_ast, local);
+            visitor.visit(index, root_css_ast, local.toRealRef());
         }
     }
 

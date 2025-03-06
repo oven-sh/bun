@@ -210,6 +210,14 @@ pub const SourceLocation = struct {
     line: u32,
     column: u32,
 
+    pub fn toLoggerLocation(this: SourceLocation, file: []const u8) bun.logger.Location {
+        return bun.logger.Location{
+            .file = file,
+            .line = @intCast(this.line),
+            .column = @intCast(this.column),
+        };
+    }
+
     /// Create a new BasicParseError at this location for an unexpected token
     pub fn newBasicUnexpectedTokenError(this: SourceLocation, token: Token) ParseError(ParserError) {
         return BasicParseError.intoDefaultParseError(.{
@@ -1921,7 +1929,6 @@ pub fn TopLevelRuleParser(comptime AtRuleParserT: type) type {
                 .composes = this.composes,
                 .composes_refs = &this.composes_refs,
                 .local_properties = this.local_properties,
-                .allow_composes = false,
             };
         }
     };
@@ -1944,13 +1951,19 @@ pub fn NestedRuleParser(comptime T: type) type {
         is_in_style_rule: bool,
         allow_declarations: bool,
 
-        allow_composes: bool,
-        saw_composes: bool = false,
+        composes_state: ComposesState = .disallow_entirely,
         composes_refs: *SmallList(bun.bundle_v2.Ref, 2),
         composes: *ComposesMap,
         local_properties: *LocalPropertyUsage,
 
         allocator: Allocator,
+
+        const ComposesState = union(enum) {
+            allow: SourceLocation,
+            disallow_nested: SourceLocation,
+            disallow_not_single_class: SourceLocation,
+            disallow_entirely,
+        };
 
         const This = @This();
 
@@ -2557,26 +2570,35 @@ pub fn NestedRuleParser(comptime T: type) type {
 
             pub fn parseBlock(this: *This, selectors: Prelude, start: *const ParserState, input: *Parser) Result(QualifiedRule) {
                 const loc = this.getLoc(start);
-                defer this.saw_composes = false;
                 defer this.composes_refs.clearRetainingCapacity();
-                var track_local_properties = false;
-                // we don't allow composes in nested style rules
-                if (input.flags.css_modules and !this.is_in_style_rule) {
-                    track_local_properties = true;
-                    this.allow_composes = brk: {
-                        var found_any: bool = false;
-                        // store all css module export names relevant to this style rule in `this.composes_refs`
-                        for (selectors.v.slice()) |*sel| {
-                            for (sel.components.items) |*comp| {
-                                if (comp.asLocallyScoped()) |id| {
-                                    const ref = id.asRef().?;
-                                    this.composes_refs.append(input.allocator(), ref);
-                                    found_any = true;
-                                }
-                            }
-                        }
-                        break :brk found_any;
-                    };
+                // allow composes if:
+                // - NOT in nested style rules
+                // - AND there is only one class selector
+                if (input.flags.css_modules) out: {
+                    if (this.is_in_style_rule) {
+                        this.composes_state = .{ .disallow_nested = .{ .line = loc.line, .column = loc.column } };
+                        break :out;
+                    }
+                    if (selectors.v.len() != 1) {
+                        this.composes_state = .{ .disallow_not_single_class = .{ .line = loc.line, .column = loc.column } };
+                        break :out;
+                    }
+
+                    const sel = selectors.v.slice()[0];
+                    if (sel.components.items.len != 1) {
+                        this.composes_state = .{ .disallow_not_single_class = .{ .line = loc.line, .column = loc.column } };
+                        break :out;
+                    }
+
+                    const comp = &sel.components.items[0];
+                    if (comp.asClass()) |r| {
+                        const ref = r.asRef().?;
+                        this.composes_refs.append(input.allocator(), ref);
+                        this.composes_state = .{ .allow = .{ .line = loc.line, .column = loc.column } };
+                        break :out;
+                    }
+
+                    this.composes_state = .{ .disallow_not_single_class = .{ .line = loc.line, .column = loc.column } };
                 }
                 const location = input.position();
                 const result = switch (this.parseNested(input, true)) {
@@ -2591,7 +2613,7 @@ pub fn NestedRuleParser(comptime T: type) type {
                 // Track which properties it used so we can validate it later (it is undefined
                 // behavior when composing and properties conflict so we will warn the user
                 // about that).
-                if (track_local_properties) {
+                if (this.composes_state == .allow) {
                     const len = input.position() - location;
                     var usage = PropertyBitset.initEmpty();
                     var custom_properties = bun.BabyList([]const u8){};
@@ -2659,7 +2681,6 @@ pub fn NestedRuleParser(comptime T: type) type {
                 }
                 entry.value_ptr.*.composes.push(allocator, composes.deepClone(allocator)) catch bun.outOfMemory();
             }
-            this.saw_composes = true;
         }
 
         pub fn parseNested(this: *This, input: *Parser, is_style_rule: bool) Result(struct { DeclarationBlock, CssRuleList(T.CustomAtRuleParser.AtRule) }) {
@@ -2674,7 +2695,11 @@ pub fn NestedRuleParser(comptime T: type) type {
                 .rules = &rules,
                 .is_in_style_rule = this.is_in_style_rule or is_style_rule,
                 .allow_declarations = this.allow_declarations or this.is_in_style_rule or is_style_rule,
-                .allow_composes = this.allow_composes and !this.is_in_style_rule,
+                // .composes_state = this.allow_composes and !this.is_in_style_rule,
+                .composes_state = if (this.is_in_style_rule and this.composes_state == .allow)
+                    .{ .disallow_nested = .{ .line = this.composes_state.allow.line, .column = this.composes_state.allow.column } }
+                else
+                    this.composes_state,
                 .composes = this.composes,
                 .composes_refs = this.composes_refs,
                 .local_properties = this.local_properties,
@@ -2715,8 +2740,6 @@ pub fn NestedRuleParser(comptime T: type) type {
                     }
                 }
             }
-
-            this.saw_composes = nested_parser.saw_composes;
 
             return .{
                 .result = .{
@@ -2907,11 +2930,57 @@ pub const ParserExtra = struct {
 pub const CustomIdentList = css_values.ident.CustomIdentList;
 pub const Specifier = css_properties.css_modules.Specifier;
 
+pub const CssRef = packed struct(u64) {
+    pub const Int = u31;
+
+    inner_index: u30 = 0,
+
+    tag: Tag,
+
+    source_index: Int = 0,
+
+    pub const Tag = enum(u3) {
+        idk,
+        class,
+        id,
+        animation,
+        keyframes,
+        container,
+        counter_style,
+
+        pub fn canBeComposed(this: @This()) bool {
+            return switch (this) {
+                .class => true,
+                else => false,
+            };
+        }
+    };
+
+    pub fn canBeComposed(this: @This()) bool {
+        return this.tag.canBeComposed();
+    }
+
+    pub fn sourceIndex(this: @This()) u32 {
+        return this.source_index;
+    }
+
+    pub fn innerIndex(this: @This()) u32 {
+        return this.inner_index;
+    }
+
+    pub fn toRealRef(this: @This()) bun.bundle_v2.Ref {
+        return bun.bundle_v2.Ref{
+            .inner_index = this.inner_index,
+            .source_index = this.source_index,
+            .tag = .symbol,
+        };
+    }
+};
 /// If css modules is enabled, this maps locally scoped class names to their ref.
 ///
 /// We use this ref as a layer of indirection during the bundling stage because we don't
 /// know the final generated class names for local scope until print time.
-pub const LocalScope = std.StringArrayHashMapUnmanaged(bun.bundle_v2.Ref);
+pub const LocalScope = std.StringArrayHashMapUnmanaged(CssRef);
 /// Local symbol renaming results go here
 pub const LocalsResultsMap = bun.bundle_v2.MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior according
@@ -2944,6 +3013,7 @@ pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: 
                 continue;
             },
             .unparsed => |u| @as(PropertyIdTag, u.property_id),
+            .composes => continue,
             else => @as(PropertyIdTag, prop.*),
         };
         const int: u16 = @intFromEnum(tag);
@@ -2956,6 +3026,7 @@ pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: 
                 continue;
             },
             .unparsed => |u| @as(PropertyIdTag, u.property_id),
+            .composes => continue,
             else => @as(PropertyIdTag, prop.*),
         };
         const int: u16 = @intFromEnum(tag);
@@ -3185,15 +3256,6 @@ pub fn StyleSheet(comptime AtRule: type) type {
                 .source_index = source_index,
             };
             var local_properties = LocalPropertyUsage{};
-
-            // Assert invariant 2
-            defer if (comptime bun.Environment.isDebug) {
-                if (options.css_modules != null) {
-                    for (parser_extra.local_scope.values()) |ref| {
-                        bun.assert(ref.tag == .symbol);
-                    }
-                }
-            };
 
             var input = ParserInput.new(allocator, code);
             var parser = Parser.new(
@@ -3641,6 +3703,33 @@ pub const ParserOptions = struct {
         }
     }
 
+    pub fn warnFmt(this: *const ParserOptions, comptime text: []const u8, args: anytype, line: u32, column: u32) void {
+        if (this.logger) |lg| {
+            lg.addWarningFmtLineCol(
+                this.filename,
+                line,
+                column,
+                this.allocator,
+                text,
+                args,
+            ) catch unreachable;
+        }
+    }
+
+    pub fn warnFmtWithNotes(this: *const ParserOptions, comptime text: []const u8, args: anytype, line: u32, column: u32, notes: []bun.logger.Data) void {
+        if (this.logger) |lg| {
+            lg.addWarningFmtLineColWithNotes(
+                this.filename,
+                line,
+                column,
+                this.allocator,
+                text,
+                args,
+                notes,
+            ) catch unreachable;
+        }
+    }
+
     pub fn default(allocator: std.mem.Allocator, log: ?*Log) ParserOptions {
         return ParserOptions{
             .filename = "",
@@ -3705,18 +3794,20 @@ pub const Parser = struct {
         __unused: u7 = 0,
     };
 
-    pub fn addSymbolForName(this: *Parser, name: []const u8) bun.bundle_v2.Ref {
+    pub fn addSymbolForName(this: *Parser, name: []const u8, tag: CssRef.Tag) bun.bundle_v2.Ref {
         // don't call this if css modules is not enabled!
         bun.assert(this.flags.css_modules);
         bun.assert(this.extra != null);
+        bun.assert(tag != .idk);
+
         const extra = this.extra.?;
 
         const entry = extra.local_scope.getOrPut(this.allocator(), name) catch bun.outOfMemory();
         if (!entry.found_existing) {
-            entry.value_ptr.* = bun.bundle_v2.Ref{
+            entry.value_ptr.* = CssRef{
                 .source_index = @intCast(this.extra.?.source_index.get()),
                 .inner_index = @intCast(extra.symbols.len),
-                .tag = .symbol,
+                .tag = tag,
             };
             extra.symbols.push(this.allocator(), bun.JSAst.Symbol{
                 .kind = .local_css,
@@ -3724,7 +3815,7 @@ pub const Parser = struct {
             }) catch bun.outOfMemory();
         }
 
-        return entry.value_ptr.*;
+        return entry.value_ptr.toRealRef();
     }
 
     // TODO: dedupe import records??

@@ -294,8 +294,10 @@ describe("bundler", () => {
     },
     entryPoints: ["/entry.js"],
     outdir: "/out",
-    bundleWarnings: {
-      "/styles.module.css": ["The name local2 never appears in styles.module.css as a locally scoped name."],
+    bundleErrors: {
+      "/styles.module.css": [
+        'The name "local2" never appears in "styles.module.css" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.',
+      ],
     },
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
@@ -436,12 +438,7 @@ describe("bundler", () => {
     entryPoints: ["/entry.js"],
     outdir: "/out",
     bundleErrors: {
-      "/styles.css": ['Cannot use "composes" with "file.txt"'],
-    },
-    bundleWarnings: {
-      "/styles.css": [
-        'You can only use "composes" with CSS files and "file.txt" is not a CSS file (it was loaded with the "text" loader).',
-      ],
+      "/styles.module.css": ['Cannot use the "composes" property with the "file.txt" file (it is not a CSS file)'],
     },
   });
 
@@ -544,6 +541,249 @@ describe("bundler", () => {
       `);
     },
   });
+
+  // Define all the invalid cases
+  const invalidComposesTests = [
+    {
+      name: "IDSelector",
+      cssContent: `
+        /* Invalid: ID selector */
+        .withId {
+          composes: #invalid;
+          color: red;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "ElementSelector",
+      cssContent: `
+        /* Invalid: Element selector */
+        .withElement {
+          composes: div;
+          color: blue;
+        }
+      `,
+      expectedError:
+        'The name "div" never appears in "styles.module.css" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.',
+    },
+    {
+      name: "CompoundSelector",
+      cssContent: `
+        /* Invalid: Compound selector */
+        .withCompound {
+          composes: .valid.invalid;
+          color: green;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "ComplexSelector",
+      cssContent: `
+        /* Invalid: Complex selector */
+        .withComplex {
+          composes: .parent > .child;
+          color: purple;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "PseudoClass",
+      cssContent: `
+        /* Invalid: Pseudo-class */
+        .withPseudo {
+          composes: .valid:hover;
+          color: orange;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "AttributeSelector",
+      cssContent: `
+        /* Invalid: Attribute selector */
+        .withAttribute {
+          composes: [disabled];
+          color: yellow;
+        }
+      `,
+      expectedError: "Invalid declaration",
+    },
+    {
+      name: "ImportedNonClass",
+      cssContent: `
+        /* Invalid: Imported non-class */
+        .withImportedNonClass {
+          composes: element from "other.module.css";
+          color: magenta;
+        }
+      `,
+      expectedError:
+        'The name "element" never appears in "other.module.css" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.',
+    },
+  ];
+
+  // Create a separate test for each invalid case
+  for (const testCase of invalidComposesTests) {
+    itBundled(`css/ImportCSSFromJSComposes${testCase.name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import styles from "./styles.module.css"
+          console.log(styles)
+        `,
+        "/styles.module.css": /* css */ testCase.cssContent,
+        "/other.module.css": /* css */ `
+          /* Non-class selectors in another file */
+          div {
+            color: brown;
+          }
+          
+          #id {
+            color: teal;
+          }
+          
+          .valid {
+            color: pink;
+          }
+          
+          element {
+            color: gray;
+          }
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      bundleErrors: testCase.expectedError
+        ? testCase.name === "ImportedNonClass"
+          ? { "/other.module.css": [testCase.expectedError] }
+          : { "/styles.module.css": [testCase.expectedError] }
+        : undefined,
+      bundleWarnings: testCase.expectedWarning ? { "/styles.module.css": [testCase.expectedWarning] } : undefined,
+      onAfterBundle(api) {
+        // Check that the output files were generated correctly
+        api.expectFile("/out/entry.js").toMatchSnapshot();
+        api.expectFile("/out/entry.css").toMatchSnapshot();
+      },
+    });
+  }
+
+  itBundled("css/ComposesWithSharedPropertiesError", {
+    files: {
+      "/entry.js": `
+      import styles from "./styles.module.css"
+      console.log(styles)
+    `,
+      "/styles.module.css": `
+      .button {
+        color: blue;
+        composes: otherButton from "./other.module.css";
+      }
+    `,
+      "/other.module.css": `
+      .otherButton {
+        color: red;
+        font-size: 16px;
+      }
+    `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: true,
+    onAfterBundle(api) {
+      // Check that the output files were generated correctly
+      api.expectFile("/out/entry.js").toMatchSnapshot();
+      api.expectFile("/out/entry.css").toMatchSnapshot();
+    },
+  });
+
+  itBundled("css/ComposesSameFile", {
+    files: {
+      "/entry.js": `
+      import styles from "./styles.module.css"
+      console.log(styles)
+    `,
+      "/styles.module.css": `
+      .button {
+        color: blue;
+        composes: otherButton from "./styles.module.css";
+      }
+
+      .otherButton {
+        color: red;
+        font-size: 16px;
+      }
+    `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: true,
+    onAfterBundle(api) {
+      // Check that the output files were generated correctly
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          button: "otherButton_-MSaAA button_-MSaAA",
+          otherButton: "otherButton_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .button_-MSaAA {
+          color: #00f;
+        }
+
+        .otherButton_-MSaAA {
+          color: red;
+          font-size: 16px;
+        }
+        "
+      `);
+    },
+  });
+
+  itBundled("css/ComposesSameFileSameClass", {
+    files: {
+      "/entry.js": `
+      import styles from "./styles.module.css"
+      console.log(styles)
+    `,
+      "/styles.module.css": `
+      .button {
+        color: blue;
+        composes: button from "./styles.module.css";
+      }
+    `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    bundleWarnings: true,
+    onAfterBundle(api) {
+      // Check that the output files were generated correctly
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          button: "button_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+      api.expectFile("/out/entry.css").toMatchInlineSnapshot(`
+        "/* styles.module.css */
+        .button_-MSaAA {
+          color: #00f;
+        }
+        "
+      `);
+    },
+  });
 });
 
 describe("esbuild-bundler", () => {
@@ -614,13 +854,13 @@ describe("esbuild-bundler", () => {
 
 /* internal.css */
 .before {
-  color: red;
-}
+          color: red;
+        }
 
 /* charset1.css */
 .middle {
-  color: green;
-}
+          color: green;
+        }
 
 /* charset2.css */
 .after {
@@ -1146,7 +1386,7 @@ c {
         @media (min-width: 768px) and (max-width: 1024px) {
           @layer layer-name {
             body {
-              color: red;
+          color: red;
             }
           }
         }
@@ -1275,7 +1515,7 @@ c {
         /* nested-media.css */
 
         /* entry.css */
-        `);
+      `);
     },
   });
 

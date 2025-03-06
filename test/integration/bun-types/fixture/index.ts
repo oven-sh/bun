@@ -21,6 +21,10 @@ fetch("url", {
   proxy: "",
 });
 
+Bun.fetch("", {
+  proxy: "",
+});
+
 new Bun.$.ShellError();
 
 new Promise(resolve => {
@@ -132,7 +136,9 @@ Bun.fetch.preconnect;
 
 Bun.fetch("", {
   proxy: "",
-  s3: {},
+  s3: {
+    acl: "public-read",
+  },
 });
 
 Bun.serve({
@@ -149,7 +155,7 @@ Bun.serve({
   },
 });
 
-import.meta.hot.data;
+import.meta.hot?.data;
 
 import { serve } from "bun";
 

@@ -814,6 +814,7 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
+    needs_before_all: bool = true,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1049,20 +1050,19 @@ pub const DescribeScope = struct {
 
     pub fn runBeforeAllIfNeeded(
         this: *DescribeScope,
-        globalThis: *JSGlobalObject,
-        ran_before_all: *std.AutoHashMap(*DescribeScope, void),
+        globalObject: *JSGlobalObject,
     ) ?JSValue {
         if (this.parent) |p| {
-            if (p.runBeforeAllIfNeeded(globalThis, ran_before_all)) |err| {
+            if (p.runBeforeAllIfNeeded(globalObject)) |err| {
                 return err;
             }
         }
 
-        if (!ran_before_all.contains(this)) {
-            if (this.execCallback(globalThis, .beforeAll)) |err| {
+        if (this.needs_before_all) {
+            this.needs_before_all = false;
+            if (this.execCallback(globalObject, .beforeAll)) |err| {
                 return err;
             }
-            ran_before_all.put(this, {}) catch unreachable;
         }
 
         return null;
@@ -1300,9 +1300,6 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
-    // Track whether beforeAll has been run for each describe block
-    pub threadlocal var ran_before_all = std.AutoHashMap(*DescribeScope, void).init(default_allocator);
-
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
         var deduped = false;
         const is_unhandled = jsc_vm.onUnhandledRejectionCtx == null;
@@ -1399,7 +1396,7 @@ pub const TestRunnerTask = struct {
         jsc_vm.onUnhandledRejectionCtx = this;
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
 
-        if (this.describe.runBeforeAllIfNeeded(globalThis, &ran_before_all)) |err| {
+        if (this.describe.runBeforeAllIfNeeded(globalThis)) |err| {
             _ = jsc_vm.uncaughtException(globalThis, err, true);
             Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, 0, 0, describe);
             return false;

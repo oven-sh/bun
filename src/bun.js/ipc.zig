@@ -679,6 +679,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: *anyopaque,
             _: Socket,
         ) void {
+            log("onOpen", .{});
             // it is NOT safe to use the first argument here because it has not been initialized yet.
             // ideally we would call .ipc.writeVersionPacket() here, and we need that to handle the
             // theoretical write failure, but since the .ipc.outgoing buffer isn't available, that
@@ -694,6 +695,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: c_int,
             _: ?*anyopaque,
         ) void {
+            log("onClose", .{});
             const ipc = this.ipc() orelse return;
             // unref if needed
             ipc.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
@@ -786,6 +788,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             context: *Context,
             socket: Socket,
         ) void {
+            log("onWritable", .{});
             const ipc = context.ipc() orelse return;
             const to_write = ipc.outgoing.slice();
             if (to_write.len == 0) {
@@ -808,6 +811,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             context: *Context,
             _: Socket,
         ) void {
+            log("onTimeout", .{});
             const ipc = context.ipc() orelse return;
             // unref if needed
             ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
@@ -817,6 +821,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             context: *Context,
             _: Socket,
         ) void {
+            log("onLongTimeout", .{});
             const ipc = context.ipc() orelse return;
             // unref if needed
             ipc.keep_alive.unref((context.getGlobalThis() orelse return).bunVM());
@@ -827,13 +832,17 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: Socket,
             _: c_int,
         ) void {
+            log("onConnectError", .{});
             // context has not been initialized
         }
 
         pub fn onEnd(
             _: *Context,
-            _: Socket,
-        ) void {}
+            s: Socket,
+        ) void {
+            log("onEnd", .{});
+            s.close(.failure);
+        }
     };
 }
 

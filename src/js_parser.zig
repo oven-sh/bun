@@ -15780,6 +15780,7 @@ fn NewParser_(
                             .binding = p.b(B.Identifier{ .ref = ref }, local.loc),
                         };
                         try partStmts.append(p.s(S.Local{ .decls = G.Decl.List.init(decls) }, local.loc));
+                        try p.declared_symbols.append(p.allocator, .{ .ref = ref, .is_top_level = true });
                     }
                 }
                 p.relocated_top_level_vars.clearRetainingCapacity();

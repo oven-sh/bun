@@ -20,7 +20,7 @@ describe("describe scope", () => {
     afterEach(() => hooks_run.push("nested describe afterEach"));
 
     it("should run after nested beforeAll/beforeEach in the correct order", () => {
-      // First test
+      // Entries from before first test
       expect(hooks_run).toEqual([
         "global beforeAll",
         "describe beforeAll",
@@ -33,6 +33,35 @@ describe("describe scope", () => {
 
     it("should run after nested afterEach/afterAll in the correct order", () => {
       expect(hooks_run).toEqual([
+        // Entries from before first test
+        "global beforeAll",
+        "describe beforeAll",
+        "nested describe beforeAll",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+
+        // Entries from after first test
+        "nested describe afterEach",
+        "describe afterEach",
+        "global afterEach",
+
+        // Entries from before second test
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+      ]);
+    });
+  });
+
+  describe("nested describe scope 2", () => {
+    beforeAll(() => hooks_run.push("nested describe 2 beforeAll"));
+    beforeEach(() => hooks_run.push("nested describe 2 beforeEach"));
+    afterAll(() => hooks_run.push("nested describe 2 afterAll"));
+    afterEach(() => hooks_run.push("nested describe 2 afterEach"));
+
+    it("should run after beforeAll/beforeEach in the correct order", () => {
+      expect(hooks_run).toEqual([
         // Entries from first test
         "global beforeAll",
         "describe beforeAll",
@@ -41,77 +70,29 @@ describe("describe scope", () => {
         "describe beforeEach",
         "nested describe beforeEach",
 
-        // New entries
+        // Entries from after first test
         "nested describe afterEach",
         "describe afterEach",
         "global afterEach",
+
+        // Entries from before second test
         "global beforeEach",
         "describe beforeEach",
         "nested describe beforeEach",
+
+        // Entries from after second test
+        "nested describe afterEach",
+        "describe afterEach",
+        "global afterEach",
+        "nested describe afterAll",
+
+        // Entries from before third test
+        "nested describe 2 beforeAll",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe 2 beforeEach",
       ]);
     });
-  });
-
-  it("should run after beforeAll/beforeEach in the correct order", () => {
-    expect(hooks_run).toEqual([
-      // Entries from first test
-      "global beforeAll",
-      "describe beforeAll",
-      "nested describe beforeAll",
-      "global beforeEach",
-      "describe beforeEach",
-      "nested describe beforeEach",
-
-      // Entries from second test
-      "nested describe afterEach",
-      "describe afterEach",
-      "global afterEach",
-      "global beforeEach",
-      "describe beforeEach",
-      "nested describe beforeEach",
-
-      // New entries
-      "nested describe afterEach",
-      "describe afterEach",
-      "global afterEach",
-      "nested describe afterAll",
-      "global beforeEach",
-      "describe beforeEach",
-    ]);
-  });
-
-  it("should run after afterEach/afterAll in the correct order", () => {
-    expect(hooks_run).toEqual([
-      // Entries from first test
-      "global beforeAll",
-      "describe beforeAll",
-      "nested describe beforeAll",
-      "global beforeEach",
-      "describe beforeEach",
-      "nested describe beforeEach",
-
-      // Entries from second test
-      "nested describe afterEach",
-      "describe afterEach",
-      "global afterEach",
-      "global beforeEach",
-      "describe beforeEach",
-      "nested describe beforeEach",
-
-      // Entries from third test
-      "nested describe afterEach",
-      "describe afterEach",
-      "global afterEach",
-      "nested describe afterAll",
-      "global beforeEach",
-      "describe beforeEach",
-
-      // New entries
-      "describe afterEach",
-      "global afterEach",
-      "global beforeEach",
-      "describe beforeEach",
-    ]);
   });
 });
 

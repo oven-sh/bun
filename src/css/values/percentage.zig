@@ -41,20 +41,15 @@ pub const Percentage = struct {
         } };
 
         if (this.v != 0.0 and @abs(this.v) < 0.01) {
-            const BUF_LEN = 32;
-            var buf: [BUF_LEN]u8 = undefined;
-            var fba = std.heap.FixedBufferAllocator.init(&buf);
-            // WE MUST SET THE CAPACITY TO 32
-            // Zig changed ArrayList to grow by cache line size, this will fail because we have 32 bytes in the buf
-            var string = std.ArrayList(u8).initCapacity(fba.allocator(), BUF_LEN) catch return dest.addFmtError();
-            bun.assert(string.capacity == BUF_LEN);
-            const writer = string.writer();
+            var buf: [32]u8 = undefined;
+            var stream = std.io.fixedBufferStream(&buf);
+            const writer = stream.writer();
             percent.toCssGeneric(writer) catch return dest.addFmtError();
             if (this.v < 0.0) {
                 try dest.writeChar('-');
-                try dest.writeStr(bun.strings.trimLeadingPattern2(string.items, '-', '0'));
+                try dest.writeStr(bun.strings.trimLeadingPattern2(stream.getWritten(), '-', '0'));
             } else {
-                try dest.writeStr(bun.strings.trimLeadingChar(string.items, '0'));
+                try dest.writeStr(bun.strings.trimLeadingChar(stream.getWritten(), '0'));
             }
         } else {
             try percent.toCss(W, dest);

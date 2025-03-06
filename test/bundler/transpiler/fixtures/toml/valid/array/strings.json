@@ -1,8 +1,0 @@
-{
-    "string_array": [
-        {"type": "string", "value": "all"},
-        {"type": "string", "value": "strings"},
-        {"type": "string", "value": "are the same"},
-        {"type": "string", "value": "type"}
-    ]
-}

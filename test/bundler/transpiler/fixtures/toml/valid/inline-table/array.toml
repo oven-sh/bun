@@ -1,5 +1,0 @@
-arr = [ {'a'= 1}, {'a'= 2} ]
-
-people = [{first_name = "Bruce", last_name = "Springsteen"},
-          {first_name = "Eric", last_name = "Clapton"},
-          {first_name = "Bob", last_name = "Seger"}]

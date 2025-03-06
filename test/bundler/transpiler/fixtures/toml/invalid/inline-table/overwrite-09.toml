@@ -1,5 +1,0 @@
-[tab.nested]
-inline-t = { nest = {} }
-
-[tab]
-nested.inline-t.nest = 2

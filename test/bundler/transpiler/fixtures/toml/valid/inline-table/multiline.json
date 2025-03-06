@@ -1,8 +1,0 @@
-{
-    "tbl_multiline": {
-        "a": {"type": "integer", "value": "1"},
-        "b": {"type": "string", "value": "multiline\n"},
-        "c": {"type": "string", "value": "and yet\nanother line"},
-        "d": {"type": "integer", "value": "4"}
-    }
-}

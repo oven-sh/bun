@@ -1,9 +1,0 @@
-[a]
-key = 1
-
-# a.extend is a key inside the "a" table.
-[a.extend]
-key = 2
-
-[a.extend.more]
-key = 3

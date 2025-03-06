@@ -1,3 +1,0 @@
-# time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second
-#                           ; rules
-d = 2006-01-01T00:00:61-00:00

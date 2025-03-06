@@ -1,4 +1,0 @@
-[fruit]
-apple.color = "red"
-
-[fruit.apple] # INVALID

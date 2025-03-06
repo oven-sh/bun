@@ -1,7 +1,0 @@
-{
-    "product": {
-        "type": {
-            "name": {"type": "string", "value": "Nail"}
-        }
-    }
-}

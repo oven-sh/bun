@@ -148,6 +148,9 @@ pub const TOML = struct {
     }
 
     pub fn parseKey(p: *TOML, allocator: std.mem.Allocator) anyerror!*Rope {
+        p.lexer.wants_key = true;
+        defer p.lexer.wants_key = false;
+
         var rope = try allocator.create(Rope);
         const head = rope;
         rope.* = .{

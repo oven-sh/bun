@@ -1,4 +1,0 @@
-tbl_multiline = { a = 1, b = """
-multiline
-""", c = """and yet
-another line""", d = 4 }

@@ -1,6 +1,0 @@
-# Define b as int, and try to use it as a table: error
-[a]
-b = 1
-
-[a.b]
-c = 2

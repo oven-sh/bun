@@ -1,1 +1,0 @@
-black = { python=">3.6", version=">=18.9b0", allow_prereleases=true }

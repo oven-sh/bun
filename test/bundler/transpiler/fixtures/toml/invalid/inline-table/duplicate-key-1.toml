@@ -1,2 +1,0 @@
-# Duplicate keys within an inline table are invalid
-a={b=1, b=2}

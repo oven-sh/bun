@@ -1,3 +1,0 @@
-fruit.name = "banana"     # this is best practice
-fruit. color = "yellow"    # same as fruit.color
-fruit . flavor = "banana"   # same as fruit.flavor

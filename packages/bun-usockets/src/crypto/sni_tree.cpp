@@ -129,7 +129,7 @@ extern "C" {
         delete (sni_node *) sni;
     }
 
-    /* Returns non-null if this name already exists */
+    /* Returns non-null if this name already exists, or -1 on error */
     int sni_add(void *sni, const char *hostname, void *user) {
         struct sni_node *root = (struct sni_node *) sni;
 
@@ -143,6 +143,7 @@ extern "C" {
             if (it == root->children.end()) {
                 /* Duplicate this label for our kept string_view of it */
                 void *labelString = malloc(label.length());
+                if (!labelString) return -1;
                 memcpy(labelString, label.data(), label.length());
 
                 it = root->children.emplace(std::string_view((char *) labelString, label.length()),

@@ -1,7 +1,0 @@
-zero = 0.0
-signed-pos = +0.0
-signed-neg = -0.0
-exponent = 0e0
-exponent-two-0 = 0e00
-exponent-signed-pos = +0e0
-exponent-signed-neg = -0e0

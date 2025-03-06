@@ -4402,12 +4402,14 @@ pub fn CowSlice(T: type) type {
         pub fn deinit(str: @This(), allocator: Allocator) void {
             if (cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
-                bun.assert(
+                bun.assertf(
                     debug.allocator.ptr == allocator.ptr and
                         debug.allocator.vtable == allocator.vtable,
+                    "Cow: cannot deinit with a different allocator",
+                    .{},
                 );
                 if (str.flags.is_owned) {
-                    bun.assert(debug.borrows == 0); // active borrows become invalid data
+                    bun.assertf(debug.borrows == 0, "Cow: cannot deinit owned slice with active borrows", .{}); // active borrows become invalid data
                 } else {
                     debug.borrows -= 1; // double deinit of a borrowed string
                 }

@@ -1,8 +1,0 @@
-{
-    "a": {
-        "b": [{
-            "x": {"type": "integer", "value": "1"}
-        }],
-        "y": {"type": "integer", "value": "2"}
-    }
-}

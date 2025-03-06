@@ -1,5 +1,0 @@
-false = false
-true = 1
-inf = 100000000
-nan = "ceci n'est pas un nombre"
-

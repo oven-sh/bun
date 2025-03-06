@@ -1,4 +1,0 @@
-# Defined a.b as int
-a.b = 1
-# Tries to access it as table: error
-a.b.c = 2

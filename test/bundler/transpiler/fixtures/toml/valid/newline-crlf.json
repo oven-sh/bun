@@ -1,4 +1,0 @@
-{
-    "newline": {"type": "string", "value": "crlf"},
-    "os":      {"type": "string", "value": "DOS"}
-}

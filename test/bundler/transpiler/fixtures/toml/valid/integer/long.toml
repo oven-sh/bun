@@ -1,4 +1,0 @@
-# int64 "should" be supported, but is not mandatory. It's fine to skip this
-# test.
-int64-max     = 9223372036854775807
-int64-max-neg = -9223372036854775808

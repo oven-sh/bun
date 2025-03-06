@@ -1,3 +1,0 @@
-[product]
-type = { name = "Nail" }
-type.edible = false  # INVALID

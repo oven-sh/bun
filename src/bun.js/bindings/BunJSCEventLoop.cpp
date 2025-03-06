@@ -11,7 +11,6 @@ static thread_local std::optional<JSC::JSLock::DropAllLocks> drop_all_locks { st
 
 extern "C" void WTFTimer__runIfImminent(void* bun_vm);
 
-// Safe if VM is nullptr
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
     ASSERT(!drop_all_locks.has_value());
@@ -23,7 +22,7 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
     }
 }
 
-extern "C" void Bun__JSC_onAfterWait(JSC::VM* _Nonnull vm, int hasMoreEventLoopWorkToDo)
+extern "C" void Bun__JSC_onAfterWait(JSC::VM* _Nonnull vm, bool hasMoreEventLoopWorkToDo)
 {
     vm->heap.acquireAccess();
     drop_all_locks.reset();

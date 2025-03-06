@@ -1303,7 +1303,7 @@ class ChildProcess extends EventEmitter {
         },
         lazy: true,
         ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
-        onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
+        onDisconnect: has_ipc ? ok => this.#onDisconnect(ok) : undefined,
         serialization,
         argv0,
         windowsHide: !!options.windowsHide,
@@ -1380,18 +1380,21 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #disconnect(ok) {
-    if (ok == null) {
-      $assert(this.connected);
-      this.#handle.disconnect();
-    } else if (!ok) {
+  #onDisconnect(firstTime: boolean) {
+    if (!firstTime) {
+      // strange
+      return;
+    }
+    $assert(!this.connected);
+    this.#maybeClose();
+    process.nextTick(() => this.emit("disconnect"));
+  }
+  #disconnect() {
+    if (!this.connected) {
       this.emit("error", $ERR_IPC_DISCONNECTED());
       return;
     }
     this.#handle.disconnect();
-    $assert(!this.connected);
-    process.nextTick(() => this.emit("disconnect"));
-    this.#maybeClose();
   }
 
   kill(sig?) {

@@ -2059,6 +2059,7 @@ pub const SideEffects = enum(u1) {
             .s_label => |label| {
                 return shouldKeepStmtInDeadControlFlow(p, label.stmt, allocator);
             },
+
             else => return true,
         }
     }
@@ -2390,6 +2391,20 @@ pub const SideEffects = enum(u1) {
             },
             .e_inlined_enum => |inlined| {
                 return toBooleanWithoutDCECheck(inlined.value.data);
+            },
+            .e_special => |special| switch (special) {
+                .module_exports,
+                .resolved_specifier_string,
+                .hot_data,
+                => {},
+                .hot_accept,
+                .hot_accept_visited,
+                .hot_enabled,
+                => return .{ .ok = true, .value = true, .side_effects = .no_side_effects },
+                .hot_disabled,
+                .hot_accept_disabled,
+                .hot_function_disabled,
+                => return .{ .ok = true, .value = false, .side_effects = .no_side_effects },
             },
             else => {},
         }
@@ -7514,6 +7529,19 @@ fn NewParser_(
                         // Optionally preserve the name
                         if (e_.left.data == .e_identifier) {
                             e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
+                        }
+                    },
+                    .bin_nullish_coalescing_assign, .bin_logical_or_assign => {
+                        // Special case `{}.field ??= value` to minify to `value`
+                        // This optimization is specifically to target this pattern in HMR:
+                        //    `import.meta.hot.data.etc ??= init()`
+                        if (e_.left.data.as(.e_dot)) |dot| {
+                            if (dot.target.data.as(.e_object)) |obj| {
+                                if (obj.properties.len == 0) {
+                                    if (!bun.strings.eqlComptime(dot.name, "__proto__"))
+                                        return e_.right;
+                                }
+                            }
                         }
                     },
                     else => {},
@@ -17380,7 +17408,19 @@ fn NewParser_(
                         return expr;
                     } else if (e_.target.data.as(.e_special)) |special|
                         switch (special) {
-                            .hot_accept => p.handleImportMetaHotAcceptCall(e_),
+                            .hot_accept, .hot_accept_disabled => {
+                                p.handleImportMetaHotAcceptCall(e_);
+                                // After validating that the import.meta.hot
+                                // code is correct, discard the entire
+                                // expression in production.
+                                if (!p.options.features.hot_module_reloading)
+                                    return .{ .data = .e_undefined, .loc = expr.loc };
+                            },
+                            // These APIs do not have any special parser transforms.
+                            .hot_function_disabled => {
+                                bun.debugAssert(!p.options.features.hot_module_reloading);
+                                return .{ .data = .e_undefined, .loc = expr.loc };
+                            },
                             else => {},
                         };
 
@@ -18723,10 +18763,9 @@ fn NewParser_(
                     }
 
                     if (strings.eqlComptime(name, "hot")) {
-                        if (!p.options.features.hot_module_reloading)
-                            return .{ .data = .e_undefined, .loc = loc };
-
-                        return .{ .data = .{ .e_special = .hot }, .loc = loc };
+                        return .{ .data = .{
+                            .e_special = if (p.options.features.hot_module_reloading) .hot_enabled else .hot_disabled,
+                        }, .loc = loc };
                     }
 
                     // Make all property accesses on `import.meta.url` side effect free.
@@ -18821,9 +18860,54 @@ fn NewParser_(
                             }
                         }
                     },
-                    .hot => {
-                        if (strings.eqlComptime(name, "accept")) {
-                            return .{ .data = .{ .e_special = .hot_accept }, .loc = loc };
+                    .hot_enabled, .hot_disabled => {
+                        const enabled = p.options.features.hot_module_reloading;
+                        if (bun.strings.eqlComptime(name, "data")) {
+                            return if (enabled)
+                                .{ .data = .{ .e_special = .hot_data }, .loc = loc }
+                            else
+                                Expr.init(E.Object, .{}, loc);
+                        }
+                        if (bun.strings.eqlComptime(name, "accept")) {
+                            return .{ .data = .{
+                                .e_special = if (enabled) .hot_accept else .hot_accept_disabled,
+                            }, .loc = loc };
+                        }
+                        const lookup_table = comptime bun.ComptimeStringMap(void, [_]struct { [:0]const u8, void }{
+                            .{ "decline", {} },
+                            .{ "dispose", {} },
+                            .{ "prune", {} },
+                            .{ "invalidate", {} },
+                            .{ "on", {} },
+                            .{ "off", {} },
+                            .{ "send", {} },
+                        });
+                        if (lookup_table.has(name)) {
+                            if (enabled) {
+                                return Expr.init(E.Dot, .{
+                                    .target = Expr.initIdentifier(p.hmr_api_ref, target.loc),
+                                    .name = name,
+                                    .name_loc = name_loc,
+                                }, loc);
+                            } else {
+                                return .{ .data = .{ .e_special = .hot_function_disabled }, .loc = loc };
+                            }
+                        } else {
+                            // This error is a bit out of place since the HMR
+                            // API is validated in the parser instead of at
+                            // runtime. When the API is not validated in this
+                            // way, the developer may unintentionally read or
+                            // write internal fields of HMRModule.
+                            p.log.addError(
+                                p.source,
+                                loc,
+                                std.fmt.allocPrint(
+                                    p.allocator,
+                                    "import.meta.hot.{s} does not exist",
+                                    .{name},
+                                ) catch bun.outOfMemory(),
+                            ) catch bun.outOfMemory();
+                            return .{ .data = .e_undefined, .loc = loc };
                         }
                     },
                     else => {},
@@ -24676,6 +24760,7 @@ pub const ConvertESMExportsForHmr = struct {
                 @memcpy(ctx.export_props.items[0..export_star_len], ctx.export_star_props.items);
             }
         }
+
         if (ctx.export_props.items.len > 0) {
             const obj = Expr.init(E.Object, .{
                 .properties = G.Property.List.fromList(ctx.export_props),
@@ -24710,6 +24795,19 @@ pub const ConvertESMExportsForHmr = struct {
             // mark a dependency on module_ref so it is renamed
             try ctx.last_part.symbol_uses.put(p.allocator, p.module_ref, .{ .count_estimate = 1 });
             try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
+        }
+
+        if (p.options.features.react_fast_refresh and p.react_refresh.register_used and !ctx.can_implicitly_accept) {
+            try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+                .value = Expr.init(E.Call, .{
+                    .target = Expr.init(E.Dot, .{
+                        .target = Expr.initIdentifier(p.hmr_api_ref, .Empty),
+                        .name = "reactRefreshAccept",
+                        .name_loc = .Empty,
+                    }, .Empty),
+                    .args = .init(&.{}),
+                }, .Empty),
+            }, .Empty));
         }
 
         // Merge all part metadata into the first part.

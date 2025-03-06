@@ -123,6 +123,10 @@ const ws = initWebSocket({
       location.reload();
       return;
     }
+    if (isServerSideRouteUpdate) {
+      performRouteReload();
+      return;
+    }
     // JavaScript modules
     if (reader.hasMoreData()) {
       const code = td.decode(reader.rest());
@@ -141,9 +145,6 @@ const ws = initWebSocket({
         }
         throw e;
       }
-    }
-    if (isServerSideRouteUpdate) {
-      performRouteReload();
     }
   },
   [MessageId.set_url_response](view) {
@@ -195,15 +196,7 @@ window.addEventListener("unhandledrejection", event => {
 try {
   const { refresh } = config;
   if (refresh) {
-    const refreshRuntime = await loadExports<any>(refresh);
-    if (typeof refreshRuntime.injectIntoGlobalHook === "function") {
-      refreshRuntime.injectIntoGlobalHook(window);
-    } else {
-      console.warn(
-        "refreshRuntime.injectIntoGlobalHook is not a function. " +
-          "Something is wrong with the React Fast Refresh runtime.",
-      );
-    }
+    const refreshRuntime = await loadModuleAsync(refresh, false, null);
     setRefreshRuntime(refreshRuntime);
   }
 

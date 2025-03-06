@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework, reactRefreshStub } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -101,7 +101,6 @@ devTest("importing a file before it is created", {
 });
 devTest("default export same-scope handling", {
   files: {
-    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
       styles: [],
       scripts: ["index.ts", "react-refresh/runtime"],
@@ -197,13 +196,13 @@ devTest("default export same-scope handling", {
 });
 devTest("directory cache bust case #17576", {
   files: {
-    ...reactRefreshStub,
     "web/index.html": emptyHtmlFile({
       styles: [],
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.ts"],
     }),
     "web/index.ts": `
       console.log(123);
+      import.meta.hot.accept();
     `,
   },
   mainDir: "server",
@@ -214,8 +213,8 @@ devTest("directory cache bust case #17576", {
       await dev.write(
         "web/Test.ts",
         `
-        export const abc = 456;
-      `,
+          export const abc = 456;
+        `,
       );
     });
     await dev.write(

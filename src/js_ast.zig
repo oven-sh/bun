@@ -1582,11 +1582,19 @@ pub const E = struct {
         /// emits `exports` or `module.exports` depending on `commonjs_named_exports_deoptimized`
         module_exports,
         /// `import.meta.hot`
-        hot,
-        /// `import.meta.hot.accept`
+        hot_enabled,
+        /// Acts as .e_undefined, but allows property accesses to the rest of the HMR API.
+        hot_disabled,
+        /// `import.meta.hot.data` when HMR is enabled. Not reachable when it is disabled.
+        hot_data,
+        /// `import.meta.hot.accept` when HMR is enabled. Truthy.
         hot_accept,
+        /// `import.meta.hot.accept` when HMR is disabled. Falsy and DCE's when called.
+        hot_accept_disabled,
+        /// `import.meta.hot.*` when HMR is disabled. Falsy and DCE's when called.
+        hot_function_disabled,
         /// Converted from `hot_accept` to this in js_parser.zig when it is
-        /// passed strings. Printed as `import.meta.hot.acceptSpecifiers`
+        /// passed strings. Printed as `hmr.hot.acceptSpecifiers`
         hot_accept_visited,
         /// Prints the resolved specifier string for an import record.
         resolved_specifier_string: ImportRecord.Index,

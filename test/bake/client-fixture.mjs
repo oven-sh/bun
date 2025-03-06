@@ -3,12 +3,13 @@
 // - https://github.com/oven-sh/bun/issues/6044
 import { Window } from "happy-dom";
 import util from "node:util";
+import { exitCodeMap } from "./exit-code-map.mjs";
 
 const args = process.argv.slice(2);
 let url = args.find(arg => !arg.startsWith("-"));
 if (!url) {
   console.error("Usage: node client-fixture.mjs <url> [...]");
-  process.exit(1);
+  process.exit(exitCodeMap.usage);
 }
 url = new URL(url, "http://localhost:3000");
 
@@ -39,6 +40,7 @@ function reset() {
       error: () => {},
       warn: () => {},
       info: () => {},
+      assert: () => {},
     };
   }
 }
@@ -91,7 +93,7 @@ function createWindow(windowUrl) {
             hexDump += "\n";
           }
           console.error(hexDump);
-          process.exit(2);
+          process.exit(exitCodeMap.websocketMessagesAreBanned);
         }
       });
     }
@@ -111,7 +113,7 @@ function createWindow(windowUrl) {
       console.error("[E]", ...args);
       originalConsole.error(...args);
       if (!expectErrors) {
-        process.exit(4);
+        process.exit(exitCodeMap.consoleError);
       }
     },
     warn: (...args) => {
@@ -123,6 +125,11 @@ function createWindow(windowUrl) {
       if (args[0]?.startsWith("Updated modules:")) return;
       console.info("[I]", ...args);
       originalConsole.info(...args);
+    },
+    assert: (value, ...args) => {
+      if (value) return;
+      console.error(...args);
+      process.exit(exitCodeMap.assertionFailed);
     },
   };
 
@@ -137,8 +144,8 @@ function createWindow(windowUrl) {
       if (pendingReloadTimer) clearTimeout(pendingReloadTimer);
       pendingReloadTimer = setTimeout(() => {
         // If we get here, permission never came
-        console.error("[E] location.reload() called but permission never arrived");
-        process.exit(2);
+        console.error("[E] location.reload() called unexpectedly");
+        process.exit(exitCodeMap.unexpectedReload);
       }, 1000);
     }
   };
@@ -182,7 +189,7 @@ async function handleReload() {
     await loadPage(window);
   } catch (error) {
     console.error("Failed to reload page:", error);
-    process.exit(1);
+    process.exit(exitCodeMap.reloadFailed);
   }
 }
 
@@ -191,16 +198,16 @@ async function loadPage() {
   const response = await fetch(url);
   if (response.status >= 400 && response.status <= 499) {
     console.error("Failed to load page:", response.statusText);
-    process.exit(1);
+    process.exit(exitCodeMap.reloadFailed);
   }
   if (!response.headers.get("content-type").match(/^text\/html;?/)) {
     console.error("Invalid content type:", response.headers.get("content-type"));
-    process.exit(1);
+    process.exit(exitCodeMap.reloadFailed);
   }
   const html = await response.text();
   if (!html.includes("<script")) {
     console.error("missing <script>");
-    process.exit(1);
+    process.exit(exitCodeMap.reloadFailed);
   }
   window.document.write(html);
 }
@@ -365,9 +372,9 @@ process.on("disconnect", () => {
   process.exit(0);
 });
 process.on("exit", () => {
-  if (expectingReload) {
+  if (process.exitCode === 0 && expectingReload) {
     console.error("[E] location.reload() was not called");
-    process.exit(2);
+    process.exit(exitCodeMap.reloadNotCalled);
   }
 });
 

@@ -13005,7 +13005,7 @@ pub const LinkerContext = struct {
     ///   ┃   'module_1', 1, "add",
     ///   ┃   'module_2', 2, "mul", "div",
     ///   ┃   'module_3', 0, // bare or import star
-    ///     ], [ "default" ], (hmr) => {
+    ///     ], [ "default" ], [], (hmr) => {
     /// 2 ┃   var [module_1, module_2, module_3] = hmr.imports;
     ///   ┃   hmr.onUpdate = [
     ///   ┃     (module) => (module_1 = module),

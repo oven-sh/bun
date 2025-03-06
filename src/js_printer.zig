@@ -1165,14 +1165,17 @@ fn NewPrinter(
         pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) void {
             p.addSourceMapping(loc);
             p.print("{");
-            p.printNewline();
+            if (stmts.len > 0) {
+                @branchHint(.likely);
+                p.printNewline();
 
-            p.indent();
-            p.printBlockBody(stmts);
-            p.unindent();
-            p.needs_semicolon = false;
+                p.indent();
+                p.printBlockBody(stmts);
+                p.unindent();
+                p.needs_semicolon = false;
 
-            p.printIndent();
+                p.printIndent();
+            }
             if (close_brace_loc != null and close_brace_loc.?.start > loc.start) {
                 p.addSourceMapping(close_brace_loc.?);
             }
@@ -2130,20 +2133,32 @@ fn NewPrinter(
                             p.printSymbol(p.options.commonjs_named_exports_ref);
                         }
                     },
-                    .hot => {
+                    .hot_enabled => {
                         bun.assert(p.options.module_type == .internal_bake_dev);
                         p.printSymbol(p.options.hmr_ref);
-                        p.print(".hot");
+                        p.print(".invalidHot()");
+                    },
+                    .hot_data => {
+                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".data");
                     },
                     .hot_accept => {
                         bun.assert(p.options.module_type == .internal_bake_dev);
                         p.printSymbol(p.options.hmr_ref);
-                        p.print(".hot.accept");
+                        p.print(".accept");
                     },
                     .hot_accept_visited => {
                         bun.assert(p.options.module_type == .internal_bake_dev);
                         p.printSymbol(p.options.hmr_ref);
-                        p.print(".hot.acceptSpecifiers");
+                        p.print(".acceptSpecifiers");
+                    },
+                    .hot_function_disabled,
+                    .hot_accept_disabled,
+                    .hot_disabled,
+                    => {
+                        bun.assert(p.options.module_type != .internal_bake_dev);
+                        p.printExpr(.{ .data = .e_undefined, .loc = expr.loc }, level, in_flags);
                     },
                     .resolved_specifier_string => |index| {
                         bun.assert(p.options.module_type == .internal_bake_dev);
@@ -5202,8 +5217,8 @@ fn NewPrinter(
                 if (func.body.stmts[0].data.s_lazy_export.* != .e_undefined) {
                     p.indent();
                     p.printIndent();
-                    p.printSymbol(p.options.commonjs_module_ref);
-                    p.print(".exports = ");
+                    p.printSymbol(p.options.hmr_ref);
+                    p.print(".cjs.exports = ");
                     p.printExpr(.{
                         .data = func.body.stmts[0].data.s_lazy_export.*,
                         .loc = func.body.stmts[0].loc,

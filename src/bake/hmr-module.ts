@@ -23,6 +23,10 @@ export const serverManifest = {};
 export const ssrManifest = {};
 /** Client */
 export let onServerSideReload: (() => Promise<void>) | null = null;
+const eventHandlers: Record<HMREvent, HotEventHandler[]> = {
+  "bun:afterUpdate": [],
+  "bun:beforeUpdate": [],
+};
 let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
@@ -39,8 +43,9 @@ const enum State {
 /** Given an Id, return the module namespace object.
  * For use in other functions in the HMR runtime.
  * Registers that module as a root. */
-export function loadExports<T>(id: Id): Promise<T> {
-  return loadModuleAsync(id, false, null).then(m => (m.esm ? m.exports : m.cjs.exports));
+export async function loadExports<T>(id: Id): Promise<T> {
+  const m = await loadModuleAsync(id, false, null);
+  return m.esm ? m.exports : m.cjs.exports;
 }
 
 interface HotAccept {
@@ -70,7 +75,8 @@ export class HMRModule {
    * Unused for CJS
    */
   imports: HMRModule[] | any[] | null = null;
-  /** Assignned by an ESM module's load function immediately */
+  /** Assignned by an ESM module's load function immediately.
+   * HTML files do not emit a store to this field */
   updateImport: ((exports: any) => void)[] | null = null;
   /** When calling `import.meta.hot.dispose` */
   onDispose: HotDisposeFunction[] | null = null;
@@ -80,6 +86,8 @@ export class HMRModule {
   depAccepts: Record<Id, HotAccept> | null = null;
   /** All modules that have imported this module */
   importers = new Set<HMRModule>();
+  /** import.meta.hot.data rewrites to this */
+  data: any = {};
 
   constructor(id: Id, isCommonJS: boolean) {
     this.id = id;
@@ -105,10 +113,12 @@ export class HMRModule {
     }
   }
 
+  /** Lowered from `.e_import` (import(id)) */
   dynamicImport(id: Id, opts?: ImportCallOptions) {
     const found = loadModuleAsync(id, true, this);
     if (found) {
-      return found.then(getEsmExports);
+      if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
+      return (found as Promise<HMRModule>).then(getEsmExports);
     }
     return opts
       ? (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(id, opts)
@@ -136,21 +146,127 @@ export class HMRModule {
     }
   }
 
+  reactRefreshAccept() {
+    if (isReactRefreshBoundary(this.exports)) {
+      this.accept();
+    }
+  }
+
   get importMeta() {
     const importMeta = {
       url: `bun://${this.id}`,
       main: false,
       require: this.require.bind(this),
-      // transpiler rewrites `import.meta.hot` to access `HotModule.hot`
+      // transpiler rewrites `import.meta.hot.*` to access `HMRModule.*`
     };
     Object.defineProperty(this, "importMeta", { value: importMeta });
     return importMeta;
   }
 
-  get hot() {
-    const hot = new Hot(this);
-    Object.defineProperty(this, "hot", { value: hot });
-    return hot;
+  // Bundler rewrites all import.meta.hot.* to access the corresponding methods
+  // on HMRModule directly.  The following code implements that interface. Data
+  // is an opaque property, which is preserved simply by the fact HMRModule is
+  // not destructed.
+
+  invalidHot() {
+    return new Proxy(
+      {},
+      {
+        get(target, prop, receiver) {
+          if (typeof prop === "symbol") {
+            return undefined;
+          }
+          throw new Error(`import.meta.hot.${prop} cannot be used indirectly.`);
+        },
+        set(target, prop, value, receiver) {
+          if (typeof prop === "symbol") {
+            return false;
+          }
+          throw new Error(`The import.meta.hot object cannot be mutated.`);
+        },
+      },
+    );
+  }
+
+  accept(
+    arg1?: string | readonly string[] | HotAcceptFunction,
+    arg2?: HotAcceptFunction | HotArrayAcceptFunction | undefined,
+  ) {
+    if (arg2 == undefined) {
+      if (arg1 == undefined) {
+        this.selfAccept = implicitAcceptFunction;
+        return;
+      }
+      if (typeof arg1 !== "function") {
+        throw new Error("import.meta.hot.accept requires a callback function");
+      }
+      // Self-accept function
+      this.selfAccept = arg1;
+    } else {
+      throw new Error(
+        '"import.meta.hot.accept" must be directly called with string literals for ' +
+          "the specifiers. This way, the bundler can pre-process the arguments.",
+      );
+    }
+  }
+
+  acceptSpecifiers(specifiers: string | readonly string[], cb?: HotAcceptFunction | HotArrayAcceptFunction) {
+    this.depAccepts ??= {};
+    const isArray = Array.isArray(specifiers);
+    const accept: HotAccept = {
+      modules: isArray ? specifiers : [specifiers],
+      cb: cb as HotAcceptFunction,
+      single: isArray,
+    };
+    if (isArray) {
+      for (const specifier of specifiers) {
+        this.depAccepts[specifier] = accept;
+      }
+    } else {
+      this.depAccepts[specifiers as string] = accept;
+    }
+  }
+
+  decline() {} // Vite: "This is currently a noop and is there for backward compatibility"
+
+  dispose(cb: HotDisposeFunction) {
+    (this.onDispose ??= []).push(cb);
+  }
+
+  prune(cb: HotDisposeFunction) {
+    // Bun currently does not throw away detached modules yet.
+    // So never calling the function technically implements this.
+  }
+
+  invalidate() {
+    throw new Error("TODO: implement ImportMetaHot.invalidate");
+  }
+
+  on(event: string, cb: HotEventHandler) {
+    if (isUnsupportedViteEventName(event)) {
+      throw new Error(`Unsupported event name: ${event}`);
+    }
+
+    // Vite compatibility, but favor using Bun's event names.
+    if (event === "vite:beforeUpdate" || event === "vite:afterUpdate") {
+      event = "bun:" + event.slice(4);
+    }
+
+    (eventHandlers[event] ??= []).push(cb);
+    this.dispose(() => this.off(event, cb));
+  }
+
+  off(event: string, cb: HotEventHandler) {
+    const handlers = eventHandlers[event];
+    if (!handlers) return;
+    const index = handlers.indexOf(cb);
+    if (index !== -1) {
+      handlers.splice(index, 1);
+    }
+  }
+
+  send(event: string, cb: HotEventHandler) {
+    throw new Error("TODO: implement ImportMetaHot.send");
   }
 
   /** Server-only */
@@ -221,7 +337,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.importers.add(importer);
     }
 
-    const depsList = parseEsmDependencies(mod, deps, loadModuleSync);
+    const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
     mod.imports = depsList.map(getEsmExports);
     load(mod);
     mod.imports = depsList;
@@ -232,14 +348,14 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
 }
 
 // Do not add the `async` keyword to this function, that way the list of
-// `HotModule`s can be created synchronously, even if evaluation is not.
+// `HMRModule`s can be created synchronously, even if evaluation is not.
 // Returns `null` if the module is not found in dynamic mode, so that the caller
 // can use the `import` keyword instead.
 export function loadModuleAsync<IsUserDynamic extends boolean>(
   id: Id,
   isUserDynamic: IsUserDynamic,
   importer: HMRModule | null,
-): (IsUserDynamic extends true ? null : never) | Promise<HMRModule> {
+): (IsUserDynamic extends true ? null : never) | Promise<HMRModule> | HMRModule {
   // First, try and re-use an existing module.
   let mod = registry.get(id)!;
   if (mod) {
@@ -251,7 +367,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       if (importer) {
         mod.importers.add(importer);
       }
-      return Promise.resolve(mod);
+      return mod;
     }
   }
   const loadOrEsmModule = unloadedModuleRegistry[id];
@@ -278,7 +394,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     }
     mod.state = State.Loaded;
 
-    return Promise.resolve(mod);
+    return mod;
   } else {
     // ESM
     if (IS_BUN_DEVELOPMENT) {
@@ -303,26 +419,54 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
 
-    const parsedImportModules = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
-    return Promise.all(parsedImportModules)
-      .then(modules => {
-        mod.imports = modules.map(getEsmExports);
-        const p = load(mod);
-        mod.imports = modules;
-        if (p) {
-          return p.then(() => {
-            mod.state = State.Loaded;
-            return mod;
-          });
-        }
+    const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
+    if (IS_BUN_DEVELOPMENT) {
+      if (isAsync) {
+        assert(list.some(x => x instanceof Promise));
+      } else {
+        assert(list.every(x => x instanceof HMRModule));
+      }
+    }
+
+    // Running finishLoadModuleAsync synchronously when there are no promises is
+    // not a performance optimization but a behavioral correctness issue.
+    return isAsync
+      ? Promise.all(list).then(
+          list => finishLoadModuleAsync(mod, load, list),
+          e => {
+            mod.state = State.Error;
+            mod.failure = e;
+            throw e;
+          },
+        )
+      : finishLoadModuleAsync(
+          mod,
+          load,
+          list as HMRModule[], // no promises as by assert above
+        );
+  }
+}
+
+function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
+  try {
+    mod.imports = modules.map(getEsmExports);
+    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
+    const p = load(mod);
+    mod.imports = modules;
+    if (p) {
+      return p.then(() => {
         mod.state = State.Loaded;
+        if (shouldPatchImporters) patchImporters(mod);
         return mod;
-      })
-      .catch(e => {
-        mod.state = State.Error;
-        mod.failure = e;
-        throw e;
       });
+    }
+    if (shouldPatchImporters) patchImporters(mod);
+    mod.state = State.Loaded;
+    return mod;
+  } catch (e) {
+    mod.state = State.Error;
+    mod.failure = e;
+    throw e;
   }
 }
 
@@ -333,14 +477,15 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   enqueueModuleLoad: T,
 ) {
   let i = 0;
-  let loadedDeps: ReturnType<T>[] = [];
+  let list: ReturnType<T>[] = [];
   let dedupeSet: Set<Id> | null = null;
+  let isAsync = false;
   while (i < deps.length) {
     const dep = deps[i] as string;
     if (IS_BUN_DEVELOPMENT) assert(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
     if (IS_BUN_DEVELOPMENT) assert(typeof deps[i + 1] === "number");
-    loadedDeps.push(enqueueModuleLoad(dep, false, mod));
+    list.push(enqueueModuleLoad(dep, false, mod));
 
     const unloadedModule = unloadedModuleRegistry[dep];
     if (!unloadedModule) {
@@ -361,12 +506,13 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         }
         i++;
       }
+      isAsync ||= unloadedModule[4];
     } else {
       if (IS_BUN_DEVELOPMENT) assert(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
     }
   }
-  return loadedDeps;
+  return { list, isAsync };
 }
 
 function findExportStar(starImports: Id[], key: string, dedupeSet: Set<Id>) {
@@ -394,90 +540,17 @@ function getEsmExports(m: HMRModule) {
   return m.esm ? m.exports : (m.exports ??= toESM(m.cjs.exports));
 }
 
-type HotAcceptFunction = (esmExports: any | void) => void;
+type HotAcceptFunction = (esmExports?: any | void) => void;
 type HotArrayAcceptFunction = (esmExports: (any | void)[]) => void;
 type HotDisposeFunction = (data: any) => void | Promise<void>;
 type HotEventHandler = (data: any) => void;
-
-/** `import.meta.hot` */
-class Hot {
-  #module: HMRModule;
-  data = {};
-
-  constructor(module: HMRModule) {
-    this.#module = module;
-  }
-
-  accept(
-    arg1: string | readonly string[] | HotAcceptFunction,
-    arg2: HotAcceptFunction | HotArrayAcceptFunction | undefined,
-  ) {
-    if (arg2 == undefined) {
-      arg1 ??= () => {};
-      if (typeof arg1 !== "function") {
-        throw new Error("import.meta.hot.accept requires a callback function");
-      }
-      // Self-accept function
-      this.#module.selfAccept = arg1;
-    } else {
-      throw new Error(
-        '"import.meta.hot.accept" must be directly called with string literals for ' +
-          "the specifiers. This way, the bundler can pre-process the arguments.",
-      );
-    }
-  }
-
-  acceptSpecifiers(specifiers: string | readonly string[], cb?: HotAcceptFunction | HotArrayAcceptFunction) {
-    this.#module.depAccepts ??= {};
-    const isArray = Array.isArray(specifiers);
-    const accept: HotAccept = {
-      modules: isArray ? specifiers : [specifiers],
-      cb: cb as HotAcceptFunction,
-      single: isArray,
-    };
-    if (isArray) {
-      for (const specifier of specifiers) {
-        this.#module.depAccepts[specifier] = accept;
-      }
-    } else {
-      this.#module.depAccepts[specifiers as string] = accept;
-    }
-  }
-
-  decline() {} // Vite: "This is currently a noop and is there for backward compatibility"
-
-  dispose(cb: HotDisposeFunction) {
-    (this.#module.onDispose ??= []).push(cb);
-  }
-
-  prune(cb: HotDisposeFunction) {
-    (this.#module.onDispose ??= []).push(cb);
-  }
-
-  invalidate() {
-    throw new Error("TODO: implement ImportMetaHot.invalidate");
-  }
-
-  on(event: string, cb: HotEventHandler) {
-    if (isUnsupportedViteEventName(event)) {
-      throw new Error(`Unsupported event name: ${event}`);
-    }
-
-    throw new Error("TODO: implement ImportMetaHot.on");
-  }
-
-  off(event: string, cb: HotEventHandler) {
-    throw new Error("TODO: implement ImportMetaHot.off");
-  }
-
-  send(event: string, cb: HotEventHandler) {
-    throw new Error("TODO: implement ImportMetaHot.send");
-  }
-}
+type HMREvent = ("bun:beforeUpdate" | "bun:afterUpdate") & string;
 
 /** Called when modules are replaced. */
 export async function replaceModules(modules: Record<Id, UnloadedModule>) {
   Object.assign(unloadedModuleRegistry, modules);
+
+  emitEvent("bun:beforeUpdate", null);
 
   type ToAccept = {
     cb: HotAccept;
@@ -506,6 +579,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
 
       // Stop propagation if the module is self-accepting
       if (mod.selfAccept) {
+        toReload.add(mod);
+        visited.add(mod);
+        continue;
+      }
+      // Modules that mutate data are implied to handle updates via reusing their `data` property
+      if (Object.keys(mod.data).length > 0) {
+        mod.selfAccept ??= implicitAcceptFunction;
         toReload.add(mod);
         visited.add(mod);
         continue;
@@ -549,25 +629,27 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
         assert(current);
         assert(current.selfAccept === null);
       }
-      if (!current!.importers) {
+      if (current.importers.size === 0) {
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
       }
-      while (current.importers.size > 0) {
+      outer: while (current.importers.size > 0) {
         path.push(current.id);
-        for (const importer of current!.importers) {
-          if (importer.selfAccept) continue;
-          if (importer.depAccepts?.[boundary]) continue;
+        inner: for (const importer of current.importers) {
+          if (importer.selfAccept) continue inner;
+          if (importer.depAccepts?.[boundary]) continue inner;
           current = importer;
-          break;
+          continue outer;
         }
+        if (IS_BUN_DEVELOPMENT) assert(false);
+        break;
       }
       path.push(current.id);
       if (IS_BUN_DEVELOPMENT) {
         assert(path.length > 0);
       }
-      message += `Module "${boundary}" is not accepted by ${path[0]}${path.length > 1 ? "," : "."}\n`;
-      for (let i = 1, len = path.length; i < len; i++) {
+      message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
+      for (let i = 2, len = path.length; i < len; i++) {
         const isLast = i === len - 1;
         message += `${isLast ? "└" : "├"} imported by "${path[i]}"${isLast ? "." : ","}\n`;
       }
@@ -593,7 +675,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
     for (const mod of toDispose) {
       mod.state = State.Stale;
       for (const fn of mod.onDispose!) {
-        const p = fn(mod.hot.data);
+        const p = fn(mod.data);
         if (p && p instanceof Promise) {
           disposePromises.push(p);
         }
@@ -612,33 +694,56 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
     mod.selfAccept = null;
     mod.depAccepts = null;
 
-    promises.push(
-      loadModuleAsync(mod.id, false, null).then(mod => {
-        if (selfAccept) {
-          selfAccept(getEsmExports(mod));
-        }
-        return mod;
-      }),
-    );
-  }
-  for (const mod of await Promise.all(promises)) {
-    const { importers } = mod;
-    const exports = getEsmExports(mod);
-    for (const importer of importers) {
-      if (!importer.esm) continue;
-      const index = importer.imports!.indexOf(mod);
-      if (index === -1) {
-        if (IS_BUN_DEVELOPMENT) assert(false);
-        continue;
+    const modOrPromise = loadModuleAsync(mod.id, false, null);
+    if (modOrPromise === mod) {
+      if (selfAccept) {
+        selfAccept(getEsmExports(mod));
       }
-      importer.updateImport![index](exports);
+    } else {
+      if (IS_BUN_DEVELOPMENT) assert(modOrPromise instanceof Promise);
+      promises.push(
+        (modOrPromise as Promise<HMRModule>).then(mod => {
+          if (selfAccept) {
+            selfAccept(getEsmExports(mod));
+          }
+          return mod;
+        }),
+      );
     }
+  }
+  if (promises.length > 0) {
+    await Promise.all(promises);
+  }
+  for (const mod of toReload) {
+    const { selfAccept } = mod;
+    if (selfAccept && selfAccept !== implicitAcceptFunction) continue;
+    patchImporters(mod);
   }
 
   // Call all accept callbacks
   for (const { cb: cbEntry, key } of toAccept) {
     const { cb: cbFn, modules, single } = cbEntry;
     cbFn(single ? getEsmExports(registry.get(key)!) : createAcceptArray(modules, key));
+  }
+
+  if (refreshRuntime) {
+    refreshRuntime.performReactRefresh();
+  }
+
+  emitEvent("bun:afterUpdate", null);
+}
+
+function patchImporters(mod: HMRModule) {
+  const { importers } = mod;
+  const exports = getEsmExports(mod);
+  for (const importer of importers) {
+    if (!importer.esm || !importer.updateImport) continue;
+    const index = importer.imports!.indexOf(mod);
+    if (index === -1) {
+      if (IS_BUN_DEVELOPMENT) assert(false);
+      continue;
+    }
+    importer.updateImport![index](exports);
   }
 }
 
@@ -653,8 +758,6 @@ function createAcceptArray(modules: string[], key: Id) {
 
 function isUnsupportedViteEventName(str: string) {
   return (
-    str === "vite:beforeUpdate" ||
-    str === "vite:afterUpdate" ||
     str === "vite:beforeFullReload" ||
     str === "vite:beforePrune" ||
     str === "vite:invalidate" ||
@@ -662,6 +765,14 @@ function isUnsupportedViteEventName(str: string) {
     str === "vite:ws:disconnect" ||
     str === "vite:ws:connect"
   );
+}
+
+function emitEvent(event: string, data: any) {
+  const handlers = eventHandlers[event];
+  if (!handlers) return;
+  for (const handler of handlers) {
+    handler(data);
+  }
 }
 
 function throwNotFound(id: Id, isUserDynamic: boolean) {
@@ -718,11 +829,51 @@ function registerSynthetic(id: Id, esmExports) {
 }
 
 function assert(condition: any): asserts condition {
-  if (!condition) throw new Error("Debug assertion failed");
+  if (!condition) {
+    console.assert(false, "Debug assertion failed");
+  }
 }
 
-export function setRefreshRuntime(runtime: any) {
-  refreshRuntime = runtime;
+export function setRefreshRuntime(runtime: HMRModule) {
+  refreshRuntime = getEsmExports(runtime);
+
+  if (typeof refreshRuntime.injectIntoGlobalHook === "function") {
+    refreshRuntime.injectIntoGlobalHook(window);
+  } else {
+    console.warn(
+      "refreshRuntime.injectIntoGlobalHook is not a function. " +
+        "Something is wrong with the React Fast Refresh runtime.",
+    );
+  }
+}
+
+// react-refresh/runtime does not provide this function for us
+// https://github.com/facebook/metro/blob/febdba2383113c88296c61e28e4ef6a7f4939fda/packages/metro/src/lib/polyfills/require.js#L748-L774
+function isReactRefreshBoundary(esmExports): boolean {
+  const { isLikelyComponentType } = refreshRuntime;
+  if (!isLikelyComponentType) return true;
+  if (isLikelyComponentType(esmExports)) {
+    return true;
+  }
+  if (esmExports == null || typeof esmExports !== "object") {
+    // Exit if we can't iterate over exports.
+    return false;
+  }
+  let hasExports = false;
+  let areAllExportsComponents = true;
+  for (const key in esmExports) {
+    hasExports = true;
+    const desc = Object.getOwnPropertyDescriptor(esmExports, key);
+    if (desc && desc.get) {
+      // Don't invoke getters as they may have side effects.
+      return false;
+    }
+    const exportValue = esmExports[key];
+    if (!isLikelyComponentType(exportValue)) {
+      areAllExportsComponents = false;
+    }
+  }
+  return hasExports && areAllExportsComponents;
 }
 
 function implicitAcceptFunction() {}

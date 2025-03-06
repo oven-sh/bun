@@ -565,13 +565,16 @@ function spawnSync(file, args, options) {
       exitedDueToTimeout,
       pid,
     } = Bun.spawnSync({
-      cmd: options.args,
+      // normalizeSpawnargs has already prepended argv0 to the spawnargs array
+      // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
+      // so we have to set argv0 to spawnargs[0] and cmd[0] to file
+      cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
       env: options.env || undefined,
       cwd: options.cwd || undefined,
       stdio: bunStdio,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
-      argv0: options.argv0,
+      argv0: options.args[0],
       timeout: options.timeout,
       killSignal: options.killSignal,
     });
@@ -880,6 +883,7 @@ function normalizeExecArgs(command, options, callback) {
   };
 }
 
+const kBunEnv = Symbol("bunEnv");
 function normalizeSpawnArguments(file, args, options) {
   validateString(file, "file");
   validateArgumentNullCheck(file, "file");
@@ -969,10 +973,14 @@ function normalizeSpawnArguments(file, args, options) {
   }
 
   // Handle argv0
-  ArrayPrototypeUnshift.$call(args, file);
+  if (typeof options.argv0 === "string") {
+    ArrayPrototypeUnshift.$call(args, options.argv0);
+  } else {
+    ArrayPrototypeUnshift.$call(args, file);
+  }
 
   const env = options.env || process.env;
-  const envPairs = {};
+  const bunEnv = {};
 
   // // process.env.NODE_V8_COVERAGE always propagates, making it possible to
   // // collect coverage for programs that spawn with white-listed environment.
@@ -1001,7 +1009,7 @@ function normalizeSpawnArguments(file, args, options) {
     if (value !== undefined) {
       validateArgumentNullCheck(key, `options.env['${key}']`);
       validateArgumentNullCheck(value, `options.env['${key}']`);
-      envPairs[key] = value;
+      bunEnv[key] = value;
     }
   }
 
@@ -1011,8 +1019,9 @@ function normalizeSpawnArguments(file, args, options) {
     ...options,
     args,
     cwd,
+
     detached: !!options.detached,
-    envPairs,
+    [kBunEnv]: bunEnv,
     file,
     windowsHide: !!options.windowsHide,
     windowsVerbatimArguments: !!windowsVerbatimArguments,
@@ -1032,6 +1041,15 @@ function checkExecSyncError(ret, args, cmd?) {
     err = genericNodeError(msg, ret);
   }
   return err;
+}
+function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> | undefined {
+  if (!envPairs) return undefined;
+  const resEnv = {};
+  for (const line of envPairs) {
+    const [key, ...value] = line.split("=", 2);
+    resEnv[key] = value.join("=");
+  }
+  return resEnv;
 }
 
 //------------------------------------------------------------------------------
@@ -1248,26 +1266,19 @@ class ChildProcess extends EventEmitter {
     validateOneOf(options.serialization, "options.serialization", [undefined, "json", "advanced"]);
     const serialization = options.serialization || "json";
 
-    validateString(options.file, "options.file");
-    // NOTE: This is confusing... So node allows you to pass a file name
-    // But also allows you to pass a command in the args and it should execute
-    var file;
-    file = this.spawnfile = options.file;
-
-    var spawnargs;
-    if (options.args == null) {
-      spawnargs = this.spawnargs = [];
-    } else {
-      validateArray(options.args, "options.args");
-      spawnargs = this.spawnargs = options.args;
-    }
-
     const stdio = options.stdio || ["pipe", "pipe", "pipe"];
     const bunStdio = getBunStdioFromOptions(stdio);
-    const argv0 = options.argv0 || file;
 
     const has_ipc = $isJSArray(stdio) && stdio.includes("ipc");
-    var env = options.envPairs || process.env;
+
+    // validate options.envPairs but only if has_ipc. for some reason.
+    if (has_ipc) {
+      if (options.envPairs !== undefined) {
+        validateArray(options.envPairs, "options.envPairs");
+      }
+    }
+
+    var env = options[kBunEnv] || parseEnvPairs(options.envPairs) || process.env;
 
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
@@ -1275,9 +1286,25 @@ class ChildProcess extends EventEmitter {
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
+    validateString(options.file, "options.file");
+    var file;
+    file = this.spawnfile = options.file;
+
+    var spawnargs;
+    if (options.args === undefined) {
+      spawnargs = this.spawnargs = [];
+      // how is this allowed?
+    } else {
+      validateArray(options.args, "options.args");
+      spawnargs = this.spawnargs = options.args;
+    }
+    // normalizeSpawnargs has already prepended argv0 to the spawnargs array
+    // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
+    // so we have to set argv0 to spawnargs[0] and cmd[0] to file
+
     try {
       this.#handle = Bun.spawn({
-        cmd: spawnargs,
+        cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
         stdio: bunStdio,
         cwd: options.cwd || undefined,
         env: env,
@@ -1305,7 +1332,7 @@ class ChildProcess extends EventEmitter {
         ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
         onDisconnect: has_ipc ? ok => this.#onDisconnect(ok) : undefined,
         serialization,
-        argv0,
+        argv0: spawnargs[0],
         windowsHide: !!options.windowsHide,
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
       });

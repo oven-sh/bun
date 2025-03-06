@@ -136,6 +136,11 @@ pub const TOML = struct {
                     loc,
                 );
             },
+            // `-` is a valid identifier
+            .t_minus => {
+                try p.lexer.next();
+                return p.e(E.String{ .data = "-" }, loc);
+            },
             // what we see as a number here could actually be a string
             .t_numeric_literal => {
                 const literal = p.lexer.raw();

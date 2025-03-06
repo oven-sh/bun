@@ -5,23 +5,10 @@ const VM = JSC.VM;
 
 pub export fn Bun__isBusyDoingImportantWork(vm: *JSC.VirtualMachine) bool {
     const loop = vm.eventLoop();
-    if (loop.is_doing_something_important) {
-        return true;
-    }
-
-    if (loop.tasks.count > 0) {
-        return true;
-    }
-
-    if (loop.immediate_tasks.count > 0 or loop.next_immediate_tasks.count > 0) {
-        return true;
-    }
-
-    if (loop.concurrent_tasks.peek() > 0) {
-        return true;
-    }
-
-    return false;
+    return loop.is_doing_something_important or
+        loop.tasks.count > 0 or
+        loop.immediate_tasks.count > 0 or loop.next_immediate_tasks.count > 0 or
+        loop.concurrent_tasks.peek() > 0;
 }
 
 // Wrapper for the Bun::GCController C++ class

@@ -1493,7 +1493,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     return array.items;
 }
 
-fn getJavaScriptCodeForHTMLFile(
+fn generateJavaScriptCodeForHTMLFile(
     dev: *DevServer,
     index: bun.JSAst.Index,
     import_records: []bun.BabyList(bun.ImportRecord),
@@ -1502,14 +1502,14 @@ fn getJavaScriptCodeForHTMLFile(
 ) bun.OOM![]const u8 {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var array: std.ArrayListUnmanaged(u8) = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch bun.outOfMemory();
+    var array = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch bun.outOfMemory();
     defer array.deinit(sfa);
     const w = array.writer(sfa);
 
     try w.writeAll("  ");
     try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
-    try w.writeAll("(m) {\n  ");
-    try w.writeAll("  return Promise.all([\n");
+    try w.writeAll(": [ [");
+    var any = false;
     for (import_records[index.get()].slice()) |import| {
         if (import.source_index.isValid()) {
             if (!loaders[import.source_index.get()].isJavaScriptLike())
@@ -1521,15 +1521,20 @@ fn getJavaScriptCodeForHTMLFile(
             if (file.flags.kind != .js)
                 continue;
         }
-
-        try w.writeAll("      m.dynamicImport(");
+        if (!any) {
+            any = true;
+            try w.writeAll("\n");
+        }
+        try w.writeAll("    ");
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
-        try w.writeAll("),\n  ");
+        try w.writeAll(", 0,\n");
     }
-    try w.writeAll("    ]);\n  ");
-    try w.writeAll("},\n");
+    if (any) {
+        try w.writeAll("  ");
+    }
+    try w.writeAll("], [], [], () => {}, false],\n");
 
-    // Avoid-recloning if it is was moved to the hap
+    // Avoid-recloning if it is was moved to the heap
     return if (array.items.ptr == &sfa_state.buffer)
         try dev.allocator.dupe(u8, array.items)
     else
@@ -1736,7 +1741,7 @@ fn prepareAndLogResolutionFailures(dev: *DevServer) !void {
 
     // Theoretically, it shouldn't be possible for errors to leak into dev.log, but just in
     // case that happens, they can be printed out.
-    if (dev.log.hasErrors()) {
+    if (dev.log.hasErrors() and dev.log.msgs.items.len > 0) {
         if (Environment.isDebug) {
             Output.debugWarn("dev.log should not be written into when using DevServer", .{});
         }
@@ -2166,7 +2171,7 @@ pub fn finalizeBundle(
     for (result.htmlChunks()) |*chunk| {
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
         const compile_result = chunk.compile_results_for_chunk[0].html;
-        const generated_js = try dev.getJavaScriptCodeForHTMLFile(
+        const generated_js = try dev.generateJavaScriptCodeForHTMLFile(
             index,
             import_records,
             input_file_sources,
@@ -4349,7 +4354,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             it = g.first_dep.items[index.get()].unwrap();
             while (it) |edge_index| {
                 const dep = g.edges.items[edge_index.get()];
-                it = dep.next_import.unwrap();
+                it = dep.next_dependency.unwrap();
                 assert(dep.imported == index);
 
                 bv2.enqueueFileFromDevServerIncrementalGraphInvalidation(
@@ -5624,7 +5629,7 @@ fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
             try w.writeInt(u32, @intCast(normalized_key.len), .little);
             if (k.len == 0) continue;
             try w.writeAll(normalized_key);
-            try w.writeByte(@intFromBool(g.stale_files.isSet(i) or switch (side) {
+            try w.writeByte(@intFromBool(g.stale_files.isSetAllowOutOfBound(i, true) or switch (side) {
                 .server => v.failed,
                 .client => v.flags.failed,
             }));
@@ -5777,7 +5782,7 @@ pub const MessageId = enum(u8) {
     /// Sent in response to `set_url`.
     /// - `u32`: Route index
     set_url_response = 'n',
-    /// Used for syncronization in dev server tests, to identify when a update was
+    /// Used for synchronization in DevServer tests, to identify when a update was
     /// acknowledged by the watcher but intentionally took no action.
     redundant_watch = 'r',
 
@@ -6153,15 +6158,6 @@ pub const HotReloadEvent = struct {
             g.invalidate(changed_file_paths, entry_points, temp_alloc) catch bun.outOfMemory();
         }
 
-        if (dev.has_tailwind_plugin_hack) |*map| {
-            for (map.keys()) |abs_path| {
-                const file = dev.client_graph.bundled_files.get(abs_path) orelse
-                    continue;
-                if (file.flags.kind == .css)
-                    entry_points.appendCss(temp_alloc, abs_path) catch bun.outOfMemory();
-            }
-        }
-
         if (entry_points.set.count() == 0) {
             Output.debugWarn("nothing to bundle", .{});
             if (changed_file_paths.len > 0)
@@ -6176,6 +6172,15 @@ pub const HotReloadEvent = struct {
 
             dev.publish(.redundant_watch, &.{MessageId.redundant_watch.char()}, .binary);
             return;
+        }
+
+        if (dev.has_tailwind_plugin_hack) |*map| {
+            for (map.keys()) |abs_path| {
+                const file = dev.client_graph.bundled_files.get(abs_path) orelse
+                    continue;
+                if (file.flags.kind == .css)
+                    entry_points.appendCss(temp_alloc, abs_path) catch bun.outOfMemory();
+            }
         }
     }
 
@@ -7201,14 +7206,15 @@ const ErrorReportRequest = struct {
 
         // Stack traces can often end with random runtime frames that are not relevant.
         trim_runtime_frames: {
-            const first_non_runtime_frame = for (frames.items, 0..) |frame, i| {
+            // Ensure that trimming will not remove ALL frames.
+            for (frames.items) |frame| {
                 if (!frame.position.isInvalid() or frame.source_url.value.ZigString.slice().ptr != runtime_name) {
-                    break i;
+                    break;
                 }
             } else break :trim_runtime_frames;
 
             // Move all frames up
-            var i = first_non_runtime_frame + 1;
+            var i: usize = 0;
             for (frames.items[i..]) |frame| {
                 if (frame.position.isInvalid() and frame.source_url.value.ZigString.slice().ptr == runtime_name) {
                     continue; // skip runtime frames

@@ -581,12 +581,12 @@ pub const Format = enum {
     /// Bake uses a special module format for Hot-module-reloading. It includes a
     /// runtime payload, sourced from src/bake/hmr-runtime-{side}.ts.
     ///
-    /// ((input_graph, config) => {
+    /// ((unloadedModuleRegistry, config) => {
     ///   ... runtime code ...
     /// })({
-    ///   "module1.ts"(module) { ... },
-    ///   "module2.ts"(module) { ... },
-    /// }, { metadata });
+    ///   "module1.ts": ...,
+    ///   "module2.ts": ...,
+    /// }, { ...metadata... });
     internal_bake_dev,
 
     pub fn keepES6ImportExportSyntax(this: Format) bool {

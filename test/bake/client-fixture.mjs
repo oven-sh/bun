@@ -13,6 +13,7 @@ if (!url) {
 url = new URL(url, "http://localhost:3000");
 
 const storeHotChunks = args.includes("--store-hot-chunks");
+const expectErrors = args.includes("--expect-errors");
 
 // Create a new window instance
 let window;
@@ -109,7 +110,9 @@ function createWindow(windowUrl) {
     error: (...args) => {
       console.error("[E]", ...args);
       originalConsole.error(...args);
-      process.exit(4);
+      if (!expectErrors) {
+        process.exit(4);
+      }
     },
     warn: (...args) => {
       console.warn("[W]", ...args);
@@ -319,8 +322,8 @@ process.on("message", async message => {
       }
 
       const errors = [];
-      const messages = overlay.shadowRoot.querySelectorAll(".b-msg");
-      for (const message of messages) {
+      const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
+      for (const message of buildErrors) {
         const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
         const label = message.querySelector(".log-label").textContent;
         const text = message.querySelector(".log-text").textContent;
@@ -338,6 +341,11 @@ process.on("message", async message => {
         }
 
         errors.push(formatted);
+      }
+      const runtimeError = overlay.shadowRoot.querySelector(".r-error");
+      if (runtimeError) {
+        // TODO: line and column of this error
+        errors.push(runtimeError.querySelector(".message-desc").textContent);
       }
 
       process.send({

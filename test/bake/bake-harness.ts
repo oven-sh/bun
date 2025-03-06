@@ -328,7 +328,7 @@ export class Dev extends EventEmitter {
   async waitForHotReload() {
     if (this.nodeEnv !== "development") return Promise.resolve();
     const err = this.output.waitForLine(/error/i).catch(() => {});
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, 100).catch(() => {});
+    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, isCI ? 1000 : 250).catch(() => {});
     const ctrl = new AbortController();
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
@@ -355,6 +355,7 @@ export class Dev extends EventEmitter {
     const client = new Client(new URL(url, this.baseUrl).href, {
       storeHotChunks: options.storeHotChunks,
       hmr: this.nodeEnv === "development",
+      expectErrors: !!options.errors,
     });
     const onPanic = () => client.output.emit("panic");
     this.output.on("panic", onPanic);
@@ -558,7 +559,7 @@ export class Client extends EventEmitter {
   expectingReload = false;
   hmr = false;
 
-  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean }) {
+  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean }) {
     super();
     activeClient = this;
     const proc = Bun.spawn({
@@ -569,6 +570,7 @@ export class Client extends EventEmitter {
         path.join(import.meta.dir, "client-fixture.mjs"),
         url,
         options.storeHotChunks ? "--store-hot-chunks" : "",
+        options.expectErrors ? "--expect-errors" : "",
       ].filter(Boolean) as string[],
       env: bunEnv,
       serialization: "json",
@@ -1434,6 +1436,7 @@ function testImpl<T extends DevServerTest>(
         bunEnv,
         {
           FORCE_COLOR: "1",
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,

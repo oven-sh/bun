@@ -1043,8 +1043,9 @@ pub const BundleV2 = struct {
         this.incrementScanCounter();
         const source_index = Index.source(this.graph.input_files.len);
         const loader = brk: {
-            const default = path.loader(&this.transpiler.options.loaders) orelse .file;
-            break :brk default;
+            const loader = path.loader(&this.transpiler.options.loaders) orelse .file;
+            if (target != .browser) break :brk loader.disableHTML();
+            break :brk loader;
         };
 
         path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
@@ -12989,141 +12990,146 @@ pub const LinkerContext = struct {
     }
 
     /// The conversion logic is completely different for format .internal_bake_dev
-    fn convertStmtsForChunkForBake(
+    /// For CommonJS, all statements are copied `inside_wrapper_suffix` and this returns.
+    ///
+    /// For ESM, this function populates all three lists:
+    /// 1. outside_wrapper_prefix: all import statements, unmodified.
+    /// 2. inside_wrapper_prefix: a var decl line and a call to `module.retrieve`
+    /// 3. inside_wrapper_suffix: all non-import statements
+    ///
+    /// The imports are rewritten at print time to fit the packed array format
+    /// that the HMR runtime can decode. This encoding is low on JS objects and
+    /// indentation.
+    ///
+    /// 1 ┃ "module/esm": [ [
+    ///   ┃   'module_1', 1, "add",
+    ///   ┃   'module_2', 2, "mul", "div",
+    ///   ┃   'module_3', 0, // bare or import star
+    ///     ], [ "default" ], (hmr) => {
+    /// 2 ┃   var [module_1, module_2, module_3] = hmr.imports;
+    ///   ┃   hmr.onUpdate = [
+    ///   ┃     (module) => (module_1 = module),
+    ///   ┃     (module) => (module_2 = module),
+    ///   ┃     (module) => (module_3 = module),
+    ///   ┃   ];
+    ///
+    /// 3 ┃   console.log("my module", module_1.add(1, module_2.mul(2, 3));
+    ///   ┃   module.exports = {
+    ///   ┃     default: module_3.something(module_2.div),
+    ///   ┃   };
+    ///     }, false ],
+    ///        ----- "is the module async?"
+    fn convertStmtsForChunkForDevServer(
         c: *LinkerContext,
-        source_index: u32,
         stmts: *StmtList,
         part_stmts: []const js_ast.Stmt,
         allocator: std.mem.Allocator,
         ast: *JSAst,
     ) !void {
-        _ = source_index; // may be used
+        const hmr_api_ref = ast.wrapper_ref;
+        const hmr_api_id = Expr.initIdentifier(hmr_api_ref, Logger.Loc.Empty);
+        var esm_decls: std.ArrayListUnmanaged(B.Array.Item) = .empty;
+        var esm_callbacks: std.ArrayListUnmanaged(Expr) = .empty;
 
-        const receiver_args = try allocator.dupe(G.Arg, &.{
-            .{ .binding = Binding.alloc(allocator, B.Identifier{ .ref = ast.module_ref }, Logger.Loc.Empty) },
-        });
-        const module_id = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty);
+        // Modules which do not have side effects
+        for (part_stmts) |stmt| switch (stmt.data) {
+            else => try stmts.inside_wrapper_suffix.append(stmt),
 
-        for (part_stmts) |stmt| {
-            switch (stmt.data) {
-                else => {
-                    try stmts.inside_wrapper_suffix.append(stmt);
-                },
-                .s_import => |st| {
-                    // hmr-runtime.ts defines `module.dynamicImport` to be the
-                    // ESM `import`. this is different from `require` in that
-                    // esm <-> cjs is handled by the runtime instead of via
-                    // transpiler-added annotations like '__commonJS'. These
-                    // annotations couldn't be added since the bundled file
-                    // must not have any reference to it's imports. That way
-                    // changing a module's type does not re-bundle its
-                    // incremental dependencies.
-                    //
-                    // This cannot be done in the parse step because the final
-                    // pretty path is not yet known. the other statement types
-                    // are not handled here because some of those generate
-                    // new local variables (it is too late to do that here).
-                    const record = ast.import_records.at(st.import_record_index);
+            .s_import => |st| {
+                const record = ast.import_records.at(st.import_record_index);
 
-                    const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
+                const is_enabled = !record.path.is_disabled and if (record.source_index.isValid())
+                    c.parse_graph.input_files.items(.loader)[record.source_index.get()] != .css
+                else
+                    true;
+                if (!is_enabled) continue;
 
-                    // CSS files and `is_disabled` records should not generate an import statement
-                    const is_enabled = !record.path.is_disabled and if (record.source_index.isValid())
-                        c.parse_graph.input_files.items(.loader)[record.source_index.get()] != .css
-                    else
-                        true;
+                const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun or record.tag == .runtime;
+                const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
-                    // module.importSync('path', (module) => ns = module, ['dep', 'etc'])
-                    const call = if (is_enabled) if (record.tag == .runtime)
-                        Expr.init(E.Call, .{
-                            .target = Expr.init(E.Dot, .{
-                                .target = module_id,
-                                .name = "require",
-                                .name_loc = stmt.loc,
-                            }, stmt.loc),
-                            .args = .init(
-                                try allocator.dupe(Expr, &.{Expr.init(E.String, .{ .data = "bun:wrap" }, .Empty)}),
+                if (is_builtin and !is_bare_import) {
+                    // hmr.importBuiltin('...') or hmr.require('bun:wrap')
+                    const call = Expr.init(E.Call, .{
+                        .target = Expr.init(E.Dot, .{
+                            .target = hmr_api_id,
+                            .name = if (record.tag == .runtime) "require" else "builtin",
+                            .name_loc = stmt.loc,
+                        }, stmt.loc),
+                        .args = .init(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
+                            .data = if (record.tag == .runtime) "bun:wrap" else record.path.pretty,
+                        }, record.range.loc)})),
+                    }, stmt.loc);
+
+                    // var namespace = ...;
+                    try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                        .kind = .k_var, // remove a tdz
+                        .decls = try G.Decl.List.fromSlice(allocator, &.{.{
+                            .binding = Binding.alloc(
+                                allocator,
+                                B.Identifier{ .ref = st.namespace_ref },
+                                st.star_name_loc orelse stmt.loc,
                             ),
-                        }, .Empty)
-                    else call: {
-                        const path = if (record.source_index.isValid())
-                            c.parse_graph.input_files.items(.source)[record.source_index.get()].path
-                        else
-                            record.path;
-
-                        const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun;
-
-                        const key_expr = Expr.init(E.String, .{
-                            .data = path.pretty,
-                        }, stmt.loc);
-
-                        const items = try allocator.alloc(Expr, st.items.len);
-                        for (st.items, items) |item, *str| {
-                            str.* = Expr.init(E.String, .{ .data = item.alias }, item.name.loc);
-                        }
-
-                        const expr = Expr.init(E.Call, .{
-                            .target = Expr.init(E.Dot, .{
-                                .target = module_id,
-                                .name = if (is_builtin)
-                                    "importBuiltin"
-                                else
-                                    "importStmt",
-                                .name_loc = stmt.loc,
-                            }, stmt.loc),
-                            .args = js_ast.ExprNodeList.init(
-                                try allocator.dupe(Expr, if (is_bare_import or is_builtin)
-                                    &.{key_expr}
-                                else
-                                    &.{
-                                        key_expr,
-                                        Expr.init(E.Arrow, .{
-                                            .args = receiver_args,
-                                            .body = .{
-                                                .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
-                                                    .value = Expr.assign(
-                                                        Expr.initIdentifier(st.namespace_ref, st.star_name_loc orelse stmt.loc),
-                                                        module_id,
-                                                    ),
-                                                }, stmt.loc)}),
-                                                .loc = stmt.loc,
-                                            },
-                                            .prefer_expr = true,
-                                        }, stmt.loc),
-                                        Expr.init(E.Array, .{
-                                            .items = BabyList(Expr).init(items),
-                                            .is_single_line = true,
-                                        }, stmt.loc),
-                                    }),
-                            ),
-                        }, stmt.loc);
-                        break :call if (is_builtin)
-                            expr
-                        else
-                            Expr.init(E.Await, .{ .value = expr }, stmt.loc);
-                    } else Expr.init(E.Object, .{}, stmt.loc);
-
+                            .value = call,
+                        }}),
+                    }, stmt.loc));
+                } else {
+                    const loc = st.star_name_loc orelse stmt.loc;
                     if (is_bare_import) {
-                        // the import value is never read
-                        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{ .value = call }, stmt.loc));
+                        try esm_decls.append(allocator, .{ .binding = .{ .data = .b_missing, .loc = .Empty } });
+                        try esm_callbacks.append(allocator, Expr.init(E.Arrow, .noop_return_undefined, .Empty));
                     } else {
-                        // 'var namespace = module.importSync(...)'
-                        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
-                            .kind = .k_var, // remove a tdz
-                            .decls = try G.Decl.List.fromSlice(allocator, &.{.{
-                                .binding = Binding.alloc(
-                                    allocator,
-                                    B.Identifier{ .ref = st.namespace_ref },
-                                    st.star_name_loc orelse stmt.loc,
-                                ),
-                                .value = call,
+                        const binding = Binding.alloc(allocator, B.Identifier{ .ref = st.namespace_ref }, loc);
+                        try esm_decls.append(allocator, .{ .binding = binding });
+                        try esm_callbacks.append(allocator, Expr.init(E.Arrow, .{
+                            .args = try allocator.dupe(G.Arg, &.{.{
+                                .binding = Binding.alloc(allocator, B.Identifier{
+                                    .ref = ast.module_ref,
+                                }, .Empty),
                             }}),
-                        }, stmt.loc));
+                            .prefer_expr = true,
+                            .body = try .initReturnExpr(allocator, Expr.init(E.Binary, .{
+                                .op = .bin_assign,
+                                .left = Expr.initIdentifier(st.namespace_ref, .Empty),
+                                .right = Expr.initIdentifier(ast.module_ref, .Empty),
+                            }, .Empty)),
+                        }, .Empty));
                     }
+                    try stmts.outside_wrapper_prefix.append(stmt);
+                }
+            },
+        };
 
-                    continue;
-                },
-            }
+        if (esm_decls.items.len > 0) {
+            // var ...;
+            try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                .kind = .k_var, // remove a tdz
+                .decls = try .fromSlice(allocator, &.{.{
+                    .binding = Binding.alloc(allocator, B.Array{
+                        .items = esm_decls.items,
+                        .is_single_line = true,
+                    }, .Empty),
+                    .value = Expr.init(E.Dot, .{
+                        .target = hmr_api_id,
+                        .name = "imports",
+                        .name_loc = .Empty,
+                    }, .Empty),
+                }}),
+            }, .Empty));
+            // hmr.onUpdate = [ ... ];
+            try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
+                .value = Expr.init(E.Binary, .{
+                    .op = .bin_assign,
+                    .left = Expr.init(E.Dot, .{
+                        .target = hmr_api_id,
+                        .name = "updateImport",
+                        .name_loc = .Empty,
+                    }, .Empty),
+                    .right = Expr.init(E.Array, .{
+                        .items = .fromList(esm_callbacks),
+                        .is_single_line = esm_callbacks.items.len <= 2,
+                    }, .Empty),
+                }, .Empty),
+            }, .Empty));
         }
     }
 
@@ -13157,8 +13163,8 @@ pub const LinkerContext = struct {
 
         // For HMR, part generation is entirely special cased.
         // - export wrapping is already done.
-        // - import wrapping needs to know resolved paths
-        // - one part range per file (ensured by another special cased code path in findAllImportedPartsInJSOrder)
+        // - imports are split from the main code.
+        // - one part range per file
         if (c.options.output_format == .internal_bake_dev) brk: {
             if (part_range.source_index.isRuntime()) {
                 @branchHint(.cold);
@@ -13166,35 +13172,42 @@ pub const LinkerContext = struct {
                 break :brk; // this is from `bun build --format=internal_bake_dev`
             }
 
-            // add a marker for the client runtime to tell that this is an ES module
-            if (ast.exports_kind == .esm) {
-                stmts.inside_wrapper_prefix.append(Stmt.alloc(S.SExpr, .{
-                    .value = Expr.assign(
-                        Expr.init(E.Dot, .{
-                            .target = Expr.initIdentifier(ast.module_ref, Loc.Empty),
-                            .name = "_esm",
-                            .name_loc = Loc.Empty,
-                        }, Loc.Empty),
-                        Expr.init(E.Boolean, .{ .value = true }, Loc.Empty),
-                    ),
-                }, Loc.Empty)) catch bun.outOfMemory();
-                ast.top_level_await_keyword = .{ .loc = .{ .start = 0 }, .len = 1 };
-            }
+            const hmr_api_ref = ast.wrapper_ref;
 
             for (parts) |part| {
-                c.convertStmtsForChunkForBake(part_range.source_index.get(), stmts, part.stmts, allocator, &ast) catch |err|
+                c.convertStmtsForChunkForDevServer(stmts, part.stmts, allocator, &ast) catch |err|
                     return .{ .err = err };
             }
 
-            stmts.all_stmts.ensureUnusedCapacity(stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len) catch bun.outOfMemory();
+            const main_stmts_len = stmts.inside_wrapper_prefix.items.len + stmts.inside_wrapper_suffix.items.len;
+            const all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.items.len + 1;
+
+            stmts.all_stmts.ensureUnusedCapacity(all_stmts_len) catch bun.outOfMemory();
             stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_prefix.items);
             stmts.all_stmts.appendSliceAssumeCapacity(stmts.inside_wrapper_suffix.items);
 
-            var clousure_args = std.BoundedArray(G.Arg, 2).fromSlice(&.{
+            const inner = stmts.all_stmts.items[0..main_stmts_len];
+
+            var clousure_args = std.BoundedArray(G.Arg, 3).fromSlice(&.{
                 .{ .binding = Binding.alloc(temp_allocator, B.Identifier{
-                    .ref = ast.module_ref,
+                    .ref = hmr_api_ref,
                 }, Logger.Loc.Empty) },
             }) catch unreachable; // is within bounds
+
+            if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) {
+                clousure_args.appendAssumeCapacity(
+                    .{
+                        .binding = Binding.alloc(temp_allocator, B.Identifier{
+                            .ref = ast.module_ref,
+                        }, Logger.Loc.Empty),
+                        .default = Expr.allocate(temp_allocator, E.Dot, .{
+                            .target = Expr.initIdentifier(hmr_api_ref, Logger.Loc.Empty),
+                            .name = "cjs",
+                            .name_loc = Logger.Loc.Empty,
+                        }, Logger.Loc.Empty),
+                    },
+                );
+            }
 
             if (ast.flags.uses_exports_ref) {
                 clousure_args.appendAssumeCapacity(
@@ -13211,13 +13224,14 @@ pub const LinkerContext = struct {
                 );
             }
 
-            var single_stmt = Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
+            stmts.all_stmts.appendAssumeCapacity(Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
                 .args = temp_allocator.dupe(G.Arg, clousure_args.slice()) catch bun.outOfMemory(),
                 .body = .{
-                    .stmts = stmts.all_stmts.items,
+                    .stmts = inner,
                     .loc = Logger.Loc.Empty,
                 },
-            } }, Logger.Loc.Empty));
+            } }, Logger.Loc.Empty)));
+            stmts.all_stmts.appendSliceAssumeCapacity(stmts.outside_wrapper_prefix.items);
 
             ast.flags.uses_module_ref = true;
 
@@ -13225,7 +13239,7 @@ pub const LinkerContext = struct {
                 r,
                 allocator,
                 writer,
-                (&single_stmt)[0..1],
+                stmts.all_stmts.items[main_stmts_len..],
                 &ast,
                 flags,
                 .None,
@@ -13808,6 +13822,11 @@ pub const LinkerContext = struct {
             ),
             .line_offset_tables = c.graph.files.items(.line_offset_table)[source_index.get()],
             .target = c.options.target,
+
+            .hmr_ref = if (c.options.output_format == .internal_bake_dev)
+                ast.wrapper_ref
+            else
+                .None,
 
             .input_files_for_dev_server = if (c.options.output_format == .internal_bake_dev)
                 c.parse_graph.input_files.items(.source)
@@ -17007,6 +17026,7 @@ pub const AstBuilder = struct {
     declared_symbols: js_ast.DeclaredSymbol.List,
     /// When set, codegen is altered
     hot_reloading: bool,
+    hmr_api_ref: Ref,
 
     // stub fields for ImportScanner duck typing
     comptime options: js_parser.Parser.Options = .{
@@ -17044,11 +17064,13 @@ pub const AstBuilder = struct {
             .named_exports = .{},
             .log = Logger.Log.init(allocator),
             .export_star_import_records = .{},
-            .module_ref = Ref.None,
             .declared_symbols = .{},
             .hot_reloading = hot_reloading,
+            .module_ref = undefined,
+            .hmr_api_ref = undefined,
         };
         ab.module_ref = try ab.newSymbol(.other, "module");
+        ab.hmr_api_ref = try ab.newSymbol(.other, "hmr");
         return ab;
     }
 
@@ -17221,6 +17243,7 @@ pub const AstBuilder = struct {
             var hmr_transform_ctx = js_parser.ConvertESMExportsForHmr{
                 .last_part = parts.last() orelse
                     unreachable, // was definitely allocated
+                .is_in_node_modules = p.source.path.isNodeModule(),
             };
             try hmr_transform_ctx.stmts.ensureTotalCapacity(p.allocator, prealloc_count: {
                 // get a estimate on how many statements there are going to be

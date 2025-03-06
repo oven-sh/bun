@@ -248,4 +248,37 @@ describe("test jest hooks in bun-test", () => {
       expect(afterEachCalled).toEqual(1);
     });
   });
+
+  describe("nested beforeAll blocks", () => {
+    let runHistory: string[] = [];
+
+    beforeAll(() => {
+      runHistory.push("top-level beforeAll");
+    });
+
+    it("should run the top-level beforeAll once for the first test", () => {
+      expect(runHistory).toEqual(["top-level beforeAll"]);
+    });
+
+    describe("nested scope level 1", () => {
+      beforeAll(() => {
+        runHistory.push("nested scope 1 beforeAll");
+      });
+
+      it("should have called both top-level and nested-level-1 beforeAll only once apiece", () => {
+        // Because we cleared runHistory above, we should see the calls fresh here
+        expect(runHistory).toEqual(["top-level beforeAll", "nested scope 1 beforeAll"]);
+      });
+
+      describe("nested scope level 2", () => {
+        beforeAll(() => {
+          runHistory.push("nested scope 2 beforeAll");
+        });
+
+        it("should have called top-level, level-1, and level-2 beforeAll only once each", () => {
+          expect(runHistory).toEqual(["top-level beforeAll", "nested scope 1 beforeAll", "nested scope 2 beforeAll"]);
+        });
+      });
+    });
+  });
 });

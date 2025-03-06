@@ -7,4 +7,5 @@ src/react-refresh.js
 *.min.js
 test/snippets
 test/js/node/test
+test/napi/node-napi-tests
 bun.lock

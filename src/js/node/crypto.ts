@@ -10645,66 +10645,82 @@ function createVerify(algorithm, options?) {
 
 crypto_exports.createVerify = createVerify;
 
-function Hash(algorithm, options?): void {
-  if (!new.target) {
+{
+  function Hash(algorithm, options?): void {
+    if (!new.target) {
+      return new Hash(algorithm, options);
+    }
+
+    const handle = new _Hash(algorithm, options);
+    this[kHandle] = handle;
+
+    LazyTransform.$apply(this, [options]);
+  }
+  $toClass(Hash, "Hash", LazyTransform);
+
+  Hash.prototype.copy = function copy(options) {
+    return new Hash(this[kHandle], options);
+  };
+
+  Hash.prototype._transform = function _transform(chunk, encoding, callback) {
+    this[kHandle].update(this, chunk, encoding);
+    callback();
+  };
+
+  Hash.prototype._flush = function _flush(callback) {
+    this.push(this[kHandle].digest());
+    callback();
+  };
+
+  Hash.prototype.update = function update(data, encoding) {
+    return this[kHandle].update(this, data, encoding);
+  };
+
+  Hash.prototype.digest = function digest(outputEncoding) {
+    return this[kHandle].digest(outputEncoding);
+  };
+
+  crypto_exports.Hash = Hash;
+  crypto_exports.createHash = function createHash(algorithm, options) {
     return new Hash(algorithm, options);
-  }
-
-  const handle = new _Hash(algorithm, options);
-  this[kHandle] = handle;
-
-  LazyTransform.$apply(this, [options]);
+  };
 }
-$toClass(Hash, "Hash", LazyTransform);
 
-Hash.prototype.copy = function copy(options) {
-  return new Hash(this[kHandle], options);
-};
+{
+  function Hmac(hmac, key, options?): void {
+    if (!new.target) {
+      return new Hmac(hmac, key, options);
+    }
 
-Hash.prototype._transform = function _transform(chunk, encoding, callback) {
-  this[kHandle].update(this, chunk, encoding);
-  callback();
-};
+    const handle = new _Hmac(hmac, key, options);
+    this[kHandle] = handle;
 
-Hash.prototype._flush = function _flush(callback) {
-  this.push(this[kHandle].digest());
-  callback();
-};
+    LazyTransform.$apply(this, [options]);
+  }
+  $toClass(Hmac, "Hmac", LazyTransform);
 
-Hash.prototype.update = function update(data, encoding) {
-  return this[kHandle].update(this, data, encoding);
-};
+  Hmac.prototype.update = function update(data, encoding) {
+    return this[kHandle].update(this, data, encoding);
+  };
 
-Hash.prototype.digest = function digest(outputEncoding) {
-  return this[kHandle].digest(outputEncoding);
-};
+  Hmac.prototype.digest = function digest(outputEncoding) {
+    return this[kHandle].digest(outputEncoding);
+  };
 
-crypto_exports.Hash = Hash;
-crypto_exports.createHash = function createHash(algorithm, options) {
-  return new Hash(algorithm, options);
-};
+  Hmac.prototype._transform = function _transform(chunk, encoding, callback) {
+    this[kHandle].update(this, chunk, encoding);
+    callback();
+  };
+  Hmac.prototype._flush = function _flush(callback) {
+    this.push(this[kHandle].digest());
+    callback();
+  };
 
-function Hmac(hmac, key, options?): void {
-  if (!new.target) {
+  crypto_exports.Hmac = Hmac;
+  crypto_exports.createHmac = function createHmac(hmac, key, options) {
     return new Hmac(hmac, key, options);
-  }
-
-  const handle = new _Hmac(hmac, key, options);
-  this[kHandle] = handle;
-
-  LazyTransform.$apply(this, [options]);
+  };
 }
-$toClass(Hmac, "Hmac", LazyTransform);
-
-Hmac.prototype.update = Hash.prototype.update;
-Hmac.prototype.digest = Hash.prototype.digest;
-Hmac.prototype._transform = Hash.prototype._transform;
-Hmac.prototype._flush = Hash.prototype._flush;
-
-crypto_exports.Hmac = Hmac;
-crypto_exports.createHmac = function createHmac(hmac, key, options) {
-  return new Hmac(hmac, key, options);
-};
 
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

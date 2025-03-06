@@ -182,11 +182,8 @@ assert.throws(
                                    ' when called without `new`');
 }
 
-// no shake :(
-// electron patch: https://github.com/electron/electron/blob/bb1c3dff21af48979799377086fd3d36d694a385/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L248
-//
 // Test XOF hash functions and the outputLength option.
-if (!common.openSSLIsBoringSSL) {
+{
   // Default outputLengths. Since OpenSSL 3.4 an outputLength is mandatory
   if (!hasOpenSSL(3, 4)) {
     assert.strictEqual(crypto.createHash('shake128').digest('hex'),
@@ -254,7 +251,7 @@ if (!common.openSSLIsBoringSSL) {
   assert.throws(() => {
     crypto.createHash('sha256', { outputLength: 28 });
   }, {
-    code: 'ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH'
+    code: common.openSSLIsBoringSSL ? 'ERR_OSSL_NOT_XOF_OR_INVALID_LENGTH' : 'ERR_OSSL_EVP_NOT_XOF_OR_INVALID_LENGTH'
   });
 
   for (const outputLength of [null, {}, 'foo', false]) {

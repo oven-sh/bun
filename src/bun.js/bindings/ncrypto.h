@@ -1450,7 +1450,7 @@ DataPointer ExportChallenge(const Buffer<const char>& buf);
 // ============================================================================
 // KDF
 
-const EVP_MD* getDigestByName(const WTF::StringView name);
+const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224 = false);
 const EVP_CIPHER* getCipherByName(const WTF::StringView name);
 
 // Verify that the specified HKDF output length is valid for the given digest.

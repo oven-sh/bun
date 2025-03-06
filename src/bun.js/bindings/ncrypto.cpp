@@ -1825,7 +1825,7 @@ DataPointer DHPointer::stateless(const EVPKeyPointer& ourKey,
 // ============================================================================
 // KDF
 
-const EVP_MD* getDigestByName(const WTF::StringView name)
+const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224)
 {
     // Historically, "dss1" and "DSS1" were DSA aliases for SHA-1
     // exposed through the public API.
@@ -1858,12 +1858,19 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
                 return EVP_sha512();
             }
             if (WTF::equalIgnoringASCIICase(moreBits, "/224"_s)) {
+                if (ignoreSHA512_224) {
+                    return nullptr;
+                }
                 return EVP_sha512_224();
             }
             if (WTF::equalIgnoringASCIICase(moreBits, "/256"_s)) {
                 return EVP_sha512_256();
             }
         }
+    }
+
+    if (ignoreSHA512_224 && WTF::equalIgnoringASCIICase(name, "sha512-224"_s)) {
+        return nullptr;
     }
 
     // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {

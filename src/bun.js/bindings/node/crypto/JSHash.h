@@ -38,13 +38,16 @@ public:
     ~JSHash();
 
     void finishCreation(JSC::VM& vm);
-    bool init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EVP_MD* md, std::optional<unsigned int> xofLen);
+    bool init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EVP_MD* md, std::optional<uint32_t> xofLen);
+    bool initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigHash::Hasher* hasher, std::optional<uint32_t> xofLen);
     bool update(std::span<const uint8_t> input);
 
     ncrypto::EVPMDCtxPointer m_ctx;
-    unsigned int m_md_len { 0 };
+    unsigned int m_mdLen { 0 };
     ByteSource m_digest;
     bool m_finalized { false };
+
+    ExternZigHash::Hasher* m_zigHasher { nullptr };
 };
 
 class JSHashPrototype final : public JSC::JSNonFinalObject {

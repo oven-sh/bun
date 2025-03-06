@@ -31,6 +31,9 @@ JSHash::JSHash(JSC::VM& vm, JSC::Structure* structure)
 
 JSHash::~JSHash()
 {
+    if (m_zigHasher) {
+        ExternZigHash::destroy(m_zigHasher);
+    }
 }
 
 void JSHash::finishCreation(JSC::VM& vm)
@@ -59,7 +62,7 @@ JSHash* JSHash::create(JSC::VM& vm, JSC::Structure* structure)
     return instance;
 }
 
-bool JSHash::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EVP_MD* md, std::optional<unsigned int> xofLen)
+bool JSHash::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EVP_MD* md, std::optional<uint32_t> xofLen)
 {
     // Create the digest context
     m_ctx = ncrypto::EVPMDCtxPointer::New();
@@ -69,10 +72,10 @@ bool JSHash::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EV
     }
 
     // Set the digest length
-    m_md_len = m_ctx.getDigestSize();
+    m_mdLen = m_ctx.getDigestSize();
 
     // Handle custom length for XOF hash functions (like SHAKE)
-    if (xofLen.has_value() && xofLen.value() != m_md_len) {
+    if (xofLen.has_value() && xofLen.value() != m_mdLen) {
         // from node:
         // https://github.com/nodejs/node/blob/2a6f90813f4802def79f2df1bfe20e95df279abf/src/crypto/crypto_hash.cc#L346
         //
@@ -83,7 +86,23 @@ bool JSHash::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EV
             m_ctx.reset();
             return false;
         }
-        m_md_len = xofLen.value();
+        m_mdLen = xofLen.value();
+    }
+
+    return true;
+}
+
+bool JSHash::initZig(JSGlobalObject* globalObject, ThrowScope& scope, ExternZigHash::Hasher* hasher, std::optional<uint32_t> xofLen)
+{
+    m_zigHasher = hasher;
+    m_mdLen = ExternZigHash::getDigestSize(hasher);
+
+    if (m_mdLen == 0) {
+        return false;
+    }
+
+    if (xofLen.has_value()) {
+        m_mdLen = xofLen.value();
     }
 
     return true;
@@ -91,15 +110,20 @@ bool JSHash::init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EV
 
 bool JSHash::update(std::span<const uint8_t> input)
 {
-    if (!m_ctx || m_finalized)
-        return false;
+    if (m_ctx) {
+        ncrypto::Buffer<const void> buffer {
+            .data = input.data(),
+            .len = input.size(),
+        };
 
-    ncrypto::Buffer<const void> buffer {
-        .data = input.data(),
-        .len = input.size(),
-    };
+        return m_ctx.digestUpdate(buffer);
+    }
 
-    return m_ctx.digestUpdate(buffer);
+    if (m_zigHasher) {
+        return ExternZigHash::update(m_zigHasher, input);
+    }
+
+    return false;
 }
 
 void JSHashPrototype::finishCreation(JSC::VM& vm)
@@ -190,7 +214,32 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    unsigned int len = hash->m_md_len;
+    uint32_t len = hash->m_mdLen;
+
+    if (hash->m_zigHasher) {
+        if (len == 0) {
+            return StringBytes::encode(
+                lexicalGlobalObject,
+                scope,
+                {},
+                encoding);
+        }
+        Vector<uint8_t> buf;
+        buf.grow(std::max((uint32_t)EVP_MAX_MD_SIZE, len));
+        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, buf.mutableSpan());
+        if (!totalDigestLen) {
+            throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
+            return JSValue::encode({});
+        }
+
+        hash->m_finalized = true;
+
+        return StringBytes::encode(
+            lexicalGlobalObject,
+            scope,
+            buf.subspan(0, std::min(len, totalDigestLen)),
+            encoding);
+    }
 
     // Only compute the digest if it hasn't been cached yet
     if (!hash->m_digest && len > 0) {
@@ -247,13 +296,18 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     // If clone, check m_finalized before anything else.
     JSHash* original = nullptr;
     const EVP_MD* md = nullptr;
+    ExternZigHash::Hasher* zigHasher = nullptr;
     if (algorithmOrHashInstanceValue.inherits(JSHash::info())) {
         original = jsDynamicCast<JSHash*>(algorithmOrHashInstanceValue);
         if (!original || original->m_finalized) {
             return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
         }
 
-        md = original->m_ctx.getDigest();
+        if (original->m_zigHasher) {
+            zigHasher = ExternZigHash::getFromOther(zigGlobalObject, original->m_zigHasher);
+        } else {
+            md = original->m_ctx.getDigest();
+        }
     } else {
         Bun::V::validateString(scope, globalObject, algorithmOrHashInstanceValue, "algorithm"_s);
         RETURN_IF_EXCEPTION(scope, {});
@@ -261,7 +315,10 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
         WTF::String algorithm = algorithmOrHashInstanceValue.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        md = ncrypto::getDigestByName(algorithm);
+        md = ncrypto::getDigestByName(algorithm, true);
+        if (!md) {
+            zigHasher = ExternZigHash::getByName(zigGlobalObject, algorithm);
+        }
     }
 
     std::optional<unsigned int> xofLen = std::nullopt;
@@ -279,6 +336,15 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     JSHash* hash = JSHash::create(vm, structure);
+
+    if (zigHasher) {
+        if (!hash->initZig(globalObject, scope, zigHasher, xofLen)) {
+            throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
+            return JSValue::encode({});
+        }
+        return JSValue::encode(hash);
+    }
+
     if (md == nullptr || !hash->init(globalObject, scope, md, xofLen)) {
         throwCryptoError(globalObject, scope, ERR_get_error(), "Digest method not supported"_s);
         return JSValue::encode({});

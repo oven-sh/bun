@@ -86,16 +86,6 @@ FullGCActivityCallback::FullGCActivityCallback(JSC::Heap& heap, void* bunVM)
 // Timer-based GC callback
 void FullGCActivityCallback::doCollection(JSC::VM& vm)
 {
-    auto& gcController = WebCore::clientData(vm)->gcController();
-    if (gcController.hasMoreEventLoopWorkToDo() || Bun__isBusyDoingImportantWork(gcController.bunVM)) {
-        if (!gcController.checkMemoryPressure()) {
-            if (scheduleCollection(vm)) {
-                // If we're in the middle of something important, delay timer-based GC.
-                // unless there's memory pressure
-                return;
-            }
-        }
-    }
 
     doCollectionEvenIfBusy(vm);
 }
@@ -219,13 +209,6 @@ bool FullGCActivityCallback::scheduleCollection(JSC::VM& vm)
 // Timer-based GC callback
 void EdenGCActivityCallback::doCollection(JSC::VM& vm)
 {
-    auto& gcController = WebCore::clientData(vm)->gcController();
-    if (gcController.hasMoreEventLoopWorkToDo() || Bun__isBusyDoingImportantWork(gcController.bunVM)) {
-        if (scheduleCollection(vm, true)) {
-            return;
-        }
-    }
-
     doCollectionEvenIfBusy(vm);
 }
 

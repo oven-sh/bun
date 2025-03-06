@@ -472,7 +472,7 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Hmac"_s)),
         globalObject->m_JSHmacClassStructure.constructor(globalObject));
-        
+
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "Hash"_s)),
         globalObject->m_JSHashClassStructure.constructor(globalObject));
 

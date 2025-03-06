@@ -14210,10 +14210,8 @@ pub const LinkerContext = struct {
                         const path_hash = bun.css.css_modules.hash(
                             allocator,
                             "{s}",
-                            .{
-                                // TODO: not sure if this is the right path to use for the hashing
-                                source.path.pretty,
-                            },
+                            // use path relative to cwd for determinism
+                            .{source.path.pretty},
                             false,
                         );
 

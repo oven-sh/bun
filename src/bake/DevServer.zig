@@ -1265,6 +1265,15 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             try entry_points.append(alloc, html.html_bundle.html_bundle.path, .{ .client = true });
         },
     }
+
+    if (dev.has_tailwind_plugin_hack) |*map| {
+        for (map.keys()) |abs_path| {
+            const file = dev.client_graph.bundled_files.get(abs_path) orelse
+                continue;
+            if (file.flags.kind == .css)
+                entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
+        }
+    }
 }
 
 fn onFrameworkRequestWithBundle(

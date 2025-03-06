@@ -1048,12 +1048,12 @@ pub const DescribeScope = struct {
         return null;
     }
 
-    pub fn runBeforeAllIfNeeded(
+    pub fn runBeforeAll(
         this: *DescribeScope,
         globalObject: *JSGlobalObject,
     ) ?JSValue {
         if (this.parent) |p| {
-            if (p.runBeforeAllIfNeeded(globalObject)) |err| {
+            if (p.runBeforeAll(globalObject)) |err| {
                 return err;
             }
         }
@@ -1387,7 +1387,7 @@ pub const TestRunnerTask = struct {
         jsc_vm.onUnhandledRejectionCtx = this;
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
 
-        if (this.describe.runBeforeAllIfNeeded(globalThis)) |err| {
+        if (this.describe.runBeforeAll(globalThis)) |err| {
             _ = jsc_vm.uncaughtException(globalThis, err, true);
             Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, 0, 0, describe);
             return false;

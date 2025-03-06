@@ -76,13 +76,14 @@ async function doTest(
     }
   }
 
-  const passTotal = metrics.valid.pass + metrics.invalid.pass;
+  const validTotal = metrics.valid.pass + metrics.valid.fail;
+  const invalidTotal = metrics.invalid.pass + metrics.invalid.fail;
 
   const snapshot = [
     // "Bun.TOML.parse test suite",
     `suite: ${name}`,
-    `valid passing:   ${pct(metrics.valid.pass, passTotal)}% (${metrics.valid.pass}/${passTotal})`,
-    `invalid passing: ${pct(metrics.invalid.pass, passTotal)}% (${metrics.invalid.pass}/${passTotal})`,
+    `valid passing:   ${pct(metrics.valid.pass, validTotal)}% (${metrics.valid.pass}/${validTotal})`,
+    `invalid passing: ${pct(metrics.invalid.pass, invalidTotal)}% (${metrics.invalid.pass}/${invalidTotal})`,
     "",
     validInfo,
     invalidInfo,

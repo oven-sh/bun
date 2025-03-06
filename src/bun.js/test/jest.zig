@@ -1039,28 +1039,8 @@ pub const DescribeScope = struct {
             return err;
         }
 
-        if (comptime hook == .beforeEach) {
+        if (comptime hook == .beforeAll or hook == .beforeEach) {
             if (this.runBeforeCallbacks(globalObject, hook)) |err| {
-                return err;
-            }
-        }
-
-        return null;
-    }
-
-    pub fn runBeforeAll(
-        this: *DescribeScope,
-        globalObject: *JSGlobalObject,
-    ) ?JSValue {
-        if (this.parent) |p| {
-            if (p.runBeforeAll(globalObject)) |err| {
-                return err;
-            }
-        }
-
-        if (this.needs_before_all) {
-            this.needs_before_all = false;
-            if (this.execCallback(globalObject, .beforeAll)) |err| {
                 return err;
             }
         }
@@ -1387,7 +1367,7 @@ pub const TestRunnerTask = struct {
         jsc_vm.onUnhandledRejectionCtx = this;
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
 
-        if (this.describe.runBeforeAll(globalThis)) |err| {
+        if (this.describe.runCallback(globalThis, .beforeAll)) |err| {
             _ = jsc_vm.uncaughtException(globalThis, err, true);
             Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, 0, 0, describe);
             return false;

@@ -3653,7 +3653,7 @@ void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const Z
     object->putDirect(arg1->vm(), Zig::toIdentifier(*arg2, arg1), JSC::JSValue::decode(JSValue3));
 }
 
-extern "C" void JSC__JSValue__putDirectMayBeIndex(JSC__JSValue target, JSC__JSGlobalObject* globalObject, const BunString*  key, JSC__JSValue value)
+extern "C" void JSC__JSValue__putDirectMayBeIndex(JSC__JSValue target, JSC__JSGlobalObject* globalObject, const BunString* key, JSC__JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);

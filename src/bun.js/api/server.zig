@@ -9369,12 +9369,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             // "/*" routes are added backwards, so if they have a static route, it will never be matched
             // so we need to check for that first
-            if (!has_dev_catch_all and !@"has /*") {
-                if (this.config.onRequest != .zero) {
-                    app.any("/*", *ThisServer, this, onRequest);
-                } else if (this.config.onNodeHTTPRequest != .zero) {
-                    app.any("/*", *ThisServer, this, onNodeHTTPRequest);
-                }
+            if (!has_dev_catch_all and !@"has /*" and this.config.onNodeHTTPRequest != .zero) {
+                app.any("/*", *ThisServer, this, onNodeHTTPRequest);
+            } else if (!has_dev_catch_all and !@"has /*" and this.config.onRequest != .zero) {
+                app.any("/*", *ThisServer, this, onRequest);
             } else if (!has_dev_catch_all and this.config.onNodeHTTPRequest != .zero) {
                 app.post("/*", *ThisServer, this, onNodeHTTPRequest);
                 app.put("/*", *ThisServer, this, onNodeHTTPRequest);

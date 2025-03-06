@@ -110,7 +110,13 @@ describe("Bun.TOML.parse", () => {
 
     // keys
     ["''='bar'", { "": "bar" }], // empty keys are valid but discouraged
+    ["'-' = 'bar'", { "-": "bar" }],
+    ["[-]\nfoo=1", { "-": { foo: 1 } }],
+    ["[----]\nfoo=1", { "----": { foo: 1 } }],
     [`0=bar`, { "0": "bar" }],
+    // ["[-123]\nfoo=1", { "-123": { foo: 1 } }],
+
+    ["#\n", {}],
   ])("bun.TOML.parse(`%s`) === %o", async (source, expected) => {
     const actual = await Bun.TOML.parse(source);
     console.log(actual);

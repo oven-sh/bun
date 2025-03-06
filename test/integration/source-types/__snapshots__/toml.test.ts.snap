@@ -2,16 +2,15 @@
 
 exports[`Bun.TOML.parse parses valid TOML without errors, and produces errors for invalid TOML 1`] = `
 "suite: Bun.TOML.parse
-valid passing:   39.52% (147/372)
-invalid passing: 60.65% (225/371)
+valid passing:   40.05% (149/372)
+invalid passing: 60.11% (223/371)
 
 pass: valid/empty-file.toml
 fail: valid/spec-example-1-compact.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/newline-crlf.json
   BuildMessage: Expected key but found {
-fail: valid/spec-example-1.toml
-  BuildMessage: Expected key but found -
+pass: valid/spec-example-1.toml
 pass: valid/implicit-groups.toml
 pass: valid/implicit-and-explicit-before.toml
 fail: valid/example.json
@@ -30,8 +29,7 @@ fail: valid/implicit-groups.json
   BuildMessage: Expected key but found {
 fail: valid/implicit-and-explicit-before.json
   BuildMessage: Expected key but found {
-fail: valid/example.toml
-  BuildMessage: Expected key but found -
+pass: valid/example.toml
 pass: valid/newline-lf.toml
 fail: valid/implicit-and-explicit-after.json
   BuildMessage: Expected key but found {
@@ -209,7 +207,7 @@ fail: valid/key/empty-1.json
 fail: valid/key/dotted-4.json
   BuildMessage: Expected key but found {
 fail: valid/key/start.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/key/space.json
   BuildMessage: Expected key but found {
 pass: valid/key/special-word.toml
@@ -291,7 +289,7 @@ fail: valid/spec/keys-7.json
 fail: valid/spec/string-6.json
   BuildMessage: Expected key but found {
 fail: valid/spec/table-7.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 pass: valid/spec/array-of-tables-2.toml
 pass: valid/spec/inline-table-1.toml
 fail: valid/spec/key-value-pair-0.json
@@ -311,7 +309,7 @@ pass: valid/spec/table-0.toml
 fail: valid/spec/table-8.json
   BuildMessage: Expected key but found {
 fail: valid/spec/offset-date-time-0.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/spec/string-1.json
   BuildMessage: Expected key but found {
 fail: valid/spec/keys-0.json
@@ -343,7 +341,7 @@ fail: valid/spec/keys-1.json
 fail: valid/spec/string-0.json
   BuildMessage: Expected key but found {
 fail: valid/spec/offset-date-time-1.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/spec/table-9.json
   BuildMessage: Expected key but found {
 pass: valid/spec/table-1.toml
@@ -382,7 +380,7 @@ pass: valid/spec/table-3.toml
 fail: valid/spec/string-2.json
   BuildMessage: Expected key but found {
 fail: valid/spec/local-date-0.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/spec/keys-3.json
   BuildMessage: Expected key but found {
 pass: valid/spec/float-0.toml
@@ -421,7 +419,7 @@ fail: valid/spec/table-1.json
   BuildMessage: Expected key but found {
 pass: valid/spec/integer-0.toml
 fail: valid/spec/local-date-time-0.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 pass: valid/inline-table/key-dotted-5.toml
 pass: valid/inline-table/end-in-bool.toml
 fail: valid/inline-table/empty.json
@@ -484,7 +482,7 @@ pass: valid/comment/at-eof2.toml
 fail: valid/comment/after-literal-no-ws.json
   BuildMessage: Expected key but found {
 fail: valid/comment/everywhere.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 pass: valid/comment/noeol.toml
 pass: valid/comment/nonascii.toml
 pass: valid/comment/at-eof.toml
@@ -498,9 +496,9 @@ fail: valid/comment/everywhere.json
 fail: valid/comment/noeol.json
   BuildMessage: Expected key but found {
 fail: valid/datetime/timezone.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/datetime/milliseconds.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/datetime/edge.json
   BuildMessage: Expected key but found {
 fail: valid/datetime/no-seconds.json
@@ -510,23 +508,23 @@ fail: valid/datetime/local-time.json
 fail: valid/datetime/datetime.json
   BuildMessage: Expected key but found {
 fail: valid/datetime/local-date.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/datetime/leap-year.toml
   AggregateError: Failed to parse toml
 fail: valid/datetime/local.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/datetime/timezone.json
   BuildMessage: Expected key but found {
 fail: valid/datetime/milliseconds.json
   BuildMessage: Expected key but found {
 fail: valid/datetime/edge.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/datetime/local-time.toml
   BuildMessage: Expected key but found :
 fail: valid/datetime/no-seconds.toml
   BuildMessage: Expected key but found :
 fail: valid/datetime/datetime.toml
-  BuildMessage: Expected key but found -
+  AggregateError: Failed to parse toml
 fail: valid/datetime/local-date.json
   BuildMessage: Expected key but found {
 fail: valid/datetime/leap-year.json
@@ -694,7 +692,7 @@ pass: invalid/string/multiline-no-close-3.toml
 expected syntax error: invalid/string/bad-uni-esc-4.toml
 pass: invalid/local-datetime/month-under.toml
 pass: invalid/local-datetime/feb-30.toml
-pass: invalid/local-datetime/no-leads-with-milli.toml
+expected syntax error: invalid/local-datetime/no-leads-with-milli.toml
 pass: invalid/local-datetime/y10k.toml
 pass: invalid/local-datetime/no-t.toml
 pass: invalid/local-datetime/no-secs.toml
@@ -740,7 +738,7 @@ pass: invalid/integer/leading-zero-sign-3.toml
 expected syntax error: invalid/integer/capital-hex.toml
 pass: invalid/integer/invalid-hex-2.toml
 expected syntax error: invalid/integer/trailing-us-hex.toml
-pass: invalid/integer/double-sign-nex.toml
+expected syntax error: invalid/integer/double-sign-nex.toml
 expected syntax error: invalid/integer/capital-bin.toml
 expected syntax error: invalid/integer/negative-hex.toml
 pass: invalid/integer/incomplete-hex.toml
@@ -984,10 +982,10 @@ invalid passing: 98.65% (366/371)
 
 pass: valid/empty-file.toml
 fail: valid/spec-example-1-compact.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 4 errors building "fixtures/toml/valid/spec-example-1-compact.toml"
 pass: valid/newline-crlf.json
 fail: valid/spec-example-1.toml
-  BuildMessage: Expected key but found -
+  BuildMessage: Expected t_equal but found 05-27T07:32:00-08:00
 pass: valid/implicit-groups.toml
 pass: valid/implicit-and-explicit-before.toml
 pass: valid/example.json
@@ -1000,7 +998,7 @@ pass: valid/spec-example-1.json
 pass: valid/implicit-groups.json
 pass: valid/implicit-and-explicit-before.json
 fail: valid/example.toml
-  BuildMessage: Expected key but found -
+  BuildMessage: Expected t_equal but found 07-05T17:45:00Z
 pass: valid/newline-lf.toml
 pass: valid/implicit-and-explicit-after.json
 pass: valid/string/with-pound.toml
@@ -1075,7 +1073,7 @@ pass: valid/float/max-int.json
 pass: valid/float/exponent.toml
 pass: valid/float/zero.toml
 fail: valid/float/inf-and-nan.toml
-  AggregateError: 4 errors building "fixtures/toml/valid/float/inf-and-nan.toml"
+  AggregateError: 2 errors building "fixtures/toml/valid/float/inf-and-nan.toml"
 pass: valid/float/underscore.json
 pass: valid/table/with-pound.toml
 pass: valid/table/array-many.json
@@ -1119,7 +1117,7 @@ pass: valid/table/array-within-dotted.toml
 pass: valid/key/empty-1.json
 pass: valid/key/dotted-4.json
 fail: valid/key/start.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/key/start.toml"
 pass: valid/key/space.json
 pass: valid/key/special-word.toml
 pass: valid/key/numeric-dotted.json
@@ -1174,7 +1172,7 @@ pass: valid/spec/comment-0.toml
 pass: valid/spec/keys-7.json
 pass: valid/spec/string-6.json
 fail: valid/spec/table-7.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/spec/table-7.toml"
 pass: valid/spec/array-of-tables-2.toml
 pass: valid/spec/inline-table-1.toml
 pass: valid/spec/key-value-pair-0.json
@@ -1188,7 +1186,7 @@ pass: valid/spec/integer-1.json
 pass: valid/spec/table-0.toml
 pass: valid/spec/table-8.json
 fail: valid/spec/offset-date-time-0.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/spec/offset-date-time-0.toml"
 pass: valid/spec/string-1.json
 pass: valid/spec/keys-0.json
 pass: valid/spec/keys-4.toml
@@ -1205,11 +1203,11 @@ fail: valid/spec/string-4.toml
   BuildMessage: Unterminated basic string (single-line)
 pass: valid/spec/keys-5.toml
 fail: valid/spec/float-2.toml
-  AggregateError: 4 errors building "fixtures/toml/valid/spec/float-2.toml"
+  AggregateError: 2 errors building "fixtures/toml/valid/spec/float-2.toml"
 pass: valid/spec/keys-1.json
 pass: valid/spec/string-0.json
 fail: valid/spec/offset-date-time-1.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/spec/offset-date-time-1.toml"
 pass: valid/spec/table-9.json
 pass: valid/spec/table-1.toml
 pass: valid/spec/local-date-time-0.json
@@ -1235,7 +1233,7 @@ pass: valid/spec/integer-2.json
 pass: valid/spec/table-3.toml
 pass: valid/spec/string-2.json
 fail: valid/spec/local-date-0.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/spec/local-date-0.toml"
 pass: valid/spec/keys-3.json
 pass: valid/spec/float-0.toml
 pass: valid/spec/integer-1.toml
@@ -1264,7 +1262,7 @@ pass: valid/spec/table-9.toml
 pass: valid/spec/table-1.json
 pass: valid/spec/integer-0.toml
 fail: valid/spec/local-date-time-0.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/spec/local-date-time-0.toml"
 pass: valid/inline-table/key-dotted-5.toml
 pass: valid/inline-table/end-in-bool.toml
 pass: valid/inline-table/empty.json
@@ -1306,7 +1304,7 @@ pass: valid/comment/tricky.json
 pass: valid/comment/at-eof2.toml
 pass: valid/comment/after-literal-no-ws.json
 fail: valid/comment/everywhere.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/comment/everywhere.toml"
 pass: valid/comment/noeol.toml
 pass: valid/comment/nonascii.toml
 pass: valid/comment/at-eof.toml
@@ -1317,29 +1315,29 @@ pass: valid/comment/after-literal-no-ws.toml
 pass: valid/comment/everywhere.json
 pass: valid/comment/noeol.json
 fail: valid/datetime/timezone.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/datetime/timezone.toml"
 fail: valid/datetime/milliseconds.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 3 errors building "fixtures/toml/valid/datetime/milliseconds.toml"
 pass: valid/datetime/edge.json
 pass: valid/datetime/no-seconds.json
 pass: valid/datetime/local-time.json
 pass: valid/datetime/datetime.json
 fail: valid/datetime/local-date.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/datetime/local-date.toml"
 fail: valid/datetime/leap-year.toml
   AggregateError: 2 errors building "fixtures/toml/valid/datetime/leap-year.toml"
 fail: valid/datetime/local.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/datetime/local.toml"
 pass: valid/datetime/timezone.json
 pass: valid/datetime/milliseconds.json
 fail: valid/datetime/edge.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/datetime/edge.toml"
 fail: valid/datetime/local-time.toml
   BuildMessage: Expected key but found :
 fail: valid/datetime/no-seconds.toml
   BuildMessage: Expected key but found :
 fail: valid/datetime/datetime.toml
-  BuildMessage: Expected key but found -
+  AggregateError: 2 errors building "fixtures/toml/valid/datetime/datetime.toml"
 pass: valid/datetime/local-date.json
 pass: valid/datetime/leap-year.json
 pass: valid/datetime/local.json

@@ -670,10 +670,10 @@ pub const JSValue = enum(i64) {
     }
 
     /// Add a property to an object.
-    /// 
+    ///
     /// This is similar to `object[key] = value` in JS, but the prototype chain
     /// is not traversed. Properties are added directly to the object.
-    /// 
+    ///
     /// `key` must be a `ZigString`, a `BunString`, or a pointer to one of those.
     /// It cannot be a numeric value; use `putMayBeIndex` for that.
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: JSC.JSValue) void {

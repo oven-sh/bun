@@ -1038,10 +1038,31 @@ pub const DescribeScope = struct {
             return err;
         }
 
-        if (comptime hook == .beforeAll or hook == .beforeEach) {
+        if (comptime hook == .beforeEach) {
             if (this.runBeforeCallbacks(globalObject, hook)) |err| {
                 return err;
             }
+        }
+
+        return null;
+    }
+
+    pub fn runBeforeAllIfNeeded(
+        this: *DescribeScope,
+        globalThis: *JSGlobalObject,
+        ran_before_all: *std.AutoHashMap(*DescribeScope, void),
+    ) ?JSValue {
+        if (this.parent) |p| {
+            if (p.runBeforeAllIfNeeded(globalThis, ran_before_all)) |err| {
+                return err;
+            }
+        }
+
+        if (!ran_before_all.contains(this)) {
+            if (this.execCallback(globalThis, .beforeAll)) |err| {
+                return err;
+            }
+            ran_before_all.put(this, {}) catch unreachable;
         }
 
         return null;
@@ -1279,6 +1300,9 @@ pub const TestRunnerTask = struct {
         fulfilled,
     };
 
+    // Track whether beforeAll has been run for each describe block
+    pub threadlocal var ran_before_all = std.AutoHashMap(*DescribeScope, void).init(default_allocator);
+
     pub fn onUnhandledRejection(jsc_vm: *VirtualMachine, globalObject: *JSGlobalObject, rejection: JSValue) void {
         var deduped = false;
         const is_unhandled = jsc_vm.onUnhandledRejectionCtx == null;
@@ -1374,6 +1398,12 @@ pub const TestRunnerTask = struct {
 
         jsc_vm.onUnhandledRejectionCtx = this;
         jsc_vm.onUnhandledRejection = onUnhandledRejection;
+
+        if (this.describe.runBeforeAllIfNeeded(globalThis, &ran_before_all)) |err| {
+            _ = jsc_vm.uncaughtException(globalThis, err, true);
+            Jest.runner.?.reportFailure(test_id, this.source_file_path, test_.label, 0, 0, describe);
+            return false;
+        }
 
         if (this.needs_before_each) {
             this.needs_before_each = false;

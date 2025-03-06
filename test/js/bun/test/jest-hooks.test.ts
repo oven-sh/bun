@@ -13,16 +13,100 @@ describe("describe scope", () => {
   afterAll(() => hooks_run.push("describe afterAll"));
   afterEach(() => hooks_run.push("describe afterEach"));
 
+  describe("nested describe scope", () => {
+    beforeAll(() => hooks_run.push("nested describe beforeAll"));
+    beforeEach(() => hooks_run.push("nested describe beforeEach"));
+    afterAll(() => hooks_run.push("nested describe afterAll"));
+    afterEach(() => hooks_run.push("nested describe afterEach"));
+
+    it("should run after nested beforeAll/beforeEach in the correct order", () => {
+      // First test
+      expect(hooks_run).toEqual([
+        "global beforeAll",
+        "describe beforeAll",
+        "nested describe beforeAll",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+      ]);
+    });
+
+    it("should run after nested afterEach/afterAll in the correct order", () => {
+      expect(hooks_run).toEqual([
+        // Entries from first test
+        "global beforeAll",
+        "describe beforeAll",
+        "nested describe beforeAll",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+
+        // New entries
+        "nested describe afterEach",
+        "describe afterEach",
+        "global afterEach",
+        "global beforeEach",
+        "describe beforeEach",
+        "nested describe beforeEach",
+      ]);
+    });
+  });
+
   it("should run after beforeAll/beforeEach in the correct order", () => {
-    expect(hooks_run).toEqual(["global beforeAll", "describe beforeAll", "global beforeEach", "describe beforeEach"]);
+    expect(hooks_run).toEqual([
+      // Entries from first test
+      "global beforeAll",
+      "describe beforeAll",
+      "nested describe beforeAll",
+      "global beforeEach",
+      "describe beforeEach",
+      "nested describe beforeEach",
+
+      // Entries from second test
+      "nested describe afterEach",
+      "describe afterEach",
+      "global afterEach",
+      "global beforeEach",
+      "describe beforeEach",
+      "nested describe beforeEach",
+
+      // New entries
+      "nested describe afterEach",
+      "describe afterEach",
+      "global afterEach",
+      "nested describe afterAll",
+      "global beforeEach",
+      "describe beforeEach",
+    ]);
   });
 
   it("should run after afterEach/afterAll in the correct order", () => {
     expect(hooks_run).toEqual([
+      // Entries from first test
       "global beforeAll",
       "describe beforeAll",
+      "nested describe beforeAll",
       "global beforeEach",
       "describe beforeEach",
+      "nested describe beforeEach",
+
+      // Entries from second test
+      "nested describe afterEach",
+      "describe afterEach",
+      "global afterEach",
+      "global beforeEach",
+      "describe beforeEach",
+      "nested describe beforeEach",
+
+      // Entries from third test
+      "nested describe afterEach",
+      "describe afterEach",
+      "global afterEach",
+      "nested describe afterAll",
+      "global beforeEach",
+      "describe beforeEach",
+
+      // New entries
       "describe afterEach",
       "global afterEach",
       "global beforeEach",
@@ -246,39 +330,6 @@ describe("test jest hooks in bun-test", () => {
     it("should have called afterEach for previous test", () => {
       expect(beforeEachCalled).toEqual(2); // Called once just before this test
       expect(afterEachCalled).toEqual(1);
-    });
-  });
-
-  describe("nested beforeAll blocks", () => {
-    let runHistory: string[] = [];
-
-    beforeAll(() => {
-      runHistory.push("top-level beforeAll");
-    });
-
-    it("should run the top-level beforeAll once for the first test", () => {
-      expect(runHistory).toEqual(["top-level beforeAll"]);
-    });
-
-    describe("nested scope level 1", () => {
-      beforeAll(() => {
-        runHistory.push("nested scope 1 beforeAll");
-      });
-
-      it("should have called both top-level and nested-level-1 beforeAll only once apiece", () => {
-        // Because we cleared runHistory above, we should see the calls fresh here
-        expect(runHistory).toEqual(["top-level beforeAll", "nested scope 1 beforeAll"]);
-      });
-
-      describe("nested scope level 2", () => {
-        beforeAll(() => {
-          runHistory.push("nested scope 2 beforeAll");
-        });
-
-        it("should have called top-level, level-1, and level-2 beforeAll only once each", () => {
-          expect(runHistory).toEqual(["top-level beforeAll", "nested scope 1 beforeAll", "nested scope 2 beforeAll"]);
-        });
-      });
     });
   });
 });

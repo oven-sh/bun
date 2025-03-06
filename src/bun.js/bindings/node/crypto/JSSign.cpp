@@ -228,21 +228,23 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         return JSValue::encode({});
     }
 
+    JSValue wrappedSign = callFrame->argument(0);
+
     // Check that we have at least 1 argument (the data)
-    if (callFrame->argumentCount() < 1) {
+    if (callFrame->argumentCount() < 2) {
         throwVMError(globalObject, scope, "Sign.prototype.update requires at least 1 argument"_s);
         return JSValue::encode({});
     }
 
     // Get the data argument
-    JSC::JSValue data = callFrame->argument(0);
+    JSC::JSValue data = callFrame->argument(1);
 
     // if it's a string, using encoding for decode. if it's a buffer, just use the buffer
     if (data.isString()) {
         JSString* dataString = data.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        JSValue encodingValue = callFrame->argument(1);
+        JSValue encodingValue = callFrame->argument(2);
         auto encoding = parseEnumeration<BufferEncodingType>(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -258,7 +260,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         updateWithBufferView(globalObject, thisObject, view);
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        return JSValue::encode(callFrame->thisValue());
+        return JSValue::encode(wrappedSign);
     }
 
     if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
@@ -271,7 +273,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSignProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
         updateWithBufferView(globalObject, thisObject, view);
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        return JSValue::encode(callFrame->thisValue());
+        return JSValue::encode(wrappedSign);
     }
 
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);

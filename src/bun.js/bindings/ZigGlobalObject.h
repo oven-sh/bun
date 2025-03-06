@@ -536,6 +536,7 @@ public:
     LazyClassStructure m_JSSignClassStructure;
     LazyClassStructure m_JSVerifyClassStructure;
     LazyClassStructure m_JSHmacClassStructure;
+    LazyClassStructure m_JSHashClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

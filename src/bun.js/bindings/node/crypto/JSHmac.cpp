@@ -112,12 +112,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
     JSHmac* hmac = jsDynamicCast<JSHmac*>(thisHmac);
 
     // Check if the HMAC is already finalized
-    if (hmac->isFinalized()) {
+    if (hmac->m_finalized) {
         return Bun::ERR::CRYPTO_HASH_FINALIZED(scope, globalObject);
     }
 
-    JSC::JSValue inputValue = callFrame->argument(0);
-    JSValue encodingValue = callFrame->argument(1);
+    JSValue wrappedHmac = callFrame->argument(0);
+    JSC::JSValue inputValue = callFrame->argument(1);
+    JSValue encodingValue = callFrame->argument(2);
 
     // Process the inputValue
     if (inputValue.isString()) {
@@ -133,7 +134,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 
-        // TODO(dylan-conway): add a way to do this with just the Vector. no need to create a buffer
         JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputString, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -143,13 +143,13 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
         }
 
-        return JSValue::encode(thisHmac);
+        return JSValue::encode(wrappedHmac);
     } else if (auto* view = JSC::jsDynamicCast<JSArrayBufferView*>(inputValue)) {
         if (!hmac->update(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() })) {
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
         }
 
-        return JSValue::encode(thisHmac);
+        return JSValue::encode(wrappedHmac);
     }
 
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, inputValue);
@@ -165,7 +165,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     JSHmac* hmac = jsDynamicCast<JSHmac*>(callFrame->thisValue());
 
     // Check if already finalized, return empty buffer if already finalized
-    if (hmac->isFinalized()) {
+    if (hmac->m_finalized) {
         auto* emptyBuffer = JSC::JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), 0);
         RETURN_IF_EXCEPTION(scope, {});
 

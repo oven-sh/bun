@@ -14,15 +14,15 @@
 
 namespace Bun {
 
-JSC_DECLARE_HOST_FUNCTION(callHmac);
-JSC_DECLARE_HOST_FUNCTION(constructHmac);
+JSC_DECLARE_HOST_FUNCTION(callHash);
+JSC_DECLARE_HOST_FUNCTION(constructHash);
 
-class JSHmac final : public JSC::JSDestructibleObject {
+class JSHash final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSHmac* create(JSC::VM& vm, JSC::Structure* structure);
+    static JSHash* create(JSC::VM& vm, JSC::Structure* structure);
 
     DECLARE_INFO;
 
@@ -34,25 +34,27 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    JSHmac(JSC::VM& vm, JSC::Structure* structure);
-    ~JSHmac();
+    JSHash(JSC::VM& vm, JSC::Structure* structure);
+    ~JSHash();
 
     void finishCreation(JSC::VM& vm);
-    void init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const StringView& algorithm, std::span<const uint8_t> keyData);
+    bool init(JSC::JSGlobalObject* globalObject, ThrowScope& scope, const EVP_MD* md, std::optional<unsigned int> xofLen);
     bool update(std::span<const uint8_t> input);
 
-    ncrypto::HMACCtxPointer m_ctx;
+    ncrypto::EVPMDCtxPointer m_ctx;
+    unsigned int m_md_len { 0 };
+    ByteSource m_digest;
     bool m_finalized { false };
 };
 
-class JSHmacPrototype final : public JSC::JSNonFinalObject {
+class JSHashPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSHmacPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
+    static JSHashPrototype* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSHmacPrototype* prototype = new (NotNull, JSC::allocateCell<JSHmacPrototype>(vm)) JSHmacPrototype(vm, structure);
+        JSHashPrototype* prototype = new (NotNull, JSC::allocateCell<JSHashPrototype>(vm)) JSHashPrototype(vm, structure);
         prototype->finishCreation(vm);
         return prototype;
     }
@@ -73,7 +75,7 @@ public:
     }
 
 private:
-    JSHmacPrototype(JSC::VM& vm, JSC::Structure* structure)
+    JSHashPrototype(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
     {
     }
@@ -81,14 +83,14 @@ private:
     void finishCreation(JSC::VM& vm);
 };
 
-class JSHmacConstructor final : public JSC::InternalFunction {
+class JSHashConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSHmacConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype)
+    static JSHashConstructor* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* prototype)
     {
-        JSHmacConstructor* constructor = new (NotNull, JSC::allocateCell<JSHmacConstructor>(vm)) JSHmacConstructor(vm, structure);
+        JSHashConstructor* constructor = new (NotNull, JSC::allocateCell<JSHashConstructor>(vm)) JSHashConstructor(vm, structure);
         constructor->finishCreation(vm, prototype);
         return constructor;
     }
@@ -106,21 +108,20 @@ public:
     }
 
 private:
-    JSHmacConstructor(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, callHmac, constructHmac)
+    JSHashConstructor(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure, callHash, constructHash)
     {
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
-        Base::finishCreation(vm, 2, "Hmac"_s, PropertyAdditionMode::WithStructureTransition);
-        // putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAdditionMode::WithStructureTransition);
+        Base::finishCreation(vm, 2, "Hash"_s, PropertyAdditionMode::WithStructureTransition);
     }
 };
 
-JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncUpdate);
-JSC_DECLARE_HOST_FUNCTION(jsHmacProtoFuncDigest);
+JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncUpdate);
+JSC_DECLARE_HOST_FUNCTION(jsHashProtoFuncDigest);
 
-void setupJSHmacClassStructure(JSC::LazyClassStructure::Initializer& init);
+void setupJSHashClassStructure(JSC::LazyClassStructure::Initializer& init);
 
 } // namespace Bun

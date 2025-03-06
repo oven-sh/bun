@@ -721,4 +721,48 @@ void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<ui
     Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, expectedTypes, key);
 }
 
+ByteSource::ByteSource(ByteSource&& other) noexcept
+    : data_(other.data_)
+    , allocated_data_(other.allocated_data_)
+    , size_(other.size_)
+{
+    other.allocated_data_ = nullptr;
+}
+
+ByteSource::~ByteSource()
+{
+    OPENSSL_clear_free(allocated_data_, size_);
+}
+
+ByteSource& ByteSource::operator=(ByteSource&& other) noexcept
+{
+    if (&other != this) {
+        OPENSSL_clear_free(allocated_data_, size_);
+        data_ = other.data_;
+        allocated_data_ = other.allocated_data_;
+        other.allocated_data_ = nullptr;
+        size_ = other.size_;
+    }
+    return *this;
+}
+
+ByteSource ByteSource::fromBIO(const ncrypto::BIOPointer& bio)
+{
+    ASSERT(bio);
+    BUF_MEM* bptr = bio;
+    auto out = ncrypto::DataPointer::Alloc(bptr->length);
+    memcpy(out.get(), bptr->data, bptr->length);
+    return ByteSource::allocated(out.release());
+}
+
+ByteSource ByteSource::allocated(void* data, size_t size)
+{
+    return ByteSource(data, data, size);
+}
+
+ByteSource ByteSource::foreign(const void* data, size_t size)
+{
+    return ByteSource(data, nullptr, size);
+}
+
 }

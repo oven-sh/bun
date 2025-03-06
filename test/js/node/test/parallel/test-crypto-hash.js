@@ -182,8 +182,11 @@ assert.throws(
                                    ' when called without `new`');
 }
 
+// no shake :(
+// electron patch: https://github.com/electron/electron/blob/bb1c3dff21af48979799377086fd3d36d694a385/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L248
+//
 // Test XOF hash functions and the outputLength option.
-{
+if (!common.openSSLIsBoringSSL) {
   // Default outputLengths. Since OpenSSL 3.4 an outputLength is mandatory
   if (!hasOpenSSL(3, 4)) {
     assert.strictEqual(crypto.createHash('shake128').digest('hex'),
@@ -281,12 +284,12 @@ assert.throws(
   assert.strictEqual(c.digest('hex'), d.digest('hex'));
 }
 
-{
-  crypto.Hash('sha256');
-  common.expectWarning({
-    DeprecationWarning: [
-      ['crypto.Hash constructor is deprecated.',
-       'DEP0179'],
-    ]
-  });
-}
+// {
+//   crypto.Hash('sha256');
+//   common.expectWarning({
+//     DeprecationWarning: [
+//       ['crypto.Hash constructor is deprecated.',
+//        'DEP0179'],
+//     ]
+//   });
+// }

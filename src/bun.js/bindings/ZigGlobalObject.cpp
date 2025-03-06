@@ -163,6 +163,7 @@
 #include "JSSign.h"
 #include "JSVerify.h"
 #include "JSHmac.h"
+#include "JSHash.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2855,6 +2856,11 @@ void GlobalObject::finishCreation(VM& vm)
             setupJSHmacClassStructure(init);
         });
 
+    m_JSHashClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSHashClassStructure(init);
+        });
+
     m_lazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
             init.set(CustomGetterSetter::create(init.vm, errorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
@@ -4044,6 +4050,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSSignClassStructure.visit(visitor);
     thisObject->m_JSVerifyClassStructure.visit(visitor);
     thisObject->m_JSHmacClassStructure.visit(visitor);
+    thisObject->m_JSHashClassStructure.visit(visitor);
     thisObject->m_statValues.visit(visitor);
     thisObject->m_bigintStatValues.visit(visitor);
     thisObject->m_statFsValues.visit(visitor);

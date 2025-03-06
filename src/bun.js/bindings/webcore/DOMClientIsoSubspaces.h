@@ -923,6 +923,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSign;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSVerify;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHmac;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHash;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
 };

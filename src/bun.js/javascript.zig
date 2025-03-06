@@ -4436,6 +4436,7 @@ pub const VirtualMachine = struct {
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
+            Bun__setChannelRef(vm.global, false);
             this.destroy();
         }
 

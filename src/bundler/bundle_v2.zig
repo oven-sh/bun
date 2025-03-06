@@ -924,8 +924,8 @@ pub const BundleV2 = struct {
         if (!entry.found_existing) {
             path.* = this.pathWithPrettyInitialized(path.*, target) catch bun.outOfMemory();
             const loader: Loader = (brk: {
-                var record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
-                if (record.loader()) |out_loader| {
+                const record: *ImportRecord = &this.graph.ast.items(.import_records)[import_record.importer_source_index].slice()[import_record.import_record_index];
+                if (record.loader) |out_loader| {
                     break :brk out_loader;
                 }
                 break :brk path.loader(&transpiler.options.loaders) orelse options.Loader.file;
@@ -1499,10 +1499,7 @@ pub const BundleV2 = struct {
         this.graph.input_files.append(bun.default_allocator, .{
             .source = source,
             .loader = loader,
-            .side_effects = switch (loader) {
-                .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
-                else => _resolver.SideEffects.has_side_effects,
-            },
+            .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
         task.* = ParseTask.init(resolve_result, source_index, this);
@@ -1542,10 +1539,7 @@ pub const BundleV2 = struct {
         this.graph.input_files.append(bun.default_allocator, .{
             .source = source,
             .loader = loader,
-            .side_effects = switch (loader) {
-                .text, .json, .toml, .file => .no_side_effects__pure_data,
-                else => .has_side_effects,
-            },
+            .side_effects = loader.sideEffects(),
         }) catch bun.outOfMemory();
         var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
         task.* = .{
@@ -3049,12 +3043,12 @@ pub const BundleV2 = struct {
             }
 
             // By default, we treat .sqlite files as external.
-            if (import_record.tag == .with_type_sqlite) {
+            if (import_record.loader != null and import_record.loader.? == .sqlite) {
                 import_record.is_external_without_side_effects = true;
                 continue;
             }
 
-            if (import_record.tag == .with_type_sqlite_embedded) {
+            if (import_record.loader != null and import_record.loader.? == .sqlite_embedded) {
                 import_record.is_external_without_side_effects = true;
             }
 
@@ -3289,7 +3283,7 @@ pub const BundleV2 = struct {
 
             // Figure out the loader.
             {
-                if (import_record.tag.loader()) |l| {
+                if (import_record.loader) |l| {
                     resolve_task.loader = l;
                 }
 
@@ -4209,17 +4203,22 @@ pub const ParseTask = struct {
                     ),
                 };
             },
-            .json => {
+            .json, .jsonc => |v| {
                 const trace = tracer(@src(), "ParseJSON");
                 defer trace.end();
-                const root = (try resolver.caches.json.parsePackageJSON(log, source, allocator, false)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
+                const root = (try resolver.caches.json.parseJSON(log, source, allocator, if (v == .jsonc) .jsonc else .json, true)) orelse Expr.init(E.Object, E.Object{}, Logger.Loc.Empty);
                 return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
             },
             .toml => {
                 const trace = tracer(@src(), "ParseTOML");
                 defer trace.end();
-                const root = try TOML.parse(&source, log, allocator, false);
-                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, log, root, &source, "")).?);
+                var temp_log = bun.logger.Log.init(allocator);
+                defer {
+                    temp_log.cloneToWithRecycled(log, true) catch bun.outOfMemory();
+                    temp_log.msgs.clearAndFree();
+                }
+                const root = try TOML.parse(&source, &temp_log, allocator, false);
+                return JSAst.init((try js_parser.newLazyExportAST(allocator, transpiler.options.define, opts, &temp_log, root, &source, "")).?);
             },
             .text => {
                 const root = Expr.init(E.String, E.String{
@@ -8879,7 +8878,7 @@ pub const LinkerContext = struct {
                     const loader = loaders[record.source_index.get()];
 
                     switch (loader) {
-                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .html, .sqlite_embedded => {
+                        .jsx, .js, .ts, .tsx, .napi, .sqlite, .json, .jsonc, .html, .sqlite_embedded => {
                             log.addErrorFmt(
                                 source,
                                 record.range.loc,

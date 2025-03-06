@@ -2807,7 +2807,8 @@ pub const E = struct {
             return this.import_record_index == std.math.maxInt(u32);
         }
 
-        pub fn importRecordTag(import: *const Import) ?ImportRecord.Tag {
+        pub fn importRecordLoader(import: *const Import) ?bun.options.Loader {
+            // This logic is duplicated in js_printer.zig fn parsePath()
             const obj = import.options.data.as(.e_object) orelse
                 return null;
             const with = obj.get("with") orelse obj.get("assert") orelse
@@ -2818,23 +2819,16 @@ pub const E = struct {
                 return null).data.as(.e_string) orelse
                 return null;
 
-            if (str.eqlComptime("json")) {
-                return .with_type_json;
-            } else if (str.eqlComptime("toml")) {
-                return .with_type_toml;
-            } else if (str.eqlComptime("text")) {
-                return .with_type_text;
-            } else if (str.eqlComptime("file")) {
-                return .with_type_file;
-            } else if (str.eqlComptime("sqlite")) {
-                const embed = brk: {
-                    const embed = with_obj.get("embed") orelse break :brk false;
-                    const embed_str = embed.data.as(.e_string) orelse break :brk false;
-                    break :brk embed_str.eqlComptime("true");
-                };
-
-                return if (embed) .with_type_sqlite_embedded else .with_type_sqlite;
-            }
+            if (!str.is_utf16) if (bun.options.Loader.fromString(str.data)) |loader| {
+                if (loader == .sqlite) {
+                    const embed = with_obj.get("embed") orelse return loader;
+                    const embed_str = embed.data.as(.e_string) orelse return loader;
+                    if (embed_str.eqlComptime("true")) {
+                        return .sqlite_embedded;
+                    }
+                }
+                return loader;
+            };
 
             return null;
         }

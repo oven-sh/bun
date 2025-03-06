@@ -505,6 +505,7 @@ const TransposeState = struct {
     is_require_immediately_assigned_to_decl: bool = false,
     loc: logger.Loc = logger.Loc.Empty,
     import_record_tag: ?ImportRecord.Tag = null,
+    import_loader: ?bun.options.Loader = null,
     import_options: Expr = Expr.empty,
 };
 
@@ -2575,6 +2576,7 @@ const ParsedPath = struct {
     text: string,
     is_macro: bool,
     import_tag: ImportRecord.Tag = .none,
+    loader: ?bun.options.Loader = null,
 };
 
 const StrictModeFeature = enum {
@@ -9075,8 +9077,8 @@ fn NewParser_(
                 item_refs.shrinkAndFree(stmt.items.len + @as(usize, @intFromBool(stmt.default_name != null)));
             }
 
-            if (path.import_tag != .none) {
-                try p.validateImportType(path.import_tag, &stmt);
+            if (path.import_tag != .none or path.loader != null) {
+                try p.validateAndSetImportType(&path, &stmt);
             }
 
             // Track the items for this namespace
@@ -9084,13 +9086,13 @@ fn NewParser_(
             return p.s(stmt, loc);
         }
 
-        fn validateImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
+        fn validateAndSetImportType(p: *P, path: *const ParsedPath, stmt: *S.Import) !void {
             @branchHint(.cold);
 
-            if (import_tag.loader() != null) {
-                p.import_records.items[stmt.import_record_index].tag = import_tag;
+            if (path.loader) |loader| {
+                p.import_records.items[stmt.import_record_index].loader = loader;
 
-                if (import_tag.isSQLite()) {
+                if (loader == .sqlite or loader == .sqlite_embedded) {
                     for (stmt.items) |*item| {
                         if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
                             try p.log.addError(
@@ -9101,7 +9103,7 @@ fn NewParser_(
                             break;
                         }
                     }
-                } else if (import_tag.onlySupportsDefaultImports()) {
+                } else if (loader == .file or loader == .text) {
                     for (stmt.items) |*item| {
                         if (!(strings.eqlComptime(item.alias, "default"))) {
                             try p.log.addError(
@@ -9113,8 +9115,8 @@ fn NewParser_(
                         }
                     }
                 }
-            } else if (import_tag == .bake_resolve_to_ssr_graph) {
-                p.import_records.items[stmt.import_record_index].tag = import_tag;
+            } else if (path.import_tag == .bake_resolve_to_ssr_graph) {
+                p.import_records.items[stmt.import_record_index].tag = path.import_tag;
             }
         }
 
@@ -12196,29 +12198,22 @@ fn NewParser_(
                     if (supported_attribute) |attr| {
                         switch (attr) {
                             .type => {
+                                // This logic is duplicated in js_ast.zig fn importRecordTag()
                                 const type_attr = string_literal_text;
                                 if (strings.eqlComptime(type_attr, "macro")) {
                                     path.is_macro = true;
-                                } else if (strings.eqlComptime(type_attr, "sqlite")) {
-                                    path.import_tag = .with_type_sqlite;
-                                    if (has_seen_embed_true) {
-                                        path.import_tag = .with_type_sqlite_embedded;
-                                    }
-                                } else if (strings.eqlComptime(type_attr, "json")) {
-                                    path.import_tag = .with_type_json;
-                                } else if (strings.eqlComptime(type_attr, "toml")) {
-                                    path.import_tag = .with_type_toml;
-                                } else if (strings.eqlComptime(type_attr, "text")) {
-                                    path.import_tag = .with_type_text;
-                                } else if (strings.eqlComptime(type_attr, "file")) {
-                                    path.import_tag = .with_type_file;
+                                } else if (bun.options.Loader.fromString(type_attr)) |loader| {
+                                    path.loader = loader;
+                                    if (loader == .sqlite and has_seen_embed_true) path.loader = .sqlite_embedded;
+                                } else {
+                                    // unknown loader; consider erroring
                                 }
                             },
                             .embed => {
                                 if (strings.eqlComptime(string_literal_text, "true")) {
                                     has_seen_embed_true = true;
-                                    if (path.import_tag == .with_type_sqlite) {
-                                        path.import_tag = .with_type_sqlite_embedded;
+                                    if (path.loader != null and path.loader == .sqlite) {
+                                        path.loader = .sqlite_embedded;
                                     }
                                 }
                             },
@@ -17203,7 +17198,7 @@ fn NewParser_(
                             .import_options = e_.options,
 
                             .loc = e_.expr.loc,
-                            .import_record_tag = e_.importRecordTag(),
+                            .import_loader = e_.importRecordLoader(),
                         };
 
                         return p.import_transposer.maybeTransposeIf(e_.expr, &state);

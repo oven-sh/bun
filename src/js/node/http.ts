@@ -2479,6 +2479,7 @@ function ClientRequest(input, options, cb) {
 
     if (!this[finishedSymbol]) {
       send();
+      resolveNextChunk?.(true);
     }
 
     return this;
@@ -2602,6 +2603,10 @@ function ClientRequest(input, options, cb) {
             yield self[kBodyChunks].shift();
           }
 
+          if (self[kBodyChunks]?.length === 0) {
+            self.emit("drain");
+          }
+
           while (!self[finishedSymbol]) {
             yield await new Promise(resolve => {
               resolveNextChunk = end => {
@@ -2613,6 +2618,10 @@ function ClientRequest(input, options, cb) {
                 }
               };
             });
+
+            if (self[kBodyChunks]?.length === 0) {
+              self.emit("drain");
+            }
           }
 
           handleResponse?.();

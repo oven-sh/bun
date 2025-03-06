@@ -115,7 +115,7 @@ void FullGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
             if (getRSS(&rss)) {
 
                 // If we're using more than 70% of the RAM, attempt to free up as much memory as possible
-                if (static_cast<double>(rss) / static_cast<double>(ramSize()) > 0.7) {
+                if (rss > (ramSize() * 7 / 10)) {
                     releaseCriticalMemory = true;
                     vm.deleteAllCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
                 }
@@ -356,13 +356,13 @@ bool GCController::checkMemoryPressure() const
     // We use blockBytesAllocated() instead.
     size_t currentHeapSize = m_vm.heap.blockBytesAllocated();
 
-    double memoryUsageRatio = static_cast<double>(currentHeapSize) / static_cast<double>(ramSize());
+    bool highMemoryUsage = currentHeapSize > (ramSize() * 7 / 10);
 
     // Check allocation rate (is memory growing rapidly?)
     bool rapidMemoryGrowth = m_lastBlockBytesAllocated > 0 && (currentHeapSize > m_lastBlockBytesAllocated * 1.5);
 
     // Memory is considered under pressure if either condition is true
-    return (memoryUsageRatio > 0.7) || // Using more than 70% of available RAM
+    return highMemoryUsage || // Using more than 70% of available RAM
         (rapidMemoryGrowth && m_hasStayedTheSameFor < 5) || // Rapid memory growth
         (currentHeapSize > 1024ull * 1024ull * 1024ull); // Over 1GB allocated
 }

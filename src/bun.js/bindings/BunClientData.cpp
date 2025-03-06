@@ -44,7 +44,7 @@ JSHeapData::JSHeapData(Heap& heap)
 
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
-JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider, JSC::HeapType heapType)
+JSVMClientData::JSVMClientData(VM& vm, void* bunVM, RefPtr<SourceProvider> sourceProvider, JSC::HeapType heapType)
     : m_builtinNames(vm)
     , m_builtinFunctions(vm, sourceProvider, m_builtinNames)
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
@@ -52,7 +52,8 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider, JS
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
-    , m_gcController(vm, heapType)
+    , m_gcController(vm, bunVM, heapType)
+    , bunVM(bunVM)
 {
 }
 
@@ -81,9 +82,7 @@ JSVMClientData::~JSVMClientData()
 void JSVMClientData::create(VM& vm, void* bunVM, JSC::HeapType heapType)
 {
     auto provider = WebCore::createBuiltinsSourceProvider();
-    JSVMClientData* clientData = new JSVMClientData(vm, provider, heapType);
-    clientData->bunVM = bunVM;
-    clientData->m_gcController.bunVM = bunVM;
+    JSVMClientData* clientData = new JSVMClientData(vm, bunVM, provider, heapType);
     vm.deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
         Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTFMove(ticket), kind);
     };

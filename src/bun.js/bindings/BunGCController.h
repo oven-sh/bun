@@ -20,7 +20,7 @@ class FullGCActivityCallback;
 // The lifetime of this is tied to the JSVMClientData instance, which is tied to the JSC::VM instance
 class GCController {
 public:
-    GCController(JSC::VM&, JSC::HeapType heapType);
+    GCController(JSC::VM&, void* bunVM, JSC::HeapType heapType);
     ~GCController();
 
     // Configure the Eden GC for smaller, more frequent collections

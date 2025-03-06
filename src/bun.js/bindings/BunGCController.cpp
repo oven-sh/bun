@@ -27,9 +27,9 @@ class FullGCActivityCallback final : public JSC::FullGCActivityCallback {
 public:
     using Base = JSC::FullGCActivityCallback;
 
-    static Ref<FullGCActivityCallback> create(JSC::Heap& heap)
+    static Ref<FullGCActivityCallback> create(JSC::Heap& heap, void* bunVM)
     {
-        return adoptRef(*new FullGCActivityCallback(heap));
+        return adoptRef(*new FullGCActivityCallback(heap, bunVM));
     }
 
     void doCollection(JSC::VM&) final;
@@ -40,7 +40,7 @@ public:
     JSC::HeapVersion m_version { 0 };
 
 private:
-    FullGCActivityCallback(JSC::Heap&);
+    FullGCActivityCallback(JSC::Heap&, void* bunVM);
 
     void* m_bunVM = nullptr;
     JSC::VM& m_vm;
@@ -54,9 +54,9 @@ class EdenGCActivityCallback final : public JSC::EdenGCActivityCallback {
 public:
     using Base = JSC::EdenGCActivityCallback;
 
-    static Ref<EdenGCActivityCallback> create(JSC::Heap& heap)
+    static Ref<EdenGCActivityCallback> create(JSC::Heap& heap, void* bunVM)
     {
-        return adoptRef(*new EdenGCActivityCallback(heap));
+        return adoptRef(*new EdenGCActivityCallback(heap, bunVM));
     }
 
     void doCollection(JSC::VM&) final;
@@ -68,7 +68,7 @@ public:
     bool scheduleCollection(JSC::VM&, bool soon);
 
 private:
-    EdenGCActivityCallback(JSC::Heap&);
+    EdenGCActivityCallback(JSC::Heap&, void* bunVM);
 
     JSC::VM& m_vm;
     void* m_bunVM = nullptr;
@@ -76,10 +76,10 @@ private:
     unsigned m_deferCount { 0 };
 };
 
-FullGCActivityCallback::FullGCActivityCallback(JSC::Heap& heap)
+FullGCActivityCallback::FullGCActivityCallback(JSC::Heap& heap, void* bunVM)
     : Base(heap, JSC::Synchronousness::Async)
     , m_vm(heap.vm())
-    , m_bunVM(bunVM(heap.vm()))
+    , m_bunVM(bunVM)
 {
 }
 
@@ -132,10 +132,10 @@ void FullGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
     }
 }
 
-EdenGCActivityCallback::EdenGCActivityCallback(JSC::Heap& heap)
+EdenGCActivityCallback::EdenGCActivityCallback(JSC::Heap& heap, void* bunVM)
     : Base(heap, JSC::Synchronousness::Async)
     , m_vm(heap.vm())
-    , m_bunVM(bunVM(heap.vm()))
+    , m_bunVM(bunVM)
 {
 }
 
@@ -239,10 +239,11 @@ void EdenGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
 
 extern "C" void Bun__GCController__setup(Bun::GCController* controller);
 
-GCController::GCController(JSC::VM& vm, JSC::HeapType heapType)
+GCController::GCController(JSC::VM& vm, void* bunVM, JSC::HeapType heapType)
     : m_vm(vm)
-    , m_edenCallback(EdenGCActivityCallback::create(vm.heap))
-    , m_fullCallback(FullGCActivityCallback::create(vm.heap))
+    , bunVM(bunVM)
+    , m_edenCallback(EdenGCActivityCallback::create(vm.heap, bunVM))
+    , m_fullCallback(FullGCActivityCallback::create(vm.heap, bunVM))
 {
     // Set them as active callbacks in the heap
     m_vm.heap.setEdenActivityCallback(Ref(m_edenCallback));

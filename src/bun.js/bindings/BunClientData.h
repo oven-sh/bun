@@ -114,7 +114,7 @@ public:
     Bun::GCController& gcController() { return m_gcController; }
 
 private:
-    explicit JSVMClientData(JSC::VM&, RefPtr<JSC::SourceProvider>, JSC::HeapType heapType);
+    explicit JSVMClientData(JSC::VM&, void* bunVM, RefPtr<JSC::SourceProvider>, JSC::HeapType heapType);
 
     bool isWebCoreJSClientData() const final { return true; }
 

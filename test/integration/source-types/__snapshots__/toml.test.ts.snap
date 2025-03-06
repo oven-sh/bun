@@ -3,7 +3,7 @@
 exports[`Bun.TOML.parse parses valid TOML without errors, and produces errors for invalid TOML 1`] = `
 "suite: Bun.TOML.parse
 valid passing:   39.52% (147/372)
-invalid passing: 60.48% (225/372)
+invalid passing: 60.65% (225/371)
 
 pass: valid/empty-file.toml
 fail: valid/spec-example-1-compact.toml
@@ -979,8 +979,8 @@ pass: invalid/local-date/month-over.toml
 
 exports[`import(*.toml) importing toml 1`] = `
 "suite: import
-valid passing:   47.79% (335/701)
-invalid passing: 52.21% (366/701)
+valid passing:   90.05% (335/372)
+invalid passing: 98.65% (366/371)
 
 pass: valid/empty-file.toml
 fail: valid/spec-example-1-compact.toml

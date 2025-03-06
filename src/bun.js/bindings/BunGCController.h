@@ -1,5 +1,7 @@
 #pragma once
 
+#include "root.h"
+
 namespace JSC {
 class VM;
 class JSObject;
@@ -18,10 +20,8 @@ class FullGCActivityCallback;
 // The lifetime of this is tied to the JSVMClientData instance, which is tied to the JSC::VM instance
 class GCController {
 public:
-    GCController(JSC::VM&);
+    GCController(JSC::VM&, JSC::HeapType heapType);
     ~GCController();
-
-    void initialize(bool miniMode);
 
     // Configure the Eden GC for smaller, more frequent collections
     void configureEdenGC(bool enabled, unsigned intervalMs = 30);
@@ -67,8 +67,8 @@ public:
 
 private:
     JSC::VM& m_vm;
-    RefPtr<EdenGCActivityCallback> m_edenCallback;
-    RefPtr<FullGCActivityCallback> m_fullCallback;
+    Ref<EdenGCActivityCallback> m_edenCallback;
+    Ref<FullGCActivityCallback> m_fullCallback;
     Metrics m_metrics = {};
     bool m_hasMoreEventLoopWorkToDo = false;
     size_t m_lastBlockBytesAllocated = 0;

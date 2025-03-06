@@ -27,7 +27,7 @@ class FullGCActivityCallback final : public JSC::FullGCActivityCallback {
 public:
     using Base = JSC::FullGCActivityCallback;
 
-    static RefPtr<FullGCActivityCallback> create(JSC::Heap& heap)
+    static Ref<FullGCActivityCallback> create(JSC::Heap& heap)
     {
         return adoptRef(*new FullGCActivityCallback(heap));
     }
@@ -54,7 +54,7 @@ class EdenGCActivityCallback final : public JSC::EdenGCActivityCallback {
 public:
     using Base = JSC::EdenGCActivityCallback;
 
-    static RefPtr<EdenGCActivityCallback> create(JSC::Heap& heap)
+    static Ref<EdenGCActivityCallback> create(JSC::Heap& heap)
     {
         return adoptRef(*new EdenGCActivityCallback(heap));
     }
@@ -237,33 +237,23 @@ void EdenGCActivityCallback::doCollectionEvenIfBusy(JSC::VM& vm)
     Base::doCollection(vm);
 }
 
-GCController::GCController(JSC::VM& vm)
-    : m_vm(vm)
-{
-}
-
-GCController::~GCController()
-{
-}
-
 extern "C" void Bun__GCController__setup(Bun::GCController* controller);
 
-void GCController::initialize(bool miniMode)
+GCController::GCController(JSC::VM& vm, JSC::HeapType heapType)
+    : m_vm(vm)
+    , m_edenCallback(EdenGCActivityCallback::create(vm.heap))
+    , m_fullCallback(FullGCActivityCallback::create(vm.heap))
 {
-    // Create Eden and Full GC callbacks
-    m_edenCallback = EdenGCActivityCallback::create(m_vm.heap);
-    m_fullCallback = FullGCActivityCallback::create(m_vm.heap);
-
     // Set them as active callbacks in the heap
-    m_vm.heap.setEdenActivityCallback(m_edenCallback.get());
-    m_vm.heap.setFullActivityCallback(m_fullCallback.get());
+    m_vm.heap.setEdenActivityCallback(Ref(m_edenCallback));
+    m_vm.heap.setFullActivityCallback(Ref(m_fullCallback));
 
     {
         const char* disable_stop_if_necessary_timer = getenv("BUN_DISABLE_STOP_IF_NECESSARY_TIMER");
         // Keep stopIfNecessaryTimer enabled by default when either:
         // - `--smol` is passed
         // - The machine has less than 4GB of RAM
-        bool shouldDisableStopIfNecessaryTimer = !miniMode;
+        bool shouldDisableStopIfNecessaryTimer = heapType == JSC::HeapType::Large;
         if (ramSize() < 1024ull * 1024ull * 1024ull * 4ull) {
             shouldDisableStopIfNecessaryTimer = false;
         }
@@ -287,6 +277,10 @@ void GCController::initialize(bool miniMode)
     this->configureFullGC(true, 300);
 
     Bun__GCController__setup(this);
+}
+
+GCController::~GCController()
+{
 }
 
 void GCController::performOpportunisticGC()
@@ -330,9 +324,6 @@ void GCController::performOpportunisticGC()
 
 void GCController::configureEdenGC(bool enabled, unsigned intervalMs)
 {
-    if (!m_edenCallback)
-        return;
-
     if (enabled) {
         m_edenCallback->setEnabled(true);
         m_edenCallback->setTimeUntilFire(WTF::Seconds::fromMilliseconds(intervalMs));
@@ -344,9 +335,6 @@ void GCController::configureEdenGC(bool enabled, unsigned intervalMs)
 
 void GCController::configureFullGC(bool enabled, unsigned intervalMs)
 {
-    if (!m_fullCallback)
-        return;
-
     if (enabled) {
         m_fullCallback->setEnabled(true);
         m_fullCallback->setTimeUntilFire(WTF::Seconds::fromMilliseconds(intervalMs));

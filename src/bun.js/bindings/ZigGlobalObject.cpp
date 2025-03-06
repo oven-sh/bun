@@ -876,8 +876,6 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
     }
 }
 
-extern "C" void* GCController__setup(Bun::GCController* controller);
-
 // executionContextId: -1 for main thread
 // executionContextId: maxInt32 for macros
 // executionContextId: >-1 for workers
@@ -897,10 +895,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     // Every JS VM's RunLoop should use Bun's RunLoop implementation
     ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
-    WebCore::JSVMClientData::create(&vm, Bun__getVM());
-
-    auto* clientData = Bun::clientData(vm);
-    clientData->gcController().initialize(miniMode);
+    WebCore::JSVMClientData::create(vm, Bun__getVM(), heapSize);
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (UNLIKELY(executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > -1)) {

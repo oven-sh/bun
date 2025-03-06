@@ -371,7 +371,7 @@ bool GCController::checkMemoryPressure() const
 
 extern "C" {
 
-Bun::GCController* Bun__GCController__create(JSC::VM* vm)
+Bun::GCController* Bun__GCController__get(JSC::VM* vm)
 {
     auto* clientData = WebCore::clientData(*vm);
     auto& gcController = clientData->gcController();

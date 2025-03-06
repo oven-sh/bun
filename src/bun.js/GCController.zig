@@ -36,12 +36,12 @@ pub const GCController = opaque {
     }
 
     extern "c" fn Bun__GCController__initialize(controller: *GCController) void;
-    extern "c" fn Bun__GCController__create(vm: *VM) *GCController;
+    extern "c" fn Bun__GCController__get(vm: *VM) *GCController;
     extern "c" fn Bun__GCController__performOpportunisticGC(controller: *GCController) void;
     extern "c" fn Bun__GCController__getMetrics(controller: *GCController, incrementalSweepCount: ?*usize, edenGCCount: ?*usize, fullGCCount: ?*usize, totalSweepTimeMs: ?*f64, maxSweepTimeMs: ?*f64) void;
 
-    fn create(vm: *VM) ?*GCController {
-        return Bun__GCController__create(vm);
+    fn get(vm: *VM) *GCController {
+        return Bun__GCController__get(vm);
     }
 
     pub fn performOpportunisticGC(this: *GCController) void {

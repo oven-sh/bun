@@ -5096,6 +5096,7 @@ const DirectoryWatchStore = struct {
             // loaders do not depend on importing other files.
             .file,
             .json,
+            .jsonc,
             .toml,
             .wasm,
             .napi,

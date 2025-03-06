@@ -9119,17 +9119,17 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             id: usize,
         ) void {
             JSC.markBinding(@src());
+            if (id == 1) {
+                // This is actually a UserRoute if id is 1 so it's safe to cast
+                upgradeWebSocketUserRoute(@ptrCast(this), resp, req, upgrade_ctx);
+                return;
+            }
+            // Access `this` as *ThisServer only if id is 0
+            bun.assert(id == 0);
             if (this.config.onNodeHTTPRequest != .zero) {
                 onNodeHTTPRequestWithUpgradeCtx(this, req, resp, upgrade_ctx);
                 return;
             }
-            if (id == 1) {
-                // user route this is actually a UserRoute its safe to cast
-                upgradeWebSocketUserRoute(@ptrCast(this), resp, req, upgrade_ctx);
-                return;
-            }
-            // only access this as *ThisServer only if id is 0
-            bun.assert(id == 0);
             if (this.config.onRequest == .zero) {
                 // require fetch method to be set otherwise we dont know what route to call
                 // this should be the fallback in case no route is provided to upgrade

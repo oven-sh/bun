@@ -1936,8 +1936,9 @@ pub const E = struct {
                 if (prop.kind != .normal or prop.class_static_block != null or prop.key == null or prop.key.?.data != .e_string or prop.value == null) {
                     return error.@"Cannot convert argument type to JS";
                 }
-                var key = prop.key.?.data.e_string.toZigString(allocator);
-                obj.put(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
+                const key = prop.key.?.data.e_string.toBunString();
+                defer key.deref();
+                obj.putMayBeIndex(globalObject, &key, try prop.value.?.toJS(allocator, globalObject));
             }
 
             return obj;
@@ -2537,6 +2538,16 @@ pub const E = struct {
             } else {
                 return JSC.ZigString.initUTF16(s.slice16());
             }
+        }
+
+        /// `data` is borrowed. Does not allocate.
+        pub fn toBunString(s: *const String) bun.String {
+            return if (s.len() == 0)
+                bun.String.empty
+            else if (s.isUTF8())
+                bun.String.fromUTF8(s.data)
+            else
+                bun.String.fromUTF16(s.slice16());
         }
 
         pub fn format(s: String, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {

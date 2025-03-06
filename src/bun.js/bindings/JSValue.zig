@@ -657,6 +657,8 @@ pub const JSValue = enum(i64) {
     }
 
     pub fn putZigString(value: JSValue, global: *JSGlobalObject, key: *const ZigString, result: JSC.JSValue) void {
+        // NOTE: JSC__JSVALUE__put calls `value.asCell()->getObject()`, which returns null if not an object
+        bun.debugAssert(value.isObject());
         @import("./headers.zig").JSC__JSValue__put(value, global, key, result);
     }
 
@@ -667,7 +669,15 @@ pub const JSValue = enum(i64) {
         JSC__JSValue__putBunString(value, global, key, result);
     }
 
+    /// Add a property to an object.
+    /// 
+    /// This is similar to `object[key] = value` in JS, but the prototype chain
+    /// is not traversed. Properties are added directly to the object.
+    /// 
+    /// `key` must be a `ZigString`, a `BunString`, or a pointer to one of those.
+    /// It cannot be a numeric value; use `putMayBeIndex` for that.
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: JSC.JSValue) void {
+        bun.assert(value.isCell());
         const Key = @TypeOf(key);
         if (comptime @typeInfo(Key) == .pointer) {
             const Elem = @typeInfo(Key).pointer.child;
@@ -690,12 +700,12 @@ pub const JSValue = enum(i64) {
     }
 
     /// Note: key can't be numeric (if so, use putMayBeIndex instead)
-    extern fn JSC__JSValue__putMayBeIndex(target: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSC.JSValue) void;
+    extern fn JSC__JSValue__putDirectMayBeIndex(target: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSC.JSValue) void;
 
     /// Same as `.put` but accepts both non-numeric and numeric keys.
     /// Prefer to use `.put` if the key is guaranteed to be non-numeric (e.g. known at comptime)
     pub inline fn putMayBeIndex(this: JSValue, globalObject: *JSGlobalObject, key: *const String, value: JSValue) void {
-        JSC__JSValue__putMayBeIndex(this, globalObject, key, value);
+        JSC__JSValue__putDirectMayBeIndex(this, globalObject, key, value);
     }
 
     pub fn putIndex(value: JSValue, globalObject: *JSGlobalObject, i: u32, out: JSValue) void {

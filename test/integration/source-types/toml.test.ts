@@ -38,12 +38,13 @@ async function doTest(
     for await (const tomlFile of await glob.scan(dir)) {
       const filepath = path.resolve(dir, tomlFile);
       // const fullpath = path.resolve(import.meta.dirname, filepath);
-      const source = needsSource ? await fs.readFile(filepath, 'utf8') : undefined;
+      const source = needsSource ? await fs.readFile(filepath, "utf8") : undefined;
       if (debugLogs) console.log(tomlFile);
       yield { filename: tomlFile, filepath, source };
     }
   }
 
+  const stripPrefix = import.meta.dirname + "/";
   for await (const testCase of iterCases(fixturePath("valid"))) {
     const { filename } = testCase;
     try {
@@ -55,6 +56,8 @@ async function doTest(
       const errInfo = String(e)
         .split("\n")
         .map(line => "  " + line)
+        // make absolute paths relative to the fixture directory
+        .map(line => line.replaceAll(stripPrefix, ""))
         .join("\n");
       validInfo += `fail: valid/${filename}\n${errInfo}\n`;
     }
@@ -88,9 +91,34 @@ async function doTest(
 }
 const pct = (pass: number, total: number, precision = 2) => ((pass / total) * 100).toFixed(precision);
 
+describe("Bun.TOML.parse", () => {
+  it.each([
+    // basic values
+    ["foo=bar", { foo: "bar" }],
+    ["foo=1", { foo: 1 }],
+    ["foo=true", { foo: true }],
+    ["foo=[1,2,3]", { foo: [1, 2, 3] }],
+    // strings
+    ["foo='bar'", { foo: "bar" }],
+    ["'foo'='bar'", { foo: "bar" }],
+    [`'foo'='''bar'''`, { foo: "bar" }],
 
-test("Bun.TOML", async () => {
-  await doTest({ name: "Bun.TOML.parse", needsSource: true }, ({ source }) => Bun.TOML.parse(source as string));
+    ['[foo]\nbar="baz"', { foo: { bar: "baz" } }],
+    ["[foo]\nbar=baz", { foo: { bar: "baz" } }],
+    ["foo={bar=baz}", { foo: { bar: "baz" } }],
+
+    // keys
+    ["''='bar'", { "": "bar" }], // empty keys are valid but discouraged
+    [`0=bar`, { "0": "bar" }],
+  ])("bun.TOML.parse(`%s`) === %o", async (source, expected) => {
+    const actual = await Bun.TOML.parse(source);
+    console.log(actual);
+    expect(actual).toStrictEqual(expected);
+  });
+
+  test("parses valid TOML without errors, and produces errors for invalid TOML", async () => {
+    await doTest({ name: "Bun.TOML.parse", needsSource: true }, ({ source }) => Bun.TOML.parse(source as string));
+  });
 });
 
 /**

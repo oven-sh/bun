@@ -61,8 +61,12 @@ function EventEmitter(opts) {
   }
 
   this._maxListeners ??= undefined;
-  if ((this[kCapture] = opts?.captureRejections ? Boolean(opts?.captureRejections) : EventEmitterPrototype[kCapture])) {
+  if (opts?.captureRejections) {
+    validateBoolean(opts.captureRejections, "options.captureRejections");
+    this[kCapture] = Boolean(opts.captureRejections);
     this.emit = emitWithRejectionCapture;
+  } else {
+    this[kCapture] = EventEmitterPrototype[kCapture];
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });

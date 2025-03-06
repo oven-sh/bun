@@ -68,6 +68,8 @@ public:
     ByteSource(const ByteSource&) = delete;
     ByteSource& operator=(const ByteSource&) = delete;
 
+    std::span<const uint8_t> span() const;
+
     template<typename T = void>
     inline const T* data() const
     {

@@ -10668,7 +10668,7 @@ crypto_exports.createVerify = createVerify;
   };
 
   Hash.prototype._flush = function _flush(callback) {
-    this.push(this[kHandle].digest());
+    this.push(this[kHandle].digest(null, false));
     callback();
   };
 

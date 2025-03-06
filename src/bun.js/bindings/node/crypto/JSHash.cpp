@@ -214,31 +214,46 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    bool finalized = true;
+    JSValue setFinalizedValue = callFrame->argument(1);
+    if (setFinalizedValue.isBoolean()) {
+        finalized = setFinalizedValue.asBoolean();
+    }
+
     uint32_t len = hash->m_mdLen;
 
     if (hash->m_zigHasher) {
-        if (len == 0) {
+        if (hash->m_digest || len == 0) {
             return StringBytes::encode(
                 lexicalGlobalObject,
                 scope,
-                {},
+                hash->m_digest.span(),
                 encoding);
         }
-        Vector<uint8_t> buf;
-        buf.grow(std::max((uint32_t)EVP_MAX_MD_SIZE, len));
-        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, buf.mutableSpan());
+
+        auto digestBuf = ncrypto::DataPointer::Alloc(std::max((uint32_t)EVP_MAX_MD_SIZE, len));
+
+        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, digestBuf.span());
         if (!totalDigestLen) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return JSValue::encode({});
         }
 
-        hash->m_finalized = true;
+        hash->m_finalized = finalized;
+        hash->m_mdLen = std::min(len, totalDigestLen);
 
-        return StringBytes::encode(
+        auto resBuf = digestBuf.release();
+        resBuf.len = hash->m_mdLen;
+
+        hash->m_digest = ByteSource::allocated(resBuf);
+
+        auto result = StringBytes::encode(
             lexicalGlobalObject,
             scope,
-            buf.subspan(0, std::min(len, totalDigestLen)),
+            hash->m_digest.span(),
             encoding);
+
+        return result;
     }
 
     // Only compute the digest if it hasn't been cached yet
@@ -256,7 +271,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     }
 
     // Mark as finalized
-    hash->m_finalized = true;
+    hash->m_finalized = finalized;
 
     // Return the digest with the requested encoding
     return StringBytes::encode(

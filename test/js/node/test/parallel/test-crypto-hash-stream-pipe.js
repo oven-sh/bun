@@ -40,7 +40,6 @@ s.pipe(h).on('data', common.mustCall(function(c) {
   assert.strictEqual(c, expect);
   // Calling digest() after piping into a stream with SHA3 should not cause
   // a segmentation fault, see https://github.com/nodejs/node/issues/28245.
-  console.log("before digest");
   assert.strictEqual(h.digest('hex'), expect);
 })).setEncoding('hex');
 

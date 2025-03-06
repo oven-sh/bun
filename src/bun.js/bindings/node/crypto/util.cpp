@@ -776,6 +776,11 @@ ByteSource::~ByteSource()
     OPENSSL_clear_free(allocated_data_, size_);
 }
 
+std::span<const uint8_t> ByteSource::span() const
+{
+    return { reinterpret_cast<const uint8_t*>(data_), size_ };
+}
+
 ByteSource& ByteSource::operator=(ByteSource&& other) noexcept
 {
     if (&other != this) {

@@ -1358,6 +1358,7 @@ class ChildProcess extends EventEmitter {
     } catch (ex) {
       if (ex == null || typeof ex !== "object" || !Object.hasOwn(ex, "errno")) throw ex;
       this.#handle = null;
+      ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
       process.nextTick(() => {
         this.emit("error", ex);
         this.emit("close", (ex as SystemError).errno ?? -1);

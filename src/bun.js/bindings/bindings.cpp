@@ -5390,9 +5390,13 @@ enum class BuiltinNamesMap : uint8_t {
     error,
     defaultKeyword,
     encoding,
+    fatal,
+    ignoreBOM,
+    type,
+    signal,
 };
 
-static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char name)
+static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
 {
 
     auto clientData = WebCore::clientData(vm);
@@ -5425,7 +5429,7 @@ static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char na
         return clientData->builtinNames().redirectPublicName();
     }
     case BuiltinNamesMap::inspectCustom: {
-        return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
+        return clientData->builtinNames().inspectCustomPublicName();
     }
     case BuiltinNamesMap::highWaterMark: {
         return clientData->builtinNames().highWaterMarkPublicName();
@@ -5454,9 +5458,21 @@ static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char na
     case BuiltinNamesMap::encoding: {
         return clientData->builtinNames().encodingPublicName();
     }
+    case BuiltinNamesMap::fatal: {
+        return clientData->builtinNames().fatalPublicName();
+    }
+    case BuiltinNamesMap::ignoreBOM: {
+        return clientData->builtinNames().ignoreBOMPublicName();
+    }
+    case BuiltinNamesMap::type: {
+        return vm.propertyNames->type;
+    }
+    case BuiltinNamesMap::signal: {
+        return clientData->builtinNames().signalPublicName();
+    }
     default: {
         ASSERT_NOT_REACHED();
-        return Identifier();
+        __builtin_unreachable();
     }
     }
 }
@@ -5478,8 +5494,8 @@ JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     JSC::JSObject* object = value.getObject();
     ASSERT_WITH_MESSAGE(object, "fastGet() called on non-object. Check that the JSValue is an object before calling fastGet().");
     auto& vm = JSC::getVM(globalObject);
-    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
 
+    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
     return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
 }
 
@@ -5490,6 +5506,7 @@ extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSG
     PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
     const Identifier name = builtinNameMap(globalObject->vm(), arg2);
     auto* object = value.getObject();
+
     if (object->getOwnPropertySlot(object, globalObject, name, slot)) {
         return JSValue::encode(slot.getValue(globalObject, name));
     }

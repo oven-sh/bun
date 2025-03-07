@@ -1321,6 +1321,15 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             try entry_points.append(alloc, html.html_bundle.html_bundle.path, .{ .client = true });
         },
     }
+
+    if (dev.has_tailwind_plugin_hack) |*map| {
+        for (map.keys()) |abs_path| {
+            const file = dev.client_graph.bundled_files.get(abs_path) orelse
+                continue;
+            if (file.flags.kind == .css)
+                entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
+        }
+    }
 }
 
 fn onFrameworkRequestWithBundle(
@@ -3672,7 +3681,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             bundler_index: bun.JSAst.Index,
         ) !void {
             bun.assert(bundler_index.isValid());
-            bun.assert(ctx.loaders[bundler_index.get()] == .css);
+            bun.assert(ctx.loaders[bundler_index.get()].isCSS());
 
             var sfb = std.heap.stackFallback(@sizeOf(bun.JSAst.Index) * 64, temp_alloc);
             const queue_alloc = sfb.get();
@@ -5052,6 +5061,7 @@ const DirectoryWatchStore = struct {
             // loaders do not depend on importing other files.
             .file,
             .json,
+            .jsonc,
             .toml,
             .wasm,
             .napi,

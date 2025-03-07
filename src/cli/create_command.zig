@@ -1431,7 +1431,7 @@ pub const CreateCommand = struct {
 
                 const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
-                const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source, .{}) catch |err| {
+                const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source, .{ .mangled_props = null }) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                     package_json_file = null;
                     break :process_package_json;

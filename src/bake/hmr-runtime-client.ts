@@ -4,7 +4,6 @@ import {
   loadModuleAsync,
   replaceModules,
   onServerSideReload,
-  loadExports,
   setRefreshRuntime,
   emitEvent,
   fullReload,

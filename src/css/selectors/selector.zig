@@ -31,6 +31,8 @@ pub const impl = struct {
         pub const SelectorImpl = struct {
             pub const AttrValue = css.css_values.string.CSSString;
             pub const Identifier = css.css_values.ident.Ident;
+            /// An identifier which could be a local name for use in CSS modules
+            pub const LocalIdentifier = css.css_values.ident.IdentOrRef;
             pub const LocalName = css.css_values.ident.Ident;
             pub const NamespacePrefix = css.css_values.ident.Ident;
             pub const NamespaceUrl = []const u8;
@@ -41,6 +43,12 @@ pub const impl = struct {
             pub const PseudoElement = parser.PseudoElement;
             pub const VendorPrefix = css.VendorPrefix;
             pub const ExtraMatchingData = void;
+        };
+
+        pub const LocalIdentifier = struct {
+            pub fn fromIdent(ident: css.css_values.ident.Ident) SelectorImpl.LocalIdentifier {
+                return .{ .v = ident };
+            }
         };
     };
 };
@@ -441,12 +449,13 @@ pub fn isCompatible(selectors: []const parser.Selector, targets: css.targets.Tar
 pub fn isUnused(
     selectors: []const parser.Selector,
     unused_symbols: *const std.StringArrayHashMapUnmanaged(void),
+    symbols: *const css.SymbolList,
     parent_is_unused: bool,
 ) bool {
     if (unused_symbols.count() == 0) return false;
 
     for (selectors) |*selector| {
-        if (!isSelectorUnused(selector, unused_symbols, parent_is_unused)) return false;
+        if (!isSelectorUnused(selector, unused_symbols, symbols, parent_is_unused)) return false;
     }
 
     return true;
@@ -455,18 +464,20 @@ pub fn isUnused(
 fn isSelectorUnused(
     selector: *const parser.Selector,
     unused_symbols: *const std.StringArrayHashMapUnmanaged(void),
+    symbols: *const css.SymbolList,
     parent_is_unused: bool,
 ) bool {
     for (selector.components.items) |*component| {
         switch (component.*) {
             .class, .id => |ident| {
-                if (unused_symbols.contains(ident.v)) return true;
+                const actual_ident = ident.asOriginalString(symbols);
+                if (unused_symbols.contains(actual_ident)) return true;
             },
             .is, .where => |is| {
-                if (isUnused(is, unused_symbols, parent_is_unused)) return true;
+                if (isUnused(is, unused_symbols, symbols, parent_is_unused)) return true;
             },
             .any => |any| {
-                if (isUnused(any.selectors, unused_symbols, parent_is_unused)) return true;
+                if (isUnused(any.selectors, unused_symbols, symbols, parent_is_unused)) return true;
             },
             .nesting => {
                 if (parent_is_unused) return true;
@@ -708,7 +719,7 @@ pub const serialize = struct {
                     const writer = id.writer();
                     css.serializer.serializeIdentifier(v.value, writer) catch return dest.addFmtError();
 
-                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions.default(), dest.import_info);
+                    const s = try css.to_css.string(dest.allocator, CSSString, &v.value, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
 
                     if (id.items.len > 0 and id.items.len < s.len) {
                         try dest.writeStr(id.items);
@@ -782,11 +793,11 @@ pub const serialize = struct {
             },
             .class => |class| {
                 try dest.writeChar('.');
-                return dest.writeIdent(class.v, true);
+                return dest.writeIdentOrRef(class, dest.css_module != null);
             },
             .id => |id| {
                 try dest.writeChar('#');
-                return dest.writeIdent(id.v, true);
+                return dest.writeIdentOrRef(id, dest.css_module != null);
             },
             .host => |selector| {
                 try dest.writeStr(":host");
@@ -1343,11 +1354,13 @@ pub const tocss_servo = struct {
             },
             .id => |s| {
                 try dest.writeChar('#');
-                try css.IdentFns.toCss(&s, W, dest);
+                const str = dest.lookupIdentOrRef(s);
+                try dest.writeStr(str);
             },
             .class => |s| {
                 try dest.writeChar('.');
-                try css.IdentFns.toCss(&s, W, dest);
+                const str = dest.lookupIdentOrRef(s);
+                try dest.writeStr(str);
             },
             .local_name => |local_name| {
                 try local_name.toCss(W, dest);

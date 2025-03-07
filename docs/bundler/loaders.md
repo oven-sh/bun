@@ -4,6 +4,12 @@ The Bun bundler implements a set of default loaders out of the box. As a rule of
 
 Bun uses the file extension to determine which built-in _loader_ should be used to parse the file. Every loader has a name, such as `js`, `tsx`, or `json`. These names are used when building [plugins](https://bun.sh/docs/bundler/plugins) that extend Bun with custom loaders.
 
+You can explicitly specify which loader to use using the 'loader' import attribute.
+
+```ts
+import my_toml from "./my_file" with { loader: "toml" };
+```
+
 ## Built-in loaders
 
 ### `js`

@@ -52,7 +52,7 @@ export function getMainWebSocket(): WebSocketWrapper | null {
 
 export function initWebSocket(
   handlers: Record<number, (dv: DataView<ArrayBuffer>, ws: WebSocket) => void>,
-  { url = "/_bun/hmr", onStatusChange }: { url?: string; onStatusChange: (connected: boolean) => void } = {},
+  { url = "/_bun/hmr", onStatusChange }: { url?: string; onStatusChange?: (connected: boolean) => void } = {},
 ): WebSocketWrapper {
   let firstConnection = true;
   let closed = false;

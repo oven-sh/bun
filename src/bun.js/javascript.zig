@@ -4450,13 +4450,8 @@ pub const VirtualMachine = struct {
         }
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
-            if (global.bunVM().ipc) |*current_ipc| {
-                switch (current_ipc.*) {
-                    .initialized => |instance| {
-                        instance.data.close(true);
-                    },
-                    .waiting => {},
-                }
+            if (global.bunVM().getIPCInstance()) |current_ipc| {
+                current_ipc.data.close(true);
             }
         }
 

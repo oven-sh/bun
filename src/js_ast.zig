@@ -1608,10 +1608,6 @@ pub const E = struct {
         hot_data,
         /// `import.meta.hot.accept` when HMR is enabled. Truthy.
         hot_accept,
-        /// `import.meta.hot.accept` when HMR is disabled. Falsy and DCE's when called.
-        hot_accept_disabled,
-        /// `import.meta.hot.*` when HMR is disabled. Falsy and DCE's when called.
-        hot_function_disabled,
         /// Converted from `hot_accept` to this in js_parser.zig when it is
         /// passed strings. Printed as `hmr.hot.acceptSpecifiers`
         hot_accept_visited,

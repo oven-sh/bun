@@ -17328,16 +17328,6 @@ fn NewParser_(
                             }
                         }
 
-                        if (e_.target.data.as(.e_special)) |special| {
-                            switch (special) {
-                                .hot_accept_disabled, .hot_function_disabled => {
-                                    method_call_should_be_replaced_with_undefined = true;
-                                    p.is_control_flow_dead = true;
-                                },
-                                else => {},
-                            }
-                        }
-
                         for (e_.args.slice()) |*arg| {
                             arg.* = p.visitExpr(arg.*);
                         }
@@ -18877,8 +18867,12 @@ fn NewParser_(
                                 Expr.init(E.Object, .{}, loc);
                         }
                         if (bun.strings.eqlComptime(name, "accept")) {
+                            if (!enabled) {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                                return .{ .data = .e_undefined, .loc = loc };
+                            }
                             return .{ .data = .{
-                                .e_special = if (enabled) .hot_accept else .hot_accept_disabled,
+                                .e_special = .hot_accept,
                             }, .loc = loc };
                         }
                         const lookup_table = comptime bun.ComptimeStringMap(void, [_]struct { [:0]const u8, void }{

@@ -21,6 +21,7 @@ if (cluster.isPrimary) {
   // The `got` function of net.Server will create a TCP server by listen(handle)
   // See lib/internal/child_process.js
   process.on('message', common.mustCall((_, server) => {
+    console.log("server", server);
     assert.strictEqual(server instanceof net.Server, true);
     process.exit(0);
   }));

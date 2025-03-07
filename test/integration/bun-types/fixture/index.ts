@@ -1,6 +1,13 @@
 import svgpath from "cool.svg";
 svgpath satisfies `${string}.svg`;
 
+import * as test from "bun:test";
+test.describe;
+test.it;
+
+import * as sqlite from "bun:sqlite";
+sqlite.Database;
+
 Bun satisfies typeof import("bun");
 
 type S3OptionsFromNamespace = Bun.S3Options;

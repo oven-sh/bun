@@ -12,6 +12,10 @@
 /// <reference path="./extensions.d.ts" />
 /// <reference path="./devserver.d.ts" />
 /// <reference path="./ffi.d.ts" />
+/// <reference path="./html-rewriter.d.ts" />
+/// <reference path="./jsc.d.ts" />
+/// <reference path="./sqlite.d.ts" />
+/// <reference path="./test.d.ts" />
 
 /// <reference path="./bun.ns.d.ts" />
 

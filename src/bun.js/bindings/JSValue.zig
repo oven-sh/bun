@@ -1571,6 +1571,10 @@ pub const JSValue = enum(i64) {
         @"error",
         default,
         encoding,
+        fatal,
+        ignoreBOM,
+        type,
+        signal,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);

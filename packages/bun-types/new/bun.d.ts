@@ -16,11 +16,8 @@
 declare module "bun" {
 	type DistributedOmit<T, K extends keyof T> = T extends T ? Omit<T, K> : never;
 	type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
-
 	type ArrayBufferView = NodeJS.TypedArray | DataView;
 	type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-	type PathLike = import("bun").PathLike;
-	type BodyInit = ReadableStream | XMLHttpRequestBodyInit | URLSearchParams;
 	type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData;
 	type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
 	type ReadableStreamDefaultReadResult<T> =
@@ -94,12 +91,6 @@ declare module "bun" {
 		promise: Promise<unknown>,
 		value: unknown,
 	) => void;
-
-	type HeadersInit =
-		| Headers
-		| Record<string, string>
-		| Array<[string, string]>
-		| IterableIterator<[string, string]>;
 
 	type ResponseType =
 		| "basic"

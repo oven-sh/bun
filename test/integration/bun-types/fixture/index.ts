@@ -75,6 +75,8 @@ r.method;
 r.body;
 r.headers.get("content-type");
 
+new Request("", {});
+
 await r.json();
 await r.text();
 
@@ -152,6 +154,8 @@ Response.redirect("bun.sh", {
 });
 
 Bun.fetch.preconnect;
+
+type g = BodyInit;
 
 Bun.fetch("", {
   proxy: "",

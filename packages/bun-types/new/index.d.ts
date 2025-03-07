@@ -10,5 +10,8 @@
 /// <reference path="./sink.d.ts" />
 /// <reference path="./bun.d.ts" />
 /// <reference path="./extensions.d.ts" />
+/// <reference path="./devserver.d.ts" />
+/// <reference path="./ffi.d.ts" />
+/// <reference path="./ns.d.ts" />
 
 declare var onmessage: never;

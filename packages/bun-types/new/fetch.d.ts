@@ -1,9 +1,35 @@
-type RequestInit = import("undici-types").RequestInit;
-type HeadersInit = import("undici-types").HeadersInit;
-type ResponseInit = import("undici-types").ResponseInit;
-type BodyInit = import("undici-types").BodyInit;
+type BodyInit = ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;
 
-interface Headers {
+type HeadersInit =
+	| Headers
+	| Record<string, string>
+	| Array<[string, string]>
+	| IterableIterator<[string, string]>;
+
+// Comes from @types/node as they're declared globally
+interface RequestInit {}
+
+// Comes from @types/node as they're declared globally
+interface ResponseInit {}
+
+declare module "bun" {
+	/**
+	 * @internal
+	 */
+	type UndiciRequest = import("undici-types").Request;
+
+	/**
+	 * @internal
+	 */
+	type UndiciResponse = import("undici-types").Response;
+
+	/**
+	 * @internal
+	 */
+	type UndiciHeaders = import("undici-types").Headers;
+}
+
+interface Headers extends Bun.UndiciHeaders {
 	/**
 	 * Convert {@link Headers} to a plain JavaScript object.
 	 *
@@ -43,16 +69,20 @@ declare var Headers: {
 	new (init?: HeadersInit): Headers;
 };
 
-interface Request {
+interface Request extends Bun.UndiciRequest {
 	headers: Headers;
 }
 
 declare var Request: {
 	prototype: Request;
-	new (requestInfo: string, requestInit?: RequestInit): Request;
+	new (requestInfo: string, init?: RequestInit): Request;
 	new (requestInfo: RequestInit & { url: string }): Request;
-	new (requestInfo: Request, requestInit?: RequestInit): Request;
+	new (requestInfo: Request, init?: RequestInit): Request;
 };
+
+interface Response extends Bun.UndiciResponse {
+	headers: Headers;
+}
 
 declare var Response: {
 	new (
@@ -168,7 +198,7 @@ declare function fetch(
  * @returns A promise that resolves to {@link Response} object.
  */
 declare function fetch(
-	input: string | URL | globalThis.Request,
+	input: string | URL | Request,
 	init?: BunFetchRequestInit,
 ): Promise<Response>;
 

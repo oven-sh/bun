@@ -62,6 +62,7 @@ function EventEmitter(opts) {
 
   this._maxListeners ??= undefined;
   if (opts?.captureRejections) {
+    // TODO: make validator functions return the validated value instead of validating and then coercing an extra time
     validateBoolean(opts.captureRejections, "options.captureRejections");
     this[kCapture] = Boolean(opts.captureRejections);
     this.emit = emitWithRejectionCapture;

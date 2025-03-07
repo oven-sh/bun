@@ -14408,7 +14408,7 @@ pub const LinkerContext = struct {
         // Collect all local css names
         var sfb = std.heap.stackFallback(512, c.allocator);
         const allocator = sfb.get();
-        var local_css_names = std.AutoArrayHashMap(bun.bundle_v2.Ref, void).init(allocator);
+        var local_css_names = std.AutoHashMap(bun.bundle_v2.Ref, void).init(allocator);
         defer local_css_names.deinit();
 
         for (all_css_asts, 0..) |maybe_css_ast, source_index| {

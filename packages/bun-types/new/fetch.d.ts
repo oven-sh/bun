@@ -13,23 +13,25 @@ interface RequestInit {}
 interface ResponseInit {}
 
 declare module "bun" {
-	/**
-	 * @internal
-	 */
-	type UndiciRequest = import("undici-types").Request;
+	namespace __internal {
+		/**
+		 * @internal
+		 */
+		type UndiciRequest = import("undici-types").Request;
 
-	/**
-	 * @internal
-	 */
-	type UndiciResponse = import("undici-types").Response;
+		/**
+		 * @internal
+		 */
+		type UndiciResponse = import("undici-types").Response;
 
-	/**
-	 * @internal
-	 */
-	type UndiciHeaders = import("undici-types").Headers;
+		/**
+		 * @internal
+		 */
+		type UndiciHeaders = import("undici-types").Headers;
+	}
 }
 
-interface Headers extends Bun.UndiciHeaders {
+interface Headers extends Bun.__internal.UndiciHeaders {
 	/**
 	 * Convert {@link Headers} to a plain JavaScript object.
 	 *
@@ -69,7 +71,7 @@ declare var Headers: {
 	new (init?: HeadersInit): Headers;
 };
 
-interface Request extends Bun.UndiciRequest {
+interface Request extends Bun.__internal.UndiciRequest {
 	headers: Headers;
 }
 
@@ -80,7 +82,7 @@ declare var Request: {
 	new (requestInfo: Request, init?: RequestInit): Request;
 };
 
-interface Response extends Bun.UndiciResponse {
+interface Response extends Bun.__internal.UndiciResponse {
 	headers: Headers;
 }
 

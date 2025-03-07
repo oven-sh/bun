@@ -14,6 +14,8 @@ const client = new Bun.S3Client({
   secretAccessKey: "",
 });
 
+new TextEncoder();
+
 client.file("");
 
 Bun.fetch;
@@ -31,6 +33,9 @@ new WritableStream();
 new TransformStream();
 new AbortSignal();
 new AbortController();
+
+new TextDecoder();
+new TextEncoder();
 
 fetch("url", {
   proxy: "",
@@ -175,6 +180,12 @@ Bun.serve({
       headers,
       status: statuses[Math.floor(Math.random() * statuses.length)],
     });
+  },
+});
+
+fetch("", {
+  tls: {
+    rejectUnauthorized: false,
   },
 });
 

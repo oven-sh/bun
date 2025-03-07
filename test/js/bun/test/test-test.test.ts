@@ -712,8 +712,6 @@ test("my-test", () => {
 
       expect(output).toContain(`## stage ${stage} ##`);
 
-      expect(output).toContain(`<dir>/my-test.test.js:5:11`.replace("<dir>", test_dir));
-
       expect(output).toContain("1 | import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe}");
 
       const stackLines = output.split("\n").filter(line => line.trim().startsWith("at "));

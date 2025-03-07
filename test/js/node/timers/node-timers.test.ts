@@ -230,7 +230,8 @@ describe("clear", () => {
 });
 
 describe.each(["with", "without"])("setImmediate %s timers running", mode => {
-  it.skipIf(isWindows && mode == "with")(
+  // TODO(@190n) #17901 did not fix this for Windows
+  it.todoIf(isWindows && mode == "with")(
     "has reasonable performance when nested",
     async () => {
       const process = Bun.spawn({

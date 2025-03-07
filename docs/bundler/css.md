@@ -13,6 +13,8 @@ Bun's CSS bundler lets you use future/modern CSS features without having to worr
 
 Bun's CSS parser and bundler is a direct Rust → Zig port of [LightningCSS](https://lightningcss.dev/), with a bundling approach inspired by esbuild. The transpiler converts modern CSS syntax into backwards-compatible equivalents that work across browsers.
 
+A huge thanks goes to the amazing work from the authors of [LightningCSS](https://lightningcss.dev/) and [esbuild](https://esbuild.github.io/).
+
 ### Browser Compatibility
 
 By default, Bun's CSS bundler targets the following browsers:
@@ -34,12 +36,12 @@ The CSS Nesting specification allows you to write more concise and intuitive sty
 .card {
   background: white;
   border-radius: 4px;
-  
+
   .title {
     font-size: 1.2rem;
     font-weight: bold;
   }
-  
+
   .content {
     padding: 1rem;
   }
@@ -70,7 +72,7 @@ You can also nest media queries and other at-rules inside selectors, eliminating
 ```css
 .responsive-element {
   display: block;
-  
+
   @media (min-width: 768px) {
     display: flex;
   }
@@ -99,7 +101,7 @@ The `color-mix()` function gives you an easy way to blend two colors together ac
 .button {
   /* Mix blue and red in the RGB color space with a 30/70 proportion */
   background-color: color-mix(in srgb, blue 30%, red);
-  
+
   /* Create a lighter variant for hover state */
   &:hover {
     background-color: color-mix(in srgb, blue 30%, red, white 20%);
@@ -130,7 +132,7 @@ CSS now allows you to modify individual components of a color using relative col
 .theme-color {
   /* Start with a base color and increase lightness by 15% */
   --accent: lch(from purple calc(l + 15%) c h);
-  
+
   /* Take our brand blue and make a desaturated version */
   --subtle-blue: oklch(from var(--brand-blue) l calc(c * 0.8) h);
 }
@@ -155,9 +157,10 @@ Modern CSS supports perceptually uniform color spaces like LAB, LCH, OKLAB, and 
 .vibrant-element {
   /* A vibrant red that exceeds sRGB gamut boundaries */
   color: lab(55% 78 35);
-  
+
   /* A smooth gradient using perceptual color space */
-  background: linear-gradient(to right, 
+  background: linear-gradient(
+    to right,
     oklch(65% 0.25 10deg),
     oklch(65% 0.25 250deg)
   );
@@ -174,12 +177,10 @@ Bun's CSS bundler automatically converts these advanced color formats to backwar
   color: color(display-p3 1 0.12 0.37);
   /* Original value preserved for browsers that support it */
   color: lab(55% 78 35);
-  
-  background: linear-gradient(to right, 
-    #cd4e15,
-    #3887ab
-  );
-  background: linear-gradient(to right, 
+
+  background: linear-gradient(to right, #cd4e15, #3887ab);
+  background: linear-gradient(
+    to right,
     oklch(65% 0.25 10deg),
     oklch(65% 0.25 250deg)
   );
@@ -196,7 +197,7 @@ The `color()` function provides a standardized way to specify colors in various 
 .vivid-element {
   /* Using the Display P3 color space for wider gamut colors */
   color: color(display-p3 1 0.1 0.3);
-  
+
   /* Using A98 RGB color space */
   background-color: color(a98-rgb 0.44 0.5 0.37);
 }
@@ -210,8 +211,8 @@ For browsers that don't support these advanced color functions yet, Bun's CSS bu
   color: #fa1a4c;
   /* Keep original for browsers that support it */
   color: color(display-p3 1 0.1 0.3);
-  
-  background-color: #6a805d; 
+
+  background-color: #6a805d;
   background-color: color(a98-rgb 0.44 0.5 0.37);
 }
 ```
@@ -226,13 +227,13 @@ The HWB (Hue, Whiteness, Blackness) color model provides an intuitive way to exp
 .easy-theming {
   /* Pure cyan with no white or black added */
   --primary: hwb(180 0% 0%);
-  
+
   /* Same hue, but with 20% white added (tint) */
   --primary-light: hwb(180 20% 0%);
-  
+
   /* Same hue, but with 30% black added (shade) */
   --primary-dark: hwb(180 0% 30%);
-  
+
   /* Muted version with both white and black added */
   --primary-muted: hwb(180 30% 20%);
 }
@@ -259,13 +260,13 @@ Modern CSS has introduced more intuitive and concise ways to express colors. Spa
 .modern-styling {
   /* Space-separated RGB notation (no commas) */
   color: rgb(50 100 200);
-  
+
   /* Space-separated RGB with alpha */
   border-color: rgba(100 50 200 / 75%);
-  
+
   /* Hex with alpha channel (8 digits) */
   background-color: #00aaff80;
-  
+
   /* HSL with simplified notation */
   box-shadow: 0 5px 10px hsl(200 50% 30% / 40%);
 }
@@ -277,13 +278,13 @@ Bun's CSS bundler automatically converts these modern color formats to ensure co
 .modern-styling {
   /* Converted to comma format for older browsers */
   color: rgb(50, 100, 200);
-  
+
   /* Alpha channels handled appropriately */
   border-color: rgba(100, 50, 200, 0.75);
-  
+
   /* Hex+alpha converted to rgba when needed */
   background-color: rgba(0, 170, 255, 0.5);
-  
+
   box-shadow: 0 5px 10px rgba(38, 115, 153, 0.4);
 }
 ```
@@ -346,9 +347,11 @@ For browsers that don't support this feature yet, Bun's CSS bundler converts it 
 }
 
 .themed-component {
-  background-color: var(--lightningcss-light, #ffffff) var(--lightningcss-dark, #121212);
+  background-color: var(--lightningcss-light, #ffffff)
+    var(--lightningcss-dark, #121212);
   color: var(--lightningcss-light, #333333) var(--lightningcss-dark, #eeeeee);
-  border-color: var(--lightningcss-light, #dddddd) var(--lightningcss-dark, #555555);
+  border-color: var(--lightningcss-light, #dddddd)
+    var(--lightningcss-dark, #555555);
 }
 ```
 
@@ -362,13 +365,13 @@ CSS logical properties let you define layout, spacing, and sizing relative to th
 .multilingual-component {
   /* Margin that adapts to writing direction */
   margin-inline-start: 1rem;
-  
+
   /* Padding that makes sense regardless of text direction */
   padding-block: 1rem 2rem;
-  
+
   /* Border radius for the starting corner at the top */
   border-start-start-radius: 4px;
-  
+
   /* Size that respects the writing mode */
   inline-size: 80%;
   block-size: auto;
@@ -510,7 +513,7 @@ The `:is()` pseudo-class function (formerly `:matches()`) allows you to create m
 
 /* Complex example with multiple groups */
 :is(header, main, footer) :is(h1, h2, .title) {
-  font-family: 'Heading Font', sans-serif;
+  font-family: "Heading Font", sans-serif;
 }
 ```
 
@@ -534,15 +537,15 @@ For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks us
 
 /* Complex example with fallbacks */
 :-webkit-any(header, main, footer) :-webkit-any(h1, h2, .title) {
-  font-family: 'Heading Font', sans-serif;
+  font-family: "Heading Font", sans-serif;
 }
 
 :-moz-any(header, main, footer) :-moz-any(h1, h2, .title) {
-  font-family: 'Heading Font', sans-serif;
+  font-family: "Heading Font", sans-serif;
 }
 
 :is(header, main, footer) :is(h1, h2, .title) {
-  font-family: 'Heading Font', sans-serif;
+  font-family: "Heading Font", sans-serif;
 }
 ```
 
@@ -609,13 +612,13 @@ CSS now includes a rich set of mathematical functions that let you perform compl
 .dynamic-sizing {
   /* Clamp a value between minimum and maximum */
   width: clamp(200px, 50%, 800px);
-  
+
   /* Round to the nearest multiple */
   padding: round(14.8px, 5px);
-  
+
   /* Trigonometry for animations or layouts */
   transform: rotate(calc(sin(45deg) * 50deg));
-  
+
   /* Complex math with multiple functions */
   --scale-factor: pow(1.25, 3);
   font-size: calc(16px * var(--scale-factor));
@@ -697,7 +700,7 @@ CSS has introduced several modern shorthand properties that improve code readabi
 .flex-container {
   /* Shorthand for align-items and justify-items */
   place-items: center start;
-  
+
   /* Shorthand for align-content and justify-content */
   place-content: space-between center;
 }
@@ -733,7 +736,7 @@ For browsers that don't support these modern shorthands, Bun converts them to th
   /* Expanded alignment properties */
   align-items: center;
   justify-items: start;
-  
+
   align-content: space-between;
   justify-content: center;
 }
@@ -772,22 +775,26 @@ The double position gradient syntax is a modern CSS feature that allows you to c
 ```css
 .striped-background {
   /* Creates a sharp transition from green to red at 30%-40% */
-  background: linear-gradient(to right, 
-    yellow 0%, 
-    green 20%, 
-    green 30%, red 30%, /* Double position creates hard stop */
-    red 70%, blue 70%,
+  background: linear-gradient(
+    to right,
+    yellow 0%,
+    green 20%,
+    green 30%,
+    red 30%,
+    /* Double position creates hard stop */ red 70%,
+    blue 70%,
     blue 100%
   );
 }
 
 .progress-bar {
   /* Creates distinct color sections */
-  background: linear-gradient(to right,
-    #4CAF50 0% 25%,   /* Green from 0% to 25% */
-    #FFC107 25% 50%,  /* Yellow from 25% to 50% */
-    #2196F3 50% 75%,  /* Blue from 50% to 75% */
-    #9C27B0 75% 100%  /* Purple from 75% to 100% */
+  background: linear-gradient(
+    to right,
+    #4caf50 0% 25%,
+    /* Green from 0% to 25% */ #ffc107 25% 50%,
+    /* Yellow from 25% to 50% */ #2196f3 50% 75%,
+    /* Blue from 50% to 75% */ #9c27b0 75% 100% /* Purple from 75% to 100% */
   );
 }
 ```
@@ -796,21 +803,29 @@ For browsers that don't support this syntax, Bun's CSS bundler automatically con
 
 ```css
 .striped-background {
-  background: linear-gradient(to right, 
-    yellow 0%, 
-    green 20%, 
-    green 30%, red 30%, /* Split into two color stops */
-    red 70%, blue 70%,
+  background: linear-gradient(
+    to right,
+    yellow 0%,
+    green 20%,
+    green 30%,
+    red 30%,
+    /* Split into two color stops */ red 70%,
+    blue 70%,
     blue 100%
   );
 }
 
 .progress-bar {
-  background: linear-gradient(to right,
-    #4CAF50 0%, #4CAF50 25%,   /* Two stops for green section */
-    #FFC107 25%, #FFC107 50%,  /* Two stops for yellow section */
-    #2196F3 50%, #2196F3 75%,  /* Two stops for blue section */
-    #9C27B0 75%, #9C27B0 100%  /* Two stops for purple section */
+  background: linear-gradient(
+    to right,
+    #4caf50 0%,
+    #4caf50 25%,
+    /* Two stops for green section */ #ffc107 25%,
+    #ffc107 50%,
+    /* Two stops for yellow section */ #2196f3 50%,
+    #2196f3 75%,
+    /* Two stops for blue section */ #9c27b0 75%,
+    #9c27b0 100% /* Two stops for purple section */
   );
 }
 ```
@@ -838,14 +853,31 @@ For browsers that don't support `system-ui`, Bun's CSS bundler automatically exp
 ```css
 .native-interface {
   /* Expanded to support all major platforms */
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 
-    Roboto, 'Noto Sans', Ubuntu, Cantarell, 'Helvetica Neue';
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Noto Sans",
+    Ubuntu,
+    Cantarell,
+    "Helvetica Neue";
 }
 
 .fallback-aware {
   /* Preserves the original fallback after the expanded stack */
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 
-    Roboto, 'Noto Sans', Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Noto Sans",
+    Ubuntu,
+    Cantarell,
+    "Helvetica Neue",
+    sans-serif;
 }
 ```
 

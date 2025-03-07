@@ -82,6 +82,11 @@ The `--dry-run` flag can be used to simulate the publish process without actuall
 $ bun publish --dry-run
 ```
 
+### `--gzip-level`
+
+Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).
+{% bunCLIUsage command="publish" /%}
+
 ### `--auth-type`
 
 If you have 2FA enabled for your npm account, `bun publish` will prompt you for a one-time password. This can be done through a browser or the CLI. The `--auth-type` flag can be used to tell the npm registry which method you prefer. The possible values are `web` and `legacy`, with `web` being the default.
@@ -102,7 +107,6 @@ Provide a one-time password directly to the CLI. If the password is valid, this 
 $ bun publish --otp 123456
 ```
 
-### `--gzip-level`
-
-Specify the level of gzip compression to use when packing the package. Only applies to `bun publish` without a tarball path argument. Values range from `0` to `9` (default is `9`).
-{% bunCLIUsage command="publish" /%}
+{% callout %}
+**Note** - `bun publish` respects the `NPM_CONFIG_TOKEN` environment variable which can be used when publishing in github actions or automated workflows.
+{% /callout %}

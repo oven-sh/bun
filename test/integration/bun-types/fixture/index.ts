@@ -1,11 +1,20 @@
 import svgpath from "cool.svg";
 svgpath satisfies `${string}.svg`;
 
-type c = BunFetchRequestInit;
+Bun satisfies typeof import("bun");
 
-fetch;
+type S3OptionsFromNamespace = Bun.S3Options;
+type S3OptionsFromImport = import("bun").S3Options;
 
-const g: BunFetchRequestInit = {};
+type c = import("bun").S3Client;
+
+Bun.s3.file("").name;
+
+const client = new Bun.S3Client({
+  secretAccessKey: "",
+});
+
+client.file("");
 
 Bun.fetch;
 
@@ -30,6 +39,8 @@ fetch("url", {
 Bun.fetch("", {
   proxy: "",
 });
+
+Bun.S3Client;
 
 new Bun.$.ShellError();
 

@@ -1,3 +1,8 @@
+type RequestInit = import("undici-types").RequestInit;
+type HeadersInit = import("undici-types").HeadersInit;
+type ResponseInit = import("undici-types").ResponseInit;
+type BodyInit = import("undici-types").BodyInit;
+
 interface Headers {
 	/**
 	 * Convert {@link Headers} to a plain JavaScript object.
@@ -35,7 +40,7 @@ interface Headers {
 
 declare var Headers: {
 	prototype: Headers;
-	new (init?: Bun.HeadersInit): Headers;
+	new (init?: HeadersInit): Headers;
 };
 
 interface Request {
@@ -51,8 +56,8 @@ declare var Request: {
 
 declare var Response: {
 	new (
-		body?: Bun.BodyInit | null | undefined,
-		init?: Bun.ResponseInit | undefined,
+		body?: BodyInit | null | undefined,
+		init?: ResponseInit | undefined,
 	): Response;
 	/**
 	 * Create a new {@link Response} with a JSON body
@@ -77,7 +82,7 @@ declare var Response: {
 	 * ```
 	 * @link https://github.com/whatwg/fetch/issues/1389
 	 */
-	json(body?: any, options?: Bun.ResponseInit | number): Response;
+	json(body?: any, options?: ResponseInit | number): Response;
 
 	/**
 	 * Create a new {@link Response} that redirects to url
@@ -103,8 +108,7 @@ declare var Response: {
 	error(): Response;
 };
 
-type _BunTLSOptions = import("bun").TLSOptions;
-interface BunFetchRequestInitTLS extends _BunTLSOptions {
+interface BunFetchRequestInitTLS extends Bun.TLSOptions {
 	/**
 	 * Custom function to check the server identity
 	 * @param hostname - The hostname of the server

@@ -1045,67 +1045,6 @@ declare module "bun" {
 		ttl: number;
 	}
 
-	/**
-	 * Fast incremental writer for files and pipes.
-	 *
-	 * This uses the same interface as {@link ArrayBufferSink}, but writes to a file or pipe.
-	 */
-	interface FileSink {
-		/**
-		 * Write a chunk of data to the file.
-		 *
-		 * If the file descriptor is not writable yet, the data is buffered.
-		 */
-		write(
-			chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-		): number;
-		/**
-		 * Flush the internal buffer, committing the data to disk or the pipe.
-		 */
-		flush(): number | Promise<number>;
-		/**
-		 * Close the file descriptor. This also flushes the internal buffer.
-		 */
-		end(error?: Error): number | Promise<number>;
-
-		start(options?: {
-			/**
-			 * Preallocate an internal buffer of this size
-			 * This can significantly improve performance when the chunk size is small
-			 */
-			highWaterMark?: number;
-		}): void;
-
-		/**
-		 * For FIFOs & pipes, this lets you decide whether Bun's process should
-		 * remain alive until the pipe is closed.
-		 *
-		 * By default, it is automatically managed. While the stream is open, the
-		 * process remains alive and once the other end hangs up or the stream
-		 * closes, the process exits.
-		 *
-		 * If you previously called {@link unref}, you can call this again to re-enable automatic management.
-		 *
-		 * Internally, it will reference count the number of times this is called. By default, that number is 1
-		 *
-		 * If the file is not a FIFO or pipe, {@link ref} and {@link unref} do
-		 * nothing. If the pipe is already closed, this does nothing.
-		 */
-		ref(): void;
-
-		/**
-		 * For FIFOs & pipes, this lets you decide whether Bun's process should
-		 * remain alive until the pipe is closed.
-		 *
-		 * If you want to allow Bun's process to terminate while the stream is open,
-		 * call this.
-		 *
-		 * If the file is not a FIFO or pipe, {@link ref} and {@link unref} do
-		 * nothing. If the pipe is already closed, this does nothing.
-		 */
-		unref(): void;
-	}
-
 	interface FileBlob extends BunFile {}
 	/**
 	 * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -1234,32 +1173,6 @@ declare module "bun" {
 		 */
 		stat(): Promise<Stats>;
 	}
-	interface NetworkSink extends FileSink {
-		/**
-		 * Write a chunk of data to the network.
-		 *
-		 * If the network is not writable yet, the data is buffered.
-		 */
-		write(
-			chunk: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-		): number;
-		/**
-		 * Flush the internal buffer, committing the data to the network.
-		 */
-		flush(): number | Promise<number>;
-		/**
-		 * Finish the upload. This also flushes the internal buffer.
-		 */
-		end(error?: Error): number | Promise<number>;
-
-		/**
-		 * Get the stat of the file.
-		 */
-		stat(): Promise<Stats>;
-	}
-
-	var S3Client: S3Client;
-	var s3: S3Client;
 
 	/**
 	 * Configuration options for S3 operations
@@ -1827,40 +1740,6 @@ declare module "bun" {
 	 *     await bucket.unlink("old.txt");
 	 */
 	type S3Client = {
-		/**
-		 * Create a new instance of an S3 bucket so that credentials can be managed
-		 * from a single instance instead of being passed to every method.
-		 *
-		 * @param options The default options to use for the S3 client. Can be
-		 * overriden by passing options to the methods.
-		 *
-		 * ## Keep S3 credentials in a single instance
-		 *
-		 * @example
-		 *     const bucket = new Bun.S3Client({
-		 *       accessKeyId: "your-access-key",
-		 *       secretAccessKey: "your-secret-key",
-		 *       bucket: "my-bucket",
-		 *       endpoint: "https://s3.us-east-1.amazonaws.com",
-		 *       sessionToken: "your-session-token",
-		 *     });
-		 *
-		 *     // S3Client is callable, so you can do this:
-		 *     const file = bucket.file("my-file.txt");
-		 *
-		 *     // or this:
-		 *     await file.write("Hello Bun!");
-		 *     await file.text();
-		 *
-		 *     // To delete the file:
-		 *     await bucket.delete("my-file.txt");
-		 *
-		 *     // To write a file without returning the instance:
-		 *     await bucket.write("my-file.txt", "Hello Bun!");
-		 *
-		 */
-		new (options?: S3Options): S3Client;
-
 		/**
 		 * Creates an S3File instance for the given path.
 		 *

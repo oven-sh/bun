@@ -8055,31 +8055,19 @@ pub const LinkerContext = struct {
                             &visitor.all_sources[idx],
                             .{ .loc = compose_loc },
                             visitor.allocator,
-                            "The \"composes\" property cannot be used with \"{s}\", because it is not a single class name.",
+                            "The composes property cannot be used with {}, because it is not a single class name.",
                             .{
-                                name,
+                                bun.fmt.quote(name),
                             },
-                            "The definition of \"{s}\" is here.",
+                            "The definition of {} is here.",
                             .{
-                                name,
+                                bun.fmt.quote(name),
                             },
 
                             .{
                                 .loc = loc,
                             },
                         ) catch bun.outOfMemory();
-                        // visitor.log.addErrorFmt(
-                        //     &visitor.all_sources[idx],
-                        //     compose_loc,
-                        //     visitor.allocator,
-                        //     "The \"composes\" property cannot be used with \"{s}\", because it is not a single class name.",
-                        //     .{
-                        //         FormatInvalidComposes{
-                        //             .name = name,
-                        //             .kind = css_ref.tag,
-                        //         },
-                        //     },
-                        // ) catch bun.outOfMemory();
                     }
 
                     fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, css_ref: bun.css.CssRef, idx: Index.Int) void {
@@ -8102,8 +8090,8 @@ pub const LinkerContext = struct {
                                                     &visitor.all_sources[idx],
                                                     compose.loc,
                                                     visitor.allocator,
-                                                    "Cannot use the \"composes\" property with the \"{s}\" file (it is not a CSS file)",
-                                                    .{visitor.all_sources[import_record.source_index.get()].path.pretty},
+                                                    "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
+                                                    .{bun.fmt.quote(visitor.all_sources[import_record.source_index.get()].path.pretty)},
                                                 ) catch bun.outOfMemory();
                                                 continue;
                                             };
@@ -8146,10 +8134,10 @@ pub const LinkerContext = struct {
                                                 &visitor.all_sources[idx],
                                                 compose.loc,
                                                 visitor.allocator,
-                                                "The name \"{s}\" never appears in \"{s}\" as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
+                                                "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
                                                 .{
-                                                    name.v,
-                                                    visitor.all_sources[idx].path.pretty,
+                                                    bun.fmt.quote(name.v),
+                                                    bun.fmt.quote(visitor.all_sources[idx].path.pretty),
                                                 },
                                             ) catch bun.outOfMemory();
                                             continue;
@@ -9299,9 +9287,9 @@ pub const LinkerContext = struct {
                             .{ .text = std.fmt.allocPrint(
                                 v.allocator,
                                 "The specification of \"composes\" does not define an order when class declarations from separate files are composed together. " ++
-                                    "The value of the \"{s}\" property for \"{s}\" may change unpredictably as the code is edited. " ++
-                                    "Make sure that all definitions of \"{s}\" for \"{s}\" are in a single file.",
-                                .{ property_name, local_original_name, property_name, local_original_name },
+                                    "The value of the {} property for {} may change unpredictably as the code is edited. " ++
+                                    "Make sure that all definitions of {} for {} are in a single file.",
+                                .{ bun.fmt.quote(property_name), bun.fmt.quote(local_original_name), bun.fmt.quote(property_name), bun.fmt.quote(local_original_name) },
                             ) catch bun.outOfMemory() },
                         },
                     ) catch bun.outOfMemory(),

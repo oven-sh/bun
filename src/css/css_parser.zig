@@ -3005,8 +3005,7 @@ pub const PropertyUsage = struct {
     }
 };
 
-// TODO: this is chonky
-pub const PropertyBitset = std.bit_set.ArrayBitSet(usize, std.math.ceilPowerOfTwo(u16, bun.meta.EnumFields(PropertyIdTag).len) catch @panic("FUCK"));
+pub const PropertyBitset = std.bit_set.ArrayBitSet(usize, std.math.ceilPowerOfTwo(u16, bun.meta.EnumFields(PropertyIdTag).len) catch unreachable);
 pub fn fillPropertyBitSet(allocator: Allocator, bitset: *PropertyBitset, block: *const DeclarationBlock, custom_properties: *bun.BabyList([]const u8)) void {
     for (block.declarations.items) |*prop| {
         const tag = switch (prop.*) {
@@ -6144,22 +6143,22 @@ pub const Token = union(TokenKind) {
         return switch (this.*) {
             .ident => |value| try serializer.serializeIdentifier(value, writer),
             .at_keyword => |value| {
-                try writer.writeAll("@");
+                try writer.writeByte('@');
                 try serializer.serializeIdentifier(value, writer);
             },
             .unrestrictedhash => |value| {
-                try writer.writeAll("#");
+                try writer.writeByte('#');
                 try serializer.serializeName(value, writer);
             },
             .idhash => |value| {
-                try writer.writeAll("#");
+                try writer.writeByte('#');
                 try serializer.serializeIdentifier(value, writer);
             },
             .quoted_string => |value| try serializer.serializeString(value, writer),
             .unquoted_url => |value| {
                 try writer.writeAll("url(");
                 try serializer.serializeUnquotedUrl(value, writer);
-                try writer.writeAll(")");
+                try writer.writeByte(')');
             },
             .delim => |value| {
                 // See comment for this variant in declaration of Token
@@ -6191,9 +6190,9 @@ pub const Token = union(TokenKind) {
                 try writer.writeAll(content);
                 try writer.writeAll("*/");
             },
-            .colon => try writer.writeAll(":"),
-            .semicolon => try writer.writeAll(";"),
-            .comma => try writer.writeAll(","),
+            .colon => try writer.writeByte(':'),
+            .semicolon => try writer.writeByte(';'),
+            .comma => try writer.writeByte(','),
             .include_match => try writer.writeAll("~="),
             .dash_match => try writer.writeAll("|="),
             .prefix_match => try writer.writeAll("^="),
@@ -6203,7 +6202,7 @@ pub const Token = union(TokenKind) {
             .cdc => try writer.writeAll("-->"),
             .function => |name| {
                 try serializer.serializeIdentifier(name, writer);
-                try writer.writeAll("(");
+                try writer.writeByte('(');
             },
             .open_paren => try writer.writeAll("("),
             .open_square => try writer.writeAll("["),

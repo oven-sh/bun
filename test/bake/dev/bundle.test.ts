@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework, reactRefreshStub } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -101,12 +101,12 @@ devTest("importing a file before it is created", {
 });
 devTest("default export same-scope handling", {
   files: {
-    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
       styles: [],
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.ts"],
     }),
     "index.ts": `
+      import.meta.hot.accept();
       await import("./fixture1.ts"); 
       console.log((new ((await import("./fixture2.ts")).default)).a); 
       await import("./fixture3.ts"); 
@@ -137,6 +137,7 @@ devTest("default export same-scope handling", {
       console.log(new A().result);
     `,
     "fixture4.ts": `
+      import.meta.hot.accept();
       export default class MOVE {
         result = "FOUR"
       }
@@ -157,6 +158,7 @@ devTest("default export same-scope handling", {
       export default function() { return "EIGHT" };
     `,
     "fixture8.ts": `
+      import.meta.hot.accept();
       export default function MOVE() { return "NINE" };
     `,
     "fixture9.ts": `
@@ -197,13 +199,13 @@ devTest("default export same-scope handling", {
 });
 devTest("directory cache bust case #17576", {
   files: {
-    ...reactRefreshStub,
     "web/index.html": emptyHtmlFile({
       styles: [],
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.ts"],
     }),
     "web/index.ts": `
       console.log(123);
+      import.meta.hot.accept();
     `,
   },
   mainDir: "server",
@@ -214,8 +216,8 @@ devTest("directory cache bust case #17576", {
       await dev.write(
         "web/Test.ts",
         `
-        export const abc = 456;
-      `,
+          export const abc = 456;
+        `,
       );
     });
     await dev.write(

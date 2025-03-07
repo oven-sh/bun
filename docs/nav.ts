@@ -224,6 +224,10 @@ export default {
     page("bundler/fullstack", "Fullstack Dev Server", {
       description: "Serve your frontend and backend from the same app with Bun's dev server.",
     }),
+    page("bundler/hmr", "Hot reloading", {
+      description: `Update modules in a running application without reloading the page using import.meta.hot`,
+    }),
+
     page("bundler/loaders", "Loaders", {
       description: "Bun's built-in loaders for the bundler and runtime",
     }),

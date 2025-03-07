@@ -1,3 +1,5 @@
+/** Module Ids are pre-resolved by the bundler, and should be treated as opaque strings.
+ * In practice, these strings are the relative file path to the module. */
 type Id = string;
 
 /** Index with same usage as `IncrementalGraph(.client).Index` */
@@ -24,10 +26,26 @@ interface Config {
   roots: FileIndex[];
 }
 
-/**
- * All modules for the initial bundle.
- */
-declare const input_graph: Record<string, ModuleLoadFunction>;
+/** All modules for the initial bundle. */
+declare const unloadedModuleRegistry: Record<string, UnloadedModule>;
+declare type UnloadedModule = UnloadedESM | UnloadedCommonJS;
+declare type UnloadedESM = [
+  deps: EncodedDependencyArray,
+  exportKeys: string[],
+  starImports: Id[],
+  load: (mod: import("./hmr-module").HMRModule) => Promise<void>,
+  isAsync: boolean,
+];
+declare type EncodedDependencyArray = (string | number)[];
+declare type UnloadedCommonJS = (
+  hmr: import("./hmr-module").HMRModule,
+  module: import("./hmr-module").HMRModule["cjs"],
+) => any;
+declare type CommonJSModule = {
+  id: Id;
+  exports: any;
+  require: (id: Id) => any;
+};
 
 declare const config: Config;
 
@@ -111,4 +129,13 @@ declare module "react-dom/server.node" {
     model: ReactElement,
     options: RenderToPipeableStreamOptions,
   ): PipeableStream<Uint8Array>;
+}
+
+declare module "bun:wrap" {
+  export const __name: unique symbol;
+  export const __legacyDecorateClassTS: unique symbol;
+  export const __legacyDecorateParamTS: unique symbol;
+  export const __legacyMetadataTS: unique symbol;
+  export const __using: unique symbol;
+  export const __callDispose: unique symbol;
 }

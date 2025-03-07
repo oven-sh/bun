@@ -1010,8 +1010,11 @@ JSC::EncodedJSValue CRYPTO_INVALID_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlo
 
 JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& curve)
 {
-    auto message = makeString("Unsupported JWK EC curve: "_s, curve);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, message));
+    WTF::StringBuilder builder;
+    builder.append("Unsupported JWK EC curve: "_s);
+    builder.append(curve);
+    builder.append('.');
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, builder.toString()));
     return {};
 }
 

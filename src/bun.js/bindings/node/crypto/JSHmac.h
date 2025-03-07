@@ -114,7 +114,6 @@ private:
     void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
     {
         Base::finishCreation(vm, 2, "Hmac"_s, PropertyAdditionMode::WithStructureTransition);
-        // putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAdditionMode::WithStructureTransition);
     }
 };
 

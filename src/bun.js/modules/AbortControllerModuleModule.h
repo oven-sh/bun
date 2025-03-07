@@ -20,8 +20,9 @@ inline void generateNativeModule_AbortControllerModule(
     auto* abortController = WebCore::JSAbortController::getConstructor(vm, globalObject).getObject();
     JSValue abortSignal = WebCore::JSAbortSignal::getConstructor(vm, globalObject);
 
+    const auto& builtinNames = WebCore::builtinNames(vm);
     const auto controllerIdent = Identifier::fromString(vm, "AbortController"_s);
-    const auto signalIdent = Identifier::fromString(vm, "AbortSignal"_s);
+    const auto& signalIdent = builtinNames.AbortSignalPublicName();
     const Identifier& esModuleMarker = vm.propertyNames->__esModule;
 
     exportNames.append(vm.propertyNames->defaultKeyword);

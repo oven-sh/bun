@@ -727,12 +727,14 @@ std::optional<ncrypto::EVPKeyPointer> preparePublicOrPrivateKey(JSGlobalObject* 
             return std::nullopt;
         }
 
+        const auto& builtinNames = WebCore::builtinNames(vm);
+
         // Handle options object with key property
         JSValue key = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "key"_s));
         RETURN_IF_EXCEPTION(scope, {});
-        JSValue formatValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
+        JSValue formatValue = optionsObj->get(lexicalGlobalObject, builtinNames.formatPublicName());
         RETURN_IF_EXCEPTION(scope, {});
-        JSValue typeValue = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "type"_s));
+        JSValue typeValue = optionsObj->get(lexicalGlobalObject, vm.propertyNames->type);
         RETURN_IF_EXCEPTION(scope, {});
         JSValue passphrase = optionsObj->get(lexicalGlobalObject, Identifier::fromString(vm, "passphrase"_s));
         RETURN_IF_EXCEPTION(scope, {});

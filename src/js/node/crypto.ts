@@ -10511,12 +10511,13 @@ function toCryptoKey(key, asPublic) {
     return key.$bunNativePtr || key;
   }
 
+  const nested = key.key;
   // Nested CryptoKey.
-  if (key.key instanceof KeyObject || key.key instanceof CryptoKey) {
-    if (asPublic && key.key.type === "private") {
-      return _createPublicKey(key.key).$bunNativePtr;
+  if (nested instanceof KeyObject || nested instanceof CryptoKey) {
+    if (asPublic && nested.type === "private") {
+      return _createPublicKey(nested).$bunNativePtr;
     }
-    return key.key.$bunNativePtr || key.key;
+    return nested.$bunNativePtr || nested;
   }
 
   // One of string, ArrayBuffer, Buffer, TypedArray, DataView, or Object.
@@ -10587,10 +10588,11 @@ function Sign(algorithm, options): void {
   }
 
   validateString(algorithm, "algorithm");
-  this[kHandle] = new _Sign();
-  this[kHandle].init(algorithm);
+  const handle = new _Sign();
+  handle.init(algorithm);
+  this[kHandle] = handle;
 
-  StreamModule.Writable.$apply(this, [options]);
+  StreamModule.Writable.$call(this, options);
 }
 $toClass(Sign, "Sign", StreamModule.Writable);
 
@@ -10622,10 +10624,11 @@ function Verify(algorithm, options): void {
   }
 
   validateString(algorithm, "algorithm");
-  this[kHandle] = new _Verify();
-  this[kHandle].init(algorithm);
+  const handle = new _Verify();
+  handle.init(algorithm);
+  this[kHandle] = handle;
 
-  StreamModule.Writable.$apply(this, [options]);
+  StreamModule.Writable.$call(this, options);
 }
 $toClass(Verify, "Verify", StreamModule.Writable);
 
@@ -10650,11 +10653,9 @@ crypto_exports.createVerify = createVerify;
     if (!new.target) {
       return new Hash(algorithm, options);
     }
+    this[kHandle] = new _Hash(algorithm, options);
 
-    const handle = new _Hash(algorithm, options);
-    this[kHandle] = handle;
-
-    LazyTransform.$apply(this, [options]);
+    LazyTransform.$call(this, options);
   }
   $toClass(Hash, "Hash", LazyTransform);
 

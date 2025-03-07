@@ -2930,29 +2930,27 @@ pub const ParserExtra = struct {
 pub const CustomIdentList = css_values.ident.CustomIdentList;
 pub const Specifier = css_properties.css_modules.Specifier;
 
-pub const CssRef = packed struct(u64) {
-    pub const Int = u31;
-
-    inner_index: u30 = 0,
+/// Reference to a symbol in a stylesheet.
+pub const CssRef = packed struct(u32) {
+    inner_index: u26 = 0,
 
     tag: Tag,
 
-    source_index: Int = 0,
+    pub const Tag = packed struct(u6) {
+        class: bool = false,
+        id: bool = false,
+        animation: bool = false,
+        keyframes: bool = false,
+        container: bool = false,
+        counter_style: bool = false,
 
-    pub const Tag = enum(u3) {
-        idk,
-        class,
-        id,
-        animation,
-        keyframes,
-        container,
-        counter_style,
+        pub const ID = Tag{ .id = true };
+        pub const CLASS = Tag{ .class = true };
+
+        pub usingnamespace Bitflags(@This());
 
         pub fn canBeComposed(this: @This()) bool {
-            return switch (this) {
-                .class => true,
-                else => false,
-            };
+            return this.class;
         }
     };
 
@@ -2960,27 +2958,31 @@ pub const CssRef = packed struct(u64) {
         return this.tag.canBeComposed();
     }
 
-    pub fn sourceIndex(this: @This()) u32 {
-        return this.source_index;
+    pub fn sourceIndex(_: @This(), source_index: u32) u32 {
+        return source_index;
     }
 
     pub fn innerIndex(this: @This()) u32 {
         return this.inner_index;
     }
 
-    pub fn toRealRef(this: @This()) bun.bundle_v2.Ref {
+    pub fn toRealRef(this: @This(), source_index: u32) bun.bundle_v2.Ref {
         return bun.bundle_v2.Ref{
             .inner_index = this.inner_index,
-            .source_index = this.source_index,
+            .source_index = @intCast(source_index),
             .tag = .symbol,
         };
     }
+};
+const LocalEntry = struct {
+    ref: CssRef,
+    loc: bun.logger.Loc,
 };
 /// If css modules is enabled, this maps locally scoped class names to their ref.
 ///
 /// We use this ref as a layer of indirection during the bundling stage because we don't
 /// know the final generated class names for local scope until print time.
-pub const LocalScope = std.StringArrayHashMapUnmanaged(CssRef);
+pub const LocalScope = std.StringArrayHashMapUnmanaged(LocalEntry);
 /// Local symbol renaming results go here
 pub const LocalsResultsMap = bun.bundle_v2.MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior according
@@ -3730,6 +3732,21 @@ pub const ParserOptions = struct {
         }
     }
 
+    pub fn warnFmtWithNote(this: *const ParserOptions, comptime text: []const u8, args: anytype, line: u32, column: u32, note_fmt: []const u8, note_args: anytype, note_range: bun.logger.Range) void {
+        if (this.logger) |lg| {
+            lg.addRangeWarningFmtWithNote(
+                null,
+                bun.logger.Loc{ .start = @intCast(line), .end = @intCast(column) },
+                this.allocator,
+                text,
+                args,
+                note_fmt,
+                note_args,
+                note_range,
+            ) catch unreachable;
+        }
+    }
+
     pub fn default(allocator: std.mem.Allocator, log: ?*Log) ParserOptions {
         return ParserOptions{
             .filename = "",
@@ -3794,28 +3811,39 @@ pub const Parser = struct {
         __unused: u7 = 0,
     };
 
-    pub fn addSymbolForName(this: *Parser, name: []const u8, tag: CssRef.Tag) bun.bundle_v2.Ref {
+    pub fn addSymbolForName(this: *Parser, name: []const u8, tag: CssRef.Tag, loc: bun.logger.Loc) bun.bundle_v2.Ref {
         // don't call this if css modules is not enabled!
         bun.assert(this.flags.css_modules);
         bun.assert(this.extra != null);
-        bun.assert(tag != .idk);
+        if (comptime bun.Environment.allow_assert) {
+            // tag should only have one bit set, or none
+            bun.assert(@popCount(tag.asBits()) <= 1);
+        }
 
         const extra = this.extra.?;
 
         const entry = extra.local_scope.getOrPut(this.allocator(), name) catch bun.outOfMemory();
         if (!entry.found_existing) {
-            entry.value_ptr.* = CssRef{
-                .source_index = @intCast(this.extra.?.source_index.get()),
-                .inner_index = @intCast(extra.symbols.len),
-                .tag = tag,
+            entry.value_ptr.* = LocalEntry{
+                .ref = CssRef{
+                    .inner_index = @intCast(extra.symbols.len),
+                    .tag = tag,
+                },
+                .loc = loc,
             };
             extra.symbols.push(this.allocator(), bun.JSAst.Symbol{
                 .kind = .local_css,
                 .original_name = name,
             }) catch bun.outOfMemory();
+        } else {
+            const prev_tag = entry.value_ptr.ref.tag;
+            if (!prev_tag.class and tag.class) {
+                entry.value_ptr.loc = loc;
+                entry.value_ptr.ref.tag = entry.value_ptr.ref.tag.bitwiseOr(tag);
+            }
         }
 
-        return entry.value_ptr.toRealRef();
+        return entry.value_ptr.ref.toRealRef(extra.source_index.get());
     }
 
     // TODO: dedupe import records??
@@ -6109,33 +6137,90 @@ pub const Token = union(TokenKind) {
 
     pub fn format(
         this: *const Token,
-        comptime fmt: []const u8,
-        opts: std.fmt.FormatOptions,
+        comptime _: []const u8,
+        _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        _ = fmt; // autofix
-        _ = opts; // autofix
         return switch (this.*) {
-            inline .ident,
-            .function,
-            .at_keyword,
-            .unrestrictedhash,
-            .idhash,
-            .quoted_string,
-            .bad_string,
-            .unquoted_url,
-            .bad_url,
-            .whitespace,
-            .comment,
-            => |str| {
-                try writer.print("{s} = {s}", .{ @tagName(this.*), str });
+            .ident => |value| try serializer.serializeIdentifier(value, writer),
+            .at_keyword => |value| {
+                try writer.writeAll("@");
+                try serializer.serializeIdentifier(value, writer);
             },
-            .delim => |d| {
-                try writer.print("'{c}'", .{@as(u8, @truncate(d))});
+            .unrestrictedhash => |value| {
+                try writer.writeAll("#");
+                try serializer.serializeName(value, writer);
             },
-            else => {
-                try writer.print("{s}", .{@tagName(this.*)});
+            .idhash => |value| {
+                try writer.writeAll("#");
+                try serializer.serializeIdentifier(value, writer);
             },
+            .quoted_string => |value| try serializer.serializeString(value, writer),
+            .unquoted_url => |value| {
+                try writer.writeAll("url(");
+                try serializer.serializeUnquotedUrl(value, writer);
+                try writer.writeAll(")");
+            },
+            .delim => |value| {
+                // See comment for this variant in declaration of Token
+                // The value of delim is only ever ascii
+                bun.debugAssert(value <= 0x7F);
+                try writer.writeByte(@truncate(value));
+            },
+            .number => |num| try serializer.writeNumeric(num.value, num.int_value, num.has_sign, writer),
+            .percentage => |num| {
+                try serializer.writeNumeric(num.unit_value * 100, num.int_value, num.has_sign, writer);
+                try writer.writeAll("%");
+            },
+            .dimension => |dim| {
+                try serializer.writeNumeric(dim.num.value, dim.num.int_value, dim.num.has_sign, writer);
+                // Disambiguate with scientific notation.
+                const unit = dim.unit;
+                if (std.mem.eql(u8, unit, "e") or std.mem.eql(u8, unit, "E") or
+                    std.mem.startsWith(u8, unit, "e-") or std.mem.startsWith(u8, unit, "E-"))
+                {
+                    try writer.writeAll("\\65 ");
+                    try serializer.serializeName(unit[1..], writer);
+                } else {
+                    try serializer.serializeIdentifier(unit, writer);
+                }
+            },
+            .whitespace => |content| try writer.writeAll(content),
+            .comment => |content| {
+                try writer.writeAll("/*");
+                try writer.writeAll(content);
+                try writer.writeAll("*/");
+            },
+            .colon => try writer.writeAll(":"),
+            .semicolon => try writer.writeAll(";"),
+            .comma => try writer.writeAll(","),
+            .include_match => try writer.writeAll("~="),
+            .dash_match => try writer.writeAll("|="),
+            .prefix_match => try writer.writeAll("^="),
+            .suffix_match => try writer.writeAll("$="),
+            .substring_match => try writer.writeAll("*="),
+            .cdo => try writer.writeAll("<!--"),
+            .cdc => try writer.writeAll("-->"),
+            .function => |name| {
+                try serializer.serializeIdentifier(name, writer);
+                try writer.writeAll("(");
+            },
+            .open_paren => try writer.writeAll("("),
+            .open_square => try writer.writeAll("["),
+            .open_curly => try writer.writeAll("{"),
+            .bad_url => |contents| {
+                try writer.writeAll("url(");
+                try writer.writeAll(contents);
+                try writer.writeByte(')');
+            },
+            .bad_string => |value| {
+                try writer.writeByte('"');
+                var string_writer = serializer.CssStringWriter(@TypeOf(writer)).new(writer);
+                try string_writer.writeStr(value);
+            },
+            .close_paren => try writer.writeAll(")"),
+            .close_square => try writer.writeAll("]"),
+            .close_curly => try writer.writeAll("}"),
         };
     }
 
@@ -6254,7 +6339,6 @@ pub const Token = union(TokenKind) {
     }
 
     pub fn toCss(this: *const This, comptime W: type, dest: *Printer(W)) PrintErr!void {
-        // zack is here: verify this is correct
         return switch (this.*) {
             .ident => |value| serializer.serializeIdentifier(value, dest) catch return dest.addFmtError(),
             .at_keyword => |value| {

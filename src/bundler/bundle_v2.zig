@@ -4313,13 +4313,12 @@ pub const ParseTask = struct {
                         return error.SyntaxError;
                     },
                 };
-                // Make sure the css modules local refs:
-                //  1. point to this source index
+                // Make sure the css modules local refs have a valid tag
                 if (comptime bun.Environment.isDebug) {
                     if (css_ast.local_scope.count() > 0) {
-                        for (css_ast.local_scope.values()) |ref| {
-                            bun.assert(ref.source_index == source.index.get());
-                            bun.assert(ref.tag != .idk);
+                        for (css_ast.local_scope.values()) |entry| {
+                            const ref = entry.ref;
+                            bun.assert(ref.innerIndex() < extra.symbols.len);
                         }
                     }
                 }
@@ -7890,8 +7889,8 @@ pub const LinkerContext = struct {
                 if (values.len == 0) break :out;
                 const size = size: {
                     var size: u32 = 0;
-                    for (values) |ref| {
-                        size = @max(size, ref.inner_index);
+                    for (values) |entry| {
+                        size = @max(size, entry.ref.inner_index);
                     }
                     break :size size + 1;
                 };
@@ -7921,9 +7920,9 @@ pub const LinkerContext = struct {
 
                     fn visitName(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, ref: bun.css.CssRef, idx: Index.Int) void {
                         bun.assert(ref.canBeComposed());
-                        const from_this_file = ref.sourceIndex() == visitor.source_index;
+                        const from_this_file = ref.sourceIndex(idx) == visitor.source_index;
                         if ((from_this_file and visitor.inner_visited.isSet(ref.innerIndex())) or
-                            (!from_this_file and visitor.composes_visited.contains(ref.toRealRef())))
+                            (!from_this_file and visitor.composes_visited.contains(ref.toRealRef(idx))))
                         {
                             return;
                         }
@@ -7933,7 +7932,7 @@ pub const LinkerContext = struct {
                             .value = Expr.init(
                                 E.NameOfSymbol,
                                 E.NameOfSymbol{
-                                    .ref = ref.toRealRef(),
+                                    .ref = ref.toRealRef(idx),
                                 },
                                 visitor.loc,
                             ),
@@ -7946,50 +7945,54 @@ pub const LinkerContext = struct {
                         if (from_this_file) {
                             visitor.inner_visited.set(ref.innerIndex());
                         } else {
-                            visitor.composes_visited.put(ref.toRealRef(), {}) catch unreachable;
+                            visitor.composes_visited.put(ref.toRealRef(idx), {}) catch unreachable;
                         }
                     }
 
                     fn warnNonSingleClassComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, css_ref: bun.css.CssRef, idx: Index.Int, compose_loc: Loc) void {
-                        const ref = css_ref.toRealRef();
-                        _ = ast;
+                        const ref = css_ref.toRealRef(idx);
                         _ = ref;
-                        const syms: *const Symbol.List = &visitor.all_symbols[css_ref.sourceIndex()];
+                        const syms: *const Symbol.List = &visitor.all_symbols[css_ref.sourceIndex(idx)];
                         const name = syms.at(css_ref.innerIndex()).original_name;
+                        const loc = ast.local_scope.get(name).?.loc;
 
-                        const FormatInvalidComposes = struct {
-                            name: []const u8,
-                            kind: bun.css.CssRef.Tag,
-
-                            pub fn format(self: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-                                switch (self.kind) {
-                                    .class => try writer.print(".{s}", .{self.name}),
-                                    .id => try writer.print("#{s}", .{self.name}),
-                                    else => try writer.print("{s}", .{self.name}),
-                                }
-                            }
-                        };
-
-                        visitor.log.addErrorFmt(
+                        visitor.log.addRangeErrorFmtWithNote(
                             &visitor.all_sources[idx],
-                            compose_loc,
+                            .{ .loc = compose_loc },
                             visitor.allocator,
                             "The \"composes\" property cannot be used with \"{s}\", because it is not a single class name.",
                             .{
-                                FormatInvalidComposes{
-                                    .name = name,
-                                    .kind = css_ref.tag,
-                                },
+                                name,
+                            },
+                            "The definition of \"{s}\" is here.",
+                            .{
+                                name,
+                            },
+
+                            .{
+                                .loc = loc,
                             },
                         ) catch bun.outOfMemory();
+                        // visitor.log.addErrorFmt(
+                        //     &visitor.all_sources[idx],
+                        //     compose_loc,
+                        //     visitor.allocator,
+                        //     "The \"composes\" property cannot be used with \"{s}\", because it is not a single class name.",
+                        //     .{
+                        //         FormatInvalidComposes{
+                        //             .name = name,
+                        //             .kind = css_ref.tag,
+                        //         },
+                        //     },
+                        // ) catch bun.outOfMemory();
                     }
 
                     fn visitComposes(visitor: *@This(), ast: *bun.css.BundlerStyleSheet, css_ref: bun.css.CssRef, idx: Index.Int) void {
-                        const ref = css_ref.toRealRef();
+                        const ref = css_ref.toRealRef(idx);
                         if (ast.composes.count() > 0) {
                             const composes = ast.composes.getPtr(ref) orelse return;
                             // while parsing we check that we only allow `composes` on single class selectors
-                            bun.assert(css_ref.tag == .class);
+                            bun.assert(css_ref.tag.class);
 
                             for (composes.composes.slice()) |*compose| {
                                 // it is imported
@@ -8010,7 +8013,8 @@ pub const LinkerContext = struct {
                                                 continue;
                                             };
                                             for (compose.names.slice()) |name| {
-                                                const other_name_ref = other_file.local_scope.get(name.v) orelse continue;
+                                                const other_name_entry = other_file.local_scope.get(name.v) orelse continue;
+                                                const other_name_ref = other_name_entry.ref;
                                                 if (!other_name_ref.canBeComposed()) {
                                                     visitor.warnNonSingleClassComposes(other_file, other_name_ref, import_record.source_index.get(), compose.loc);
                                                 } else {
@@ -8042,7 +8046,7 @@ pub const LinkerContext = struct {
                                 } else {
                                     // it is from the current file
                                     for (compose.names.slice()) |name| {
-                                        const name_ref = ast.local_scope.get(name.v) orelse {
+                                        const name_entry = ast.local_scope.get(name.v) orelse {
                                             visitor.log.addErrorFmt(
                                                 &visitor.all_sources[idx],
                                                 compose.loc,
@@ -8055,6 +8059,7 @@ pub const LinkerContext = struct {
                                             ) catch bun.outOfMemory();
                                             continue;
                                         };
+                                        const name_ref = name_entry.ref;
                                         if (!name_ref.canBeComposed()) {
                                             visitor.warnNonSingleClassComposes(ast, name_ref, idx, compose.loc);
                                         } else {
@@ -8081,17 +8086,17 @@ pub const LinkerContext = struct {
                     .all_symbols = this.graph.ast.items(.symbols),
                 };
 
-                for (values) |ref| {
-                    bun.assert(ref.source_index == source_index);
+                for (values) |entry| {
+                    const ref = entry.ref;
                     bun.assert(ref.inner_index < symbols.len);
 
                     var template_parts = std.ArrayList(E.TemplatePart).init(this.allocator);
-                    var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref.toRealRef() }, stmt.loc);
+                    var value = Expr.init(E.NameOfSymbol, E.NameOfSymbol{ .ref = ref.toRealRef(source_index) }, stmt.loc);
 
                     visitor.parts = &template_parts;
                     visitor.clearAll();
                     visitor.inner_visited.set(ref.innerIndex());
-                    if (ref.tag == .class) visitor.visitComposes(css_ast, ref, source_index);
+                    if (ref.tag.class) visitor.visitComposes(css_ast, ref, source_index);
 
                     if (template_parts.items.len > 0) {
                         template_parts.append(E.TemplatePart{
@@ -9232,7 +9237,7 @@ pub const LinkerContext = struct {
                                 const other_ast = v.all_css_asts[record.source_index.get()] orelse continue;
                                 for (compose.names.slice()) |name| {
                                     const other_name = other_ast.local_scope.get(name.v) orelse continue;
-                                    const other_name_ref = other_name.toRealRef();
+                                    const other_name_ref = other_name.ref.toRealRef(record.source_index.get());
                                     v.visit(record.source_index.get(), other_ast, other_name_ref);
                                 }
                             } else {
@@ -9244,8 +9249,8 @@ pub const LinkerContext = struct {
                         } else {
                             // inside this file
                             for (compose.names.slice()) |name| {
-                                const name_ref = ast.local_scope.get(name.v) orelse continue;
-                                v.visit(idx, ast, name_ref.toRealRef());
+                                const name_entry = ast.local_scope.get(name.v) orelse continue;
+                                v.visit(idx, ast, name_entry.ref.toRealRef(idx));
                             }
                         }
                     }
@@ -9282,7 +9287,7 @@ pub const LinkerContext = struct {
         defer visitor.deinit();
         for (root_css_ast.local_scope.values()) |local| {
             visitor.clearRetainingCapacity();
-            visitor.visit(index, root_css_ast, local.toRealRef());
+            visitor.visit(index, root_css_ast, local.ref.toRealRef(index));
         }
     }
 

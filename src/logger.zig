@@ -1098,6 +1098,39 @@ pub const Log = struct {
         });
     }
 
+    // pub fn addWarningFmtLineColWithNote(log: *Log, filepath: []const u8, line: u32, col: u32, allocator: std.mem.Allocator, comptime text: string, args: anytype, comptime note_fmt: string, note_args: anytype, note_range: Range) OOM!void {
+    //     @branchHint(.cold);
+    //     if (!Kind.shouldPrint(.warn, log.level)) return;
+    //     log.warnings += 1;
+
+    //     var notes = try allocator.alloc(Data, 1);
+    //     notes[0] = Data{
+    //         .text = try allocPrint(allocator, note_fmt, note_args),
+    //         .lcoation = Location{
+    //             .file = filepath,
+    //             .line = @intCast(line),
+    //             .column = @intCast(col),
+    //         },
+    //     };
+
+    //     try log.addMsg(.{
+    //         .kind = .warn,
+    //         .data = try Data.cloneLineText(
+    //             Data{
+    //                 .text = try allocPrint(allocator, text, args),
+    //                 .location = Location{
+    //                     .file = filepath,
+    //                     .line = @intCast(line),
+    //                     .column = @intCast(col),
+    //                 },
+    //             },
+    //             log.clone_line_text,
+    //             allocator,
+    //         ),
+    //         .notes = notes,
+    //     });
+    // }
+
     pub fn addRangeWarningFmt(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, comptime text: string, args: anytype) OOM!void {
         @branchHint(.cold);
         if (!Kind.shouldPrint(.warn, log.level)) return;

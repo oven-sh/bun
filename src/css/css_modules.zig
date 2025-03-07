@@ -164,6 +164,7 @@ pub const CssModule = struct {
         // const allocator = dest.allocator;
         for (selectors.v.slice()) |*sel| {
             if (sel.len() == 1) {
+                // Commenting this out because we may use this later
                 // const component: *const css.selector.parser.Component = &sel.components.items[0];
                 // switch (component.*) {
                 //     .class => |id| {

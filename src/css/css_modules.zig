@@ -39,9 +39,6 @@ pub const CssModule = struct {
                     if (project_root) |root| {
                         if (bun.path.Platform.auto.isAbsolute(root)) {
                             alloced = true;
-                            // TODO: should we use this allocator or something else
-                            const relative_to_root = bun.path.relative(root, path);
-                            debug("relative_to_root: {s}", .{relative_to_root});
                             break :source allocator.dupe(u8, bun.path.relative(root, path)) catch bun.outOfMemory();
                         }
                     }
@@ -100,8 +97,8 @@ pub const CssModule = struct {
         const allocator = dest.allocator;
         const reference, const key = if (from.*) |specifier| switch (specifier) {
             .global => return name[2..],
-            .file => |file| init: {
-                const import_record = try dest.importRecord(file);
+            .import_record_index => |import_record_index| init: {
+                const import_record = try dest.importRecord(import_record_index);
                 break :init .{
                     CssModuleReference{
                         .dependency = .{

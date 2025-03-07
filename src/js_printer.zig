@@ -2790,7 +2790,7 @@ fn NewPrinter(
                                     part.value.loc,
                                 ),
                                 .e_dot => brk: {
-                                    // TODO: handle this here
+                                    // TODO: handle inlining of dot properties
                                     break :brk null;
                                 },
                                 else => null,

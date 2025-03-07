@@ -38,7 +38,7 @@ pub const Composes = struct {
     from: ?Specifier,
     /// The source location of the `composes` property.
     loc: bun.logger.Loc,
-    loc2: Location,
+    cssparser_loc: Location,
 
     pub fn parse(input: *css.Parser) css.Result(Composes) {
         const loc = input.position();
@@ -60,7 +60,7 @@ pub const Composes = struct {
                 .names = names,
                 .from = from,
                 .loc = bun.logger.Loc{ .start = @intCast(loc) },
-                .loc2 = Location.fromSourceLocation(loc2),
+                .cssparser_loc = Location.fromSourceLocation(loc2),
             },
         };
     }
@@ -111,9 +111,7 @@ pub const Specifier = union(enum) {
     /// The referenced name comes from the specified file.
     ///
     /// Is an import record index
-    file: u32,
-    /// The referenced name comes from a source index (used during bundling).
-    // source_index: u32,
+    import_record_index: u32,
 
     pub fn eql(lhs: *const @This(), rhs: *const @This()) bool {
         return css.implementEql(@This(), lhs, rhs);
@@ -122,13 +120,13 @@ pub const Specifier = union(enum) {
     pub fn parse(input: *css.Parser) css.Result(Specifier) {
         const start_position = input.position();
         if (input.tryParse(css.Parser.expectUrlOrString, .{}).asValue()) |file| {
-            const import_record_idx = switch (input.addImportRecord(file, start_position, .composes)) {
+            const import_record_index = switch (input.addImportRecord(file, start_position, .composes)) {
                 .result => |idx| idx,
                 .err => |e| return .{ .err = e },
             };
             return .{
                 .result = .{
-                    .file = import_record_idx,
+                    .import_record_index = import_record_index,
                 },
             };
         }
@@ -139,8 +137,8 @@ pub const Specifier = union(enum) {
     pub fn toCss(this: *const @This(), comptime W: type, dest: *Printer(W)) PrintErr!void {
         return switch (this.*) {
             .global => dest.writeStr("global"),
-            .file => |import_record_idx| {
-                const url = try dest.getImportRecordUrl(import_record_idx);
+            .import_record_index => |import_record_index| {
+                const url = try dest.getImportRecordUrl(import_record_index);
                 css.serializer.serializeString(url, dest) catch return dest.addFmtError();
             },
             // .source_index => {},

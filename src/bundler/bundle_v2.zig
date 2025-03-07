@@ -8080,8 +8080,8 @@ pub const LinkerContext = struct {
                             for (composes.composes.slice()) |*compose| {
                                 // it is imported
                                 if (compose.from != null) {
-                                    if (compose.from.? == .file) {
-                                        const import_record_idx = compose.from.?.file;
+                                    if (compose.from.? == .import_record_index) {
+                                        const import_record_idx = compose.from.?.import_record_index;
                                         const import_records: *const BabyList(bun.css.ImportRecord) = &visitor.all_import_records[idx];
                                         const import_record = import_records.at(import_record_idx);
                                         if (import_record.source_index.isValid()) {
@@ -8391,8 +8391,8 @@ pub const LinkerContext = struct {
                     // Validate cross-file "composes: ... from" named imports
                     for (css_ast.composes.values()) |*composes| {
                         for (composes.composes.slice()) |*compose| {
-                            if (compose.from == null or compose.from.? != .file) continue;
-                            const import_record_idx = compose.from.?.file;
+                            if (compose.from == null or compose.from.? != .import_record_index) continue;
+                            const import_record_idx = compose.from.?.import_record_index;
                             const record = &import_records[import_record_idx];
                             if (!record.source_index.isValid()) continue;
                             const other_css_ast = css_asts[record.source_index.get()] orelse continue;
@@ -9313,8 +9313,8 @@ pub const LinkerContext = struct {
                     for (composes.composes.sliceConst()) |*compose| {
                         // is an import
                         if (compose.from != null) {
-                            if (compose.from.? == .file) {
-                                const import_record_idx = compose.from.?.file;
+                            if (compose.from.? == .import_record_index) {
+                                const import_record_idx = compose.from.?.import_record_index;
                                 const record = v.all_import_records[idx].at(import_record_idx);
                                 if (record.source_index.isInvalid()) continue;
                                 const other_ast = v.all_css_asts[record.source_index.get()] orelse continue;

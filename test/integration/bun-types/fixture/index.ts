@@ -126,18 +126,18 @@ fetch;
 
 fetch.preconnect(new URL(""));
 
-// Bun.serve({
-//   port: 3000,
-//   fetch: () => new Response("ok"),
+Bun.serve({
+  port: 3000,
+  fetch: () => new Response("ok"),
 
-//   key: Bun.file(""),
-//   cert: Bun.file(""),
+  key: Bun.file(""),
+  cert: Bun.file(""),
 
-//   tls: {
-//     key: Bun.file(""),
-//     cert: Bun.file(""),
-//   },
-// });
+  tls: {
+    key: Bun.file(""),
+    cert: Bun.file(""),
+  },
+});
 
 URL.canParse;
 URL.createObjectURL;

@@ -164,6 +164,25 @@ interface BunFetchRequestInit extends RequestInit {
 	 * Override the default TLS options
 	 */
 	tls?: BunFetchRequestInitTLS;
+
+	/**
+	 * Log the raw HTTP request & response to stdout. This API may be
+	 * removed in a future version of Bun without notice.
+	 * This is a custom property that is not part of the Fetch API specification.
+	 * It exists mostly as a debugging tool
+	 */
+	verbose?: boolean;
+
+	/**
+	 * Override http_proxy or HTTPS_PROXY
+	 * This is a custom property that is not part of the Fetch API specification.
+	 */
+	proxy?: string;
+
+	/**
+	 * Override the default S3 options
+	 */
+	s3?: Bun.S3Options;
 }
 
 /**

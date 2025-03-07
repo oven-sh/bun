@@ -175,27 +175,6 @@ declare var File: {
 	): File;
 };
 
-type _RequestInit = import("undici-types").RequestInit;
-interface RequestInit extends _RequestInit {
-	/**
-	 * Log the raw HTTP request & response to stdout. This API may be
-	 * removed in a future version of Bun without notice.
-	 * This is a custom property that is not part of the Fetch API specification.
-	 * It exists mostly as a debugging tool
-	 */
-	verbose?: boolean;
-	/**
-	 * Override http_proxy or HTTPS_PROXY
-	 * This is a custom property that is not part of the Fetch API specification.
-	 */
-	proxy?: string;
-
-	/**
-	 * Override the default S3 options
-	 */
-	s3?: import("bun").S3Options;
-}
-
 /**
  * ShadowRealms are a distinct global environment, with its own global object
  * containing its own intrinsics and built-ins (standard objects that are not

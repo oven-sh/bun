@@ -35,7 +35,8 @@ async function doTest(
   let invalidInfo = "";
 
   async function* iterCases(dir: string) {
-    for await (const tomlFile of await glob.scan(dir)) {
+    let allFiles = await Array.fromAsync(glob.scan(dir));
+    for (const tomlFile of allFiles ) {
       const filepath = path.resolve(dir, tomlFile);
       // const fullpath = path.resolve(import.meta.dirname, filepath);
       const source = needsSource ? await fs.readFile(filepath, "utf8") : undefined;

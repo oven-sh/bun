@@ -33,7 +33,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber } = require("internal/validators");
+const { validateFunction, validateNumber, validateUint32 } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -500,6 +500,7 @@ const Socket = (function (InternalSocket) {
     _parent;
     _parentWrap;
     #socket;
+    #fd: number | null = null;
     server;
     pauseOnConnect = false;
     #upgraded;
@@ -520,6 +521,7 @@ const Socket = (function (InternalSocket) {
         noDelay = false,
         keepAlive = false,
         keepAliveInitialDelay = 0,
+        fd,
         ...opts
       } = options || {};
 
@@ -545,6 +547,10 @@ const Socket = (function (InternalSocket) {
       this._parentWrap = this;
       this.#pendingRead = undefined;
       this.#upgraded = null;
+      if (fd != null) {
+        validateUint32(fd, "options.fd");
+        this.#fd = fd;
+      }
 
       this[kSetNoDelay] = Boolean(noDelay);
       this[kSetKeepAlive] = Boolean(keepAlive);
@@ -946,7 +952,7 @@ const Socket = (function (InternalSocket) {
         this._writableState.destroyed = true;
       }
 
-      detachSocket(self);
+      this._handle = null;
       callback(err);
       process.nextTick(emitCloseNT, this, !!err);
     }
@@ -1044,6 +1050,7 @@ const Socket = (function (InternalSocket) {
       } else {
         this.destroy($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
       }
+      return this;
     }
 
     setKeepAlive(enable = false, initialDelayMsecs = 0) {

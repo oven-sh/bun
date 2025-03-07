@@ -3270,3 +3270,6 @@ test("ReadableStream", () => {
     `ReadableStream { locked: false, state: 'readable', supportsBYOB: false }`,
   );
 });
+test("WritableStream", () => {
+  expect(util.inspect(new WritableStream())).toEqual(`WritableStream { locked: false, state: 'writable' }`);
+});

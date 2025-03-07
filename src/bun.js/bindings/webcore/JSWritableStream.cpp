@@ -46,6 +46,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -55,6 +56,7 @@ using namespace JSC;
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_abort);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter);
+static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_customInspect);
 
 // Attributes
 
@@ -154,6 +156,7 @@ void JSWritableStreamPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSWritableStream::info(), JSWritableStreamPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    this->putDirect(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)), JSFunction::create(vm, globalObject(), 0, String("[nodejs.util.inspect.custom]"_s), jsWritableStreamPrototypeFunction_customInspect, ImplementationVisibility::Private), PropertyAttribute::Builtin | 0);
 }
 
 const ClassInfo JSWritableStream::s_info = { "WritableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStream) };
@@ -257,6 +260,18 @@ static inline JSC::EncodedJSValue jsWritableStreamPrototypeFunction_getWriterBod
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSWritableStream>::call<jsWritableStreamPrototypeFunction_getWriterBody>(*lexicalGlobalObject, *callFrame, "getWriter");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_customInspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSWritableStream* thisObject = jsDynamicCast<JSWritableStream*>(callFrame->thisValue());
+    if (!thisObject) return Bun::throwInvalidThisError(lexicalGlobalObject, scope, "WritableStream", callFrame->thisValue());
+
+    auto locked = !thisObject->get(lexicalGlobalObject, WebCore::builtinNames(vm).writerPrivateName()).isUndefined() ? "true"_s : "false"_s;
+    auto state = thisObject->wrapped().internalWritableStream().guardedObject().getObject()->getDirect(vm, WebCore::builtinNames(vm).statePrivateName()).toWTFString(lexicalGlobalObject);
+    return JSValue::encode(jsString(vm, WTF::makeString("WritableStream { locked: "_s, locked, ", state: '"_s, state, "' }"_s)));
 }
 
 JSC::GCClient::IsoSubspace* JSWritableStream::subspaceForImpl(JSC::VM& vm)

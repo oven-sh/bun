@@ -268,6 +268,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useV8DateParser() = true;
         JSC::Options::evalMode() = evalMode;
         JSC::Options::useIteratorHelpers() = true;
+        JSC::Options::heapGrowthSteepnessFactor() = 1.0;
+        JSC::Options::heapGrowthMaxIncrease() = 2.0;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -4403,6 +4405,10 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalOb
 
             if (params.type() == ScriptFetchParameters::Type::HostDefined) {
                 typeAttributeString = params.hostDefinedImportType();
+            } else if (params.type() == ScriptFetchParameters::Type::JSON) {
+                typeAttributeString = "json"_s;
+            } else if (params.type() == ScriptFetchParameters::Type::WebAssembly) {
+                typeAttributeString = "webassembly"_s;
             }
         }
     }

@@ -1237,6 +1237,9 @@ pub const Symbol = struct {
         /// Assigning to a "const" symbol will throw a TypeError at runtime
         constant,
 
+        // CSS identifiers that are renamed to be unique to the file they are in
+        local_css,
+
         /// This annotates all other symbols that don't have special behavior.
         other,
 
@@ -1383,6 +1386,11 @@ pub const Symbol = struct {
             return Map{ .symbols_for_source = symbols_for_source };
         }
 
+        pub fn initWithOneList(list: List) Map {
+            const baby_list = BabyList(List).init((&list)[0..1]);
+            return initList(baby_list);
+        }
+
         pub fn initList(list: NestedList) Map {
             return Map{ .symbols_for_source = list };
         }
@@ -1450,6 +1458,17 @@ pub const OptionalChain = enum(u1) {
 };
 
 pub const E = struct {
+    /// This represents an internal property name that can be mangled. The symbol
+    /// referenced by this expression should be a "SymbolMangledProp" symbol.
+    pub const NameOfSymbol = struct {
+        ref: Ref = Ref.None,
+
+        /// If true, a preceding comment contains "@__KEY__"
+        ///
+        /// Currently not used
+        has_property_key_comment: bool = false,
+    };
+
     pub const Array = struct {
         items: ExprNodeList = ExprNodeList{},
         comma_after_spread: ?logger.Loc = null,
@@ -2834,7 +2853,8 @@ pub const E = struct {
             return this.import_record_index == std.math.maxInt(u32);
         }
 
-        pub fn importRecordTag(import: *const Import) ?ImportRecord.Tag {
+        pub fn importRecordLoader(import: *const Import) ?bun.options.Loader {
+            // This logic is duplicated in js_printer.zig fn parsePath()
             const obj = import.options.data.as(.e_object) orelse
                 return null;
             const with = obj.get("with") orelse obj.get("assert") orelse
@@ -2845,23 +2865,16 @@ pub const E = struct {
                 return null).data.as(.e_string) orelse
                 return null;
 
-            if (str.eqlComptime("json")) {
-                return .with_type_json;
-            } else if (str.eqlComptime("toml")) {
-                return .with_type_toml;
-            } else if (str.eqlComptime("text")) {
-                return .with_type_text;
-            } else if (str.eqlComptime("file")) {
-                return .with_type_file;
-            } else if (str.eqlComptime("sqlite")) {
-                const embed = brk: {
-                    const embed = with_obj.get("embed") orelse break :brk false;
-                    const embed_str = embed.data.as(.e_string) orelse break :brk false;
-                    break :brk embed_str.eqlComptime("true");
-                };
-
-                return if (embed) .with_type_sqlite_embedded else .with_type_sqlite;
-            }
+            if (!str.is_utf16) if (bun.options.Loader.fromString(str.data)) |loader| {
+                if (loader == .sqlite) {
+                    const embed = with_obj.get("embed") orelse return loader;
+                    const embed_str = embed.data.as(.e_string) orelse return loader;
+                    if (embed_str.eqlComptime("true")) {
+                        return .sqlite_embedded;
+                    }
+                }
+                return loader;
+            };
 
             return null;
         }
@@ -4255,6 +4268,14 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
+            E.NameOfSymbol => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_name_of_symbol = Data.Store.append(E.NameOfSymbol, st),
+                    },
+                };
+            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4629,6 +4650,7 @@ pub const Expr = struct {
         e_require_main,
         e_special,
         e_inlined_enum,
+        e_name_of_symbol,
 
         // object, regex and array may have had side effects
         pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -5316,6 +5338,8 @@ pub const Expr = struct {
 
         e_inlined_enum: *E.InlinedEnum,
 
+        e_name_of_symbol: *E.NameOfSymbol,
+
         comptime {
             bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
         }
@@ -5654,6 +5678,10 @@ pub const Expr = struct {
         pub fn writeToHasher(this: Expr.Data, hasher: anytype, symbol_table: anytype) void {
             writeAnyToHasher(hasher, std.meta.activeTag(this));
             switch (this) {
+                .e_name_of_symbol => |e| {
+                    const symbol = e.ref.getSymbol(symbol_table);
+                    hasher.update(symbol.original_name);
+                },
                 .e_array => |e| {
                     writeAnyToHasher(hasher, .{
                         e.is_single_line,
@@ -6254,6 +6282,7 @@ pub const Expr = struct {
 
         pub const Store = struct {
             const StoreType = NewStore(&.{
+                E.NameOfSymbol,
                 E.Array,
                 E.Arrow,
                 E.Await,

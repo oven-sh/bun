@@ -3625,7 +3625,15 @@ const TOMLObject = struct {
             return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
         };
         var writer = js_printer.BufferPrinter.init(buffer_writer);
-        _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source, .{}) catch {
+        _ = js_printer.printJSON(
+            *js_printer.BufferPrinter,
+            &writer,
+            parse_result,
+            &source,
+            .{
+                .mangled_props = null,
+            },
+        ) catch {
             return globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
         };
 

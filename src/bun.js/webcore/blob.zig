@@ -4750,6 +4750,18 @@ pub const Blob = struct {
         return null;
     }
 
+    pub fn getLoader(blob: *const Blob, jsc_vm: *VirtualMachine) ?bun.options.Loader {
+        if (blob.getFileName()) |filename| {
+            const current_path = bun.fs.Path.init(filename);
+            return current_path.loader(&jsc_vm.transpiler.options.loaders) orelse .tsx;
+        } else if (blob.getMimeTypeOrContentType()) |mime_type| {
+            return .fromMimeType(mime_type);
+        } else {
+            // Be maximally permissive.
+            return .tsx;
+        }
+    }
+
     // TODO: Move this to a separate `File` object or BunFile
     pub fn getLastModified(
         this: *Blob,

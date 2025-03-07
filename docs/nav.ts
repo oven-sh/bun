@@ -218,6 +218,9 @@ export default {
     page("bundler/html", "Bundle frontend & static sites", {
       description: `Zero-config HTML bundler for single-page apps and multi-page apps. Automatic bundling, TailwindCSS plugins, TypeScript, JSX, React support, and incredibly fast builds`,
     }),
+    page("bundler/css", "Bundle, transpile, and minify CSS", {
+      description: `Production ready CSS bundler with support for modern CSS features, CSS modules, and more.`,
+    }),
     page("bundler/fullstack", "Fullstack Dev Server", {
       description: "Serve your frontend and backend from the same app with Bun's dev server.",
     }),

@@ -513,6 +513,7 @@ public:
         return static_cast<T*>(data_);
     }
 
+    inline std::span<uint8_t> span() const { return { get<uint8_t>(), len_ }; }
     inline size_t size() const noexcept { return len_; }
     void reset(void* data = nullptr, size_t len = 0);
     void reset(const Buffer<void>& buffer);
@@ -1450,7 +1451,7 @@ DataPointer ExportChallenge(const Buffer<const char>& buf);
 // ============================================================================
 // KDF
 
-const EVP_MD* getDigestByName(const WTF::StringView name);
+const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224 = false);
 const EVP_CIPHER* getCipherByName(const WTF::StringView name);
 
 // Verify that the specified HKDF output length is valid for the given digest.

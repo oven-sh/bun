@@ -41,7 +41,11 @@ fetch("url", {
   proxy: "",
 });
 
-Bun.fetch("", {
+fetch(new URL("url"), {
+  proxy: "",
+});
+
+Bun.fetch(new URL("url"), {
   proxy: "",
 });
 

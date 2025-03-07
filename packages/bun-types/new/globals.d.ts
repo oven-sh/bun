@@ -1263,3 +1263,13 @@ declare var Blob: {
 	prototype: Blob;
 	new (parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
 };
+
+interface URL {}
+declare var URL: {
+	prototype: URL;
+	new (url: string | URL, base?: string | URL): URL;
+	canParse(url: string): boolean;
+	createObjectURL(object: any): string;
+	revokeObjectURL(url: string): void;
+	parse(url: string): URL;
+};

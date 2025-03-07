@@ -256,10 +256,6 @@ GCController::GCController(JSC::VM& vm, void* bunVM, JSC::HeapType heapType)
         }
     }
 
-    // Configure GC with server-optimized settings
-    this->configureEdenGC(true, 30);
-    this->configureFullGC(true, 300);
-
     Bun__GCController__setup(this);
 }
 

@@ -21,23 +21,23 @@
 
 'use strict';
 const common = require('../common');
-const fixtures = require('../common/fixtures');
-
-// Check that the calls to Integer::New() and Date::New() succeed and bail out
-// if they don't.
-// V8 returns an empty handle on stack overflow. Trying to set the empty handle
-// as a property on an object results in a NULL pointer dereference in release
-// builds and an assert in debug builds.
-// https://github.com/nodejs/node-v0.x-archive/issues/4015
-
+const net = require('net');
 const assert = require('assert');
-const { spawn } = require('child_process');
+const N = 20;
+let disconnectCount = 0;
 
-const cp = spawn(process.execPath, [fixtures.path('test-fs-stat-sync-overflow.js')]);
+const c = net.createConnection(common.PORT);
 
-const stderr = [];
-cp.stderr.on('data', (chunk) => stderr.push(chunk));
+c.on('connect', common.mustNotCall('client should not have connected'));
 
-cp.on('exit', common.mustCall(() => {
-  assert.match(Buffer.concat(stderr).toString('utf8'), /RangeError: Maximum call stack size exceeded/);
-}));
+c.on('error', common.mustCall((error) => {
+  // Family autoselection might be skipped if only a single address is returned by DNS.
+  const actualError = Array.isArray(error.errors) ? error.errors[0] : error;
+
+  assert.strictEqual(actualError.code, 'ECONNREFUSED');
+}, N + 1));
+
+c.on('close', common.mustCall(() => {
+  if (disconnectCount++ < N)
+    c.connect(common.PORT); // reconnect
+}, N + 1));

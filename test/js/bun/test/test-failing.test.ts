@@ -14,7 +14,7 @@ describe("test.failing", () => {
   });
 
   it("requires a test function (unlike test.todo)", () => {
-    expect(() => test.failing("test name")).toThrow(/test expects second argument to be a function/i);
+    expect(() => test.failing("test name")).toThrow("test() expects second argument to be a function");
   });
 
   it("passes if an error is thrown or a promise rejects ", async () => {

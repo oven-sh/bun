@@ -7518,7 +7518,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 &writer,
                 bun.Global.BunInfo.generate(*Transpiler, &JSC.VirtualMachine.get().transpiler, allocator) catch unreachable,
                 &source,
-                .{},
+                .{ .mangled_props = null },
             ) catch unreachable;
 
             resp.writeStatus("200 OK");

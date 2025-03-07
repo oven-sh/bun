@@ -798,15 +798,13 @@ pub const Listener = struct {
                 uws.us_socket_context_free(@intFromBool(ssl_enabled), socket_context);
             }
 
-            const err = globalObject.createErrorInstance(
-                "Failed to listen at {s}",
-                .{
-                    bun.span(hostname_or_unix.slice()),
-                },
-            );
+            const err = globalObject.createErrorInstance("Failed to listen at {s}", .{bun.span(hostname_or_unix.slice())});
             log("Failed to listen {d}", .{errno});
             if (errno != 0) {
+                err.put(globalObject, ZigString.static("syscall"), bun.String.createUTF8ForJS(globalObject, "listen"));
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
+                err.put(globalObject, ZigString.static("address"), hostname_or_unix.toZigString().toJS(globalObject));
+                if (port) |p| err.put(globalObject, ZigString.static("port"), .jsNumber(p));
                 if (bun.C.SystemErrno.init(errno)) |str| {
                     err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
                 }

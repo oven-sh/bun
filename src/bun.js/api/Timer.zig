@@ -176,14 +176,18 @@ pub const All = struct {
         if (this.active_timer_count == 0) {
             return false;
         }
+        if (vm.event_loop.immediate_tasks.count > 0 or vm.event_loop.next_immediate_tasks.count > 0) {
+            spec.* = .{ .nsec = 0, .sec = 0 };
+            return true;
+        }
 
-        var now: timespec = undefined;
-        var has_set_now: bool = false;
+        var maybe_now: ?timespec = null;
         while (this.timers.peek()) |min| {
-            if (!has_set_now) {
-                now = timespec.now();
-                has_set_now = true;
-            }
+            const now = maybe_now orelse now: {
+                const real_now = timespec.now();
+                maybe_now = real_now;
+                break :now real_now;
+            };
 
             switch (now.order(&min.next)) {
                 .gt, .eq => {
@@ -202,8 +206,6 @@ pub const All = struct {
                     return true;
                 },
             }
-
-            unreachable;
         }
 
         return false;

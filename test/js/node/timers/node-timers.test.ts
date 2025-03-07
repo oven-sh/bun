@@ -1,7 +1,7 @@
 import { describe, expect, it, test, mock } from "bun:test";
 import { clearInterval, clearTimeout, promises, setInterval, setTimeout, setImmediate } from "node:timers";
 import { promisify } from "util";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import jsc from "bun:jsc";
 import path from "node:path";
 
@@ -229,14 +229,24 @@ describe("clear", () => {
   });
 });
 
-describe("setImmediate", () => {
-  it("has reasonable performance when nested with no other timers running", async () => {
-    const process = Bun.spawn({
-      cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts")],
-      stdout: "pipe",
-      env: bunEnv,
-    });
+describe.each(["with", "without"])("setImmediate %s timers running", mode => {
+  // TODO(@190n) #17901 did not fix this for Windows
+  it.todoIf(isWindows && mode == "with")(
+    "has reasonable performance when nested",
+    async () => {
+      const process = Bun.spawn({
+        cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts"), mode + "-interval"],
+        stdout: "pipe",
+        env: bunEnv,
+      });
 
-    expect(await new Response(process.stdout).text()).toBe("callback\n".repeat(5000));
-  }, 5000);
+      await process.exited;
+      const out = await new Response(process.stdout).text();
+      expect(process.exitCode).toBe(0);
+      // if this fails, there will be a nicer error than printing out the entire string
+      expect((out.match(/\n/g) ?? []).length).toBe(5000);
+      expect(out).toBe("callback\n".repeat(5000));
+    },
+    5000,
+  );
 });

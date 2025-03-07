@@ -486,6 +486,8 @@ pub const Options = struct {
     // us do binary search on to figure out what line a given AST node came from
     line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
 
+    mangled_props: ?*const bun.bundle_v2.MangledProps,
+
     // Default indentation is 2 spaces
     pub const Indentation = struct {
         scalar: usize = 2,
@@ -695,6 +697,8 @@ fn NewPrinter(
         temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+
+        was_lazy_export: bool = false,
 
         const Printer = @This();
 
@@ -954,6 +958,15 @@ fn NewPrinter(
                 p.print(indentation_buf[0..amt]);
                 i -= amt;
             }
+        }
+
+        pub fn mangledPropName(p: *Printer, _ref: Ref) string {
+            const ref = p.symbols().follow(_ref);
+            // TODO: we don't support that
+            if (p.options.mangled_props != null) {
+                if (p.options.mangled_props.?.get(ref)) |name| return name;
+            }
+            return p.renamer.nameForSymbol(ref);
         }
 
         pub inline fn printSpace(p: *Printer) void {
@@ -1349,6 +1362,13 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
+            // TODO: esbuild does this to make the source map more accurate with E.NameOfSymbol
+            // if (printer.symbols().get(printer.symbols().follow(ref))) |original_symbol| {
+            //     if (!bun.strings.eql( original_symbol.original_name, name)) {
+            //         printer.source_map_builder.addSourceMapping(location, originalName);
+            //         return;
+            //     }
+            // }
             printer.addSourceMapping(location);
         }
 
@@ -2759,6 +2779,60 @@ fn NewPrinter(
                     p.printStringLiteralEString(e, true);
                 },
                 .e_template => |e| {
+                    if (e.tag == null and (p.options.minify_syntax or p.was_lazy_export)) {
+                        var replaced = std.ArrayList(E.TemplatePart).init(p.options.allocator);
+                        for (e.parts, 0..) |_part, i| {
+                            var part = _part;
+                            const inlined_value: ?js_ast.Expr = switch (part.value.data) {
+                                .e_name_of_symbol => |e2| Expr.init(
+                                    E.String,
+                                    E.String.init(p.mangledPropName(e2.ref)),
+                                    part.value.loc,
+                                ),
+                                .e_dot => brk: {
+                                    // TODO: handle inlining of dot properties
+                                    break :brk null;
+                                },
+                                else => null,
+                            };
+
+                            if (inlined_value) |value| {
+                                if (replaced.items.len == 0) {
+                                    replaced.appendSlice(e.parts[0..i]) catch bun.outOfMemory();
+                                }
+                                part.value = value;
+                                replaced.append(part) catch bun.outOfMemory();
+                            } else if (replaced.items.len > 0) {
+                                replaced.append(part) catch bun.outOfMemory();
+                            }
+                        }
+
+                        if (replaced.items.len > 0) {
+                            var copy = e.*;
+                            copy.parts = replaced.items;
+                            const e2 = copy.fold(p.options.allocator, expr.loc);
+                            switch (e2.data) {
+                                .e_string => {
+                                    p.print('"');
+                                    p.printStringCharactersUTF8(e2.data.e_string.data, '"');
+                                    p.print('"');
+                                    return;
+                                },
+                                .e_template => {
+                                    e.* = e2.data.e_template.*;
+                                },
+                                else => {},
+                            }
+                        }
+
+                        // Convert no-substitution template literals into strings if it's smaller
+                        if (e.parts.len == 0) {
+                            p.addSourceMapping(expr.loc);
+                            p.printStringCharactersEString(&e.head.cooked, '`');
+                            return;
+                        }
+                    }
+
                     if (e.tag) |tag| {
                         p.addSourceMapping(expr.loc);
                         // Optional chains are forbidden in template tags
@@ -3055,6 +3129,18 @@ fn NewPrinter(
                         p.print(e.comment);
                         p.print(" */");
                     }
+                },
+                .e_name_of_symbol => |e| {
+                    const name = p.mangledPropName(e.ref);
+                    p.addSourceMappingForName(expr.loc, name, e.ref);
+
+                    if (!p.options.minify_whitespace and e.has_property_key_comment) {
+                        p.print(" /* @__KEY__ */");
+                    }
+
+                    p.print('"');
+                    p.printStringCharactersUTF8(name, '"');
+                    p.print('"');
                 },
 
                 .e_jsx_element,
@@ -4435,36 +4521,27 @@ fn NewPrinter(
 
                     p.printImportRecordPath(record);
 
-                    switch (record.tag) {
-                        .with_type_sqlite, .with_type_sqlite_embedded => {
-                            // we do not preserve "embed": "true" since it is not necessary
-                            p.printWhitespacer(ws(" with { type: \"sqlite\" }"));
-                        },
-                        .with_type_text => {
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"text\" }"));
-                            }
-                        },
-                        .with_type_json => {
-                            // backwards compatibility: previously, we always stripped type json
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"json\" }"));
-                            }
-                        },
-                        .with_type_toml => {
-                            // backwards compatibility: previously, we always stripped type
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"toml\" }"));
-                            }
-                        },
-                        .with_type_file => {
-                            // backwards compatibility: previously, we always stripped type
-                            if (comptime is_bun_platform) {
-                                p.printWhitespacer(ws(" with { type: \"file\" }"));
-                            }
-                        },
-                        else => {},
-                    }
+                    // backwards compatibility: previously, we always stripped type
+                    if (comptime is_bun_platform) if (record.loader) |loader| switch (loader) {
+                        .jsx => p.printWhitespacer(ws(" with { type: \"jsx\" }")),
+                        .js => p.printWhitespacer(ws(" with { type: \"js\" }")),
+                        .ts => p.printWhitespacer(ws(" with { type: \"ts\" }")),
+                        .tsx => p.printWhitespacer(ws(" with { type: \"tsx\" }")),
+                        .css => p.printWhitespacer(ws(" with { type: \"css\" }")),
+                        .file => p.printWhitespacer(ws(" with { type: \"file\" }")),
+                        .json => p.printWhitespacer(ws(" with { type: \"json\" }")),
+                        .jsonc => p.printWhitespacer(ws(" with { type: \"jsonc\" }")),
+                        .toml => p.printWhitespacer(ws(" with { type: \"toml\" }")),
+                        .wasm => p.printWhitespacer(ws(" with { type: \"wasm\" }")),
+                        .napi => p.printWhitespacer(ws(" with { type: \"napi\" }")),
+                        .base64 => p.printWhitespacer(ws(" with { type: \"base64\" }")),
+                        .dataurl => p.printWhitespacer(ws(" with { type: \"dataurl\" }")),
+                        .text => p.printWhitespacer(ws(" with { type: \"text\" }")),
+                        .bunsh => p.printWhitespacer(ws(" with { type: \"sh\" }")),
+                        // sqlite_embedded only relevant when bundling
+                        .sqlite, .sqlite_embedded => p.printWhitespacer(ws(" with { type: \"sqlite\" }")),
+                        .html => p.printWhitespacer(ws(" with { type: \"html\" }")),
+                    };
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {
@@ -5748,6 +5825,7 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
+    printer.was_lazy_export = tree.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -5940,6 +6018,7 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
+    printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();

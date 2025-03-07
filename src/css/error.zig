@@ -349,6 +349,7 @@ pub const SelectorError = union(enum) {
     /// An unsupported pseudo class or pseudo element was encountered.
     unsupported_pseudo_class_or_element: []const u8,
     unexpected_selector_after_pseudo_element: css.Token,
+    ambiguous_css_module_class: []const u8,
 
     pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         return switch (this) {
@@ -374,6 +375,7 @@ pub const SelectorError = union(enum) {
             .pseudo_element_expected_ident => |tok| try writer.print("Expected identifier in pseudo-element, found: {}", .{tok}),
             .unexpected_token_in_attribute_selector => |tok| try writer.print("Unexpected token in attribute selector: {}", .{tok}),
             .unexpected_selector_after_pseudo_element => |tok| try writer.print("Unexpected selector after pseudo-element: {}", .{tok}),
+            .ambiguous_css_module_class => |name| try writer.print("CSS module class: '{s}' is currently not supported.", .{name}),
         };
     }
 };

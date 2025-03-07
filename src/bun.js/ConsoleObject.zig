@@ -1178,7 +1178,7 @@ pub const Formatter = struct {
                     return @as(Tag, this);
                 }
             },
-            cell: JSValue.JSType = JSValue.JSType.Cell,
+            type: JSValue.JSType = .Cell,
         };
 
         pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
@@ -1225,13 +1225,13 @@ pub const Formatter = struct {
 
             if (js_type.isHidden()) return .{
                 .tag = .{ .NativeCode = {} },
-                .cell = js_type,
+                .type = js_type,
             };
 
             if (js_type == .Cell) {
                 return .{
                     .tag = .{ .NativeCode = {} },
-                    .cell = js_type,
+                    .type = js_type,
                 };
             }
 
@@ -1246,7 +1246,7 @@ pub const Formatter = struct {
                                     .this = value,
                                 },
                             },
-                            .cell = js_type,
+                            .type = js_type,
                         };
                     }
                 }
@@ -1256,7 +1256,7 @@ pub const Formatter = struct {
             if (js_type == .DOMWrapper) {
                 return .{
                     .tag = .{ .Private = {} },
-                    .cell = js_type,
+                    .type = js_type,
                 };
             }
 
@@ -1266,7 +1266,7 @@ pub const Formatter = struct {
                 if (value.isClass(globalThis)) {
                     return .{
                         .tag = .{ .Class = {} },
-                        .cell = js_type,
+                        .type = js_type,
                     };
                 }
 
@@ -1276,7 +1276,7 @@ pub const Formatter = struct {
                     // ideally, we would print [Function: namespace] { ... } on all functions, internal and js.
                     // what we'll do later is rid of .Function and .Class and handle the prefix in the .Object formatter
                     .tag = if (js_type == .InternalFunction) .Object else .Function,
-                    .cell = js_type,
+                    .type = js_type,
                 };
             }
 
@@ -1289,7 +1289,7 @@ pub const Formatter = struct {
                 }
                 return .{
                     .tag = .{ .GlobalObject = {} },
-                    .cell = js_type,
+                    .type = js_type,
                 };
             }
 
@@ -1306,7 +1306,7 @@ pub const Formatter = struct {
                         JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_element_transitional), globalThis) or
                         JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis))
                     {
-                        return .{ .tag = .{ .JSX = {} }, .cell = js_type };
+                        return .{ .tag = .{ .JSX = {} }, .type = js_type };
                     }
                 }
             }
@@ -1404,7 +1404,7 @@ pub const Formatter = struct {
 
                     else => .JSON,
                 },
-                .cell = js_type,
+                .type = js_type,
             };
         }
     };
@@ -1927,7 +1927,7 @@ pub const Formatter = struct {
                     .disable_inspect_custom = this.disable_inspect_custom,
                 });
 
-                if (tag.cell.isHidden()) return;
+                if (tag.type.isHidden()) return;
                 if (ctx.i == 0) {
                     handleFirstProperty(ctx, globalThis, ctx.parent);
                 } else {
@@ -2010,7 +2010,7 @@ pub const Formatter = struct {
                     );
                 }
 
-                if (tag.cell.isStringLike()) {
+                if (tag.type.isStringLike()) {
                     if (comptime enable_ansi_colors) {
                         writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
                     }
@@ -2018,7 +2018,7 @@ pub const Formatter = struct {
 
                 this.format(tag, Writer, ctx.writer, value, globalThis, enable_ansi_colors) catch {}; // TODO:
 
-                if (tag.cell.isStringLike()) {
+                if (tag.type.isStringLike()) {
                     if (comptime enable_ansi_colors) {
                         writer.writeAll(comptime Output.prettyFmt("<r>", true));
                     }
@@ -2430,7 +2430,7 @@ pub const Formatter = struct {
 
                         try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
-                        if (tag.cell.isStringLike()) {
+                        if (tag.type.isStringLike()) {
                             if (comptime enable_ansi_colors) {
                                 writer.writeAll(comptime Output.prettyFmt("<r>", true));
                             }
@@ -2495,7 +2495,7 @@ pub const Formatter = struct {
 
                         try this.format(tag, Writer, writer_, element, this.globalThis, enable_ansi_colors);
 
-                        if (tag.cell.isStringLike()) {
+                        if (tag.type.isStringLike()) {
                             if (comptime enable_ansi_colors) {
                                 writer.writeAll(comptime Output.prettyFmt("<r>", true));
                             }
@@ -3035,10 +3035,10 @@ pub const Formatter = struct {
                         .disable_inspect_custom = this.disable_inspect_custom,
                     });
 
-                    if (_tag.cell == .Symbol) {} else if (_tag.cell.isStringLike()) {
+                    if (_tag.type == .Symbol) {} else if (_tag.type.isStringLike()) {
                         try type_value.toZigString(&tag_name_str, this.globalThis);
                         is_tag_kind_primitive = true;
-                    } else if (_tag.cell.isObject() or type_value.isCallable(this.globalThis.vm())) {
+                    } else if (_tag.type.isObject() or type_value.isCallable(this.globalThis.vm())) {
                         type_value.getNameProperty(this.globalThis, &tag_name_str);
                         if (tag_name_str.len == 0) {
                             tag_name_str = ZigString.init("NoName");
@@ -3111,7 +3111,7 @@ pub const Formatter = struct {
                                     .disable_inspect_custom = this.disable_inspect_custom,
                                 });
 
-                                if (tag.cell.isHidden()) continue;
+                                if (tag.type.isHidden()) continue;
 
                                 if (needs_space) writer.space();
                                 needs_space = false;
@@ -3121,7 +3121,7 @@ pub const Formatter = struct {
                                     .{prop.trunc(128)},
                                 );
 
-                                if (tag.cell.isStringLike()) {
+                                if (tag.type.isStringLike()) {
                                     if (comptime enable_ansi_colors) {
                                         writer.writeAll(comptime Output.prettyFmt("<r><green>", true));
                                     }
@@ -3129,7 +3129,7 @@ pub const Formatter = struct {
 
                                 try this.format(tag, Writer, writer_, property_value, this.globalThis, enable_ansi_colors);
 
-                                if (tag.cell.isStringLike()) {
+                                if (tag.type.isStringLike()) {
                                     if (comptime enable_ansi_colors) {
                                         writer.writeAll(comptime Output.prettyFmt("<r>", true));
                                     }
@@ -3494,11 +3494,11 @@ pub const Formatter = struct {
         // it _should_ limit the stack usage because each version of the
         // function will be relatively small
         switch (result.tag.tag()) {
-            inline else => |tag| try this.printAs(tag, Writer, writer, value, result.cell, enable_ansi_colors),
+            inline else => |tag| try this.printAs(tag, Writer, writer, value, result.type, enable_ansi_colors),
 
             .CustomFormattedObject => {
                 this.custom_formatted_object = result.tag.CustomFormattedObject;
-                try this.printAs(.CustomFormattedObject, Writer, writer, value, result.cell, enable_ansi_colors);
+                try this.printAs(.CustomFormattedObject, Writer, writer, value, result.type, enable_ansi_colors);
             },
         }
     }

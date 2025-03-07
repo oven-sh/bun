@@ -14,7 +14,9 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
-	type DistributedOmit<T, K extends keyof T> = T extends T ? Omit<T, K> : never;
+	type DistributedOmit<T, K extends PropertyKey> = T extends T
+		? Omit<T, K>
+		: never;
 	type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
 	type ArrayBufferView = NodeJS.TypedArray | DataView;
 	type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
@@ -4247,7 +4249,7 @@ declare module "bun" {
 				/**
 				 * Send any additional headers while upgrading, like cookies
 				 */
-				headers?: Bun.HeadersInit;
+				headers?: HeadersInit;
 				/**
 				 * This value is passed to the {@link ServerWebSocket.data} property
 				 */
@@ -5132,7 +5134,7 @@ declare module "bun" {
 		 */
 		update(
 			input: Bun.BlobOrStringOrBuffer,
-			inputEncoding?: import("crypto").CryptoEncoding,
+			inputEncoding?: import("crypto").Encoding,
 		): CryptoHasher;
 
 		/**

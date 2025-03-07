@@ -986,7 +986,7 @@ pub const PathLike = union(enum) {
             .StringObject,
             .DerivedStringObject,
             => {
-                var str = try arg.toBunString2(ctx);
+                var str = try arg.toBunString(ctx);
                 defer str.deref();
 
                 arguments.eat();
@@ -1327,7 +1327,7 @@ fn timeLikeFromNow() TimeLike {
     //        timestamps are not modified, but other error conditions may still
     return .{
         .sec = 0,
-        .nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.C.translated.UTIME_NOW,
+        .nsec = if (Environment.isLinux) std.os.linux.UTIME.NOW else bun.c.UTIME_NOW,
     };
 }
 
@@ -1998,8 +1998,12 @@ pub const Process = struct {
             );
         }
 
-        if (vm.main.len > 0)
+        if (vm.main.len > 0 and
+            !strings.endsWithComptime(vm.main, bun.pathLiteral("/[eval]")) and
+            !strings.endsWithComptime(vm.main, bun.pathLiteral("/[stdin]")))
+        {
             args_list.appendAssumeCapacity(bun.String.fromUTF8(vm.main));
+        }
 
         defer allocator.free(args);
 

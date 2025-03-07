@@ -19,6 +19,7 @@ const FetchTasklet = Fetch.FetchTasklet;
 const S3 = bun.S3;
 const S3HttpSimpleTask = S3.S3HttpSimpleTask;
 const S3HttpDownloadStreamingTask = S3.S3HttpDownloadStreamingTask;
+const NapiFinalizerTask = bun.JSC.napi.NapiFinalizerTask;
 
 const Waker = bun.Async.Waker;
 
@@ -448,7 +449,8 @@ const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
-const TimerObject = JSC.BunTimer.TimerObject;
+const TimeoutObject = JSC.BunTimer.TimeoutObject;
+const ImmediateObject = JSC.BunTimer.ImmediateObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
@@ -484,6 +486,7 @@ pub const Task = TaggedPointerUnion(.{
     Futimes,
     GetAddrInfoRequestTask,
     HotReloadTask,
+    ImmediateObject,
     JSCDeferredWorkTask,
     Lchmod,
     Lchown,
@@ -494,6 +497,7 @@ pub const Task = TaggedPointerUnion(.{
     Mkdir,
     Mkdtemp,
     napi_async_work,
+    NapiFinalizerTask,
     NativeBrotli,
     NativeZlib,
     Open,
@@ -535,7 +539,7 @@ pub const Task = TaggedPointerUnion(.{
     StatFS,
     Symlink,
     ThreadSafeFunction,
-    TimerObject,
+    TimeoutObject,
     Truncate,
     Unlink,
     Utimes,
@@ -1329,8 +1333,12 @@ pub const EventLoop = struct {
                     var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
                     any.drain();
                 },
-                @field(Task.Tag, @typeName(TimerObject)) => {
-                    var any: *TimerObject = task.get(TimerObject).?;
+                @field(Task.Tag, @typeName(TimeoutObject)) => {
+                    var any: *TimeoutObject = task.get(TimeoutObject).?;
+                    any.runImmediateTask(virtual_machine);
+                },
+                @field(Task.Tag, @typeName(ImmediateObject)) => {
+                    var any: *ImmediateObject = task.get(ImmediateObject).?;
                     any.runImmediateTask(virtual_machine);
                 },
                 @field(Task.Tag, @typeName(ServerAllConnectionsClosedTask)) => {
@@ -1343,6 +1351,9 @@ pub const EventLoop = struct {
                 },
                 @field(Task.Tag, @typeName(PosixSignalTask)) => {
                     PosixSignalTask.runFromJSThread(@intCast(task.asUintptr()), global);
+                },
+                @field(Task.Tag, @typeName(NapiFinalizerTask)) => {
+                    task.get(NapiFinalizerTask).?.runOnJSThread();
                 },
                 @field(Task.Tag, @typeName(StatFS)) => {
                     var any: *StatFS = task.get(StatFS).?;

@@ -110,8 +110,6 @@ pub const ParseResult = struct {
     }
 };
 
-const cache_files = false;
-
 pub const PluginRunner = struct {
     global_object: *JSC.JSGlobalObject,
     allocator: std.mem.Allocator,
@@ -166,7 +164,7 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        const file_path = path_value.toBunString(global);
+        const file_path = try path_value.toBunString(global);
         defer file_path.deref();
 
         if (file_path.length() == 0) {
@@ -198,7 +196,7 @@ pub const PluginRunner = struct {
                     return null;
                 }
 
-                const namespace_str = namespace_value.toBunString(global);
+                const namespace_str = try namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
                     namespace_str.deref();
                     break :brk bun.String.init("file");
@@ -262,7 +260,7 @@ pub const PluginRunner = struct {
             );
         }
 
-        const file_path = path_value.toBunString(global);
+        const file_path = try path_value.toBunString(global);
 
         if (file_path.length() == 0) {
             return JSC.ErrorableString.err(
@@ -291,7 +289,7 @@ pub const PluginRunner = struct {
                     );
                 }
 
-                const namespace_str = namespace_value.toBunString(global);
+                const namespace_str = try namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
                     break :brk bun.String.static("file");
                 }
@@ -321,13 +319,10 @@ pub const PluginRunner = struct {
         defer user_namespace.deref();
 
         // Our super slow way of cloning the string into memory owned by JSC
-        const combined_string = std.fmt.allocPrint(
-            this.allocator,
-            "{any}:{any}",
-            .{ user_namespace, file_path },
-        ) catch unreachable;
+        const combined_string = std.fmt.allocPrint(this.allocator, "{any}:{any}", .{ user_namespace, file_path }) catch unreachable;
         var out_ = bun.String.init(combined_string);
-        const out = out_.toJS(this.global_object).toBunString(this.global_object);
+        const jsval = out_.toJS(this.global_object);
+        const out = jsval.toBunString(this.global_object) catch @panic("unreachable");
         this.allocator.free(combined_string);
         return JSC.ErrorableString.ok(out);
     }
@@ -360,7 +355,7 @@ pub const Transpiler = struct {
 
     macro_context: ?js_ast.Macro.MacroContext = null,
 
-    pub const isCacheEnabled = cache_files;
+    pub const isCacheEnabled = false;
 
     pub inline fn getPackageManager(this: *Transpiler) *PackageManager {
         return this.resolver.getPackageManager();
@@ -372,6 +367,7 @@ pub const Transpiler = struct {
         this.resolver.log = log;
     }
 
+    // TODO: remove this method. it does not make sense
     pub fn setAllocator(this: *Transpiler, allocator: std.mem.Allocator) void {
         this.allocator = allocator;
         this.linker.allocator = allocator;
@@ -670,7 +666,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .text => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -1212,14 +1208,13 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .json => |kind| {
-                var expr = if (kind == .json)
+            inline .toml, .json, .jsonc => |kind| {
+                var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-                    if (source.path.isJSONCFile())
-                        JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
-                    else
-                        JSON.parse(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
+                else if (kind == .json)
+                    JSON.parse(&source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, transpiler.log, allocator, false) catch return null
                 else

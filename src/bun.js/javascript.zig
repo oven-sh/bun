@@ -771,7 +771,6 @@ pub const VirtualMachine = struct {
     main_is_html_entrypoint: bool = false,
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
-    process: bun.JSC.C.JSObjectRef = null,
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
@@ -869,7 +868,7 @@ pub const VirtualMachine = struct {
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSInternalPromise = undefined,
     entry_point_result: struct {
-        value: JSC.Strong = .{},
+        value: JSC.Strong = .empty,
         cjs_set_value: bool = false,
     } = .{},
 
@@ -1021,14 +1020,21 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+    pub fn isEventLoopAliveExcludingImmediates(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
             vm.active_tasks +
             vm.event_loop.tasks.count +
-            vm.event_loop.immediate_tasks.count +
-            vm.event_loop.next_immediate_tasks.count +
             @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
+    }
+
+    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+        return vm.isEventLoopAliveExcludingImmediates() or
+            // We need to keep running in this case so that immediate tasks get run. But immediates
+            // intentionally don't make the event loop _active_ so we need to check for them
+            // separately.
+            vm.event_loop.immediate_tasks.count > 0 or
+            vm.event_loop.next_immediate_tasks.count > 0;
     }
 
     pub fn wakeup(this: *VirtualMachine) void {
@@ -1372,7 +1378,7 @@ pub const VirtualMachine = struct {
 
     pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
         if (this.module_loader.eval_source) |eval_source| {
-            var specifier_str = specifier.toBunString(this.global);
+            var specifier_str = specifier.toBunString(this.global) catch @panic("unexpected exception");
             defer specifier_str.deref();
             return specifier_str.eqlUTF8(eval_source.path.text);
         }
@@ -1403,13 +1409,18 @@ pub const VirtualMachine = struct {
 
     pub fn onExit(this: *VirtualMachine) void {
         this.exit_handler.dispatchOnExit();
+        this.is_shutting_down = true;
 
         const rare_data = this.rare_data orelse return;
-        var hooks = rare_data.cleanup_hooks;
-        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.default_allocator);
-        rare_data.cleanup_hooks = .{};
-        for (hooks.items) |hook| {
-            hook.execute();
+        defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
+        // Make sure we run new cleanup hooks introduced by running cleanup hooks
+        while (rare_data.cleanup_hooks.items.len > 0) {
+            var hooks = rare_data.cleanup_hooks;
+            defer hooks.deinit(bun.default_allocator);
+            rare_data.cleanup_hooks = .{};
+            for (hooks.items) |hook| {
+                hook.execute();
+            }
         }
     }
 
@@ -2416,93 +2427,15 @@ pub const VirtualMachine = struct {
 
         const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
-        const normalized_file_path_from_specifier, const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice());
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
-        var path = Fs.Path.init(normalized_file_path_from_specifier);
 
-        // For blobs.
-        var blob_source: ?JSC.WebCore.Blob = null;
         var virtual_source_to_use: ?logger.Source = null;
-        defer {
-            if (blob_source) |*blob| {
-                blob.deinit();
-            }
-        }
-
-        const loader, const virtual_source = brk: {
-            if (jsc_vm.module_loader.eval_source) |eval_source| {
-                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                    break :brk .{ .tsx, eval_source };
-                }
-                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                    break :brk .{ .tsx, eval_source };
-                }
-            }
-
-            var ext_for_loader = path.name.ext;
-
-            // Support errors within blob: URLs
-            // Be careful to handle Bun.file(), in addition to regular Blob/File objects
-            // Bun.file() should be treated the same as a file path.
-            if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
-                if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
-                    blob_source = blob;
-
-                    if (blob.getFileName()) |filename| {
-                        const current_path = Fs.Path.init(filename);
-                        if (blob.needsToReadFile()) {
-                            path = current_path;
-                        }
-
-                        ext_for_loader = current_path.name.ext;
-                    } else if (blob.getMimeTypeOrContentType()) |mime_type| {
-                        if (strings.hasPrefixComptime(mime_type.value, "application/javascript-jsx")) {
-                            ext_for_loader = ".jsx";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript-jsx")) {
-                            ext_for_loader = ".tsx";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/javascript")) {
-                            ext_for_loader = ".js";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
-                            ext_for_loader = ".ts";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
-                            ext_for_loader = ".json";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
-                            ext_for_loader = ".jsonc";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
-                            ext_for_loader = ".jsonc";
-                        } else if (mime_type.category == .text) {
-                            ext_for_loader = ".txt";
-                        } else {
-                            // Be maximally permissive.
-                            ext_for_loader = ".tsx";
-                        }
-                    } else {
-                        // Be maximally permissive.
-                        ext_for_loader = ".tsx";
-                    }
-
-                    if (!blob.needsToReadFile()) {
-                        virtual_source_to_use = logger.Source{
-                            .path = path,
-                            .contents = blob.sharedView(),
-                        };
-                    }
-                } else {
-                    return error.ModuleNotFound;
-                }
-            }
-
-            break :brk .{
-                jsc_vm.transpiler.options.loaders.get(ext_for_loader) orelse brk2: {
-                    if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                        break :brk2 options.Loader.js;
-                    }
-                    break :brk2 options.Loader.file;
-                },
-                if (virtual_source_to_use) |*src| src else null,
-            };
+        var blob_to_deinit: ?JSC.WebCore.Blob = null;
+        const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
+            return error.ModuleNotFound;
         };
+        defer if (blob_to_deinit) |*blob| blob.deinit();
 
         // .print_source, which is used by exceptions avoids duplicating the entire source code
         // but that means we have to be careful of the lifetime of the source code
@@ -2512,13 +2445,13 @@ pub const VirtualMachine = struct {
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
-            specifier,
+            lr.specifier,
             referrer_clone.slice(),
             _specifier,
-            path,
-            loader,
+            lr.path,
+            lr.loader orelse if (lr.is_main) .js else .file,
             log,
-            virtual_source,
+            lr.virtual_source,
             null,
             VirtualMachine.source_code_printer.?,
             globalObject,
@@ -3940,7 +3873,7 @@ pub const VirtualMachine = struct {
         const code: ?[]const u8 = if (is_error_instance) code: {
             if (error_instance.uncheckedPtrCast(JSC.JSObject).getCodePropertyVMInquiry(this.global)) |code_value| {
                 if (code_value.isString()) {
-                    const code_string = code_value.toBunString2(this.global) catch {
+                    const code_string = code_value.toBunString(this.global) catch {
                         // JSC::JSString to WTF::String can only fail on out of memory.
                         bun.outOfMemory();
                     };

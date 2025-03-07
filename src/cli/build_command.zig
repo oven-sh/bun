@@ -224,10 +224,17 @@ pub const BuildCommand = struct {
         this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
         this_transpiler.options.env.prefix = ctx.bundler_options.env_prefix;
 
+        if (ctx.bundler_options.production) {
+            try this_transpiler.env.map.put("NODE_ENV", "production");
+        }
+
         try this_transpiler.configureDefines();
         this_transpiler.configureLinker();
 
-        // This is currently done in DevServer by default, but not in Bun.build
+        if (ctx.bundler_options.production) {
+            bun.assert(!this_transpiler.options.jsx.development);
+        }
+
         if (!this_transpiler.options.production) {
             try this_transpiler.options.conditions.appendSlice(&.{"development"});
         }
@@ -316,6 +323,15 @@ pub const BuildCommand = struct {
                 break :brk result.output_files;
             }
 
+            if (ctx.bundler_options.outdir.len == 0 and outfile.len > 0 and !ctx.bundler_options.compile) {
+                this_transpiler.options.entry_naming = try std.fmt.allocPrint(allocator, "./{s}", .{
+                    std.fs.path.basename(outfile),
+                });
+                if (std.fs.path.dirname(outfile)) |dir|
+                    ctx.bundler_options.outdir = dir;
+                this_transpiler.resolver.opts.entry_naming = this_transpiler.options.entry_naming;
+            }
+
             break :brk (BundleV2.generateFromCLI(
                 &this_transpiler,
                 allocator,
@@ -338,168 +354,209 @@ pub const BuildCommand = struct {
         };
         const bundled_end = std.time.nanoTimestamp();
 
-        {
-            var write_summary = false;
-            {
-                dump: {
-                    defer Output.flush();
-                    var writer = Output.writer();
-                    var output_dir = this_transpiler.options.output_dir;
+        var had_err = false;
+        dump: {
+            defer Output.flush();
+            var writer = Output.writer();
+            var output_dir = this_transpiler.options.output_dir;
 
-                    const will_be_one_file =
-                        // --outdir is not supported with --compile
-                        // but you can still use --outfile
-                        // in which case, we should set the output dir to the dirname of the outfile
-                        // https://github.com/oven-sh/bun/issues/8697
-                        ctx.bundler_options.compile or
-                        (output_files.len == 1 and output_files[0].value == .buffer);
+            const will_be_one_file =
+                // --outdir is not supported with --compile
+                // but you can still use --outfile
+                // in which case, we should set the output dir to the dirname of the outfile
+                // https://github.com/oven-sh/bun/issues/8697
+                ctx.bundler_options.compile or
+                (output_files.len == 1 and output_files[0].value == .buffer);
 
-                    if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
-                        output_dir = std.fs.path.dirname(outfile) orelse ".";
-                        output_files[0].dest_path = std.fs.path.basename(outfile);
-                    }
+            if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
+                output_dir = std.fs.path.dirname(outfile) orelse ".";
+                output_files[0].dest_path = std.fs.path.basename(outfile);
+            }
 
-                    if (!ctx.bundler_options.compile) {
-                        if (outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
-                            // if --no-bundle is passed, it won't have an output dir
-                            if (output_files[0].value == .buffer)
-                                try writer.writeAll(output_files[0].value.buffer.bytes);
-                            break :dump;
-                        }
-                    }
-
-                    var root_path = output_dir;
-                    if (root_path.len == 0 and ctx.args.entry_points.len == 1)
-                        root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
-
-                    const root_dir = if (root_path.len == 0 or strings.eqlComptime(root_path, "."))
-                        std.fs.cwd()
-                    else
-                        std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
-                            Output.prettyErrorln("<r><red>{s}<r> while attempting to open output directory {}", .{ @errorName(err), bun.fmt.quote(root_path) });
-                            exitOrWatch(1, ctx.debug.hot_reload == .watch);
-                            unreachable;
-                        };
-
-                    const all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
-                    var max_path_len: usize = 0;
-                    for (all_paths, output_files) |*dest, src| {
-                        dest.* = src.dest_path;
-                    }
-
-                    const from_path = resolve_path.longestCommonPath(all_paths);
-
-                    for (output_files) |f| {
-                        max_path_len = @max(
-                            @max(from_path.len, f.dest_path.len) + 2 - from_path.len,
-                            max_path_len,
-                        );
-                    }
-
-                    if (ctx.bundler_options.compile) {
-                        printSummary(
-                            bundled_end,
-                            minify_duration,
-                            this_transpiler.options.minify_identifiers or this_transpiler.options.minify_whitespace or this_transpiler.options.minify_syntax,
-                            input_code_length,
-                            reachable_file_count,
-                            output_files,
-                        );
-
-                        Output.flush();
-
-                        const is_cross_compile = !compile_target.isDefault();
-
-                        if (outfile.len == 0 or strings.eqlComptime(outfile, ".") or strings.eqlComptime(outfile, "..") or strings.eqlComptime(outfile, "../")) {
-                            outfile = "index";
-                        }
-
-                        if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) {
-                            outfile = try std.fmt.allocPrint(allocator, "{s}.exe", .{outfile});
-                        }
-
-                        try bun.StandaloneModuleGraph.toExecutable(
-                            compile_target,
-                            allocator,
-                            output_files,
-                            root_dir,
-                            this_transpiler.options.public_path,
-                            outfile,
-                            this_transpiler.env,
-                            this_transpiler.options.output_format,
-                            ctx.bundler_options.windows_hide_console,
-                            ctx.bundler_options.windows_icon,
-                        );
-                        const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
-                        const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
-                            0...9 => 3,
-                            10...99 => 2,
-                            100...999 => 1,
-                            1000...9999 => 0,
-                            else => 0,
-                        };
-                        const padding_buf = [_]u8{' '} ** 16;
-                        const padding_ = padding_buf[0..@as(usize, @intCast(compiled_elapsed_digit_count))];
-                        Output.pretty("{s}", .{padding_});
-
-                        Output.printElapsedStdoutTrim(@as(f64, @floatFromInt(compiled_elapsed)));
-
-                        Output.pretty(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
-                            outfile,
-                            if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
-                        });
-
-                        if (is_cross_compile) {
-                            Output.pretty(" <r><d>{s}<r>\n", .{compile_target});
-                        } else {
-                            Output.pretty("\n", .{});
-                        }
-
-                        break :dump;
-                    }
-
-                    // On posix, file handles automatically close on process exit by the OS
-                    // Closing files shows up in profiling.
-                    // So don't do that unless we actually need to.
-                    // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.len;
-
-                    for (output_files) |f| {
-                        const rel_path = f.writeToDisk(root_dir, from_path) catch |err| {
-                            Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
-                            continue;
-                        };
-
-                        // Print summary
-                        _ = try writer.write("\n");
-                        const padding_count = 2 + (@max(rel_path.len, max_path_len) - rel_path.len);
-                        try writer.writeByteNTimes(' ', 2);
-                        try writer.writeAll(rel_path);
-                        try writer.writeByteNTimes(' ', padding_count);
-                        const size = @as(f64, @floatFromInt(f.size)) / 1000.0;
-                        try std.fmt.formatType(size, "d", .{ .precision = 2 }, writer, 1);
-                        try writer.writeAll(" KB\n");
-                    }
-
-                    write_summary = true;
-                }
-                if (write_summary and log.errors == 0) {
-                    Output.prettyln("\n", .{});
-                    Output.printElapsedStdoutTrim(
-                        @as(f64, @floatFromInt((@divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time)), @as(i64, std.time.ns_per_ms))))),
-                    );
-                    if (this_transpiler.options.transform_only) {
-                        Output.prettyln(" <green>transpile<r>", .{});
-                    } else {
-                        Output.prettyln(" <green>bundle<r> {d} modules", .{
-                            reachable_file_count,
-                        });
-                    }
+            if (!ctx.bundler_options.compile) {
+                if (outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
+                    // if --no-bundle is passed, it won't have an output dir
+                    if (output_files[0].value == .buffer)
+                        try writer.writeAll(output_files[0].value.buffer.bytes);
+                    break :dump;
                 }
             }
 
-            try log.print(Output.errorWriter());
-            exitOrWatch(0, ctx.debug.hot_reload == .watch);
+            var root_path = output_dir;
+            if (root_path.len == 0 and ctx.args.entry_points.len == 1)
+                root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
+
+            const root_dir = if (root_path.len == 0 or strings.eqlComptime(root_path, "."))
+                std.fs.cwd()
+            else
+                std.fs.cwd().makeOpenPath(root_path, .{}) catch |err| {
+                    Output.err(err, "could not open output directory {}", .{bun.fmt.quote(root_path)});
+                    exitOrWatch(1, ctx.debug.hot_reload == .watch);
+                    unreachable;
+                };
+
+            const all_paths = try ctx.allocator.alloc([]const u8, output_files.len);
+            var max_path_len: usize = 0;
+            for (all_paths, output_files) |*dest, src| {
+                dest.* = src.dest_path;
+            }
+
+            const from_path = resolve_path.longestCommonPath(all_paths);
+
+            var size_padding: usize = 0;
+
+            for (output_files) |f| {
+                max_path_len = @max(
+                    @max(from_path.len, f.dest_path.len) + 2 - from_path.len,
+                    max_path_len,
+                );
+                size_padding = @max(size_padding, std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+            }
+
+            if (ctx.bundler_options.compile) {
+                printSummary(
+                    bundled_end,
+                    minify_duration,
+                    this_transpiler.options.minify_identifiers or this_transpiler.options.minify_whitespace or this_transpiler.options.minify_syntax,
+                    input_code_length,
+                    reachable_file_count,
+                    output_files,
+                );
+
+                Output.flush();
+
+                const is_cross_compile = !compile_target.isDefault();
+
+                if (outfile.len == 0 or strings.eqlComptime(outfile, ".") or strings.eqlComptime(outfile, "..") or strings.eqlComptime(outfile, "../")) {
+                    outfile = "index";
+                }
+
+                if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) {
+                    outfile = try std.fmt.allocPrint(allocator, "{s}.exe", .{outfile});
+                }
+
+                try bun.StandaloneModuleGraph.toExecutable(
+                    compile_target,
+                    allocator,
+                    output_files,
+                    root_dir,
+                    this_transpiler.options.public_path,
+                    outfile,
+                    this_transpiler.env,
+                    this_transpiler.options.output_format,
+                    ctx.bundler_options.windows_hide_console,
+                    ctx.bundler_options.windows_icon,
+                );
+                const compiled_elapsed = @divTrunc(@as(i64, @truncate(std.time.nanoTimestamp() - bundled_end)), @as(i64, std.time.ns_per_ms));
+                const compiled_elapsed_digit_count: isize = switch (compiled_elapsed) {
+                    0...9 => 3,
+                    10...99 => 2,
+                    100...999 => 1,
+                    1000...9999 => 0,
+                    else => 0,
+                };
+                const padding_buf = [_]u8{' '} ** 16;
+                const padding_ = padding_buf[0..@as(usize, @intCast(compiled_elapsed_digit_count))];
+                Output.pretty("{s}", .{padding_});
+
+                Output.printElapsedStdoutTrim(@as(f64, @floatFromInt(compiled_elapsed)));
+
+                Output.pretty(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
+                    outfile,
+                    if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
+                });
+
+                if (is_cross_compile) {
+                    Output.pretty(" <r><d>{s}<r>\n", .{compile_target});
+                } else {
+                    Output.pretty("\n", .{});
+                }
+
+                break :dump;
+            }
+
+            if (log.errors == 0) {
+                if (this_transpiler.options.transform_only) {
+                    Output.prettyln("<green>Transpiled file in {d}ms<r>", .{
+                        @divFloor(std.time.nanoTimestamp() - bun.CLI.start_time, std.time.ns_per_ms),
+                    });
+                } else {
+                    Output.prettyln("<green>Bundled {d} module{s} in {d}ms<r>", .{
+                        reachable_file_count,
+                        if (reachable_file_count == 1) "" else "s",
+                        @divFloor(std.time.nanoTimestamp() - bun.CLI.start_time, std.time.ns_per_ms),
+                    });
+                }
+                Output.prettyln("\n", .{});
+                Output.flush();
+            }
+
+            for (output_files) |f| {
+                size_padding = @max(size_padding, std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+            }
+
+            for (output_files) |f| {
+                f.writeToDisk(root_dir, from_path) catch |err| {
+                    Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
+                    had_err = true;
+                    continue;
+                };
+
+                bun.debugAssert(!std.fs.path.isAbsolute(f.dest_path));
+
+                const rel_path = bun.strings.trimPrefixComptime(u8, f.dest_path, "./");
+
+                // Print summary
+                const padding_count = (@max(rel_path.len, max_path_len) - rel_path.len);
+                try writer.writeByteNTimes(' ', 2);
+
+                if (Output.enable_ansi_colors_stdout) try writer.writeAll(switch (f.output_kind) {
+                    .@"entry-point" => Output.prettyFmt("<blue>", true),
+                    .chunk => Output.prettyFmt("<cyan>", true),
+                    .asset => Output.prettyFmt("<magenta>", true),
+                    .sourcemap => Output.prettyFmt("<d>", true),
+                    .bytecode => Output.prettyFmt("<d>", true),
+                });
+
+                try writer.writeAll(rel_path);
+                if (Output.enable_ansi_colors_stdout) {
+                    // highlight big files
+                    const warn_threshold: usize = switch (f.output_kind) {
+                        .@"entry-point", .chunk => 128 * 1024,
+                        .asset => 16 * 1024 * 1024,
+                        else => std.math.maxInt(usize),
+                    };
+                    if (f.size > warn_threshold) {
+                        try writer.writeAll(Output.prettyFmt("<yellow>", true));
+                    } else {
+                        try writer.writeAll("\x1b[0m");
+                    }
+                }
+
+                try writer.writeByteNTimes(' ', padding_count);
+                try writer.print("{s}  ", .{bun.fmt.size(f.size, .{})});
+                try writer.writeByteNTimes(' ', size_padding - std.fmt.count("{}", .{bun.fmt.size(f.size, .{})}));
+
+                if (Output.enable_ansi_colors_stdout) {
+                    try writer.writeAll("\x1b[2m");
+                }
+                try writer.print("({s})", .{switch (f.output_kind) {
+                    .@"entry-point" => "entry point",
+                    .chunk => "chunk",
+                    .asset => "asset",
+                    .sourcemap => "source map",
+                    .bytecode => "bytecode",
+                }});
+                if (Output.enable_ansi_colors_stdout)
+                    try writer.writeAll("\x1b[0m");
+                try writer.writeAll("\n");
+            }
+
+            Output.prettyln("\n", .{});
         }
+
+        try log.print(Output.errorWriter());
+        exitOrWatch(if (had_err) 1 else 0, ctx.debug.hot_reload == .watch);
     }
 };
 

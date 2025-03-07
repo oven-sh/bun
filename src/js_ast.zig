@@ -1586,6 +1586,20 @@ pub const E = struct {
         inverted: bool = false,
     };
 
+    pub const Special = union(enum) {
+        /// emits `exports` or `module.exports` depending on `commonjs_named_exports_deoptimized`
+        module_exports,
+        /// `import.meta.hot`
+        hot,
+        /// `import.meta.hot.accept`
+        hot_accept,
+        /// Converted from `hot_accept` to this in js_parser.zig when it is
+        /// passed strings. Printed as `import.meta.hot.acceptSpecifiers`
+        hot_accept_visited,
+        /// Prints the resolved specifier string for an import record.
+        resolved_specifier_string: ImportRecord.Index,
+    };
+
     pub const Call = struct {
         // Node:
         target: ExprNodeIndex,
@@ -2155,7 +2169,7 @@ pub const E = struct {
 
         /// Assumes each key in the property is a string
         pub fn alphabetizeProperties(this: *Object) void {
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.isDebug) {
                 for (this.properties.slice()) |prop| {
                     bun.assert(prop.key.?.data == .e_string);
                 }
@@ -2783,7 +2797,7 @@ pub const E = struct {
     };
 
     pub const RequireResolveString = struct {
-        import_record_index: u32 = 0,
+        import_record_index: u32,
 
         // close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
@@ -2812,7 +2826,8 @@ pub const E = struct {
             return this.import_record_index == std.math.maxInt(u32);
         }
 
-        pub fn importRecordTag(import: *const Import) ?ImportRecord.Tag {
+        pub fn importRecordLoader(import: *const Import) ?bun.options.Loader {
+            // This logic is duplicated in js_printer.zig fn parsePath()
             const obj = import.options.data.as(.e_object) orelse
                 return null;
             const with = obj.get("with") orelse obj.get("assert") orelse
@@ -2823,23 +2838,16 @@ pub const E = struct {
                 return null).data.as(.e_string) orelse
                 return null;
 
-            if (str.eqlComptime("json")) {
-                return .with_type_json;
-            } else if (str.eqlComptime("toml")) {
-                return .with_type_toml;
-            } else if (str.eqlComptime("text")) {
-                return .with_type_text;
-            } else if (str.eqlComptime("file")) {
-                return .with_type_file;
-            } else if (str.eqlComptime("sqlite")) {
-                const embed = brk: {
-                    const embed = with_obj.get("embed") orelse break :brk false;
-                    const embed_str = embed.data.as(.e_string) orelse break :brk false;
-                    break :brk embed_str.eqlComptime("true");
-                };
-
-                return if (embed) .with_type_sqlite_embedded else .with_type_sqlite;
-            }
+            if (!str.is_utf16) if (bun.options.Loader.fromString(str.data)) |loader| {
+                if (loader == .sqlite) {
+                    const embed = with_obj.get("embed") orelse return loader;
+                    const embed_str = embed.data.as(.e_string) orelse return loader;
+                    if (embed_str.eqlComptime("true")) {
+                        return .sqlite_embedded;
+                    }
+                }
+                return loader;
+            };
 
             return null;
         }
@@ -2850,7 +2858,7 @@ pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
 
-    pub const Batcher = bun.Batcher(Stmt);
+    pub const Batcher = NewBatcher(Stmt);
 
     pub fn assign(a: Expr, b: Expr) Stmt {
         return Stmt.alloc(
@@ -4118,18 +4126,7 @@ pub const Expr = struct {
                     },
                 };
             },
-            E.TemplatePart => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_template_part = brk: {
-                            const item = allocator.create(Type) catch unreachable;
-                            item.* = st;
-                            break :brk item;
-                        },
-                    },
-                };
-            },
+
             E.Template => {
                 return Expr{
                     .loc = loc,
@@ -4488,14 +4485,7 @@ pub const Expr = struct {
                     },
                 };
             },
-            E.TemplatePart => {
-                return Expr{
-                    .loc = loc,
-                    .data = Data{
-                        .e_template_part = Data.Store.append(Type, st),
-                    },
-                };
-            },
+
             E.Template => {
                 return Expr{
                     .loc = loc,
@@ -4604,7 +4594,6 @@ pub const Expr = struct {
         e_jsx_element,
         e_object,
         e_spread,
-        e_template_part,
         e_template,
         e_reg_exp,
         e_await,
@@ -4615,7 +4604,6 @@ pub const Expr = struct {
         e_import_identifier,
         e_private_identifier,
         e_commonjs_export_identifier,
-        e_module_dot_exports,
         e_boolean,
         e_number,
         e_big_int,
@@ -4633,6 +4621,7 @@ pub const Expr = struct {
         e_import_meta,
         e_import_meta_main,
         e_require_main,
+        e_special,
         e_inlined_enum,
         e_name_of_symbol,
 
@@ -4684,7 +4673,6 @@ pub const Expr = struct {
                 .e_big_int => writer.writeAll("BigInt"),
                 .e_object => writer.writeAll("object"),
                 .e_spread => writer.writeAll("..."),
-                .e_template_part => writer.writeAll("template_part"),
                 .e_template => writer.writeAll("template"),
                 .e_reg_exp => writer.writeAll("regexp"),
                 .e_await => writer.writeAll("await"),
@@ -4973,16 +4961,7 @@ pub const Expr = struct {
                 },
             }
         }
-        pub fn isTemplatePart(self: Tag) bool {
-            switch (self) {
-                .e_template_part => {
-                    return true;
-                },
-                else => {
-                    return false;
-                },
-            }
-        }
+
         pub fn isTemplate(self: Tag) bool {
             switch (self) {
                 .e_template => {
@@ -5293,7 +5272,6 @@ pub const Expr = struct {
         e_jsx_element: *E.JSXElement,
         e_object: *E.Object,
         e_spread: *E.Spread,
-        e_template_part: *E.TemplatePart,
         e_template: *E.Template,
         e_reg_exp: *E.RegExp,
         e_await: *E.Await,
@@ -5305,7 +5283,6 @@ pub const Expr = struct {
         e_import_identifier: E.ImportIdentifier,
         e_private_identifier: E.PrivateIdentifier,
         e_commonjs_export_identifier: E.CommonJSExportIdentifier,
-        e_module_dot_exports,
 
         e_boolean: E.Boolean,
         e_number: E.Number,
@@ -5327,6 +5304,10 @@ pub const Expr = struct {
 
         e_import_meta_main: E.ImportMetaMain,
         e_require_main,
+
+        /// Covers some exotic AST node types under one namespace, since the
+        /// places this is found it all follows similar handling.
+        e_special: E.Special,
 
         e_inlined_enum: *E.InlinedEnum,
 
@@ -5406,11 +5387,6 @@ pub const Expr = struct {
                     const item = try allocator.create(std.meta.Child(@TypeOf(this.e_spread)));
                     item.* = el.*;
                     return .{ .e_spread = item };
-                },
-                .e_template_part => |el| {
-                    const item = try allocator.create(std.meta.Child(@TypeOf(this.e_template_part)));
-                    item.* = el.*;
-                    return .{ .e_template_part = item };
                 },
                 .e_template => |el| {
                     const item = try allocator.create(std.meta.Child(@TypeOf(this.e_template)));
@@ -5598,14 +5574,6 @@ pub const Expr = struct {
                     });
                     return .{ .e_spread = item };
                 },
-                .e_template_part => |el| {
-                    const item = bun.create(allocator, E.TemplatePart, .{
-                        .value = try el.value.deepClone(allocator),
-                        .tail_loc = el.tail_loc,
-                        .tail = el.tail,
-                    });
-                    return .{ .e_template_part = item };
-                },
                 .e_template => |el| {
                     const item = bun.create(allocator, E.Template, .{
                         .tag = if (el.tag) |tag| try tag.deepClone(allocator) else null,
@@ -5743,9 +5711,6 @@ pub const Expr = struct {
                     if (e.value) |value|
                         value.data.writeToHasher(hasher, symbol_table);
                 },
-                .e_template_part => {
-                    // TODO: delete e_template_part as hit has zero usages
-                },
                 .e_template => |e| {
                     _ = e; // autofix
                 },
@@ -5806,7 +5771,7 @@ pub const Expr = struct {
                 .e_new_target,
                 .e_require_main,
                 .e_import_meta,
-                .e_module_dot_exports,
+                .e_special,
                 => {},
             }
         }
@@ -7366,7 +7331,7 @@ pub const TSNamespaceMember = struct {
 /// Inlined enum values can only be numbers and strings
 /// This type special cases an encoding similar to JSValue, where nan-boxing is used
 /// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
-pub const InlinedEnumValue = packed struct {
+pub const InlinedEnumValue = struct {
     raw_data: u64,
 
     pub const Decoded = union(enum) {
@@ -7438,27 +7403,22 @@ pub const ExportsKind = enum {
     // module.
     esm_with_dynamic_fallback_from_cjs,
 
-    const dynamic = std.EnumSet(ExportsKind).init(.{
-        .esm_with_dynamic_fallback = true,
-        .esm_with_dynamic_fallback_from_cjs = true,
-        .cjs = true,
-    });
-
-    const with_dynamic_fallback = std.EnumSet(ExportsKind).init(.{
-        .esm_with_dynamic_fallback = true,
-        .esm_with_dynamic_fallback_from_cjs = true,
-    });
-
     pub fn isDynamic(self: ExportsKind) bool {
-        return dynamic.contains(self);
+        return switch (self) {
+            .cjs, .esm_with_dynamic_fallback, .esm_with_dynamic_fallback_from_cjs => true,
+            .none, .esm => false,
+        };
+    }
+
+    pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
+        return switch (self) {
+            .none, .cjs, .esm => false,
+            .esm_with_dynamic_fallback, .esm_with_dynamic_fallback_from_cjs => true,
+        };
     }
 
     pub fn jsonStringify(self: @This(), writer: anytype) !void {
         return try writer.write(@tagName(self));
-    }
-
-    pub fn isESMWithDynamicFallback(self: ExportsKind) bool {
-        return with_dynamic_fallback.contains(self);
     }
 };
 
@@ -8418,7 +8378,7 @@ pub const Macro = struct {
                         return Expr.init(E.Number, E.Number{ .value = value.asNumber() }, this.caller.loc);
                     },
                     .String => {
-                        var bun_str = value.toBunString(this.global);
+                        var bun_str = try value.toBunString(this.global);
                         defer bun_str.deref();
 
                         // encode into utf16 so the printer escapes the string correctly
@@ -9009,3 +8969,41 @@ const ToJSError = error{
 };
 
 const writeAnyToHasher = bun.writeAnyToHasher;
+
+/// Say you need to allocate a bunch of tiny arrays
+/// You could just do separate allocations for each, but that is slow
+/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
+/// So a better idea is to batch up your allocations into one larger allocation
+/// and then just make all the arrays point to different parts of the larger allocation
+pub fn NewBatcher(comptime Type: type) type {
+    return struct {
+        head: []Type,
+
+        pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
+            const all = try allocator.alloc(Type, count);
+            return @This(){ .head = all };
+        }
+
+        pub fn done(this: *@This()) void {
+            bun.assert(this.head.len == 0); // count to init() was too large, overallocation
+        }
+
+        pub fn eat(this: *@This(), value: Type) *Type {
+            return @as(*Type, @ptrCast(&this.head.eat1(value).ptr));
+        }
+
+        pub fn eat1(this: *@This(), value: Type) []Type {
+            var prev = this.head[0..1];
+            prev[0] = value;
+            this.head = this.head[1..];
+            return prev;
+        }
+
+        pub fn next(this: *@This(), values: anytype) []Type {
+            this.head[0..values.len].* = values;
+            const prev = this.head[0..values.len];
+            this.head = this.head[values.len..];
+            return prev;
+        }
+    };
+}

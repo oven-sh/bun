@@ -77,5 +77,4 @@ pub fn ExactSizeMatcher(comptime max_bytes: usize) type {
     };
 }
 
-const eight = ExactSizeMatcher(8);
 const expect = std.testing.expect;

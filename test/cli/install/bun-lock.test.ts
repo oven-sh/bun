@@ -1,7 +1,15 @@
 import { spawn, write, file } from "bun";
 import { expect, it, beforeAll, afterAll } from "bun:test";
 import { access, copyFile, open, writeFile, exists, cp, rm } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, VerdaccioRegistry, runBunInstall, toBeValidBin } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  VerdaccioRegistry,
+  runBunInstall,
+  toBeValidBin,
+  readdirSorted,
+} from "harness";
 import { join } from "path";
 
 expect.extend({
@@ -241,12 +249,7 @@ it("should not deduplicate bundled packages with un-bundled packages", async () 
   expect(await exited).toBe(0);
 
   async function checkModules() {
-    const res = await Promise.all([
-      exists(join(packageDir, "node_modules/debug-1")),
-      exists(join(packageDir, "node_modules/npm-1")),
-      exists(join(packageDir, "node_modules/ms-1")),
-    ]);
-    expect(res).toEqual([true, true, true]);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["debug-1", "ms-1", "npm-1"]);
   }
 
   await checkModules();
@@ -276,6 +279,56 @@ it("should not deduplicate bundled packages with un-bundled packages", async () 
     .split(/\r?\n/)
     .slice(1);
   expect(out2).toEqual(out1);
+
+  // force saving a lockfile does not increase the number of packages
+  ({ exited, stdout } = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+
+  await checkModules();
+  const out3 = (await Bun.readableStreamToText(stdout))
+    .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
+    .split(/\r?\n/)
+    .slice(1);
+
+  ({ exited, stdout } = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+  await checkModules();
+
+  const out4 = (await Bun.readableStreamToText(stdout))
+    .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
+    .split(/\r?\n/)
+    .slice(1);
+  expect(out4).toEqual(out3);
+
+  expect(out4).toMatchSnapshot();
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+  // --frozen-lockfile is successful
+  ({ exited, stdout } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "inherit",
+  }));
+
+  expect(await exited).toBe(0);
+  await checkModules();
 });
 
 it("should not change formatting unexpectedly", async () => {

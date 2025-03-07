@@ -47,7 +47,7 @@ const ValueRef = union(Tag) {
 
     pub fn asBunString(this: ValueRef, globalObject: *JSGlobalObject) bun.String {
         return switch (this) {
-            .jsvalue => |str| str.toBunString(globalObject),
+            .jsvalue => |str| str.toBunString(globalObject) catch @panic("unexpected exception"),
             .bunstr => |str| return str,
         };
     }
@@ -320,7 +320,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
 
         if (obj.getOwn(globalThis, "short")) |short_option| {
             try validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
-            var short_option_str = short_option.toBunString(globalThis);
+            var short_option_str = try short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
                 const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
                 return globalThis.throwValue(err);

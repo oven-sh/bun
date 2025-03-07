@@ -46,7 +46,6 @@ pub const FallbackModule = struct {
                 .name = name,
                 .version = version,
                 .module_type = .esm,
-                .hash = @as(u32, @truncate(bun.hash(name ++ "@" ++ version))),
                 .main_fields = undefined,
                 .browser_map = undefined,
                 .source = logger.Source.initPathString(import_path ++ name ++ "/package.json", ""),

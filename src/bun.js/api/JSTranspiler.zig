@@ -441,7 +441,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             if (!kind.isStringLike()) {
                 tsconfig.jsonStringify(globalThis, 0, &out);
             } else {
-                out = tsconfig.toBunString(globalThis);
+                out = tsconfig.toBunString(globalThis) catch @panic("unexpected exception");
             }
 
             if (out.isEmpty()) break :tsconfig;
@@ -480,7 +480,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
             if (is_object) {
                 macros.jsonStringify(globalThis, 0, &out);
             } else {
-                out = macros.toBunString(globalThis);
+                out = try macros.toBunString(globalThis);
             }
 
             if (out.isEmpty()) break :macros;
@@ -490,6 +490,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 &transpiler.log,
                 source,
                 allocator,
+                .json,
+                false,
             ) catch null) orelse break :macros;
             transpiler.macro_map = PackageJSON.parseMacrosJSON(allocator, json, &transpiler.log, &source);
         }

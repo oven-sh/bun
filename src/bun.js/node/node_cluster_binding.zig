@@ -104,8 +104,8 @@ pub const InternalMsgHolder = struct {
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
     callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong) = .{},
-    worker: JSC.Strong = .{},
-    cb: JSC.Strong = .{},
+    worker: JSC.Strong = .empty,
+    cb: JSC.Strong = .empty,
     messages: std.ArrayListUnmanaged(JSC.Strong) = .{},
 
     pub fn isReady(this: *InternalMsgHolder) bool {
@@ -237,7 +237,7 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
             const ack = p.toInt32();
             if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
-                defer cbstrong.clear();
+                defer cbstrong.deinit();
                 _ = ipc_data.internal_msg_queue.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
                 event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{

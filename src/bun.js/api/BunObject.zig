@@ -258,7 +258,7 @@ pub fn shellEscape(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
     }
 
     const jsval = arguments.ptr[0];
-    const bunstr = jsval.toBunString(globalThis);
+    const bunstr = try jsval.toBunString(globalThis);
     if (globalThis.hasException()) return .zero;
     defer bunstr.deref();
 
@@ -882,9 +882,9 @@ fn doResolve(globalThis: *JSC.JSGlobalObject, arguments: []const JSValue) bun.JS
         }
     }
 
-    const specifier_str = specifier.toBunString(globalThis);
+    const specifier_str = try specifier.toBunString(globalThis);
     defer specifier_str.deref();
-    const from_str = from.toBunString(globalThis);
+    const from_str = try from.toBunString(globalThis);
     defer from_str.deref();
     return doResolveWithArgs(
         globalThis,
@@ -960,10 +960,10 @@ pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
 }
 
 export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString2(global) catch return .zero;
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString2(global) catch return .zero;
+    const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
     const value = doResolveWithArgs(global, specifier_str, source_str, is_esm, true) catch {
@@ -975,10 +975,10 @@ export fn Bun__resolve(global: *JSGlobalObject, specifier: JSValue, source: JSVa
 }
 
 export fn Bun__resolveSync(global: *JSGlobalObject, specifier: JSValue, source: JSValue, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString2(global) catch return .zero;
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
 
-    const source_str = source.toBunString2(global) catch return .zero;
+    const source_str = source.toBunString(global) catch return .zero;
     defer source_str.deref();
 
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source_str, is_esm, true));
@@ -990,7 +990,7 @@ export fn Bun__resolveSyncWithStrings(global: *JSGlobalObject, specifier: *bun.S
 }
 
 export fn Bun__resolveSyncWithSource(global: *JSGlobalObject, specifier: JSValue, source: *bun.String, is_esm: bool) JSC.JSValue {
-    const specifier_str = specifier.toBunString2(global) catch return .zero;
+    const specifier_str = specifier.toBunString(global) catch return .zero;
     defer specifier_str.deref();
     return JSC.toJSHostValue(global, doResolveWithArgs(global, specifier_str, source.*, is_esm, true));
 }
@@ -1055,7 +1055,8 @@ pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) b
 pub const Crypto = struct {
     const Hashers = @import("../../sha.zig");
 
-    const BoringSSL = bun.BoringSSL;
+    const BoringSSL = bun.BoringSSL.c;
+
     pub const HMAC = struct {
         ctx: BoringSSL.HMAC_CTX,
         algorithm: EVP.Algorithm,
@@ -1318,7 +1319,7 @@ pub const Crypto = struct {
                         return;
                     }
 
-                    const globalThis = this.promise.strong.globalThis orelse this.vm.global;
+                    const globalThis = this.vm.global;
                     const promise = this.promise.swap();
                     if (this.err) |err| {
                         promise.reject(globalThis, createCryptoError(globalThis, err));
@@ -1479,7 +1480,7 @@ pub const Crypto = struct {
         };
 
         pub fn init(algorithm: Algorithm, md: *const BoringSSL.EVP_MD, engine: *BoringSSL.ENGINE) EVP {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             var ctx: BoringSSL.EVP_MD_CTX = undefined;
             BoringSSL.EVP_MD_CTX_init(&ctx);
@@ -1567,7 +1568,7 @@ pub const Crypto = struct {
     };
 
     pub fn createCryptoError(globalThis: *JSC.JSGlobalObject, err_code: u32) JSValue {
-        return BoringSSL.ERR_toJS(globalThis, err_code);
+        return bun.BoringSSL.ERR_toJS(globalThis, err_code);
     }
     const unknown_password_algorithm_message = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";
 
@@ -1971,7 +1972,7 @@ pub const Crypto = struct {
 
             pub fn deinit(this: *HashJob) void {
                 this.promise.deinit();
-                bun.default_allocator.free(this.password);
+                bun.freeSensitive(bun.default_allocator, this.password);
                 this.destroy();
             }
 
@@ -1992,9 +1993,10 @@ pub const Crypto = struct {
                     .global = this.global,
                     .ref = this.ref,
                 });
+                this.promise = .empty;
+
                 result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
-                this.promise.strong = .{};
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
@@ -2184,8 +2186,10 @@ pub const Crypto = struct {
 
             pub fn deinit(this: *VerifyJob) void {
                 this.promise.deinit();
-                bun.default_allocator.free(this.password);
-                bun.default_allocator.free(this.prev_hash);
+
+                bun.freeSensitive(bun.default_allocator, this.password);
+                bun.freeSensitive(bun.default_allocator, this.prev_hash);
+
                 this.destroy();
             }
 
@@ -2206,9 +2210,10 @@ pub const Crypto = struct {
                     .global = this.global,
                     .ref = this.ref,
                 });
+                this.promise = .empty;
+
                 result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
-                this.promise.strong = .{};
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
@@ -3105,22 +3110,22 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPServer)) => {
                         var server: *JSC.API.HTTPServer = entry.as(JSC.API.HTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPServer)) => {
                         var server: *JSC.API.DebugHTTPServer = entry.as(JSC.API.DebugHTTPServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.DebugHTTPSServer)) => {
                         var server: *JSC.API.DebugHTTPSServer = entry.as(JSC.API.DebugHTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     @field(@TypeOf(entry.tag()), @typeName(JSC.API.HTTPSServer)) => {
                         var server: *JSC.API.HTTPSServer = entry.as(JSC.API.HTTPSServer);
                         server.onReloadFromZig(&config, globalObject);
-                        return server.thisObject;
+                        return server.js_value.get() orelse .undefined;
                     },
                     else => {},
                 }
@@ -3155,9 +3160,7 @@ pub fn serve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.J
                     if (route_list_object != .zero) {
                         ServerType.routeListSetCached(obj, globalObject, route_list_object);
                     }
-                    obj.protect();
-
-                    server.thisObject = obj;
+                    server.js_value.set(globalObject, obj);
 
                     if (config.allow_hot) {
                         if (globalObject.bunVM().hotMap()) |hot| {
@@ -4587,7 +4590,7 @@ pub const JSZlib = struct {
                     defer reader.deinit();
                     return globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
                 };
-                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
+                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch bun.outOfMemory() };
                 reader.list.capacity = reader.list.items.len;
                 reader.list_ptr = &reader.list;
 
@@ -4628,7 +4631,7 @@ pub const JSZlib = struct {
     }
 };
 
-pub usingnamespace @import("./bun/subprocess.zig");
+pub const Subprocess = @import("./bun/subprocess.zig");
 
 const InternalTestingAPIs = struct {
     pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {

@@ -43,8 +43,9 @@ assert.throws(function() {
 }, {
   code: 'ERR_INVALID_ARG_TYPE',
   name: 'TypeError',
-  message: 'The first argument must be of type string, Buffer, ArrayBuffer, Array, or Array-like Object.' +
-           ' Received an instance of AB'
+  message: 'The first argument must be of type string, ' +
+           'Buffer, ArrayBuffer, Array, or Array-like Object. Received ' +
+           'an instance of AB'
 });
 
 // Test the byteOffset and length arguments

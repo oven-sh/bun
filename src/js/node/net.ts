@@ -1007,6 +1007,11 @@ const Socket = (function (InternalSocket) {
       }
     }
 
+    _reset() {
+      this.resetAndClosing = true;
+      return this.destroy();
+    }
+
     get readyState() {
       if (this.connecting) return "opening";
       if (this.readable) {
@@ -1037,13 +1042,14 @@ const Socket = (function (InternalSocket) {
     resetAndDestroy() {
       if (this._handle) {
         if (this.connecting) {
-          this.once("connect", () => this._handle?.terminate());
+          this.once("connect", () => this._reset());
         } else {
-          this._handle.terminate();
+          this._reset();
         }
       } else {
-        this.destroy($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+        this.destroy($ERR_SOCKET_CLOSED());
       }
+      return this;
     }
 
     setKeepAlive(enable = false, initialDelayMsecs = 0) {
@@ -1155,7 +1161,7 @@ const Socket = (function (InternalSocket) {
         this._pendingData = chunk;
         this._pendingEncoding = encoding;
         function onClose() {
-          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION());
         }
         this.once("connect", function connect() {
           this.off("close", onClose);
@@ -1168,7 +1174,7 @@ const Socket = (function (InternalSocket) {
       this.#writeCallback = null;
       const socket = this._handle;
       if (!socket) {
-        callback($ERR_SOCKET_CLOSED("Socket is closed"));
+        callback($ERR_SOCKET_CLOSED());
         return false;
       }
       const success = socket.$write(chunk, encoding);

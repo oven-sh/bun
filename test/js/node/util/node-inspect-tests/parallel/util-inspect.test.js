@@ -3280,3 +3280,12 @@ test("TextEncoderStream", () => {
   writable: WritableStream { locked: false, state: 'writable' }
 }`);
 });
+test("TextDecoderStream", () => {
+  expect(util.inspect(new TextDecoderStream())).toEqual(`TextDecoderStream {
+  encoding: 'utf-8',
+  fatal: false,
+  ignoreBOM: false,
+  readable: ReadableStream { locked: false, state: 'readable', supportsBYOB: false },
+  writable: WritableStream { locked: false, state: 'writable' }
+}`);
+});

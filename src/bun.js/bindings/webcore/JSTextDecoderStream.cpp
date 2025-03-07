@@ -38,13 +38,17 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include "ErrorCode.h"
 
 namespace WebCore {
 using namespace JSC;
 
+extern "C" BunString Bun__inspect(JSC::JSGlobalObject* globalObject, JSValue value);
+
 // Attributes
 
 static JSC_DECLARE_CUSTOM_GETTER(jsTextDecoderStreamConstructor);
+static JSC_DECLARE_HOST_FUNCTION(JSTextDecoderStreamPrototype__customInspect);
 
 class JSTextDecoderStreamPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -120,6 +124,7 @@ void JSTextDecoderStreamPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSTextDecoderStream::info(), JSTextDecoderStreamPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    this->putDirect(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)), JSFunction::create(vm, globalObject(), 0, String("[nodejs.util.inspect.custom]"_s), JSTextDecoderStreamPrototype__customInspect, ImplementationVisibility::Private), PropertyAttribute::Builtin | 0);
 }
 
 const ClassInfo JSTextDecoderStream::s_info = { "TextDecoderStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextDecoderStream) };
@@ -160,6 +165,23 @@ JSC_DEFINE_CUSTOM_GETTER(jsTextDecoderStreamConstructor, (JSGlobalObject * lexic
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSTextDecoderStream::getConstructor(vm, prototype->globalObject()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(JSTextDecoderStreamPrototype__customInspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSTextDecoderStream* thisObject = jsDynamicCast<JSTextDecoderStream*>(callFrame->thisValue());
+    if (!thisObject) return Bun::throwInvalidThisError(lexicalGlobalObject, scope, "TextDecoderStream", callFrame->thisValue());
+    auto& builtinNames = WebCore::builtinNames(vm);
+
+    auto encoding = thisObject->getDirect(vm, builtinNames.encodingPrivateName()).toWTFString(lexicalGlobalObject);
+    auto fatal = thisObject->getDirect(vm, builtinNames.fatalPrivateName()).toBoolean(lexicalGlobalObject) ? "true"_s : "false"_s;
+    auto ignoreBOM = thisObject->getDirect(vm, builtinNames.ignoreBOMPrivateName()).toBoolean(lexicalGlobalObject) ? "true"_s : "false"_s;
+    auto transform = thisObject->getDirect(vm, builtinNames.textDecoderStreamTransformPrivateName());
+    auto readable = Bun__inspect(lexicalGlobalObject, transform.getObject()->getDirect(vm, builtinNames.readablePrivateName())).transferToWTFString();
+    auto writable = Bun__inspect(lexicalGlobalObject, transform.getObject()->getDirect(vm, builtinNames.writablePrivateName())).transferToWTFString();
+    return JSValue::encode(jsString(vm, WTF::makeString("TextDecoderStream {\n  encoding: '"_s, encoding, "',\n  fatal: "_s, fatal, ",\n  ignoreBOM: "_s, ignoreBOM, ",\n  readable: "_s, readable, ",\n  writable: "_s, writable, "\n}"_s)));
 }
 
 JSC::GCClient::IsoSubspace* JSTextDecoderStream::subspaceForImpl(JSC::VM& vm)

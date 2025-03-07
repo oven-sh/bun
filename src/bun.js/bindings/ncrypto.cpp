@@ -1837,35 +1837,50 @@ const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224)
         return EVP_md5();
     }
 
-    if (WTF::startsWithIgnoringASCIICase(name, "sha-"_s)) {
-        auto bits = name.substring(4);
-        if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
-            return EVP_sha1();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
-            return EVP_sha224();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
-            return EVP_sha256();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
-            return EVP_sha384();
+    if (WTF::startsWithIgnoringASCIICase(name, "sha"_s)) {
+        auto remain = name.substring(3);
+        if (remain.startsWith('-')) {
+            auto bits = remain.substring(1);
+            if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
+                return EVP_sha1();
+            }
+            if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
+                return EVP_sha224();
+            }
+            if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
+                return EVP_sha256();
+            }
+            if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
+                return EVP_sha384();
+            }
+
+            if (WTF::startsWithIgnoringASCIICase(bits, "512"_s)) {
+                auto moreBits = bits.substring(3);
+                if (moreBits.isEmpty()) {
+                    return EVP_sha512();
+                }
+                if (WTF::equalIgnoringASCIICase(moreBits, "/224"_s)) {
+                    if (ignoreSHA512_224) {
+                        return nullptr;
+                    }
+                    return EVP_sha512_224();
+                }
+                if (WTF::equalIgnoringASCIICase(moreBits, "/256"_s)) {
+                    return EVP_sha512_256();
+                }
+
+                // backwards compatibility with what we supported before
+                // (not supported by node)
+                if (WTF::equalIgnoringASCIICase(moreBits, "256"_s) || WTF::equalIgnoringASCIICase(moreBits, "_256"_s)) {
+                    return EVP_sha512_256();
+                }
+            }
         }
 
-        if (WTF::startsWithIgnoringASCIICase(bits, "512"_s)) {
-            auto moreBits = bits.substring(3);
-            if (moreBits.isEmpty()) {
-                return EVP_sha512();
-            }
-            if (WTF::equalIgnoringASCIICase(moreBits, "/224"_s)) {
-                if (ignoreSHA512_224) {
-                    return nullptr;
-                }
-                return EVP_sha512_224();
-            }
-            if (WTF::equalIgnoringASCIICase(moreBits, "/256"_s)) {
-                return EVP_sha512_256();
-            }
+        // backwards compatibility with what we supported before
+        // (not supported by node)
+        if (WTF::equalIgnoringASCIICase(remain, "128"_s)) {
+            return EVP_sha1();
         }
     }
 

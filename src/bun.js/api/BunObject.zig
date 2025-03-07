@@ -2420,7 +2420,7 @@ pub const Crypto = struct {
                 const digest_buf = buf[0..buf_len];
                 switch (handle.*) {
                     .zig => {
-                        const res = handle.zig.final(digest_buf);
+                        const res = handle.zig.finalWithLen(digest_buf, buf_len);
                         return @intCast(res.len);
                     },
                     .evp => {
@@ -2949,17 +2949,21 @@ pub const Crypto = struct {
             @panic("unreachable");
         }
 
-        fn final(self: *CryptoHasherZig, output_digest_slice: []u8) []u8 {
+        fn finalWithLen(self: *CryptoHasherZig, output_digest_slice: []u8, res_len: usize) []u8 {
             inline for (algo_map) |pair| {
                 const name, const T = pair;
                 if (self.algorithm == @field(EVP.Algorithm, name)) {
                     T.final(@ptrCast(@alignCast(self.state)), @ptrCast(output_digest_slice));
                     const reset: *T = @ptrCast(@alignCast(self.state));
                     reset.* = T.init(.{});
-                    return output_digest_slice;
+                    return output_digest_slice[0..res_len];
                 }
             }
             @panic("unreachable");
+        }
+
+        fn final(self: *CryptoHasherZig, output_digest_slice: []u8) []u8 {
+            return self.finalWithLen(output_digest_slice, self.digest_length);
         }
 
         fn deinit(self: *CryptoHasherZig) void {

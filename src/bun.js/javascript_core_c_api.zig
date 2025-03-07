@@ -8,11 +8,11 @@ const bun = @import("root").bun;
 const std = @import("std");
 const cpp = @import("./bindings/bindings.zig");
 const generic = opaque {
-    pub fn value(this: *const @This()) cpp.JSValue {
+    pub fn value(this: *const generic) cpp.JSValue {
         return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValueReprInt, @bitCast(@intFromPtr(this)))));
     }
 
-    pub inline fn bunVM(this: *@This()) *bun.JSC.VirtualMachine {
+    pub inline fn bunVM(this: *generic) *bun.JSC.VirtualMachine {
         return this.ptr().bunVM();
     }
 };

@@ -47,17 +47,14 @@ fn randomUUID(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValu
     const args = callFrame.arguments();
 
     var disable_entropy_cache = false;
-    if (args.len > 0) disable_entropy_cache_option: {
+    if (args.len > 0) {
         const options = args[0];
         if (options != .undefined) {
             try validators.validateObject(global, options, "options", .{}, .{});
+            if (try options.get(global, "disableEntropyCache")) |disable_entropy_cache_value| {
+                disable_entropy_cache = try validators.validateBoolean(global, disable_entropy_cache_value, "options.disableEntropyCache", .{});
+            }
         }
-
-        const disable_entropy_cache_value = try options.get(global, "disableEntropyCache") orelse {
-            break :disable_entropy_cache_option;
-        };
-
-        disable_entropy_cache = try validators.validateBoolean(global, disable_entropy_cache_value, "options.disableEntropyCache", .{});
     }
 
     var str, var bytes = String.createUninitialized(.latin1, 36);

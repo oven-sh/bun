@@ -1034,17 +1034,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     }
 }
 
-extern "C" void Bun__setChannelRef(GlobalObject* globalObject, bool enabled)
-{
-    auto process = jsCast<Process*>(globalObject->processObject());
-    process->wrapped().m_hasIPCRef = enabled;
+extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
 
-    if (enabled) {
-        process->scriptExecutionContext()->refEventLoop();
-    } else {
-        process->scriptExecutionContext()->unrefEventLoop();
-    }
-}
 extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
@@ -1058,11 +1049,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                 if (Bun__GlobalObject__hasIPC(global)
                     && eventEmitter.listenerCount(eventName) == 1) {
                     Bun__ensureProcessIPCInitialized(global);
-                    Bun__setChannelRef(global, true);
-                }
-            } else {
-                if (eventEmitter.listenerCount(eventName) == 0) {
-                    Bun__setChannelRef(global, false);
+                    Bun__refChannelUnlessOverridden(global);
                 }
             }
             return;

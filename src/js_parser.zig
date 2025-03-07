@@ -17325,6 +17325,16 @@ fn NewParser_(
                             }
                         }
 
+                        if (e_.target.data.as(.e_special)) |special| {
+                            switch (special) {
+                                .hot_accept_disabled, .hot_function_disabled => {
+                                    method_call_should_be_replaced_with_undefined = true;
+                                    p.is_control_flow_dead = true;
+                                },
+                                else => {},
+                            }
+                        }
+
                         for (e_.args.slice()) |*arg| {
                             arg.* = p.visitExpr(arg.*);
                         }
@@ -17408,7 +17418,7 @@ fn NewParser_(
                         return expr;
                     } else if (e_.target.data.as(.e_special)) |special|
                         switch (special) {
-                            .hot_accept, .hot_accept_disabled => {
+                            .hot_accept => {
                                 p.handleImportMetaHotAcceptCall(e_);
                                 // After validating that the import.meta.hot
                                 // code is correct, discard the entire
@@ -17417,8 +17427,8 @@ fn NewParser_(
                                     return .{ .data = .e_undefined, .loc = expr.loc };
                             },
                             // These APIs do not have any special parser transforms.
-                            .hot_function_disabled => {
-                                bun.debugAssert(!p.options.features.hot_module_reloading);
+                            .hot_function_disabled, .hot_accept_disabled => {
+                                bun.debugAssert(false);
                                 return .{ .data = .e_undefined, .loc = expr.loc };
                             },
                             else => {},

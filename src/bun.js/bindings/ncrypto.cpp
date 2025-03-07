@@ -1825,12 +1825,67 @@ DataPointer DHPointer::stateless(const EVPKeyPointer& ourKey,
 // ============================================================================
 // KDF
 
-const EVP_MD* getDigestByName(const WTF::StringView name)
+const EVP_MD* getDigestByName(const WTF::StringView name, bool ignoreSHA512_224)
 {
     // Historically, "dss1" and "DSS1" were DSA aliases for SHA-1
     // exposed through the public API.
     if (name == "dss1"_s || name == "DSS1"_s) [[unlikely]] {
         return EVP_sha1();
+    }
+
+    if (WTF::equalIgnoringASCIICase(name, "md5"_s)) {
+        return EVP_md5();
+    }
+
+    if (WTF::startsWithIgnoringASCIICase(name, "sha"_s)) {
+        auto remain = name.substring(3);
+        if (remain.startsWith('-')) {
+            auto bits = remain.substring(1);
+            if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
+                return EVP_sha1();
+            }
+            if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
+                return EVP_sha224();
+            }
+            if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
+                return EVP_sha256();
+            }
+            if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
+                return EVP_sha384();
+            }
+
+            if (WTF::startsWithIgnoringASCIICase(bits, "512"_s)) {
+                auto moreBits = bits.substring(3);
+                if (moreBits.isEmpty()) {
+                    return EVP_sha512();
+                }
+                if (WTF::equalIgnoringASCIICase(moreBits, "/224"_s)) {
+                    if (ignoreSHA512_224) {
+                        return nullptr;
+                    }
+                    return EVP_sha512_224();
+                }
+                if (WTF::equalIgnoringASCIICase(moreBits, "/256"_s)) {
+                    return EVP_sha512_256();
+                }
+
+                // backwards compatibility with what we supported before
+                // (not supported by node)
+                if (WTF::equalIgnoringASCIICase(moreBits, "256"_s) || WTF::equalIgnoringASCIICase(moreBits, "_256"_s)) {
+                    return EVP_sha512_256();
+                }
+            }
+        }
+
+        // backwards compatibility with what we supported before
+        // (not supported by node)
+        if (WTF::equalIgnoringASCIICase(remain, "128"_s)) {
+            return EVP_sha1();
+        }
+    }
+
+    if (ignoreSHA512_224 && WTF::equalIgnoringASCIICase(name, "sha512-224"_s)) {
+        return nullptr;
     }
 
     // if (name == "ripemd160WithRSA"_s || name == "RSA-RIPEMD160"_s) {

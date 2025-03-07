@@ -3050,9 +3050,11 @@ pub const Parser = struct {
         scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
     }
 
-    pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8) !js_ast.Result {
+    pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8, symbols: Symbol.List) !js_ast.Result {
         var p: JavaScriptParser = undefined;
         try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
+        defer p.lexer.deinit();
+
         p.lexer.track_comments = this.options.features.minify_identifiers;
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
@@ -3062,9 +3064,11 @@ pub const Parser = struct {
             p.should_fold_typescript_constant_expressions = true;
         }
 
-        defer p.lexer.deinit();
-        const result: js_ast.Result = undefined;
-        _ = result;
+        // If we added to `p.symbols` it's going to fuck up all the indices
+        // in the `symbols` array.
+        bun.assert(p.symbols.items.len == 0);
+        p.symbols = symbols.listManaged(p.allocator);
+
         try p.prepareForVisitPass();
 
         var final_expr = expr;
@@ -24048,6 +24052,19 @@ pub fn newLazyExportAST(
     source: *const logger.Source,
     comptime runtime_api_call: []const u8,
 ) anyerror!?js_ast.Ast {
+    return newLazyExportASTImpl(allocator, define, opts, log_to_copy_into, expr, source, runtime_api_call, .{});
+}
+
+pub fn newLazyExportASTImpl(
+    allocator: std.mem.Allocator,
+    define: *Define,
+    opts: Parser.Options,
+    log_to_copy_into: *logger.Log,
+    expr: Expr,
+    source: *const logger.Source,
+    comptime runtime_api_call: []const u8,
+    symbols: Symbol.List,
+) anyerror!?js_ast.Ast {
     var temp_log = logger.Log.init(allocator);
     const log = &temp_log;
     var parser = Parser{
@@ -24061,6 +24078,7 @@ pub fn newLazyExportAST(
     var result = parser.toLazyExportAST(
         expr,
         runtime_api_call,
+        symbols,
     ) catch |err| {
         if (temp_log.errors == 0) {
             log_to_copy_into.addRangeError(source, parser.lexer.range(), @errorName(err)) catch unreachable;

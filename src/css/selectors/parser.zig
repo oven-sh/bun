@@ -927,7 +927,7 @@ pub const PseudoClass = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info);
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
         try serialize.serializePseudoClass(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
@@ -1043,6 +1043,15 @@ pub const SelectorParser = struct {
 
     pub const Impl = impl.Selectors;
 
+    pub fn newLocalIdentifier(_: *SelectorParser, input: *css.Parser, tag: css.CssRef.Tag, raw: []const u8, loc: usize) Impl.SelectorImpl.LocalIdentifier {
+        if (input.flags.css_modules) {
+            return Impl.SelectorImpl.LocalIdentifier.fromRef(input.addSymbolForName(raw, tag, bun.logger.Loc{
+                .start = @intCast(loc),
+            }), if (comptime bun.Environment.isDebug) .{ raw, input.allocator() } else {});
+        }
+        return Impl.SelectorImpl.LocalIdentifier.fromIdent(.{ .v = raw });
+    }
+
     pub fn namespaceForPrefix(this: *SelectorParser, prefix: css.css_values.ident.Ident) ?[]const u8 {
         _ = this; // autofix
         return prefix.v;
@@ -1125,213 +1134,105 @@ pub const SelectorParser = struct {
     ) Result(PseudoClass) {
         // @compileError(css.todo_stuff.match_ignore_ascii_case);
         const pseudo_class: PseudoClass = pseudo_class: {
-            if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "hover")) {
+            const Map = comptime bun.ComptimeStringMap(PseudoClass, .{
                 // https://drafts.csswg.org/selectors-4/#useraction-pseudos
-                break :pseudo_class .hover;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "active")) {
-                // https://drafts.csswg.org/selectors-4/#useraction-pseudos
-                break :pseudo_class .active;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "focus")) {
-                // https://drafts.csswg.org/selectors-4/#useraction-pseudos
-                break :pseudo_class .focus;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "focus-visible")) {
-                // https://drafts.csswg.org/selectors-4/#useraction-pseudos
-                break :pseudo_class .focus_visible;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "focus-within")) {
-                // https://drafts.csswg.org/selectors-4/#useraction-pseudos
-                break :pseudo_class .focus_within;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "current")) {
+                .{ "hover", PseudoClass{ .hover = {} } },
+                .{ "active", PseudoClass{ .active = {} } },
+                .{ "focus", PseudoClass{ .focus = {} } },
+                .{ "focus-visible", PseudoClass{ .focus_visible = {} } },
+                .{ "focus-within", PseudoClass{ .focus_within = {} } },
+
                 // https://drafts.csswg.org/selectors-4/#time-pseudos
-                break :pseudo_class .current;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "past")) {
-                // https://drafts.csswg.org/selectors-4/#time-pseudos
-                break :pseudo_class .past;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "future")) {
-                // https://drafts.csswg.org/selectors-4/#time-pseudos
-                break :pseudo_class .future;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "playing")) {
+                .{ "current", PseudoClass{ .current = {} } },
+                .{ "past", PseudoClass{ .past = {} } },
+                .{ "future", PseudoClass{ .future = {} } },
+
                 // https://drafts.csswg.org/selectors-4/#resource-pseudos
-                break :pseudo_class .playing;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "paused")) {
-                // https://drafts.csswg.org/selectors-4/#resource-pseudos
-                break :pseudo_class .paused;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "seeking")) {
-                // https://drafts.csswg.org/selectors-4/#resource-pseudos
-                break :pseudo_class .seeking;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "buffering")) {
-                // https://drafts.csswg.org/selectors-4/#resource-pseudos
-                break :pseudo_class .buffering;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "stalled")) {
-                // https://drafts.csswg.org/selectors-4/#resource-pseudos
-                break :pseudo_class .stalled;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "muted")) {
-                // https://drafts.csswg.org/selectors-4/#resource-pseudos
-                break :pseudo_class .muted;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "volume-locked")) {
-                // https://drafts.csswg.org/selectors-4/#resource-pseudos
-                break :pseudo_class .volume_locked;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "fullscreen")) {
+                .{ "playing", PseudoClass{ .playing = {} } },
+                .{ "paused", PseudoClass{ .paused = {} } },
+                .{ "seeking", PseudoClass{ .seeking = {} } },
+                .{ "buffering", PseudoClass{ .buffering = {} } },
+                .{ "stalled", PseudoClass{ .stalled = {} } },
+                .{ "muted", PseudoClass{ .muted = {} } },
+                .{ "volume-locked", PseudoClass{ .volume_locked = {} } },
+
                 // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
-                break :pseudo_class .{ .fullscreen = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-full-screen")) {
-                // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
-                break :pseudo_class .{ .fullscreen = css.VendorPrefix{ .webkit = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-full-screen")) {
-                // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
-                break :pseudo_class .{ .fullscreen = css.VendorPrefix{ .moz = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-fullscreen")) {
-                // https://fullscreen.spec.whatwg.org/#:fullscreen-pseudo-class
-                break :pseudo_class .{ .fullscreen = css.VendorPrefix{ .ms = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "open")) {
+                .{ "fullscreen", PseudoClass{ .fullscreen = css.VendorPrefix{ .none = true } } },
+                .{ "-webkit-full-screen", PseudoClass{ .fullscreen = css.VendorPrefix{ .webkit = true } } },
+                .{ "-moz-full-screen", PseudoClass{ .fullscreen = css.VendorPrefix{ .moz = true } } },
+                .{ "-ms-fullscreen", PseudoClass{ .fullscreen = css.VendorPrefix{ .ms = true } } },
+
                 // https://drafts.csswg.org/selectors/#display-state-pseudos
-                break :pseudo_class .open;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "closed")) {
-                // https://drafts.csswg.org/selectors/#display-state-pseudos
-                break :pseudo_class .closed;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "modal")) {
-                // https://drafts.csswg.org/selectors/#display-state-pseudos
-                break :pseudo_class .modal;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "picture-in-picture")) {
-                // https://drafts.csswg.org/selectors/#display-state-pseudos
-                break :pseudo_class .picture_in_picture;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "popover-open")) {
+                .{ "open", PseudoClass{ .open = {} } },
+                .{ "closed", PseudoClass{ .closed = {} } },
+                .{ "modal", PseudoClass{ .modal = {} } },
+                .{ "picture-in-picture", PseudoClass{ .picture_in_picture = {} } },
+
                 // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-popover-open
-                break :pseudo_class .popover_open;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "defined")) {
+                .{ "popover-open", PseudoClass{ .popover_open = {} } },
+
                 // https://drafts.csswg.org/selectors-4/#the-defined-pseudo
-                break :pseudo_class .defined;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "any-link")) {
+                .{ "defined", PseudoClass{ .defined = {} } },
+
                 // https://drafts.csswg.org/selectors-4/#location
-                break :pseudo_class .{ .any_link = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-any-link")) {
-                // https://drafts.csswg.org/selectors-4/#location
-                break :pseudo_class .{ .any_link = css.VendorPrefix{ .webkit = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-any-link")) {
-                // https://drafts.csswg.org/selectors-4/#location
-                break :pseudo_class .{ .any_link = css.VendorPrefix{ .moz = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "link")) {
-                // https://drafts.csswg.org/selectors-4/#location
-                break :pseudo_class .link;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "local-link")) {
-                // https://drafts.csswg.org/selectors-4/#location
-                break :pseudo_class .local_link;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "target")) {
-                // https://drafts.csswg.org/selectors-4/#location
-                break :pseudo_class .target;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "target-within")) {
-                // https://drafts.csswg.org/selectors-4/#location
-                break :pseudo_class .target_within;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "visited")) {
-                // https://drafts.csswg.org/selectors-4/#location
-                break :pseudo_class .visited;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "enabled")) {
+                .{ "any-link", PseudoClass{ .any_link = css.VendorPrefix{ .none = true } } },
+                .{ "-webkit-any-link", PseudoClass{ .any_link = css.VendorPrefix{ .webkit = true } } },
+                .{ "-moz-any-link", PseudoClass{ .any_link = css.VendorPrefix{ .moz = true } } },
+                .{ "link", PseudoClass{ .link = {} } },
+                .{ "local-link", PseudoClass{ .local_link = {} } },
+                .{ "target", PseudoClass{ .target = {} } },
+                .{ "target-within", PseudoClass{ .target_within = {} } },
+                .{ "visited", PseudoClass{ .visited = {} } },
+
                 // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .enabled;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "disabled")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .disabled;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "read-only")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .{ .read_only = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-read-only")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .{ .read_only = css.VendorPrefix{ .moz = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "read-write")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .{ .read_write = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-read-write")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .{ .read_write = css.VendorPrefix{ .moz = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "placeholder-shown")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .{ .placeholder_shown = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-moz-placeholder-shown")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .{ .placeholder_shown = css.VendorPrefix{ .moz = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-ms-placeholder-shown")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .{ .placeholder_shown = css.VendorPrefix{ .ms = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "default")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .default;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "checked")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .checked;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "indeterminate")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .indeterminate;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "blank")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .blank;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "valid")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .valid;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "invalid")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .invalid;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "in-range")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .in_range;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "out-of-range")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .out_of_range;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "required")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .required;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "optional")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .optional;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "user-valid")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .user_valid;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "user-invalid")) {
-                // https://drafts.csswg.org/selectors-4/#input-pseudos
-                break :pseudo_class .user_invalid;
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "autofill")) {
+                .{ "enabled", PseudoClass{ .enabled = {} } },
+                .{ "disabled", PseudoClass{ .disabled = {} } },
+                .{ "read-only", PseudoClass{ .read_only = css.VendorPrefix{ .none = true } } },
+                .{ "-moz-read-only", PseudoClass{ .read_only = css.VendorPrefix{ .moz = true } } },
+                .{ "read-write", PseudoClass{ .read_write = css.VendorPrefix{ .none = true } } },
+                .{ "-moz-read-write", PseudoClass{ .read_write = css.VendorPrefix{ .moz = true } } },
+                .{ "placeholder-shown", PseudoClass{ .placeholder_shown = css.VendorPrefix{ .none = true } } },
+                .{ "-moz-placeholder-shown", PseudoClass{ .placeholder_shown = css.VendorPrefix{ .moz = true } } },
+                .{ "-ms-placeholder-shown", PseudoClass{ .placeholder_shown = css.VendorPrefix{ .ms = true } } },
+                .{ "default", PseudoClass{ .default = {} } },
+                .{ "checked", PseudoClass{ .checked = {} } },
+                .{ "indeterminate", PseudoClass{ .indeterminate = {} } },
+                .{ "blank", PseudoClass{ .blank = {} } },
+                .{ "valid", PseudoClass{ .valid = {} } },
+                .{ "invalid", PseudoClass{ .invalid = {} } },
+                .{ "in-range", PseudoClass{ .in_range = {} } },
+                .{ "out-of-range", PseudoClass{ .out_of_range = {} } },
+                .{ "required", PseudoClass{ .required = {} } },
+                .{ "optional", PseudoClass{ .optional = {} } },
+                .{ "user-valid", PseudoClass{ .user_valid = {} } },
+                .{ "user-invalid", PseudoClass{ .user_invalid = {} } },
+
                 // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
-                break :pseudo_class .{ .autofill = css.VendorPrefix{ .none = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-webkit-autofill")) {
-                // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
-                break :pseudo_class .{ .autofill = css.VendorPrefix{ .webkit = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "-o-autofill")) {
-                // https://html.spec.whatwg.org/multipage/semantics-other.html#selector-autofill
-                break :pseudo_class .{ .autofill = css.VendorPrefix{ .o = true } };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "horizontal")) {
+                .{ "autofill", PseudoClass{ .autofill = css.VendorPrefix{ .none = true } } },
+                .{ "-webkit-autofill", PseudoClass{ .autofill = css.VendorPrefix{ .webkit = true } } },
+                .{ "-o-autofill", PseudoClass{ .autofill = css.VendorPrefix{ .o = true } } },
+
                 // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .horizontal };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "vertical")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .vertical };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "decrement")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .decrement };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "increment")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .increment };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "start")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .start };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "end")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .end };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "double-button")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .double_button };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "single-button")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .single_button };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "no-button")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .no_button };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "corner-present")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .corner_present };
-            } else if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "window-inactive")) {
-                // https://webkit.org/blog/363/styling-scrollbars/
-                break :pseudo_class .{ .webkit_scrollbar = .window_inactive };
+                .{ "horizontal", PseudoClass{ .webkit_scrollbar = .horizontal } },
+                .{ "vertical", PseudoClass{ .webkit_scrollbar = .vertical } },
+                .{ "decrement", PseudoClass{ .webkit_scrollbar = .decrement } },
+                .{ "increment", PseudoClass{ .webkit_scrollbar = .increment } },
+                .{ "start", PseudoClass{ .webkit_scrollbar = .start } },
+                .{ "end", PseudoClass{ .webkit_scrollbar = .end } },
+                .{ "double-button", PseudoClass{ .webkit_scrollbar = .double_button } },
+                .{ "single-button", PseudoClass{ .webkit_scrollbar = .single_button } },
+                .{ "no-button", PseudoClass{ .webkit_scrollbar = .no_button } },
+                .{ "corner-present", PseudoClass{ .webkit_scrollbar = .corner_present } },
+                .{ "window-inactive", PseudoClass{ .webkit_scrollbar = .window_inactive } },
+            });
+
+            if (Map.getAnyCase(name)) |pseudo| {
+                break :pseudo_class pseudo;
             } else {
                 if (bun.strings.startsWithChar(name, '_')) {
                     this.options.warn(loc.newCustomError(SelectorParseErrorKind{ .unsupported_pseudo_class_or_element = name }));
+                } else if (this.options.css_modules != null and bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "local") or bun.strings.eqlCaseInsensitiveASCIIICheckLength(name, "global")) {
+                    return .{ .err = loc.newCustomError(SelectorParseErrorKind{ .ambiguous_css_module_class = name }) };
                 }
                 return .{ .result = PseudoClass{ .custom = .{ .name = name } } };
             }
@@ -1746,8 +1647,13 @@ pub fn GenericSelector(comptime Impl: type) type {
                 var arraylist = ArrayList(u8){};
                 const w = arraylist.writer(bun.default_allocator);
                 defer arraylist.deinit(bun.default_allocator);
-                var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null);
+                const symbols = bun.JSAst.Symbol.Map{};
+                const P = css.Printer(@TypeOf(w));
+                var printer = P.new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
                 defer printer.deinit();
+                P.in_debug_fmt = true;
+                defer P.in_debug_fmt = false;
+
                 css.selector.tocss_servo.toCss_Selector(this.this, @TypeOf(w), &printer) catch |e| return try writer.print("<error writing selector: {s}>\n", .{@errorName(e)});
                 try writer.writeAll(arraylist.items);
             }
@@ -1884,8 +1790,8 @@ pub fn GenericComponent(comptime Impl: type) type {
         explicit_universal_type,
         local_name: LocalName(Impl),
 
-        id: Impl.SelectorImpl.Identifier,
-        class: Impl.SelectorImpl.Identifier,
+        id: Impl.SelectorImpl.LocalIdentifier,
+        class: Impl.SelectorImpl.LocalIdentifier,
 
         attribute_in_no_namespace_exists: struct {
             local_name: Impl.SelectorImpl.LocalName,
@@ -1979,6 +1885,21 @@ pub fn GenericComponent(comptime Impl: type) type {
 
         const This = @This();
 
+        /// If css mdules is enabled these will be locally scoped
+        pub fn isLocallyScoped(this: *const @This()) bool {
+            return switch (this.*) {
+                .id, .class => true,
+                else => false,
+            };
+        }
+
+        pub fn asClass(this: *const @This()) ?Impl.SelectorImpl.LocalIdentifier {
+            return switch (this.*) {
+                inline .class => |v| v,
+                else => null,
+            };
+        }
+
         pub fn deepClone(this: *const @This(), allocator: Allocator) @This() {
             return css.implementDeepClone(@This(), this, allocator);
         }
@@ -1992,7 +1913,7 @@ pub fn GenericComponent(comptime Impl: type) type {
                 .local_name => return try writer.print("local_name={s}", .{this.local_name.name.v}),
                 .combinator => return try writer.print("combinator='{}'", .{this.combinator}),
                 .pseudo_element => return try writer.print("pseudo_element={}", .{this.pseudo_element}),
-                .class => return try writer.print("class={s}", .{this.class.v}),
+                .class => return try writer.print("class={}", .{this.class}),
                 else => {},
             }
             return writer.print("{s}", .{@tagName(this.*)});
@@ -2367,6 +2288,7 @@ pub const SelectorParseErrorKind = union(enum) {
     bad_value_in_attr: css.Token,
     explicit_namespace_unexpected_token: css.Token,
     unexpected_ident: []const u8,
+    ambiguous_css_module_class: []const u8,
 
     pub fn intoDefaultParserError(this: SelectorParseErrorKind) css.ParserError {
         return css.ParserError{
@@ -2396,6 +2318,7 @@ pub const SelectorParseErrorKind = union(enum) {
             .explicit_namespace_unexpected_token => |token| .{ .explicit_namespace_unexpected_token = token },
             .unexpected_ident => |ident| .{ .unexpected_ident = ident },
             .unexpected_selector_after_pseudo_element => |tok| .{ .unexpected_selector_after_pseudo_element = tok },
+            .ambiguous_css_module_class => |name| .{ .ambiguous_css_module_class = name },
         };
     }
 };
@@ -2598,7 +2521,7 @@ pub const PseudoElement = union(enum) {
         const writer = s.writer(dest.allocator);
         const W2 = @TypeOf(writer);
         const scratchbuf = std.ArrayList(u8).init(dest.allocator);
-        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info);
+        var printer = Printer(W2).new(dest.allocator, scratchbuf, writer, css.PrinterOptions.default(), dest.import_info, dest.local_names, dest.symbols);
         try serialize.serializePseudoElement(this, W2, &printer, null);
         return dest.writeStr(s.items);
     }
@@ -2744,6 +2667,7 @@ pub fn parse_one_simple_selector(
 
     const start = input.state();
     const token_location = input.currentSourceLocation();
+    const token_loc = input.position();
     const token = switch (input.nextIncludingWhitespace()) {
         .result => |v| v.*,
         .err => {
@@ -2757,7 +2681,7 @@ pub fn parse_one_simple_selector(
             if (state.intersects(SelectorParsingState.AFTER_PSEUDO)) {
                 return .{ .err = token_location.newCustomError(SelectorParseErrorKind.intoDefaultParserError(.{ .unexpected_selector_after_pseudo_element = .{ .idhash = id } })) };
             }
-            const component: GenericComponent(Impl) = .{ .id = .{ .v = id } };
+            const component: GenericComponent(Impl) = .{ .id = parser.newLocalIdentifier(input, .ID, id, token_loc) };
             return .{ .result = S{
                 .simple_selector = component,
             } };
@@ -2948,7 +2872,7 @@ pub fn parse_one_simple_selector(
                             return .{ .err = location.newCustomError(e.intoDefaultParserError()) };
                         },
                     };
-                    return .{ .result = .{ .simple_selector = .{ .class = .{ .v = class } } } };
+                    return .{ .result = .{ .simple_selector = .{ .class = parser.newLocalIdentifier(input, .CLASS, class, token_loc) } } };
                 },
                 '&' => {
                     if (parser.isNestingAllowed()) {

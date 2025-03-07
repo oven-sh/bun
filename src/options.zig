@@ -647,6 +647,10 @@ pub const Loader = enum(u8) {
     sqlite_embedded,
     html,
 
+    pub fn isCSS(this: Loader) bool {
+        return this == .css;
+    }
+
     pub fn disableHTML(this: Loader) Loader {
         return switch (this) {
             .html => .file,

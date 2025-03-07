@@ -2271,7 +2271,7 @@ pub const Formatter = struct {
                 if (result.isString()) {
                     writer.print("{}", .{result.fmtString(this.globalThis)});
                 } else {
-                    try this.format(ConsoleObject.Formatter.Tag.get(result, this.globalThis), Writer, writer_, result, this.globalThis, enable_ansi_colors);
+                    try this.format(ConsoleObject.Formatter.Tag.getAdvanced(result, this.globalThis, .{ .disable_inspect_custom = true }), Writer, writer_, result, this.globalThis, enable_ansi_colors);
                 }
             },
             .Symbol => {

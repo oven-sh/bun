@@ -174,7 +174,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableStreamPrototype__customInspect, (JSGlobalObje
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
-    if (!thisObject) return JSValue::encode(jsUndefined());
+    if (!thisObject) return JSValue::encode(callFrame->thisValue());
     auto& builtinNames = WebCore::builtinNames(vm);
 
     auto locked = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "locked"_s)).toBoolean(lexicalGlobalObject) ? "true"_s : "false"_s;

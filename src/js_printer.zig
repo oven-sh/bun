@@ -1172,7 +1172,6 @@ fn NewPrinter(
                 p.indent();
                 p.printBlockBody(stmts);
                 p.unindent();
-                p.needs_semicolon = false;
 
                 p.printIndent();
             }
@@ -1180,6 +1179,8 @@ fn NewPrinter(
                 p.addSourceMapping(close_brace_loc.?);
             }
             p.print("}");
+
+            p.needs_semicolon = false;
         }
 
         pub fn printTwoBlocksInOne(p: *Printer, loc: logger.Loc, stmts: []const Stmt, prepend: []const Stmt) void {

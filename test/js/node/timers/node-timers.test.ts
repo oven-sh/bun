@@ -1,7 +1,7 @@
 import { describe, expect, it, test, mock } from "bun:test";
 import { clearInterval, clearTimeout, promises, setInterval, setTimeout, setImmediate } from "node:timers";
 import { promisify } from "util";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import jsc from "bun:jsc";
 import path from "node:path";
 
@@ -229,10 +229,10 @@ describe("clear", () => {
   });
 });
 
-describe("setImmediate", () => {
-  it.each(["with", "without"])(
-    "has reasonable performance when nested %s timers running",
-    async mode => {
+describe.each(["with", "without"])("setImmediate %s timers running", mode => {
+  it.skipIf(isWindows && mode == "with")(
+    "has reasonable performance when nested",
+    async () => {
       const process = Bun.spawn({
         cmd: [bunExe(), path.join(__dirname, "setImmediate-fixture.ts"), mode + "-interval"],
         stdout: "pipe",

@@ -1568,6 +1568,7 @@ class Http2Stream extends Duplex {
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
+      autoDestroy: false,
     });
     this.#id = streamId;
     this[bunHTTP2Session] = session;
@@ -1738,7 +1739,7 @@ class Http2Stream extends Duplex {
       }
       // at this state destroyed will be true but we need to close the writable side
       this._writableState.destroyed = false;
-      this.end();
+      this.end(); // why this is needed?
       // we now restore the destroyed flag
       this._writableState.destroyed = true;
     }
@@ -1973,7 +1974,7 @@ class ServerHttp2Stream extends Http2Stream {
     super(streamId, session, headers);
   }
   pushStream() {
-    throwNotImplemented("ServerHttp2Stream.prototype.pushStream()");
+    throw $ERR_HTTP2_PUSH_DISABLED("HTTP/2 client has disabled push streams");
   }
 
   respondWithFile(path, headers, options) {
@@ -2129,8 +2130,17 @@ class ServerHttp2Stream extends Http2Stream {
         sensitiveNames[sensitives[i]] = true;
       }
     }
-    if (headers[":status"] === undefined) {
-      headers[":status"] = 200;
+    const statusCode = headers[HTTP2_HEADER_STATUS] || 200;
+    let endStream = !!options?.endStream;
+    if (
+      endStream ||
+      statusCode === HTTP_STATUS_NO_CONTENT ||
+      statusCode === HTTP_STATUS_RESET_CONTENT ||
+      statusCode === HTTP_STATUS_NOT_MODIFIED ||
+      this.headRequest === true
+    ) {
+      options = { ...options, endStream: true };
+      endStream = true;
     }
 
     if (typeof options === "undefined") {
@@ -2146,6 +2156,9 @@ class ServerHttp2Stream extends Http2Stream {
     }
     this.headersSent = true;
     this[bunHTTP2Headers] = headers;
+    if (endStream) {
+      this.end();
+    }
 
     return;
   }
@@ -3383,8 +3396,10 @@ function connectionListener(socket: Socket) {
           "listener for the `unknownProtocol` event.\n",
       );
     }
+    return;
   }
 
+  // setup session
   const session = new ServerHttp2Session(socket, options, this);
   session.on("error", sessionOnError);
   const timeout = this.timeout;

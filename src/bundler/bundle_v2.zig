@@ -2204,7 +2204,8 @@ pub const BundleV2 = struct {
                 const source = &this.graph.input_files.items(.source)[load.source_index.get()];
                 // If it's a file namespace, we should run it through the parser like normal.
                 // The file could be on disk.
-                if (source.path.isFile()) {
+                if (load.was_file) {
+                    bun.assert(source.path.isFile());
                     this.graph.pool.schedule(load.parse_task);
                     return;
                 }

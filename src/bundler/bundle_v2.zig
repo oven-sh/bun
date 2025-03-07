@@ -9234,7 +9234,7 @@ pub const LinkerContext = struct {
         };
         const Visitor = struct {
             visited: std.AutoArrayHashMap(Ref, void),
-            properties: std.StringArrayHashMap(PropertyInFile),
+            properties: bun.StringArrayHashMap(PropertyInFile),
             all_import_records: []const ImportRecord.List,
             all_css_asts: []const ?*bun.css.BundlerStyleSheet,
             all_symbols: *const Symbol.Map,
@@ -9358,7 +9358,7 @@ pub const LinkerContext = struct {
         const temp_allocator = sfb.get();
         var visitor = Visitor{
             .visited = std.AutoArrayHashMap(Ref, void).init(temp_allocator),
-            .properties = std.StringArrayHashMap(PropertyInFile).init(temp_allocator),
+            .properties = bun.StringArrayHashMap(PropertyInFile).init(temp_allocator),
             .all_import_records = import_records_list,
             .all_css_asts = all_css_asts,
             .all_symbols = &this.graph.symbols,

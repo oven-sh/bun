@@ -2982,7 +2982,7 @@ const LocalEntry = struct {
 ///
 /// We use this ref as a layer of indirection during the bundling stage because we don't
 /// know the final generated class names for local scope until print time.
-pub const LocalScope = std.StringArrayHashMapUnmanaged(LocalEntry);
+pub const LocalScope = bun.StringArrayHashMapUnmanaged(LocalEntry);
 /// Local symbol renaming results go here
 pub const LocalsResultsMap = bun.bundle_v2.MangledProps;
 /// Using `compose` and having conflicting properties is undefined behavior according

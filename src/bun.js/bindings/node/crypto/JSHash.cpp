@@ -223,17 +223,17 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
     uint32_t len = hash->m_mdLen;
 
     if (hash->m_zigHasher) {
-        if (hash->m_digest || len == 0) {
+        if (hash->m_digestBuffer.size() > 0 || len == 0) {
             return StringBytes::encode(
                 lexicalGlobalObject,
                 scope,
-                hash->m_digest.span(),
+                hash->m_digestBuffer.span().subspan(0, hash->m_mdLen),
                 encoding);
         }
 
-        auto digestBuf = ncrypto::DataPointer::Alloc(std::max((uint32_t)EVP_MAX_MD_SIZE, len));
-
-        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, digestBuf.span());
+        uint32_t maxDigestLen = std::max((uint32_t)EVP_MAX_MD_SIZE, len);
+        hash->m_digestBuffer.resizeToFit(maxDigestLen);
+        auto totalDigestLen = ExternZigHash::digest(hash->m_zigHasher, globalObject, hash->m_digestBuffer.mutableSpan());
         if (!totalDigestLen) {
             throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "Failed to finalize digest"_s);
             return JSValue::encode({});
@@ -242,15 +242,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         hash->m_finalized = finalized;
         hash->m_mdLen = std::min(len, totalDigestLen);
 
-        auto resBuf = digestBuf.release();
-        resBuf.len = hash->m_mdLen;
-
-        hash->m_digest = ByteSource::allocated(resBuf);
-
         auto result = StringBytes::encode(
             lexicalGlobalObject,
             scope,
-            hash->m_digest.span(),
+            hash->m_digestBuffer.span().subspan(0, hash->m_mdLen),
             encoding);
 
         return result;

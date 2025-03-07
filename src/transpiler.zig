@@ -745,21 +745,43 @@ pub const Transpiler = struct {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                     return null;
                 };
-                var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, transpiler.log), null)) {
+                var opts = bun.css.ParserOptions.default(alloc, transpiler.log);
+                const css_module_suffix = ".module.css";
+                const enable_css_modules = file_path.text.len > css_module_suffix.len and
+                    strings.eqlComptime(file_path.text[file_path.text.len - css_module_suffix.len ..], css_module_suffix);
+                if (enable_css_modules) {
+                    opts.filename = bun.path.basename(file_path.text);
+                    opts.css_modules = bun.css.CssModuleConfig{};
+                }
+                var sheet, var extra = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(
+                    alloc,
+                    entry.contents,
+                    opts,
+                    null,
+                    // TODO: DO WE EVEN HAVE SOURCE INDEX IN THIS TRANSPILER.ZIG file??
+                    bun.bundle_v2.Index.invalid,
+                )) {
                     .result => |v| v,
                     .err => |e| {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
                         return null;
                     },
                 };
-                if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
+                if (sheet.minify(alloc, bun.css.MinifyOptions.default(), &extra).asErr()) |e| {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
                     return null;
                 }
-                const result = switch (sheet.toCss(alloc, bun.css.PrinterOptions{
-                    .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
-                    .minify = transpiler.options.minify_whitespace,
-                }, null)) {
+                const symbols = bun.JSAst.Symbol.Map{};
+                const result = switch (sheet.toCss(
+                    alloc,
+                    bun.css.PrinterOptions{
+                        .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
+                        .minify = transpiler.options.minify_whitespace,
+                    },
+                    null,
+                    null,
+                    &symbols,
+                )) {
                     .result => |v| v,
                     .err => |e| {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}) catch bun.outOfMemory();
@@ -849,6 +871,7 @@ pub const Transpiler = struct {
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                    .mangled_props = null,
                 },
                 enable_source_map,
             ),
@@ -883,6 +906,7 @@ pub const Transpiler = struct {
                         .runtime_transpiler_cache = runtime_transpiler_cache,
                         .target = transpiler.options.target,
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                        .mangled_props = null,
                     },
                     enable_source_map,
                 ),

@@ -20,7 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
-import { expect } from "bun:test";
+import { test, expect } from "bun:test";
 import { isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
@@ -3272,4 +3272,11 @@ test("ReadableStream", () => {
 });
 test("WritableStream", () => {
   expect(util.inspect(new WritableStream())).toEqual(`WritableStream { locked: false, state: 'writable' }`);
+});
+test("TextEncoderStream", () => {
+  expect(util.inspect(new TextEncoderStream())).toEqual(`TextEncoderStream {
+  encoding: 'utf-8',
+  readable: ReadableStream { locked: false, state: 'readable', supportsBYOB: false },
+  writable: WritableStream { locked: false, state: 'writable' }
+}`);
 });

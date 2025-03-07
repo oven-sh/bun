@@ -45,6 +45,7 @@ const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_U
 
 const {
   randomInt: _randomInt,
+  randomUUID: _randomUUID,
   pbkdf2: pbkdf2_,
   pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
@@ -11807,7 +11808,7 @@ crypto_exports.getFips = function getFips() {
 };
 
 crypto_exports.getRandomValues = getRandomValues;
-crypto_exports.randomUUID = randomUUID;
+crypto_exports.randomUUID = _randomUUID;
 crypto_exports.randomInt = randomInt;
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;

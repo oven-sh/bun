@@ -356,7 +356,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * 
     if (!signal.isUndefined()) {
         auto* object = signal.getObject();
         if (UNLIKELY(!object)) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "AbortSignal"_s, signal);
-        if (UNLIKELY(object->inherits<WebCore::JSAbortSignal>())) {
+        if (LIKELY(object->inherits<WebCore::JSAbortSignal>())) {
             return JSValue::encode(jsUndefined());
         }
 

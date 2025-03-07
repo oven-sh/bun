@@ -39,6 +39,13 @@ const enum State {
   Loaded,
   Error,
 }
+const enum ESMProps {
+  imports,
+  exports,
+  stars,
+  load,
+  isAsync,
+}
 
 /** Given an Id, return the module namespace object.
  * For use in other functions in the HMR runtime.
@@ -222,17 +229,14 @@ export class HMRModule {
   }
 
   invalidate() {
+    emitEvent("bun:invalidate", null);
     // by throwing an error right now, this will cause a page refresh
     throw new Error("TODO: implement ImportMetaHot.invalidate");
   }
 
   on(event: string, cb: HotEventHandler) {
-    if (isUnsupportedViteEventName(event)) {
-      throw new Error(`Unsupported event name: ${event}`);
-    }
-
     // Vite compatibility, but favor using Bun's event names.
-    if (event === "vite:beforeUpdate" || event === "vite:afterUpdate") {
+    if (event.startsWith("vite:")) {
       event = "bun:" + event.slice(4);
     }
 
@@ -272,6 +276,7 @@ HMRModule.prototype.indirectHot = new Proxy({}, {
   },
 });
 
+// TODO: This function is currently recursive.
 export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
   // First, try and re-use an existing module.
   let mod = registry.get(id);
@@ -311,17 +316,17 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     // ESM
     if (IS_BUN_DEVELOPMENT) {
       try {
-        assert(Array.isArray(loadOrEsmModule[0]));
-        assert(Array.isArray(loadOrEsmModule[1]));
-        assert(Array.isArray(loadOrEsmModule[2]));
-        assert(typeof loadOrEsmModule[3] === "function");
-        assert(typeof loadOrEsmModule[4] === "boolean");
+        assert(Array.isArray(loadOrEsmModule[ESMProps.imports]));
+        assert(Array.isArray(loadOrEsmModule[ESMProps.exports]));
+        assert(Array.isArray(loadOrEsmModule[ESMProps.stars]));
+        assert(typeof loadOrEsmModule[ESMProps.load] === "function");
+        assert(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
       }
     }
-    const [deps /* exports */ /* stars */, , , load, isAsync] = loadOrEsmModule;
+    const { [ESMProps.imports]: deps, [ESMProps.load]: load, [ESMProps.isAsync]: isAsync } = loadOrEsmModule;
     if (isAsync) {
       throw new AsyncImportError(id);
     }
@@ -350,6 +355,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
 // `HMRModule`s can be created synchronously, even if evaluation is not.
 // Returns `null` if the module is not found in dynamic mode, so that the caller
 // can use the `import` keyword instead.
+// TODO: This function is currently recursive.
 export function loadModuleAsync<IsUserDynamic extends boolean>(
   id: Id,
   isUserDynamic: IsUserDynamic,
@@ -358,8 +364,9 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   // First, try and re-use an existing module.
   let mod = registry.get(id)!;
   if (mod) {
-    if (mod.state === State.Error) throw mod.failure;
-    if (mod.state === State.Stale) {
+    const { state } = mod;
+    if (state === State.Error) throw mod.failure;
+    if (state === State.Stale) {
       mod.state = State.Pending;
       isUserDynamic = false as IsUserDynamic;
     } else {
@@ -475,6 +482,7 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
 }
 
 type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule) => R;
+// TODO: This function is currently recursive.
 function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   mod: HMRModule,
   deps: (string | number)[],
@@ -482,9 +490,9 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
 ) {
   let i = 0;
   let list: ReturnType<T>[] = [];
-  let dedupeSet: Set<Id> | null = null;
   let isAsync = false;
-  while (i < deps.length) {
+  const { length } = deps;
+  while (i < length) {
     const dep = deps[i] as string;
     if (IS_BUN_DEVELOPMENT) assert(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
@@ -496,21 +504,19 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       throwNotFound(dep, false);
     }
     if (typeof unloadedModule !== "function") {
-      const availableExportKeys = unloadedModule[1];
+      const availableExportKeys = unloadedModule[ESMProps.exports];
       i += 2;
       while (i < expectedExportKeyEnd) {
         const key = deps[i] as string;
         if (IS_BUN_DEVELOPMENT) assert(typeof key === "string");
         if (!availableExportKeys.includes(key)) {
-          dedupeSet ??= new Set<Id>();
-          if (!findExportStar(unloadedModule[2], key, dedupeSet)) {
+          if (!hasExportStar(unloadedModule[ESMProps.stars], key)) {
             throw new SyntaxError(`Module "${dep}" does not export key "${key}"`);
           }
-          dedupeSet.clear();
         }
         i++;
       }
-      isAsync ||= unloadedModule[4];
+      isAsync ||= unloadedModule[ESMProps.isAsync];
     } else {
       if (IS_BUN_DEVELOPMENT) assert(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
@@ -519,24 +525,31 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   return { list, isAsync };
 }
 
-function findExportStar(starImports: Id[], key: string, dedupeSet: Set<Id>) {
-  for (const starImport of starImports) {
-    if (dedupeSet.has(starImport)) continue;
-    dedupeSet.add(starImport);
+function hasExportStar(starImports: Id[], key: string) {
+  if (starImports.length === 0) return false;
+  const queue: Id[] = [...starImports];
+  const visited = new Set<Id>();
+  while (queue.length > 0) {
+    const starImport = queue.shift()!;
+    if (visited.has(starImport)) continue;
+    visited.add(starImport);
     const mod = unloadedModuleRegistry[starImport];
+    if (IS_BUN_DEVELOPMENT) assert(mod, `Module "${starImport}" not found`);
     if (typeof mod === "function") {
-      // CommonJS has dynamic keys (can export anything, even a Proxy)
       return true;
     }
-    const availableExportKeys = mod[1];
+    const availableExportKeys = mod[ESMProps.exports];
     if (availableExportKeys.includes(key)) {
       return true; // Found
     }
-    // Recurse to further star imports.
-    if (findExportStar(mod[2], key, dedupeSet)) {
-      return true;
+    const nestedStarImports = mod[ESMProps.stars];
+    for (const nestedImport of nestedStarImports) {
+      if (!visited.has(nestedImport)) {
+        queue.push(nestedImport);
+      }
     }
   }
+
   return false;
 }
 
@@ -548,7 +561,15 @@ type HotAcceptFunction = (esmExports?: any | void) => void;
 type HotArrayAcceptFunction = (esmExports: (any | void)[]) => void;
 type HotDisposeFunction = (data: any) => void | Promise<void>;
 type HotEventHandler = (data: any) => void;
-type HMREvent = ("bun:beforeUpdate" | "bun:afterUpdate") & string;
+type HMREvent =
+  | "bun:beforeUpdate"
+  | "bun:afterUpdate"
+  | "bun:beforeFullReload"
+  | "bun:beforePrune"
+  | "bun:invalidate"
+  | "bun:error"
+  | "bun:ws:disconnect"
+  | "bun:ws:connect";
 
 /** Called when modules are replaced. */
 export async function replaceModules(modules: Record<Id, UnloadedModule>) {
@@ -566,8 +587,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
   const toDispose: HMRModule[] = [];
 
   // Discover all HMR boundaries
-  outer: for (const key in modules) {
-    if (!modules.hasOwnProperty(key)) continue;
+  outer: for (const key of Object.keys(modules)) {
     const existing = registry.get(key);
     if (!existing) continue;
 
@@ -670,7 +690,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
           kind: "warn",
         }),
       );
-      location.reload();
+      fullReload();
     } else {
       console.warn(message);
     }
@@ -761,18 +781,7 @@ function createAcceptArray(modules: string[], key: Id) {
   return arr;
 }
 
-function isUnsupportedViteEventName(str: string) {
-  return (
-    str === "vite:beforeFullReload" ||
-    str === "vite:beforePrune" ||
-    str === "vite:invalidate" ||
-    str === "vite:error" ||
-    str === "vite:ws:disconnect" ||
-    str === "vite:ws:connect"
-  );
-}
-
-function emitEvent(event: string, data: any) {
+export function emitEvent(event: HMREvent, data: any) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
   for (const handler of handlers) {
@@ -792,6 +801,13 @@ function throwNotFound(id: Id, isUserDynamic: boolean) {
   throw new Error(
     `Failed to load bundled module '${id}'. This is not a dynamic import, and therefore is a bug in Bun's bundler.`,
   );
+}
+
+export function fullReload() {
+  try {
+    emitEvent("bun:beforeFullReload", null);
+  } catch {}
+  location.reload();
 }
 
 class AsyncImportError extends Error {

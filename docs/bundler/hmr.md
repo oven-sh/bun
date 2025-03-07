@@ -58,7 +58,7 @@ doSomething(import.meta.hot.data);
 | ✅  | `hot.data`         | Persist data between module evaluations.                              |
 | ✅  | `hot.dispose()`    | Add a callback function to run when a module is about to be replaced. |
 | ❌  | `hot.invalidate()` |                                                                       |
-| 🚧  | `hot.on()`         | **NOTE**: Only a subset of events are implemented.                    |
+| ✅  | `hot.on()`         | Attach an event listener                                              |
 | ✅  | `hot.off()`        | Remove an event listener from `on`.                                   |
 | ❌  | `hot.send()`       |                                                                       |
 | 🚧  | `hot.prune()`      | **NOTE**: Callback is currently never called.                         |
@@ -205,3 +205,30 @@ import.meta.hot.prune(() => {
 If `dispose` was used instead, the WebSocket would close and re-open on every
 hot update. Both versions of the code will prevent page reloads when imported
 files are updated.
+
+### `import.meta.hot.on()` and `off()`
+
+`on()` and `off()` are used to listen for events from the HMR runtime. Event names are prefixed with a prefix so that plugins do not conflict with each other.
+
+```ts
+import.meta.hot.on("bun:beforeUpdate", () => {
+  console.log("before a hot update");
+});
+```
+
+When a file is replaced, all of its event listeners are automatically removed.
+
+A list of all built-in events:
+
+| Event                  | Emitted when                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| `bun:beforeUpdate`     | before a hot update is applied.                                                                 |
+| `bun:afterUpdate`      | after a hot update is applied.                                                                  |
+| `bun:beforeFullReload` | before a full page reload happens.                                                              |
+| `bun:beforePrune`      | before prune callbacks are called.                                                              |
+| `bun:invalidate`       | when a module is invalidated with `import.meta.hot.invalidate()`                                |
+| `bun:error`            | when a build or runtime error occurs                                                            |
+| `bun:ws:disconnect`    | when the HMR WebSocket connection is lost. This can indicate the development server is offline. |
+| `bun:ws:connect`       | when the HMR WebSocket connects or re-connects.                                                 |
+
+For compatibility with Vite, the above events are also available via `vite:*` prefix instead of `bun:*`.

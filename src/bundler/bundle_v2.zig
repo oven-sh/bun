@@ -13031,18 +13031,25 @@ pub const LinkerContext = struct {
         var esm_decls: std.ArrayListUnmanaged(B.Array.Item) = .empty;
         var esm_callbacks: std.ArrayListUnmanaged(Expr) = .empty;
 
+        for (ast.import_records.slice()) |*record| {
+            if (record.path.is_disabled) continue;
+            if (record.source_index.isValid() and c.parse_graph.input_files.items(.loader)[record.source_index.get()] == .css) {
+                record.path.is_disabled = true;
+                continue;
+            }
+            // Make sure the printer gets the resolved path
+            if (record.source_index.isValid()) {
+                record.path = c.parse_graph.input_files.items(.source)[record.source_index.get()].path;
+            }
+        }
+
         // Modules which do not have side effects
         for (part_stmts) |stmt| switch (stmt.data) {
             else => try stmts.inside_wrapper_suffix.append(stmt),
 
             .s_import => |st| {
                 const record = ast.import_records.mut(st.import_record_index);
-
-                const is_enabled = !record.path.is_disabled and if (record.source_index.isValid())
-                    c.parse_graph.input_files.items(.loader)[record.source_index.get()] != .css
-                else
-                    true;
-                if (!is_enabled) continue;
+                if (record.path.is_disabled) continue;
 
                 const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun or record.tag == .runtime;
                 const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
@@ -13096,13 +13103,6 @@ pub const LinkerContext = struct {
                             }, .Empty)),
                         }, .Empty));
                     }
-
-                    // Make sure the printer gets the resolved path
-                    const path = if (record.source_index.isValid())
-                        c.parse_graph.input_files.items(.source)[record.source_index.get()].path
-                    else
-                        record.path;
-                    record.path = path;
 
                     try stmts.outside_wrapper_prefix.append(stmt);
                 }

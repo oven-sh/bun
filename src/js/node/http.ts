@@ -1926,7 +1926,7 @@ const ServerResponsePrototype = {
       } else {
         // If there's no data but you already called end, then you're done.
         // We can ignore it in that case.
-        if (!(!chunk && handle.ended)) {
+        if (!(!chunk && handle.ended) && !handle.aborted) {
           handle.end(chunk, encoding);
         }
       }

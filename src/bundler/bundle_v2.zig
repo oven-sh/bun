@@ -3154,8 +3154,49 @@ pub const BundleV2 = struct {
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
-                                        "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                        .{ import_record.kind.errorLabel(), import_record.path.text },
+                                        "Browser build cannot {s} Node.js builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". To use Node.js builtins, set target to 'node' or 'bun'"
+                                            else
+                                                "",
+                                        },
+                                        import_record.kind,
+                                    ) catch bun.outOfMemory();
+                                } else if (!ast.target.isBun() and strings.eqlComptime(import_record.path.text, "bun")) {
+                                    addError(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "Browser build cannot {s} Bun builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". When bundling for Bun, set target to 'bun'"
+                                            else
+                                                "",
+                                        },
+                                        import_record.kind,
+                                    ) catch bun.outOfMemory();
+                                } else if (!ast.target.isBun() and strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                                    addError(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "Browser build cannot {s} Bun builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". When bundling for Bun, set target to 'bun'"
+                                            else
+                                                "",
+                                        },
                                         import_record.kind,
                                     ) catch bun.outOfMemory();
                                 } else {
@@ -5078,7 +5119,7 @@ pub const ParseTask = struct {
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.
         if (transpiler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
-            opts.import_meta_main_value = task.is_entry_point;
+            opts.import_meta_main_value = task.is_entry_point and transpiler.options.dev_server == null;
         } else if (target == .node) {
             opts.lower_import_meta_main_for_node_js = true;
         }

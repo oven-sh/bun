@@ -63,7 +63,7 @@ export function registerNativeCall(
   call_type: NativeCallType,
   filename: string,
   symbol: string,
-  create_fn_len: null | number,
+  create_fn_len: null | number | undefined,
 ) {
   const resolved_filename = resolveNativeFileId(call_type, filename);
 

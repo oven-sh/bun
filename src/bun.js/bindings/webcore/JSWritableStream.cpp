@@ -268,9 +268,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_customInspect, (JSGlo
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSWritableStream* thisObject = jsDynamicCast<JSWritableStream*>(callFrame->thisValue());
     if (!thisObject) return Bun::throwInvalidThisError(lexicalGlobalObject, scope, "WritableStream", callFrame->thisValue());
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     auto locked = !thisObject->get(lexicalGlobalObject, WebCore::builtinNames(vm).writerPrivateName()).isUndefined() ? "true"_s : "false"_s;
-    auto state = thisObject->wrapped().internalWritableStream().guardedObject().getObject()->getDirect(vm, WebCore::builtinNames(vm).statePrivateName()).toWTFString(lexicalGlobalObject);
+    auto state = thisObject->wrapped().internalWritableStream().guardedObject().getObject()->getDirect(vm, builtinNames.statePrivateName()).toWTFString(lexicalGlobalObject);
     return JSValue::encode(jsString(vm, WTF::makeString("WritableStream { locked: "_s, locked, ", state: '"_s, state, "' }"_s)));
 }
 

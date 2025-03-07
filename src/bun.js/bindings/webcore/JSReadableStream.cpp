@@ -175,10 +175,11 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableStreamPrototype__customInspect, (JSGlobalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
     if (!thisObject) return Bun::throwInvalidThisError(lexicalGlobalObject, scope, "ReadableStream", callFrame->thisValue());
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     auto locked = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "locked"_s)).toBoolean(lexicalGlobalObject) ? "true"_s : "false"_s;
-    auto state = thisObject->getDirect(vm, WebCore::builtinNames(vm).statePrivateName()).toWTFString(lexicalGlobalObject);
-    auto supportsBYOB = thisObject->getDirect(vm, WebCore::builtinNames(vm).readableStreamControllerPrivateName()).inherits<JSReadableByteStreamController>() ? "true"_s : "false"_s;
+    auto state = thisObject->getDirect(vm, builtinNames.statePrivateName()).toWTFString(lexicalGlobalObject);
+    auto supportsBYOB = thisObject->getDirect(vm, builtinNames.readableStreamControllerPrivateName()).inherits<JSReadableByteStreamController>() ? "true"_s : "false"_s;
     return JSValue::encode(jsString(vm, WTF::makeString("ReadableStream { locked: "_s, locked, ", state: '"_s, state, "', supportsBYOB: "_s, supportsBYOB, " }"_s)));
 }
 

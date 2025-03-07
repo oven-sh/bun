@@ -33,7 +33,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber } = require("internal/validators");
+const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1391,7 +1391,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       port = 0;
     } else if (typeof port === "object") {
       const options = port;
-      options.signal?.addEventListener("abort", () => this.close());
+      addServerAbortSignalOption(this, options);
 
       hostname = options.host;
       exclusive = options.exclusive;
@@ -1568,6 +1568,21 @@ function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
   self.emit("close");
 }
+
+function addServerAbortSignalOption(self, options) {
+  if (options?.signal === undefined) {
+    return;
+  }
+  validateAbortSignal(options.signal, "options.signal");
+  const { signal } = options;
+  const onAborted = () => self.close();
+  if (signal.aborted) {
+    process.nextTick(onAborted);
+  } else {
+    signal.addEventListener("abort", onAborted);
+  }
+}
+
 class ConnResetException extends Error {
   constructor(msg) {
     super(msg);

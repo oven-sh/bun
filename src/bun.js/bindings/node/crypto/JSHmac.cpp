@@ -211,7 +211,8 @@ JSC_DEFINE_HOST_FUNCTION(jsHmacProtoFuncDigest, (JSC::JSGlobalObject * lexicalGl
         hmac->m_ctx.reset();
     }
 
-    // TODO(dylan-conway): We shouldn't set finalized if coming from _flush
+    // We shouldn't set finalized if coming from _flush, but this
+    // works because m_ctx is reset after digest
     hmac->m_finalized = true;
 
     return StringBytes::encode(

@@ -1,5 +1,3 @@
-# CSS
-
 Bun's bundler has built-in support for CSS with the following features:
 
 - Transpiling modern/feature features to work on all browsers (including vendor prefixing)

@@ -900,6 +900,13 @@ pub const VirtualMachine = struct {
 
     is_inside_deferred_task_queue: bool = false,
 
+    // defaults off. .on("message") will set it to true unles overridden
+    // process.channel.unref() will set it to false and mark it overridden
+    // on disconnect it will be disabled
+    channel_ref: bun.Async.KeepAlive = .{},
+    // if process.channel.ref() or unref() has been called, this is set to true
+    channel_ref_overridden: bool = false,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
@@ -4436,11 +4443,9 @@ pub const VirtualMachine = struct {
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
-            Bun__setChannelRef(vm.global, false);
+            vm.channel_ref.disableConcurrently();
             this.destroy();
         }
-
-        extern fn Bun__setChannelRef(*JSGlobalObject, bool) void;
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
             if (global.bunVM().ipc) |*current_ipc| {

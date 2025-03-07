@@ -13036,7 +13036,7 @@ pub const LinkerContext = struct {
             else => try stmts.inside_wrapper_suffix.append(stmt),
 
             .s_import => |st| {
-                const record = ast.import_records.at(st.import_record_index);
+                const record = ast.import_records.mut(st.import_record_index);
 
                 const is_enabled = !record.path.is_disabled and if (record.source_index.isValid())
                     c.parse_graph.input_files.items(.loader)[record.source_index.get()] != .css
@@ -13047,31 +13047,33 @@ pub const LinkerContext = struct {
                 const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun or record.tag == .runtime;
                 const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
 
-                if (is_builtin and !is_bare_import) {
-                    // hmr.importBuiltin('...') or hmr.require('bun:wrap')
-                    const call = Expr.init(E.Call, .{
-                        .target = Expr.init(E.Dot, .{
-                            .target = hmr_api_id,
-                            .name = if (record.tag == .runtime) "require" else "builtin",
-                            .name_loc = stmt.loc,
-                        }, stmt.loc),
-                        .args = .init(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
-                            .data = if (record.tag == .runtime) "bun:wrap" else record.path.pretty,
-                        }, record.range.loc)})),
-                    }, stmt.loc);
+                if (is_builtin) {
+                    if (!is_bare_import) {
+                        // hmr.importBuiltin('...') or hmr.require('bun:wrap')
+                        const call = Expr.init(E.Call, .{
+                            .target = Expr.init(E.Dot, .{
+                                .target = hmr_api_id,
+                                .name = if (record.tag == .runtime) "require" else "builtin",
+                                .name_loc = stmt.loc,
+                            }, stmt.loc),
+                            .args = .init(try allocator.dupe(Expr, &.{Expr.init(E.String, .{
+                                .data = if (record.tag == .runtime) "bun:wrap" else record.path.pretty,
+                            }, record.range.loc)})),
+                        }, stmt.loc);
 
-                    // var namespace = ...;
-                    try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
-                        .kind = .k_var, // remove a tdz
-                        .decls = try G.Decl.List.fromSlice(allocator, &.{.{
-                            .binding = Binding.alloc(
-                                allocator,
-                                B.Identifier{ .ref = st.namespace_ref },
-                                st.star_name_loc orelse stmt.loc,
-                            ),
-                            .value = call,
-                        }}),
-                    }, stmt.loc));
+                        // var namespace = ...;
+                        try stmts.inside_wrapper_prefix.append(Stmt.alloc(S.Local, .{
+                            .kind = .k_var, // remove a tdz
+                            .decls = try G.Decl.List.fromSlice(allocator, &.{.{
+                                .binding = Binding.alloc(
+                                    allocator,
+                                    B.Identifier{ .ref = st.namespace_ref },
+                                    st.star_name_loc orelse stmt.loc,
+                                ),
+                                .value = call,
+                            }}),
+                        }, stmt.loc));
+                    }
                 } else {
                     const loc = st.star_name_loc orelse stmt.loc;
                     if (is_bare_import) {
@@ -13094,6 +13096,14 @@ pub const LinkerContext = struct {
                             }, .Empty)),
                         }, .Empty));
                     }
+
+                    // Make sure the printer gets the resolved path
+                    const path = if (record.source_index.isValid())
+                        c.parse_graph.input_files.items(.source)[record.source_index.get()].path
+                    else
+                        record.path;
+                    record.path = path;
+
                     try stmts.outside_wrapper_prefix.append(stmt);
                 }
             },
@@ -13235,6 +13245,18 @@ pub const LinkerContext = struct {
 
             ast.flags.uses_module_ref = true;
 
+            // TODO: there is a weird edge case where the pretty path is not computed
+            // it does not reproduce when debugging.
+            var source = c.getSource(part_range.source_index.get()).*;
+            if (source.path.text.ptr == source.path.pretty.ptr) {
+                source.path = genericPathWithPrettyInitialized(
+                    source.path,
+                    c.options.target,
+                    c.resolver.fs.top_level_dir,
+                    allocator,
+                ) catch bun.outOfMemory();
+            }
+
             return c.printCodeForFileInChunkJS(
                 r,
                 allocator,
@@ -13246,6 +13268,7 @@ pub const LinkerContext = struct {
                 .None,
                 null,
                 part_range.source_index,
+                &source,
             );
         }
 
@@ -13761,6 +13784,7 @@ pub const LinkerContext = struct {
             toCommonJSRef,
             runtimeRequireRef,
             part_range.source_index,
+            c.getSource(part_range.source_index.get()),
         );
     }
 
@@ -13776,6 +13800,7 @@ pub const LinkerContext = struct {
         to_commonjs_ref: Ref,
         runtime_require_ref: ?Ref,
         source_index: Index,
+        source: *const bun.logger.Source,
     ) js_printer.PrintResult {
         const parts_to_print = &[_]Part{
             .{ .stmts = out_stmts },
@@ -13845,7 +13870,7 @@ pub const LinkerContext = struct {
                     &printer,
                     ast.target,
                     ast.toAST(),
-                    c.getSource(source_index.get()),
+                    source,
                     print_options,
                     ast.import_records.slice(),
                     parts_to_print,

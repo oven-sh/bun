@@ -1,4 +1,4 @@
-// This is an implementation of an module loader with hot-reloading support.
+// This is an implementation of a module loader with hot-reloading support.
 // Note that this aims to implement the behavior of `bun build` rather than what
 // the ECMAScript Module spec says. This way, development builds function like
 // the production ones from `bun build`.
@@ -158,6 +158,9 @@ export class HMRModule {
       main: false,
       require: this.require.bind(this),
       // transpiler rewrites `import.meta.hot.*` to access `HMRModule.*`
+      get hot() {
+        throw new Error("import.meta.hot cannot be used indirectly.");
+      },
     };
     Object.defineProperty(this, "importMeta", { value: importMeta });
     return importMeta;
@@ -167,26 +170,6 @@ export class HMRModule {
   // on HMRModule directly.  The following code implements that interface. Data
   // is an opaque property, which is preserved simply by the fact HMRModule is
   // not destructed.
-
-  invalidHot() {
-    return new Proxy(
-      {},
-      {
-        get(target, prop, receiver) {
-          if (typeof prop === "symbol") {
-            return undefined;
-          }
-          throw new Error(`import.meta.hot.${prop} cannot be used indirectly.`);
-        },
-        set(target, prop, value, receiver) {
-          if (typeof prop === "symbol") {
-            return false;
-          }
-          throw new Error(`The import.meta.hot object cannot be mutated.`);
-        },
-      },
-    );
-  }
 
   accept(
     arg1?: string | readonly string[] | HotAcceptFunction,
@@ -216,7 +199,7 @@ export class HMRModule {
     const accept: HotAccept = {
       modules: isArray ? specifiers : [specifiers],
       cb: cb as HotAcceptFunction,
-      single: isArray,
+      single: !isArray,
     };
     if (isArray) {
       for (const specifier of specifiers) {
@@ -239,6 +222,7 @@ export class HMRModule {
   }
 
   invalidate() {
+    // by throwing an error right now, this will cause a page refresh
     throw new Error("TODO: implement ImportMetaHot.invalidate");
   }
 
@@ -269,12 +253,24 @@ export class HMRModule {
     throw new Error("TODO: implement ImportMetaHot.send");
   }
 
+  declare indirectHot: any;
+
   /** Server-only */
   declare builtin: (id: string) => any;
 }
 if (side === "server") {
   HMRModule.prototype.builtin = import.meta.require;
 }
+// prettier-ignore
+HMRModule.prototype.indirectHot = new Proxy({}, {
+  get(_, prop) {
+    if (typeof prop === "symbol") return undefined;
+    throw new Error(`import.meta.hot.${prop} cannot be used indirectly.`);
+  },
+  set() {
+    throw new Error(`The import.meta.hot object cannot be mutated.`);
+  },
+});
 
 export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
   // First, try and re-use an existing module.
@@ -338,9 +334,12 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     }
 
     const { list: depsList } = parseEsmDependencies(mod, deps, loadModuleSync);
+    const exportsBefore = mod.exports;
     mod.imports = depsList.map(getEsmExports);
     load(mod);
     mod.imports = depsList;
+    if (mod.exports === exportsBefore) mod.exports = {};
+    mod.cjs = null;
     mod.state = State.Loaded;
   }
 
@@ -449,6 +448,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
 function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HMRModule[]) {
   try {
+    const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
     const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     const p = load(mod);
@@ -456,10 +456,14 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
     if (p) {
       return p.then(() => {
         mod.state = State.Loaded;
+        if (mod.exports === exportsBefore) mod.exports = {};
+        mod.cjs = null;
         if (shouldPatchImporters) patchImporters(mod);
         return mod;
       });
     }
+    if (mod.exports === exportsBefore) mod.exports = {};
+    mod.cjs = null;
     if (shouldPatchImporters) patchImporters(mod);
     mod.state = State.Loaded;
     return mod;
@@ -578,25 +582,28 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
       if (!mod) break;
 
       // Stop propagation if the module is self-accepting
+      let hadSelfAccept = true;
       if (mod.selfAccept) {
         toReload.add(mod);
         visited.add(mod);
-        continue;
+        hadSelfAccept = false;
+        if (mod.onDispose) {
+          toDispose.push(mod);
+        }
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
-      if (Object.keys(mod.data).length > 0) {
+      else if (Object.keys(mod.data).length > 0) {
         mod.selfAccept ??= implicitAcceptFunction;
         toReload.add(mod);
         visited.add(mod);
-        continue;
-      }
-
-      if (mod.onDispose) {
-        toDispose.push(mod);
+        hadSelfAccept = false;
+        if (mod.onDispose) {
+          toDispose.push(mod);
+        }
       }
 
       // All importers will be visited
-      if (mod.importers.size === 0) {
+      if (hadSelfAccept && mod.importers.size === 0) {
         failures ??= new Set();
         failures.add(key);
         continue outer;
@@ -606,7 +613,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
         const cb = importer.depAccepts?.[key];
         if (cb) {
           toAccept.push({ cb, key });
-        } else {
+        } else if (hadSelfAccept) {
           if (visited.has(importer)) continue;
           visited.add(importer);
           queue.push(importer);
@@ -680,6 +687,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
           disposePromises.push(p);
         }
       }
+      mod.onDispose = null;
     }
     if (disposePromises.length > 0) {
       await Promise.all(disposePromises);
@@ -739,10 +747,7 @@ function patchImporters(mod: HMRModule) {
   for (const importer of importers) {
     if (!importer.esm || !importer.updateImport) continue;
     const index = importer.imports!.indexOf(mod);
-    if (index === -1) {
-      if (IS_BUN_DEVELOPMENT) assert(false);
-      continue;
-    }
+    if (index === -1) continue; // require or dynamic import
     importer.updateImport![index](exports);
   }
 }
@@ -780,6 +785,9 @@ function throwNotFound(id: Id, isUserDynamic: boolean) {
     throw new Error(
       `Failed to resolve dynamic import '${id}'. With Bun's bundler, all imports must be statically known at build time so that the bundler can trace everything.`,
     );
+  }
+  if (IS_BUN_DEVELOPMENT) {
+    console.warn("Available modules:", Object.keys(unloadedModuleRegistry));
   }
   throw new Error(
     `Failed to load bundled module '${id}'. This is not a dynamic import, and therefore is a bug in Bun's bundler.`,
@@ -828,9 +836,9 @@ function registerSynthetic(id: Id, esmExports) {
   registry.set(id, module);
 }
 
-function assert(condition: any): asserts condition {
+function assert(condition: any, message?: string): asserts condition {
   if (!condition) {
-    console.assert(false, "Debug assertion failed");
+    console.assert(false, "ASSERTION FAILED" + (message ? `: ${message}` : ""));
   }
 }
 

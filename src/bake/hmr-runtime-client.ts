@@ -136,7 +136,10 @@ const ws = initWebSocket({
         // errors from hot-reloaded modules cannot be mapped back to their
         // source.
         const modules = (0, eval)(code);
-        replaceModules(modules);
+        replaceModules(modules).catch(e => {
+          console.error(e);
+          location.reload();
+        });
       } catch (e) {
         if (IS_BUN_DEVELOPMENT) {
           console.error(e, "Failed to parse HMR payload", { code });

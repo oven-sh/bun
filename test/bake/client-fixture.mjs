@@ -58,8 +58,7 @@ function createWindow(windowUrl) {
     if (typeof url === "string") {
       url = new URL(url, windowUrl).href;
     }
-    const response = await fetch(url, options);
-    return response;
+    return fetch(url, options);
   };
 
   // Provide WebSocket
@@ -128,7 +127,7 @@ function createWindow(windowUrl) {
     },
     assert: (value, ...args) => {
       if (value) return;
-      console.error(...args);
+      console.trace(...args);
       process.exit(exitCodeMap.assertionFailed);
     },
   };
@@ -146,7 +145,7 @@ function createWindow(windowUrl) {
         // If we get here, permission never came
         console.error("[E] location.reload() called unexpectedly");
         process.exit(exitCodeMap.unexpectedReload);
-      }, 1000);
+      }, 500);
     }
   };
 
@@ -372,6 +371,17 @@ process.on("disconnect", () => {
   process.exit(0);
 });
 process.on("exit", () => {
+  if (window) {
+    const message = window.sessionStorage.getItem("bun:hmr:message");
+    if (message) {
+      const decoded = JSON.parse(message);
+      if (decoded.kind === "warn") {
+        console.error(decoded.message);
+      } else {
+        console.error(decoded.message);
+      }
+    }
+  }
   if (process.exitCode === 0 && expectingReload) {
     console.error("[E] location.reload() was not called");
     process.exit(exitCodeMap.reloadNotCalled);

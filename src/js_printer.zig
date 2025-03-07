@@ -2136,7 +2136,7 @@ fn NewPrinter(
                     .hot_enabled => {
                         bun.assert(p.options.module_type == .internal_bake_dev);
                         p.printSymbol(p.options.hmr_ref);
-                        p.print(".invalidHot()");
+                        p.print(".indirectHot");
                     },
                     .hot_data => {
                         bun.assert(p.options.module_type == .internal_bake_dev);

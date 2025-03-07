@@ -2,7 +2,7 @@
 
 Bun's bundler has built-in support for CSS with the following features:
 
-- Transpiling modern/feature features to work on all browsers (inlcuding vendor prefixing)
+- Transpiling modern/feature features to work on all browsers (including vendor prefixing)
 - Minification
 - CSS Modules
 - Tailwind (via a native bundler plugin)

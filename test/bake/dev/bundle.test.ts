@@ -267,3 +267,37 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+devTest("importing html file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./index.html";
+      console.log(html);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        "index.ts:1:1: error: Browser builds cannot import HTML files.",
+      ],
+    });
+  },
+});
+devTest("importing bun on the client", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import bun from "bun";
+      console.log(bun);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+  },
+});

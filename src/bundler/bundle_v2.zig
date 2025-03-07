@@ -3066,8 +3066,6 @@ pub const BundleV2 = struct {
             const transpiler, const bake_graph: bake.Graph, const target =
                 if (import_record.tag == .bake_resolve_to_ssr_graph)
             brk: {
-                // TODO: consider moving this error into js_parser so it is caught more reliably
-                // Then we can assert(this.framework != null)
                 if (this.framework == null) {
                     this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
                         source,
@@ -3213,6 +3211,22 @@ pub const BundleV2 = struct {
             }
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
+                if (path.loader(&this.transpiler.options.loaders) == .html) {
+                    // This use case is currently not supported. This error
+                    // blocks an assertion failure because the DevServer
+                    // reserves the HTML file's spot in IncrementalGraph for the
+                    // route definition.
+                    const log = this.logForResolutionFailures(source.path.text, bake_graph);
+                    log.addRangeErrorFmt(
+                        source,
+                        import_record.range,
+                        this.graph.allocator,
+                        "Browser builds cannot import HTML files.",
+                        .{},
+                    ) catch bun.outOfMemory();
+                    continue;
+                }
+
                 if (loader == .css) {
                     // Do not use cached files for CSS.
                     break :brk;

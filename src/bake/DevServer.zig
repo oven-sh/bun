@@ -3168,9 +3168,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 .js, .asset => {
                     g.owner().allocator.free(file.jsCode());
                     const map = &g.source_maps.items[index.get()];
-                    g.owner().allocator.free(map.vlq());
-                    if (map.quoted_contents_flags.is_owned) {
-                        map.quotedContentsCowString().deinit(g.owner().allocator);
+                    if (map.vlq_len > 0) {
+                        g.owner().allocator.free(map.vlq());
+                        if (map.quoted_contents_flags.is_owned) {
+                            map.quotedContentsCowString().deinit(g.owner().allocator);
+                        }
+                        map.* = .empty;
                     }
                 },
                 .css => if (css == .unref_css) {
@@ -4638,6 +4641,8 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             var path_count: usize = 0;
             for (g.current_chunk_parts.items) |entry| {
+                const map = &source_maps[entry.get()];
+                if (map.vlq_len == 0) {}
                 path_count += 1;
                 try source_map_strings.appendSlice(",");
                 const path = paths[entry.get()];
@@ -4690,17 +4695,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             );
             for (g.current_chunk_parts.items) |file_index| {
                 const map = &source_maps[file_index.get()];
-                // For empty chunks, put a blank entry. This allows HTML
-                // files to get their stack remapped, despite having no
-                // actual mappings.
+                // Skip empty chunks. This will only be hit for HTML files,
+                // which do not have a source map as they emit empty functions
+                // like `() => {}`, so they cannot throw errors.
                 if (map.vlq_len == 0) {
-                    const ptr: bun.StringPointer = .{
-                        .offset = @intCast(j.len + ",\"".len),
-                        .length = 0,
-                    };
-                    j.pushStatic(",\"\"");
-                    file_paths.appendAssumeCapacity(paths[file_index.get()]);
-                    source_contents.appendAssumeCapacity(ptr);
                     continue;
                 }
                 j.pushStatic(",");
@@ -4753,6 +4751,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             for (g.current_chunk_parts.items, 1..) |entry, source_index| {
                 const source_map = &source_maps[entry.get()];
                 if (source_map.vlq_len == 0) {
+                    // Generate fake mappings that skip over this chunk.
                     if (source_map.extra.empty.line_count.unwrap()) |line_count| {
                         lines_between += line_count.get();
                     } else {
@@ -4760,54 +4759,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         source_map.extra.empty.line_count = .init(count);
                         lines_between += count;
                     }
-                    // TODO: consider reviving this code. it generates a valid
-                    // map according to Source Map Visualization, but it does
-                    // not map correctly in Chrome or Bun. This code tries to
-                    // add a mapping for each source line of unmapped code, so
-                    // at the very minimum the file name can be retrieved.
-                    // In practice, Bun may not need this as the only chunks
-                    // with this behavior are HTML and empty JS files.
-
-                    // if (lines_between > 0) {
-                    //     j.pushStatic(try bun.strings.repeatingAlloc(arena, lines_between, ';'));
-                    //     lines_between = 0;
-                    // }
-                    // if (source_map.extra.empty.line_count.unwrap()) |lc| {
-                    //     lines_between = lc.get();
-                    // } else {
-                    //     const count: u32 = @intCast(bun.strings.countChar(files[entry.get()].jsCode(), '\n'));
-                    //     source_map.extra.empty.line_count = .init(count);
-                    //     lines_between = count;
-                    // }
-                    // // For empty chunks, put a blank entry for HTML. This will
-                    // // consist of a single mapping per line to cover the file
-                    // assert(lines_between > 1); // there is one line to open the function, and one line `},` to close it
-                    // const repeating_mapping = ";AAAA"; // VLQ [0, 0, 0, 0] to repeat a column zero same source index mapping
-                    // const original_line = SourceMap.encodeVLQWithLookupTable(-prev_end_state.original_line);
-                    // const original_column = SourceMap.encodeVLQWithLookupTable(-prev_end_state.original_column);
-                    // var list = std.ArrayList(u8).init(arena);
-                    // const first = "AC"; // VLQ [0, 1], generated column and generated source index
-                    // try list.ensureTotalCapacityPrecise(
-                    //     @as(usize, (lines_between + 1) * repeating_mapping.len) +
-                    //         first.len +
-                    //         @as(usize, original_line.len) +
-                    //         @as(usize, original_column.len),
-                    // );
-                    // list.appendSliceAssumeCapacity(first);
-                    // list.appendSliceAssumeCapacity(original_line.slice());
-                    // list.appendSliceAssumeCapacity(original_column.slice());
-                    // for (0..lines_between + 1) |_| {
-                    //     list.appendSliceAssumeCapacity(repeating_mapping);
-                    // }
-                    // j.pushStatic(list.items);
-                    // prev_end_state = .{
-                    //     .source_index = @intCast(source_index),
-                    //     .generated_line = 0,
-                    //     .generated_column = 0,
-                    //     .original_line = 0,
-                    //     .original_column = 0,
-                    // };
-                    // lines_between = 1;
                     continue;
                 }
 

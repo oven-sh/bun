@@ -20,6 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
+import { expect } from "bun:test";
 import { isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
@@ -3263,3 +3264,9 @@ function mustCall(fn, criteria = 1) {
   });
   return _return;
 }
+
+test("ReadableStream", () => {
+  expect(util.inspect(new ReadableStream())).toEqual(
+    `ReadableStream { locked: false, state: 'readable', supportsBYOB: false }`,
+  );
+});

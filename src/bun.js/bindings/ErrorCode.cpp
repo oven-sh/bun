@@ -1217,6 +1217,12 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JS
     return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, builder.toString());
 }
 
+EncodedJSValue Bun::throwInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const ASCIILiteral expectedTypeName, JSC::JSValue actualThisValue)
+{
+    scope.throwException(globalObject, createInvalidThisError(globalObject, actualThisValue, expectedTypeName));
+    return {};
+}
+
 JSC::EncodedJSValue Bun::throwError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, Bun::ErrorCode code, const WTF::String& message)
 {
     scope.throwException(globalObject, createError(globalObject, code, message));

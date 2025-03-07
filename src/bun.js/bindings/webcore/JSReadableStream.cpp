@@ -40,6 +40,8 @@
 #include <wtf/PointerPreparations.h>
 #include "ZigGeneratedClasses.h"
 #include "JavaScriptCore/BuiltinNames.h"
+#include "ErrorCode.h"
+#include "JSReadableByteStreamController.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -118,7 +120,6 @@ static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
     { "pipeTo"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeToCodeGenerator, 1 } },
     { "pipeThrough"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamPipeThroughCodeGenerator, 2 } },
     { "tee"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamTeeCodeGenerator, 0 } },
-
 };
 
 const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };
@@ -168,6 +169,19 @@ static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__disturbedGetterWrap, 
     return JSValue::encode(jsBoolean(thisObject->disturbed()));
 }
 
+JSC_DEFINE_HOST_FUNCTION(JSReadableStreamPrototype__customInspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSReadableStream* thisObject = jsDynamicCast<JSReadableStream*>(callFrame->thisValue());
+    if (!thisObject) return Bun::throwInvalidThisError(lexicalGlobalObject, scope, "ReadableStream", callFrame->thisValue());
+
+    auto locked = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "locked"_s)).toBoolean(lexicalGlobalObject) ? "true"_s : "false"_s;
+    auto state = thisObject->getDirect(vm, WebCore::builtinNames(vm).statePrivateName()).toWTFString(lexicalGlobalObject);
+    auto supportsBYOB = thisObject->getDirect(vm, WebCore::builtinNames(vm).readableStreamControllerPrivateName()).inherits<JSReadableByteStreamController>() ? "true"_s : "false"_s;
+    return JSValue::encode(jsString(vm, WTF::makeString("ReadableStream { locked: "_s, locked, ", state: '"_s, state, "', supportsBYOB: "_s, supportsBYOB, " }"_s)));
+}
+
 void JSReadableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -181,6 +195,7 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
     this->putDirectBuiltinFunction(vm, globalObject(), vm.propertyNames->asyncIteratorSymbol, readableStreamLazyAsyncIteratorCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
     this->putDirectBuiltinFunction(vm, globalObject(), vm.propertyNames->builtinNames().valuesPublicName(), readableStreamValuesCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    this->putDirect(vm, Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)), JSFunction::create(vm, globalObject(), 0, String("[nodejs.util.inspect.custom]"_s), JSReadableStreamPrototype__customInspect, ImplementationVisibility::Private), PropertyAttribute::Builtin | 0);
 }
 
 const ClassInfo JSReadableStream::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStream) };

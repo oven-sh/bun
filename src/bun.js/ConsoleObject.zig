@@ -942,7 +942,7 @@ pub fn format2(
 
             tag = ConsoleObject.Formatter.Tag.get(this_value, global);
             if (tag.tag == .String and fmt.remaining_values.len > 0) {
-                tag.tag = .{ .StringPossiblyFormatted = {} };
+                tag.tag = .StringPossiblyFormatted;
             }
 
             try fmt.format(tag, Writer, writer, this_value, global, true);
@@ -964,7 +964,7 @@ pub fn format2(
             any = true;
             tag = ConsoleObject.Formatter.Tag.get(this_value, global);
             if (tag.tag == .String and fmt.remaining_values.len > 0) {
-                tag.tag = .{ .StringPossiblyFormatted = {} };
+                tag.tag = .StringPossiblyFormatted;
             }
 
             try fmt.format(tag, Writer, writer, this_value, global, false);
@@ -1194,43 +1194,43 @@ pub const Formatter = struct {
         pub fn getAdvanced(value: JSValue, globalThis: *JSGlobalObject, opts: Options) Result {
             switch (@intFromEnum(value)) {
                 0, 0xa => return Result{
-                    .tag = .{ .Undefined = {} },
+                    .tag = .Undefined,
                 },
                 0x2 => return Result{
-                    .tag = .{ .Null = {} },
+                    .tag = .Null,
                 },
                 else => {},
             }
 
             if (value.isInt32()) {
                 return .{
-                    .tag = .{ .Integer = {} },
+                    .tag = .Integer,
                 };
             } else if (value.isNumber()) {
                 return .{
-                    .tag = .{ .Double = {} },
+                    .tag = .Double,
                 };
             } else if (value.isBoolean()) {
                 return .{
-                    .tag = .{ .Boolean = {} },
+                    .tag = .Boolean,
                 };
             }
 
             if (!value.isCell())
                 return .{
-                    .tag = .{ .NativeCode = {} },
+                    .tag = .NativeCode,
                 };
 
             const js_type = value.jsType();
 
             if (js_type.isHidden()) return .{
-                .tag = .{ .NativeCode = {} },
+                .tag = .NativeCode,
                 .type = js_type,
             };
 
             if (js_type == .Cell) {
                 return .{
-                    .tag = .{ .NativeCode = {} },
+                    .tag = .NativeCode,
                     .type = js_type,
                 };
             }
@@ -1255,7 +1255,7 @@ pub const Formatter = struct {
 
             if (js_type == .DOMWrapper) {
                 return .{
-                    .tag = .{ .Private = {} },
+                    .tag = .Private,
                     .type = js_type,
                 };
             }
@@ -1265,7 +1265,7 @@ pub const Formatter = struct {
             if (js_type != .Object and js_type != .ProxyObject and value.isCallable(globalThis.vm())) {
                 if (value.isClass(globalThis)) {
                     return .{
-                        .tag = .{ .Class = {} },
+                        .tag = .Class,
                         .type = js_type,
                     };
                 }
@@ -1288,7 +1288,7 @@ pub const Formatter = struct {
                     );
                 }
                 return .{
-                    .tag = .{ .GlobalObject = {} },
+                    .tag = .GlobalObject,
                     .type = js_type,
                 };
             }
@@ -1306,7 +1306,7 @@ pub const Formatter = struct {
                         JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_element_transitional), globalThis) or
                         JSValue.isSameValue(typeof_symbol, JSValue.symbolFor(globalThis, &react_fragment), globalThis))
                     {
-                        return .{ .tag = .{ .JSX = {} }, .type = js_type };
+                        return .{ .tag = .JSX, .type = js_type };
                     }
                 }
             }

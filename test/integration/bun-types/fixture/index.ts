@@ -42,6 +42,8 @@ Bun.fetch("", {
 
 Bun.S3Client;
 
+Bun.$.ShellPromise;
+
 new Bun.$.ShellError();
 
 new Promise(resolve => {

@@ -9,6 +9,6 @@
   },
   "type": "module",
   "dependencies": {
-    "@types/bun": "types-bun-1.2.4.tgz"
+    "@types/bun": "types-bun-1.2.5.tgz"
   }
 }

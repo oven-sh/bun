@@ -573,7 +573,7 @@ declare module "bun" {
 		threadId: number;
 	}
 
-	export interface BlobPropertyBag {
+	interface BlobPropertyBag {
 		/** Set a default "type". Not yet implemented. */
 		type?: string;
 		/** Not implemented in Bun yet. */
@@ -793,79 +793,6 @@ declare module "bun" {
 		new (): Shell;
 	}
 
-	namespace Shell {
-		export class ShellError extends Error {
-			readonly stdout: Buffer;
-			readonly stderr: Buffer;
-			readonly exitCode: number;
-
-			/**
-			 * Read from stdout as a string
-			 *
-			 * @param encoding - The encoding to use when decoding the output
-			 * @returns Stdout as a string with the given encoding
-			 * @example
-			 *
-			 * ## Read as UTF-8 string
-			 *
-			 * ```ts
-			 * const output = await $`echo hello`;
-			 * console.log(output.text()); // "hello\n"
-			 * ```
-			 *
-			 * ## Read as base64 string
-			 *
-			 * ```ts
-			 * const output = await $`echo ${atob("hello")}`;
-			 * console.log(output.text("base64")); // "hello\n"
-			 * ```
-			 *
-			 */
-			text(encoding?: BufferEncoding): string;
-
-			/**
-			 * Read from stdout as a JSON object
-			 *
-			 * @returns Stdout as a JSON object
-			 * @example
-			 *
-			 * ```ts
-			 * const output = await $`echo '{"hello": 123}'`;
-			 * console.log(output.json()); // { hello: 123 }
-			 * ```
-			 *
-			 */
-			json(): any;
-
-			/**
-			 * Read from stdout as an ArrayBuffer
-			 *
-			 * @returns Stdout as an ArrayBuffer
-			 * @example
-			 *
-			 * ```ts
-			 * const output = await $`echo hello`;
-			 * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
-			 * ```
-			 */
-			arrayBuffer(): ArrayBuffer;
-
-			/**
-			 * Read from stdout as a Blob
-			 *
-			 * @returns Stdout as a blob
-			 * @example
-			 * ```ts
-			 * const output = await $`echo hello`;
-			 * console.log(output.blob()); // Blob { size: 6, type: "" }
-			 * ```
-			 */
-			blob(): Blob;
-
-			bytes(): Uint8Array;
-		}
-	}
-
 	interface Shell {
 		(
 			strings: TemplateStringsArray,
@@ -924,11 +851,91 @@ declare module "bun" {
 		 */
 		throws(shouldThrow: boolean): this;
 
-		readonly ShellPromise: typeof ShellPromise;
 		readonly Shell: ShellConstructor;
+
+		readonly ShellPromise: {
+			prototype: ShellPromise;
+			new (args: unknown, throws: boolean): ShellPromise;
+		};
+
+		readonly ShellError: {
+			prototype: ShellError;
+			new (): ShellError;
+		};
 	}
 
-	export interface ShellOutput {
+	interface ShellError extends Error {
+		readonly stdout: Buffer;
+		readonly stderr: Buffer;
+		readonly exitCode: number;
+
+		/**
+		 * Read from stdout as a string
+		 *
+		 * @param encoding - The encoding to use when decoding the output
+		 * @returns Stdout as a string with the given encoding
+		 * @example
+		 *
+		 * ## Read as UTF-8 string
+		 *
+		 * ```ts
+		 * const output = await $`echo hello`;
+		 * console.log(output.text()); // "hello\n"
+		 * ```
+		 *
+		 * ## Read as base64 string
+		 *
+		 * ```ts
+		 * const output = await $`echo ${atob("hello")}`;
+		 * console.log(output.text("base64")); // "hello\n"
+		 * ```
+		 *
+		 */
+		text(encoding?: BufferEncoding): string;
+
+		/**
+		 * Read from stdout as a JSON object
+		 *
+		 * @returns Stdout as a JSON object
+		 * @example
+		 *
+		 * ```ts
+		 * const output = await $`echo '{"hello": 123}'`;
+		 * console.log(output.json()); // { hello: 123 }
+		 * ```
+		 *
+		 */
+		json(): any;
+
+		/**
+		 * Read from stdout as an ArrayBuffer
+		 *
+		 * @returns Stdout as an ArrayBuffer
+		 * @example
+		 *
+		 * ```ts
+		 * const output = await $`echo hello`;
+		 * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
+		 * ```
+		 */
+		arrayBuffer(): ArrayBuffer;
+
+		/**
+		 * Read from stdout as a Blob
+		 *
+		 * @returns Stdout as a blob
+		 * @example
+		 * ```ts
+		 * const output = await $`echo hello`;
+		 * console.log(output.blob()); // Blob { size: 6, type: "" }
+		 * ```
+		 */
+		blob(): Blob;
+
+		bytes(): Uint8Array;
+	}
+
+	interface ShellOutput {
 		readonly stdout: Buffer;
 		readonly stderr: Buffer;
 		readonly exitCode: number;
@@ -1010,7 +1017,7 @@ declare module "bun" {
 		blob(): Blob;
 	}
 
-	export const $: Shell;
+	const $: Shell;
 
 	interface TOML {
 		/**
@@ -4890,9 +4897,6 @@ declare module "bun" {
 		// tslint:disable-next-line:unified-signatures
 		arrayBufferToString(buffer: Uint16Array): string;
 
-		/** Mock bun's segfault handler. You probably don't want to use this */
-		segfault(): void;
-
 		/**
 		 * Force the garbage collector to run extremely often,
 		 * especially inside `bun:test`.
@@ -4909,6 +4913,11 @@ declare module "bun" {
 		 * @returns The previous level
 		 */
 		gcAggressionLevel(level?: 0 | 1 | 2): 0 | 1 | 2;
+
+		/**
+		 * Dump the mimalloc heap to the console
+		 */
+		mimallocDump(): void;
 	}
 	const unsafe: Unsafe;
 
@@ -4930,7 +4939,7 @@ declare module "bun" {
 	const enableANSIColors: boolean;
 
 	/**
-	 * What script launched bun?
+	 * What script launched Bun?
 	 *
 	 * Absolute file path
 	 *
@@ -5020,9 +5029,7 @@ declare module "bun" {
 	 */
 	function openInEditor(path: string, options?: EditorOptions): void;
 
-	var fetch: typeof globalThis.fetch & {
-		preconnect(url: string): void;
-	};
+	var fetch: typeof globalThis.fetch;
 
 	interface EditorOptions {
 		editor?: "vscode" | "subl";

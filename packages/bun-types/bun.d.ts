@@ -459,7 +459,7 @@ declare module "bun" {
 		blob(): Blob;
 	}
 
-	export const $: Shell;
+	const $: Shell;
 
 	interface TOML {
 		/**

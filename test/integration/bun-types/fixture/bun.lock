@@ -4,7 +4,7 @@
     "": {
       "name": "fixture",
       "dependencies": {
-        "@types/bun": "types-bun-1.2.4.tgz",
+        "@types/bun": "types-bun-1.2.5.tgz",
       },
       "peerDependencies": {
         "typescript": "^5.0.0",
@@ -12,7 +12,7 @@
     },
   },
   "packages": {
-    "@types/bun": ["@types/bun@types-bun-1.2.4.tgz", { "dependencies": { "@types/node": "*", "@types/ws": "~8.5.10" } }],
+    "@types/bun": ["@types/bun@types-bun-1.2.5.tgz", { "dependencies": { "@types/node": "*", "@types/ws": "~8.5.10" } }],
 
     "@types/node": ["@types/node@22.13.9", "", { "dependencies": { "undici-types": "~6.20.0" } }, "sha512-acBjXdRJ3A6Pb3tqnw9HZmyR3Fiol3aGxRCK1x3d+6CDAMjl7I649wpSd+yNURCjbOUGu9tqtLKnTGxmK6CyGw=="],
 

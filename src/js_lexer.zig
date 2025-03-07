@@ -3258,6 +3258,8 @@ pub fn latin1IdentifierContinueLengthScalar(name: []const u8) usize {
             else => return i,
         }
     }
+
+    return name.len;
 }
 
 pub const PragmaArg = enum {

@@ -1047,7 +1047,7 @@ pub const SelectorParser = struct {
         if (input.flags.css_modules) {
             return Impl.SelectorImpl.LocalIdentifier.fromRef(input.addSymbolForName(raw, tag, bun.logger.Loc{
                 .start = @intCast(loc),
-            }), .{ raw, input.allocator() });
+            }), if (comptime bun.Environment.isDebug) .{ raw, input.allocator() } else {});
         }
         return Impl.SelectorImpl.LocalIdentifier.fromIdent(.{ .v = raw });
     }

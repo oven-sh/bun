@@ -231,13 +231,12 @@ devTest("export * as namespace", {
     await c.expectMessage("PASS");
   },
 });
-devTest("ESM <-> CJS", {
+devTest("ESM <-> CJS sync", {
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
     "index.ts": `
-      await import('./esm'); // TODO: implement sync ESM
       const mod = require('./esm');
       if (!mod.__esModule) throw new Error('mod.__esModule should be set');
       console.log('PASS');
@@ -249,5 +248,57 @@ devTest("ESM <-> CJS", {
   async test(dev) {
     await using c = await dev.client();
     await c.expectMessage("PASS");
+  },
+});
+devTest("ESM <-> CJS (async)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const esmImport = await import('./esm'); // TODO: implement sync ESM
+      const mod = require('./esm');
+      if (!mod.__esModule) throw new Error('mod.__esModule should be set');
+      if (esmImport.x !== mod.x) throw new Error('esmImport.x should be equal to mod.x');
+      if ('__esModule' in esmImport) throw new Error('esmImport.__esModule should be unset');
+      console.log('PASS');
+    `,
+    "esm.ts": `
+      export const x = 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client();
+    await c.expectMessage("PASS");
+  },
+});
+devTest("cannot require a module with top level await", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      const mod = require('./esm');
+      console.log('FAIL');
+    `,
+    "esm.ts": `
+      console.log("FAIL");
+      import { hello } from './dir';
+      hello;
+    `,
+    "dir/index.ts": `
+      import './async';
+    `,
+    "dir/async.ts": `
+      console.log("FAIL");
+      await 1;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [
+        `error: Cannot require "esm.ts" because "dir/async.ts" uses top-level await, but 'require' is a synchronous operation.`,
+      ],
+    });
   },
 });

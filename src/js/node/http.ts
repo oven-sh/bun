@@ -1403,7 +1403,7 @@ ServerResponse.prototype.appendHeader = function appendHeader(name, value) {
 ServerResponse.prototype.flushHeaders = function flushHeaders() {};
 
 ServerResponse.prototype.getHeader = function getHeader(name) {
-  return getHeader(this[headersSymbol], name);
+  return getHeader_(this[headersSymbol], name);
 };
 
 ServerResponse.prototype.getHeaders = function getHeaders() {

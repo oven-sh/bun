@@ -1136,21 +1136,21 @@ Readable.prototype.resume = function resume() {
     } else {
       state[kState] &= ~kFlowing;
     }
-    resume(this, state);
+    emitResumeNT(this, state);
   }
   state[kState] |= kHasPaused;
   state[kState] &= ~kPaused;
   return this;
 };
 
-function resume(stream, state) {
+function emitResumeNT(stream, state) {
   if ((state[kState] & kResumeScheduled) === 0) {
     state[kState] |= kResumeScheduled;
-    process.nextTick(resume_, stream, state);
+    process.nextTick(emitResume, stream, state);
   }
 }
 
-function resume_(stream, state) {
+function emitResume(stream, state) {
   $debug("resume", (state[kState] & kReading) !== 0);
   if ((state[kState] & kReading) === 0) {
     stream.read(0);

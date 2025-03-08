@@ -10220,12 +10220,14 @@ var getRandomValues = array => crypto.getRandomValues(array),
           }
         }
       : void 0;
-Object.defineProperty(scrypt, "name", {
-  value: "::bunternal::",
-}),
-  Object.defineProperty(scryptSync, "name", {
+scrypt &&
+  Object.defineProperty(scrypt, "name", {
     value: "::bunternal::",
-  });
+  }),
+  scryptSync &&
+    Object.defineProperty(scryptSync, "name", {
+      value: "::bunternal::",
+    });
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it

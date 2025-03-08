@@ -1,0 +1,6 @@
+nl_mid = "val\nue"
+nl_end = """value\n"""
+
+lit_nl_end = '''value\n'''
+lit_nl_mid = 'val\nue'
+lit_nl_uni = 'val\ue'

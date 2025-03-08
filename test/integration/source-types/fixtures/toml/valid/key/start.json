@@ -1,0 +1,36 @@
+{
+    "-": {
+        "-": {"type": "integer", "value": "4"}
+    },
+    "---": {
+        "---": {"type": "integer", "value": "7"}
+    },
+    "-key": {
+        "-key": {"type": "integer", "value": "1"}
+    },
+    "1": {
+        "1": {"type": "integer", "value": "6"}
+    },
+    "111": {
+        "111": {"type": "integer", "value": "9"}
+    },
+    "1key": {
+        "1key": {"type": "integer", "value": "3"}
+    },
+    "_": {
+        "_": {"type": "integer", "value": "5"}
+    },
+    "___": {
+        "___": {"type": "integer", "value": "8"}
+    },
+    "_key": {
+        "_key": {"type": "integer", "value": "2"}
+    },
+    "inline": {
+        "---": {
+            "---": {"type": "integer", "value": "10"},
+            "111": {"type": "integer", "value": "12"},
+            "___": {"type": "integer", "value": "11"}
+        }
+    }
+}

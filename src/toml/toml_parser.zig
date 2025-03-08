@@ -136,6 +136,11 @@ pub const TOML = struct {
                     loc,
                 );
             },
+            // `-` is a valid identifier
+            .t_minus => {
+                try p.lexer.next();
+                return p.e(E.String{ .data = "-" }, loc);
+            },
             // what we see as a number here could actually be a string
             .t_numeric_literal => {
                 const literal = p.lexer.raw();
@@ -148,6 +153,9 @@ pub const TOML = struct {
     }
 
     pub fn parseKey(p: *TOML, allocator: std.mem.Allocator) anyerror!*Rope {
+        p.lexer.wants_key = true;
+        defer p.lexer.wants_key = false;
+
         var rope = try allocator.create(Rope);
         const head = rope;
         rope.* = .{

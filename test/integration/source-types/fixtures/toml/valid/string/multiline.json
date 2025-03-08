@@ -1,0 +1,11 @@
+{
+    "equivalent_one":      {"type": "string", "value": "The quick brown fox jumps over the lazy dog."},
+    "equivalent_three":    {"type": "string", "value": "The quick brown fox jumps over the lazy dog."},
+    "equivalent_two":      {"type": "string", "value": "The quick brown fox jumps over the lazy dog."},
+    "escape-bs-1":         {"type": "string", "value": "a \\\nb"},
+    "escape-bs-2":         {"type": "string", "value": "a \\b"},
+    "escape-bs-3":         {"type": "string", "value": "a \\\\\n  b"},
+    "keep-ws-before":      {"type": "string", "value": "a   \tb"},
+    "no-space":            {"type": "string", "value": "ab"},
+    "whitespace-after-bs": {"type": "string", "value": "The quick brown fox jumps over the lazy dog."}
+}

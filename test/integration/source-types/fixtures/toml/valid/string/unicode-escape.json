@@ -1,0 +1,16 @@
+{
+    "a":          {"type": "string", "value": "a"},
+    "b":          {"type": "string", "value": "b"},
+    "c":          {"type": "string", "value": "c"},
+    "delta-1":    {"type": "string", "value": "δ"},
+    "delta-2":    {"type": "string", "value": "δ"},
+    "ml-a":       {"type": "string", "value": "a"},
+    "ml-b":       {"type": "string", "value": "b"},
+    "ml-c":       {"type": "string", "value": "c"},
+    "ml-delta-1": {"type": "string", "value": "δ"},
+    "ml-delta-2": {"type": "string", "value": "δ"},
+    "ml-null-1":  {"type": "string", "value": "\u0000"},
+    "ml-null-2":  {"type": "string", "value": "\u0000"},
+    "null-1":     {"type": "string", "value": "\u0000"},
+    "null-2":     {"type": "string", "value": "\u0000"}
+}

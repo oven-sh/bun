@@ -1,0 +1,24 @@
+{
+    "name": {
+        "first": {"type": "string", "value": "Tom"},
+        "last":  {"type": "string", "value": "Preston-Werner"}
+    },
+    "point": {
+        "x": {"type": "integer", "value": "1"},
+        "y": {"type": "integer", "value": "2"}
+    },
+    "simple": {
+        "a": {"type": "integer", "value": "1"}
+    },
+    "str-key": {
+        "a": {"type": "integer", "value": "1"}
+    },
+    "table-array": [
+        {
+            "a": {"type": "integer", "value": "1"}
+        },
+        {
+            "b": {"type": "integer", "value": "2"}
+        }
+    ]
+}

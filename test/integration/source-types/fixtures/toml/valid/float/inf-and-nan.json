@@ -1,0 +1,8 @@
+{
+    "infinity":      {"type": "float", "value": "inf"},
+    "infinity_neg":  {"type": "float", "value": "-inf"},
+    "infinity_plus": {"type": "float", "value": "inf"},
+    "nan":           {"type": "float", "value": "nan"},
+    "nan_neg":       {"type": "float", "value": "nan"},
+    "nan_plus":      {"type": "float", "value": "nan"}
+}

@@ -1,0 +1,6 @@
+{
+    "int1": {"type": "integer", "value": "99"},
+    "int2": {"type": "integer", "value": "42"},
+    "int3": {"type": "integer", "value": "0"},
+    "int4": {"type": "integer", "value": "-17"}
+}

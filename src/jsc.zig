@@ -69,6 +69,7 @@ pub const Node = struct {
     pub const Util = struct {
         pub const parseArgs = @import("./bun.js/node/util/parse_args.zig").parseArgs;
     };
+    pub const Crypto = @import("./bun.js/node/node_crypto_binding.zig");
 };
 
 const std = @import("std");

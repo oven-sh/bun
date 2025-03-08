@@ -47,9 +47,10 @@ const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_U
 
 const {
   randomInt: _randomInt,
+  pbkdf2: _pbkdf2,
+  pbkdf2Sync: _pbkdf2Sync,
+  timingSafeEqual: _timingSafeEqual,
   randomUUID: _randomUUID,
-  pbkdf2: pbkdf2_,
-  pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString, validateInt32 } = require("internal/validators");
@@ -493,7 +494,7 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
     digest = undefined;
   }
 
-  const promise = pbkdf2_(password, salt, iterations, keylen, digest, callback);
+  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
     promise.then(
       result => callback(null, result),
@@ -506,7 +507,7 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 }
 
 function pbkdf2Sync(password, salt, iterations, keylen, digest) {
-  return pbkdf2Sync_(password, salt, iterations, keylen, digest);
+  return _pbkdf2Sync(password, salt, iterations, keylen, digest);
 }
 
 // node_modules/des.js/lib/des/utils.js
@@ -4380,8 +4381,9 @@ var require_browser7 = __commonJS({
     exports.DiffieHellmanGroup = exports.createDiffieHellmanGroup = exports.getDiffieHellman = getDiffieHellman;
     exports.createDiffieHellman = exports.DiffieHellman = createDiffieHellman;
 
+    // TODO: move entire function out of js in diffie-hellman pr
     exports.diffieHellman = function diffieHellman(options) {
-      validateObject(options);
+      validateObject(options, "options");
 
       const { privateKey, publicKey } = options;
 
@@ -10194,17 +10196,6 @@ var crypto_exports = require_crypto_browserify2();
 
 var getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
-  timingSafeEqual =
-    "timingSafeEqual" in crypto
-      ? (a, b) => {
-          let { byteLength: byteLengthA } = a,
-            { byteLength: byteLengthB } = b;
-          if (typeof byteLengthA != "number" || typeof byteLengthB != "number")
-            throw new TypeError("Input must be an array buffer view");
-          if (byteLengthA !== byteLengthB) throw new RangeError("Input buffers must have the same length");
-          return crypto.timingSafeEqual(a, b);
-        }
-      : void 0,
   scryptSync =
     "scryptSync" in crypto
       ? (password, salt, keylen, options) => {
@@ -10229,16 +10220,14 @@ var getRandomValues = array => crypto.getRandomValues(array),
           }
         }
       : void 0;
-timingSafeEqual &&
-  (Object.defineProperty(timingSafeEqual, "name", {
-    value: "::bunternal::",
-  }),
+scrypt &&
   Object.defineProperty(scrypt, "name", {
     value: "::bunternal::",
   }),
-  Object.defineProperty(scryptSync, "name", {
-    value: "::bunternal::",
-  }));
+  scryptSync &&
+    Object.defineProperty(scryptSync, "name", {
+      value: "::bunternal::",
+    });
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it
@@ -10576,7 +10565,7 @@ crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
-crypto_exports.timingSafeEqual = timingSafeEqual;
+crypto_exports.timingSafeEqual = _timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;

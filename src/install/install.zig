@@ -10947,6 +10947,11 @@ pub const PackageManager = struct {
                             }
                         }
                     }
+                    if (!any_changes) {
+                        Output.prettyErrorln("\n", .{});
+                        Output.errGeneric("package \"{s}\" was not found in package.json, there's nothing to remove!", .{request.name});
+                        Global.exit(1);
+                    }
                 }
             },
 

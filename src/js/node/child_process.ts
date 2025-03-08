@@ -618,6 +618,7 @@ function spawnSync(file, args, options) {
   }
 
   if (result.error) {
+    result.error.syscall = "spawnSync " + options.file;
     result.error.spawnargs = ArrayPrototypeSlice.$call(options.args, 1);
   }
 
@@ -1358,6 +1359,7 @@ class ChildProcess extends EventEmitter {
     } catch (ex) {
       if (ex == null || typeof ex !== "object" || !Object.hasOwn(ex, "errno")) throw ex;
       this.#handle = null;
+      ex.syscall = "spawn " + this.spawnfile;
       ex.spawnargs = Array.prototype.slice.$call(this.spawnargs, 1);
       process.nextTick(() => {
         this.emit("error", ex);

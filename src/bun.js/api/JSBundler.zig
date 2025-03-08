@@ -739,7 +739,7 @@ pub const JSBundler = struct {
                 .value = .pending,
                 .path = parse.path.text,
                 .namespace = parse.path.namespace,
-                .was_file = false,
+                .was_file = parse.path.isFile(),
                 .called_defer = false,
                 .task = undefined,
                 .js_task = undefined,
@@ -1013,7 +1013,7 @@ pub const JSBundler = struct {
             onstart_promises_array: JSC.JSValue,
             is_last: bool,
             is_bake: bool,
-        ) !JSValue {
+        ) bun.JSError!JSValue {
             JSC.markBinding(@src());
             const tracer = bun.tracy.traceNamed(@src(), "JSBundler.addPlugin");
             defer tracer.end();

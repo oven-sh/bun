@@ -176,7 +176,8 @@ fn setEnv(name: [*:0]const u8, value: [*:0]const u8) void {
 /// [1] => write end
 pub const Pipe = [2]bun.FileDescriptor;
 
-const log = bun.Output.scoped(.SHELL, true);
+const logscope = bun.Output.Scoped(.SHELL, true);
+const log = logscope.log;
 const logsys = bun.Output.scoped(.SYS, true);
 
 pub const GlobalJS = struct {
@@ -1652,6 +1653,14 @@ pub const Parser = struct {
                             break;
                         }
                     },
+                    .Tilde => {
+                        _ = self.expect(.Tilde);
+                        try atoms.append(.tilde);
+                        if (next_delimits) {
+                            _ = self.match(.Delimit);
+                            break;
+                        }
+                    },
                     .BraceBegin => {
                         has_brace_open = true;
                         _ = self.expect(.BraceBegin);
@@ -1700,16 +1709,8 @@ pub const Parser = struct {
                     },
                     .SingleQuotedText, .DoubleQuotedText, .Text => |txtrng| {
                         _ = self.advance();
-                        var txt = self.text(txtrng);
-                        if (peeked == .Text and txt.len > 0 and txt[0] == '~') {
-                            txt = txt[1..];
-                            try atoms.append(.tilde);
-                            if (txt.len > 0) {
-                                try atoms.append(.{ .Text = txt });
-                            }
-                        } else {
-                            try atoms.append(.{ .Text = txt });
-                        }
+                        const txt = self.text(txtrng);
+                        try atoms.append(.{ .Text = txt });
                         if (next_delimits) {
                             _ = self.match(.Delimit);
                             if (should_break) break;
@@ -1992,6 +1993,7 @@ pub const TokenTag = enum {
     Dollar,
     Asterisk,
     DoubleAsterisk,
+    Tilde,
     Eq,
     Semicolon,
     Newline,
@@ -2033,6 +2035,8 @@ pub const Token = union(TokenTag) {
     // `*`
     Asterisk,
     DoubleAsterisk,
+    // `~`
+    Tilde,
 
     /// =
     Eq,
@@ -2100,6 +2104,7 @@ pub const Token = union(TokenTag) {
             .Dollar => "`$`",
             .Asterisk => "`*`",
             .DoubleAsterisk => "`**`",
+            .Tilde => "`~`",
             .Eq => "`+`",
             .Semicolon => "`;`",
             .Newline => "`\\n`",
@@ -2139,15 +2144,15 @@ pub const LexResult = struct {
             const size = size: {
                 var i: usize = 0;
                 for (errors) |e| {
-                    i += e.msg.len;
+                    i += e.msg.end - e.msg.start;
                 }
                 break :size i;
             };
             var buf = arena.alloc(u8, size) catch bun.outOfMemory();
             var i: usize = 0;
             for (errors) |e| {
-                @memcpy(buf[i .. i + e.msg.len], e.msg);
-                i += e.msg.len;
+                @memcpy(buf[i .. i + (e.msg.end - e.msg.start)], this.strpool[e.msg.start..e.msg.end]);
+                i += e.msg.end - e.msg.start;
             }
             break :str buf;
         };
@@ -2155,8 +2160,8 @@ pub const LexResult = struct {
     }
 };
 pub const LexError = struct {
-    /// Allocated with lexer arena
-    msg: []const u8,
+    /// Within str pool
+    msg: struct { start: usize, end: usize },
 };
 
 /// A special char used to denote the beginning of a special token
@@ -2243,7 +2248,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
             const start = self.strpool.items.len;
             self.strpool.appendSlice(msg) catch bun.outOfMemory();
             const end = self.strpool.items.len;
-            self.errors.append(.{ .msg = self.strpool.items[start..end] }) catch bun.outOfMemory();
+            self.errors.append(.{ .msg = .{ .start = start, .end = end } }) catch bun.outOfMemory();
         }
 
         fn make_sublexer(self: *@This(), kind: SubShellKind) @This() {
@@ -2437,6 +2442,26 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                             try self.break_word(false);
                             try self.tokens.append(.Asterisk);
                             continue;
+                        },
+
+                        // home directory
+                        '~' => {
+                            comptime assertSpecialChar('~');
+
+                            if (self.chars.state == .Single or self.chars.state == .Double) break :escaped;
+                            if (self.chars.prev != null and (self.chars.prev.?.char != ' ' or self.chars.prev.?.escaped)) break :escaped;
+                            // expand for:
+                            // ~/, ~\\, not ~\"
+                            if (self.peek()) |next| {
+                                if (next.char == '/' or next.char == '\\' or next.char == ' ') {
+                                    // allowed
+                                } else {
+                                    // not allowed
+                                    break :escaped;
+                                }
+                            }
+                            try self.break_word(false);
+                            try self.tokens.append(.Tilde);
                         },
 
                         // brace expansion syntax
@@ -2686,13 +2711,10 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     }
                     continue;
                 }
-                // Treat newline preceded by backslash as whitespace
+                // Ignore newline preceeded by backslash
                 else if (char == '\n') {
                     if (comptime bun.Environment.allow_assert) {
                         assert(input.escaped);
-                    }
-                    if (self.chars.state != .Double) {
-                        try self.break_word_impl(true, true, false);
                     }
                     continue;
                 }
@@ -2746,7 +2768,9 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
         }
 
         inline fn isImmediatelyEscapedQuote(self: *@This()) bool {
-            return (self.chars.state == .Double and
+            // this doesn't work and probably can't? maybe try to revamp string breaking?
+            // if this is going to be modified, it needs to support bunstr, single quoted strings, and bunstr inside strings
+            return ((self.chars.state == .Double or self.chars.state == .Single) and
                 (self.chars.current != null and !self.chars.current.?.escaped and self.chars.current.?.char == '"') and
                 (self.chars.prev != null and !self.chars.prev.?.escaped and self.chars.prev.?.char == '"'));
         }
@@ -2780,6 +2804,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 .BraceEnd,
                 .CmdSubstEnd,
                 .Asterisk,
+                .Tilde,
                 => true,
 
                 .Pipe,
@@ -3138,17 +3163,24 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                     switch (bytes[i]) {
                         '0'...'9' => {
                             if (digit_buf_count >= digit_buf.len) {
-                                const ERROR_STR = "Invalid " ++ name ++ " (number too high): ";
-                                var error_buf: [ERROR_STR.len + digit_buf.len + 1]u8 = undefined;
-                                const error_msg = std.fmt.bufPrint(error_buf[0..], "{s} {s}{c}", .{ ERROR_STR, digit_buf[0..digit_buf_count], bytes[i] }) catch @panic("Should not happen");
-                                self.add_error(error_msg);
+                                self.add_error("Invalid " ++ name ++ " (number too high)");
                                 return null;
                             }
                             digit_buf[digit_buf_count] = bytes[i];
                             digit_buf_count += 1;
                         },
-                        else => break,
+                        '.' => {
+                            i += 1;
+                            break;
+                        },
+                        else => {
+                            self.add_error("Invalid " ++ name ++ " (missing '.' at end)");
+                            return null;
+                        },
                     }
+                } else {
+                    self.add_error("Invalid " ++ name ++ " (missing '.' at end)");
+                    return null;
                 }
 
                 if (digit_buf_count == 0) {
@@ -3157,15 +3189,11 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
                 }
 
                 const idx = std.fmt.parseInt(usize, digit_buf[0..digit_buf_count], 10) catch {
-                    self.add_error("Invalid " ++ name ++ " ref ");
+                    self.add_error("Invalid " ++ name ++ " (out of bounds)");
                     return null;
                 };
 
                 if (!validate(self, idx)) return null;
-                // if (idx >= self.string_refs.len) {
-                //     self.add_error("Invalid " ++ name ++ " (out of bounds");
-                //     return null;
-                // }
 
                 // Bump the cursor
                 const new_idx = self.chars.cursorPos() + i;
@@ -3193,7 +3221,7 @@ pub fn NewLexer(comptime encoding: StringEncoding) type {
 
         fn validateJSStringRefIdx(self: *@This(), idx: usize) bool {
             if (idx >= self.string_refs.len) {
-                self.add_error("Invalid JS string ref (out of bounds");
+                self.add_error("Invalid JS string ref (out of bounds)");
                 return false;
             }
             return true;
@@ -3487,31 +3515,37 @@ pub fn ShellCharIter(comptime encoding: StringEncoding) type {
         }
 
         pub fn read_char(self: *@This()) ?InputChar {
-            const indexed_value = self.src.index() orelse return null;
-            var char = indexed_value.char;
-            if (char != '\\' or self.state == .Single) return .{ .char = char };
+            while (true) {
+                const indexed_value = self.src.index() orelse return null;
+                var char = indexed_value.char;
+                if (char != '\\' or self.state == .Single) return .{ .char = char };
 
-            // Handle backslash
-            switch (self.state) {
-                .Normal => {
-                    const peeked = self.src.indexNext() orelse return null;
-                    char = peeked.char;
-                },
-                .Double => {
-                    const peeked = self.src.indexNext() orelse return null;
-                    switch (peeked.char) {
-                        // Backslash only applies to these characters
-                        '$', '`', '"', '\\', '\n', '#' => {
-                            char = peeked.char;
-                        },
-                        else => return .{ .char = char, .escaped = false },
-                    }
-                },
-                // We checked `self.state == .Single` above so this is impossible
-                .Single => unreachable,
+                // Handle backslash
+                const peeked = self.src.indexNext() orelse return null;
+                if (peeked.char == '\n') {
+                    // completely ignore backslash newline, don't advance self.prev/self.current
+                    self.src.eat(true);
+                    continue;
+                }
+                switch (self.state) {
+                    .Normal => {
+                        char = peeked.char;
+                    },
+                    .Double => {
+                        switch (peeked.char) {
+                            // Backslash only applies to these characters
+                            '$', '`', '"', '\\', '#' => {
+                                char = peeked.char;
+                            },
+                            else => return .{ .char = char, .escaped = false },
+                        }
+                    },
+                    // We checked `self.state == .Single` above so this is impossible
+                    .Single => unreachable,
+                }
+
+                return .{ .char = char, .escaped = true };
             }
-
-            return .{ .char = char, .escaped = true };
         }
     };
 }
@@ -3677,6 +3711,8 @@ pub const Test = struct {
         // *
         Asterisk,
         DoubleAsterisk,
+        // ~
+        Tilde,
         // =
         Eq,
         Semicolon,
@@ -3714,6 +3750,7 @@ pub const Test = struct {
                 .JSObjRef => |val| return .{ .JSObjRef = val },
                 .Pipe => return .Pipe,
                 .DoublePipe => return .DoublePipe,
+                .Tilde => return .Tilde,
                 .Ampersand => return .Ampersand,
                 .DoubleAmpersand => return .DoubleAmpersand,
                 .Redirect => |r| return .{ .Redirect = r },
@@ -3942,7 +3979,7 @@ pub const ShellSrcBuilder = struct {
         const invalid = bun.simdutf.validate.utf8(utf8);
         if (!invalid) return false;
         if (allow_escape) {
-            if (needsEscapeUtf8AsciiLatin1(utf8)) {
+            if (needsEscape(u8, utf8)) {
                 const bunstr = bun.String.createUTF8(utf8);
                 defer bunstr.deref();
                 try this.appendJSStrRef(bunstr);
@@ -3976,7 +4013,7 @@ pub const ShellSrcBuilder = struct {
 
     pub fn appendJSStrRef(this: *ShellSrcBuilder, bunstr: bun.String) bun.OOM!void {
         const idx = this.jsstrs_to_escape.items.len;
-        const str = std.fmt.bufPrint(this.jsstr_ref_buf[0..], "{s}{d}", .{ LEX_JS_STRING_PREFIX, idx }) catch {
+        const str = std.fmt.bufPrint(this.jsstr_ref_buf[0..], "{s}{d}.", .{ LEX_JS_STRING_PREFIX, idx }) catch {
             @panic("Impossible");
         };
         try this.outbuf.appendSlice(str);
@@ -4066,26 +4103,20 @@ pub fn escapeUtf16(str: []const u16, outbuf: *std.ArrayList(u8), comptime add_qu
 }
 
 pub fn needsEscapeBunstr(bunstr: bun.String) bool {
-    if (bunstr.isUTF16()) return needsEscapeUTF16(bunstr.utf16());
+    if (bunstr.isUTF16()) return needsEscape(u16, bunstr.utf16());
     // Otherwise is utf-8, ascii, or latin-1
-    return needsEscapeUtf8AsciiLatin1(bunstr.byteSlice());
+    return needsEscape(u8, bunstr.byteSlice());
 }
 
-pub fn needsEscapeUTF16(str: []const u16) bool {
-    for (str) |codeunit| {
-        if (codeunit < 0xff and SPECIAL_CHARS_TABLE.isSet(codeunit)) return true;
-    }
-
-    return false;
-}
-
+/// For ascii, latin-1, utf-8, or utf-16.
 /// Checks for the presence of any char from `SPECIAL_CHARS` in `str`. This
 /// indicates the *possibility* that the string must be escaped, so it can have
 /// false positives, but it is faster than running the shell lexer through the
 /// input string for a more correct implementation.
-pub fn needsEscapeUtf8AsciiLatin1(str: []const u8) bool {
+pub fn needsEscape(comptime backing_char: type, str: []const backing_char) bool {
+    if (str.len == 0) return true;
     for (str) |c| {
-        if (SPECIAL_CHARS_TABLE.isSet(c)) return true;
+        if (c <= 0xFF and SPECIAL_CHARS_TABLE.isSet(c)) return true;
     }
     return false;
 }

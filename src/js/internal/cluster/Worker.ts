@@ -25,19 +25,19 @@ function Worker(options) {
 }
 $toClass(Worker, "Worker", EventEmitter);
 
-Worker.prototype.kill = function () {
+Worker.prototype.kill = function kill() {
   this.destroy.$apply(this, arguments);
 };
 
-Worker.prototype.send = function () {
+Worker.prototype.send = function send() {
   return this.process.send.$apply(this.process, arguments);
 };
 
-Worker.prototype.isDead = function () {
+Worker.prototype.isDead = function isDead() {
   return this.process.exitCode != null || this.process.signalCode != null;
 };
 
-Worker.prototype.isConnected = function () {
+Worker.prototype.isConnected = function isConnected() {
   return this.process.connected;
 };
 

@@ -2118,14 +2118,14 @@ function SQL(o, e = {}) {
       }
     };
     // begin is not allowed on a transaction we need to use savepoint() instead
-    transaction_sql.begin = function () {
+    transaction_sql.begin = function begin() {
       if (distributed) {
         throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call begin inside a distributed transaction");
       }
       throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call begin inside a transaction use savepoint() instead");
     };
 
-    transaction_sql.beginDistributed = function () {
+    transaction_sql.beginDistributed = function beginDistributed() {
       if (distributed) {
         throw $ERR_POSTGRES_INVALID_TRANSACTION_STATE("cannot call beginDistributed inside a distributed transaction");
       }
@@ -2134,7 +2134,7 @@ function SQL(o, e = {}) {
       );
     };
 
-    transaction_sql.flush = function () {
+    transaction_sql.flush = function flush() {
       if (state.connectionState & ReservedConnectionState.closed) {
         throw connectionClosedError();
       }

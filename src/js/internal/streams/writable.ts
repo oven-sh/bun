@@ -409,7 +409,7 @@ ObjectDefineProperty(Writable, SymbolHasInstance, {
 });
 
 // Otherwise people can pipe Writable streams, which is just wrong.
-Writable.prototype.pipe = function () {
+Writable.prototype.pipe = function pipe() {
   errorOrDestroy(this, $ERR_STREAM_CANNOT_PIPE());
 };
 
@@ -463,7 +463,7 @@ function _write(stream, chunk, encoding, cb?) {
   return writeOrBuffer(stream, state, chunk, encoding, cb);
 }
 
-Writable.prototype.write = function (chunk, encoding, cb) {
+Writable.prototype.write = function write(chunk, encoding, cb) {
   if (encoding != null && typeof encoding === "function") {
     cb = encoding;
     encoding = null;
@@ -472,14 +472,14 @@ Writable.prototype.write = function (chunk, encoding, cb) {
   return _write(this, chunk, encoding, cb) === true;
 };
 
-Writable.prototype.cork = function () {
+Writable.prototype.cork = function cork() {
   const state = this._writableState;
 
   state[kState] |= kCorked;
   state.corked++;
 };
 
-Writable.prototype.uncork = function () {
+Writable.prototype.uncork = function uncork() {
   const state = this._writableState;
 
   if (state.corked) {
@@ -753,7 +753,7 @@ function clearBuffer(stream, state) {
   state[kState] &= ~kBufferProcessing;
 }
 
-Writable.prototype._write = function (chunk, encoding, cb) {
+Writable.prototype._write = function _write(chunk, encoding, cb) {
   if (this._writev) {
     this._writev([{ chunk, encoding }], cb);
   } else {
@@ -763,7 +763,7 @@ Writable.prototype._write = function (chunk, encoding, cb) {
 
 Writable.prototype._writev = null;
 
-Writable.prototype.end = function (chunk, encoding, cb) {
+Writable.prototype.end = function end(chunk, encoding, cb) {
   const state = this._writableState;
 
   if (typeof chunk === "function") {
@@ -1073,7 +1073,7 @@ ObjectDefineProperties(Writable.prototype, {
 });
 
 const destroy = destroyImpl.destroy;
-Writable.prototype.destroy = function (err, cb) {
+Writable.prototype.destroy = function destroy(err, cb) {
   const state = this._writableState;
 
   // Invoke pending callbacks.
@@ -1086,7 +1086,7 @@ Writable.prototype.destroy = function (err, cb) {
 };
 
 Writable.prototype._undestroy = destroyImpl.undestroy;
-Writable.prototype._destroy = function (err, cb) {
+Writable.prototype._destroy = function _destroy(err, cb) {
   cb(err);
 };
 
@@ -1101,11 +1101,11 @@ function lazyWebStreams() {
   return webStreamsAdapters;
 }
 
-Writable.fromWeb = function (writableStream, options) {
+Writable.fromWeb = function fromWeb(writableStream, options) {
   return lazyWebStreams().newStreamWritableFromWritableStream(writableStream, options);
 };
 
-Writable.toWeb = function (streamWritable) {
+Writable.toWeb = function toWeb(streamWritable) {
   return lazyWebStreams().newWritableStreamFromStreamWritable(streamWritable);
 };
 

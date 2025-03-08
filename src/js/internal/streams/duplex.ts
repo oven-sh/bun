@@ -136,16 +136,16 @@ function lazyWebStreams() {
   return webStreamsAdapters;
 }
 
-Duplex.fromWeb = function (pair, options) {
+Duplex.fromWeb = function fromWeb(pair, options) {
   return lazyWebStreams().newStreamDuplexFromReadableWritablePair(pair, options);
 };
 
-Duplex.toWeb = function (duplex) {
+Duplex.toWeb = function toWeb(duplex) {
   return lazyWebStreams().newReadableWritablePairFromDuplex(duplex);
 };
 
 let duplexify;
-Duplex.from = function (body) {
+Duplex.from = function from(body) {
   duplexify ??= require("internal/streams/duplexify");
   return duplexify(body, "body");
 };

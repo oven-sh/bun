@@ -125,11 +125,11 @@ function prefinish() {
 
 Transform.prototype._final = final;
 
-Transform.prototype._transform = function (chunk, encoding, callback) {
+Transform.prototype._transform = function _transform(chunk, encoding, callback) {
   throw $ERR_METHOD_NOT_IMPLEMENTED("_transform()");
 };
 
-Transform.prototype._write = function (chunk, encoding, callback) {
+Transform.prototype._write = function _write(chunk, encoding, callback) {
   const rState = this._readableState;
   const wState = this._writableState;
   const length = rState.length;
@@ -161,7 +161,7 @@ Transform.prototype._write = function (chunk, encoding, callback) {
   });
 };
 
-Transform.prototype._read = function () {
+Transform.prototype._read = function _read() {
   if (this[kCallback]) {
     const callback = this[kCallback];
     this[kCallback] = null;

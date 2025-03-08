@@ -25,7 +25,7 @@ cluster.isPrimary = false;
 cluster.worker = null;
 cluster.Worker = Worker;
 
-cluster._setupWorker = function () {
+cluster._setupWorker = function _setupWorker() {
   const worker = new Worker({
     id: +process.env.NODE_UNIQUE_ID | 0,
     process: process,
@@ -54,7 +54,7 @@ cluster._setupWorker = function () {
 };
 
 // `obj` is a net#Server or a dgram#Socket object.
-cluster._getServer = function (obj, options, cb) {
+cluster._getServer = function _getServer(obj, options, cb) {
   let address = options.address;
 
   // Resolve unix socket paths to absolute paths
@@ -127,7 +127,7 @@ function shared(message, { handle, indexesKey, index }, cb) {
   // closed. Avoids resource leaks when the handle is short-lived.
   const close = handle.close;
 
-  handle.close = function () {
+  handle.close = function close() {
     send({ act: "close", key });
     handles.delete(key);
     removeIndexesKey(indexesKey, index);
@@ -227,7 +227,7 @@ function send(message, cb?) {
 }
 
 // Extend generic Worker with methods specific to worker processes.
-Worker.prototype.disconnect = function () {
+Worker.prototype.disconnect = function disconnect() {
   if (this.state !== "disconnecting" && this.state !== "destroying") {
     this.state = "disconnecting";
     this._disconnect();
@@ -236,7 +236,7 @@ Worker.prototype.disconnect = function () {
   return this;
 };
 
-Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
+Worker.prototype._disconnect = function _disconnect(this: typeof Worker, primaryInitiated?) {
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 
@@ -267,7 +267,7 @@ Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?)
   checkWaitingCount();
 };
 
-Worker.prototype.destroy = function () {
+Worker.prototype.destroy = function destroy() {
   if (this.state === "destroying") return;
 
   this.exitedAfterDisconnect = true;

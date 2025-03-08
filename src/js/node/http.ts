@@ -289,12 +289,12 @@ ObjectDefineProperty(Agent, "defaultMaxSockets", {
   },
 });
 
-Agent.prototype.createConnection = function () {
+Agent.prototype.createConnection = function createConnection() {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createConnection is a no-op, returns fake socket");
   return (this[kfakeSocket] ??= new FakeSocket());
 };
 
-Agent.prototype.getName = function (options = kEmptyObject) {
+Agent.prototype.getName = function getName(options = kEmptyObject) {
   let name = `http:${options.host || "localhost"}:`;
   if (options.port) name += options.port;
   name += ":";
@@ -306,29 +306,29 @@ Agent.prototype.getName = function (options = kEmptyObject) {
   return name;
 };
 
-Agent.prototype.addRequest = function () {
+Agent.prototype.addRequest = function addRequest() {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.addRequest is a no-op");
 };
 
-Agent.prototype.createSocket = function (req, options, cb) {
+Agent.prototype.createSocket = function createSocket(req, options, cb) {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.createSocket returns fake socket");
   cb(null, (this[kfakeSocket] ??= new FakeSocket()));
 };
 
-Agent.prototype.removeSocket = function () {
+Agent.prototype.removeSocket = function removeSocket() {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.removeSocket is a no-op");
 };
 
-Agent.prototype.keepSocketAlive = function () {
+Agent.prototype.keepSocketAlive = function keepSocketAlive() {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.keepSocketAlive is a no-op");
   return true;
 };
 
-Agent.prototype.reuseSocket = function () {
+Agent.prototype.reuseSocket = function reuseSocket() {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.reuseSocket is a no-op");
 };
 
-Agent.prototype.destroy = function () {
+Agent.prototype.destroy = function destroy() {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
 };
 
@@ -647,11 +647,11 @@ Server.prototype = {
             if (rejectFunction) rejectFunction(err);
           };
 
-          var reply = function (resp) {
+          function reply(resp) {
             if (pendingResponse) return;
             pendingResponse = resp;
             if (resolveFunction) resolveFunction(resp);
-          };
+          }
 
           const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = isHTTPS;
@@ -1021,9 +1021,9 @@ OutgoingMessage.prototype.constructor = OutgoingMessage; // Re-add constructor w
 $setPrototypeDirect.$call(OutgoingMessage, Writable);
 
 // Express "compress" package uses this
-OutgoingMessage.prototype._implicitHeader = function () {};
+OutgoingMessage.prototype._implicitHeader = function _implicitHeader() {};
 
-OutgoingMessage.prototype.appendHeader = function (name, value) {
+OutgoingMessage.prototype.appendHeader = function appendHeader(name, value) {
   var headers = (this[headersSymbol] ??= new Headers());
   if (typeof value === "number") {
     value = String(value);
@@ -1031,29 +1031,29 @@ OutgoingMessage.prototype.appendHeader = function (name, value) {
   headers.append(name, value);
 };
 
-OutgoingMessage.prototype.flushHeaders = function () {};
+OutgoingMessage.prototype.flushHeaders = function flushHeaders() {};
 
-OutgoingMessage.prototype.getHeader = function (name) {
+OutgoingMessage.prototype.getHeader = function getHeader(name) {
   return getHeader(this[headersSymbol], name);
 };
 
-OutgoingMessage.prototype.getHeaders = function () {
+OutgoingMessage.prototype.getHeaders = function getHeaders() {
   if (!this[headersSymbol]) return kEmptyObject;
   return this[headersSymbol].toJSON();
 };
 
-OutgoingMessage.prototype.getHeaderNames = function () {
+OutgoingMessage.prototype.getHeaderNames = function getHeaderNames() {
   var headers = this[headersSymbol];
   if (!headers) return [];
   return Array.from(headers.keys());
 };
 
-OutgoingMessage.prototype.removeHeader = function (name) {
+OutgoingMessage.prototype.removeHeader = function removeHeader(name) {
   if (!this[headersSymbol]) return;
   this[headersSymbol].delete(name);
 };
 
-OutgoingMessage.prototype.setHeader = function (name, value) {
+OutgoingMessage.prototype.setHeader = function setHeader(name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   var headers = this[headersSymbol];
   if (typeof value === "number") {
@@ -1063,12 +1063,12 @@ OutgoingMessage.prototype.setHeader = function (name, value) {
   return this;
 };
 
-OutgoingMessage.prototype.hasHeader = function (name) {
+OutgoingMessage.prototype.hasHeader = function hasHeader(name) {
   if (!this[headersSymbol]) return false;
   return this[headersSymbol].has(name);
 };
 
-OutgoingMessage.prototype.addTrailers = function (headers) {
+OutgoingMessage.prototype.addTrailers = function addTrailers(headers) {
   throw new Error("not implemented");
 };
 
@@ -1078,7 +1078,7 @@ function onTimeout() {
   this.emit("timeout");
 }
 
-OutgoingMessage.prototype.setTimeout = function (msecs, callback) {
+OutgoingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (this.destroyed) return this;
 
   this.timeout = msecs = validateMsecs(msecs, "msecs");
@@ -1245,12 +1245,12 @@ ServerResponse.prototype.constructor = ServerResponse; // Re-add constructor whi
 $setPrototypeDirect.$call(ServerResponse, OutgoingMessage);
 
 // Express "compress" package uses this
-ServerResponse.prototype._implicitHeader = function () {
+ServerResponse.prototype._implicitHeader = function _implicitHeader() {
   // @ts-ignore
   this.writeHead(this.statusCode);
 };
 
-ServerResponse.prototype._write = function (chunk, encoding, callback) {
+ServerResponse.prototype._write = function _write(chunk, encoding, callback) {
   if (this[firstWriteSymbol] === undefined && !this.headersSent) {
     this[firstWriteSymbol] = chunk;
     callback();
@@ -1263,7 +1263,7 @@ ServerResponse.prototype._write = function (chunk, encoding, callback) {
   });
 };
 
-ServerResponse.prototype._writev = function (chunks, callback) {
+ServerResponse.prototype._writev = function _writev(chunks, callback) {
   if (chunks.length === 1 && !this.headersSent && this[firstWriteSymbol] === undefined) {
     this[firstWriteSymbol] = chunks[0].chunk;
     callback();
@@ -1318,7 +1318,7 @@ function drainHeadersIfObservable() {
   this._implicitHeader();
 }
 
-ServerResponse.prototype._final = function (callback) {
+ServerResponse.prototype._final = function _final(callback) {
   const req = this.req;
   const shouldEmitClose = req && req.emit && !this[finishedSymbol];
 
@@ -1359,15 +1359,15 @@ ServerResponse.prototype._final = function (callback) {
   });
 };
 
-ServerResponse.prototype.writeProcessing = function () {
+ServerResponse.prototype.writeProcessing = function writeProcessing() {
   throw new Error("not implemented");
 };
 
-ServerResponse.prototype.addTrailers = function (headers) {
+ServerResponse.prototype.addTrailers = function addTrailers(headers) {
   throw new Error("not implemented");
 };
 
-ServerResponse.prototype.assignSocket = function (socket) {
+ServerResponse.prototype.assignSocket = function assignSocket(socket) {
   if (socket._httpMessage) {
     throw ERR_HTTP_SOCKET_ASSIGNED();
   }
@@ -1378,20 +1378,20 @@ ServerResponse.prototype.assignSocket = function (socket) {
   this.emit("socket", socket);
 };
 
-ServerResponse.prototype.detachSocket = function (socket) {
+ServerResponse.prototype.detachSocket = function detachSocket(socket) {
   throw new Error("not implemented");
 };
 
-ServerResponse.prototype.writeContinue = function (callback) {
+ServerResponse.prototype.writeContinue = function writeContinue(callback) {
   throw new Error("not implemented");
 };
 
-ServerResponse.prototype.setTimeout = function (msecs, callback) {
+ServerResponse.prototype.setTimeout = function setTimeout(msecs, callback) {
   // TODO:
   return this;
 };
 
-ServerResponse.prototype.appendHeader = function (name, value) {
+ServerResponse.prototype.appendHeader = function appendHeader(name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   const headers = this[headersSymbol];
   if (typeof value === "number") {
@@ -1400,30 +1400,30 @@ ServerResponse.prototype.appendHeader = function (name, value) {
   headers.append(name, value);
 };
 
-ServerResponse.prototype.flushHeaders = function () {};
+ServerResponse.prototype.flushHeaders = function flushHeaders() {};
 
-ServerResponse.prototype.getHeader = function (name) {
+ServerResponse.prototype.getHeader = function getHeader(name) {
   return getHeader(this[headersSymbol], name);
 };
 
-ServerResponse.prototype.getHeaders = function () {
+ServerResponse.prototype.getHeaders = function getHeaders() {
   const headers = this[headersSymbol];
   if (!headers) return kEmptyObject;
   return headers.toJSON();
 };
 
-ServerResponse.prototype.getHeaderNames = function () {
+ServerResponse.prototype.getHeaderNames = function getHeaderNames() {
   const headers = this[headersSymbol];
   if (!headers) return [];
   return Array.from(headers.keys());
 };
 
-ServerResponse.prototype.removeHeader = function (name) {
+ServerResponse.prototype.removeHeader = function removeHeader(name) {
   if (!this[headersSymbol]) return;
   this[headersSymbol].delete(name);
 };
 
-ServerResponse.prototype.setHeader = function (name, value) {
+ServerResponse.prototype.setHeader = function setHeader(name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   const headers = this[headersSymbol];
   if (typeof value === "number") {
@@ -1433,12 +1433,12 @@ ServerResponse.prototype.setHeader = function (name, value) {
   return this;
 };
 
-ServerResponse.prototype.hasHeader = function (name) {
+ServerResponse.prototype.hasHeader = function hasHeader(name) {
   if (!this[headersSymbol]) return false;
   return this[headersSymbol].has(name);
 };
 
-ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
+ServerResponse.prototype.writeHead = function writeHead(statusCode, statusMessage, headers) {
   _writeHead(statusCode, statusMessage, headers, this);
 
   return this;

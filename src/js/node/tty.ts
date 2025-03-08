@@ -21,7 +21,7 @@ Object.defineProperty(ReadStream, "prototype", {
   get() {
     const Prototype = Object.create(require("node:fs").ReadStream.prototype);
 
-    Prototype.setRawMode = function (flag) {
+    Prototype.setRawMode = function setRawMode(flag) {
       flag = !!flag;
 
       // On windows, this goes through the stream handle itself, as it must call
@@ -101,7 +101,7 @@ Object.defineProperty(WriteStream, "prototype", {
     const Real = require("node:fs").WriteStream.prototype;
     Object.defineProperty(WriteStream, "prototype", { value: Real });
 
-    WriteStream.prototype._refreshSize = function () {
+    WriteStream.prototype._refreshSize = function _refreshSize() {
       const oldCols = this.columns;
       const oldRows = this.rows;
       const windowSizeArray = [0, 0];
@@ -114,30 +114,30 @@ Object.defineProperty(WriteStream, "prototype", {
       }
     };
 
-    WriteStream.prototype.clearLine = function (dir, cb) {
+    WriteStream.prototype.clearLine = function clearLine(dir, cb) {
       return require("node:readline").clearLine(this, dir, cb);
     };
 
-    WriteStream.prototype.clearScreenDown = function (cb) {
+    WriteStream.prototype.clearScreenDown = function clearScreenDown(cb) {
       return require("node:readline").clearScreenDown(this, cb);
     };
 
-    WriteStream.prototype.cursorTo = function (x, y, cb) {
+    WriteStream.prototype.cursorTo = function cursorTo(x, y, cb) {
       return require("node:readline").cursorTo(this, x, y, cb);
     };
 
     // The `getColorDepth` API got inspired by multiple sources such as
     // https://github.com/chalk/supports-color,
     // https://github.com/isaacs/color-support.
-    WriteStream.prototype.getColorDepth = function (env = process.env) {
+    WriteStream.prototype.getColorDepth = function getColorDepth(env = process.env) {
       return require("internal/tty").getColorDepth(env);
     };
 
-    WriteStream.prototype.getWindowSize = function () {
+    WriteStream.prototype.getWindowSize = function getWindowSize() {
       return [this.columns, this.rows];
     };
 
-    WriteStream.prototype.hasColors = function (count, env) {
+    WriteStream.prototype.hasColors = function hasColors(count, env) {
       if (env === undefined && (count === undefined || (typeof count === "object" && count !== null))) {
         env = count;
         count = 16;
@@ -148,7 +148,7 @@ Object.defineProperty(WriteStream, "prototype", {
       return count <= 2 ** this.getColorDepth(env);
     };
 
-    WriteStream.prototype.moveCursor = function (dx, dy, cb) {
+    WriteStream.prototype.moveCursor = function moveCursor(dx, dy, cb) {
       return require("node:readline").moveCursor(this, dx, dy, cb);
     };
 

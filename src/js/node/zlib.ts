@@ -223,18 +223,18 @@ ObjectDefineProperty(ZlibBase.prototype, "bytesRead", {
   },
 });
 
-ZlibBase.prototype.reset = function () {
+ZlibBase.prototype.reset = function reset() {
   assert(this._handle, "zlib binding closed");
   return this._handle.reset();
 };
 
 // This is the _flush function called by the transform class, internally, when the last chunk has been written.
-ZlibBase.prototype._flush = function (callback) {
+ZlibBase.prototype._flush = function _flush(callback) {
   this._transform(Buffer.alloc(0), "", callback);
 };
 
 // Force Transform compat behavior.
-ZlibBase.prototype._final = function (callback) {
+ZlibBase.prototype._final = function _final(callback) {
   callback();
 };
 
@@ -264,7 +264,7 @@ const kFlushBuffers: (typeof Buffer)[] = [];
   }
 }
 
-ZlibBase.prototype.flush = function (kind, callback) {
+ZlibBase.prototype.flush = function flush(kind, callback) {
   if (typeof kind === "function" || (kind === undefined && !callback)) {
     callback = kind;
     kind = this._defaultFullFlushFlag;
@@ -278,17 +278,17 @@ ZlibBase.prototype.flush = function (kind, callback) {
   }
 };
 
-ZlibBase.prototype.close = function (callback) {
+ZlibBase.prototype.close = function close(callback) {
   if (callback) finished(this, callback);
   this.destroy();
 };
 
-ZlibBase.prototype._destroy = function (err, callback) {
+ZlibBase.prototype._destroy = function _destroy(err, callback) {
   _close(this);
   callback(err);
 };
 
-ZlibBase.prototype._transform = function (chunk, encoding, cb) {
+ZlibBase.prototype._transform = function _transform(chunk, encoding, cb) {
   let flushFlag = this._defaultFlushFlag;
   // We use a 'fake' zero-length chunk to carry information about flushes from the public API to the actual stream implementation.
   if (typeof chunk[kFlushFlag] === "number") {
@@ -302,7 +302,7 @@ ZlibBase.prototype._transform = function (chunk, encoding, cb) {
   processChunk(this, chunk, flushFlag, cb);
 };
 
-ZlibBase.prototype._processChunk = function (chunk, flushFlag, cb) {
+ZlibBase.prototype._processChunk = function _processChunk(chunk, flushFlag, cb) {
   // _processChunk() is left for backwards compatibility
   if (typeof cb === "function") processChunk(this, chunk, flushFlag, cb);
   else return processChunkSync(this, chunk, flushFlag);

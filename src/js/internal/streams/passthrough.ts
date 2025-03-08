@@ -13,7 +13,7 @@ function PassThrough(options) {
 }
 $toClass(PassThrough, "PassThrough", Transform);
 
-PassThrough.prototype._transform = function (chunk, encoding, cb) {
+PassThrough.prototype._transform = function _transform(chunk, encoding, cb) {
   cb(null, chunk);
 };
 

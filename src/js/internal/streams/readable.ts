@@ -304,7 +304,7 @@ Readable.ReadableState = ReadableState;
 
 Readable.prototype.destroy = destroyImpl.destroy;
 Readable.prototype._undestroy = destroyImpl.undestroy;
-Readable.prototype._destroy = function (err, cb) {
+Readable.prototype._destroy = function _destroy(err, cb) {
   cb(err);
 };
 
@@ -325,7 +325,7 @@ Readable.prototype[SymbolAsyncDispose] = function () {
 // This returns true if the highWaterMark has not been hit yet,
 // similar to how Writable.write() returns true if you should
 // write() some more.
-Readable.prototype.push = function (chunk, encoding) {
+Readable.prototype.push = function push(chunk, encoding) {
   $debug("push", chunk);
 
   const state = this._readableState;
@@ -335,7 +335,7 @@ Readable.prototype.push = function (chunk, encoding) {
 };
 
 // Unshift should *always* be something directly out of read().
-Readable.prototype.unshift = function (chunk, encoding) {
+Readable.prototype.unshift = function unshift(chunk, encoding) {
   $debug("unshift", chunk);
   const state = this._readableState;
   return (state[kState] & kObjectMode) === 0
@@ -510,13 +510,13 @@ function addChunk(stream, state, chunk, addToFront) {
   maybeReadMore(stream, state);
 }
 
-Readable.prototype.isPaused = function () {
+Readable.prototype.isPaused = function isPaused() {
   const state = this._readableState;
   return (state[kState] & kPaused) !== 0 || (state[kState] & (kHasFlowing | kFlowing)) === kHasFlowing;
 };
 
 // Backwards compatibility.
-Readable.prototype.setEncoding = function (enc) {
+Readable.prototype.setEncoding = function setEncoding(enc) {
   const state = this._readableState;
 
   const decoder = new StringDecoder(enc);
@@ -571,7 +571,7 @@ function howMuchToRead(n, state) {
 }
 
 // You can override either this method, or the async _read(n) below.
-Readable.prototype.read = function (n) {
+Readable.prototype.read = function read(n) {
   $debug("read", n);
   // Same as parseInt(undefined, 10), however V8 7.3 performance regressed
   // in this scenario, so we are doing it manually.
@@ -817,11 +817,11 @@ function maybeReadMore_(stream, state) {
 // call cb(er, data) where data is <= n in length.
 // for virtual (non-string, non-buffer) streams, "length" is somewhat
 // arbitrary, and perhaps not very meaningful.
-Readable.prototype._read = function (n) {
+Readable.prototype._read = function _read(n) {
   throw $ERR_METHOD_NOT_IMPLEMENTED("_read()");
 };
 
-Readable.prototype.pipe = function (dest, pipeOpts) {
+Readable.prototype.pipe = function pipe(dest, pipeOpts) {
   const src = this;
   const state = this._readableState;
 
@@ -994,7 +994,7 @@ function pipeOnDrain(src, dest) {
   };
 }
 
-Readable.prototype.unpipe = function (dest) {
+Readable.prototype.unpipe = function unpipe(dest) {
   const state = this._readableState;
   const unpipeInfo = { hasUnpiped: false };
 
@@ -1025,7 +1025,7 @@ Readable.prototype.unpipe = function (dest) {
 
 // Set up data events if they are asked for
 // Ensure readable listeners eventually get something.
-Readable.prototype.on = function (ev, fn) {
+Readable.prototype.on = function on(ev, fn) {
   const res = Stream.prototype.on.$call(this, ev, fn);
   const state = this._readableState;
 
@@ -1057,7 +1057,7 @@ Readable.prototype.on = function (ev, fn) {
 };
 Readable.prototype.addListener = Readable.prototype.on;
 
-Readable.prototype.removeListener = function (ev, fn) {
+Readable.prototype.removeListener = function removeListener(ev, fn) {
   const state = this._readableState;
 
   const res = Stream.prototype.removeListener.$call(this, ev, fn);
@@ -1078,7 +1078,7 @@ Readable.prototype.removeListener = function (ev, fn) {
 };
 Readable.prototype.off = Readable.prototype.removeListener;
 
-Readable.prototype.removeAllListeners = function (ev) {
+Readable.prototype.removeAllListeners = function removeAllListeners(ev) {
   const res = Stream.prototype.removeAllListeners.$apply(this, arguments);
 
   if (ev === "readable" || ev === undefined) {
@@ -1123,7 +1123,7 @@ function nReadingNextTick(self) {
 
 // pause() and resume() are remnants of the legacy readable stream API
 // If the user uses them, then switch into old mode.
-Readable.prototype.resume = function () {
+Readable.prototype.resume = function resume() {
   const state = this._readableState;
   if ((state[kState] & kFlowing) === 0) {
     $debug("resume");
@@ -1162,7 +1162,7 @@ function resume_(stream, state) {
   if ((state[kState] & (kFlowing | kReading)) === kFlowing) stream.read(0);
 }
 
-Readable.prototype.pause = function () {
+Readable.prototype.pause = function pause() {
   const state = this._readableState;
   $debug("call pause");
   if ((state[kState] & (kHasFlowing | kFlowing)) !== kHasFlowing) {
@@ -1184,7 +1184,7 @@ function flow(stream) {
 // Wrap an old-style stream as the async data source.
 // This is *not* part of the readable stream interface.
 // It is an ugly unfortunate mess of history.
-Readable.prototype.wrap = function (stream) {
+Readable.prototype.wrap = function wrap(stream) {
   let paused = false;
 
   // TODO (ronag): Should this.destroy(err) emit
@@ -1237,7 +1237,7 @@ Readable.prototype[SymbolAsyncIterator] = function () {
   return streamToAsyncIterator(this);
 };
 
-Readable.prototype.iterator = function (options) {
+Readable.prototype.iterator = function iterator(options) {
   if (options !== undefined) {
     validateObject(options, "options");
   }
@@ -1617,7 +1617,7 @@ function endWritableNT(stream) {
   }
 }
 
-Readable.from = function (iterable, opts) {
+Readable.from = function from(iterable, opts) {
   return from(Readable, iterable, opts);
 };
 
@@ -1628,15 +1628,15 @@ function lazyWebStreams() {
   return webStreamsAdapters;
 }
 
-Readable.fromWeb = function (readableStream, options) {
+Readable.fromWeb = function fromWeb(readableStream, options) {
   return lazyWebStreams().newStreamReadableFromReadableStream(readableStream, options);
 };
 
-Readable.toWeb = function (streamReadable, options) {
+Readable.toWeb = function toWeb(streamReadable, options) {
   return lazyWebStreams().newReadableStreamFromStreamReadable(streamReadable, options);
 };
 
-Readable.wrap = function (src, options) {
+Readable.wrap = function wrap(src, options) {
   return new Readable({
     objectMode: src.readableObjectMode ?? src.objectMode ?? true,
     ...options,

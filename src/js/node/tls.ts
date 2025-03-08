@@ -518,7 +518,7 @@ function Server(options, secureConnectionListener): void {
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
 
-  this.addContext = function (hostname, context) {
+  this.addContext = function addContext(hostname, context) {
     if (typeof hostname !== "string") {
       throw new TypeError("hostname must be a string");
     }
@@ -533,7 +533,7 @@ function Server(options, secureConnectionListener): void {
     }
   };
 
-  this.setSecureContext = function (options) {
+  this.setSecureContext = function setSecureContext(options) {
     if (options instanceof InternalSecureContext) {
       options = options.context;
     }
@@ -604,11 +604,11 @@ function Server(options, secureConnectionListener): void {
     }
   };
 
-  Server.prototype.getTicketKeys = function () {
+  Server.prototype.getTicketKeys = function getTicketKeys() {
     throw Error("Not implented in Bun yet");
   };
 
-  Server.prototype.setTicketKeys = function () {
+  Server.prototype.setTicketKeys = function setTicketKeys() {
     throw Error("Not implented in Bun yet");
   };
 

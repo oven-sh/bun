@@ -42,7 +42,7 @@ function from(Readable, iterable, opts) {
   let reading = false;
   let isAsyncValues = false;
 
-  readable._read = function () {
+  readable._read = function _read() {
     if (!reading) {
       reading = true;
 
@@ -56,7 +56,7 @@ function from(Readable, iterable, opts) {
     }
   };
 
-  readable._destroy = function (error, cb) {
+  readable._destroy = function _destroy(error, cb) {
     PromisePrototypeThen.$call(
       close(error),
       () => process.nextTick(cb, error), // nextTick is here in case cb throws

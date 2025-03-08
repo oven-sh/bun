@@ -2598,7 +2598,7 @@ Interface.prototype._addHistory = _Interface.prototype[kAddHistory];
 Interface.prototype._refreshLine = _Interface.prototype[kRefreshLine];
 Interface.prototype._normalWrite = _Interface.prototype[kNormalWrite];
 Interface.prototype._insertString = _Interface.prototype[kInsertString];
-Interface.prototype._tabComplete = function (lastKeypressWasTab) {
+Interface.prototype._tabComplete = function _tabComplete(lastKeypressWasTab) {
   // Overriding parent method because `this.completer` in the legacy
   // implementation takes a callback instead of being an async function.
   this.pause();

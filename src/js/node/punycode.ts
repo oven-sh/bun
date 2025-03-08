@@ -126,7 +126,7 @@ const ucs2encode = codePoints => String.fromCodePoint(...codePoints);
  * representing integers) in the range `0` to `base - 1`, or `base` if
  * the code point does not represent a value.
  */
-const basicToDigit = function (codePoint) {
+function basicToDigit(codePoint) {
   if (codePoint >= 0x30 && codePoint < 0x3a) {
     return 26 + (codePoint - 0x30);
   }
@@ -137,7 +137,7 @@ const basicToDigit = function (codePoint) {
     return codePoint - 0x61;
   }
   return base;
-};
+}
 
 /**
  * Converts a digit/integer into a basic code point.
@@ -150,18 +150,18 @@ const basicToDigit = function (codePoint) {
  * used; else, the lowercase form is used. The behavior is undefined
  * if `flag` is non-zero and `digit` has no uppercase form.
  */
-const digitToBasic = function (digit, flag) {
+function digitToBasic(digit, flag) {
   //  0..25 map to ASCII a..z or A..Z
   // 26..35 map to ASCII 0..9
   return digit + 22 + 75 * (digit < 26) - ((flag != 0) << 5);
-};
+}
 
 /**
  * Bias adaptation function as per section 3.4 of RFC 3492.
  * https://tools.ietf.org/html/rfc3492#section-3.4
  * @private
  */
-const adapt = function (delta, numPoints, firstTime) {
+function adapt(delta, numPoints, firstTime) {
   let k = 0;
   delta = firstTime ? floor(delta / damp) : delta >> 1;
   delta += floor(delta / numPoints);
@@ -169,7 +169,7 @@ const adapt = function (delta, numPoints, firstTime) {
     delta = floor(delta / baseMinusTMin);
   }
   return floor(k + ((baseMinusTMin + 1) * delta) / (delta + skew));
-};
+}
 
 /**
  * Converts a Punycode string of ASCII-only symbols to a string of Unicode
@@ -178,7 +178,7 @@ const adapt = function (delta, numPoints, firstTime) {
  * @param {String} input The Punycode string of ASCII-only symbols.
  * @returns {String} The resulting string of Unicode symbols.
  */
-const decode = function (input: string) {
+function decode(input: string) {
   // Don't use UCS-2.
   const output: number[] = [];
   const inputLength = input.length;
@@ -259,7 +259,7 @@ const decode = function (input: string) {
   }
 
   return String.fromCodePoint(...output);
-};
+}
 
 /**
  * Converts a string of Unicode symbols (e.g. a domain name label) to a
@@ -268,7 +268,7 @@ const decode = function (input: string) {
  * @param {String} input The string of Unicode symbols.
  * @returns {String} The resulting Punycode string of ASCII-only symbols.
  */
-const encode = function (input_: string) {
+function encode(input_: string) {
   const output: string[] = [];
 
   // Convert the input in UCS-2 to an array of Unicode code points.
@@ -350,7 +350,7 @@ const encode = function (input_: string) {
     ++n;
   }
   return output.join("");
-};
+}
 
 /**
  * Converts a Punycode string representing a domain name or an email address
@@ -363,11 +363,11 @@ const encode = function (input_: string) {
  * @returns {String} The Unicode representation of the given Punycode
  * string.
  */
-const toUnicode = function (input) {
+function toUnicode(input) {
   return mapDomain(input, function (string) {
     return regexPunycode.test(string) ? decode(string.slice(4).toLowerCase()) : string;
   });
-};
+}
 
 /**
  * Converts a Unicode string representing a domain name or an email address to
@@ -380,11 +380,11 @@ const toUnicode = function (input) {
  * @returns {String} The Punycode representation of the given domain name or
  * email address.
  */
-const toASCII = function (input) {
+function toASCII(input) {
   return mapDomain(input, function (string) {
     return regexNonASCII.test(string) ? "xn--" + encode(string) : string;
   });
-};
+}
 
 /*--------------------------------------------------------------------------*/
 

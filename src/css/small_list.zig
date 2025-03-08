@@ -287,7 +287,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
                             old.deinit(allocator);
                         }
                     }
-                } else if (res.popOrNull()) |the_last| {
+                } else if (res.pop()) |the_last| {
                     var old = this.*;
                     // Prefixed property with no unprefixed version.
                     // Replace self with the last prefixed version so that it doesn't

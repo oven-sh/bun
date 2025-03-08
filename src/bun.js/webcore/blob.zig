@@ -1193,11 +1193,11 @@ pub const Blob = struct {
             if (path_or_blob == .path or
                 // If they try to set an offset, its a little more complicated so let's avoid that
                 (path_or_blob.blob.offset == 0 and !path_or_blob.blob.isS3() and
-                // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
-                !(path_or_blob.blob.store != null and
-                path_or_blob.blob.store.?.data == .file and
-                path_or_blob.blob.store.?.data.file.mode != 0 and
-                bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
+                    // Is this a file that is known to be a pipe? Let's avoid blocking the main thread on it.
+                    !(path_or_blob.blob.store != null and
+                        path_or_blob.blob.store.?.data == .file and
+                        path_or_blob.blob.store.?.data.file.mode != 0 and
+                        bun.isRegularFile(path_or_blob.blob.store.?.data.file.mode))))
             {
                 if (data.isString()) {
                     const len = data.getLength(globalThis);
@@ -5780,7 +5780,7 @@ pub const Blob = struct {
                     joiner.push(sliced.slice(), sliced.allocator.get());
                 },
             }
-            current = stack.popOrNull() orelse break;
+            current = stack.pop() orelse break;
         }
 
         const joined = try joiner.done(bun.default_allocator);

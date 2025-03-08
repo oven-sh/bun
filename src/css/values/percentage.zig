@@ -41,17 +41,15 @@ pub const Percentage = struct {
         } };
 
         if (this.v != 0.0 and @abs(this.v) < 0.01) {
-            // TODO: is this the max length?
             var buf: [32]u8 = undefined;
-            var fba = std.heap.FixedBufferAllocator.init(&buf);
-            var string = std.ArrayList(u8).init(fba.allocator());
-            const writer = string.writer();
+            var stream = std.io.fixedBufferStream(&buf);
+            const writer = stream.writer();
             percent.toCssGeneric(writer) catch return dest.addFmtError();
             if (this.v < 0.0) {
                 try dest.writeChar('-');
-                try dest.writeStr(bun.strings.trimLeadingPattern2(string.items, '-', '0'));
+                try dest.writeStr(bun.strings.trimLeadingPattern2(stream.getWritten(), '-', '0'));
             } else {
-                try dest.writeStr(bun.strings.trimLeadingChar(string.items, '0'));
+                try dest.writeStr(bun.strings.trimLeadingChar(stream.getWritten(), '0'));
             }
         } else {
             try percent.toCss(W, dest);

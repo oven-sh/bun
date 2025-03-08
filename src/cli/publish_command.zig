@@ -1149,7 +1149,7 @@ pub const PublishCommand = struct {
 
                 try dirs.append(allocator, .{ bin_dir.asDir(), normalized_bin_dir, false });
 
-                while (dirs.popOrNull()) |dir_info| {
+                while (dirs.pop()) |dir_info| {
                     var dir, const dir_subpath, const close_dir = dir_info;
                     defer if (close_dir) dir.close();
 

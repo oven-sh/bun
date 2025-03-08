@@ -417,7 +417,7 @@ pub const PathWatcherManager = struct {
             this.manager.mutex.lock();
             defer this.manager.mutex.unlock();
 
-            const watcher = this.watcher_list.popOrNull();
+            const watcher = this.watcher_list.pop();
             if (watcher == null) {
                 // no more work todo, release the fd and path
                 _ = this.manager.current_fd_task.remove(this.path.fd);
@@ -659,7 +659,7 @@ pub const PathWatcherManager = struct {
                     {
                         watcher.mutex.lock();
                         defer watcher.mutex.unlock();
-                        while (watcher.file_paths.popOrNull()) |file_path| {
+                        while (watcher.file_paths.pop()) |file_path| {
                             this._decrementPathRefNoLock(file_path);
                         }
                     }
@@ -695,7 +695,7 @@ pub const PathWatcherManager = struct {
         this.main_watcher.deinit(false);
 
         if (this.watcher_count > 0) {
-            while (this.watchers.popOrNull()) |watcher| {
+            while (this.watchers.pop()) |watcher| {
                 if (watcher) |w| {
                     // unlink watcher
                     w.manager = null;
@@ -870,7 +870,7 @@ pub const PathWatcher = struct {
                 const time_diff = time_stamp - this.last_change_event.time_stamp;
                 if (!((this.last_change_event.time_stamp == 0 or time_diff > 1) or
                     this.last_change_event.event_type != event_type and
-                    this.last_change_event.hash != hash))
+                        this.last_change_event.hash != hash))
                 {
                     // skip consecutive duplicates
                     return;

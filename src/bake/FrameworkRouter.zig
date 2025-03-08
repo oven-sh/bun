@@ -810,7 +810,7 @@ fn newRoute(fr: *FrameworkRouter, alloc: Allocator, route_data: Route) !Route.In
 }
 
 fn newEdge(fr: *FrameworkRouter, alloc: Allocator, edge_data: Route.Edge) !Route.Edge.Index {
-    if (fr.freed_edges.popOrNull()) |i| {
+    if (fr.freed_edges.pop()) |i| {
         fr.edges.items[i.get()] = edge_data;
         return i;
     } else {

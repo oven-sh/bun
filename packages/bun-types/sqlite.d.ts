@@ -91,7 +91,7 @@ declare module "bun:sqlite" {
              * @default false
              * @since v1.1.14
              */
-            safeInteger?: boolean;
+            safeIntegers?: boolean;
 
             /**
              * When set to `false` or `undefined`:
@@ -578,6 +578,15 @@ declare module "bun:sqlite" {
      * | `null` | `NULL` |
      */
     get(...params: ParamsType): ReturnType | null;
+
+    /**
+     * Execute the prepared statement and return an
+     *
+     * @param params optional values to bind to the statement. If omitted, the statement is run with the last bound values or no parameters if there are none.
+     *
+     */
+    iterate(...params: ParamsType): IterableIterator<ReturnType>;
+    [Symbol.iterator](): IterableIterator<ReturnType>;
 
     /**
      * Execute the prepared statement. This returns `undefined`.
@@ -1118,7 +1127,7 @@ declare module "bun:sqlite" {
    *
    * @since Bun v1.1.14
    */
-  interface Changes {
+  export interface Changes {
     /**
      * The number of rows changed by the last `run` or `exec` call.
      */

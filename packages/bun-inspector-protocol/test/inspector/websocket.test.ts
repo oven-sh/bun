@@ -1,7 +1,7 @@
-import { describe, test, expect, mock, beforeAll, afterAll } from "bun:test";
-import { WebSocketInspector } from "../../src/inspector/websocket";
 import type { Server } from "bun";
 import { serve } from "bun";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { WebSocketInspector } from "../../src/inspector/websocket";
 
 let server: Server;
 let url: URL;

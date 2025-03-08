@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import type { BinaryLike } from "node:crypto";
+import { expect, test } from "bun:test";
 import type { BlobOptions } from "node:buffer";
+import type { BinaryLike } from "node:crypto";
 import path from "node:path";
 test("blob: imports have sourcemapped stacktraces", async () => {
   const blob = new Blob(

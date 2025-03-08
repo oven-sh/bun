@@ -1,4 +1,4 @@
-import { test, describe } from "bun:test";
+import { describe, test } from "bun:test";
 
 test.todo("todo 1");
 test.todo("todo 2", () => {

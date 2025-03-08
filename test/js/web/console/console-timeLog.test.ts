@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 it("should log to console correctly", async () => {
   const { stderr, exited } = spawn({

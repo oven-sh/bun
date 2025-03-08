@@ -1,6 +1,6 @@
 import { symlinkSync } from "fs";
-import path from "path";
 import { tmpdirSync } from "harness";
+import path from "path";
 
 export function createTempDirectoryWithBrokenSymlinks() {
   // Create a temporary directory

@@ -1,7 +1,7 @@
-import { describe, it, expect, afterEach } from "bun:test";
 import type { Server, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
-import { bunEnv, bunExe, forceGuardMalloc, nodeExe } from "harness";
+import { afterEach, describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, forceGuardMalloc } from "harness";
 import { isIP } from "node:net";
 import path from "node:path";
 
@@ -825,3 +825,13 @@ async function connect(server: Server): Promise<void> {
   clients.push(client);
   await promise;
 }
+
+it("you can call server.subscriberCount() when its not a websocket server", async () => {
+  using server = serve({
+    port: 0,
+    fetch(request, server) {
+      return new Response();
+    },
+  });
+  expect(server.subscriberCount("boop")).toBe(0);
+});

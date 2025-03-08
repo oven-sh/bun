@@ -1,4 +1,4 @@
-import { expect, it, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 
 describe("ResolveMessage", () => {
   it("position object does not segfault", async () => {

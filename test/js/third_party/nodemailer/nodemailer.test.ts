@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunRun, getSecret } from "harness";
 import path from "path";
 

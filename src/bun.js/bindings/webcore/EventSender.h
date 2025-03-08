@@ -34,7 +34,9 @@ namespace WebCore {
 class Page;
 
 template<typename T> class EventSender {
-    WTF_MAKE_NONCOPYABLE(EventSender); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_NONCOPYABLE(EventSender);
+    WTF_MAKE_FAST_ALLOCATED;
+
 public:
     explicit EventSender(const AtomString& eventType);
 
@@ -98,7 +100,7 @@ template<typename T> void EventSender<T>::dispatchPendingEvents(Page* page)
 
     m_dispatchSoonList.checkConsistency();
 
-    m_dispatchingList = std::exchange(m_dispatchSoonList, { });
+    m_dispatchingList = std::exchange(m_dispatchSoonList, {});
     for (auto& event : m_dispatchingList) {
         if (auto sender = event.get()) {
             event = nullptr;

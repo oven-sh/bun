@@ -205,7 +205,7 @@ export fn init(heapsize: u32) void {
         buffer_writer = writer.ctx;
     }
 }
-const Arena = @import("./mimalloc_arena.zig").Arena;
+const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 
 var log: Logger.Log = undefined;
 
@@ -483,7 +483,7 @@ export fn getTests(opts_array: u64) u64 {
 
         Output.print("Error: {s}\n", .{@errorName(err)});
 
-        log_.printForLogLevel(Output.writer()) catch unreachable;
+        log_.print(Output.writer()) catch unreachable;
         return 0;
     };
 

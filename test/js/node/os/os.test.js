@@ -1,7 +1,7 @@
-import { it, expect, describe } from "bun:test";
-import * as os from "node:os";
+import { describe, expect, it } from "bun:test";
 import { realpathSync } from "fs";
 import { isWindows } from "harness";
+import * as os from "node:os";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -41,7 +41,20 @@ it("setPriority", () => {
 });
 
 it("loadavg", () => {
-  expect(os.loadavg().length === 3).toBe(true);
+  if (isWindows) {
+    expect(os.loadavg()).toEqual([0, 0, 0]);
+  } else {
+    const out = Bun.spawnSync(["uptime"]).stdout.toString();
+    const regex = /load averages?: ([\d\.]+),? ([\d\.]+),? ([\d\.]+)/;
+    const result = regex.exec(out);
+    const expected = [parseFloat(result[1]), parseFloat(result[2]), parseFloat(result[3])];
+    const actual = os.loadavg();
+    expect(actual).toBeArrayOfSize(3);
+    for (let i = 0; i < 3; i++) {
+      // This is quite a lenient range, just in case the load average is changing rapidly
+      expect(actual[i]).toBeWithin(expected[i] / 2 - 0.5, expected[i] * 2 + 0.5);
+    }
+  }
 });
 
 it("homedir", () => {
@@ -220,5 +233,24 @@ describe("toString works like node", () => {
         expect(left).toBe(right);
       }
     });
+  }
+});
+
+it("getPriority system error object", () => {
+  try {
+    os.getPriority(-1);
+    expect.unreachable();
+  } catch (err) {
+    expect(err.name).toBe("SystemError");
+    expect(err.message).toBe("A system error occurred: uv_os_getpriority returned ESRCH (no such process)");
+    expect(err.code).toBe("ERR_SYSTEM_ERROR");
+    expect(err.info).toEqual({
+      errno: isWindows ? -4040 : -3,
+      code: "ESRCH",
+      message: "no such process",
+      syscall: "uv_os_getpriority",
+    });
+    expect(err.errno).toBe(isWindows ? -4040 : -3);
+    expect(err.syscall).toBe("uv_os_getpriority");
   }
 });

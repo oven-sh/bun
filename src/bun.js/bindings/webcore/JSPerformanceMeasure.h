@@ -63,12 +63,12 @@ public:
     {
         return static_cast<PerformanceMeasure&>(Base::wrapped());
     }
+
 protected:
     JSPerformanceMeasure(JSC::Structure*, JSDOMGlobalObject&, Ref<PerformanceMeasure>&&);
 
     DECLARE_DEFAULT_FINISH_CREATION;
 };
-
 
 template<> struct JSDOMWrapperConverterTraits<PerformanceMeasure> {
     using WrapperClass = JSPerformanceMeasure;

@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { describe, it, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 test("esbuild", () => {

@@ -1,3 +1,10 @@
-const [addServerName] = $zig("socket.zig", "createNodeTLSBinding");
+const [addServerName, upgradeDuplexToTLS, isNamedPipeSocket] = $zig("socket.zig", "createNodeTLSBinding");
+const { SocketAddress } = $zig("node_net_binding.zig", "createBinding");
 
-export default { addServerName };
+export default {
+  addServerName,
+  upgradeDuplexToTLS,
+  isNamedPipeSocket,
+  SocketAddress,
+  normalizedArgsSymbol: Symbol("normalizedArgs"),
+};

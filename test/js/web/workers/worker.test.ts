@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
@@ -16,6 +16,59 @@ describe("web worker", () => {
       worker.terminate();
     }
   }
+
+  describe("preload", () => {
+    test("invalid file URL", async () => {
+      expect(() => new Worker("file://:!:!:!!!!", {})).toThrow(/Invalid file URL/);
+      expect(
+        () =>
+          new Worker(import.meta.url, {
+            preload: ["file://:!:!:!!!!", "file://:!:!:!!!!2"],
+          }),
+      ).toThrow(/Invalid file URL/);
+    });
+
+    test("string", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: new URL("worker-fixture-preload.js", import.meta.url).href,
+      });
+      const result = await waitForWorkerResult(worker, "hello world");
+      expect(result).toEqual("hello world");
+    });
+
+    test("array of 2 strings", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [
+          new URL("worker-fixture-preload.js", import.meta.url).href,
+          new URL("worker-fixture-preload-2.js", import.meta.url).href,
+        ],
+      });
+      const result = await waitForWorkerResult(worker, "hello world world");
+      expect(result).toEqual("hello world world");
+    });
+
+    test("array of string", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [new URL("worker-fixture-preload.js", import.meta.url).href],
+      });
+      const result = await waitForWorkerResult(worker, "hello world");
+      expect(result).toEqual("hello world");
+    });
+
+    test("error in preload doesn't crash parent", async () => {
+      const worker = new Worker(new URL("worker-fixture-preload-entry.js", import.meta.url).href, {
+        preload: [new URL("worker-fixture-preload-bad.js", import.meta.url).href],
+      });
+      const { resolve, promise } = Promise.withResolvers();
+      worker.onerror = e => {
+        resolve(e.message);
+      };
+      const result = await promise;
+      expect(result).toMatch(
+        /THIS IS AN ERROR AND THIS PARTICULAR STRING DOESNT APPEAR IN THE SOURCE CODE SO WE KNOW FOR SURE IT SENT THE ACTUAL MESSAGE AND NOT JUST A DUMP OF THE SOURCE CODE AS IT ORIGINALLY WAS/,
+      );
+    });
+  });
 
   test("worker", done => {
     const worker = new Worker(new URL("worker-fixture.js", import.meta.url).href, {
@@ -309,15 +362,14 @@ describe("worker_threads", () => {
   test("worker with eval = true succeeds with valid code", async () => {
     let message;
     const worker = new wt.Worker("postMessage('hello')", { eval: true });
-    worker.on('message', e => {
+    worker.on("message", e => {
       message = e;
     });
     const p = new Promise((resolve, reject) => {
-      worker.on('error', reject);
-      worker.on('exit', resolve);
-    })
+      worker.on("error", reject);
+      worker.on("exit", resolve);
+    });
     await p;
     expect(message).toEqual("hello");
   });
-
 });

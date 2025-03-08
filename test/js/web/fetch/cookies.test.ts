@@ -1,8 +1,8 @@
 "use strict";
 
-import { createServer } from "node:http";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
-import { test, expect } from "bun:test";
+import { createServer } from "node:http";
 
 test("Can receive set-cookie headers from a server using fetch - issue #1262", async () => {
   await using server = createServer((req, res) => {

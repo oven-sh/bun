@@ -48,7 +48,7 @@ CryptoAlgorithmIdentifier CryptoAlgorithmHKDF::identifier() const
 void CryptoAlgorithmHKDF::deriveBits(const CryptoAlgorithmParameters& parameters, Ref<CryptoKey>&& baseKey, size_t length, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context, WorkQueue& workQueue)
 {
     if (!length || length % 8) {
-        exceptionCallback(OperationError);
+        exceptionCallback(OperationError, ""_s);
         return;
     }
 
@@ -61,15 +61,15 @@ void CryptoAlgorithmHKDF::deriveBits(const CryptoAlgorithmParameters& parameters
 void CryptoAlgorithmHKDF::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters& parameters, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     if (format != CryptoKeyFormat::Raw) {
-        exceptionCallback(NotSupportedError);
+        exceptionCallback(NotSupportedError, ""_s);
         return;
     }
     if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
-        exceptionCallback(SyntaxError);
+        exceptionCallback(SyntaxError, ""_s);
         return;
     }
     if (extractable) {
-        exceptionCallback(SyntaxError);
+        exceptionCallback(SyntaxError, ""_s);
         return;
     }
 
@@ -80,7 +80,7 @@ ExceptionOr<size_t> CryptoAlgorithmHKDF::getKeyLength(const CryptoAlgorithmParam
 {
     return 0;
 }
-    
+
 } // namespace WebCore
 
 #endif // ENABLE(WEB_CRYPTO)

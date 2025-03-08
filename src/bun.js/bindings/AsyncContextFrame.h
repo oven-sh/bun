@@ -36,7 +36,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<AsyncContextFrame, Bun::UseCustomHeapCellType::No>(
+        return WebCore::subspaceForImpl<AsyncContextFrame, WebCore::UseCustomHeapCellType::No>(
             vm,
             [](auto& spaces) { return spaces.m_clientSubspaceForAsyncContextFrame.get(); },
             [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAsyncContextFrame = std::forward<decltype(space)>(space); },

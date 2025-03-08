@@ -4,7 +4,7 @@ description: An internal version of the 'oven-sh/setup-bun' action.
 inputs:
   bun-version:
     type: string
-    description: "The version of bun to install: 'latest', 'canary', 'bun-v1.0.0', etc."
+    description: "The version of bun to install: 'latest', 'canary', 'bun-v1.2.0', etc."
     default: latest
     required: false
   baseline:
@@ -42,9 +42,10 @@ runs:
           canary) release="canary";;
           *)      release="bun-v${{ inputs.bun-version }}";;
         esac
-        curl -LO "${{ inputs.download-url }}/${release}/${target}.zip"
+        curl -LO "${{ inputs.download-url }}/${release}/${target}.zip" --retry 5
         unzip ${target}.zip
         mkdir -p ${{ runner.temp }}/.bun/bin
         mv ${target}/bun* ${{ runner.temp }}/.bun/bin/
         chmod +x ${{ runner.temp }}/.bun/bin/*
+        ln -fs ${{ runner.temp }}/.bun/bin/bun ${{ runner.temp }}/.bun/bin/bunx
         echo "${{ runner.temp }}/.bun/bin" >> ${GITHUB_PATH}

@@ -3,8 +3,8 @@
 //  if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
 //    return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
 //  }
+import { expect, test } from "bun:test";
 import { Stats, statSync } from "node:fs";
-import { test, expect } from "bun:test";
 
 test("fs.stats truncate", async () => {
   const stats = new Stats(...Array.from({ length: 14 }, () => Number.MAX_VALUE));

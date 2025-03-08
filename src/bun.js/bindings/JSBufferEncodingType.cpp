@@ -29,20 +29,19 @@
 namespace WebCore {
 using namespace JSC;
 
-static const NeverDestroyed<String> values[] = {
-    MAKE_STATIC_STRING_IMPL("utf8"),
-    MAKE_STATIC_STRING_IMPL("ucs2"),
-    MAKE_STATIC_STRING_IMPL("utf16le"),
-    MAKE_STATIC_STRING_IMPL("latin1"),
-    MAKE_STATIC_STRING_IMPL("ascii"),
-    MAKE_STATIC_STRING_IMPL("base64"),
-    MAKE_STATIC_STRING_IMPL("base64url"),
-    MAKE_STATIC_STRING_IMPL("hex"),
-};
-
 String convertEnumerationToString(BufferEncodingType enumerationValue)
 {
 
+    static const std::array<NeverDestroyed<String>, 8> values = {
+        MAKE_STATIC_STRING_IMPL("utf8"),
+        MAKE_STATIC_STRING_IMPL("ucs2"),
+        MAKE_STATIC_STRING_IMPL("utf16le"),
+        MAKE_STATIC_STRING_IMPL("latin1"),
+        MAKE_STATIC_STRING_IMPL("ascii"),
+        MAKE_STATIC_STRING_IMPL("base64"),
+        MAKE_STATIC_STRING_IMPL("base64url"),
+        MAKE_STATIC_STRING_IMPL("hex"),
+    };
     ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));
     return values[static_cast<size_t>(enumerationValue)];
 }
@@ -53,14 +52,28 @@ template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject,
 }
 
 // this function is mostly copied from node
-template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSGlobalObject& lexicalGlobalObject, JSValue arg)
+{
+    if (UNLIKELY(!arg.isString())) {
+        return std::nullopt;
+    }
+
+    auto* str = arg.toStringOrNull(&lexicalGlobalObject);
+    if (!str) {
+        return std::nullopt;
+    }
+    const auto& view = str->view(&lexicalGlobalObject);
+    return parseEnumerationFromView<BufferEncodingType>(view);
+}
+
+template<> std::optional<BufferEncodingType> parseEnumerationFromString<BufferEncodingType>(const String& encoding)
+{
+    return parseEnumerationFromView<BufferEncodingType>(encoding);
+}
+
+template<> std::optional<BufferEncodingType> parseEnumerationFromView<BufferEncodingType>(const StringView& encoding)
 {
     // caller must check if value is a string
-    JSC::JSString* str = asString(value);
-    if (UNLIKELY(!str))
-        return std::nullopt;
-
-    String encoding = str->value(&lexicalGlobalObject);
     switch (encoding.length()) {
     case 0: {
         return BufferEncodingType::utf8;
@@ -119,10 +132,9 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     case 'h':
     case 'H':
         // hex
-        if (encoding[1] == 'e')
-            if (encoding[2] == 'x' && encoding[3] == '\0')
-                return BufferEncodingType::hex;
         if (WTF::equalIgnoringASCIICase(encoding, "hex"_s))
+            return BufferEncodingType::hex;
+        if (WTF::equalIgnoringASCIICase(encoding, "hex\0"_s))
             return BufferEncodingType::hex;
         break;
     }

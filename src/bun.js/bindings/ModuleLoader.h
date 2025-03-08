@@ -47,6 +47,8 @@ struct OnLoadResult {
     bool wasMock;
 };
 
+extern "C" bool isBunTest;
+
 class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
 public:
     using Base = JSC::JSInternalFieldObjectImpl<3>;

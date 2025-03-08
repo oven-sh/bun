@@ -1,6 +1,6 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { existsSync, readdirSync } from "fs";
 import { join } from "path";
-import { readdirSync, existsSync } from "fs";
 const base = join(import.meta.dir, "../");
 
 const packageJSONDirs = [
@@ -22,20 +22,25 @@ describe("package.json dependencies must be exact versions", async () => {
         optionalDependencies = {},
       } = await Bun.file(join(dir, "./package.json")).json();
 
+      // Hyphen is necessary to accept prerelease versions like "1.1.3-alpha.7"
+      // This regex still forbids semver ranges like "1.0.0 - 1.2.0", as those must have spaces
+      // around the hyphen.
+      const okRegex = /^(([a-zA-Z0-9\.\-]|)+$|file:)/;
+
       for (const [name, dep] of Object.entries(dependencies)) {
-        expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
+        expect(dep, `dependency ${name} specifies non-exact version "${dep}"`).toMatch(okRegex);
       }
 
       for (const [name, dep] of Object.entries(devDependencies)) {
-        expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
+        expect(dep, `dev dependency ${name} specifies non-exact version "${dep}"`).toMatch(okRegex);
       }
 
       for (const [name, dep] of Object.entries(peerDependencies)) {
-        expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
+        expect(dep, `peer dependency ${name} specifies non-exact version "${dep}"`).toMatch(okRegex);
       }
 
       for (const [name, dep] of Object.entries(optionalDependencies)) {
-        expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
+        expect(dep, `optional dependency ${name} specifies non-exact version "${dep}"`).toMatch(okRegex);
       }
     });
   }

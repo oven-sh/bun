@@ -1,3 +1,5 @@
+import "./hot-file-loader.css";
+import "./hot-file-loader.file";
 import "./hot-runner-imported";
 
 globalThis.counter ??= 0;

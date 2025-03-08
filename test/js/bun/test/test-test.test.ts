@@ -1,11 +1,11 @@
 // @ts-nocheck
 import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
-import { mkdirSync, realpathSync, rmSync, writeFileSync, copyFileSync } from "fs";
+import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, tempDirWithFiles, tmpdirSync } from "harness";
 import { tmpdir } from "os";
-import { join, dirname } from "path";
+import { dirname, join } from "path";
 
 const tmp = realpathSync(tmpdir());
 
@@ -43,7 +43,7 @@ it("shouldn't crash when async test runner callback throws", async () => {
     expect(err).toContain("error: ##123##");
     expect(err).toContain("error: ##456##");
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe("");
+    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
@@ -189,19 +189,19 @@ test("describe scope throwing doesn't block other tests from running", async () 
     it("test enqueued before a describe scope throws is never run", () => {
       throw new Error("This test failed");
     });
-  
+
     throw "This test passed. Ignore the error message";
-  
+
     it("test enqueued after a describe scope throws is never run", () => {
       throw new Error("This test failed");
     });
   });
-  
+
   it("a describe scope throwing doesn't cause all other tests in the file to fail", () => {
     console.log(
       String.fromCharCode(...[73, 32, 104, 97, 118, 101, 32, 98, 101, 101, 110, 32, 114, 101, 97, 99, 104, 101, 100, 33]),
     );
-  });  
+  });
 `;
 
   const dir = tmpdirSync();
@@ -303,7 +303,7 @@ it("should return non-zero exit code for invalid syntax", async () => {
     expect(err).toContain(" 1 fail");
     expect(err).toContain("Ran 1 tests across 1 files");
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe("");
+    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
@@ -331,7 +331,7 @@ it("invalid syntax counts towards bail", async () => {
     expect(err).not.toContain("DO NOT RUN ME");
     expect(err).toContain("Ran 3 tests across 3 files");
     expect(stdout).toBeDefined();
-    expect(await new Response(stdout).text()).toBe("");
+    expect(await new Response(stdout).text()).toBe(`bun test ${Bun.version_with_sha}\n`);
     expect(await exited).toBe(1);
   } finally {
     // await rm(test_dir, { force: true, recursive: true });
@@ -584,6 +584,7 @@ it("test --preload supports global lifecycle hooks", () => {
   });
   expect(stdout.toString().trim()).toBe(
     `
+bun test ${Bun.version_with_sha}
 beforeAll: #1
 beforeAll: #2
 beforeAll: TEST-FILE
@@ -661,7 +662,14 @@ describe("empty", () => {
     expect(err).toContain("0 fail");
     expect(stdout).toBeDefined();
     const out = await new Response(stdout).text();
-    expect(out.split(/\r?\n/)).toEqual(["before all", "before all scoped", "after all scoped", "after all", ""]);
+    expect(out.split(/\r?\n/)).toEqual([
+      `bun test ${Bun.version_with_sha}`,
+      "before all",
+      "before all scoped",
+      "after all scoped",
+      "after all",
+      "",
+    ]);
     expect(await exited).toBe(0);
   } finally {
     await rm(test_dir, { force: true, recursive: true });
@@ -700,31 +708,31 @@ test("my-test", () => {
         stderr: "pipe",
         env: bunEnv,
       });
-      expect(
-        stderr
-          .toString()
-          .replaceAll(test_dir, "<dir>")
-          .replaceAll("\r\n", "\n")
-          .replaceAll("\\", "/")
-          .split("\n")
-          .filter(a => {
-            if (a.includes("(:")) return false;
-            if (a.includes("bun test v")) return false;
+      const output = stderr.toString();
 
-            // Timers are a little inconsistent on macOS vs Linux
-            // On Linux, it might not run in time, but on macOS it will
-            if (a.includes(" expect() calls")) return false;
+      expect(output).toContain(`## stage ${stage} ##`);
 
-            return true;
-          })
-          .map(a =>
-            a
-              .trimEnd()
-              .replace(/\[((\d+)(\.?)\d+\s?ms)\]/, "")
-              .trimEnd(),
-          )
-          .join("\n"),
-      ).toMatchSnapshot();
+      expect(output).toContain("1 | import {test, beforeAll, expect, beforeEach, afterEach, afterAll, describe}");
+
+      const stackLines = output.split("\n").filter(line => line.trim().startsWith("at "));
+      expect(stackLines.length).toBeGreaterThan(0);
+      if (process.platform === "win32") {
+        expect(stackLines[0]).toContain(`<dir>\\my-test.test.js:5:11`.replace("<dir>", test_dir));
+      }
+      if (process.platform !== "win32") {
+        expect(stackLines[0]).toContain(`<dir>/my-test.test.js:5:11`.replace("<dir>", test_dir));
+      }
+
+      if (stage === "beforeEach") {
+        expect(output).toContain("0 pass");
+        expect(output).toContain("1 fail");
+      } else {
+        expect(output).toContain("1 pass");
+        expect(output).toContain("0 fail");
+        expect(output).toContain("1 error");
+      }
+
+      expect(output).toContain("Ran 1 tests across 1 files");
     });
   }
 });

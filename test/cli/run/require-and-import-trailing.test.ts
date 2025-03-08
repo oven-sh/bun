@@ -1,6 +1,5 @@
-import { test, expect, describe } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
-import { join } from "path";
+import { expect, test } from "bun:test";
+import { tempDirWithFiles } from "harness";
 
 test("require() with trailing slash", () => {
   const requireDir = tempDirWithFiles("require-trailing", {

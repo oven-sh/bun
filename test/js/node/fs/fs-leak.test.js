@@ -1,6 +1,8 @@
 // This file is a .cjs file so you can run it in node+jest to verify node behaves exactly the same.
+const { expect, test } = require("bun:test");
 const fs = require("fs");
 const { tmpdir, devNull } = require("os");
+const { fsStreamInternals } = require('bun:internal-for-testing');
 
 function getMaxFd() {
   const dev_null = fs.openSync(devNull, "r");
@@ -64,27 +66,31 @@ test("createWriteStream file handle does not leak file descriptors", async () =>
   const path = `${tmpdir()}/${Date.now()}.leakTest.txt`;
 
   const fd = await fs.promises.open(path, "w");
+  let closed = false;
+  fd.on("close", () => {
+    closed = true;
+  });
 
   await new Promise((resolve, reject) => {
-    const stream = fd.createWriteStream({});
+    const stream = fd.createWriteStream();
+    expect(stream.autoClose).toBe(true);
 
     stream.on("error", reject);
-
     stream.on("open", () => {
-      for (let i = 0; i < 100; i++) {
-        stream.write("hello world");
-      }
-      stream.end();
+      reject(new Error("fd is already open. open event should not be called"));
     });
 
     stream.on("close", () => {
       resolve();
     });
+
+    for (let i = 0; i < 100; i++) {
+      stream.write("hello world");
+    }
+    stream.end();
   });
 
-  console.log("fd", fd);
-  await fd.close();
-  await fd.close();
+  expect(closed).toBe(true);
 
   // If this is larger than the start value, it means that the file descriptor was not closed
   expect(getMaxFd()).toBe(start);

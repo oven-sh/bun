@@ -1,7 +1,7 @@
-import { Readable } from "stream";
-import { test, describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
 import { join } from "path";
+import { Readable } from "stream";
 describe("#09555", () => {
   test("fetch() Response body", async () => {
     const full = crypto.getRandomValues(new Uint8Array(1024 * 3));
@@ -28,8 +28,8 @@ describe("#09555", () => {
 
     let total = 0;
     const res = await fetch(server.url.href);
-    const stream = Readable.fromWeb(res.body);
-    let chunks = [];
+    const stream = Readable.fromWeb(res.body!);
+    let chunks: any[] = [];
     for await (const chunk of stream) {
       total += chunk.length;
       chunks.push(chunk);

@@ -1,9 +1,9 @@
 import { serve, ServeOptions, Server } from "bun";
-import { afterAll, afterEach, expect, it } from "bun:test";
+import { afterAll, expect, it } from "bun:test";
 import { rmSync } from "fs";
-import { join } from "path";
-import { request } from "http";
 import { isWindows, tmpdirSync } from "harness";
+import { request } from "http";
+import { join } from "path";
 const tmp_dir = tmpdirSync();
 
 it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () => {
@@ -48,7 +48,7 @@ it("throws an error when the directory is not found", () => {
         return new Response("hello");
       },
     }),
-  ).toThrow("No such file or directory");
+  ).toThrow("no such file or directory");
 });
 
 if (process.platform === "linux") {

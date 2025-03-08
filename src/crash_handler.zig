@@ -22,6 +22,7 @@ const bun = @import("root").bun;
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
+const VLQ = SourceMap.VLQ;
 const windows = std.os.windows;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -44,11 +45,18 @@ var has_printed_message = false;
 var panicking = std.atomic.Value(u8).init(0);
 
 // Locked to avoid interleaving panic messages from multiple threads.
-var panic_mutex = std.Thread.Mutex{};
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var panic_mutex = bun.Mutex{};
 
 /// Counts how many times the panic handler is invoked by this thread.
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
+
+threadlocal var inside_native_plugin: ?[*:0]const u8 = null;
+
+export fn CrashHandler__setInsideNativePlugin(name: ?[*:0]const u8) callconv(.C) void {
+    inside_native_plugin = name;
+}
 
 /// This can be set by various parts of the codebase to indicate a broader
 /// action being taken. It is printed when a crash happens, which can help
@@ -59,7 +67,12 @@ threadlocal var panic_stage: usize = 0;
 /// rate or only crash due to assertion failures, are debug-only. See `Action`.
 pub threadlocal var current_action: ?Action = null;
 
-const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
+var before_crash_handlers: std.ArrayListUnmanaged(struct { *anyopaque, *const OnBeforeCrash }) = .{};
+
+// TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
+var before_crash_handlers_mutex: bun.Mutex = .{};
+
+const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig");
 
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
@@ -132,17 +145,17 @@ pub const Action = union(enum) {
             .bundle_generate_chunk => |data| if (bun.Environment.isDebug) {
                 try writer.print(
                     \\generating bundler chunk
-                    \\  chunk entry point: {s}
-                    \\  source: {s}
+                    \\  chunk entry point: {?s}
+                    \\  source: {?s}
                     \\  part range: {d}..{d}
                 ,
                     .{
-                        data.linkerContext().graph.bundler_graph.input_files
+                        if (data.part_range.source_index.isValid()) data.linkerContext().parse_graph.input_files
                             .items(.source)[data.chunk.entry_point.source_index]
-                            .path.text,
-                        data.linkerContext().graph.bundler_graph.input_files
+                            .path.text else null,
+                        if (data.part_range.source_index.isValid()) data.linkerContext().parse_graph.input_files
                             .items(.source)[data.part_range.source_index.get()]
-                            .path.text,
+                            .path.text else null,
                         data.part_range.part_index_begin,
                         data.part_range.part_index_end,
                     },
@@ -166,7 +179,7 @@ pub fn crashHandler(
     error_return_trace: ?*std.builtin.StackTrace,
     begin_addr: ?usize,
 ) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
 
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
@@ -179,6 +192,13 @@ pub fn crashHandler(
 
             panic_stage = 1;
             _ = panicking.fetchAdd(1, .seq_cst);
+
+            if (before_crash_handlers_mutex.tryLock()) {
+                for (before_crash_handlers.items) |item| {
+                    const ptr, const cb = item;
+                    cb(ptr);
+                }
+            }
 
             {
                 panic_mutex.lock();
@@ -216,6 +236,18 @@ pub fn crashHandler(
 
                     writer.writeAll("=" ** 60 ++ "\n") catch std.posix.abort();
                     printMetadata(writer) catch std.posix.abort();
+
+                    if (inside_native_plugin) |name| {
+                        const native_plugin_name = name;
+                        const fmt =
+                            \\
+                            \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                            \\
+                            \\This indicates either a bug in the native plugin or in Bun.
+                            \\
+                        ;
+                        writer.print(Output.prettyFmt(fmt, true), .{native_plugin_name}) catch std.posix.abort();
+                    }
                 } else {
                     if (Output.enable_ansi_colors) {
                         writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
@@ -244,11 +276,11 @@ pub fn crashHandler(
                     } else switch (bun.Environment.os) {
                         .windows => {
                             var name: std.os.windows.PWSTR = undefined;
-                            const result = bun.windows.GetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), &name);
+                            const result = bun.windows.GetThreadDescription(bun.windows.GetCurrentThread(), &name);
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
                                 writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
-                                writer.print("(thread {d})", .{std.os.windows.kernel32.GetCurrentThreadId()}) catch std.posix.abort();
+                                writer.print("(thread {d})", .{bun.windows.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
                         .mac, .linux => {},
@@ -270,7 +302,13 @@ pub fn crashHandler(
                 var trace_buf: std.builtin.StackTrace = undefined;
 
                 // If a trace was not provided, compute one now
-                const trace = error_return_trace orelse get_backtrace: {
+                const trace = @as(?*std.builtin.StackTrace, if (error_return_trace) |ert|
+                    if (ert.index > 0)
+                        ert
+                    else
+                        null
+                else
+                    null) orelse get_backtrace: {
                     trace_buf = std.builtin.StackTrace{
                         .index = 0,
                         .instruction_addresses = &addr_buf,
@@ -298,9 +336,19 @@ pub fn crashHandler(
                         } else {
                             writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
                         }
-                        if (reason == .out_of_memory) {
+                        if (inside_native_plugin) |name| {
+                            const native_plugin_name = name;
+                            writer.print(Output.prettyFmt(
+                                \\Bun has encountered a crash while running the <red><d>"{s}"<r> native plugin.
+                                \\
+                                \\To send a redacted crash report to Bun's team,
+                                \\please file a GitHub issue using the link below:
+                                \\
+                                \\
+                            , true), .{native_plugin_name}) catch std.posix.abort();
+                        } else if (reason == .out_of_memory) {
                             writer.writeAll(
-                                \\Bun has ran out of memory.
+                                \\Bun has run out of memory.
                                 \\
                                 \\To send a redacted crash report to Bun's team,
                                 \\please file a GitHub issue using the link below:
@@ -665,7 +713,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 }
 
 pub fn panicImpl(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, begin_addr: ?usize) noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     crashHandler(
         if (bun.strings.eqlComptime(msg, "reached unreachable code"))
             .{ .@"unreachable" = {} }
@@ -755,13 +803,22 @@ pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
         }
     }
 
-    try std.posix.sigaction(std.posix.SIG.SEGV, act, null);
-    try std.posix.sigaction(std.posix.SIG.ILL, act, null);
-    try std.posix.sigaction(std.posix.SIG.BUS, act, null);
-    try std.posix.sigaction(std.posix.SIG.FPE, act, null);
+    std.posix.sigaction(std.posix.SIG.SEGV, act, null);
+    std.posix.sigaction(std.posix.SIG.ILL, act, null);
+    std.posix.sigaction(std.posix.SIG.BUS, act, null);
+    std.posix.sigaction(std.posix.SIG.FPE, act, null);
 }
 
 var windows_segfault_handle: ?windows.HANDLE = null;
+
+pub fn resetOnPosix() void {
+    var act = std.posix.Sigaction{
+        .handler = .{ .sigaction = handleSegfaultPosix },
+        .mask = std.posix.empty_sigset,
+        .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
+    };
+    updatePosixSegfaultHandler(&act) catch {};
+}
 
 pub fn init() void {
     if (!enable) return;
@@ -770,12 +827,7 @@ pub fn init() void {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
         .mac, .linux => {
-            var act = std.posix.Sigaction{
-                .handler = .{ .sigaction = handleSegfaultPosix },
-                .mask = std.posix.empty_sigset,
-                .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
-            };
-            updatePosixSegfaultHandler(&act) catch {};
+            resetOnPosix();
         },
         else => @compileError("TODO"),
     }
@@ -823,19 +875,20 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
     );
 }
 
-extern "C" fn gnu_get_libc_version() ?[*:0]const u8;
+extern "c" fn gnu_get_libc_version() ?[*:0]const u8;
 
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
     }
 
+    var is_ancient_cpu = false;
+
     try writer.writeAll(metadata_version_line);
     {
         const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
         const cpu_features = CPUFeatures.get();
-        if (bun.Environment.isLinux) {
-            // TODO: musl
+        if (bun.Environment.isLinux and !bun.Environment.isMusl) {
             const version = gnu_get_libc_version() orelse "";
             const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
             if (platform.os == .wsl) {
@@ -843,10 +896,17 @@ pub fn printMetadata(writer: anytype) !void {
             } else {
                 try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
             }
+        } else if (bun.Environment.isLinux and bun.Environment.isMusl) {
+            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            try writer.print("Linux Kernel v{d}.{d}.{d} | musl\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch });
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         } else if (bun.Environment.isWindows) {
             try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
+        }
+
+        if (bun.Environment.isX64) {
+            is_ancient_cpu = !cpu_features.hasAnyAVX();
         }
 
         if (!cpu_features.isEmpty()) {
@@ -903,6 +963,12 @@ pub fn printMetadata(writer: anytype) !void {
         try writer.writeAll(Output.prettyFmt("<r>", true));
     }
     try writer.writeAll("\n");
+
+    if (comptime bun.Environment.isX64) {
+        if (is_ancient_cpu) {
+            try writer.writeAll("CPU lacks AVX support. Please consider upgrading to a newer CPU.\n");
+        }
+    }
 }
 
 fn waitForOtherThreadToFinishPanicking() void {
@@ -913,7 +979,7 @@ fn waitForOtherThreadToFinishPanicking() void {
 
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -929,7 +995,7 @@ pub fn sleepForeverIfAnotherThreadIsCrashing() void {
     if (panicking.load(.acquire) > 0) {
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
-        while (true) std.Thread.Futex.wait(&futex, 0);
+        while (true) bun.Futex.waitForever(&futex, 0);
         comptime unreachable;
     }
 }
@@ -1085,19 +1151,19 @@ const StackLine = struct {
                     fn callback(info: *std.posix.dl_phdr_info, _: usize, context: *CtxTy) !void {
                         defer context.i += 1;
 
-                        if (context.address < info.dlpi_addr) return;
-                        const phdrs = info.dlpi_phdr[0..info.dlpi_phnum];
+                        if (context.address < info.addr) return;
+                        const phdrs = info.phdr[0..info.phnum];
                         for (phdrs) |*phdr| {
                             if (phdr.p_type != std.elf.PT_LOAD) continue;
 
                             // Overflowing addition is used to handle the case of VSDOs
                             // having a p_vaddr = 0xffffffffff700000
-                            const seg_start = info.dlpi_addr +% phdr.p_vaddr;
+                            const seg_start = info.addr +% phdr.p_vaddr;
                             const seg_end = seg_start + phdr.p_memsz;
                             if (context.address >= seg_start and context.address < seg_end) {
-                                // const name = bun.sliceTo(info.dlpi_name, 0) orelse "";
+                                // const name = bun.sliceTo(info.name, 0) orelse "";
                                 context.result = .{
-                                    .address = @intCast(context.address - info.dlpi_addr),
+                                    .address = @intCast(context.address - info.addr),
                                     .object = null,
                                 };
                                 return error.Found;
@@ -1118,12 +1184,12 @@ const StackLine = struct {
         };
 
         if (known.object) |object| {
-            try SourceMap.encodeVLQ(1).writeTo(writer);
-            try SourceMap.encodeVLQ(@intCast(object.len)).writeTo(writer);
+            try VLQ.encode(1).writeTo(writer);
+            try VLQ.encode(@intCast(object.len)).writeTo(writer);
             try writer.writeAll(object);
         }
 
-        try SourceMap.encodeVLQ(known.address).writeTo(writer);
+        try VLQ.encode(known.address).writeTo(writer);
     }
 
     pub fn format(line: StackLine, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -1182,10 +1248,7 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
         try StackLine.writeEncoded(line, writer);
     }
 
-    try writer.writeAll(comptime zero_vlq: {
-        const vlq = SourceMap.encodeVLQ(0);
-        break :zero_vlq vlq.bytes[0..vlq.len];
-    });
+    try writer.writeAll(VLQ.zero.slice());
 
     // The following switch must be kept in sync with `bun.report`'s decoder implementation.
     switch (opts.reason) {
@@ -1253,8 +1316,8 @@ fn encodeTraceString(opts: TraceString, writer: anytype) !void {
 }
 
 fn writeU64AsTwoVLQs(writer: anytype, addr: usize) !void {
-    const first = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
-    const second = SourceMap.encodeVLQ(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
+    const first = VLQ.encode(@bitCast(@as(u32, @intCast((addr & 0xFFFFFFFF00000000) >> 32))));
+    const second = VLQ.encode(@bitCast(@as(u32, @intCast(addr & 0xFFFFFFFF))));
     try first.writeTo(writer);
     try second.writeTo(writer);
 }
@@ -1386,7 +1449,7 @@ fn report(url: []const u8) void {
                 },
             }
         },
-        else => @compileError("NOT IMPLEMENTED"),
+        else => @compileError("Not implemented"),
     }
 }
 
@@ -1395,7 +1458,9 @@ fn report(url: []const u8) void {
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            std.posix.abort();
+            // This exit code is what Node.js uses when it calls
+            // abort. This is relied on by their Node-API tests.
+            bun.C.quick_exit(134);
         },
         else => {
             // Install default handler so that the tkill below will terminate.
@@ -1409,7 +1474,7 @@ fn crash() noreturn {
                 std.posix.SIG.HUP,
                 std.posix.SIG.TERM,
             }) |sig| {
-                std.posix.sigaction(sig, &sigact, null) catch {};
+                std.posix.sigaction(sig, &sigact, null);
             }
 
             @trap();
@@ -1419,63 +1484,70 @@ fn crash() noreturn {
 
 pub var verbose_error_trace = false;
 
-fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
+noinline fn coldHandleErrorReturnTrace(err_int_workaround_for_zig_ccall_bug: std.meta.Int(.unsigned, @bitSizeOf(anyerror)), trace: *std.builtin.StackTrace, comptime is_root: bool) void {
+    @branchHint(.cold);
+    const err = @errorFromInt(err_int_workaround_for_zig_ccall_bug);
+
+    // The format of the panic trace is slightly different in debug
+    // builds Mainly, we demangle the backtrace immediately instead
+    // of using a trace string.
+    //
+    // To make the release-mode behavior easier to demo, debug mode
+    // checks for this CLI flag.
+    const is_debug = bun.Environment.isDebug and check_flag: {
+        for (bun.argv) |arg| {
+            if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
+                break :check_flag false;
+            }
+        }
+        break :check_flag true;
+    };
+
+    if (is_debug) {
+        if (is_root) {
+            if (verbose_error_trace) {
+                Output.note("Release build will not have this trace by default:", .{});
+            }
+        } else {
+            Output.note(
+                "caught error.{s}:",
+                .{@errorName(err)},
+            );
+        }
+        Output.flush();
+        dumpStackTrace(trace.*);
+    } else {
+        const ts = TraceString{
+            .trace = trace,
+            .reason = .{ .zig_error = err },
+            .action = .view_trace,
+        };
+        if (is_root) {
+            Output.prettyErrorln(
+                \\
+                \\To send a redacted crash report to Bun's team,
+                \\please file a GitHub issue using the link below:
+                \\
+                \\ <cyan>{}<r>
+                \\
+            ,
+                .{ts},
+            );
+        } else {
+            Output.prettyErrorln(
+                "<cyan>trace<r>: error.{s}: <d>{}<r>",
+                .{ @errorName(err), ts },
+            );
+        }
+    }
+}
+
+inline fn handleErrorReturnTraceExtra(err: anyerror, maybe_trace: ?*std.builtin.StackTrace, comptime is_root: bool) void {
     if (!builtin.have_error_return_tracing) return;
     if (!verbose_error_trace and !is_root) return;
 
     if (maybe_trace) |trace| {
-        // The format of the panic trace is slightly different in debug
-        // builds Mainly, we demangle the backtrace immediately instead
-        // of using a trace string.
-        //
-        // To make the release-mode behavior easier to demo, debug mode
-        // checks for this CLI flag.
-        const is_debug = bun.Environment.isDebug and check_flag: {
-            for (bun.argv) |arg| {
-                if (bun.strings.eqlComptime(arg, "--debug-crash-handler-use-trace-string")) {
-                    break :check_flag false;
-                }
-            }
-            break :check_flag true;
-        };
-
-        if (is_debug) {
-            if (is_root) {
-                if (verbose_error_trace) {
-                    Output.note("Release build will not have this trace by default:", .{});
-                }
-            } else {
-                Output.note(
-                    "caught error.{s}:",
-                    .{@errorName(err)},
-                );
-            }
-            Output.flush();
-            dumpStackTrace(trace.*);
-        } else {
-            const ts = TraceString{
-                .trace = trace,
-                .reason = .{ .zig_error = err },
-                .action = .view_trace,
-            };
-            if (is_root) {
-                Output.prettyErrorln(
-                    \\
-                    \\To send a redacted crash report to Bun's team,
-                    \\please file a GitHub issue using the link below:
-                    \\
-                    \\ <cyan>{}<r>
-                    \\
-                ,
-                    .{ts},
-                );
-            } else {
-                Output.prettyErrorln(
-                    "<cyan>trace<r>: error.{s}: <d>{}<r>",
-                    .{ @errorName(err), ts },
-                );
-            }
-        }
+        coldHandleErrorReturnTrace(@intFromError(err), trace, is_root);
     }
 }
 
@@ -1495,6 +1567,7 @@ const stdDumpStackTrace = debug.dumpStackTrace;
 /// Version of the standard library dumpStackTrace that has some fallbacks for
 /// cases where such logic fails to run.
 pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
+    Output.flush();
     const stderr = std.io.getStdErr().writer();
     if (!bun.Environment.isDebug) {
         // debug symbols aren't available, lets print a tracestring
@@ -1502,7 +1575,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
             .action = .view_trace,
             .reason = .{ .zig_error = error.DumpStackTrace },
             .trace = &trace,
-        }});
+        }}) catch {};
         return;
     }
 
@@ -1513,9 +1586,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
                 stderr.print("Unable to dump stack trace: Unable to open debug info: {s}\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
-            var arena = bun.ArenaAllocator.init(bun.default_allocator);
-            defer arena.deinit();
-            debug.writeStackTrace(trace, stderr, arena.allocator(), debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
+            debug.writeStackTrace(trace, stderr, debug_info, std.io.tty.detectConfig(std.io.getStdErr())) catch |err| {
                 stderr.print("Unable to dump stack trace: {s}\nFallback trace:\n", .{@errorName(err)}) catch return;
                 break :attempt_dump;
             };
@@ -1583,6 +1654,62 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
     stderr.writeAll(proc.stderr) catch return;
 }
 
+pub fn dumpCurrentStackTrace(first_address: ?usize) void {
+    var addrs: [32]usize = undefined;
+    var stack: std.builtin.StackTrace = .{ .index = 0, .instruction_addresses = &addrs };
+    std.debug.captureStackTrace(first_address orelse @returnAddress(), &stack);
+    dumpStackTrace(stack);
+}
+
+/// A variant of `std.builtin.StackTrace` that stores its data within itself
+/// instead of being a pointer. This allows storing captured stack traces
+/// for later printing.
+pub const StoredTrace = struct {
+    data: [31]usize,
+    index: usize,
+
+    pub const empty: StoredTrace = .{
+        .data = .{0} ** 31,
+        .index = 0,
+    };
+
+    pub fn trace(stored: *StoredTrace) std.builtin.StackTrace {
+        return .{
+            .index = stored.index,
+            .instruction_addresses = &stored.data,
+        };
+    }
+
+    pub fn capture(begin: ?usize) StoredTrace {
+        var stored: StoredTrace = StoredTrace.empty;
+        var frame = stored.trace();
+        std.debug.captureStackTrace(begin orelse @returnAddress(), &frame);
+        stored.index = frame.index;
+        for (frame.instruction_addresses[0..frame.index], 0..) |addr, i| {
+            if (addr == 0) {
+                stored.index = i;
+                break;
+            }
+        }
+        return stored;
+    }
+
+    pub fn from(stack_trace: ?*std.builtin.StackTrace) StoredTrace {
+        if (stack_trace) |stack| {
+            var data: [31]usize = undefined;
+            @memset(&data, 0);
+            const items = @min(stack.instruction_addresses.len, 31);
+            @memcpy(data[0..items], stack.instruction_addresses[0..items]);
+            return .{
+                .data = data,
+                .index = @min(items, stack.index),
+            };
+        } else {
+            return empty;
+        }
+    }
+};
+
 pub const js_bindings = struct {
     const JSC = bun.JSC;
     const JSValue = JSC.JSValue;
@@ -1606,7 +1733,7 @@ pub const js_bindings = struct {
         return obj;
     }
 
-    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) JSValue {
+    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) bun.JSError!JSValue {
         if (!bun.Environment.isMac) return .undefined;
 
         const header = std.c._dyld_get_image_header(0) orelse return .undefined;
@@ -1616,7 +1743,7 @@ pub const js_bindings = struct {
         return JSValue.jsNumber(base_address - vmaddr_slide);
     }
 
-    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         @setRuntimeSafety(false);
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
@@ -1624,33 +1751,34 @@ pub const js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
-    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.crash_handler.handleRootError(error.Test, null);
     }
 
-    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.outOfMemory();
     }
 
-    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
     }
 
-    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const bits = bun.Analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
             // there is definitely enough space in the bounded array
             unreachable;
         };
-        return bun.String.createLatin1(buf.slice()).toJS(global);
+        var str = bun.String.createLatin1(buf.slice());
+        return str.transferToJS(global);
     }
 
-    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
@@ -1660,8 +1788,53 @@ pub const js_bindings = struct {
         obj.put(global, JSC.ZigString.static("features"), array);
         obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
         obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
+
+        // This is the source of truth for the git sha.
+        // Not the github ref or the git tag.
         obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
+
         obj.put(global, JSC.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }
 };
+
+const OnBeforeCrash = fn (opaque_ptr: *anyopaque) void;
+
+/// For large codebases such as bun.bake.DevServer, it may be helpful
+/// to dump a large amount of state to a file to aid debugging a crash.
+///
+/// Pre-crash handlers are likely, but not guaranteed to call. Errors are ignored.
+pub fn appendPreCrashHandler(comptime T: type, ptr: *T, comptime handler: fn (*T) anyerror!void) !void {
+    const wrap = struct {
+        fn onCrash(opaque_ptr: *anyopaque) void {
+            handler(@ptrCast(@alignCast(opaque_ptr))) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+            };
+        }
+    };
+
+    before_crash_handlers_mutex.lock();
+    defer before_crash_handlers_mutex.unlock();
+    try before_crash_handlers.append(bun.default_allocator, .{ ptr, wrap.onCrash });
+}
+
+pub fn removePreCrashHandler(ptr: *anyopaque) void {
+    before_crash_handlers_mutex.lock();
+    defer before_crash_handlers_mutex.unlock();
+    const index = for (before_crash_handlers.items, 0..) |item, i| {
+        if (item.@"0" == ptr) break i;
+    } else return;
+    _ = before_crash_handlers.orderedRemove(index);
+}
+
+pub fn isPanicking() bool {
+    return panicking.load(.monotonic) > 0;
+}
+
+export fn Bun__crashHandler(message_ptr: [*]u8, message_len: usize) noreturn {
+    crashHandler(.{ .panic = message_ptr[0..message_len] }, null, @returnAddress());
+}
+
+comptime {
+    _ = &Bun__crashHandler;
+}

@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 
-import { tempDirWithFiles, bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import path from "path";
 
 test("expect.assertions causes the test to fail when it should", async () => {

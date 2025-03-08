@@ -1,9 +1,9 @@
 globalThis._importMeta_ = { url: import.meta.url, env: process.env };
-import { promises, existsSync } from "fs";
-import { dirname as dirname$1, resolve as resolve$1, join } from "path";
+import { existsSync, promises } from "fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { promises as promises$1 } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { dirname as dirname$1, join, resolve as resolve$1 } from "path";
 
 const HASH_RE = /#/g;
 const AMPERSAND_RE = /&/g;

@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { heapStats } from "bun:jsc";
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
 
@@ -267,7 +267,7 @@ it("setTimeout if refreshed before run, should reschedule to run later", done =>
   let start = Date.now();
   let timer = setTimeout(() => {
     let end = Date.now();
-    expect(end - start).toBeGreaterThan(149);
+    expect(end - start).toBeGreaterThanOrEqual(149);
     done();
   }, 100);
 

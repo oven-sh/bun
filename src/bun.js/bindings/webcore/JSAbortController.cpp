@@ -98,7 +98,7 @@ using JSAbortControllerDOMConstructor = JSDOMConstructor<JSAbortController>;
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    auto& vm = lexicalGlobalObject->vm();
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSAbortControllerDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
@@ -216,7 +216,7 @@ static inline JSC::EncodedJSValue jsAbortControllerPrototypeFunction_abortBody(J
     auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
     auto reason = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.abort(*jsCast<JSDOMGlobalObject*>(lexicalGlobalObject), WTFMove(reason)); })));
 }
 

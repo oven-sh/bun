@@ -1,7 +1,6 @@
-import { once } from "node:events";
+import { expect, test } from "bun:test";
 import { createServer } from "node:http";
 import { promisify } from "node:util";
-import { test, expect } from "bun:test";
 
 test("after redirecting the url of the response is set to the target url", async () => {
   // redirect-1 -> redirect-2 -> target

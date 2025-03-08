@@ -36,7 +36,8 @@ public:
             : capture(capture)
             , passive(passive)
             , once(once)
-        { }
+        {
+        }
 
         bool capture;
         bool passive;

@@ -1,6 +1,6 @@
-import { test, expect } from "bun:test";
-import { join } from "path";
+import { expect, test } from "bun:test";
 import { tempDirWithFiles } from "harness";
+import { join } from "path";
 test("empty jsonc - package.json", async () => {
   const dir = tempDirWithFiles("jsonc", {
     "package.json": ``,
@@ -18,6 +18,22 @@ test("empty jsonc - tsconfig.json", async () => {
     "index.ts": `
     import tsconfig from './tsconfig.json';
     if (JSON.stringify(tsconfig) !== '{}') throw new Error('tsconfig.json should be empty');
+    `,
+  });
+  expect([join(dir, "index.ts")]).toRun();
+});
+
+test("import anything.jsonc as json", async () => {
+  const jsoncFile = `{
+    // comment
+    "trailingComma": 0,
+  }`;
+  const dir = tempDirWithFiles("jsonc", {
+    "anything.jsonc": jsoncFile,
+    "index.ts": `
+    import file from './anything.jsonc';
+    const _file = ${jsoncFile}
+    if (!Bun.deepEquals(file, _file)) throw new Error('anything.jsonc wasnt imported as jsonc');
     `,
   });
   expect([join(dir, "index.ts")]).toRun();

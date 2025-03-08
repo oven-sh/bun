@@ -1,4 +1,4 @@
-import { it, expect, describe } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { randomInt } from "crypto";
 
 describe("randomInt args validation", async () => {

@@ -33,6 +33,14 @@ To add a package as an optional dependency (`"optionalDependencies"`):
 $ bun add --optional lodash
 ```
 
+## `--peer`
+
+To add a package as a peer dependency (`"peerDependencies"`):
+
+```bash
+$ bun add --peer @types/bun
+```
+
 ## `--exact`
 
 {% callout %}
@@ -161,3 +169,5 @@ This will add the following line to your `package.json`:
   }
 }
 ```
+
+{% bunCLIUsage command="add" /%}

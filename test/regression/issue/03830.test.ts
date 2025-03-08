@@ -1,6 +1,6 @@
-import { it, expect } from "bun:test";
+import { expect, it } from "bun:test";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { mkdirSync, rmSync, writeFileSync, realpathSync } from "fs";
 import { join } from "path";
 
 it("macros should not lead to seg faults under any given input", async () => {
@@ -15,7 +15,10 @@ it("macros should not lead to seg faults under any given input", async () => {
   // Create a directory with our test file
   mkdirSync(testDir, { recursive: true });
   writeFileSync(join(testDir, "macro.ts"), "export function fn(str) { return str; }");
-  writeFileSync(join(testDir, "index.ts"), "import { fn } from './macro' assert { type: 'macro' };\nfn(`©${''}`);");
+  writeFileSync(
+    join(testDir, "index.ts"),
+    "import { fn } from './macro' assert { type: 'macro' };\nfn(`©${Number(0)}`);",
+  );
   testDir = realpathSync(testDir);
 
   const { stderr, exitCode } = Bun.spawnSync({

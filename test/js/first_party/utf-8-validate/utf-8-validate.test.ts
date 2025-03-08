@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import isValidUTF8 from "utf-8-validate";
 
 test("utf-8-validate", () => {

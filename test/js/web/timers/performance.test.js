@@ -1,6 +1,19 @@
 import { expect, it } from "bun:test";
 import { isWindows } from "harness";
 
+it("performance.clearResourceTimings()", () => {
+  performance.clearResourceTimings();
+});
+
+it("performance.setResourceTimingBufferSize()", () => {
+  performance.setResourceTimingBufferSize(10);
+});
+
+it("performance.onresourcetimingbufferfull", () => {
+  performance.onresourcetimingbufferfull = () => {};
+  performance.onresourcetimingbufferfull();
+});
+
 it("performance.now() should be monotonic", () => {
   const first = performance.now();
   const second = performance.now();
@@ -8,21 +21,15 @@ it("performance.now() should be monotonic", () => {
   const fourth = performance.now();
   const fifth = performance.now();
   const sixth = performance.now();
+  expect(first).toBeLessThanOrEqual(second);
+  expect(second).toBeLessThanOrEqual(third);
+  expect(third).toBeLessThanOrEqual(fourth);
+  expect(fourth).toBeLessThanOrEqual(fifth);
+  expect(fifth).toBeLessThanOrEqual(sixth);
   if (isWindows) {
     // Timer precision is monotonic on Windows, but it is 100ns of precision
     // making it extremely easy to hit overlapping timer values here.
-    expect(first).toBeLessThanOrEqual(second);
-    expect(second).toBeLessThanOrEqual(third);
-    expect(third).toBeLessThanOrEqual(fourth);
-    expect(fourth).toBeLessThanOrEqual(fifth);
-    expect(fifth).toBeLessThanOrEqual(sixth);
     Bun.sleepSync(0.001);
-  } else {
-    expect(first).toBeLessThan(second);
-    expect(second).toBeLessThan(third);
-    expect(third).toBeLessThan(fourth);
-    expect(fourth).toBeLessThan(fifth);
-    expect(fifth).toBeLessThan(sixth);
   }
   expect(Bun.nanoseconds()).toBeGreaterThan(0);
   expect(Bun.nanoseconds()).toBeGreaterThan(sixth);

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { Request } from "node-fetch";
 
 test("new Request('/') works with node-fetch", () => {

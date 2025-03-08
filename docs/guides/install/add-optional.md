@@ -2,7 +2,7 @@
 name: Add an optional dependency
 ---
 
-To add an npm package as a peer dependency, use the `--optional` flag.
+To add an npm package as an optional dependency, use the `--optional` flag.
 
 ```sh
 $ bun add zod --optional
@@ -22,4 +22,4 @@ This will add the package to `optionalDependencies` in `package.json`.
 
 ---
 
-See [Docs > Package manager](/docs/cli/install) for complete documentation of Bun's package manager.
+See [Docs > Package manager](https://bun.sh/docs/cli/install) for complete documentation of Bun's package manager.

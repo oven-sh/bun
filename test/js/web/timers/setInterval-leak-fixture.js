@@ -1,7 +1,10 @@
 const delta = 1;
-const initialRuns = 5_000_000;
+const initialRuns = 10_000;
 let runs = initialRuns;
-var initial = 0;
+
+function usage() {
+  return process.memoryUsage.rss();
+}
 
 Promise.withResolvers ??= () => {
   let promise, resolve, reject;
@@ -11,35 +14,43 @@ Promise.withResolvers ??= () => {
   });
   return { promise, resolve, reject };
 };
-const gc = typeof Bun !== "undefined" ? Bun.gc : typeof globalThis.gc !== "undefined" ? globalThis.gc : () => {};
-var resolve, promise;
-({ promise, resolve } = Promise.withResolvers());
 
-function iterate() {
-  if (runs === initialRuns) {
-    initial = process.memoryUsage.rss();
-    console.log(this);
+function gc() {
+  if (typeof Bun !== "undefined") {
+    Bun.gc(true);
+  } else if (typeof globalThis.gc !== "undefined") {
+    globalThis.gc();
   }
+}
 
+var resolve, promise;
+
+// Attaches large allocated data to the current timer. Decrements the number of remaining iterations.
+// When invoked the last time, resolves promise with the memory usage at the end of this batch.
+function iterate() {
   this.bigLeakyObject = {
     huge: {
       wow: {
         big: {
-          data: [],
+          data: runs.toString().repeat(50),
         },
       },
     },
   };
 
   if (runs-- === 1) {
-    const rss = process.memoryUsage.rss();
+    const rss = usage();
     resolve(rss);
   }
 }
 
+// Resets the global run counter. Creates `iterations` new timers with iterate as the callback.
+// Waits for them all to finish, then clears all the timers, triggers garbage collection, and
+// returns the final memory usage measured by a timer.
 async function batch(iterations) {
   let result;
   runs = initialRuns;
+  ({ promise, resolve } = Promise.withResolvers());
   {
     const timers = [];
     for (let i = 0; i < iterations; i++) timers.push(setInterval(iterate, delta));
@@ -51,14 +62,20 @@ async function batch(iterations) {
 }
 
 {
-  for (let i = 0; i < 50; i++) await batch(1_000);
-  gc(true);
-  const initial = await batch(1_000);
-  for (let i = 0; i < 250; i++) {
+  // Warmup
+  for (let i = 0; i < 50; i++) {
     await batch(1_000);
   }
-  gc(true);
-  const result = process.memoryUsage.rss();
+  // Measure memory usage after the warmup
+  const initial = usage();
+  // Run batch 300 more times, each time creating 1,000 timers, waiting for them to finish, and
+  // clearing them.
+  for (let i = 0; i < 300; i++) {
+    await batch(1_000);
+  }
+  // Measure memory usage again, to check that cleared timers and the objects allocated inside each
+  // callback have not bloated it
+  const result = usage();
   {
     const delta = ((result - initial) / 1024 / 1024) | 0;
     console.log("RSS", (result / 1024 / 1024) | 0, "MB");

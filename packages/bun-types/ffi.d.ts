@@ -337,6 +337,10 @@ declare module "bun:ffi" {
      */
     u64_fast = 16,
     function = 17,
+
+    napi_env = 18,
+    napi_value = 19,
+    buffer = 20,
   }
 
   type Pointer = number & { __pointer__: null };
@@ -372,6 +376,9 @@ declare module "bun:ffi" {
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | JSCallback; // cannot be null
+    [FFIType.napi_env]: unknown;
+    [FFIType.napi_value]: unknown;
+    [FFIType.buffer]: NodeJS.TypedArray | DataView;
   }
   interface FFITypeToReturnsType {
     [FFIType.char]: number;
@@ -404,6 +411,9 @@ declare module "bun:ffi" {
     [FFIType.i64_fast]: number | bigint;
     [FFIType.u64_fast]: number | bigint;
     [FFIType.function]: Pointer | null;
+    [FFIType.napi_env]: unknown;
+    [FFIType.napi_value]: unknown;
+    [FFIType.buffer]: NodeJS.TypedArray | DataView;
   }
   interface FFITypeStringToType {
     ["char"]: FFIType.char;
@@ -436,6 +446,9 @@ declare module "bun:ffi" {
     ["function"]: FFIType.pointer; // for now
     ["usize"]: FFIType.uint64_t; // for now
     ["callback"]: FFIType.pointer; // for now
+    ["napi_env"]: FFIType.napi_env;
+    ["napi_value"]: FFIType.napi_value;
+    ["buffer"]: FFIType.buffer;
   }
 
   type FFITypeOrString = FFIType | keyof FFITypeStringToType;
@@ -553,17 +566,21 @@ declare module "bun:ffi" {
 
   type ToFFIType<T extends FFITypeOrString> = T extends FFIType ? T : T extends string ? FFITypeStringToType[T] : never;
 
+  const FFIFunctionCallableSymbol: unique symbol;
   type ConvertFns<Fns extends Symbols> = {
-    [K in keyof Fns]: (
-      ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
-        ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
-        : // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-          [unknown] extends [Fns[K]["args"]]
-          ? []
-          : never
-    ) => [unknown] extends [Fns[K]["returns"]] // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
-      ? undefined
-      : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
+    [K in keyof Fns]: {
+      (
+        ...args: Fns[K]["args"] extends infer A extends readonly FFITypeOrString[]
+          ? { [L in keyof A]: FFITypeToArgsType[ToFFIType<A[L]>] }
+          : // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+            [unknown] extends [Fns[K]["args"]]
+            ? []
+            : never
+      ): [unknown] extends [Fns[K]["returns"]] // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type
+        ? undefined
+        : FFITypeToReturnsType[ToFFIType<NonNullable<Fns[K]["returns"]>>];
+      __ffi_function_callable: typeof FFIFunctionCallableSymbol;
+    };
   };
 
   /**
@@ -596,6 +613,114 @@ declare module "bun:ffi" {
     name: string | import("bun").BunFile | URL,
     symbols: Fns,
   ): Library<Fns>;
+
+  /**
+   * **Experimental:** Compile ISO C11 source code using TinyCC, and make {@link symbols} available as functions to JavaScript.
+   *
+   * @param options
+   * @returns Library<Fns>
+   *
+   * @example
+   * ## Hello, World!
+   *
+   * JavaScript:
+   * ```js
+   * import { cc } from "bun:ffi";
+   * import hello from "./hello.c" with {type: "file"};
+   * const {symbols: {hello}} = cc({
+   *   source: hello,
+   *   symbols: {
+   *     hello: {
+   *       returns: "cstring",
+   *       args: [],
+   *     },
+   *   },
+   * });
+   * // "Hello, World!"
+   * console.log(hello());
+   * ```
+   *
+   * `./hello.c`:
+   * ```c
+   * #include <stdio.h>
+   * const char* hello() {
+   *   return "Hello, World!";
+   * }
+   * ```
+   */
+  function cc<Fns extends Record<string, FFIFunction>>(options: {
+    /**
+     * File path to an ISO C11 source file to compile and link
+     */
+    source: string | import("bun").BunFile | URL;
+
+    /**
+     * Library names to link against
+     *
+     * Equivalent to `-l` option in gcc/clang.
+     */
+    library?: string[] | string;
+
+    /**
+     * Include directories to pass to the compiler
+     *
+     * Equivalent to `-I` option in gcc/clang.
+     */
+    include?: string[] | string;
+
+    /**
+     * Map of symbols to load where the key is the symbol name and the value is the {@link FFIFunction}
+     */
+    symbols: Fns;
+
+    /**
+     * Map of symbols to define where the key is the symbol name and the value is the symbol value
+     *
+     * Equivalent to `-D` option in gcc/clang.
+     *
+     * @example
+     * ```js
+     * import { cc } from "bun:ffi";
+     * const {symbols: {hello}} = cc({
+     *   source: hello,
+     *   define: {
+     *     "NDEBUG": "1",
+     *   },
+     *   symbols: {
+     *     hello: {
+     *       returns: "cstring",
+     *       args: [],
+     *     },
+     *   },
+     * });
+     * ```
+     */
+    define?: Record<string, string>;
+
+    /**
+     * Flags to pass to the compiler. Note: we do not make gurantees about which specific version of the compiler is used.
+     *
+     * @default "-std=c11 -Wl,--export-all-symbols -g -O2"
+     *
+     * This is useful for passing macOS frameworks to link against. Or if there are other options you want to pass to the compiler.
+     *
+     * @example
+     * ```js
+     * import { cc } from "bun:ffi";
+     * const {symbols: {hello}} = cc({
+     *   source: hello,
+     *   flags: ["-framework CoreFoundation", "-framework Security"],
+     *   symbols: {
+     *     hello: {
+     *       returns: "cstring",
+     *       args: [],
+     *     },
+     *   },
+     * });
+     * ```
+     */
+    flags?: string | string[];
+  }): Library<Fns>;
 
   /**
    * Turn a native library's function pointer into a JavaScript function

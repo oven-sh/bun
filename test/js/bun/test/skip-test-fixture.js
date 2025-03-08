@@ -1,4 +1,4 @@
-import { test, describe } from "bun:test";
+import { describe, test } from "bun:test";
 
 test.skip("test #1", () => {
   console.log("unreachable");

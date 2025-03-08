@@ -144,10 +144,7 @@ __bun_temp_ref_6$ && await __bun_temp_ref_6$;
 `;
 
 exports[`Bun.Transpiler using top level 1`] = `
-"import {
-__callDispose as __callDispose,
-__using as __using
-} from "bun:wrap";
+"import { __callDispose as __callDispose, __using as __using } from "bun:wrap";
 export function c(e) {
   let __bun_temp_ref_1$ = [];
   try {
@@ -159,7 +156,7 @@ export function c(e) {
     __callDispose(__bun_temp_ref_1$, __bun_temp_ref_3$, __bun_temp_ref_4$);
   }
 }
-import {using} from "n";
+import { using } from "n";
 let __bun_temp_ref_5$ = [];
 try {
   var a = __using(__bun_temp_ref_5$, b, 0);

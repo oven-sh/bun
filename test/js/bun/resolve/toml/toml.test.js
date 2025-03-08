@@ -1,6 +1,6 @@
 import { expect, it } from "bun:test";
-import tomlFromCustomTypeAttribute from "./toml-fixture.toml.txt" with { type: "toml" };
 import emptyToml from "./toml-empty.toml";
+import tomlFromCustomTypeAttribute from "./toml-fixture.toml.txt" with { type: "toml" };
 
 function checkToml(toml) {
   expect(toml.framework).toBe("next");

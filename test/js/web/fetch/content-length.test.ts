@@ -1,7 +1,7 @@
-import { Blob } from "node:buffer";
-import { createServer } from "node:http";
-import { once } from "node:events";
 import { expect, test } from "bun:test";
+import { Blob } from "node:buffer";
+import { once } from "node:events";
+import { createServer } from "node:http";
 
 // https://github.com/nodejs/undici/issues/1783
 test("Content-Length is set when using a FormData body with fetch", async () => {

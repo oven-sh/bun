@@ -110,7 +110,7 @@ You can read results from the subprocess via the `stdout` and `stderr` propertie
 ```ts
 const proc = Bun.spawn(["bun", "--version"]);
 const text = await new Response(proc.stdout).text();
-console.log(text); // => "1.1.7"
+console.log(text); // => "$BUN_LATEST_VERSION"
 ```
 
 Configure the output stream by passing one of the following values to `stdout/stderr`:
@@ -179,7 +179,7 @@ proc.kill(); // specify an exit code
 
 The parent `bun` process will not terminate until all child processes have exited. Use `proc.unref()` to detach the child process from the parent.
 
-```
+```ts
 const proc = Bun.spawn(["bun", "--version"]);
 proc.unref();
 ```

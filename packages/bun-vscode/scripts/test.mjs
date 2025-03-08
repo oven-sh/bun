@@ -1,21 +1,21 @@
+import { exec } from "node:child_process";
 import { readdirSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { dirname } from "node:path";
 
-const { pathname } = new URL("..", import.meta.url);
-process.chdir(pathname);
+process.chdir(dirname(import.meta.dirname));
 
-let path;
+let extPath;
 for (const filename of readdirSync("extension")) {
   if (filename.endsWith(".vsix")) {
-    path = `extension/${filename}`;
+    extPath = `extension/${filename}`;
     break;
   }
 }
 
-if (!path) {
+if (!extPath) {
   throw new Error("No .vsix file found");
 }
 
-spawn("code", ["--new-window", `--install-extension=${path}`, `--extensionDevelopmentPath=${pathname}`, "example"], {
+exec(`code --new-window --install-extension=${extPath} --extensionDevelopmentPath=${process.cwd()} example`, {
   stdio: "inherit",
 });

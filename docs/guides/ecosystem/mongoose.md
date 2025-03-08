@@ -8,18 +8,18 @@ MongoDB and Mongoose work out of the box with Bun. This guide assumes you've alr
 
 Once MongoDB is running, create a directory and initialize it with `bun init`.
 
-```bash
-mkdir mongoose-app
-cd mongoose-app
-bun init
+```sh
+$ mkdir mongoose-app
+$ cd mongoose-app
+$ bun init
 ```
 
 ---
 
 Then add Mongoose as a dependency.
 
-```bash
-bun add mongoose
+```sh
+$ bun add mongoose
 ```
 
 ---

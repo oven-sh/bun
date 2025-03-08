@@ -1,5 +1,5 @@
 import { spawnSync } from "bun";
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 
 test("Bun.serve() propagates errors to the parent fixture", async () => {

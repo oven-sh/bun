@@ -167,8 +167,8 @@ describe("FileSink", () => {
 });
 
 import fs from "node:fs";
-import util from "node:util";
 import path from "node:path";
+import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
   using _ = fileDescriptorLeakChecker();
@@ -193,7 +193,7 @@ it("end does close when not backed by a file descriptor", async () => {
   await Bun.sleep(10); // For the file descriptor leak checker.
 });
 
-it("write result is not cummulative", async () => {
+it("write result is not cumulative", async () => {
   using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");

@@ -1,6 +1,6 @@
-import { expect, test, describe } from "bun:test";
-import { createServer } from "node:http";
+import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
+import { createServer } from "node:http";
 
 describe("Headers initialization", () => {
   test("allows undefined", () => {

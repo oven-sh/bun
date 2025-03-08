@@ -22,6 +22,7 @@ pub const WebWorker = struct {
 
     /// Already resolved.
     specifier: []const u8 = "",
+    preloads: [][]const u8 = &.{},
     store_fd: bool = false,
     arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
@@ -76,6 +77,97 @@ pub const WebWorker = struct {
         return true;
     }
 
+    fn resolveEntryPointSpecifier(
+        parent: *JSC.VirtualMachine,
+        str: []const u8,
+        error_message: *bun.String,
+        logger: *bun.logger.Log,
+    ) ?[]const u8 {
+        if (parent.standalone_module_graph) |graph| {
+            if (graph.find(str) != null) {
+                return str;
+            }
+
+            // Since `bun build --compile` renames files to `.js` by
+            // default, we need to do the reverse of our file extension
+            // mapping.
+            //
+            //   new Worker("./foo") -> new Worker("./foo.js")
+            //   new Worker("./foo.ts") -> new Worker("./foo.js")
+            //   new Worker("./foo.jsx") -> new Worker("./foo.js")
+            //   new Worker("./foo.mjs") -> new Worker("./foo.js")
+            //   new Worker("./foo.mts") -> new Worker("./foo.js")
+            //   new Worker("./foo.cjs") -> new Worker("./foo.js")
+            //   new Worker("./foo.cts") -> new Worker("./foo.js")
+            //   new Worker("./foo.tsx") -> new Worker("./foo.js")
+            //
+            if (bun.strings.hasPrefixComptime(str, "./") or bun.strings.hasPrefixComptime(str, "../")) try_from_extension: {
+                var pathbuf: bun.PathBuffer = undefined;
+                var base = str;
+
+                base = bun.path.joinAbsStringBuf(bun.StandaloneModuleGraph.base_public_path_with_default_suffix, &pathbuf, &.{str}, .loose);
+                const extname = std.fs.path.extension(base);
+
+                // ./foo -> ./foo.js
+                if (extname.len == 0) {
+                    pathbuf[base.len..][0..3].* = ".js".*;
+                    if (graph.find(pathbuf[0 .. base.len + 3])) |js_file| {
+                        return js_file.name;
+                    }
+
+                    break :try_from_extension;
+                }
+
+                // ./foo.ts -> ./foo.js
+                if (bun.strings.eqlComptime(extname, ".ts")) {
+                    pathbuf[base.len - 3 .. base.len][0..3].* = ".js".*;
+                    if (graph.find(pathbuf[0..base.len])) |js_file| {
+                        return js_file.name;
+                    }
+
+                    break :try_from_extension;
+                }
+
+                if (extname.len == 4) {
+                    inline for (.{ ".tsx", ".jsx", ".mjs", ".mts", ".cts", ".cjs" }) |ext| {
+                        if (bun.strings.eqlComptime(extname, ext)) {
+                            pathbuf[base.len - ext.len ..][0..".js".len].* = ".js".*;
+                            const as_js = pathbuf[0 .. base.len - ext.len + ".js".len];
+                            if (graph.find(as_js)) |js_file| {
+                                return js_file.name;
+                            }
+                            break :try_from_extension;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (JSC.WebCore.ObjectURLRegistry.isBlobURL(str)) {
+            if (JSC.WebCore.ObjectURLRegistry.singleton().has(str["blob:".len..])) {
+                return str;
+            } else {
+                error_message.* = bun.String.static("Blob URL is missing");
+                return null;
+            }
+        }
+
+        var resolved_entry_point: bun.resolver.Result = parent.transpiler.resolveEntryPoint(str) catch {
+            const out = logger.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global) catch {
+                error_message.* = bun.String.static("unexpected exception");
+                return null;
+            };
+            error_message.* = out;
+            return null;
+        };
+
+        const entry_path: *bun.fs.Path = resolved_entry_point.path() orelse {
+            error_message.* = bun.String.static("Worker entry point is missing");
+            return null;
+        };
+        return entry_path.text;
+    }
+
     pub fn create(
         cpp_worker: *void,
         parent: *JSC.VirtualMachine,
@@ -90,100 +182,44 @@ pub const WebWorker = struct {
         argv_len: u32,
         execArgv_ptr: ?[*]WTFStringImpl,
         execArgv_len: u32,
+        preload_modules_ptr: ?[*]bun.String,
+        preload_modules_len: u32,
     ) callconv(.C) ?*WebWorker {
         JSC.markBinding(@src());
         log("[{d}] WebWorker.create", .{this_context_id});
         var spec_slice = specifier_str.toUTF8(bun.default_allocator);
         defer spec_slice.deinit();
-        const prev_log = parent.bundler.log;
+        const prev_log = parent.transpiler.log;
         var temp_log = bun.logger.Log.init(bun.default_allocator);
-        parent.bundler.setLog(&temp_log);
-        defer parent.bundler.setLog(prev_log);
+        parent.transpiler.setLog(&temp_log);
+        defer parent.transpiler.setLog(prev_log);
         defer temp_log.deinit();
 
-        const path = brk: {
-            const str = spec_slice.slice();
-            if (parent.standalone_module_graph) |graph| {
-                if (graph.find(str) != null) {
-                    break :brk str;
-                }
+        const preload_modules = if (preload_modules_ptr) |ptr|
+            ptr[0..preload_modules_len]
+        else
+            &.{};
 
-                // Since `bun build --compile` renames files to `.js` by
-                // default, we need to do the reverse of our file extension
-                // mapping.
-                //
-                //   new Worker("./foo") -> new Worker("./foo.js")
-                //   new Worker("./foo.ts") -> new Worker("./foo.js")
-                //   new Worker("./foo.jsx") -> new Worker("./foo.js")
-                //   new Worker("./foo.mjs") -> new Worker("./foo.js")
-                //   new Worker("./foo.mts") -> new Worker("./foo.js")
-                //   new Worker("./foo.cjs") -> new Worker("./foo.js")
-                //   new Worker("./foo.cts") -> new Worker("./foo.js")
-                //   new Worker("./foo.tsx") -> new Worker("./foo.js")
-                //
-                if (bun.strings.hasPrefixComptime(str, "./") or bun.strings.hasPrefixComptime(str, "../")) try_from_extension: {
-                    var pathbuf: bun.PathBuffer = undefined;
-                    var base = str;
-
-                    base = bun.path.joinAbsStringBuf(bun.StandaloneModuleGraph.base_public_path_with_default_suffix, &pathbuf, &.{str}, .loose);
-                    const extname = std.fs.path.extension(base);
-
-                    // ./foo -> ./foo.js
-                    if (extname.len == 0) {
-                        pathbuf[base.len..][0..3].* = ".js".*;
-                        if (graph.find(pathbuf[0 .. base.len + 3])) |js_file| {
-                            break :brk js_file.name;
-                        }
-
-                        break :try_from_extension;
-                    }
-
-                    // ./foo.ts -> ./foo.js
-                    if (bun.strings.eqlComptime(extname, ".ts")) {
-                        pathbuf[base.len - 3 .. base.len][0..3].* = ".js".*;
-                        if (graph.find(pathbuf[0..base.len])) |js_file| {
-                            break :brk js_file.name;
-                        }
-
-                        break :try_from_extension;
-                    }
-
-                    if (extname.len == 4) {
-                        inline for (.{ ".tsx", ".jsx", ".mjs", ".mts", ".cts", ".cjs" }) |ext| {
-                            if (bun.strings.eqlComptime(extname, ext)) {
-                                pathbuf[base.len - ext.len ..][0..".js".len].* = ".js".*;
-                                const as_js = pathbuf[0 .. base.len - ext.len + ".js".len];
-                                if (graph.find(as_js)) |js_file| {
-                                    break :brk js_file.name;
-                                }
-                                break :try_from_extension;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if (JSC.WebCore.ObjectURLRegistry.isBlobURL(str)) {
-                if (JSC.WebCore.ObjectURLRegistry.singleton().has(str["blob:".len..])) {
-                    break :brk str;
-                } else {
-                    error_message.* = bun.String.static("Blob URL is missing");
-                    return null;
-                }
-            }
-
-            var resolved_entry_point: bun.resolver.Result = parent.bundler.resolveEntryPoint(str) catch {
-                const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
-                error_message.* = out;
-                return null;
-            };
-
-            const entry_path: *bun.fs.Path = resolved_entry_point.path() orelse {
-                error_message.* = bun.String.static("Worker entry point is missing");
-                return null;
-            };
-            break :brk entry_path.text;
+        const path = resolveEntryPointSpecifier(parent, spec_slice.slice(), error_message, &temp_log) orelse {
+            return null;
         };
+
+        var preloads = std.ArrayList([]const u8).initCapacity(bun.default_allocator, preload_modules_len) catch bun.outOfMemory();
+        for (preload_modules) |module| {
+            const utf8_slice = module.toUTF8(bun.default_allocator);
+            defer utf8_slice.deinit();
+            if (resolveEntryPointSpecifier(parent, utf8_slice.slice(), error_message, &temp_log)) |preload| {
+                preloads.append(bun.default_allocator.dupe(u8, preload) catch bun.outOfMemory()) catch bun.outOfMemory();
+            }
+
+            if (!error_message.isEmpty()) {
+                for (preloads.items) |preload| {
+                    bun.default_allocator.free(preload);
+                }
+                preloads.deinit();
+                return null;
+            }
+        }
 
         var worker = bun.default_allocator.create(WebWorker) catch bun.outOfMemory();
         worker.* = WebWorker{
@@ -193,7 +229,7 @@ pub const WebWorker = struct {
             .execution_context_id = this_context_id,
             .mini = mini,
             .specifier = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
-            .store_fd = parent.bundler.resolver.store_fd,
+            .store_fd = parent.transpiler.resolver.store_fd,
             .name = brk: {
                 if (!name_str.isEmpty()) {
                     break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch bun.outOfMemory();
@@ -204,6 +240,7 @@ pub const WebWorker = struct {
             .worker_event_loop_running = true,
             .argv = if (argv_ptr) |ptr| ptr[0..argv_len] else null,
             .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
+            .preloads = preloads.items,
         };
 
         worker.parent_poll_ref.ref(parent);
@@ -214,6 +251,7 @@ pub const WebWorker = struct {
     pub fn startWithErrorHandling(
         this: *WebWorker,
     ) void {
+        bun.Analytics.Features.workers_spawned += 1;
         start(this) catch |err| {
             Output.panic("An unhandled error occurred while starting a worker: {s}\n", .{@errorName(err)});
         };
@@ -239,20 +277,15 @@ pub const WebWorker = struct {
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
             .allocator = this.arena.?.allocator(),
-            .args = this.parent.bundler.options.transform_options,
+            .args = this.parent.transpiler.options.transform_options,
             .store_fd = this.store_fd,
             .graph = this.parent.standalone_module_graph,
         });
         vm.allocator = this.arena.?.allocator();
         vm.arena = &this.arena.?;
 
-        var b = &vm.bundler;
+        var b = &vm.transpiler;
 
-        b.configureRouter(false) catch {
-            this.flushLogs();
-            this.exitAndDeinit();
-            return;
-        };
         b.configureDefines() catch {
             this.flushLogs();
             this.exitAndDeinit();
@@ -262,12 +295,12 @@ pub const WebWorker = struct {
         // TODO: we may have to clone other parts of vm state. this will be more
         // important when implementing vm.deinit()
         const map = try vm.allocator.create(bun.DotEnv.Map);
-        map.* = try vm.bundler.env.map.cloneWithAllocator(vm.allocator);
+        map.* = try vm.transpiler.env.map.cloneWithAllocator(vm.allocator);
 
         const loader = try vm.allocator.create(bun.DotEnv.Loader);
         loader.* = bun.DotEnv.Loader.init(map, vm.allocator);
 
-        vm.bundler.env = loader;
+        vm.transpiler.env = loader;
 
         vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = false;
@@ -286,6 +319,10 @@ pub const WebWorker = struct {
         log("[{d}] deinit", .{this.execution_context_id});
         this.parent_poll_ref.unrefConcurrently(this.parent);
         bun.default_allocator.free(this.specifier);
+        for (this.preloads) |preload| {
+            bun.default_allocator.free(preload);
+        }
+        bun.default_allocator.free(this.preloads);
         bun.default_allocator.destroy(this);
     }
 
@@ -294,7 +331,7 @@ pub const WebWorker = struct {
         var vm = this.vm orelse return;
         if (vm.log.msgs.items.len == 0) return;
         const err = vm.log.toJS(vm.global, bun.default_allocator, "Error in worker");
-        const str = err.toBunString(vm.global);
+        const str = err.toBunString(vm.global) catch @panic("unexpected exception");
         defer str.deref();
         WebWorker__dispatchError(vm.global, this.cpp_worker, str, err);
     }
@@ -303,7 +340,7 @@ pub const WebWorker = struct {
         // Prevent recursion
         vm.onUnhandledRejection = &JSC.VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
 
-        const error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
+        var error_instance = error_instance_or_exception.toError() orelse error_instance_or_exception;
 
         var array = bun.MutableString.init(bun.default_allocator, 0) catch unreachable;
         defer array.deinit();
@@ -330,12 +367,18 @@ pub const WebWorker = struct {
                 .flush = false,
                 .max_depth = 32,
             },
-        );
+        ) catch |err| {
+            switch (err) {
+                error.JSError => {},
+                error.OutOfMemory => globalObject.throwOutOfMemory() catch {},
+            }
+            error_instance = globalObject.tryTakeException().?;
+        };
         buffered_writer.flush() catch {
             bun.outOfMemory();
         };
         JSC.markBinding(@src());
-        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);
+        WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.slice()), error_instance);
         if (vm.worker) |worker_| {
             _ = worker.setRequestedTerminate();
             worker.parent_poll_ref.unrefConcurrently(worker.parent);
@@ -359,14 +402,14 @@ pub const WebWorker = struct {
         var vm = this.vm.?;
         assert(this.status.load(.acquire) == .start);
         this.setStatus(.starting);
-
+        vm.preload = this.preloads;
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
             this.flushLogs();
             this.exitAndDeinit();
             return;
         };
 
-        if (promise.status(vm.global.vm()) == .Rejected) {
+        if (promise.status(vm.global.vm()) == .rejected) {
             const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
             if (!handled) {
@@ -435,6 +478,7 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
+        // TODO(@heimskr): make WebWorker termination more immediate. Currently, console.log after process.exit will go through if in a WebWorker.
         if (this.status.load(.acquire) == .terminated) {
             return;
         }
@@ -456,13 +500,16 @@ pub const WebWorker = struct {
     pub fn exitAndDeinit(this: *WebWorker) noreturn {
         JSC.markBinding(@src());
         this.setStatus(.terminated);
+        bun.Analytics.Features.workers_terminated += 1;
 
         log("[{d}] exitAndDeinit", .{this.execution_context_id});
         const cpp_worker = this.cpp_worker;
         var exit_code: i32 = 0;
         var globalObject: ?*JSC.JSGlobalObject = null;
         var vm_to_deinit: ?*JSC.VirtualMachine = null;
+        var loop: ?*bun.uws.Loop = null;
         if (this.vm) |vm| {
+            loop = vm.uwsLoop();
             this.vm = null;
             vm.is_shutting_down = true;
             vm.onExit();
@@ -473,25 +520,29 @@ pub const WebWorker = struct {
         var arena = this.arena;
 
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+        if (loop) |loop_| {
+            loop_.internal_loop_data.jsc_vm = null;
+        }
+
         bun.uws.onThreadExit();
         this.deinit();
 
         if (vm_to_deinit) |vm| {
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
+        bun.deleteAllPoolsForThreadExit();
         if (arena) |*arena_| {
             arena_.deinit();
         }
+
         bun.exitThread();
     }
 
     comptime {
-        if (!JSC.is_bindgen) {
-            @export(create, .{ .name = "WebWorker__create" });
-            @export(requestTerminate, .{ .name = "WebWorker__requestTerminate" });
-            @export(setRef, .{ .name = "WebWorker__setRef" });
-            _ = WebWorker__updatePtr;
-        }
+        @export(&create, .{ .name = "WebWorker__create" });
+        @export(&requestTerminate, .{ .name = "WebWorker__requestTerminate" });
+        @export(&setRef, .{ .name = "WebWorker__setRef" });
+        _ = WebWorker__updatePtr;
     }
 };
 

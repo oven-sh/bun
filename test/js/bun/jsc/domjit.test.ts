@@ -1,10 +1,10 @@
 // test functions that use DOMJIT
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
+import { ptr, read } from "bun:ffi";
 import crypto from "crypto";
 import { statSync } from "fs";
-import { read, ptr } from "bun:ffi";
 import vm from "node:vm";
 
 const dirStats = statSync(import.meta.dir);

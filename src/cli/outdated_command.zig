@@ -17,106 +17,13 @@ const PathBuffer = bun.PathBuffer;
 const FileSystem = bun.fs.FileSystem;
 const path = bun.path;
 const glob = bun.glob;
-
-fn Table(
-    comptime column_color: []const u8,
-    comptime column_left_pad: usize,
-    comptime column_right_pad: usize,
-    comptime enable_ansi_colors: bool,
-) type {
-    return struct {
-        column_names: []const []const u8,
-        column_inside_lengths: []const usize,
-
-        pub fn topLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┌" else "|";
-        }
-        pub fn topRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┐" else "|";
-        }
-        pub fn topColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┬" else "-";
-        }
-
-        pub fn bottomLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "└" else "|";
-        }
-        pub fn bottomRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┘" else "|";
-        }
-        pub fn bottomColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┴" else "-";
-        }
-
-        pub fn middleLeftSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "├" else "|";
-        }
-        pub fn middleRightSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┤" else "|";
-        }
-        pub fn middleColumnSep(_: *const @This()) string {
-            return if (enable_ansi_colors) "┼" else "|";
-        }
-
-        pub fn horizontalEdge(_: *const @This()) string {
-            return if (enable_ansi_colors) "─" else "-";
-        }
-        pub fn verticalEdge(_: *const @This()) string {
-            return if (enable_ansi_colors) "│" else "|";
-        }
-
-        pub fn init(column_names_: []const []const u8, column_inside_lengths_: []const usize) @This() {
-            return .{
-                .column_names = column_names_,
-                .column_inside_lengths = column_inside_lengths_,
-            };
-        }
-
-        pub fn printTopLineSeparator(this: *const @This()) void {
-            this.printLine(this.topLeftSep(), this.topRightSep(), this.topColumnSep());
-        }
-
-        pub fn printBottomLineSeparator(this: *const @This()) void {
-            this.printLine(this.bottomLeftSep(), this.bottomRightSep(), this.bottomColumnSep());
-        }
-
-        pub fn printLineSeparator(this: *const @This()) void {
-            this.printLine(this.middleLeftSep(), this.middleRightSep(), this.middleColumnSep());
-        }
-
-        pub fn printLine(this: *const @This(), left_edge_separator: string, right_edge_separator: string, column_separator: string) void {
-            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
-                if (i == 0) {
-                    Output.pretty("{s}", .{left_edge_separator});
-                } else {
-                    Output.pretty("{s}", .{column_separator});
-                }
-
-                for (0..column_left_pad + column_inside_length + column_right_pad) |_| Output.pretty("{s}", .{this.horizontalEdge()});
-
-                if (i == this.column_inside_lengths.len - 1) {
-                    Output.pretty("{s}\n", .{right_edge_separator});
-                }
-            }
-        }
-
-        pub fn printColumnNames(this: *const @This()) void {
-            for (this.column_inside_lengths, 0..) |column_inside_length, i| {
-                Output.pretty("{s}", .{this.verticalEdge()});
-                for (0..column_left_pad) |_| Output.pretty(" ", .{});
-                Output.pretty("<b><" ++ column_color ++ ">{s}<r>", .{this.column_names[i]});
-                for (this.column_names[i].len..column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
-                if (i == this.column_inside_lengths.len - 1) {
-                    Output.pretty("{s}\n", .{this.verticalEdge()});
-                }
-            }
-        }
-    };
-}
+const Table = bun.fmt.Table;
+const WorkspaceFilter = PackageManager.WorkspaceFilter;
+const OOM = bun.OOM;
 
 pub const OutdatedCommand = struct {
     pub fn exec(ctx: Command.Context) !void {
-        Output.prettyErrorln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+        Output.prettyln("<r><b>bun outdated <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
         Output.flush();
 
         const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .outdated);
@@ -139,11 +46,10 @@ pub const OutdatedCommand = struct {
     }
 
     fn outdated(ctx: Command.Context, original_cwd: string, manager: *PackageManager, comptime log_level: PackageManager.Options.LogLevel) !void {
-        const load_lockfile_result = manager.lockfile.loadFromDisk(
+        const load_lockfile_result = manager.lockfile.loadFromCwd(
             manager,
             manager.allocator,
             manager.log,
-            manager.options.lockfile_path,
             true,
         );
 
@@ -172,12 +78,7 @@ pub const OutdatedCommand = struct {
                     }
 
                     if (ctx.log.hasErrors()) {
-                        switch (Output.enable_ansi_colors) {
-                            inline else => |enable_ansi_colors| try manager.log.printForLogLevelWithEnableAnsiColors(
-                                Output.errorWriter(),
-                                enable_ansi_colors,
-                            ),
-                        }
+                        try manager.log.print(Output.errorWriter());
                     }
                 }
 
@@ -215,10 +116,10 @@ pub const OutdatedCommand = struct {
     // TODO: use in `bun pack, publish, run, ...`
     const FilterType = union(enum) {
         all,
-        name: []const u32,
-        path: []const u32,
+        name: []const u8,
+        path: []const u8,
 
-        pub fn init(pattern: []const u32, is_path: bool) @This() {
+        pub fn init(pattern: []const u8, is_path: bool) @This() {
             return if (is_path) .{
                 .path = pattern,
             } else .{
@@ -226,12 +127,9 @@ pub const OutdatedCommand = struct {
             };
         }
 
-        pub fn deinit(this: @This(), allocator: std.mem.Allocator) void {
-            switch (this) {
-                .path, .name => |pattern| allocator.free(pattern),
-                else => {},
-            }
-        }
+        /// *NOTE*: Currently this does nothing since name and path are not
+        /// allocated.
+        pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
     };
 
     fn findMatchingWorkspaces(
@@ -239,7 +137,7 @@ pub const OutdatedCommand = struct {
         original_cwd: string,
         manager: *PackageManager,
         filters: []const string,
-    ) error{OutOfMemory}![]const PackageID {
+    ) OOM![]const PackageID {
         const lockfile = manager.lockfile;
         const packages = lockfile.packages.slice();
         const pkg_names = packages.items(.name);
@@ -252,37 +150,12 @@ pub const OutdatedCommand = struct {
             try workspace_pkg_ids.append(allocator, @intCast(pkg_id));
         }
 
+        var path_buf: bun.PathBuffer = undefined;
+
         const converted_filters = converted_filters: {
-            const buf = try allocator.alloc(FilterType, filters.len);
+            const buf = try allocator.alloc(WorkspaceFilter, filters.len);
             for (filters, buf) |filter, *converted| {
-                if ((filter.len == 1 and filter[0] == '*') or strings.eqlComptime(filter, "**")) {
-                    converted.* = .all;
-                    continue;
-                }
-
-                const is_path = filter.len > 0 and filter[0] == '.';
-
-                const joined_filter = if (is_path)
-                    strings.withoutTrailingSlash(path.joinAbsString(original_cwd, &[_]string{filter}, .posix))
-                else
-                    filter;
-
-                if (joined_filter.len == 0) {
-                    converted.* = FilterType.init(&.{}, is_path);
-                    continue;
-                }
-
-                const length = bun.simdutf.length.utf32.from.utf8.le(joined_filter);
-                const convert_buf = try allocator.alloc(u32, length);
-
-                const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(joined_filter, convert_buf);
-                if (!convert_result.isSuccessful()) {
-                    // nothing would match
-                    converted.* = FilterType.init(&.{}, false);
-                    continue;
-                }
-
-                converted.* = FilterType.init(convert_buf[0..convert_result.count], is_path);
+                converted.* = try WorkspaceFilter.init(allocator, filter, original_cwd, &path_buf);
             }
             break :converted_filters buf;
         };
@@ -311,16 +184,16 @@ pub const OutdatedCommand = struct {
                                 else => unreachable,
                             };
 
-                            const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
+                            const abs_res_path = path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &path_buf, &[_]string{res_path}, .posix);
 
-                            if (!glob.matchImpl(pattern, strings.withoutTrailingSlash(abs_res_path))) {
+                            if (!glob.walk.matchImpl(allocator, pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;
                             }
                         },
                         .name => |pattern| {
                             const name = pkg_names[workspace_pkg_id].slice(string_buf);
 
-                            if (!glob.matchImpl(pattern, name)) {
+                            if (!glob.walk.matchImpl(allocator, pattern, name).matches()) {
                                 break :matched false;
                             }
                         },
@@ -366,17 +239,8 @@ pub const OutdatedCommand = struct {
                     continue;
                 }
 
-                const length = bun.simdutf.length.utf32.from.utf8.le(arg);
-                const convert_buf = bun.default_allocator.alloc(u32, length) catch bun.outOfMemory();
-
-                const convert_result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(arg, convert_buf);
-                if (!convert_result.isSuccessful()) {
-                    converted.* = FilterType.init(&.{}, false);
-                    continue;
-                }
-
-                converted.* = FilterType.init(convert_buf[0..convert_result.count], false);
-                at_least_one_greater_than_zero = at_least_one_greater_than_zero or convert_result.count > 0;
+                converted.* = FilterType.init(arg, false);
+                at_least_one_greater_than_zero = at_least_one_greater_than_zero or arg.len > 0;
             }
 
             // nothing will match
@@ -432,7 +296,7 @@ pub const OutdatedCommand = struct {
                                 .path => unreachable,
                                 .name => |name_pattern| {
                                     if (name_pattern.len == 0) continue;
-                                    if (!glob.matchImpl(name_pattern, dep.name.slice(string_buf))) {
+                                    if (!glob.walk.matchImpl(bun.default_allocator, name_pattern, dep.name.slice(string_buf)).matches()) {
                                         break :match false;
                                     }
                                 },
@@ -450,9 +314,11 @@ pub const OutdatedCommand = struct {
                 const package_name = pkg_names[package_id].slice(string_buf);
                 var expired = false;
                 const manifest = manager.manifests.byNameAllowExpired(
+                    manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
                     &expired,
+                    .load_from_memory_fallback_to_disk,
                 ) orelse continue;
 
                 const latest = manifest.findByDistTag("latest") orelse continue;
@@ -550,30 +416,30 @@ pub const OutdatedCommand = struct {
         table.printColumnNames();
 
         for (workspace_pkg_ids) |workspace_pkg_id| {
-            inline for (
-                .{
-                    Behavior{ .normal = true },
-                    Behavior{ .dev = true },
-                    Behavior{ .peer = true },
-                    Behavior{ .optional = true },
-                },
-            ) |group_behavior| {
+            inline for ([_]Behavior{
+                .{ .prod = true },
+                .{ .dev = true },
+                .{ .peer = true },
+                .{ .optional = true },
+            }) |group_behavior| {
                 for (outdated_ids.items) |ids| {
                     if (workspace_pkg_id != ids.workspace_pkg_id) continue;
                     const package_id = ids.package_id;
                     const dep_id = ids.dep_id;
 
                     const dep = dependencies[dep_id];
-                    if (@as(u8, @bitCast(group_behavior)) & @as(u8, @bitCast(dep.behavior)) == 0) continue;
+                    if (!dep.behavior.includes(group_behavior)) continue;
 
                     const package_name = pkg_names[package_id].slice(string_buf);
                     const resolution = pkg_resolutions[package_id];
 
                     var expired = false;
                     const manifest = manager.manifests.byNameAllowExpired(
+                        manager,
                         manager.scopeForPackageName(package_name),
                         package_name,
                         &expired,
+                        .load_from_memory_fallback_to_disk,
                     ) orelse continue;
 
                     const latest = manifest.findByDistTag("latest") orelse continue;
@@ -595,7 +461,7 @@ pub const OutdatedCommand = struct {
                         else
                             "";
 
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         Output.pretty("{s}<d>{s}<r>", .{ package_name, behavior_str });
@@ -604,7 +470,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // current version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{resolution.value.npm.version.fmt(string_buf)}) catch bun.outOfMemory();
@@ -615,7 +481,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // update version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{update.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
@@ -626,7 +492,7 @@ pub const OutdatedCommand = struct {
 
                     {
                         // latest version
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         version_writer.print("{}", .{latest.version.fmt(manifest.string_buf)}) catch bun.outOfMemory();
@@ -636,7 +502,7 @@ pub const OutdatedCommand = struct {
                     }
 
                     if (was_filtered) {
-                        Output.pretty("{s}", .{table.verticalEdge()});
+                        Output.pretty("{s}", .{table.symbols.verticalEdge()});
                         for (0..column_left_pad) |_| Output.pretty(" ", .{});
 
                         const workspace_name = pkg_names[workspace_pkg_id].slice(string_buf);
@@ -645,7 +511,7 @@ pub const OutdatedCommand = struct {
                         for (workspace_name.len..workspace_column_inside_length + column_right_pad) |_| Output.pretty(" ", .{});
                     }
 
-                    Output.pretty("{s}\n", .{table.verticalEdge()});
+                    Output.pretty("{s}\n", .{table.symbols.verticalEdge()});
                 }
             }
         }
@@ -680,8 +546,10 @@ pub const OutdatedCommand = struct {
 
                 const package_name = pkg_names[package_id].slice(string_buf);
                 _ = manager.manifests.byName(
+                    manager,
                     manager.scopeForPackageName(package_name),
                     package_name,
+                    .load_from_memory_fallback_to_disk,
                 ) orelse {
                     const task_id = Install.Task.Id.forManifest(package_name);
                     if (manager.hasCreatedNetworkTask(task_id, dep.behavior.optional)) continue;
@@ -690,7 +558,7 @@ pub const OutdatedCommand = struct {
 
                     var task = manager.getNetworkTask();
                     task.* = .{
-                        .package_manager = &PackageManager.instance,
+                        .package_manager = manager,
                         .callback = undefined,
                         .task_id = task_id,
                         .allocator = manager.allocator,

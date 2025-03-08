@@ -1,5 +1,5 @@
-import { it, expect } from "bun:test";
-import { bunExe, bunEnv } from "harness";
+import { expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import path from "path";
 
 it("setImmediate", async () => {

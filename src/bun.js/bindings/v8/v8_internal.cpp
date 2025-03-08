@@ -9,5 +9,5 @@ Isolate* IsolateFromNeverReadOnlySpaceObject(uintptr_t obj)
     return nullptr;
 }
 
-}
-}
+} // namespace internal
+} // namespace v8

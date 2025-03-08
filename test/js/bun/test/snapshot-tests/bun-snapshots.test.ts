@@ -1,4 +1,4 @@
-import { it, test, expect, describe } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 
 test("it will create a snapshot file if it doesn't exist", () => {
   expect({ a: { b: { c: false } }, c: 2, jkfje: 99238 }).toMatchSnapshot({ a: { b: { c: expect.any(Boolean) } } });

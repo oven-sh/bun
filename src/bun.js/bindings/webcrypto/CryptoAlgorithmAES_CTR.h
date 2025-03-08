@@ -53,8 +53,8 @@ public:
 
             CounterBlockBits operator&(const CounterBlockBits&) const;
             CounterBlockBits operator~() const;
-            CounterBlockBits& operator <<=(unsigned);
-            CounterBlockBits& operator &=(const CounterBlockBits&);
+            CounterBlockBits& operator<<=(unsigned);
+            CounterBlockBits& operator&=(const CounterBlockBits&);
 
             uint64_t m_hi { 0 };
             uint64_t m_lo { 0 };

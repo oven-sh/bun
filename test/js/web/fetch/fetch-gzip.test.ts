@@ -1,5 +1,5 @@
 import { Socket } from "bun";
-import { it, expect, beforeAll } from "bun:test";
+import { beforeAll, expect, it } from "bun:test";
 import { gcTick } from "harness";
 import path from "path";
 
@@ -210,8 +210,7 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
         await write("\r\n");
 
         socket.flush();
-      },
-      drain(socket) {},
+      }
     },
   });
   await 1;

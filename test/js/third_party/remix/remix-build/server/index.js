@@ -1,9 +1,9 @@
-import { jsx, jsxs } from "react/jsx-runtime";
-import { PassThrough } from "node:stream";
 import { createReadableStreamFromReadable } from "@remix-run/node";
-import { RemixServer, Outlet, Meta, Links, ScrollRestoration, Scripts } from "@remix-run/react";
+import { Links, Meta, Outlet, RemixServer, Scripts, ScrollRestoration } from "@remix-run/react";
 import { isbot } from "isbot";
+import { PassThrough } from "node:stream";
 import { renderToPipeableStream } from "react-dom/server";
+import { jsx, jsxs } from "react/jsx-runtime";
 const ABORT_DELAY = 5e3;
 function handleRequest(request, responseStatusCode, responseHeaders, remixContext, loadContext) {
   return isbot(request.headers.get("user-agent") || "")

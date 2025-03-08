@@ -432,8 +432,9 @@ public:
 
     /* Try and end the response. Returns [true, true] on success.
      * Starts a timeout in some cases. Returns [ok, hasResponded] */
-    std::pair<bool, bool> tryEnd(std::string_view data, uint64_t totalSize = 0, bool closeConnection = false) {
-        return {internalEnd(data, totalSize, true, true, closeConnection), hasResponded()};
+    std::pair<bool, bool> tryEnd(std::string_view data, uintmax_t totalSize = 0, bool closeConnection = false) {
+        bool ok = internalEnd(data, totalSize, true, true, closeConnection);
+        return {ok, hasResponded()};
     }
 
     /* Write the end of chunked encoded stream */
@@ -459,7 +460,7 @@ public:
         writeStatus(HTTP_200_OK);
 
         /* Do not allow sending 0 chunks, they mark end of response */
-        if (!data.length()) {
+        if (data.empty()) {
             /* If you called us, then according to you it was fine to call us so it's fine to still call us */
             return true;
         }
@@ -586,17 +587,36 @@ public:
         httpResponseData->onAborted = handler;
         return this;
     }
+
+    HttpResponse *onTimeout(void* userData,  HttpResponseData<SSL>::OnTimeoutCallback handler) {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        
+        httpResponseData->userData = userData;
+        httpResponseData->onTimeout = handler;
+        return this;
+    }
+
     HttpResponse* clearOnWritableAndAborted() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onWritable = nullptr;
         httpResponseData->onAborted = nullptr;
+        httpResponseData->onTimeout = nullptr;
+
         return this;
     }
+
     HttpResponse* clearOnAborted() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->onAborted = nullptr;
+        return this;
+    }
+
+    HttpResponse* clearOnTimeout() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->onTimeout = nullptr;
         return this;
     }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */

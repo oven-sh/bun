@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isWindows, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 import { Subprocess } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { copyFileSync } from "fs";
+import { cp, rm } from "fs/promises";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
-import { cp, rm } from "fs/promises";
-import { install_test_helpers } from "bun:internal-for-testing";
+import { bunEnv, bunExe, isCI, isWindows, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({ toMatchNodeModulesAt });
@@ -79,7 +79,7 @@ async function getDevServerURL() {
   readStream()
     .catch(e => reject(e))
     .finally(() => {
-      dev_server.unref?.();
+      dev_server?.unref?.();
     });
   await promise;
   return baseUrl;

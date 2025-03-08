@@ -1,7 +1,7 @@
-import jwt from "jsonwebtoken";
-import { expect, describe, it } from "bun:test";
-import jws from "jws";
+import { describe, expect, it } from "bun:test";
 import { generateKeyPairSync } from "crypto";
+import jwt from "jsonwebtoken";
+import jws from "jws";
 
 describe("HS256", function () {
   describe("when signing using HS256", function () {

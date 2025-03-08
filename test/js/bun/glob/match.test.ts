@@ -22,10 +22,17 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-import { expect, test, describe } from "bun:test";
 import { Glob } from "bun";
+import { describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
+import { join } from "path";
 
 describe("Glob.match", () => {
+  test("WTF", () => {
+    // let glob = new Glob("C:\\Users\\window\\AppData\\Local\\Temp\\testworkspace_V7osKW\\**");
+    // expect(glob.match("C:\\Users\\window\\AppData\\Local\\Temp\\testworkspace_V7osKW\\packages\\malfored1")).toBeTrue();
+  });
+
   test("single wildcard", () => {
     let glob: Glob;
 
@@ -56,6 +63,7 @@ describe("Glob.match", () => {
     let glob: Glob;
 
     glob = new Glob("**");
+    // FIXME: should this match?
     expect(glob.match("")).toBeTrue();
     expect(glob.match("nice/wow/great/foo.ts")).toBeTrue();
 
@@ -75,7 +83,20 @@ describe("Glob.match", () => {
     expect(glob.match("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();
   });
 
-  test("braces", () => {
+  test("no early globstar lock-in", () => {
+    // see https://github.com/oven-sh/bun/issues/14934
+    expect(new Glob(`**/*abc*`).match(`a/abc`)).toBeTrue();
+    expect(new Glob(`**/*.js`).match(`a/b.c/c.js`)).toBeTrue();
+    expect(new Glob("/**/*a").match("/a/a")).toBeTrue();
+    expect(new Glob("**/*.js").match("a/b.c/c.js")).toBeTrue();
+    expect(new Glob("**/**/*.js").match("a/b.c/c.js")).toBeTrue();
+    expect(new Glob("a/**/*.d").match("a/b/c.d")).toBeTrue();
+    expect(new Glob("a/**/*.d").match("a/.b/c.d")).toBeTrue();
+    expect(new Glob("**/*/**").match("a/b/c")).toBeTrue();
+    expect(new Glob("**/*/c.js").match("a/b/c.js")).toBeTrue();
+  });
+
+  test("braces", async () => {
     let glob: Glob;
 
     glob = new Glob("index.{ts,tsx,js,jsx}");
@@ -84,6 +105,219 @@ describe("Glob.match", () => {
     expect(glob.match("index.js")).toBeTrue();
     expect(glob.match("index.jsx")).toBeTrue();
     expect(glob.match("index.jsxxxxxxxx")).toBeFalse();
+
+    glob = new Glob("foo{bar,b*z}");
+    expect(glob.match("foobar")).toBeTrue();
+    expect(glob.match("foobuzz")).toBeTrue();
+    expect(glob.match("foobarz")).toBeTrue();
+
+    glob = new Glob("{a}/{b}/");
+    expect(glob.match("a/b/")).toBeTrue();
+
+    glob = new Glob("{a,b}/c/{d,e}/**/*est.ts");
+    expect(glob.match("a/c/d/one/two/three.test.ts"));
+
+    glob = new Glob("{a,{d,e}b}/c");
+    expect(glob.match("a/c")).toBeTrue();
+
+    glob = new Glob("{**/a,**/b}");
+    expect(glob.match("b")).toBeTrue();
+
+    const fixtures = [
+      {
+        pattern: "{src,extensions}/**/test/**/{fixtures,browser,common}/**/*.{ts,js}",
+        expectedMatches: "matched-0.txt",
+      },
+      { pattern: "{extensions,src}/**/{media,images,icons}/**/*.{svg,png,gif,jpg}", expectedMatches: "matched-1.txt" },
+      {
+        pattern: "{.github,build,test}/**/{workflows,azure-pipelines,integration,smoke}/**/*.{yml,yaml,json}",
+        expectedMatches: "matched-2.txt",
+      },
+      {
+        pattern: "src/vs/{base,editor,platform,workbench}/test/{browser,common,node}/**/[a-z]*[tT]est.ts",
+        expectedMatches: "matched-3.txt",
+      },
+      {
+        pattern: "src/vs/workbench/{contrib,services}/**/*{Editor,Workspace,Terminal}*.ts",
+        expectedMatches: "matched-4.txt",
+      },
+      {
+        pattern: "{extensions,src}/**/{markdown,json,javascript,typescript}/**/*.{ts,json}",
+        expectedMatches: "matched-5.txt",
+      },
+      {
+        pattern: "**/{electron-sandbox,electron-main,browser,node}/**/{*[sS]ervice*,*[cC]ontroller*}.ts",
+        expectedMatches: "matched-6.txt",
+      },
+      {
+        pattern: "{src,extensions}/**/{common,browser,electron-sandbox}/**/*{[cC]ontribution,[sS]ervice}.ts",
+        expectedMatches: "matched-7.txt",
+      },
+      {
+        pattern: "src/vs/{base,platform,workbench}/**/{test,browser}/**/*{[mM]odel,[cC]ontroller}*.ts",
+        expectedMatches: "matched-8.txt",
+      },
+      {
+        pattern: "extensions/**/{browser,common,node}/{**/*[sS]ervice*,**/*[pP]rovider*}.ts",
+        expectedMatches: "matched-9.txt",
+      },
+    ];
+
+    const allFilePaths = (
+      await Bun.file(join(import.meta.dir, "..", "..", "..", "fixtures", "glob", "filelist.txt")).text()
+    ).split("\n");
+
+    for (const { pattern, expectedMatches } of fixtures) {
+      const shouldMatch = (
+        await Bun.file(join(import.meta.dir, "..", "..", "..", "fixtures", "glob", `${expectedMatches}`)).text()
+      ).split("\n");
+
+      glob = new Glob(pattern);
+      let matched: string[] = [];
+      for (const filepath of allFilePaths) {
+        if (glob.match(filepath)) {
+          matched.push(filepath);
+        }
+      }
+
+      expect(matched).toEqual(shouldMatch);
+    }
+  });
+
+  test("nested braces", () => {
+    let glob: Glob;
+
+    // Basic single-level nesting
+    // ("a{b,c{d,e}}f", ["abf", "acdf", "acef"]),
+    glob = new Glob("a{b,c{d,e}}f");
+    expect(glob.match("abf")).toBeTrue();
+    expect(glob.match("acdf")).toBeTrue();
+    expect(glob.match("acef")).toBeTrue();
+
+    // Two levels deep
+    glob = new Glob("x{1,2{3,4}}y");
+    expect(glob.match("x1y")).toBeTrue();
+    expect(glob.match("x23y")).toBeTrue();
+    expect(glob.match("x24y")).toBeTrue();
+
+    glob = new Glob("a{b,c{d,e},f}g");
+    expect(glob.match("abg")).toBeTrue();
+    expect(glob.match("acdg")).toBeTrue();
+    expect(glob.match("aceg")).toBeTrue();
+    expect(glob.match("afg")).toBeTrue();
+
+    // Three levels deep
+    glob = new Glob("1{2,3{4,5{6,7}}}8");
+    expect(glob.match("128")).toBeTrue();
+    expect(glob.match("1348")).toBeTrue();
+    expect(glob.match("13568")).toBeTrue();
+    expect(glob.match("13578")).toBeTrue();
+
+    // Four levels deep
+    glob = new Glob("{a,b{c,d{e,f{g,h}}}}i");
+    expect(glob.match("ai")).toBeTrue();
+    expect(glob.match("bci")).toBeTrue();
+    expect(glob.match("bdei")).toBeTrue();
+    expect(glob.match("bdfgi")).toBeTrue();
+    expect(glob.match("bdfhi")).toBeTrue();
+
+    // Five levels deep
+    glob = new Glob("v{w,x{y,z{1,2{3,4{5,6}}}}}7");
+    expect(glob.match("vw7")).toBeTrue();
+    expect(glob.match("vxy7")).toBeTrue();
+    expect(glob.match("vxz17")).toBeTrue();
+    expect(glob.match("vxz237")).toBeTrue();
+    expect(glob.match("vxz2457")).toBeTrue();
+    expect(glob.match("vxz2467")).toBeTrue();
+
+    // Six levels deep
+    glob = new Glob("a{b,c{d,e{f,g{h,i{j,k{l,m}}}}}}n");
+    expect(glob.match("abn")).toBeTrue();
+    expect(glob.match("acdn")).toBeTrue();
+    expect(glob.match("acefn")).toBeTrue();
+    expect(glob.match("aceghn")).toBeTrue();
+    expect(glob.match("acegijn")).toBeTrue();
+    expect(glob.match("acegikln")).toBeTrue();
+    expect(glob.match("acegikmn")).toBeTrue();
+
+    // Seven levels deep
+    glob = new Glob("1{2,3{4,5{6,7{8,9{a,b{c,d{e,f}}}}}}}g");
+    expect(glob.match("12g")).toBeTrue();
+    expect(glob.match("134g")).toBeTrue();
+    expect(glob.match("1356g")).toBeTrue();
+    expect(glob.match("13578g")).toBeTrue();
+    expect(glob.match("13579ag")).toBeTrue();
+    expect(glob.match("13579bcg")).toBeTrue();
+    expect(glob.match("13579bdeg")).toBeTrue();
+    expect(glob.match("13579bdfg")).toBeTrue();
+
+    // Eight levels deep
+    glob = new Glob("p{q,r{s,t{u,v{w,x{y,z{1,2{3,4{5,6}}}}}}}}7");
+    expect(glob.match("pq7")).toBeTrue();
+    expect(glob.match("prs7")).toBeTrue();
+    expect(glob.match("prtu7")).toBeTrue();
+    expect(glob.match("prtvw7")).toBeTrue();
+    expect(glob.match("prtvxy7")).toBeTrue();
+    expect(glob.match("prtvxz17")).toBeTrue();
+    expect(glob.match("prtvxz237")).toBeTrue();
+    expect(glob.match("prtvxz2457")).toBeTrue();
+    expect(glob.match("prtvxz2467")).toBeTrue();
+
+    // Nine levels deep
+    glob = new Glob("a{b,c{d,e{f,g{h,i{j,k{l,m{n,o{p,q{r,s}}}}}}}}}t");
+    expect(glob.match("abt")).toBeTrue();
+    expect(glob.match("acdt")).toBeTrue();
+    expect(glob.match("aceft")).toBeTrue();
+    expect(glob.match("aceght")).toBeTrue();
+    expect(glob.match("acegijt")).toBeTrue();
+    expect(glob.match("acegiklt")).toBeTrue();
+    expect(glob.match("acegikmnt")).toBeTrue();
+    expect(glob.match("acegikmopt")).toBeTrue();
+    expect(glob.match("acegikmoqrt")).toBeTrue();
+    expect(glob.match("acegikmoqst")).toBeTrue();
+
+    // Ten levels deep
+    glob = new Glob("1{2,3{4,5{6,7{8,9{a,b{c,d{e,f{g,h{i,j{k,l}}}}}}}}}}m");
+    expect(glob.match("12m")).toBeTrue();
+    expect(glob.match("134m")).toBeTrue();
+    expect(glob.match("1356m")).toBeTrue();
+    expect(glob.match("13578m")).toBeTrue();
+    expect(glob.match("13579am")).toBeTrue();
+    expect(glob.match("13579bcm")).toBeTrue();
+    expect(glob.match("13579bdem")).toBeTrue();
+    expect(glob.match("13579bdfgm")).toBeTrue();
+    expect(glob.match("13579bdfhim")).toBeTrue();
+    expect(glob.match("13579bdfhjkm")).toBeTrue();
+    expect(glob.match("13579bdfhjlm")).toBeTrue();
+
+    // Edge cases
+    // Redundant nesting
+    glob = new Glob("{a,{b,c}}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("b")).toBeTrue();
+    expect(glob.match("c")).toBeTrue();
+
+    // Empty nested group
+    glob = new Glob("{a,b{}}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("b")).toBeTrue();
+
+    // Empty nested group with tail
+    glob = new Glob("{a,b{,c{{}}}}d");
+    expect(glob.match("ad")).toBeTrue();
+    expect(glob.match("bcd")).toBeTrue();
+
+    // Leading nested group
+    glob = new Glob("{{a,b},c}");
+    expect(glob.match("a")).toBeTrue();
+    expect(glob.match("b")).toBeTrue();
+    expect(glob.match("c")).toBeTrue();
+
+    // Empty nested group in middle
+    glob = new Glob("{a,b{c,d{}}}e");
+    expect(glob.match("ae")).toBeTrue();
+    expect(glob.match("bce")).toBeTrue();
+    expect(glob.match("bde")).toBeTrue();
   });
 
   // Most of the potential bugs when dealing with non-ASCII patterns is when the
@@ -100,19 +334,45 @@ describe("Glob.match", () => {
     expect(glob.match("😎/¢£.jsx")).toBeTrue();
     expect(glob.match("😎/¢£.jsxxxxxxxx")).toBeFalse();
 
+    // wildcard before and after non-ascii
     glob = new Glob("*é*");
     expect(glob.match("café noir")).toBeTrue();
     expect(glob.match("café noir")).toBeTrue();
+    expect(glob.match("é")).toBeTrue();
+    glob = new Glob("*😎");
+    expect(glob.match("😎")).toBeTrue();
+    expect(glob.match("ëëëëëë😎")).toBeTrue();
 
+    // wildcard matches non-ascii
     glob = new Glob("caf*noir");
     expect(glob.match("café noir")).toBeTrue();
     expect(glob.match("café noir")).toBeTrue();
     expect(glob.match("cafeenoir")).toBeTrue();
 
+    // character class match non-ascii
     glob = new Glob("F[ë£a]");
     expect(glob.match("Fë")).toBeTrue();
     expect(glob.match("F£")).toBeTrue();
     expect(glob.match("Fa")).toBeTrue();
+
+    // ? matches any single character
+    glob = new Glob("?ëlmao");
+    expect(glob.match("ëlmao")).toBeFalse();
+    expect(glob.match("ëëlmao")).toBeTrue();
+    expect(glob.match("fëlmao")).toBeTrue();
+    expect(glob.match("lmao")).toBeFalse();
+
+    // braces match non-ascii
+    glob = new Glob("F{ë,£,a}");
+    expect(glob.match("Fë")).toBeTrue();
+    expect(glob.match("F£")).toBeTrue();
+    expect(glob.match("Fa")).toBeTrue();
+    expect(glob.match("Fb")).toBeFalse();
+    expect(glob.match("F😎")).toBeFalse();
+
+    // escape matches non-ascii
+    glob = new Glob("\\😎");
+    expect(glob.match("😎")).toBeTrue();
 
     // invalid surrogate pairs
     glob = new Glob("\uD83D\u0027");
@@ -632,6 +892,13 @@ describe("Glob.match", () => {
       expect(new Glob("[^a-c]*").match("BZZ")).toBeTrue();
       expect(new Glob("[^a-c]*").match("beware")).toBeFalse();
       expect(new Glob("[^a-c]*").match("BewAre")).toBeTrue();
+    });
+
+    test("square braces", () => {
+      expect(new Glob("src/*.[tj]s").match("src/foo.js")).toBeTrue();
+      expect(new Glob("src/*.[tj]s").match("src/foo.ts")).toBeTrue();
+      expect(new Glob("foo/ba[rz].md").match("foo/bar.md")).toBeTrue();
+      expect(new Glob("foo/ba[rz].md").match("foo/baz.md")).toBeTrue();
     });
 
     test("bash wildmatch", () => {
@@ -1511,6 +1778,117 @@ describe("Glob.match", () => {
         ),
       ),
     ).toBeDefined();
+  });
+
+  test("trailing globstar patterns", () => {
+    let glob = new Glob("C:/Users/window/AppData/Local/Temp/testworkspace_V7osKW**");
+    expect(glob.match("C:/Users/window/AppData/Local/Temp/testworkspace_V7osKW/packages/malfored1")).toBeFalse();
+
+    // Trailing globstar with no slash won't match subdirectories
+    // expect(new Glob("foo**").match("foo/bar/hi")).toBeFalse();
+    expect(new Glob("foo**").match("foobar")).toBeTrue();
+    expect(new Glob("foo**").match("foo")).toBeTrue();
+
+    // Basic trailing globstar
+    expect(new Glob("foo/**").match("foo")).toBeFalse();
+    expect(new Glob("foo/**").match("foo/")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar/baz")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar/baz/")).toBeTrue();
+    expect(new Glob("foo/**").match("food/bar")).toBeFalse();
+
+    // Multiple trailing globstars (should behave the same as one)
+    expect(new Glob("foo/**/**").match("foo")).toBeFalse();
+    expect(new Glob("foo/**/**").match("foo/")).toBeTrue();
+    expect(new Glob("foo/**/**").match("foo/bar")).toBeTrue();
+    expect(new Glob("foo/**/**").match("foo/bar/baz")).toBeTrue();
+    expect(new Glob("foo/**/**/**").match("foo/bar/baz")).toBeTrue();
+
+    // Trailing globstar with file extension
+    expect(new Glob("foo/**/*.js").match("foo/bar.js")).toBeTrue();
+    expect(new Glob("foo/**/*.js").match("foo/bar/baz.js")).toBeTrue();
+    expect(new Glob("foo/**/*.js").match("foo/bar/baz/qux.js")).toBeTrue();
+    expect(new Glob("foo/**/*.js").match("foo/bar.txt")).toBeFalse();
+    expect(new Glob("foo/**/*.js").match("foo/bar/baz.txt")).toBeFalse();
+
+    // Complex patterns with trailing globstars
+    expect(new Glob("**/foo/**").match("foo/")).toBeTrue();
+    expect(new Glob("**/foo/**").match("a/foo/")).toBeTrue();
+    expect(new Glob("**/foo/**").match("a/b/foo/")).toBeTrue();
+    expect(new Glob("**/foo/**").match("foo/bar")).toBeTrue();
+    expect(new Glob("**/foo/**").match("a/foo/bar")).toBeTrue();
+    expect(new Glob("**/foo/**").match("a/b/foo/bar/baz")).toBeTrue();
+
+    // Edge cases
+    expect(new Glob("/**").match("/")).toBeTrue();
+    expect(new Glob("/**").match("/foo")).toBeTrue();
+    expect(new Glob("/**").match("/foo/bar")).toBeTrue();
+
+    // Empty segments
+    expect(new Glob("foo///**").match("foo///bar")).toBeTrue();
+    expect(new Glob("foo///**").match("foo/bar")).toBeFalse();
+
+    // Dots and special characters
+    expect(new Glob("./**").match(".")).toBeFalse();
+    expect(new Glob("./**").match("./")).toBeTrue();
+    expect(new Glob("./**").match("./foo")).toBeTrue();
+    expect(new Glob("./**").match("./foo/bar")).toBeTrue();
+    expect(new Glob("./**").match("../foo")).toBeFalse();
+
+    // Unicode characters
+    expect(new Glob("🎉/**").match("🎉/")).toBeTrue();
+    expect(new Glob("🎉/**").match("🎉/🌟")).toBeTrue();
+    expect(new Glob("🎉/**").match("🎉/🌟/✨")).toBeTrue();
+
+    // Mixing with other glob features
+    expect(new Glob("foo/{bar,baz}/**").match("foo/bar/")).toBeTrue();
+    expect(new Glob("foo/{bar,baz}/**").match("foo/baz/qux")).toBeTrue();
+    expect(new Glob("foo/{bar,baz}/**").match("foo/qux/")).toBeFalse();
+
+    expect(new Glob("foo/[a-z]/**").match("foo/a/")).toBeTrue();
+    expect(new Glob("foo/[a-z]/**").match("foo/z/bar")).toBeTrue();
+    expect(new Glob("foo/[a-z]/**").match("foo/1/")).toBeFalse();
+
+    // Escaped characters
+    expect(new Glob("foo\\*/**").match("foo*/")).toBeTrue();
+    expect(new Glob("foo\\*/**").match("foo*/bar")).toBeTrue();
+    expect(new Glob("foo\\*/**").match("foobar/")).toBeFalse();
+
+    // Very long paths
+    const longPath = "a/".repeat(100);
+    expect(new Glob("a/**").match(longPath)).toBeTrue();
+
+    // Mixed case
+    expect(new Glob("FoO/**").match("FoO/BaR")).toBeTrue();
+    expect(new Glob("FoO/**").match("foo/bar")).toBeFalse();
+
+    // Partial segment matches should fail
+    expect(new Glob("foo/**").match("foobar/")).toBeFalse();
+    expect(new Glob("foo/**").match("foobar/baz")).toBeFalse();
+
+    // Missing slashes
+    expect(new Glob("foo**").match("foo/bar")).toBeFalse();
+    expect(new Glob("foo**").match("foobar")).toBeTrue();
+    if (isWindows) {
+      expect(new Glob("foo/**").match("foo\\bar")).toBeTrue();
+    } else {
+      expect(new Glob("foo/**").match("foo\\bar")).toBeFalse();
+    }
+
+    // Path traversal
+    expect(new Glob("foo/**").match("foo/../bar")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar/../../baz")).toBeTrue();
+    expect(new Glob("foo/**").match("foo/bar/../..")).toBeTrue();
+
+    // Empty path segments
+    expect(new Glob("foo/**//").match("foo///bar")).toBeFalse();
+    expect(new Glob("foo/**").match("foo//bar")).toBeTrue();
+    expect(new Glob("a/**/").match("a/b//")).toBeTrue();
+    expect(new Glob("foo/**/").match("foo/bar//")).toBeTrue();
+
+    // Unicode normalization
+    expect(new Glob("foo/**").match("foo/\u0041\u030A")).toBeTrue(); // "A" with ring
+    expect(new Glob("foo/**").match("foo/\u00C5")).toBeTrue(); // "Å" single character
   });
 });
 

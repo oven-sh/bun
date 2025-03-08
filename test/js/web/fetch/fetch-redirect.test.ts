@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { expect, it } from "bun:test";
 
 // https://github.com/oven-sh/bun/issues/12701
 it("fetch() preserves body on redirect", async () => {

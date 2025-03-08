@@ -67,9 +67,13 @@ public:
 
 } // namespace WebCore
 
+// clang-format off
+
 #define SPECIALIZE_TYPE_TRAITS_CRYPTO_ALGORITHM_PARAMETERS(ToClassName) \
 SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::CryptoAlgorithm##ToClassName) \
 static bool isType(const WebCore::CryptoAlgorithmParameters& parameters) { return parameters.parametersClass() == WebCore::CryptoAlgorithmParameters::Class::ToClassName; } \
 SPECIALIZE_TYPE_TRAITS_END()
+
+// clang-format on
 
 #endif // ENABLE(WEB_CRYPTO)

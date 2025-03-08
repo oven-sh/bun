@@ -1,5 +1,5 @@
-import { itBundled } from "./expectBundled";
 import { describe } from "bun:test";
+import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   // https://x.com/jeroendotdot/status/1740651288239460384?s=46&t=0Uhw6mmGT650_9M2pXUsCw

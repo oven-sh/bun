@@ -1,4 +1,4 @@
-import { start, end } from "./startEnd.mjs";
+import { end, start } from "./startEnd.mjs";
 
 start("Second");
 

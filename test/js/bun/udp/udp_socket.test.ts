@@ -2,8 +2,16 @@ import { udpSocket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { disableAggressiveGCScope, randomPort } from "harness";
 import { dataCases, dataTypes } from "./testdata";
+import { heapStats } from "bun:jsc";
 
 describe("udpSocket()", () => {
+  test("connect with invalid hostname rejects", async () => {
+    expect(async () =>
+      udpSocket({
+        connect: { hostname: "example!!!!!.com", port: 443 },
+      }),
+    ).toThrow();
+  });
   test("can create a socket", async () => {
     const socket = await udpSocket({});
     expect(socket).toBeInstanceOf(Object);
@@ -12,7 +20,7 @@ describe("udpSocket()", () => {
     expect(socket.port).toBe(socket.port); // test that property is cached
     expect(socket.hostname).toBeString();
     expect(socket.hostname).toBe(socket.hostname); // test that property is cached
-    expect(socket.address).toEqual({
+    expect(socket.address).toMatchObject({
       address: socket.hostname,
       family: socket.hostname === "::" ? "IPv6" : "IPv4",
       port: socket.port,

@@ -1,5 +1,4 @@
-import { $ } from "bun";
-import { describe, test, expect } from "bun:test";
+import { describe } from "bun:test";
 import { createTestBuilder } from "../test_builder";
 const TestBuilder = createTestBuilder(import.meta.path);
 

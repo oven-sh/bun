@@ -906,6 +906,8 @@ pub const VirtualMachine = struct {
     channel_ref: bun.Async.KeepAlive = .{},
     // if process.channel.ref() or unref() has been called, this is set to true
     channel_ref_overridden: bool = false,
+    // if one disconnect event listener should be ignored
+    channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 

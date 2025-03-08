@@ -36,7 +36,7 @@ cluster._setupWorker = function () {
 
   // make sure the process.once("disconnect") doesn't count as a ref
   // before calling, check if the channel is refd. if it isn't, then unref it after calling process.once();
-  const prev = $newZigFunction("node_cluster_binding.zig", "channelIsRefdAndNotOverridden", 0)();
+  $newZigFunction("node_cluster_binding.zig", "channelIgnoreOneDisconnectEventListener", 0)();
   process.once("disconnect", () => {
     worker.emit("disconnect");
 
@@ -46,7 +46,6 @@ cluster._setupWorker = function () {
       process.exit(kNoFailure);
     }
   });
-  if (!prev) $newZigFunction("node_cluster_binding.zig", "unrefChannelUnlessOverridden", 0)();
 
   onInternalMessage(worker, onmessage);
   send({ act: "online" });

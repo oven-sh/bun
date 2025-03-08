@@ -55,6 +55,7 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
 JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, JSValue thisValue, const ASCIILiteral typeName);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
+EncodedJSValue throwInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const ASCIILiteral expectedTypeName, JSC::JSValue actualThisValue);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);
 

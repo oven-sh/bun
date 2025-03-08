@@ -12,6 +12,9 @@ const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
 const validators = @import("./util/validators.zig");
+const JSError = bun.JSError;
+const JSGlobalObject = JSC.JSGlobalObject;
+const String = bun.String;
 
 fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).slice();
@@ -73,12 +76,33 @@ fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
     return out_arraybuffer;
 }
 
-pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
-    const crypto = JSC.JSValue.createEmptyObject(global, 3);
+pub fn timingSafeEqual(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
+    const l_value, const r_value = callFrame.argumentsAsArray(2);
 
-    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
-    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", pbkdf2Sync, 5, .{}));
-    crypto.put(global, bun.String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", randomInt, 2, .{}));
+    const l_buf = l_value.asArrayBuffer(global) orelse {
+        return global.ERR_INVALID_ARG_TYPE("The \"buf1\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
+    };
+    const l = l_buf.byteSlice();
+
+    const r_buf = r_value.asArrayBuffer(global) orelse {
+        return global.ERR_INVALID_ARG_TYPE("The \"buf2\" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.", .{}).throw();
+    };
+    const r = r_buf.byteSlice();
+
+    if (l.len != r.len) {
+        return global.ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH("Input buffers must have the same byte length", .{}).throw();
+    }
+
+    return JSC.jsBoolean(BoringSSL.CRYPTO_memcmp(l.ptr, r.ptr, l.len) == 0);
+}
+
+pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
+    const crypto = JSC.JSValue.createEmptyObject(global, 4);
+
+    crypto.put(global, String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
+    crypto.put(global, String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", pbkdf2Sync, 5, .{}));
+    crypto.put(global, String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", randomInt, 2, .{}));
+    crypto.put(global, String.init("timingSafeEqual"), JSC.JSFunction.create(global, "timingSafeEqual", timingSafeEqual, 2, .{}));
 
     return crypto;
 }

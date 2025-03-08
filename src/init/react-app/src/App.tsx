@@ -8,7 +8,7 @@ export function App() {
   return (
     <div className="app">
       <div className="logo-container">
-        <a href="https://bun.sh/" target="_blank">
+        <a href="https://bun.sh" target="_blank">
           <img src={logo} alt="Bun Logo" className="logo bun-logo" />
         </a>
         <a href="https://react.dev" target="_blank">

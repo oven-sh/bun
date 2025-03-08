@@ -1,6 +1,13 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
-import { loadModuleAsync, replaceModules, onServerSideReload, loadExports, setRefreshRuntime } from "./hmr-module";
+import {
+  loadModuleAsync,
+  replaceModules,
+  onServerSideReload,
+  setRefreshRuntime,
+  emitEvent,
+  fullReload,
+} from "./hmr-module";
 import { hasFatalError, onServerErrorPayload, onRuntimeError } from "./client/overlay";
 import { DataViewReader } from "./client/data-view";
 import { initWebSocket } from "./client/websocket";
@@ -41,15 +48,15 @@ async function performRouteReload() {
 
   // Fallback for when reloading fails or is not implemented by the framework is
   // to hard-reload.
-  location.reload();
+  fullReload();
 }
 
 let isFirstRun = true;
-const ws = initWebSocket({
+const handlers = {
   [MessageId.version](view) {
     if (td.decode(view.buffer.slice(1)) !== config.version) {
       console.error("Version mismatch, hard-reloading");
-      location.reload();
+      fullReload();
       return;
     }
 
@@ -60,7 +67,7 @@ const ws = initWebSocket({
       // but the issue lies in possibly outdated client files. For correctness,
       // all client files have to be HMR reloaded or proven unchanged.
       // Configuration changes are already handled by the `config.version` data.
-      location.reload();
+      fullReload();
       return;
     }
 
@@ -120,7 +127,7 @@ const ws = initWebSocket({
       }
     }
     if (hasFatalError && (isServerSideRouteUpdate || reader.hasMoreData())) {
-      location.reload();
+      fullReload();
       return;
     }
     if (isServerSideRouteUpdate) {
@@ -138,7 +145,7 @@ const ws = initWebSocket({
         const modules = (0, eval)(code);
         replaceModules(modules).catch(e => {
           console.error(e);
-          location.reload();
+          fullReload();
         });
       } catch (e) {
         if (IS_BUN_DEVELOPMENT) {
@@ -155,6 +162,11 @@ const ws = initWebSocket({
     currentRouteIndex = reader.u32();
   },
   [MessageId.errors]: onServerErrorPayload,
+};
+const ws = initWebSocket(handlers, {
+  onStatusChange(connected) {
+    emitEvent(connected ? "bun:ws:connect" : "bun:ws:disconnect", null);
+  },
 });
 
 // Before loading user code, instrument some globals.

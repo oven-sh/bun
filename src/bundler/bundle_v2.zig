@@ -3062,8 +3062,6 @@ pub const BundleV2 = struct {
             const transpiler, const bake_graph: bake.Graph, const target =
                 if (import_record.tag == .bake_resolve_to_ssr_graph)
             brk: {
-                // TODO: consider moving this error into js_parser so it is caught more reliably
-                // Then we can assert(this.framework != null)
                 if (this.framework == null) {
                     this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
                         source,
@@ -3152,8 +3150,49 @@ pub const BundleV2 = struct {
                                         source,
                                         import_record.range,
                                         this.graph.allocator,
-                                        "Browser build cannot {s} Node.js builtin: \"{s}\". To use Node.js builtins, set target to 'node' or 'bun'",
-                                        .{ import_record.kind.errorLabel(), import_record.path.text },
+                                        "Browser build cannot {s} Node.js builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". To use Node.js builtins, set target to 'node' or 'bun'"
+                                            else
+                                                "",
+                                        },
+                                        import_record.kind,
+                                    ) catch bun.outOfMemory();
+                                } else if (!ast.target.isBun() and strings.eqlComptime(import_record.path.text, "bun")) {
+                                    addError(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "Browser build cannot {s} Bun builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". When bundling for Bun, set target to 'bun'"
+                                            else
+                                                "",
+                                        },
+                                        import_record.kind,
+                                    ) catch bun.outOfMemory();
+                                } else if (!ast.target.isBun() and strings.hasPrefixComptime(import_record.path.text, "bun:")) {
+                                    addError(
+                                        log,
+                                        source,
+                                        import_record.range,
+                                        this.graph.allocator,
+                                        "Browser build cannot {s} Bun builtin: \"{s}\"{s}",
+                                        .{
+                                            import_record.kind.errorLabel(),
+                                            import_record.path.text,
+                                            if (this.transpiler.options.dev_server == null)
+                                                ". When bundling for Bun, set target to 'bun'"
+                                            else
+                                                "",
+                                        },
                                         import_record.kind,
                                     ) catch bun.outOfMemory();
                                 } else {
@@ -3209,7 +3248,23 @@ pub const BundleV2 = struct {
             }
 
             if (this.transpiler.options.dev_server) |dev_server| brk: {
-                if (loader.isCSS()) {
+                if (path.loader(&this.transpiler.options.loaders) == .html) {
+                    // This use case is currently not supported. This error
+                    // blocks an assertion failure because the DevServer
+                    // reserves the HTML file's spot in IncrementalGraph for the
+                    // route definition.
+                    const log = this.logForResolutionFailures(source.path.text, bake_graph);
+                    log.addRangeErrorFmt(
+                        source,
+                        import_record.range,
+                        this.graph.allocator,
+                        "Browser builds cannot import HTML files.",
+                        .{},
+                    ) catch bun.outOfMemory();
+                    continue;
+                }
+
+                if (loader == .css) {
                     // Do not use cached files for CSS.
                     break :brk;
                 }
@@ -5091,7 +5146,7 @@ pub const ParseTask = struct {
         // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
         // in which we inline `true`.
         if (transpiler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
-            opts.import_meta_main_value = task.is_entry_point;
+            opts.import_meta_main_value = task.is_entry_point and transpiler.options.dev_server == null;
         } else if (target == .node) {
             opts.lower_import_meta_main_for_node_js = true;
         }
@@ -10288,7 +10343,6 @@ pub const LinkerContext = struct {
                         }
                     },
                     else => {},
-                    // else => bun.unreachablePanic("Unexpected output format", .{}),
                 }
             }
         }
@@ -12592,6 +12646,7 @@ pub const LinkerContext = struct {
                                     S.ExportClause,
                                     .{
                                         .items = items.items,
+                                        .is_single_line = false,
                                     },
                                     Logger.Loc.Empty,
                                 ),
@@ -13561,18 +13616,25 @@ pub const LinkerContext = struct {
         var esm_decls: std.ArrayListUnmanaged(B.Array.Item) = .empty;
         var esm_callbacks: std.ArrayListUnmanaged(Expr) = .empty;
 
+        for (ast.import_records.slice()) |*record| {
+            if (record.path.is_disabled) continue;
+            if (record.source_index.isValid() and c.parse_graph.input_files.items(.loader)[record.source_index.get()] == .css) {
+                record.path.is_disabled = true;
+                continue;
+            }
+            // Make sure the printer gets the resolved path
+            if (record.source_index.isValid()) {
+                record.path = c.parse_graph.input_files.items(.source)[record.source_index.get()].path;
+            }
+        }
+
         // Modules which do not have side effects
         for (part_stmts) |stmt| switch (stmt.data) {
             else => try stmts.inside_wrapper_suffix.append(stmt),
 
             .s_import => |st| {
                 const record = ast.import_records.mut(st.import_record_index);
-
-                const is_enabled = !record.path.is_disabled and if (record.source_index.isValid())
-                    c.parse_graph.input_files.items(.loader)[record.source_index.get()] != .css
-                else
-                    true;
-                if (!is_enabled) continue;
+                if (record.path.is_disabled) continue;
 
                 const is_builtin = record.tag == .builtin or record.tag == .bun_test or record.tag == .bun or record.tag == .runtime;
                 const is_bare_import = st.star_name_loc == null and st.items.len == 0 and st.default_name == null;
@@ -13626,13 +13688,6 @@ pub const LinkerContext = struct {
                             }, .Empty)),
                         }, .Empty));
                     }
-
-                    // Make sure the printer gets the resolved path
-                    const path = if (record.source_index.isValid())
-                        c.parse_graph.input_files.items(.source)[record.source_index.get()].path
-                    else
-                        record.path;
-                    record.path = path;
 
                     try stmts.outside_wrapper_prefix.append(stmt);
                 }

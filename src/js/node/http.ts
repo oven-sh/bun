@@ -1952,6 +1952,29 @@ class ClientRequest extends OutgoingMessage {
       if (typeof options.secureOptions !== "number") throw new TypeError("secureOptions argument must be a string");
       this._ensureTls().secureOptions = options.secureOptions;
     }
+
+    if (this.#agent.options.ca) {
+      if (!isValidTLSArray(this.#agent.options.ca))
+        throw new TypeError(
+          "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().ca = this.#agent.options.ca;
+    }
+    if (this.#agent.options.cert) {
+      if (!isValidTLSArray(this.#agent.options.cert))
+        throw new TypeError(
+          "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().cert = this.#agent.options.cert;
+    }
+    if (this.#agent.options.key) {
+      if (!isValidTLSArray(this.#agent.options.key))
+        throw new TypeError(
+          "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
+        );
+      this._ensureTls().key = this.#agent.options.key;
+    }
+
     this.#path = options.path || "/";
     if (cb) {
       this.once("response", cb);

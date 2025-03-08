@@ -1131,6 +1131,13 @@
       // Don't pause when the GC runs while the debugger is open.
       "postRunCommands": ["command source '${workspaceFolder}/misctools/lldb/lldb_commands'"],
     },
+    {
+      "type": "midas-rr",
+      "request": "attach",
+      "name": "rr",
+      "trace": "Off",
+      "setupCommands": ["handle SIGPWR nostop noprint pass"],
+    },
   ],
   "inputs": [
     {

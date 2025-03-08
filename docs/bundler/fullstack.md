@@ -203,6 +203,13 @@ When `development` is `true`, Bun will:
 - Include the `SourceMap` header in the response so that devtools can show the original source code
 - Disable minification
 - Re-bundle assets on each request to a .html file
+- Client-side hot reload! ([New in Bun v1.2.3](https://bun.sh/blog/bun-v1.2.3#develop-frontend-apps-with-bun-index-html))
+
+Hot reloading can be disabled, but with other dev features still active (so the behaviour of Bun versions prior to v1.2.3) like this:
+
+```js-diff
+development: { hmr: false },
+```
 
 #### Production mode
 

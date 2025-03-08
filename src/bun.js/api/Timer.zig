@@ -1162,13 +1162,17 @@ pub const EventLoopTimer = struct {
         if (order == .eq) {
             if (maybe_a_internals) |a_internals| {
                 if (maybe_b_internals) |b_internals| {
-                    // We use a u25 internally to conserve memory, but we
-                    // generally want to avoid all integer operations involving
-                    // non^2 integers.
-                    const b_epoch: u32 = b_internals.flags.epoch;
-                    const a_epoch: u32 = a_internals.flags.epoch;
-
-                    return b_epoch -% a_epoch < std.math.maxInt(u25) / 2;
+                    // We expect that the epoch will overflow sometimes.
+                    // If it does, we would ideally like timers with an epoch from before the
+                    // overflow to be sorted *before* timers with an epoch from after the overflow
+                    // (even though their epoch will be numerically *larger*).
+                    //
+                    // Wrapping subtraction gives us a distance that is consistent even if one
+                    // epoch has overflowed and the other hasn't. If the distance from a to b is
+                    // small, it's likely that b is really newer than a, so we consider a less than
+                    // b. If the distance from a to b is large (greater than half the u25 range),
+                    // it's more likely that b is older than a so the true distance is from b to a.
+                    return b_internals.flags.epoch -% a_internals.flags.epoch < std.math.maxInt(u25) / 2;
                 }
             }
         }

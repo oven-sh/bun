@@ -22,7 +22,7 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
     }
 }
 
-extern "C" void Bun__JSC_onAfterWait(JSC::VM* _Nonnull vm, int hasMoreEventLoopWorkToDo)
+extern "C" void Bun__JSC_onAfterWait(JSC::VM* _Nonnull vm, bool hasMoreEventLoopWorkToDo)
 {
     vm->heap.acquireAccess();
     drop_all_locks.reset();

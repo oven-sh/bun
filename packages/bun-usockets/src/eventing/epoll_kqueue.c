@@ -248,7 +248,7 @@ void us_loop_run(struct us_loop_t *loop) {
 }
 
 extern void Bun__JSC_onBeforeWait(void*);
-extern void Bun__JSC_onAfterWait(void*, int hasMoreEventLoopWorkToDo);
+extern void Bun__JSC_onAfterWait(void*, bool hasMoreEventLoopWorkToDo);
 extern void Bun__JSC_onDidRunCallbacks(void*);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {

@@ -9,7 +9,7 @@ export function App() {
   return (
     <div className="container mx-auto p-8 text-center relative z-10">
       <div className="flex justify-center items-center gap-8 mb-8">
-        <a href="https://bun.sh/" target="_blank">
+        <a href="https://bun.sh" target="_blank">
           <img
             src={logo}
             alt="Bun Logo"

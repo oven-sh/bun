@@ -1,13 +1,13 @@
 Bun's bundler has built-in support for CSS with the following features:
 
-- Transpiling modern/feature features to work on all browsers (including vendor prefixing)
+- Transpiling modern/future features to work on all browsers (including vendor prefixing)
 - Minification
 - CSS Modules
 - Tailwind (via a native bundler plugin)
 
 ## Transpiling
 
-Bun's CSS bundler lets you use future/modern CSS features without having to worry about browser compatibility — all thanks to its transpiling and vendor prefixing features which are enabled by default.
+Bun's CSS bundler lets you use modern/future CSS features without having to worry about browser compatibility — all thanks to its transpiling and vendor prefixing features which are enabled by default.
 
 Bun's CSS parser and bundler is a direct Rust → Zig port of [LightningCSS](https://lightningcss.dev/), with a bundling approach inspired by esbuild. The transpiler converts modern CSS syntax into backwards-compatible equivalents that work across browsers.
 

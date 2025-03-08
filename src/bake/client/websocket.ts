@@ -105,7 +105,7 @@ export function initWebSocket(
   }
 
   async function onClose() {
-    onStatusChange(false);
+    onStatusChange?.(false);
     console.warn("[Bun] Hot-module-reloading socket disconnected, reconnecting...");
 
     await new Promise(done => setTimeout(done, 1000));

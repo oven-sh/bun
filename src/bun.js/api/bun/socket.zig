@@ -1220,37 +1220,9 @@ pub const Listener = struct {
             if (ssl.?.server_name) |s| {
                 server_name = bun.default_allocator.dupe(u8, s[0..bun.len(s)]) catch bun.outOfMemory();
             }
-            uws.NewSocketHandler(true).configure(
-                socket_context,
-                true,
-                *TLSSocket,
-                struct {
-                    pub const onOpen = NewSocket(true).onOpen;
-                    pub const onClose = NewSocket(true).onClose;
-                    pub const onData = NewSocket(true).onData;
-                    pub const onWritable = NewSocket(true).onWritable;
-                    pub const onTimeout = NewSocket(true).onTimeout;
-                    pub const onConnectError = NewSocket(true).onConnectError;
-                    pub const onEnd = NewSocket(true).onEnd;
-                    pub const onHandshake = NewSocket(true).onHandshake;
-                },
-            );
+            uws.NewSocketHandler(true).configure(socket_context, true, *TLSSocket, NewSocket(true));
         } else {
-            uws.NewSocketHandler(false).configure(
-                socket_context,
-                true,
-                *TCPSocket,
-                struct {
-                    pub const onOpen = NewSocket(false).onOpen;
-                    pub const onClose = NewSocket(false).onClose;
-                    pub const onData = NewSocket(false).onData;
-                    pub const onWritable = NewSocket(false).onWritable;
-                    pub const onTimeout = NewSocket(false).onTimeout;
-                    pub const onConnectError = NewSocket(false).onConnectError;
-                    pub const onEnd = NewSocket(false).onEnd;
-                    pub const onHandshake = NewSocket(false).onHandshake;
-                },
-            );
+            uws.NewSocketHandler(false).configure(socket_context, true, *TCPSocket, NewSocket(false));
         }
 
         default_data.ensureStillAlive();

@@ -47,18 +47,10 @@ const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_U
 
 const {
   randomInt: _randomInt,
-<<<<<<< HEAD
   pbkdf2: _pbkdf2,
   pbkdf2Sync: _pbkdf2Sync,
   timingSafeEqual: _timingSafeEqual,
-||||||| 9d6729fef3
-  pbkdf2: pbkdf2_,
-  pbkdf2Sync: pbkdf2Sync_,
-=======
   randomUUID: _randomUUID,
-  pbkdf2: pbkdf2_,
-  pbkdf2Sync: pbkdf2Sync_,
->>>>>>> main
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString, validateInt32 } = require("internal/validators");

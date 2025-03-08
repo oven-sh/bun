@@ -317,18 +317,17 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_context_t *ctx, int socke
 
     struct us_socket_t *s = (struct us_socket_t *) p1;
     s->context = ctx;
-    s->timeout = 0;
-    s->long_timeout = 0;
+    s->timeout = 255;
+    s->long_timeout = 255;
     s->low_prio_state = 0;
+    s->allow_half_open = 0;
+    s->connect_next = 0;
+    s->connect_state = 0;
 
     /* We always use nodelay */
     bsd_socket_nodelay(fd, 1);
-
-    int flags = fcntl(fd, F_GETFL, 0);
-    if (flags != -1) {
-        flags |= O_NONBLOCK;
-        fcntl(fd, F_SETFL, flags);
-    }
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
 
     us_internal_socket_context_link_socket(ctx, s);
 

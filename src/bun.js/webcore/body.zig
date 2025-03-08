@@ -309,6 +309,20 @@ pub const Body = struct {
         Error: ValueError,
         Null,
 
+        // We may not have all the data yet
+        // So we can't know for sure if it's empty or not
+        // We CAN know that it is definitely empty.
+        pub fn isDefinitelyEmpty(this: *const Value) bool {
+            return switch (this.*) {
+                .Null => true,
+                .Used, .Empty => true,
+                .InternalBlob => this.InternalBlob.slice().len == 0,
+                .Blob => this.Blob.size == 0,
+                .WTFStringImpl => this.WTFStringImpl.length() == 0,
+                .Error, .Locked => false,
+            };
+        }
+
         pub const heap_breakdown_label = "BodyValue";
         pub const ValueError = union(enum) {
             AbortReason: JSC.CommonAbortReason,

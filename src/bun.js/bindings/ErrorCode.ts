@@ -90,6 +90,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["ERR_INVALID_CHAR", TypeError],
   ["MODULE_NOT_FOUND", Error],
+  ["ERR_HTTP_HEADERS_SENT", Error],
+  ["ERR_HTTP_BODY_NOT_ALLOWED", Error],
+  ["ERR_HTTP_INVALID_STATUS_CODE", RangeError],
+  ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
   ["ERR_SERVER_ALREADY_LISTEN", Error],
 
   // Bun-specific
@@ -99,7 +103,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_BORINGSSL", Error],
 
   // Console
-  ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
+  ["ERR_CONSOLE_WRITABLE_STREAM", TypeError],
 
   // FS
   ["ERR_DIR_CLOSED", Error],

@@ -115,9 +115,8 @@ private:
         us_socket_context_on_close(SSL, getSocketContext(), [](us_socket_t *s, int /*code*/, void */*reason*/) {
             ((AsyncSocket<SSL> *)s)->uncorkWithoutSending();
 
-
             /* Get socket ext */
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(SSL, s);
+            auto *httpResponseData = reinterpret_cast<HttpResponseData<SSL> *>(us_socket_ext(SSL, s));
 
             /* Call filter */
             HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
@@ -130,6 +129,9 @@ private:
                 httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
 
+            if (httpResponseData->socketData && httpContextData->onSocketClosed) {
+                httpContextData->onSocketClosed(httpResponseData->socketData, SSL, s);
+            }
 
             /* Destruct socket ext */
             httpResponseData->~HttpResponseData<SSL>();
@@ -171,7 +173,7 @@ private:
             proxyParser = &httpResponseData->proxyParser;
 #endif
 
-            /* The return value is entirely up to us to interpret. The HttpParser only care for whether the returned value is DIFFERENT or not from passed user */
+            /* The return value is entirely up to us to interpret. The HttpParser cares only for whether the returned value is DIFFERENT from passed user */
             auto [err, returnedSocket] = httpResponseData->consumePostPadded(data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
                 /* For every request we reset the timeout and hang until user makes action */
                 /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
@@ -182,7 +184,7 @@ private:
                 httpResponseData->offset = 0;
 
                 /* Are we not ready for another request yet? Terminate the connection.
-                 * Important for denying async pipelining until, if ever, we want to suppot it.
+                 * Important for denying async pipelining until, if ever, we want to support it.
                  * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
                 if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
                     us_socket_close(SSL, (us_socket_t *) s, 0, nullptr);
@@ -416,7 +418,7 @@ private:
 
             /* Force close rather than gracefully shutdown and risk confusing the client with a complete download */
             AsyncSocket<SSL> *asyncSocket = (AsyncSocket<SSL> *) s;
-            // Node.js by default sclose the connection but they emit the timeout event before that
+            // Node.js by default closes the connection but they emit the timeout event before that
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) asyncSocket->getAsyncSocketData();
 
             if (httpResponseData->onTimeout) {

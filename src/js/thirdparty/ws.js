@@ -8,6 +8,7 @@ const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
+const { kDeprecatedReplySymbol } = require("internal/http");
 const encoder = new TextEncoder();
 const eventIds = {
   open: 1,
@@ -1230,7 +1231,10 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const [{ [kBunInternals]: server }, response, req] = socket[kBunInternals];
+    const response = socket._httpMessage;
+    const server = socket.server[kBunInternals];
+    const req = socket[kBunInternals];
+
     if (this._state > RUNNING) return abortHandshake(response, 503);
 
     let protocol = "";
@@ -1252,7 +1256,6 @@ class WebSocketServer extends EventEmitter {
         data: ws[kBunInternals],
       })
     ) {
-      response._reply(undefined);
       if (this.clients) {
         this.clients.add(ws);
         ws.on("close", () => {
@@ -1280,7 +1283,7 @@ class WebSocketServer extends EventEmitter {
    */
   handleUpgrade(req, socket, head, cb) {
     // socket is actually fake so we use internal http_res
-    const [_, response] = socket[kBunInternals];
+    const response = socket._httpMessage;
 
     // socket.on("error", socketOnError);
 

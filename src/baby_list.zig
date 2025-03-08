@@ -316,6 +316,12 @@ pub fn BabyList(comptime Type: type) type {
             this.update(list__);
         }
 
+        pub fn insertSlice(this: *@This(), allocator: std.mem.Allocator, index: usize, vals: []const Type) !void {
+            var list__ = this.listManaged(allocator);
+            try list__.insertSlice(index, vals);
+            this.update(list__);
+        }
+
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {
             var list__ = this.listManaged(allocator);
             try list__.appendSlice(value);

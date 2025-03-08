@@ -387,7 +387,7 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
     JSC::EncodedJSValue res;
     StringView str;
     if (input->is8Bit()) {
-        if (input->isRope()) {
+        if (input->isNonSubstringRope()) {
             GCDeferralContext gcDeferralContext(vm);
             auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
@@ -428,7 +428,9 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto source = argument0.value().toWTFString(lexicalGlobalObject);
+    auto* str = argument0.value().toString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto source = str->view(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto* destination = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(argument1.value());
@@ -438,11 +440,11 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
     }
 
     size_t res = 0;
-    if (!source.is8Bit()) {
-        const auto span = source.span16();
+    if (!source->is8Bit()) {
+        const auto span = source->span16();
         res = TextEncoder__encodeInto16(span.data(), span.size(), destination->vector(), destination->byteLength());
     } else {
-        const auto span = source.span8();
+        const auto span = source->span8();
         res = TextEncoder__encodeInto8(span.data(), span.size(), destination->vector(), destination->byteLength());
     }
 

@@ -1,6 +1,6 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, imageFixtures, reactRefreshStub } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 import assert from "node:assert";
 
 devTest("css file with syntax error does not kill old styles", {
@@ -97,9 +97,8 @@ devTest("css file with initial syntax error gets recovered", {
 });
 devTest("add new css import later", {
   files: {
-    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.ts"],
       body: `hello world`,
     }),
     "index.ts": `
@@ -107,6 +106,7 @@ devTest("add new css import later", {
       export default function () {
         return "hello world";
       }
+      import.meta.hot.accept();
     `,
     "styles.css": `
       body {

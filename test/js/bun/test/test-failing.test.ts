@@ -14,7 +14,7 @@ describe("test.failing", () => {
   });
 
   it("requires a test function (unlike test.todo)", () => {
-    expect(() => test.failing("test name")).toThrow(/expects a function/i);
+    expect(() => test.failing("test name")).toThrow("test() expects second argument to be a function");
   });
 
   it("passes if an error is thrown or a promise rejects ", async () => {
@@ -33,7 +33,7 @@ describe("test.failing", () => {
     expect(stderr).toContain("this test is marked as failing but it passed");
   });
 
-  it("timeouts stll count as failures", async () => {
+  it("timeouts still count as failures", async () => {
     const result = await $.cwd(fixtureDir).nothrow()`${bunExe()} test ./failing-test-timeout.fixture.ts`.quiet();
     const stderr = result.stderr.toString();
     if (result.exitCode === 0) {

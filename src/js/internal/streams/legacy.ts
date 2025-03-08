@@ -10,7 +10,7 @@ function Stream(opts) {
 }
 $toClass(Stream, "Stream", EE);
 
-Stream.prototype.pipe = function (dest, options) {
+Stream.prototype.pipe = function pipe(dest, options) {
   const source = this;
 
   function ondata(chunk) {

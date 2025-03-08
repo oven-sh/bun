@@ -217,7 +217,7 @@ function bufferSize(self, size, buffer) {
   return ret;
 }
 
-Socket.prototype.bind = function (port_, address_ /* , callback */) {
+Socket.prototype.bind = function bind(port_, address_ /* , callback */) {
   let port = port_;
 
   const state = this[kStateSymbol];
@@ -365,7 +365,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
   return this;
 };
 
-Socket.prototype.connect = function (port, address, callback) {
+Socket.prototype.connect = function connect(port, address, callback) {
   port = validatePort(port, "Port", false);
   if (typeof address === "function") {
     callback = address;
@@ -434,7 +434,7 @@ function doConnect(ex, self, ip, address, port, callback) {
 
 const disconnectFn = $newZigFunction("udp_socket.zig", "UDPSocket.jsDisconnect", 0);
 
-Socket.prototype.disconnect = function () {
+Socket.prototype.disconnect = function disconnect() {
   const state = this[kStateSymbol];
   if (state.connectState !== CONNECT_STATE_CONNECTED) throw $ERR_SOCKET_DGRAM_NOT_CONNECTED();
 
@@ -443,7 +443,7 @@ Socket.prototype.disconnect = function () {
 };
 
 // Thin wrapper around `send`, here for compatibility with dgram_legacy.js
-Socket.prototype.sendto = function (buffer, offset, length, port, address, callback) {
+Socket.prototype.sendto = function sendto(buffer, offset, length, port, address, callback) {
   validateNumber(offset, "offset");
   validateNumber(length, "length");
   validateNumber(port, "port");
@@ -532,7 +532,7 @@ function clearQueue() {
 // send(buffer, offset, length)
 // send(bufferOrList, callback)
 // send(bufferOrList)
-Socket.prototype.send = function (buffer, offset, length, port, address, callback) {
+Socket.prototype.send = function send(buffer, offset, length, port, address, callback) {
   let list;
   const state = this[kStateSymbol];
   const connected = state.connectState === CONNECT_STATE_CONNECTED;
@@ -696,7 +696,7 @@ function afterSend(err, sent) {
 }
 */
 
-Socket.prototype.close = function (callback) {
+Socket.prototype.close = function close(callback) {
   const state = this[kStateSymbol];
   const queue = state.queue;
 
@@ -735,13 +735,13 @@ function socketCloseNT(self) {
   self.emit("close");
 }
 
-Socket.prototype.address = function () {
+Socket.prototype.address = function address() {
   const addr = this[kStateSymbol].handle.socket?.address;
   if (!addr) throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   return addr;
 };
 
-Socket.prototype.remoteAddress = function () {
+Socket.prototype.remoteAddress = function remoteAddress() {
   const state = this[kStateSymbol];
   const socket = state.handle.socket;
 
@@ -754,7 +754,7 @@ Socket.prototype.remoteAddress = function () {
   return socket.remoteAddress;
 };
 
-Socket.prototype.setBroadcast = function (arg) {
+Socket.prototype.setBroadcast = function setBroadcast(arg) {
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
     throw new Error("setBroadcast EBADF");
@@ -762,7 +762,7 @@ Socket.prototype.setBroadcast = function (arg) {
   return handle.socket.setBroadcast(arg);
 };
 
-Socket.prototype.setTTL = function (ttl) {
+Socket.prototype.setTTL = function setTTL(ttl) {
   if (typeof ttl !== "number") {
     throw $ERR_INVALID_ARG_TYPE("ttl", "number", ttl);
   }
@@ -774,7 +774,7 @@ Socket.prototype.setTTL = function (ttl) {
   return handle.socket.setTTL(ttl);
 };
 
-Socket.prototype.setMulticastTTL = function (ttl) {
+Socket.prototype.setMulticastTTL = function setMulticastTTL(ttl) {
   if (typeof ttl !== "number") {
     throw $ERR_INVALID_ARG_TYPE("ttl", "number", ttl);
   }
@@ -786,7 +786,7 @@ Socket.prototype.setMulticastTTL = function (ttl) {
   return handle.socket.setMulticastTTL(ttl);
 };
 
-Socket.prototype.setMulticastLoopback = function (arg) {
+Socket.prototype.setMulticastLoopback = function setMulticastLoopback(arg) {
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
     throw new Error("setMulticastLoopback EBADF");
@@ -794,7 +794,7 @@ Socket.prototype.setMulticastLoopback = function (arg) {
   return handle.socket.setMulticastLoopback(arg);
 };
 
-Socket.prototype.setMulticastInterface = function (interfaceAddress) {
+Socket.prototype.setMulticastInterface = function setMulticastInterface(interfaceAddress) {
   validateString(interfaceAddress, "interfaceAddress");
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
@@ -805,7 +805,7 @@ Socket.prototype.setMulticastInterface = function (interfaceAddress) {
   }
 };
 
-Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
+Socket.prototype.addMembership = function addMembership(multicastAddress, interfaceAddress) {
   if (!multicastAddress) {
     throw $ERR_MISSING_ARGS("multicastAddress");
   }
@@ -826,7 +826,7 @@ Socket.prototype.addMembership = function (multicastAddress, interfaceAddress) {
   return handle.socket.addMembership(multicastAddress, interfaceAddress);
 };
 
-Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) {
+Socket.prototype.dropMembership = function dropMembership(multicastAddress, interfaceAddress) {
   if (!multicastAddress) {
     throw $ERR_MISSING_ARGS("multicastAddress");
   }
@@ -844,7 +844,11 @@ Socket.prototype.dropMembership = function (multicastAddress, interfaceAddress) 
   return handle.socket.dropMembership(multicastAddress, interfaceAddress);
 };
 
-Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAddress, interfaceAddress) {
+Socket.prototype.addSourceSpecificMembership = function addSourceSpecificMembership(
+  sourceAddress,
+  groupAddress,
+  interfaceAddress,
+) {
   validateString(sourceAddress, "sourceAddress");
   validateString(groupAddress, "groupAddress");
   if (typeof interfaceAddress !== "undefined") {
@@ -864,7 +868,11 @@ Socket.prototype.addSourceSpecificMembership = function (sourceAddress, groupAdd
   return handle.socket.addSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
 };
 
-Socket.prototype.dropSourceSpecificMembership = function (sourceAddress, groupAddress, interfaceAddress) {
+Socket.prototype.dropSourceSpecificMembership = function dropSourceSpecificMembership(
+  sourceAddress,
+  groupAddress,
+  interfaceAddress,
+) {
   validateString(sourceAddress, "sourceAddress");
   validateString(groupAddress, "groupAddress");
   if (typeof interfaceAddress !== "undefined") {
@@ -884,7 +892,7 @@ Socket.prototype.dropSourceSpecificMembership = function (sourceAddress, groupAd
   return handle.socket.dropSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
 };
 
-Socket.prototype.ref = function () {
+Socket.prototype.ref = function ref() {
   const socket = this[kStateSymbol].handle?.socket;
 
   if (socket) socket.ref();
@@ -892,7 +900,7 @@ Socket.prototype.ref = function () {
   return this;
 };
 
-Socket.prototype.unref = function () {
+Socket.prototype.unref = function unref() {
   const socket = this[kStateSymbol].handle?.socket;
 
   if (socket) {
@@ -904,28 +912,28 @@ Socket.prototype.unref = function () {
   return this;
 };
 
-Socket.prototype.setRecvBufferSize = function (size) {
+Socket.prototype.setRecvBufferSize = function setRecvBufferSize(size) {
   bufferSize(this, size, RECV_BUFFER);
 };
 
-Socket.prototype.setSendBufferSize = function (size) {
+Socket.prototype.setSendBufferSize = function setSendBufferSize(size) {
   bufferSize(this, size, SEND_BUFFER);
 };
 
-Socket.prototype.getRecvBufferSize = function () {
+Socket.prototype.getRecvBufferSize = function getRecvBufferSize() {
   return bufferSize(this, 0, RECV_BUFFER);
 };
 
-Socket.prototype.getSendBufferSize = function () {
+Socket.prototype.getSendBufferSize = function getSendBufferSize() {
   return bufferSize(this, 0, SEND_BUFFER);
 };
 
-Socket.prototype.getSendQueueSize = function () {
+Socket.prototype.getSendQueueSize = function getSendQueueSize() {
   return 0;
   // return this[kStateSymbol].handle.getSendQueueSize();
 };
 
-Socket.prototype.getSendQueueCount = function () {
+Socket.prototype.getSendQueueCount = function getSendQueueCount() {
   return 0;
   // return this[kStateSymbol].handle.getSendQueueCount();
 };

@@ -62,7 +62,7 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
   read:
     fh.read === fileHandlePrototypeRead
       ? read
-      : function (fd, buf, offset, length, pos, cb) {
+      : function read(fd, buf, offset, length, pos, cb) {
           return fh.read(buf, offset, length, pos).then(
             ({ bytesRead, buffer }) => cb(null, bytesRead, buffer),
             err => cb(err, 0, buf),
@@ -71,7 +71,7 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
   write:
     fh.write === fileHandlePrototypeWrite
       ? write
-      : function (fd, buffer, offset, length, position, cb) {
+      : function write(fd, buffer, offset, length, position, cb) {
           return fh.write(buffer, offset, length, position).then(
             ({ bytesWritten, buffer }) => cb(null, bytesWritten, buffer),
             err => cb(err, 0, buffer),
@@ -81,7 +81,7 @@ const fileHandleStreamFs = (fh: FileHandle) => ({
   fsync:
     fh.sync === fileHandlePrototypeFsync
       ? fsync
-      : function (fd, cb) {
+      : function sync(fd, cb) {
           return fh.sync().then(() => cb(), cb);
         },
   close: streamFileHandleClose.bind(fh),
@@ -248,7 +248,7 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
 
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
-    this.emit = function (...args) {
+    this.emit = function emit(...args) {
       if (args[0] === "open") {
         this.emit = orgEmit;
         callback();
@@ -299,7 +299,7 @@ readStreamPrototype.open = streamNoop;
 
 readStreamPrototype._construct = streamConstruct;
 
-readStreamPrototype._read = function (n) {
+readStreamPrototype._read = function _read(n) {
   n = this.pos !== undefined ? $min(this.end - this.pos + 1, n) : $min(this.end - this.bytesRead + 1, n);
 
   if (n <= 0) {
@@ -335,7 +335,7 @@ readStreamPrototype._read = function (n) {
   });
 };
 
-readStreamPrototype._destroy = function (this: FSStream, err, cb) {
+readStreamPrototype._destroy = function _destroy(this: FSStream, err, cb) {
   // Usually for async IO it is safe to close a file descriptor
   // even when there are pending operations. However, due to platform
   // differences file IO is implemented using synchronous operations
@@ -349,7 +349,7 @@ readStreamPrototype._destroy = function (this: FSStream, err, cb) {
   }
 };
 
-readStreamPrototype.close = function (cb) {
+readStreamPrototype.close = function close(cb) {
   if (typeof cb === "function") finished(this, cb);
   this.destroy();
 };
@@ -390,7 +390,7 @@ function closeAfterSync(stream, err, cb) {
   stream.fd = null;
 }
 
-ReadStream.prototype.pipe = function (this: FSStream, dest, pipeOpts) {
+ReadStream.prototype.pipe = function pipe(this: FSStream, dest, pipeOpts) {
   // Fast path for streaming files:
   // if (this[kReadStreamFastPath]) {
   // }
@@ -660,7 +660,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   }
 }
 
-writeStreamPrototype._writev = function (data, cb) {
+writeStreamPrototype._writev = function _writev(data, cb) {
   const len = data.length;
   const chunks = new Array(len);
   let size = 0;
@@ -700,7 +700,7 @@ writeStreamPrototype._writev = function (data, cb) {
   }
 };
 
-writeStreamPrototype._destroy = function (err, cb) {
+writeStreamPrototype._destroy = function _destroy(err, cb) {
   const sink = this[kWriteStreamFastPath];
   if (sink && sink !== true) {
     const end = sink.end(err);
@@ -712,7 +712,7 @@ writeStreamPrototype._destroy = function (err, cb) {
   close(this, err, cb);
 };
 
-writeStreamPrototype.close = function (this: FSStream, cb) {
+writeStreamPrototype.close = function close(this: FSStream, cb) {
   if (cb) {
     if (this.closed) {
       process.nextTick(cb);

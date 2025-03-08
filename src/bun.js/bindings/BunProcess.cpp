@@ -1035,6 +1035,8 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
 }
 
 extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
+extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
+extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
 extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
@@ -1045,11 +1047,22 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         // IPC handlers
         if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
             auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
+            auto messageListenerCount = eventEmitter.listenerCount(Identifier::fromString(JSC::getVM(global), "message"_s));
+            auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(JSC::getVM(global), "disconnect"_s));
+            if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
+                disconnectListenerCount--;
+            }
+            auto totalListenerCount = messageListenerCount + disconnectListenerCount;
             if (isAdded) {
                 if (Bun__GlobalObject__hasIPC(global)
-                    && eventEmitter.listenerCount(eventName) == 1) {
+                    && totalListenerCount == 1) {
                     Bun__ensureProcessIPCInitialized(global);
                     Bun__refChannelUnlessOverridden(global);
+                }
+            } else {
+                if (Bun__GlobalObject__hasIPC(global)
+                    && totalListenerCount == 0) {
+                    Bun__unrefChannelUnlessOverridden(global);
                 }
             }
             return;

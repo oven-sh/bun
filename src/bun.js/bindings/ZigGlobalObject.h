@@ -478,6 +478,7 @@ public:
 
     LazyProperty<JSGlobalObject, Structure> m_JSS3FileStructure;
     LazyProperty<JSGlobalObject, Structure> m_S3ErrorStructure;
+
     JSC::LazyClassStructure m_JSStatsClassStructure;
     JSC::LazyClassStructure m_JSStatsBigIntClassStructure;
     JSC::LazyClassStructure m_JSDirentClassStructure;
@@ -534,6 +535,8 @@ public:
     LazyClassStructure m_JSX509CertificateClassStructure;
     LazyClassStructure m_JSSignClassStructure;
     LazyClassStructure m_JSVerifyClassStructure;
+    LazyClassStructure m_JSHmacClassStructure;
+    LazyClassStructure m_JSHashClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

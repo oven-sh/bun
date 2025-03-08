@@ -6,12 +6,16 @@ const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const Crypto = JSC.API.Bun.Crypto;
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const assert = bun.assert;
 const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
 const validators = @import("./util/validators.zig");
+const JSGlobalObject = JSC.JSGlobalObject;
+const JSError = bun.JSError;
+const String = bun.String;
+const UUID = bun.UUID;
 
 fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(2).slice();
@@ -37,6 +41,31 @@ fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
     }
 
     return JSC.JSValue.jsNumberFromInt64(std.crypto.random.intRangeLessThan(i64, min, max));
+}
+
+fn randomUUID(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {
+    const args = callFrame.arguments();
+
+    var disable_entropy_cache = false;
+    if (args.len > 0) {
+        const options = args[0];
+        if (options != .undefined) {
+            try validators.validateObject(global, options, "options", .{}, .{});
+            if (try options.get(global, "disableEntropyCache")) |disable_entropy_cache_value| {
+                disable_entropy_cache = try validators.validateBoolean(global, disable_entropy_cache_value, "options.disableEntropyCache", .{});
+            }
+        }
+    }
+
+    var str, var bytes = String.createUninitialized(.latin1, 36);
+
+    const uuid = if (disable_entropy_cache)
+        UUID.init()
+    else
+        global.bunVM().rareData().nextUUID();
+
+    uuid.print(bytes[0..36]);
+    return str.transferToJS(global);
 }
 
 fn pbkdf2(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -74,11 +103,12 @@ fn pbkdf2Sync(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JS
 }
 
 pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
-    const crypto = JSC.JSValue.createEmptyObject(global, 3);
+    const crypto = JSC.JSValue.createEmptyObject(global, 4);
 
     crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", pbkdf2, 5, .{}));
     crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", pbkdf2Sync, 5, .{}));
     crypto.put(global, bun.String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", randomInt, 2, .{}));
+    crypto.put(global, String.init("randomUUID"), JSC.JSFunction.create(global, "randomUUID", randomUUID, 1, .{}));
 
     return crypto;
 }

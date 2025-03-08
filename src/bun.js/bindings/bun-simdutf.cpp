@@ -339,6 +339,11 @@ size_t simdutf__base64_encode(const char* input, size_t length, char* output, in
     return simdutf::binary_to_base64(input, length, output, is_urlsafe ? simdutf::base64_url : simdutf::base64_default);
 }
 
+size_t simdutf__base64_length_from_binary(size_t length, int is_urlsafe)
+{
+    return simdutf::base64_length_from_binary(length, is_urlsafe ? simdutf::base64_url : simdutf::base64_default);
+}
+
 SIMDUTFResult simdutf__base64_decode_from_binary(const char* input, size_t length, char* output, size_t outlen_, int is_urlsafe)
 {
     size_t outlen = outlen_;

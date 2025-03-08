@@ -58,14 +58,12 @@ pub const Blob = struct {
     pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBlob;
 
-    // pub usingnamespace @import("./blob/ReadFile.zig");
     const rf = @import("./blob/ReadFile.zig");
     pub const ReadFile = rf.ReadFile;
     pub const ReadFileUV = rf.ReadFileUV;
     pub const ReadFileTask = rf.ReadFileTask;
     pub const ReadFileResultType = rf.ReadFileResultType;
 
-    // pub usingnamespace @import("./blob/WriteFile.zig");
     const wf = @import("./blob/WriteFile.zig");
     pub const WriteFile = wf.WriteFile;
     pub const WriteFileWindows = wf.WriteFileWindows;
@@ -4750,6 +4748,18 @@ pub const Blob = struct {
         }
 
         return null;
+    }
+
+    pub fn getLoader(blob: *const Blob, jsc_vm: *VirtualMachine) ?bun.options.Loader {
+        if (blob.getFileName()) |filename| {
+            const current_path = bun.fs.Path.init(filename);
+            return current_path.loader(&jsc_vm.transpiler.options.loaders) orelse .tsx;
+        } else if (blob.getMimeTypeOrContentType()) |mime_type| {
+            return .fromMimeType(mime_type);
+        } else {
+            // Be maximally permissive.
+            return .tsx;
+        }
     }
 
     // TODO: Move this to a separate `File` object or BunFile

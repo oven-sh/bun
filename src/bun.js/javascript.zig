@@ -2431,93 +2431,15 @@ pub const VirtualMachine = struct {
 
         const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
-        const normalized_file_path_from_specifier, const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice());
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
-        var path = Fs.Path.init(normalized_file_path_from_specifier);
 
-        // For blobs.
-        var blob_source: ?JSC.WebCore.Blob = null;
         var virtual_source_to_use: ?logger.Source = null;
-        defer {
-            if (blob_source) |*blob| {
-                blob.deinit();
-            }
-        }
-
-        const loader, const virtual_source = brk: {
-            if (jsc_vm.module_loader.eval_source) |eval_source| {
-                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                    break :brk .{ .tsx, eval_source };
-                }
-                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                    break :brk .{ .tsx, eval_source };
-                }
-            }
-
-            var ext_for_loader = path.name.ext;
-
-            // Support errors within blob: URLs
-            // Be careful to handle Bun.file(), in addition to regular Blob/File objects
-            // Bun.file() should be treated the same as a file path.
-            if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
-                if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
-                    blob_source = blob;
-
-                    if (blob.getFileName()) |filename| {
-                        const current_path = Fs.Path.init(filename);
-                        if (blob.needsToReadFile()) {
-                            path = current_path;
-                        }
-
-                        ext_for_loader = current_path.name.ext;
-                    } else if (blob.getMimeTypeOrContentType()) |mime_type| {
-                        if (strings.hasPrefixComptime(mime_type.value, "application/javascript-jsx")) {
-                            ext_for_loader = ".jsx";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript-jsx")) {
-                            ext_for_loader = ".tsx";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/javascript")) {
-                            ext_for_loader = ".js";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
-                            ext_for_loader = ".ts";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
-                            ext_for_loader = ".json";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
-                            ext_for_loader = ".jsonc";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
-                            ext_for_loader = ".jsonc";
-                        } else if (mime_type.category == .text) {
-                            ext_for_loader = ".txt";
-                        } else {
-                            // Be maximally permissive.
-                            ext_for_loader = ".tsx";
-                        }
-                    } else {
-                        // Be maximally permissive.
-                        ext_for_loader = ".tsx";
-                    }
-
-                    if (!blob.needsToReadFile()) {
-                        virtual_source_to_use = logger.Source{
-                            .path = path,
-                            .contents = blob.sharedView(),
-                        };
-                    }
-                } else {
-                    return error.ModuleNotFound;
-                }
-            }
-
-            break :brk .{
-                jsc_vm.transpiler.options.loaders.get(ext_for_loader) orelse brk2: {
-                    if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                        break :brk2 options.Loader.js;
-                    }
-                    break :brk2 options.Loader.file;
-                },
-                if (virtual_source_to_use) |*src| src else null,
-            };
+        var blob_to_deinit: ?JSC.WebCore.Blob = null;
+        const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
+            return error.ModuleNotFound;
         };
+        defer if (blob_to_deinit) |*blob| blob.deinit();
 
         // .print_source, which is used by exceptions avoids duplicating the entire source code
         // but that means we have to be careful of the lifetime of the source code
@@ -2527,13 +2449,13 @@ pub const VirtualMachine = struct {
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
-            specifier,
+            lr.specifier,
             referrer_clone.slice(),
             _specifier,
-            path,
-            loader,
+            lr.path,
+            lr.loader orelse if (lr.is_main) .js else .file,
             log,
-            virtual_source,
+            lr.virtual_source,
             null,
             VirtualMachine.source_code_printer.?,
             globalObject,

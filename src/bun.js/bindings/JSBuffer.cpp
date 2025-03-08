@@ -283,7 +283,7 @@ static WebCore::BufferEncodingType parseEncoding(JSC::ThrowScope& scope, JSC::JS
     RETURN_IF_EXCEPTION(scope, {});
     const auto& view = arg_->view(lexicalGlobalObject);
 
-    std::optional<BufferEncodingType> encoded = parseEnumeration2(*lexicalGlobalObject, view);
+    std::optional<BufferEncodingType> encoded = parseEnumerationFromView<BufferEncodingType>(view);
     if (UNLIKELY(!encoded)) {
         if (validateUnknown) {
             Bun::V::validateString(scope, lexicalGlobalObject, arg, "encoding"_s);
@@ -1501,7 +1501,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
     if (!encodingValue.isUndefined()) {
         encodingString = encodingValue.toWTFString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        encoding = parseEnumeration2(*lexicalGlobalObject, encodingString);
+        encoding = parseEnumerationFromString<BufferEncodingType>(encodingString);
     } else {
         encoding = BufferEncodingType::utf8;
     }
@@ -1714,64 +1714,54 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
     return JSC::JSValue::encode(castedThis);
 }
 
-JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, std::span<const uint8_t> bytes, BufferEncodingType encoding)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& vm = lexicalGlobalObject->vm();
 
-    if (UNLIKELY(length == 0)) {
-        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
+    if (UNLIKELY(bytes.size() == 0)) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
-    if (length > WTF::String::MaxLength) {
+
+    if (bytes.size() > WTF::String::MaxLength) {
         return Bun::ERR::STRING_TOO_LONG(scope, lexicalGlobalObject);
     }
-    if (length > castedThis->byteLength()) {
-        length = castedThis->byteLength();
-    }
-
-    JSC::EncodedJSValue ret = 0;
 
     switch (encoding) {
-    case WebCore::BufferEncodingType::latin1: {
+    case BufferEncodingType::latin1: {
         std::span<LChar> data;
-        auto str = String::tryCreateUninitialized(length, data);
+        auto str = String::tryCreateUninitialized(bytes.size(), data);
         if (UNLIKELY(str.isNull())) {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return JSValue::encode({});
         }
-        memcpy(data.data(), reinterpret_cast<const char*>(castedThis->vector()) + offset, length);
-        return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
-    }
 
-    case WebCore::BufferEncodingType::ucs2:
-    case WebCore::BufferEncodingType::utf16le: {
+        memcpy(data.data(), bytes.data(), bytes.size());
+        return JSValue::encode(jsString(vm, WTFMove(str)));
+    }
+    case BufferEncodingType::ucs2:
+    case BufferEncodingType::utf16le: {
         std::span<UChar> data;
-        size_t u16length = length / 2;
+        size_t u16length = bytes.size() / 2;
         if (u16length == 0) {
-            return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-        } else {
-            auto str = String::tryCreateUninitialized(u16length, data);
-            if (UNLIKELY(str.isNull())) {
-                throwOutOfMemoryError(lexicalGlobalObject, scope);
-                return JSValue::encode({});
-            }
-            memcpy(reinterpret_cast<void*>(data.data()), reinterpret_cast<const char*>(castedThis->vector()) + offset, u16length * 2);
-            return JSC::JSValue::encode(JSC::jsString(vm, str));
+            return JSValue::encode(jsEmptyString(vm));
         }
-
-        break;
-    }
-
-    case WebCore::BufferEncodingType::ascii: {
-        // ascii: we always know the length
-        // so we might as well allocate upfront
-        std::span<LChar> data;
-        auto str = String::tryCreateUninitialized(length, data);
+        auto str = String::tryCreateUninitialized(u16length, data);
         if (UNLIKELY(str.isNull())) {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return JSValue::encode({});
         }
-        Bun__encoding__writeLatin1(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, data.data(), length, static_cast<uint8_t>(encoding));
-        return JSC::JSValue::encode(JSC::jsString(vm, WTFMove(str)));
+        memcpy(reinterpret_cast<void*>(data.data()), bytes.data(), u16length * 2);
+        return JSValue::encode(jsString(vm, WTFMove(str)));
+    }
+    case BufferEncodingType::ascii: {
+        std::span<LChar> data;
+        auto str = String::tryCreateUninitialized(bytes.size(), data);
+        if (UNLIKELY(str.isNull())) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return JSValue::encode({});
+        }
+        Bun__encoding__writeLatin1(bytes.data(), bytes.size(), data.data(), data.size(), static_cast<uint8_t>(encoding));
+        return JSValue::encode(jsString(vm, WTFMove(str)));
     }
 
     case WebCore::BufferEncodingType::buffer:
@@ -1779,23 +1769,49 @@ JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGl
     case WebCore::BufferEncodingType::base64:
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
-        ret = Bun__encoding__toString(reinterpret_cast<const unsigned char*>(castedThis->vector()) + offset, length, lexicalGlobalObject, static_cast<uint8_t>(encoding));
-        RETURN_IF_EXCEPTION(scope, {});
-        break;
+        EncodedJSValue res = Bun__encoding__toString(bytes.data(), bytes.size(), lexicalGlobalObject, static_cast<uint8_t>(encoding));
+        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+
+        JSValue stringValue = JSValue::decode(res);
+        if (UNLIKELY(!stringValue.isString())) {
+            scope.throwException(lexicalGlobalObject, stringValue);
+            return JSValue::encode({});
+        }
+
+        RELEASE_AND_RETURN(scope, JSValue::encode(stringValue));
     }
     default: {
         throwTypeError(lexicalGlobalObject, scope, "Unsupported encoding? This shouldn't happen"_s);
         return {};
     }
     }
+}
 
-    JSC::JSValue retValue = JSC::JSValue::decode(ret);
-    if (UNLIKELY(!retValue.isString())) {
-        scope.throwException(lexicalGlobalObject, retValue);
-        return {};
+JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (UNLIKELY(!castedThis->byteLength())) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
 
-    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(retValue));
+    ASSERT(offset < castedThis->byteLength());
+    ASSERT(length <= castedThis->byteLength());
+    ASSERT(offset + length <= castedThis->byteLength());
+
+    if (offset >= castedThis->byteLength()) {
+        offset = castedThis->byteLength();
+    }
+
+    if (length > castedThis->byteLength()) {
+        length = castedThis->byteLength();
+    }
+
+    if (offset + length > castedThis->byteLength()) {
+        length = castedThis->byteLength() - offset;
+    }
+
+    return jsBufferToStringFromBytes(lexicalGlobalObject, scope, castedThis->span().subspan(offset, length), encoding);
 }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L208-L233

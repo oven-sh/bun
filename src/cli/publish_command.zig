@@ -973,6 +973,7 @@ pub const PublishCommand = struct {
             &json_source,
             .{
                 .minify_whitespace = true,
+                .mangled_props = null,
             },
         ) catch |err| {
             switch (err) {

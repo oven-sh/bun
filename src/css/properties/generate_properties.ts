@@ -30,6 +30,14 @@ type PropertyDef = {
     css_modules: boolean;
   };
   eval_branch_quota?: number;
+  /**
+   * If parsing a property fails, we fallback to parsing it as `UnparsedProperty`. This is just
+   * the raw tokens. This is helpful for certain minify property handlers.
+   *
+   * In other cases, it's more helpful to throw an error. For example, if the `composes` property,
+   * is used incorrectly, it is more useful for the user to know about that error.
+   */
+  parse_dont_make_unparsed?: boolean;
 };
 
 const OUTPUT_FILE = "src/css/properties/properties_generated.zig";
@@ -313,6 +321,15 @@ function generatePropertyImplParseCases(property_defs: Record<string, PropertyDe
         meta.valid_prefixes === undefined
           ? `.{ .${escapeIdent(name)} = c }`
           : `.{ .${escapeIdent(name)} = .{ c, pre } }`;
+      if (meta.parse_dont_make_unparsed === true) {
+        return `.${escapeIdent(name)} => ${capture} {
+    ${meta.eval_branch_quota !== undefined ? `@setEvalBranchQuota(${meta.eval_branch_quota});` : ""}
+  return switch (css.generic.parseWithOptions(${meta.ty}, input, options)) {
+    .result => |c| return .{ .result = ${ret} },
+    .err => |e| return .{ .err = e },
+  };
+},`;
+      }
       return `.${escapeIdent(name)} => ${capture} {
     ${meta.eval_branch_quota !== undefined ? `@setEvalBranchQuota(${meta.eval_branch_quota});` : ""}
   if (css.generic.parseWithOptions(${meta.ty}, input, options).asValue()) |c| {
@@ -1549,6 +1566,7 @@ generateCode({
   composes: {
     ty: "Composes",
     conditional: { css_modules: true },
+    parse_dont_make_unparsed: true,
   },
   // TODO: Hello future Zack, if you uncomment this, remember to uncomment the corresponding value in FallbackHandler in prefix_handler.zig :)
   // fill: {

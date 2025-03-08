@@ -127,6 +127,8 @@ pub fn Printer(comptime Writer: type) type {
         css_module: ?css.CssModule = null,
         dependencies: ?ArrayList(css.Dependency) = null,
         remove_imports: bool,
+        /// A mapping of pseudo classes to replace with class names that can be applied
+        /// from JavaScript. Useful for polyfills, for example.
         pseudo_classes: ?PseudoClasses = null,
         indentation_buf: std.ArrayList(u8),
         ctx: ?*const css.StyleContext = null,
@@ -134,11 +136,39 @@ pub fn Printer(comptime Writer: type) type {
         error_kind: ?css.PrinterError = null,
         import_info: ?ImportInfo = null,
         public_path: []const u8,
+        symbols: *const bun.JSAst.Symbol.Map,
+        local_names: ?*const css.LocalsResultsMap = null,
         /// NOTE This should be the same mimalloc heap arena allocator
         allocator: Allocator,
         // TODO: finish the fields
 
+        pub threadlocal var in_debug_fmt: if (bun.Environment.isDebug) bool else u0 = if (bun.Environment.isDebug) false else 0;
+
         const This = @This();
+
+        pub fn lookupSymbol(this: *This, ref: bun.bundle_v2.Ref) []const u8 {
+            const symbols = this.symbols;
+
+            const final_ref = symbols.follow(ref);
+            if (this.local_names) |local_names| {
+                if (local_names.get(final_ref)) |local_name| return local_name;
+            }
+
+            const original_name = symbols.get(final_ref).?.original_name;
+            return original_name;
+        }
+
+        pub fn lookupIdentOrRef(this: *This, ident: css.css_values.ident.IdentOrRef) []const u8 {
+            if (comptime bun.Environment.isDebug) {
+                if (in_debug_fmt) {
+                    return ident.debugIdent();
+                }
+            }
+            if (ident.isIdent()) {
+                return ident.asIdent().?.v;
+            }
+            return this.lookupSymbol(ident.asRef().?);
+        }
 
         inline fn getWrittenAmt(writer: Writer) usize {
             return switch (Writer) {
@@ -223,6 +253,8 @@ pub fn Printer(comptime Writer: type) type {
             dest: Writer,
             options: PrinterOptions,
             import_info: ?ImportInfo,
+            local_names: ?*const css.LocalsResultsMap,
+            symbols: *const bun.JSAst.Symbol.Map,
         ) This {
             return .{
                 .sources = null,
@@ -237,11 +269,13 @@ pub fn Printer(comptime Writer: type) type {
                 .scratchbuf = scratchbuf,
                 .allocator = allocator,
                 .public_path = options.public_path,
+                .local_names = local_names,
                 .loc = .{
                     .source_index = 0,
                     .line = 0,
                     .column = 1,
                 },
+                .symbols = symbols,
             };
         }
 
@@ -340,6 +374,16 @@ pub fn Printer(comptime Writer: type) type {
             var str = allocator.dupe(u8, s) catch bun.outOfMemory();
             std.mem.replaceScalar(u8, str[0..], '.', '-');
             return str;
+        }
+
+        pub fn writeIdentOrRef(this: *This, ident: css.css_values.ident.IdentOrRef, handle_css_module: bool) PrintErr!void {
+            if (!handle_css_module) {
+                bun.assert(ident.isIdent());
+                return css.serializer.serializeIdentifier(ident.asIdent().?.v, this) catch return this.addFmtError();
+            }
+
+            const str = this.lookupIdentOrRef(ident);
+            return css.serializer.serializeIdentifier(str, this) catch return this.addFmtError();
         }
 
         /// Writes a CSS identifier to the underlying destination, escaping it

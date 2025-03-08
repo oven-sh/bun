@@ -141,13 +141,13 @@ namespace uWS
 
         std::string_view getFullUrl()
         {
-            return std::string_view(headers->value.data(), headers->value.length());
+            return headers->value;
         }
 
         /* Hack: this should be getMethod */
         std::string_view getCaseSensitiveMethod()
         {
-            return std::string_view(headers->key.data(), headers->key.length());
+            return headers->key;
         }
 
         std::string_view getMethod()
@@ -158,7 +158,7 @@ namespace uWS
                 ((char *)headers->key.data())[i] |= 32;
             }
 
-            return std::string_view(headers->key.data(), headers->key.length());
+            return headers->key;
         }
 
         /* Returns the raw querystring as a whole, still encoded */
@@ -167,7 +167,7 @@ namespace uWS
             if (querySeparator < headers->value.length())
             {
                 /* Strip the initial ? */
-                return std::string_view(headers->value.data() + querySeparator + 1, headers->value.length() - querySeparator - 1);
+                return headers->value.substr(querySeparator + 1);
             }
             else
             {
@@ -179,9 +179,7 @@ namespace uWS
         std::string_view getQuery(std::string_view key)
         {
             /* Raw querystring including initial '?' sign */
-            std::string_view queryString = std::string_view(headers->value.data() + querySeparator, headers->value.length() - querySeparator);
-
-            return getDecodedQueryValue(key, queryString);
+            return getDecodedQueryValue(key, headers->value.substr(querySeparator));
         }
 
         void setParameters(std::pair<int, std::string_view *> parameters)
@@ -569,7 +567,7 @@ namespace uWS
      * From here we return either [consumed, user] for "keep going",
      * or [consumed, nullptr] for "break; I am closed or upgraded to websocket"
      * or [whatever, fullptr] for "break and close me, I am a parser error!" */
-    template <int CONSUME_MINIMALLY>
+    template <bool ConsumeMinimally>
     std::pair<unsigned int, void *> fenceAndConsumePostPadded(char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
@@ -669,7 +667,7 @@ namespace uWS
 
                 remainingStreamingBytes = STATE_IS_CHUNKED;
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
-                if (!CONSUME_MINIMALLY) {
+                if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
                     std::string_view dataToConsume(data, length);
                     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes)) {
@@ -686,7 +684,7 @@ namespace uWS
                 }
             } else if (contentLengthStringLen) {
               
-                if (!CONSUME_MINIMALLY) {
+                if constexpr (!ConsumeMinimally) {
                     unsigned int emittable = (unsigned int) std::min<uint64_t>(remainingStreamingBytes, length);
                     dataHandler(user, std::string_view(data, emittable), emittable == remainingStreamingBytes);
                     remainingStreamingBytes -= emittable;
@@ -701,7 +699,7 @@ namespace uWS
             }
 
             /* Consume minimally should break as easrly as possible */
-            if (CONSUME_MINIMALLY) {
+            if constexpr (ConsumeMinimally) {
                 break;
             }
         }

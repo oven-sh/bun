@@ -1051,12 +1051,24 @@ JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope,
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& digest)
+JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& digest)
 {
     WTF::StringBuilder builder;
     builder.append("Invalid digest: "_s);
     builder.append(digest);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_DIGEST, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_HASH_FINALIZED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_HASH_FINALIZED, "Digest already called"_s));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_HASH_UPDATE_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_HASH_UPDATE_FAILED, "Hash update failed"_s));
     return {};
 }
 
@@ -1341,6 +1353,29 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         }
         case 2: {
             JSValue arg0 = callFrame->argument(1);
+            // ["foo", "bar", "baz"] -> 'The "foo", "bar", or "baz" argument must be specified'
+            if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
+                ASSERT(arr->length() > 0);
+                WTF::StringBuilder builder;
+                builder.append("The "_s);
+                for (unsigned i = 0, length = arr->length(); i < length; i++) {
+                    JSValue index = arr->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (i == length - 1) builder.append("or "_s);
+                    builder.append('"');
+                    auto* jsString = index.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto str = jsString->view(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    builder.append(str);
+                    builder.append('"');
+                    if (i != length - 1) builder.append(',');
+                    builder.append(' ');
+                }
+                builder.append("argument must be specified"_s);
+                return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+            }
+
             auto* jsString = arg0.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto str0 = jsString->view(globalObject);
@@ -1600,6 +1635,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
     case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
+    case ErrorCode::ERR_SOCKET_CLOSED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED, "Socket is closed"_s));
+    case ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION, "Socket closed before the connection was established"_s));
 
     default: {
         break;

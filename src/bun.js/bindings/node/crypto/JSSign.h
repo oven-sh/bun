@@ -21,7 +21,7 @@ public:
     using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSSign* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject);
+    static JSSign* create(JSC::VM& vm, JSC::Structure* structure);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     template<typename CellType, JSC::SubspaceAccess mode>
@@ -33,7 +33,7 @@ public:
 
 private:
     JSSign(JSC::VM& vm, JSC::Structure* structure);
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
+    void finishCreation(JSC::VM& vm);
 };
 
 class JSSignPrototype final : public JSC::JSNonFinalObject {

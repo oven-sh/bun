@@ -20,6 +20,9 @@ import { EventEmitter } from "node:events";
 import { dedent } from "../bundler/expectBundled.ts";
 import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
+import { exitCodeMapStrings } from "./exit-code-map.mjs";
+
+const isDebugBuild = Bun.version.includes("debug");
 
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {
@@ -47,14 +50,6 @@ function imageFixture(relative: string) {
   buf.sourcePath = relative;
   return buf;
 }
-
-/// Workaround to enable hot-module-reloading
-export const reactRefreshStub = {
-  "node_modules/react-refresh/runtime.js": `
-    export const performReactRefresh = () => {};
-    export const injectIntoGlobalHook = () => {};
-  `,
-};
 
 export function emptyHtmlFile({
   styles = [],
@@ -109,12 +104,11 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
-
-  deinitTesting?: boolean;
 }
 
 let interactive = false;
 let activeClient: Client | null = null;
+const interactive_timeout = 24 * 60 * 60 * 1000; // 24 hours
 
 async function maybeWaitInteractive(message: string) {
   if (interactive) {
@@ -192,13 +186,13 @@ export class Dev extends EventEmitter {
   connectSocket() {
     const connected = Promise.withResolvers<void>();
     this.socket = new WebSocket(this.baseUrl + "/_bun/hmr");
-    this.socket.onmessage = (event) => {
+    this.socket.onmessage = event => {
       const data = new Uint8Array(event.data as any);
-      if (data[0] === 'V'.charCodeAt(0)) {
-        this.socket!.send('sr');
+      if (data[0] === "V".charCodeAt(0)) {
+        this.socket!.send("sr");
         connected.resolve();
       }
-      if (data[0] === 'r'.charCodeAt(0)) {
+      if (data[0] === "r".charCodeAt(0)) {
         this.emit("redundant_watch");
       }
       this.emit("hmr", data);
@@ -239,7 +233,7 @@ export class Dev extends EventEmitter {
       if (isDev && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -264,12 +258,12 @@ export class Dev extends EventEmitter {
    * @param options Options for handling errors after deletion
    * @returns Promise that resolves when the file is deleted and hot reload is complete (if applicable)
    */
-  delete(file: string, options: { errors?: null | ErrorSpec[] } = {}) {
+  delete(file: string, options: { errors?: null | ErrorSpec[]; wait?: boolean } = {}) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && this.waitForHotReload();
+      const wait = isDev && options.wait && this.waitForHotReload();
 
       const filePath = this.join(file);
       if (!fs.existsSync(filePath)) {
@@ -280,10 +274,10 @@ export class Dev extends EventEmitter {
       await wait;
 
       let errors = options.errors;
-      if (isDev && errors !== null) {
+      if (isDev && options.wait && errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -314,7 +308,7 @@ export class Dev extends EventEmitter {
       if (errors !== null) {
         errors ??= [];
         for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
+          await client.expectErrorOverlay(errors, snapshot);
         }
       }
     });
@@ -327,7 +321,7 @@ export class Dev extends EventEmitter {
   async waitForHotReload() {
     if (this.nodeEnv !== "development") return Promise.resolve();
     const err = this.output.waitForLine(/error/i).catch(() => {});
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i).catch(() => {});
+    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, isCI ? 1000 : 250).catch(() => {});
     const ctrl = new AbortController();
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
@@ -354,6 +348,7 @@ export class Dev extends EventEmitter {
     const client = new Client(new URL(url, this.baseUrl).href, {
       storeHotChunks: options.storeHotChunks,
       hmr: this.nodeEnv === "development",
+      expectErrors: !!options.errors,
     });
     const onPanic = () => client.output.emit("panic");
     this.output.on("panic", onPanic);
@@ -380,17 +375,22 @@ export class Dev extends EventEmitter {
     await Promise.race([
       //
       this.devProcess.exited,
-      new Promise(resolve => setTimeout(resolve, 2000)),
+      new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
     ]);
     if (this.output.panicked) {
       await this.devProcess.exited;
       throw new Error("DevServer panicked");
     }
     if (this.devProcess.exitCode !== 0) {
-      throw new Error(
-        `DevServer exited with code ${this.devProcess.exitCode ?? `Signal ${this.devProcess.signalCode}`}`,
-      );
+      const code =
+        " with " +
+        (this.devProcess.exitCode ? `code ${this.devProcess.exitCode}` : `signal ${this.devProcess.signalCode}`);
+      throw new Error(`DevServer exited${code}`);
     }
+  }
+
+  mkdir(dir: string) {
+    return fs.mkdirSync(path.join(this.rootDir, dir), { recursive: true });
   }
 }
 
@@ -546,14 +546,14 @@ export class Client extends EventEmitter {
   #proc: Subprocess;
   output: OutputLineStream;
   exited = false;
-  exitCode: string | null = null;
+  exitCode: string | number | null = null;
   messages: any[] = [];
   #hmrChunk: string | null = null;
   suppressInteractivePrompt: boolean = false;
   expectingReload = false;
   hmr = false;
 
-  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean }) {
+  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean }) {
     super();
     activeClient = this;
     const proc = Bun.spawn({
@@ -564,6 +564,7 @@ export class Client extends EventEmitter {
         path.join(import.meta.dir, "client-fixture.mjs"),
         url,
         options.storeHotChunks ? "--store-hot-chunks" : "",
+        options.expectErrors ? "--expect-errors" : "",
       ].filter(Boolean) as string[],
       env: bunEnv,
       serialization: "json",
@@ -573,9 +574,9 @@ export class Client extends EventEmitter {
       onExit: (subprocess, exitCode, signalCode, error) => {
         danglingProcesses.delete(subprocess);
         if (exitCode !== null) {
-          this.exitCode = exitCode.toString();
+          this.exitCode = exitCode;
         } else if (signalCode !== null) {
-          this.exitCode = `SIG${signalCode}`;
+          this.exitCode = `${signalCode}`;
         } else {
           this.exitCode = "unknown";
         }
@@ -600,12 +601,16 @@ export class Client extends EventEmitter {
     this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
   }
 
-  hardReload() {
+  hardReload(options: { errors?: ErrorSpec[] } = {}) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       await maybeWaitInteractive("hard-reload");
       if (this.exited) throw new Error("Client is not running.");
       this.#proc.send({ type: "hard-reload" });
-      await this.output.waitForLine(hmrClientInitRegex);
+
+      if (this.hmr) {
+        await this.output.waitForLine(hmrClientInitRegex);
+        await this.expectErrorOverlay(options.errors ?? []);
+      }
     });
   }
 
@@ -630,7 +635,13 @@ export class Client extends EventEmitter {
     } catch (e) {}
     await this.#proc.exited;
     if (this.exitCode !== null && this.exitCode !== "0") {
-      throw new Error(`Client exited with code ${this.exitCode}`);
+      let code;
+      if (exitCodeMapStrings[this.exitCode]) {
+        code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);
+      } else {
+        code = " with " + (typeof this.exitCode === "number" ? `code ${this.exitCode}` : `signal ${this.exitCode}`);
+      }
+      throw new Error(`Client exited${code}`);
     }
     if (this.messages.length > 0) {
       throw new Error(`Client sent ${this.messages.length} unread messages: ${JSON.stringify(this.messages, null, 2)}`);
@@ -652,11 +663,14 @@ export class Client extends EventEmitter {
       };
       this.once("reload", onEvent);
       this.once("exit", onEvent);
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.resolve();
-        this.expectingReload = false;
-      }, 1000);
+      let t: any = setTimeout(
+        () => {
+          t = null;
+          resolver.resolve();
+          this.expectingReload = false;
+        },
+        interactive ? interactive_timeout : 1000,
+      );
       await cb();
       await resolver.promise;
       if (t) clearTimeout(t);
@@ -683,10 +697,13 @@ export class Client extends EventEmitter {
         }
         this.once("message", onMessage);
         this.once("exit", onExit);
-        let t: any = setTimeout(() => {
-          t = null;
-          resolver.resolve();
-        }, 1000);
+        let t: any = setTimeout(
+          () => {
+            t = null;
+            resolver.resolve();
+          },
+          interactive ? interactive_timeout : 1000,
+        );
         await resolver.promise;
         if (t) clearTimeout(t);
         this.off("message", onMessage);
@@ -859,10 +876,13 @@ export class Client extends EventEmitter {
       const resolver = Promise.withResolvers();
       this.once("hmr-chunk", () => resolver.resolve());
       this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.reject(new Error("Timeout waiting for HMR chunk"));
-      }, 1000);
+      let t: any = setTimeout(
+        () => {
+          t = null;
+          resolver.reject(new Error("Timeout waiting for HMR chunk"));
+        },
+        interactive ? interactive_timeout : 1000,
+      );
       await resolver.promise;
       if (t) clearTimeout(t);
     }
@@ -1131,6 +1151,7 @@ class OutputLineStream extends EventEmitter {
   disposed = false;
   closes = 0;
   panicked = false;
+  exitCode: number | string | null = null;
 
   constructor(name: string, readable1: ReadableStream, readable2: ReadableStream) {
     super();
@@ -1189,7 +1210,7 @@ class OutputLineStream extends EventEmitter {
 
   waitForLine(
     regex: RegExp,
-    timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
+    timeout = interactive ? interactive_timeout : (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
   ): Promise<RegExpMatchArray> {
     if (this.panicked) {
       return new Promise((_, reject) => {
@@ -1219,7 +1240,11 @@ class OutputLineStream extends EventEmitter {
       };
       const onClose = () => {
         reset();
-        reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
+        if (exitCodeMapStrings[this.exitCode]) {
+          reject(new Error(exitCodeMapStrings[this.exitCode]));
+        } else {
+          reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
+        }
       };
       let panicked = false;
       this.on("line", onLine);
@@ -1416,12 +1441,13 @@ function testImpl<T extends DevServerTest>(
         bunEnv,
         {
           FORCE_COLOR: "1",
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
-          // BUN_DEBUG_SERVER: "1",
-          BUN_DEBUG_DEVSERVER: "1",
-          BUN_DEBUG_WATCHER: "1",
+          BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
+          BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
+          BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1436,6 +1462,7 @@ function testImpl<T extends DevServerTest>(
     }
     // @ts-expect-error
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
+    devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     // @ts-expect-error
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
@@ -1490,7 +1517,9 @@ function testImpl<T extends DevServerTest>(
     jest.test(
       name,
       run,
-      (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
+      interactive
+        ? interactive_timeout
+        : (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
     );
     return options;
   } catch {

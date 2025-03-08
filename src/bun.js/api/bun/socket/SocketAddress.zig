@@ -594,8 +594,8 @@ const WellKnownAddress = struct {
 // The same types are defined in a bunch of different places. We should probably unify them.
 comptime {
     // Windows doesn't have c.socklen_t. because of course it doesn't.
-    const other_socklens = if (@hasDecl(bun.C.translated, "socklen_t"))
-        .{ std.posix.socklen_t, bun.C.translated.socklen_t }
+    const other_socklens = if (@hasDecl(bun.c, "socklen_t"))
+        .{ std.posix.socklen_t, bun.c.socklen_t }
     else
         .{std.posix.socklen_t};
     for (other_socklens) |other_socklen| {
@@ -638,7 +638,7 @@ win: {
         pub const sockaddr_in6 = std.posix.sockaddr.in6;
     };
 } else posix: {
-    const C = bun.C.translated;
+    const C = bun.c;
     break :posix struct {
         pub const IN4ADDR_LOOPBACK = C.IN4ADDR_LOOPBACK;
         pub const INET6_ADDRSTRLEN = C.INET6_ADDRSTRLEN;

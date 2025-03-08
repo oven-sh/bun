@@ -9,7 +9,8 @@ template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, BufferEnc
 
 template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSC::JSGlobalObject&, JSValue);
 std::optional<BufferEncodingType> parseEnumerationAllowBuffer(JSC::JSGlobalObject&, JSValue);
-std::optional<BufferEncodingType> parseEnumeration2(JSC::JSGlobalObject&, const WTF::StringView);
+template<> std::optional<BufferEncodingType> parseEnumerationFromString(const WTF::String&);
+template<> std::optional<BufferEncodingType> parseEnumerationFromView(const WTF::StringView&);
 template<> WTF::ASCIILiteral expectedEnumerationValues<BufferEncodingType>();
 
 template<bool allowBuffer>

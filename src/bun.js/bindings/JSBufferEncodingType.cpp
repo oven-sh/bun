@@ -64,12 +64,12 @@ static std::optional<BufferEncodingType> parseEnumerationAllowBufferInternal(JSG
     }
     const auto& view = str->view(&lexicalGlobalObject);
     if constexpr (allowBuffer) {
-        if (view == "buffer"_s) {
+        if (WTF::equalIgnoringASCIICase(view, "buffer"_s)) {
             return BufferEncodingType::buffer;
         }
     }
 
-    return parseEnumeration2(lexicalGlobalObject, view);
+    return parseEnumerationFromView<BufferEncodingType>(view);
 }
 
 std::optional<BufferEncodingType> parseEnumerationAllowBuffer(JSGlobalObject& lexicalGlobalObject, JSValue arg)
@@ -95,7 +95,12 @@ std::optional<BufferEncodingType> validateBufferEncoding(JSGlobalObject& lexical
     return value;
 }
 
-std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGlobalObject, const WTF::StringView encoding)
+template<> std::optional<BufferEncodingType> parseEnumerationFromString<BufferEncodingType>(const String& encoding)
+{
+    return parseEnumerationFromView<BufferEncodingType>(encoding);
+}
+
+template<> std::optional<BufferEncodingType> parseEnumerationFromView<BufferEncodingType>(const StringView& encoding)
 {
     // caller must check if value is a string
     switch (encoding.length()) {

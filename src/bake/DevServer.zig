@@ -1321,6 +1321,15 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
             try entry_points.append(alloc, html.html_bundle.html_bundle.path, .{ .client = true });
         },
     }
+
+    if (dev.has_tailwind_plugin_hack) |*map| {
+        for (map.keys()) |abs_path| {
+            const file = dev.client_graph.bundled_files.get(abs_path) orelse
+                continue;
+            if (file.flags.kind == .css)
+                entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
+        }
+    }
 }
 
 fn onFrameworkRequestWithBundle(
@@ -1493,7 +1502,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     return array.items;
 }
 
-fn getJavaScriptCodeForHTMLFile(
+fn generateJavaScriptCodeForHTMLFile(
     dev: *DevServer,
     index: bun.JSAst.Index,
     import_records: []bun.BabyList(bun.ImportRecord),
@@ -1502,31 +1511,39 @@ fn getJavaScriptCodeForHTMLFile(
 ) bun.OOM![]const u8 {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var array: std.ArrayListUnmanaged(u8) = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch bun.outOfMemory();
+    var array = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch bun.outOfMemory();
     defer array.deinit(sfa);
     const w = array.writer(sfa);
 
     try w.writeAll("  ");
     try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
-    try w.writeAll("(m) {\n  ");
-    try w.writeAll("  return Promise.all([\n");
+    try w.writeAll(": [ [");
+    var any = false;
     for (import_records[index.get()].slice()) |import| {
         if (import.source_index.isValid()) {
             if (!loaders[import.source_index.get()].isJavaScriptLike())
                 continue; // ignore non-JavaScript imports
         } else {
-            if (!import.path.is_disabled)
+            // Find the in-graph import.
+            const file = dev.client_graph.bundled_files.get(import.path.text) orelse
+                continue;
+            if (file.flags.kind != .js)
                 continue;
         }
-
-        try w.writeAll("      m.dynamicImport(");
+        if (!any) {
+            any = true;
+            try w.writeAll("\n");
+        }
+        try w.writeAll("    ");
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
-        try w.writeAll("),\n  ");
+        try w.writeAll(", 0,\n");
     }
-    try w.writeAll("  ]);\n  ");
-    try w.writeAll("},\n");
+    if (any) {
+        try w.writeAll("  ");
+    }
+    try w.writeAll("], [], [], () => {}, false],\n");
 
-    // Avoid-recloning if it is was moved to the hap
+    // Avoid-recloning if it is was moved to the heap
     return if (array.items.ptr == &sfa_state.buffer)
         try dev.allocator.dupe(u8, array.items)
     else
@@ -1733,7 +1750,7 @@ fn prepareAndLogResolutionFailures(dev: *DevServer) !void {
 
     // Theoretically, it shouldn't be possible for errors to leak into dev.log, but just in
     // case that happens, they can be printed out.
-    if (dev.log.hasErrors()) {
+    if (dev.log.hasErrors() and dev.log.msgs.items.len > 0) {
         if (Environment.isDebug) {
             Output.debugWarn("dev.log should not be written into when using DevServer", .{});
         }
@@ -2163,7 +2180,7 @@ pub fn finalizeBundle(
     for (result.htmlChunks()) |*chunk| {
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
         const compile_result = chunk.compile_results_for_chunk[0].html;
-        const generated_js = try dev.getJavaScriptCodeForHTMLFile(
+        const generated_js = try dev.generateJavaScriptCodeForHTMLFile(
             index,
             import_records,
             input_file_sources,
@@ -2970,6 +2987,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// exact size, instead of the log approach that dynamic arrays use.
         stale_files: DynamicBitSetUnmanaged,
 
+        // TODO: rename `dependencies` to something that clearly indicates direction.
+        // such as "parent" or "consumer"
+
         /// Start of a file's 'dependencies' linked list. These are the other
         /// files that have imports to this file. Walk this list to discover
         /// what files are to be reloaded when something changes.
@@ -3259,9 +3279,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
         // for a simpler example. It is more complicated here because this
         // structure is two-way.
         pub const Edge = struct {
-            /// The file with the `import` statement
+            /// The file with the import statement
             dependency: FileIndex,
-            /// The file that `dependency` is importing
+            /// The file the import statement references.
             imported: FileIndex,
 
             next_import: EdgeIndex.Optional,
@@ -3661,7 +3681,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             bundler_index: bun.JSAst.Index,
         ) !void {
             bun.assert(bundler_index.isValid());
-            bun.assert(ctx.loaders[bundler_index.get()] == .css);
+            bun.assert(ctx.loaders[bundler_index.get()].isCSS());
 
             var sfb = std.heap.stackFallback(@sizeOf(bun.JSAst.Index) * 64, temp_alloc);
             const queue_alloc = sfb.get();
@@ -4346,7 +4366,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             it = g.first_dep.items[index.get()].unwrap();
             while (it) |edge_index| {
                 const dep = g.edges.items[edge_index.get()];
-                it = dep.next_import.unwrap();
+                it = dep.next_dependency.unwrap();
                 assert(dep.imported == index);
 
                 bv2.enqueueFileFromDevServerIncrementalGraphInvalidation(
@@ -5055,6 +5075,7 @@ fn initGraphTraceState(dev: *const DevServer, sfa: Allocator, extra_client_bits:
 ///
 /// This structure manages those watchers, including releasing them once
 /// import resolution failures are solved.
+// TODO: when a file fixes its resolution, there is no code specifically to remove the watchers.
 const DirectoryWatchStore = struct {
     /// List of active watchers. Can be re-ordered on removal
     watches: bun.StringArrayHashMapUnmanaged(Entry),
@@ -5072,25 +5093,47 @@ const DirectoryWatchStore = struct {
         return @alignCast(@fieldParentPtr("directory_watchers", store));
     }
 
-    pub fn trackResolutionFailure(
-        store: *DirectoryWatchStore,
-        import_source: []const u8,
-        specifier: []const u8,
-        renderer: bake.Graph,
-    ) bun.OOM!void {
-        // When it does not resolve to a file path, there is
-        // nothing to track. Bake does not watch node_modules.
-        if (!(bun.strings.startsWith(specifier, "./") or
-            bun.strings.startsWith(specifier, "../"))) return;
+    pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []const u8, specifier: []const u8, renderer: bake.Graph, loader: bun.options.Loader) bun.OOM!void {
+        // When it does not resolve to a file path, there is nothing to track.
+        if (specifier.len == 0) return;
         if (!std.fs.path.isAbsolute(import_source)) return;
+
+        switch (loader) {
+            .tsx, .ts, .jsx, .js => {
+                if (!(bun.strings.startsWith(specifier, "./") or
+                    bun.strings.startsWith(specifier, "../"))) return;
+            },
+
+            // Imports in CSS can resolve to relative files without './'
+            // Imports in HTML can resolve to project-relative paths by
+            // prefixing with '/', but that is done in HTMLScanner.
+            .css, .html => {},
+
+            // Multiple parts of DevServer rely on the fact that these
+            // loaders do not depend on importing other files.
+            .file,
+            .json,
+            .jsonc,
+            .toml,
+            .wasm,
+            .napi,
+            .base64,
+            .dataurl,
+            .text,
+            .bunsh,
+            .sqlite,
+            .sqlite_embedded,
+            => bun.debugAssert(false),
+        }
 
         const buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(buf);
         const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier}, .auto);
         const dir = bun.path.dirname(joined, .auto);
 
-        // `import_source` is not a stable string. let's share memory with the file graph.
-        // this requires that
+        // The `import_source` parameter is not a stable string. Since the
+        // import source will be added to IncrementalGraph anyways, this is a
+        // great place to share memory.
         const dev = store.owner();
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
@@ -5114,6 +5157,7 @@ const DirectoryWatchStore = struct {
         file_path: []const u8,
         specifier: []const u8,
     ) !void {
+        assert(specifier.len > 0);
         // TODO: watch the parent dir too.
         const dev = store.owner();
 
@@ -5127,12 +5171,13 @@ const DirectoryWatchStore = struct {
             try store.dependencies.ensureUnusedCapacity(dev.allocator, 1);
 
         const gop = try store.watches.getOrPut(dev.allocator, bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
+        const specifier_cloned = if (specifier[0] == '.' or std.fs.path.isAbsolute(specifier))
+            try dev.allocator.dupe(u8, specifier)
+        else
+            try std.fmt.allocPrint(dev.allocator, "./{s}", .{specifier});
+        errdefer dev.allocator.free(specifier_cloned);
+
         if (gop.found_existing) {
-            const specifier_cloned = try dev.allocator.dupe(u8, specifier);
-            errdefer dev.allocator.free(specifier_cloned);
-
-            // TODO: check for dependency
-
             const dep = store.appendDepAssumeCapacity(.{
                 .next = gop.value_ptr.first_dep.toOptional(),
                 .source_file_path = file_path,
@@ -5150,44 +5195,35 @@ const DirectoryWatchStore = struct {
             break :fd if (fd == .zero) null else fd;
         } else null;
 
-        const fd, const owned_fd = if (Watcher.requires_file_descriptors)
-            if (cache_fd) |fd|
-                .{ fd, false }
-            else
-                .{
-                    switch (bun.sys.open(
-                        &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
-                            error.NameTooLong => return, // wouldn't be able to open, ignore
-                        }),
-                        // pass
-                        bun.O.DIRECTORY,
-                        0,
-                    )) {
-                        .result => |fd| fd,
-                        .err => |err| switch (err.getErrno()) {
-                            // If this directory doesn't exist, a watcher should be
-                            // placed on the parent directory. Then, if this
-                            // directory is later created, the watcher can be
-                            // properly initialized. This would happen if you write
-                            // an import path like `./dir/whatever/hello.tsx` and
-                            // `dir` does not exist, Bun must place a watcher on
-                            // `.`, see the creation of `dir`, and repeat until it
-                            // can open a watcher on `whatever` to see the creation
-                            // of `hello.tsx`
-                            .NOENT => {
-                                // TODO: implement that. for now it ignores
-                                return;
-                            },
-                            .NOTDIR => return error.Ignore, // ignore
-                            else => {
-                                bun.todoPanic(@src(), "log watcher error", .{});
-                            },
-                        },
-                    },
-                    true,
-                }
-        else
-            .{ bun.invalid_fd, false };
+        const fd, const owned_fd = if (Watcher.requires_file_descriptors) if (cache_fd) |fd|
+            .{ fd, false }
+        else switch (bun.sys.open(
+            &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
+                error.NameTooLong => return error.Ignore, // wouldn't be able to open, ignore
+            }),
+            // O_EVTONLY is the flag to indicate that only watches will be used.
+            bun.O.DIRECTORY | bun.c.O_EVTONLY,
+            0,
+        )) {
+            .result => |fd| .{ fd, true },
+            .err => |err| switch (err.getErrno()) {
+                // If this directory doesn't exist, a watcher should be placed
+                // on the parent directory. Then, if this directory is later
+                // created, the watcher can be properly initialized. This would
+                // happen if a specifier like `./dir/whatever/hello.tsx` and
+                // `dir` does not exist, Bun must place a watcher on `.`, see
+                // the creation of `dir`, and repeat until it can open a watcher
+                // on `whatever` to see the creation of `hello.tsx`
+                .NOENT => {
+                    // TODO: implement that. for now it ignores (BUN-10968)
+                    return error.Ignore;
+                },
+                .NOTDIR => return error.Ignore, // ignore
+                else => {
+                    bun.todoPanic(@src(), "log watcher error", .{});
+                },
+            },
+        } else .{ bun.invalid_fd, false };
         errdefer _ = if (Watcher.requires_file_descriptors) if (owned_fd) bun.sys.close(fd);
         if (Watcher.requires_file_descriptors)
             debug.log("-> fd: {} ({s})", .{
@@ -5199,9 +5235,6 @@ const DirectoryWatchStore = struct {
         errdefer dev.allocator.free(dir_name);
 
         gop.key_ptr.* = bun.strings.withoutTrailingSlashWindowsPath(dir_name);
-
-        const specifier_cloned = try dev.allocator.dupe(u8, specifier);
-        errdefer dev.allocator.free(specifier_cloned);
 
         const watch_index = switch (dev.bun_watcher.addDirectory(fd, dir_name, bun.Watcher.getHash(dir_name), false)) {
             .err => return error.Ignore,
@@ -5609,7 +5642,7 @@ fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
             try w.writeInt(u32, @intCast(normalized_key.len), .little);
             if (k.len == 0) continue;
             try w.writeAll(normalized_key);
-            try w.writeByte(@intFromBool(g.stale_files.isSet(i) or switch (side) {
+            try w.writeByte(@intFromBool(g.stale_files.isSetAllowOutOfBound(i, true) or switch (side) {
                 .server => v.failed,
                 .client => v.flags.failed,
             }));
@@ -5762,7 +5795,7 @@ pub const MessageId = enum(u8) {
     /// Sent in response to `set_url`.
     /// - `u32`: Route index
     set_url_response = 'n',
-    /// Used for syncronization in dev server tests, to identify when a update was
+    /// Used for synchronization in DevServer tests, to identify when a update was
     /// acknowledged by the watcher but intentionally took no action.
     redundant_watch = 'r',
 
@@ -6081,16 +6114,15 @@ pub const HotReloadEvent = struct {
         defer dev.graph_safety_lock.unlock();
 
         // First handle directories, because this may mutate `event.files`
-        for (event.dirs.keys()) |changed_dir_with_slash| {
+        if (dev.directory_watchers.watches.count() > 0) for (event.dirs.keys()) |changed_dir_with_slash| {
             const changed_dir = bun.strings.withoutTrailingSlashWindowsPath(changed_dir_with_slash);
 
             // Bust resolution cache, but since Bun does not watch all
             // directories in a codebase, this only targets the following resolutions
             _ = dev.server_transpiler.resolver.bustDirCache(changed_dir);
 
-            // if a directory watch exists for resolution
-            // failures, check those now.
-            if (dev.directory_watchers.watches.getIndex(bun.strings.withoutTrailingSlashWindowsPath(changed_dir))) |watcher_index| {
+            // if a directory watch exists for resolution failures, check those now.
+            if (dev.directory_watchers.watches.getIndex(changed_dir)) |watcher_index| {
                 const entry = &dev.directory_watchers.watches.values()[watcher_index];
                 var new_chain: DirectoryWatchStore.Dep.Index.Optional = .none;
                 var it: ?DirectoryWatchStore.Dep.Index = entry.first_dep;
@@ -6104,9 +6136,9 @@ pub const HotReloadEvent = struct {
                         dep.specifier,
                         .stmt,
                     ) catch null) != null) {
-                        // the resolution result is not preserved as safely
-                        // transferring it into BundleV2 is too complicated. the
-                        // resolution is cached, anyways.
+                        // this resolution result is not preserved as passing it
+                        // into BundleV2 is too complicated. the resolution is
+                        // cached, anyways.
                         event.appendFile(dev.allocator, dep.source_file_path);
                         dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch bun.outOfMemory();
                     } else {
@@ -6123,7 +6155,7 @@ pub const HotReloadEvent = struct {
                     dev.directory_watchers.freeEntry(dev.allocator, watcher_index);
                 }
             }
-        }
+        };
 
         var rest_extra = event.extra_files.items;
         while (bun.strings.indexOfChar(rest_extra, 0)) |str| {
@@ -6137,15 +6169,6 @@ pub const HotReloadEvent = struct {
         const changed_file_paths = event.files.keys();
         inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
             g.invalidate(changed_file_paths, entry_points, temp_alloc) catch bun.outOfMemory();
-        }
-
-        if (dev.has_tailwind_plugin_hack) |*map| {
-            for (map.keys()) |abs_path| {
-                const file = dev.client_graph.bundled_files.get(abs_path) orelse
-                    continue;
-                if (file.flags.kind == .css)
-                    entry_points.appendCss(temp_alloc, abs_path) catch bun.outOfMemory();
-            }
         }
 
         if (entry_points.set.count() == 0) {
@@ -6162,6 +6185,15 @@ pub const HotReloadEvent = struct {
 
             dev.publish(.redundant_watch, &.{MessageId.redundant_watch.char()}, .binary);
             return;
+        }
+
+        if (dev.has_tailwind_plugin_hack) |*map| {
+            for (map.keys()) |abs_path| {
+                const file = dev.client_graph.bundled_files.get(abs_path) orelse
+                    continue;
+                if (file.flags.kind == .css)
+                    entry_points.appendCss(temp_alloc, abs_path) catch bun.outOfMemory();
+            }
         }
     }
 
@@ -6237,8 +6269,8 @@ const WatcherAtomics = struct {
     pub fn init(dev: *DevServer) WatcherAtomics {
         return .{
             .events = .{
-                .{ .aligned = HotReloadEvent.initEmpty(dev) },
-                .{ .aligned = HotReloadEvent.initEmpty(dev) },
+                .{ .aligned = .initEmpty(dev) },
+                .{ .aligned = .initEmpty(dev) },
             },
             .current = 0,
             .watcher_events_emitted = .init(0),
@@ -7187,14 +7219,15 @@ const ErrorReportRequest = struct {
 
         // Stack traces can often end with random runtime frames that are not relevant.
         trim_runtime_frames: {
-            const first_non_runtime_frame = for (frames.items, 0..) |frame, i| {
+            // Ensure that trimming will not remove ALL frames.
+            for (frames.items) |frame| {
                 if (!frame.position.isInvalid() or frame.source_url.value.ZigString.slice().ptr != runtime_name) {
-                    break i;
+                    break;
                 }
             } else break :trim_runtime_frames;
 
             // Move all frames up
-            var i = first_non_runtime_frame + 1;
+            var i: usize = 0;
             for (frames.items[i..]) |frame| {
                 if (frame.position.isInvalid() and frame.source_url.value.ZigString.slice().ptr == runtime_name) {
                     continue; // skip runtime frames

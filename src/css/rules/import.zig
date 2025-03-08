@@ -221,6 +221,8 @@ pub const ImportRule = struct {
             dest.allocator,
             this,
             dest.filename(),
+            dest.local_names,
+            dest.symbols,
         ) else null;
 
         // #[cfg(feature = "sourcemap")]

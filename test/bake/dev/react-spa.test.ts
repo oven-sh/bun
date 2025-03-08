@@ -8,6 +8,7 @@ const reactAndRefreshStub = {
   "node_modules/react-refresh/runtime.js": /* js */ `
     exports.performReactRefresh = () => {};
     exports.injectIntoGlobalHook = () => {};
+    exports.isLikelyComponentType = () => true;
     exports.register = require("bun-devserver-react-mock").register;
     exports.createSignatureFunctionForTransform = require("bun-devserver-react-mock").createSignatureFunctionForTransform;
   `,

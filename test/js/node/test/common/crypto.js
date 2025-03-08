@@ -34,23 +34,6 @@ const modp2buf = Buffer.from([
   0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 ]);
 
-function testDH({ publicKey: alicePublicKey, privateKey: alicePrivateKey },
-                { publicKey: bobPublicKey, privateKey: bobPrivateKey },
-                expectedValue) {
-  const buf1 = crypto.diffieHellman({
-    privateKey: alicePrivateKey,
-    publicKey: bobPublicKey,
-  });
-  const buf2 = crypto.diffieHellman({
-    privateKey: bobPrivateKey,
-    publicKey: alicePublicKey,
-  });
-  assert.deepStrictEqual(buf1, buf2);
-
-  if (expectedValue !== undefined)
-    assert.deepStrictEqual(buf1, expectedValue);
-}
-
 // Asserts that the size of the given key (in chars or bytes) is within 10% of
 // the expected size.
 function assertApproximateSize(key, expectedSize) {
@@ -139,7 +122,6 @@ let opensslCli = null;
 
 module.exports = {
   modp2buf,
-  testDH,
   assertApproximateSize,
   testEncryptDecrypt,
   testSignVerify,
@@ -157,30 +139,32 @@ module.exports = {
   },
   // opensslCli defined lazily to reduce overhead of spawnSync
   get opensslCli() {
-    if (opensslCli !== null) return opensslCli;
+    if (typeof Bun === "object") {
+      if (opensslCli !== null) return opensslCli;
+  
+      opensslCli = Bun.which('openssl');
+      
+      return opensslCli;
+    }
 
-    opensslCli = Bun.which('openssl');
-    
+    if (process.config.variables.node_shared_openssl) {
+      // Use external command
+      opensslCli = 'openssl';
+    } else {
+      const path = require('path');
+      // Use command built from sources included in Node.js repository
+      opensslCli = path.join(path.dirname(process.execPath), 'openssl-cli');
+    }
+
+    if (exports.isWindows) opensslCli += '.exe';
+
+    const { spawnSync } = require('child_process');
+
+    const opensslCmd = spawnSync(opensslCli, ['version']);
+    if (opensslCmd.status !== 0 || opensslCmd.error !== undefined) {
+      // OpenSSL command cannot be executed
+      opensslCli = false;
+    }
     return opensslCli;
-
-    // if (process.config.variables.node_shared_openssl) {
-    //   // Use external command
-    //   opensslCli = 'openssl';
-    // } else {
-    //   const path = require('path');
-    //   // Use command built from sources included in Node.js repository
-    //   opensslCli = path.join(path.dirname(process.execPath), 'openssl-cli');
-    // }
-
-    // if (exports.isWindows) opensslCli += '.exe';
-
-    // const { spawnSync } = require('child_process');
-
-    // const opensslCmd = spawnSync(opensslCli, ['version']);
-    // if (opensslCmd.status !== 0 || opensslCmd.error !== undefined) {
-    //   // OpenSSL command cannot be executed
-    //   opensslCli = false;
-    // }
-    // return opensslCli;
   },
 };

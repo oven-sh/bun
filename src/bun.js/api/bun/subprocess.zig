@@ -2228,10 +2228,15 @@ pub fn spawnMaybeSync(
         .err => |err| {
             spawn_options.deinit();
             switch (err.getErrno()) {
-                .ACCES, .NOENT, .PERM, .ISDIR, .NOTDIR => {
-                    const display_path: [:0]const u8 = if (argv0 != null)
-                        std.mem.sliceTo(argv0.?, 0)
-                    else if (argv.items.len > 0 and argv.items[0] != null)
+                .NOENT => {
+                    const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
+                        std.mem.sliceTo(argv.items[0].?, 0)
+                    else
+                        "";
+                    return throwCommandNotFound(globalThis, display_path);
+                },
+                .ACCES, .PERM, .ISDIR, .NOTDIR => {
+                    const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
                         std.mem.sliceTo(argv.items[0].?, 0)
                     else
                         "";
@@ -2524,7 +2529,7 @@ fn throwCommandNotFound(globalThis: *JSC.JSGlobalObject, command: []const u8) bu
     const err = JSC.SystemError{
         .message = bun.String.createFormat("Executable not found in $PATH: \"{s}\"", .{command}) catch bun.outOfMemory(),
         .code = bun.String.static("ENOENT"),
-        .errno = -@as(c_int, @intFromEnum(bun.C.E.NOENT)),
+        .errno = -bun.C.UV_ENOENT,
         .path = bun.String.createUTF8(command),
     };
     return globalThis.throwValue(err.toErrorInstance(globalThis));

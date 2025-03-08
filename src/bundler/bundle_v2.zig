@@ -10343,7 +10343,6 @@ pub const LinkerContext = struct {
                         }
                     },
                     else => {},
-                    // else => bun.unreachablePanic("Unexpected output format", .{}),
                 }
             }
         }
@@ -12647,6 +12646,7 @@ pub const LinkerContext = struct {
                                     S.ExportClause,
                                     .{
                                         .items = items.items,
+                                        .is_single_line = false,
                                     },
                                     Logger.Loc.Empty,
                                 ),

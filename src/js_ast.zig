@@ -6392,7 +6392,10 @@ pub const S = struct {
         value: []const u8,
     };
 
-    pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
+    pub const ExportClause = struct {
+        items: []ClauseItem,
+        is_single_line: bool,
+    };
 
     pub const Empty = struct {};
 

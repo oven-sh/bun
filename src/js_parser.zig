@@ -9819,7 +9819,10 @@ fn NewParser_(
                                 }
                             }
                             p.has_es_module_syntax = true;
-                            return p.s(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
+                            return p.s(S.ExportClause{
+                                .items = export_clause.clauses,
+                                .is_single_line = export_clause.is_single_line,
+                            }, loc);
                         },
                         T.t_equals => {
                             // "export = value;"
@@ -19314,6 +19317,7 @@ fn NewParser_(
                             };
                             stmts.appendAssumeCapacity(p.s(S.ExportClause{
                                 .items = items,
+                                .is_single_line = false,
                             }, stmt.loc));
                         }
 
@@ -23309,6 +23313,7 @@ fn NewParser_(
                 if (exports.items.len > 0) {
                     result.appendAssumeCapacity(p.s(S.ExportClause{
                         .items = exports.items,
+                        .is_single_line = false,
                     }, loc));
                 }
 

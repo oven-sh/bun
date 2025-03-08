@@ -6239,7 +6239,7 @@ declare module "bun" {
      * @param socket
      */
     open?(socket: Socket<Data>): void | Promise<void>;
-    close?(socket: Socket<Data>): void | Promise<void>;
+    close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;

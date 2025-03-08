@@ -1,0 +1,15 @@
+{
+  "name": "a",
+  "version": "1.2.3",
+  "dependencies": {
+    "abbrev": "^1.1.1",
+    "full-git-url": "git+https://github.com/isaacs/abbrev-js.git",
+    "ghshort": "github:isaacs/abbrev-js",
+    "old": "npm:abbrev@1.0.x",
+    "pinned": "npm:abbrev@1.1.1",
+    "reg": "npm:abbrev@^1.1.1",
+    "remote": "https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz",
+    "symlink": "file:./abbrev-link-target",
+    "tarball": "file:abbrev-1.1.1.tgz"
+  }
+}

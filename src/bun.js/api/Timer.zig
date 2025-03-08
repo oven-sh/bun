@@ -26,6 +26,38 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
 
 const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
 
+pub const TimerRef = struct {
+    state: enum {
+        unset,
+        ref,
+        unref,
+    } = .unset,
+
+    fn setRef(this: *TimerRef, enable: bool, vm: *JSC.VirtualMachine) void {
+        if (enable and this.state == .ref) {
+            return;
+        } else if (!enable and this.state != .ref) {
+            return;
+        }
+
+        if (enable) {
+            this.state = .ref;
+            vm.timer.incrementTimerRef(1);
+        } else {
+            this.state = .unref;
+            vm.timer.incrementTimerRef(-1);
+        }
+    }
+
+    pub fn unref(this: *TimerRef, vm: *JSC.VirtualMachine) void {
+        setRef(this, false, vm);
+    }
+
+    pub fn ref(this: *TimerRef, vm: *JSC.VirtualMachine) void {
+        setRef(this, true, vm);
+    }
+};
+
 pub const All = struct {
     last_id: i32 = 1,
     lock: bun.Mutex = .{},
@@ -173,9 +205,6 @@ pub const All = struct {
     }
 
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
-        if (this.active_timer_count == 0) {
-            return false;
-        }
         if (vm.event_loop.immediate_tasks.count > 0 or vm.event_loop.next_immediate_tasks.count > 0) {
             spec.* = .{ .nsec = 0, .sec = 0 };
             return true;

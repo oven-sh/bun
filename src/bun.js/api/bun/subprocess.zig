@@ -2377,7 +2377,7 @@ pub fn spawnMaybeSync(
                 subprocess.stdout.pipe.watch();
             }
 
-            jsc_vm.tick();
+            jsc_vm.eventLoop().tick();
             jsc_vm.eventLoop().autoTick();
         }
     }

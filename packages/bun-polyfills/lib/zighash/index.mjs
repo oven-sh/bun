@@ -79,6 +79,21 @@ export function cityhash64(input = '', seed = 0n) {
     return BigInt.asUintN(64, exports.cityhash64(ptr, size, seed));
 }
 /** @type {JSSeededHash32Function} */
+export function xxhash32(input = '', seed = 0) {
+  const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+  return exports.xxhash32(ptr, size, seed)
+}
+/** @type {JSSeededHash64Function} */
+export function xxhash64(input = '', seed = 0n) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return BigInt.asUintN(64, exports.xxhash64(ptr, size, seed));
+}
+/** @type {JSSeededHash64Function} */
+export function xxhash3(input = '', seed = 0n) {
+    const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
+    return BigInt.asUintN(64, exports.xxhash3(ptr, size, seed));
+}
+/** @type {JSSeededHash32Function} */
 export function murmur32v3(input = '', seed = 0) {
     const { ptr, size } = typeof input === 'string' ? allocString(input, false) : allocBuffer(input);
     return exports.murmur32v3(ptr, size, seed); //! Bun doesn't unsigned-cast this one, likely unintended but for now we'll do the same

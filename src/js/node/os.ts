@@ -1,5 +1,4 @@
 // Hardcoded module "node:os"
-
 var tmpdir = function () {
   var env = Bun.env;
 
@@ -18,6 +17,8 @@ var tmpdir = function () {
     if (length > 1 && path[length - 1] === "/") path = path.slice(0, -1);
     return path;
   };
+
+  tmpdir[Symbol.toPrimitive] = tmpdir;
 
   return tmpdir();
 };
@@ -85,44 +86,63 @@ function lazyCpus({ cpus }) {
 }
 
 // all logic based on `process.platform` and `process.arch` is inlined at bundle time
-function bound(obj) {
+function bound(binding) {
   return {
-    availableParallelism: () => navigator.hardwareConcurrency,
-    arch: () => process.arch,
-    cpus: lazyCpus(obj),
-    endianness: () => (process.arch === "arm64" || process.arch === "x64" ? "LE" : $bundleError("TODO: endianness")),
-    freemem: obj.freemem.bind(obj),
-    getPriority: obj.getPriority.bind(obj),
-    homedir: obj.homedir.bind(obj),
-    hostname: obj.hostname.bind(obj),
-    loadavg: obj.loadavg.bind(obj),
-    networkInterfaces: obj.networkInterfaces.bind(obj),
-    platform: () => process.platform,
-    release: obj.release.bind(obj),
-    setPriority: obj.setPriority.bind(obj),
+    availableParallelism: function () {
+      return navigator.hardwareConcurrency;
+    },
+    arch: function () {
+      return process.arch;
+    },
+    cpus: lazyCpus(binding),
+    endianness: function () {
+      return process.arch === "arm64" || process.arch === "x64" //
+        ? "LE"
+        : $bundleError("TODO: endianness");
+    },
+    freemem: binding.freemem,
+    getPriority: binding.getPriority,
+    homedir: binding.homedir,
+    hostname: binding.hostname,
+    loadavg: binding.loadavg,
+    networkInterfaces: binding.networkInterfaces,
+    platform: function () {
+      return process.platform;
+    },
+    release: binding.release,
+    setPriority: binding.setPriority,
     get tmpdir() {
       return tmpdir;
     },
-    totalmem: obj.totalmem.bind(obj),
-    type: () =>
-      process.platform === "win32"
+    totalmem: binding.totalmem,
+    type: function () {
+      return process.platform === "win32"
         ? "Windows_NT"
         : process.platform === "darwin"
           ? "Darwin"
           : process.platform === "linux"
             ? "Linux"
-            : $bundleError("TODO: type"),
-    uptime: obj.uptime.bind(obj),
-    userInfo: obj.userInfo.bind(obj),
-    version: obj.version.bind(obj),
-    machine: obj.machine.bind(obj),
+            : $bundleError("TODO: type");
+    },
+    uptime: binding.uptime,
+    userInfo: binding.userInfo,
+    version: binding.version,
+    machine: function () {
+      return process.arch === "arm64" //
+        ? "arm64"
+        : process.arch === "x64"
+          ? "x86_64"
+          : $bundleError("TODO: machine");
+    },
     devNull: process.platform === "win32" ? "\\\\.\\nul" : "/dev/null",
-    EOL: process.platform === "win32" ? "\r\n" : "\n",
+    get EOL() {
+      return process.platform === "win32" ? "\r\n" : "\n";
+    },
     constants: $processBindingConstants.os,
   };
 }
 
-const out = bound($zig("node_os.zig", "OS.create"));
+const out = bound($zig("node_os.zig", "createNodeOsBinding"));
 
 symbolToStringify(out, "arch");
 symbolToStringify(out, "availableParallelism");
@@ -138,8 +158,10 @@ symbolToStringify(out, "type");
 symbolToStringify(out, "uptime");
 symbolToStringify(out, "version");
 symbolToStringify(out, "machine");
+
 function symbolToStringify(obj, key) {
-  obj[key][Symbol.toPrimitive] = function (hint) {
+  $assert(obj[key] !== undefined, `Missing ${key}`);
+  obj[key][Symbol.toPrimitive] = function (hint: string) {
     return obj[key]();
   };
 }

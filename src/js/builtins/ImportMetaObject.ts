@@ -178,8 +178,12 @@ export function internalRequire(this: ImportMetaObject, id) {
 $visibility = "Private";
 export function createRequireCache() {
   var moduleMap = new Map();
-  var inner = {};
-  return new Proxy(inner, {
+  var inner = {
+    [Symbol.for("nodejs.util.inspect.custom")]() {
+      return { ...proxy };
+    },
+  };
+  var proxy = new Proxy(inner, {
     get(target, key: string) {
       const entry = $requireMap.$get(key);
       if (entry) return entry;
@@ -234,6 +238,8 @@ export function createRequireCache() {
       }
     },
   });
+
+  return proxy;
 }
 
 $getter;

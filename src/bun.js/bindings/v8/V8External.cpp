@@ -1,16 +1,19 @@
 #include "V8External.h"
 #include "V8HandleScope.h"
-
+#include "v8_compatibility_assertions.h"
 #include "napi_external.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::External)
 
 namespace v8 {
 
 Local<External> External::New(Isolate* isolate, void* value)
 {
     auto globalObject = isolate->globalObject();
-    auto& vm = globalObject->vm();
+    auto& vm = JSC::getVM(globalObject);
     auto structure = globalObject->NapiExternalStructure();
-    Bun::NapiExternal* val = Bun::NapiExternal::create(vm, structure, value, nullptr, nullptr);
+    Bun::NapiExternal* val = Bun::NapiExternal::create(vm, structure, value,
+        nullptr /* hint */, nullptr /* env */, nullptr /* callback */);
     return isolate->currentHandleScope()->createLocal<External>(vm, val);
 }
 
@@ -23,4 +26,4 @@ void* External::Value() const
     return external->value();
 }
 
-}
+} // namespace v8

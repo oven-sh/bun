@@ -565,7 +565,7 @@ describe("EventEmitter.on", () => {
             2,
             {
               code: "ABORT_ERR",
-              message: "The operation was aborted",
+              message: "The operation was aborted.",
             },
           ],
         ]);
@@ -877,4 +877,8 @@ test("getEventListeners", () => {
   expect(getEventListeners(target, "hey").length).toBe(1);
   target.dispatchEvent(new Event("hey"));
   expect(getEventListeners(target, "hey").length).toBe(0);
+});
+
+test("EventEmitter.name", () => {
+  expect(EventEmitter.name).toBe("EventEmitter");
 });

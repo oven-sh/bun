@@ -15,90 +15,181 @@
  *
  */
 
-import * as grpc from "@grpc/grpc-js";
-import * as assert from "assert";
-import { afterAll, afterEach, beforeAll, describe, it } from "bun:test";
+import assert from "node:assert";
+import grpc from "@grpc/grpc-js";
+import { afterAll as after, beforeAll as before, describe, it, afterEach, beforeEach } from "bun:test";
+import { ServiceClient, ServiceClientConstructor } from "@grpc/grpc-js/build/src/make-client";
+
 import { TestClient, TestServer } from "./common";
 
-["h2", "h2c"].forEach(protocol => {
-  describe("Channel idle timer", () => {
-    let server: TestServer;
-    let client: TestClient | null = null;
-    beforeAll(() => {
-      server = new TestServer(protocol === "h2");
-      return server.start();
+describe("Channel idle timer", () => {
+  let server: TestServer;
+  let client: TestClient | null = null;
+  before(() => {
+    server = new TestServer(false);
+    return server.start();
+  });
+  afterEach(() => {
+    if (client) {
+      client.close();
+      client = null;
+    }
+  });
+  after(() => {
+    server.shutdown();
+  });
+  it("Should go idle after the specified time after a request ends", function (done) {
+    client = TestClient.createFromServer(server, {
+      "grpc.client_idle_timeout_ms": 1000,
     });
-    afterEach(() => {
-      if (client) {
-        client.close();
-        client = null;
-      }
+    client.sendRequest(error => {
+      assert.ifError(error);
+      assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
+      setTimeout(() => {
+        assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
+        done();
+      }, 1100);
     });
-    afterAll(() => {
-      server.shutdown();
+  });
+  it("Should be able to make a request after going idle", function (done) {
+    client = TestClient.createFromServer(server, {
+      "grpc.client_idle_timeout_ms": 1000,
     });
-    it("Should go idle after the specified time after a request ends", function (done) {
-      client = TestClient.createFromServer(server, {
-        "grpc.client_idle_timeout_ms": 1000,
-      });
-      client.sendRequest(error => {
-        assert.ifError(error);
+    client.sendRequest(error => {
+      assert.ifError(error);
+      assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
+      setTimeout(() => {
+        assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
+        client!.sendRequest(error => {
+          assert.ifError(error);
+          done();
+        });
+      }, 1100);
+    });
+  });
+  it("Should go idle after the specified time after waitForReady ends", function (done) {
+    client = TestClient.createFromServer(server, {
+      "grpc.client_idle_timeout_ms": 1000,
+    });
+    const deadline = new Date();
+    deadline.setSeconds(deadline.getSeconds() + 3);
+    client.waitForReady(deadline, error => {
+      assert.ifError(error);
+      assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
+      setTimeout(() => {
+        assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
+        done();
+      }, 1100);
+    });
+  });
+  it("Should ensure that the timeout is at least 1 second", function (done) {
+    client = TestClient.createFromServer(server, {
+      "grpc.client_idle_timeout_ms": 50,
+    });
+    client.sendRequest(error => {
+      assert.ifError(error);
+      assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
+      setTimeout(() => {
+        // Should still be ready after 100ms
         assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
         setTimeout(() => {
+          // Should go IDLE after another second
           assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
           done();
-        }, 1100);
-      });
+        }, 1000);
+      }, 100);
     });
-    it("Should be able to make a request after going idle", function (done) {
-      client = TestClient.createFromServer(server, {
-        "grpc.client_idle_timeout_ms": 1000,
-      });
-      client.sendRequest(error => {
-        if (error) {
-          return done(error);
-        }
-        assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
-        setTimeout(() => {
-          assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
-          client!.sendRequest(error => {
-            done(error);
-          });
-        }, 1100);
-      });
+  });
+});
+
+describe.todo("Channel idle timer with UDS", () => {
+  let server: TestServer;
+  let client: TestClient | null = null;
+  before(() => {
+    server = new TestServer(false);
+    return server.startUds();
+  });
+  afterEach(() => {
+    if (client) {
+      client.close();
+      client = null;
+    }
+  });
+  after(() => {
+    server.shutdown();
+  });
+  it("Should be able to make a request after going idle", function (done) {
+    client = TestClient.createFromServer(server, {
+      "grpc.client_idle_timeout_ms": 1000,
     });
-    it("Should go idle after the specified time after waitForReady ends", function (done) {
-      client = TestClient.createFromServer(server, {
-        "grpc.client_idle_timeout_ms": 1000,
-      });
-      const deadline = new Date();
-      deadline.setSeconds(deadline.getSeconds() + 3);
-      client.waitForReady(deadline, error => {
-        assert.ifError(error);
-        assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
-        setTimeout(() => {
-          assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
+    client.sendRequest(error => {
+      assert.ifError(error);
+      assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
+      setTimeout(() => {
+        assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
+        client!.sendRequest(error => {
+          assert.ifError(error);
           done();
-        }, 1100);
+        });
+      }, 1100);
+    });
+  });
+});
+
+describe("Server idle timer", () => {
+  let server: TestServer;
+  let client: TestClient | null = null;
+  before(() => {
+    server = new TestServer(false, {
+      "grpc.max_connection_idle_ms": 500, // small for testing purposes
+    });
+    return server.start();
+  });
+  afterEach(() => {
+    if (client) {
+      client.close();
+      client = null;
+    }
+  });
+  after(() => {
+    server.shutdown();
+  });
+
+  it("Should go idle after the specified time after a request ends", function (done) {
+    client = TestClient.createFromServer(server);
+    client.sendRequest(error => {
+      assert.ifError(error);
+      assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
+      client?.waitForClientState(Date.now() + 1500, grpc.connectivityState.IDLE, done);
+    });
+  });
+
+  it("Should be able to make a request after going idle", function (done) {
+    client = TestClient.createFromServer(server);
+    client.sendRequest(error => {
+      assert.ifError(error);
+      assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
+      client!.waitForClientState(Date.now() + 1500, grpc.connectivityState.IDLE, err => {
+        if (err) return done(err);
+
+        assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
+        client!.sendRequest(error => {
+          assert.ifError(error);
+          done();
+        });
       });
     });
-    it("Should ensure that the timeout is at least 1 second", function (done) {
-      client = TestClient.createFromServer(server, {
-        "grpc.client_idle_timeout_ms": 50,
-      });
-      client.sendRequest(error => {
-        assert.ifError(error);
-        assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
-        setTimeout(() => {
-          // Should still be ready after 100ms
-          assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
-          setTimeout(() => {
-            // Should go IDLE after another second
-            assert.strictEqual(client!.getChannelState(), grpc.connectivityState.IDLE);
-            done();
-          }, 1000);
-        }, 100);
-      });
+  });
+
+  it("Should go idle after the specified time after waitForReady ends", function (done) {
+    client = TestClient.createFromServer(server);
+    const deadline = new Date();
+    deadline.setSeconds(deadline.getSeconds() + 3);
+    client.waitForReady(deadline, error => {
+      assert.ifError(error);
+      assert.strictEqual(client!.getChannelState(), grpc.connectivityState.READY);
+
+      client!.waitForClientState(Date.now() + 1500, grpc.connectivityState.IDLE, done);
     });
   });
 });

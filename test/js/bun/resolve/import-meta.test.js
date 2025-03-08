@@ -1,15 +1,25 @@
 import { spawnSync } from "bun";
-import { expect, it } from "bun:test";
+import { expect, it, mock } from "bun:test";
 import { bunEnv, bunExe, ospath } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import * as Module from "node:module";
+import Module from "node:module";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import sync from "./require-json.json";
+import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
 
 const { path, dir, dirname, filename } = import.meta;
 
 const tmpbase = tmpdir() + sep;
+
+it("import.meta.require is settable", () => {
+  const old = import.meta.require;
+  const fn = mock(() => "hello");
+  import.meta.require = fn;
+  expect(import.meta.require("hello")).toBe("hello");
+  import.meta.require = old;
+  expect(fn).toHaveBeenCalledTimes(1);
+});
 
 it("import.meta.main", () => {
   const { exitCode } = spawnSync({
@@ -62,8 +72,8 @@ it("Module.createRequire does not use file url as the referrer (err message chec
   } catch (e) {
     expect(e.name).not.toBe("UnreachableError");
     expect(e.message).not.toInclude("file:///");
-    expect(e.message).toInclude('"whaaat"');
-    expect(e.message).toInclude('"' + import.meta.path + '"');
+    expect(e.message).toInclude(`'whaaat'`);
+    expect(e.message).toInclude(`'` + import.meta.path + `'`);
   }
 });
 
@@ -127,7 +137,12 @@ it("Module._cache", () => {
 });
 
 it("Module._resolveFilename()", () => {
-  expect(Module._resolveFilename).toBeUndefined();
+  expect(isModuleResolveFilenameSlowPathEnabled()).toBe(false);
+  const original = Module._resolveFilename;
+  Module._resolveFilename = () => {};
+  expect(isModuleResolveFilenameSlowPathEnabled()).toBe(true);
+  Module._resolveFilename = original;
+  expect(isModuleResolveFilenameSlowPathEnabled()).toBe(false);
 });
 
 it("Module.createRequire(file://url).resolve(file://url)", () => {

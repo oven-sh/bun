@@ -3,7 +3,7 @@ const std = @import("std");
 const UnboundedQueue = @import("../unbounded_queue.zig").UnboundedQueue;
 const Path = @import("../../resolver/resolve_path.zig");
 const Fs = @import("../../fs.zig");
-const Mutex = @import("../../lock.zig").Lock;
+const Mutex = bun.Mutex;
 const FSEvents = @import("./fs_events.zig");
 
 const bun = @import("root").bun;
@@ -13,7 +13,6 @@ const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const string = bun.string;
 const JSC = bun.JSC;
 const VirtualMachine = JSC.VirtualMachine;
-const GenericWatcher = @import("../../watcher.zig");
 
 const sync = @import("../../sync.zig");
 const Semaphore = sync.Semaphore;
@@ -25,9 +24,10 @@ const FSWatcher = bun.JSC.Node.FSWatcher;
 const Event = FSWatcher.Event;
 const StringOrBytesToDecode = FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 
+const Watcher = bun.Watcher;
+
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
-    pub const Watcher = GenericWatcher.NewWatcher(*PathWatcherManager);
     const log = Output.scoped(.PathWatcherManager, false);
     main_watcher: *Watcher,
 
@@ -47,11 +47,10 @@ pub const PathWatcherManager = struct {
         path: [:0]const u8,
         dirname: string,
         refs: u32 = 0,
-        hash: GenericWatcher.HashType,
+        hash: Watcher.HashType,
     };
 
     fn refPendingTask(this: *PathWatcherManager) bool {
-        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.deinit_on_last_task) return false;
@@ -61,12 +60,10 @@ pub const PathWatcherManager = struct {
     }
 
     fn hasPendingTasks(this: *PathWatcherManager) callconv(.C) bool {
-        @fence(.acquire);
         return this.has_pending_tasks.load(.acquire);
     }
 
     fn unrefPendingTask(this: *PathWatcherManager) void {
-        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_tasks -= 1;
@@ -107,7 +104,7 @@ pub const PathWatcherManager = struct {
                         .path = cloned_path,
                         // if is really a file we need to get the dirname
                         .dirname = std.fs.path.dirname(cloned_path) orelse cloned_path,
-                        .hash = GenericWatcher.getHash(cloned_path),
+                        .hash = Watcher.getHash(cloned_path),
                         .refs = 1,
                     };
                     _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
@@ -122,7 +119,7 @@ pub const PathWatcherManager = struct {
                     .is_file = false,
                     .path = cloned_path,
                     .dirname = cloned_path,
-                    .hash = GenericWatcher.getHash(cloned_path),
+                    .hash = Watcher.getHash(cloned_path),
                     .refs = 1,
                 };
                 _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
@@ -148,8 +145,9 @@ pub const PathWatcherManager = struct {
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
             .watchers = watchers,
             .main_watcher = try Watcher.init(
+                PathWatcherManager,
                 this,
-                vm.bundler.fs,
+                vm.transpiler.fs,
                 bun.default_allocator,
             ),
             .vm = vm,
@@ -164,9 +162,9 @@ pub const PathWatcherManager = struct {
 
     pub fn onFileUpdate(
         this: *PathWatcherManager,
-        events: []GenericWatcher.WatchEvent,
+        events: []Watcher.WatchEvent,
         changed_files: []?[:0]u8,
-        watchlist: GenericWatcher.WatchList,
+        watchlist: Watcher.WatchList,
     ) void {
         var slice = watchlist.slice();
         const file_paths = slice.items(.file_path);
@@ -209,7 +207,7 @@ pub const PathWatcherManager = struct {
 
                     if (event.op.write or event.op.delete or event.op.rename) {
                         const event_type: PathWatcher.EventType = if (event.op.delete or event.op.rename or event.op.move_to) .rename else .change;
-                        const hash = GenericWatcher.getHash(file_path);
+                        const hash = Watcher.getHash(file_path);
 
                         for (watchers) |w| {
                             if (w) |watcher| {
@@ -272,7 +270,7 @@ pub const PathWatcherManager = struct {
                         const len = file_path_without_trailing_slash.len + changed_name.len;
                         const path_slice = _on_file_update_path_buf[0 .. len + 1];
 
-                        const hash = GenericWatcher.getHash(path_slice);
+                        const hash = Watcher.getHash(path_slice);
 
                         // skip consecutive duplicates
                         const event_type: PathWatcher.EventType = .rename; // renaming folders, creating folder or files will be always be rename
@@ -586,7 +584,7 @@ pub const PathWatcherManager = struct {
 
         const path = watcher.path;
         if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false).unwrap();
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, .file, .zero, null, false).unwrap();
         } else {
             if (comptime Environment.isMac) {
                 if (watcher.fsevents_watcher != null) {
@@ -743,7 +741,7 @@ pub const PathWatcher = struct {
     has_pending_directories: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     closed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     pub const ChangeEvent = struct {
-        hash: GenericWatcher.HashType = 0,
+        hash: Watcher.HashType = 0,
         event_type: EventType = .change,
         time_stamp: i64 = 0,
     };
@@ -829,7 +827,6 @@ pub const PathWatcher = struct {
     }
 
     pub fn refPendingDirectory(this: *PathWatcher) bool {
-        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.isClosed()) return false;
@@ -839,24 +836,20 @@ pub const PathWatcher = struct {
     }
 
     pub fn hasPendingDirectories(this: *PathWatcher) callconv(.C) bool {
-        @fence(.acquire);
         return this.has_pending_directories.load(.acquire);
     }
 
     pub fn isClosed(this: *PathWatcher) bool {
-        @fence(.acquire);
         return this.closed.load(.acquire);
     }
 
     pub fn setClosed(this: *PathWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        @fence(.release);
         this.closed.store(true, .release);
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
@@ -866,7 +859,7 @@ pub const PathWatcher = struct {
         }
     }
 
-    pub fn emit(this: *PathWatcher, event: Event, hash: GenericWatcher.HashType, time_stamp: i64, is_file: bool) void {
+    pub fn emit(this: *PathWatcher, event: Event, hash: Watcher.HashType, time_stamp: i64, is_file: bool) void {
         switch (event) {
             .change, .rename => {
                 const event_type = switch (event) {
@@ -972,7 +965,11 @@ pub fn watch(
 
     const path_info = switch (manager._fdFromAbsolutePathZ(path)) {
         .result => |result| result,
-        .err => |err| return .{ .err = err },
+        .err => |_err| {
+            var err = _err;
+            err.syscall = .watch;
+            return .{ .err = err };
+        },
     };
 
     const watcher = PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx) catch |e| {

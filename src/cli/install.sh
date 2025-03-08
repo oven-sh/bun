@@ -78,6 +78,14 @@ case $platform in
     ;;
 esac
 
+case "$target" in
+'linux'*)
+    if [ -f /etc/alpine-release ]; then
+        target="$target-musl"
+    fi
+    ;;
+esac
+
 if [[ $target = darwin-x64 ]]; then
     # Is this process running in Rosetta?
     # redirect stderr to devnull to avoid error message when not running in Rosetta
@@ -91,19 +99,20 @@ GITHUB=${GITHUB-"https://github.com"}
 
 github_repo="$GITHUB/oven-sh/bun"
 
-if [[ $target = darwin-x64 ]]; then
-    # If AVX2 isn't supported, use the -baseline build
+# If AVX2 isn't supported, use the -baseline build
+case "$target" in
+'darwin-x64'*)
     if [[ $(sysctl -a | grep machdep.cpu | grep AVX2) == '' ]]; then
-        target=darwin-x64-baseline
+        target="$target-baseline"
     fi
-fi
-
-if [[ $target = linux-x64 ]]; then
+    ;;
+'linux-x64'*)
     # If AVX2 isn't supported, use the -baseline build
     if [[ $(cat /proc/cpuinfo | grep avx2) = '' ]]; then
-        target=linux-x64-baseline
+        target="$target-baseline"
     fi
-fi
+    ;;
+esac
 
 exe_name=bun
 

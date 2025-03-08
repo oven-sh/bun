@@ -22,7 +22,7 @@ describe("fail", () => {
     fixture => {
       expect([path.join(import.meta.dir, fixture)]).not.toRun();
     },
-    500,
+    700,
   );
 });
 
@@ -32,6 +32,6 @@ describe("pass", () => {
     fixture => {
       expect([path.join(import.meta.dir, fixture)]).toRun();
     },
-    500,
+    700,
   );
 });

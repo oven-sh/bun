@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import crypto from "node:crypto";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import util from "node:util";
 
 it("crypto.randomBytes should return a Buffer", () => {
@@ -260,7 +260,6 @@ describe("createHash", () => {
     "id-rsassa-pkcs1-v1_5-with-sha3-256",
     "id-rsassa-pkcs1-v1_5-with-sha3-384",
     "id-rsassa-pkcs1-v1_5-with-sha3-512",
-    "md5-sha1",
     "md5withrsaencryption",
     "ripemd",
     "ripemd160withrsa",
@@ -302,11 +301,23 @@ describe("createHash", () => {
           const hash = crypto.createHash(name);
           hash.update("Hello World");
           expect(hash.digest("hex")).toBe(nodeValues[name].value);
-        }).toThrow(Error(`Unsupported algorithm ${name}`));
+        }).toThrow(Error(`Digest method not supported`));
       } else {
         const hash = crypto.createHash(name);
         hash.update("Hello World");
+
+        // testing copy to be sure boringssl workarounds for blake2b256/512,
+        // ripemd160, sha3-<n>, and shake128/256 are working.
+        const copy = hash.copy();
         expect(hash.digest("hex")).toBe(nodeValues[name].value);
+        expect(copy.digest("hex")).toBe(nodeValues[name].value);
+
+        expect(() => {
+          hash.copy();
+        }).toThrow(Error(`Digest already called`));
+        expect(() => {
+          copy.copy();
+        }).toThrow(Error(`Digest already called`));
       }
     });
 
@@ -316,7 +327,7 @@ describe("createHash", () => {
           const hash = crypto.createHash(name);
           hash.update("Hello World");
           expect(hash.digest()).toEqual(Buffer.from(nodeValues[name].value, "hex"));
-        }).toThrow(Error(`Unsupported algorithm ${name}`));
+        }).toThrow(Error(`Digest method not supported`));
       } else {
         const hash = crypto.createHash(name);
         hash.update("Hello World");
@@ -439,7 +450,7 @@ describe("createHash", () => {
 
   it("repeated calls doesnt segfault", () => {
     function fn() {
-      crypto.createHash("sha1").update(Math.random(), "ascii").digest("base64");
+      crypto.createHash("sha1").update(Math.random().toString(), "ascii").digest("base64");
     }
 
     for (let i = 0; i < 10; i++) fn();
@@ -478,6 +489,27 @@ describe("createHash", () => {
     copy.update("world");
     expect(copy.digest("hex")).toBe(hash.digest("hex"));
   });
+
+  it("uses the Transform options object", () => {
+    const hasher = crypto.createHash("sha256", { defaultEncoding: "binary" });
+    hasher.on("readable", () => {
+      const data = hasher.read();
+      if (data) {
+        expect(data.toString("hex")).toBe("4d4d75d742863ab9656f3d5f76dff8589c3922e95a24ea6812157ffe4aaa3b6b");
+      }
+    });
+    const stream = Readable.from("ï");
+    stream.pipe(hasher);
+  });
+});
+
+describe("Hash", () => {
+  it("should have correct method names", () => {
+    const hash = crypto.createHash("sha256");
+    expect(hash.update.name).toBe("update");
+    expect(hash.digest.name).toBe("digest");
+    expect(hash.copy.name).toBe("copy");
+  });
 });
 
 it("crypto.createHmac", () => {
@@ -514,4 +546,107 @@ it("createDecipheriv should validate iv and password", () => {
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, null).setAutoPadding(false)).toThrow();
   expect(() => crypto.createDecipheriv("aes-128-cbc", key).setAutoPadding(false)).toThrow();
   expect(() => crypto.createDecipheriv("aes-128-cbc", key, Buffer.alloc(16)).setAutoPadding(false)).not.toThrow();
+});
+
+it("x25519", () => {
+  // Generate Alice's keys
+  const alice = crypto.generateKeyPairSync("x25519", {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "der",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+    },
+  });
+
+  // Generate Bob's keys
+  const bob = crypto.generateKeyPairSync("x25519", {
+    publicKeyEncoding: {
+      type: "spki",
+      format: "der",
+    },
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+    },
+  });
+
+  // Convert keys to KeyObjects before DH computation
+  const alicePrivateKey = crypto.createPrivateKey({
+    key: alice.privateKey,
+    format: "der",
+    type: "pkcs8",
+  });
+
+  const bobPublicKey = crypto.createPublicKey({
+    key: bob.publicKey,
+    format: "der",
+    type: "spki",
+  });
+
+  const bobPrivateKey = crypto.createPrivateKey({
+    key: bob.privateKey,
+    format: "der",
+    type: "pkcs8",
+  });
+
+  const alicePublicKey = crypto.createPublicKey({
+    key: alice.publicKey,
+    format: "der",
+    type: "spki",
+  });
+
+  // Compute shared secrets using KeyObjects
+  const aliceSecret = crypto.diffieHellman({
+    privateKey: alicePrivateKey,
+    publicKey: bobPublicKey,
+  });
+
+  const bobSecret = crypto.diffieHellman({
+    privateKey: bobPrivateKey,
+    publicKey: alicePublicKey,
+  });
+
+  // Verify both parties computed the same secret
+  expect(aliceSecret).toEqual(bobSecret);
+  expect(aliceSecret.length).toBe(32);
+
+  // Verify valid key generation
+  expect(() => {
+    crypto.generateKeyPairSync("x25519", {
+      publicKeyEncoding: {
+        type: "spki",
+        format: "der",
+      },
+      privateKeyEncoding: {
+        type: "pkcs8",
+        format: "der",
+      },
+    });
+  }).not.toThrow();
+
+  // Test invalid keys - need to create proper KeyObjects even for invalid cases
+  expect(() => {
+    crypto.diffieHellman({
+      privateKey: crypto.createPrivateKey({
+        key: Buffer.from("invalid"),
+        format: "der",
+        type: "pkcs8",
+      }),
+      publicKey: bobPublicKey,
+    });
+  }).toThrow();
+
+  expect(() => {
+    crypto.diffieHellman({
+      privateKey: bobPrivateKey,
+      publicKey: crypto.createPublicKey({
+        key: Buffer.from("invalid"),
+        format: "der",
+        type: "spki",
+      }),
+    });
+  }).toThrow();
 });

@@ -69,7 +69,7 @@ pub fn parseParam(line: []const u8) !Param(Help) {
     @setEvalBranchQuota(999999);
 
     var found_comma = false;
-    var it = mem.tokenize(u8, line, " \t");
+    var it = mem.tokenizeAny(u8, line, " \t");
     var param_str = it.next() orelse return error.NoParamFound;
 
     const short_name = if (!mem.startsWith(u8, param_str, "--") and
@@ -446,7 +446,11 @@ pub fn helpEx(
 pub fn simplePrintParam(param: Param(Help)) !void {
     Output.pretty("\n", .{});
     if (param.names.short) |s| {
-        Output.pretty("  <cyan>-{c}<r>", .{s});
+        if (param.takes_value != .none and param.names.long == null) {
+            Output.pretty("  <cyan>-{c}<r><d><cyan>=\\<val\\><r>", .{s});
+        } else {
+            Output.pretty("  <cyan>-{c}<r>", .{s});
+        }
     } else {
         Output.pretty("    ", .{});
     }
@@ -457,7 +461,11 @@ pub fn simplePrintParam(param: Param(Help)) !void {
             Output.pretty("  ", .{});
         }
 
-        Output.pretty("<cyan>--{s}<r>", .{l});
+        if (param.takes_value != .none) {
+            Output.pretty("<cyan>--{s}<r><d><cyan>=\\<val\\><r>", .{l});
+        } else {
+            Output.pretty("<cyan>--{s}<r>", .{l});
+        }
     } else {
         Output.pretty("    ", .{});
     }
@@ -470,8 +478,9 @@ pub fn simpleHelp(
         var res: usize = 2;
         for (params) |param| {
             const flags_len = if (param.names.long) |l| l.len else 0;
-            if (res < flags_len)
-                res = flags_len;
+            const value_len: usize = if (param.takes_value != .none) 6 else 0;
+            if (res < flags_len + value_len)
+                res = flags_len + value_len;
         }
 
         break :blk res;
@@ -488,7 +497,9 @@ pub fn simpleHelp(
         const default_allocator = bun.default_allocator;
 
         const flags_len = if (param.names.long) |l| l.len else 0;
-        const num_spaces_after = max_spacing - flags_len;
+        const value_len: usize = if (param.takes_value != .none) 6 else 0;
+        const total_len = flags_len + value_len;
+        const num_spaces_after = max_spacing - total_len;
         var spaces_after = default_allocator.alloc(u8, num_spaces_after) catch unreachable;
         defer default_allocator.free(spaces_after);
         for (0..num_spaces_after) |i| {
@@ -503,15 +514,16 @@ pub fn simpleHelp(
 pub fn simpleHelpBunTopLevel(
     comptime params: []const Param(Help),
 ) void {
-    const max_spacing = 25;
+    const max_spacing = 30;
     const space_buf: *const [max_spacing]u8 = " " ** max_spacing;
 
     const computed_max_spacing = comptime blk: {
         var res: usize = 2;
         for (params) |param| {
             const flags_len = if (param.names.long) |l| l.len else 0;
-            if (res < flags_len)
-                res = flags_len;
+            const value_len: usize = if (param.takes_value != .none) 6 else 0;
+            if (res < flags_len + value_len)
+                res = flags_len + value_len;
         }
 
         break :blk res;
@@ -528,7 +540,9 @@ pub fn simpleHelpBunTopLevel(
                 simplePrintParam(param) catch unreachable;
 
                 const flags_len = if (param.names.long) |l| l.len else 0;
-                const num_spaces_after = max_spacing - flags_len;
+                const value_len: usize = if (param.takes_value != .none) 6 else 0;
+                const total_len = flags_len + value_len;
+                const num_spaces_after = max_spacing - total_len;
 
                 Output.pretty(space_buf[0..num_spaces_after] ++ desc_text, .{});
             }

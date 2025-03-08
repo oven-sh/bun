@@ -1,38 +1,9 @@
 // Hardcoded module "node:timers/promises"
 // https://github.com/niksy/isomorphic-timers-promises/blob/master/index.js
+
+const { validateBoolean, validateAbortSignal, validateObject, validateNumber } = require("internal/validators");
+
 const symbolAsyncIterator = Symbol.asyncIterator;
-
-class ERR_INVALID_ARG_TYPE extends Error {
-  constructor(name, expected, actual) {
-    super(`${name} must be ${expected}, ${typeof actual} given`);
-    this.code = "ERR_INVALID_ARG_TYPE";
-  }
-}
-
-class AbortError extends Error {
-  constructor() {
-    super("The operation was aborted");
-    this.code = "ABORT_ERR";
-  }
-}
-
-function validateObject(object, name) {
-  if (object === null || typeof object !== "object") {
-    throw new ERR_INVALID_ARG_TYPE(name, "Object", object);
-  }
-}
-
-function validateBoolean(value, name) {
-  if (typeof value !== "boolean") {
-    throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
-  }
-}
-
-function validateAbortSignal(signal, name) {
-  if (typeof signal !== "undefined" && (signal === null || typeof signal !== "object" || !("aborted" in signal))) {
-    throw new ERR_INVALID_ARG_TYPE(name, "AbortSignal", signal);
-  }
-}
 
 function asyncIterator({ next: nextFunction, return: returnFunction }) {
   const result = {};
@@ -52,6 +23,16 @@ function asyncIterator({ next: nextFunction, return: returnFunction }) {
 function setTimeoutPromise(after = 1, value, options = {}) {
   const arguments_ = [].concat(value ?? []);
   try {
+    // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
+    // warning, not throw an error. So we can't call validateNumber as that will throw if the number
+    // is outside of a given range.
+    if (typeof after != "number") {
+      validateNumber(after, "delay");
+    }
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  try {
     validateObject(options, "options");
   } catch (error) {
     return Promise.reject(error);
@@ -68,7 +49,7 @@ function setTimeoutPromise(after = 1, value, options = {}) {
     return Promise.reject(error);
   }
   if (signal?.aborted) {
-    return Promise.reject(new AbortError());
+    return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
@@ -79,7 +60,7 @@ function setTimeoutPromise(after = 1, value, options = {}) {
     if (signal) {
       onCancel = () => {
         clearTimeout(timeout);
-        reject(new AbortError());
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel);
     }
@@ -107,7 +88,7 @@ function setImmediatePromise(value, options = {}) {
     return Promise.reject(error);
   }
   if (signal?.aborted) {
-    return Promise.reject(new AbortError());
+    return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
   }
   let onCancel;
   const returnValue = new Promise((resolve, reject) => {
@@ -118,7 +99,7 @@ function setImmediatePromise(value, options = {}) {
     if (signal) {
       onCancel = () => {
         clearImmediate(immediate);
-        reject(new AbortError());
+        reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel);
     }
@@ -130,6 +111,20 @@ function setImmediatePromise(value, options = {}) {
 
 function setIntervalPromise(after = 1, value, options = {}) {
   /* eslint-disable no-undefined, no-unreachable-loop, no-loop-func */
+  try {
+    // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
+    // warning, not throw an error. So we can't call validateNumber as that will throw if the number
+    // is outside of a given range.
+    if (typeof after != "number") {
+      validateNumber(after, "delay");
+    }
+  } catch (error) {
+    return asyncIterator({
+      next: function () {
+        return Promise.reject(error);
+      },
+    });
+  }
   try {
     validateObject(options, "options");
   } catch (error) {
@@ -161,7 +156,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
   if (signal?.aborted) {
     return asyncIterator({
       next: function () {
-        return Promise.reject(new AbortError());
+        return Promise.reject($makeAbortError(undefined, { cause: signal.reason }));
       },
     });
   }
@@ -202,7 +197,7 @@ function setIntervalPromise(after = 1, value, options = {}) {
               resolve();
             }
           } else if (notYielded === 0) {
-            reject(new AbortError());
+            reject($makeAbortError(undefined, { cause: signal.reason }));
           } else {
             resolve();
           }
@@ -210,6 +205,8 @@ function setIntervalPromise(after = 1, value, options = {}) {
           if (notYielded > 0) {
             notYielded = notYielded - 1;
             return { done: false, value: value };
+          } else if (signal?.aborted) {
+            throw $makeAbortError(undefined, { cause: signal.reason });
           }
           return { done: true };
         });

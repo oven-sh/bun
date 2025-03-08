@@ -1,7 +1,65 @@
 {
   "name": "JSC",
-  "version": { "major": 1, "minor": 3 },
+  "version": {
+    "major": 1,
+    "minor": 4
+  },
   "domains": [
+    {
+      "domain": "Audit",
+      "description": "",
+      "version": 4,
+      "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
+      "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
+      "commands": [
+        {
+          "name": "setup",
+          "description": "Creates the `WebInspectorAudit` object that is passed to run. Must call teardown before calling setup more than once.",
+          "parameters": [
+            {
+              "name": "contextId",
+              "$ref": "Runtime.ExecutionContextId",
+              "optional": true,
+              "description": "Specifies in which isolated context to run the test. Each content script lives in an isolated context and this parameter may be used to specify one of those contexts. If the parameter is omitted or 0 the evaluation will be performed in the context of the inspected page."
+            }
+          ]
+        },
+        {
+          "name": "run",
+          "description": "Parses and evaluates the given test string and sends back the result. Returned values are saved to the \"audit\" object group. Call setup before and teardown after if the `WebInspectorAudit` object should be passed into the test.",
+          "parameters": [
+            {
+              "name": "test",
+              "type": "string",
+              "description": "Test string to parse and evaluate."
+            },
+            {
+              "name": "contextId",
+              "$ref": "Runtime.ExecutionContextId",
+              "optional": true,
+              "description": "Specifies in which isolated context to run the test. Each content script lives in an isolated context and this parameter may be used to specify one of those contexts. If the parameter is omitted or 0 the evaluation will be performed in the context of the inspected page."
+            }
+          ],
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Evaluation result."
+            },
+            {
+              "name": "wasThrown",
+              "type": "boolean",
+              "optional": true,
+              "description": "True if the result was thrown during the evaluation."
+            }
+          ]
+        },
+        {
+          "name": "teardown",
+          "description": "Destroys the `WebInspectorAudit` object that is passed to run. Must call setup before calling teardown."
+        }
+      ]
+    },
     {
       "domain": "Console",
       "description": "Console domain defines methods and events for interaction with the JavaScript console. Console collects messages created by means of the <a href='http://getfirebug.com/wiki/index.php/Console_API'>JavaScript Console API</a>. One needs to enable this domain using <code>enable</code> command in order to start receiving the console messages. Browser collects messages issued while console domain is not enabled as well and reports them using <code>messageAdded</code> notification upon enabling.",
@@ -41,28 +99,44 @@
         {
           "id": "ClearReason",
           "type": "string",
-          "enum": ["console-api", "main-frame-navigation"],
+          "enum": ["console-api", "frontend", "main-frame-navigation"],
           "description": "The reason the console is being cleared."
         },
         {
           "id": "Channel",
           "description": "Logging channel.",
           "type": "object",
-          "properties": [{ "name": "source", "$ref": "ChannelSource" }, { "name": "level", "$ref": "ChannelLevel" }]
+          "properties": [
+            {
+              "name": "source",
+              "$ref": "ChannelSource"
+            },
+            {
+              "name": "level",
+              "$ref": "ChannelLevel"
+            }
+          ]
         },
         {
           "id": "ConsoleMessage",
           "type": "object",
           "description": "Console message.",
           "properties": [
-            { "name": "source", "$ref": "ChannelSource" },
+            {
+              "name": "source",
+              "$ref": "ChannelSource"
+            },
             {
               "name": "level",
               "type": "string",
               "enum": ["log", "info", "warning", "error", "debug"],
               "description": "Message severity."
             },
-            { "name": "text", "type": "string", "description": "Message text." },
+            {
+              "name": "text",
+              "type": "string",
+              "description": "Message text."
+            },
             {
               "name": "type",
               "type": "string",
@@ -85,7 +159,12 @@
               ],
               "description": "Console message type."
             },
-            { "name": "url", "type": "string", "optional": true, "description": "URL of the message origin." },
+            {
+              "name": "url",
+              "type": "string",
+              "optional": true,
+              "description": "URL of the message origin."
+            },
             {
               "name": "line",
               "type": "integer",
@@ -107,7 +186,9 @@
             {
               "name": "parameters",
               "type": "array",
-              "items": { "$ref": "Runtime.RemoteObject" },
+              "items": {
+                "$ref": "Runtime.RemoteObject"
+              },
               "optional": true,
               "description": "Message parameters in case of the formatted message."
             },
@@ -136,11 +217,31 @@
           "type": "object",
           "description": "Stack entry for console errors and assertions.",
           "properties": [
-            { "name": "functionName", "type": "string", "description": "JavaScript function name." },
-            { "name": "url", "type": "string", "description": "JavaScript script name or url." },
-            { "name": "scriptId", "$ref": "Debugger.ScriptId", "description": "Script identifier." },
-            { "name": "lineNumber", "type": "integer", "description": "JavaScript script line number." },
-            { "name": "columnNumber", "type": "integer", "description": "JavaScript script column number." }
+            {
+              "name": "functionName",
+              "type": "string",
+              "description": "JavaScript function name."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "JavaScript script name or url."
+            },
+            {
+              "name": "scriptId",
+              "$ref": "Debugger.ScriptId",
+              "description": "Script identifier."
+            },
+            {
+              "name": "lineNumber",
+              "type": "integer",
+              "description": "JavaScript script line number."
+            },
+            {
+              "name": "columnNumber",
+              "type": "integer",
+              "description": "JavaScript script column number."
+            }
           ]
         },
         {
@@ -148,7 +249,13 @@
           "description": "Call frames for async function calls, console assertions, and error messages.",
           "type": "object",
           "properties": [
-            { "name": "callFrames", "type": "array", "items": { "$ref": "CallFrame" } },
+            {
+              "name": "callFrames",
+              "type": "array",
+              "items": {
+                "$ref": "CallFrame"
+              }
+            },
             {
               "name": "topCallFrameIsBoundary",
               "type": "boolean",
@@ -161,7 +268,12 @@
               "optional": true,
               "description": "Whether one or more frames have been truncated from the bottom of the stack."
             },
-            { "name": "parentStackTrace", "$ref": "StackTrace", "optional": true, "description": "Parent StackTrace." }
+            {
+              "name": "parentStackTrace",
+              "$ref": "StackTrace",
+              "optional": true,
+              "description": "Parent StackTrace."
+            }
           ]
         }
       ],
@@ -174,20 +286,48 @@
           "name": "disable",
           "description": "Disables console domain, prevents further console messages from being reported to the client."
         },
-        { "name": "clearMessages", "description": "Clears console messages collected in the browser." },
+        {
+          "name": "clearMessages",
+          "description": "Clears console messages collected in the browser."
+        },
+        {
+          "name": "setConsoleClearAPIEnabled",
+          "description": "Control whether calling <code>console.clear()</code> has an effect in Web Inspector. Defaults to true.",
+          "parameters": [
+            {
+              "name": "enable",
+              "type": "boolean"
+            }
+          ]
+        },
         {
           "name": "getLoggingChannels",
           "description": "List of the different message sources that are non-default logging channels.",
           "returns": [
-            { "name": "channels", "type": "array", "items": { "$ref": "Channel" }, "description": "Logging channels." }
+            {
+              "name": "channels",
+              "type": "array",
+              "items": {
+                "$ref": "Channel"
+              },
+              "description": "Logging channels."
+            }
           ]
         },
         {
           "name": "setLoggingChannelLevel",
           "description": "Modify the level of a channel.",
           "parameters": [
-            { "name": "source", "$ref": "ChannelSource", "description": "Logging channel to modify." },
-            { "name": "level", "$ref": "ChannelLevel", "description": "New level." }
+            {
+              "name": "source",
+              "$ref": "ChannelSource",
+              "description": "Logging channel to modify."
+            },
+            {
+              "name": "level",
+              "$ref": "ChannelLevel",
+              "description": "New level."
+            }
           ]
         }
       ],
@@ -196,14 +336,22 @@
           "name": "messageAdded",
           "description": "Issued when new console message is added.",
           "parameters": [
-            { "name": "message", "$ref": "ConsoleMessage", "description": "Console message that has been added." }
+            {
+              "name": "message",
+              "$ref": "ConsoleMessage",
+              "description": "Console message that has been added."
+            }
           ]
         },
         {
           "name": "messageRepeatCountUpdated",
           "description": "Issued when subsequent message(s) are equal to the previous one(s).",
           "parameters": [
-            { "name": "count", "type": "integer", "description": "New repeat count value." },
+            {
+              "name": "count",
+              "type": "integer",
+              "description": "New repeat count value."
+            },
             {
               "name": "timestamp",
               "type": "number",
@@ -216,14 +364,21 @@
           "name": "messagesCleared",
           "description": "Issued when console is cleared. This happens either upon <code>clearMessages</code> command or after page navigation.",
           "parameters": [
-            { "name": "reason", "$ref": "ClearReason", "description": "The reason the console is being cleared." }
+            {
+              "name": "reason",
+              "$ref": "ClearReason",
+              "description": "The reason the console is being cleared."
+            }
           ]
         },
         {
           "name": "heapSnapshot",
           "description": "Issued from console.takeHeapSnapshot.",
           "parameters": [
-            { "name": "timestamp", "type": "number" },
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
             {
               "name": "snapshotData",
               "$ref": "Heap.HeapSnapshotData",
@@ -240,93 +395,31 @@
       ]
     },
     {
-      "domain": "CPUProfiler",
-      "description": "CPUProfiler domain exposes cpu usage tracking.",
-      "condition": "defined(ENABLE_RESOURCE_USAGE) && ENABLE_RESOURCE_USAGE",
-      "debuggableTypes": ["page", "web-page"],
-      "targetTypes": ["page"],
-      "types": [
-        {
-          "id": "ThreadInfo",
-          "description": "CPU usage for an individual thread.",
-          "type": "object",
-          "properties": [
-            { "name": "name", "type": "string", "description": "Some thread identification information." },
-            {
-              "name": "usage",
-              "type": "number",
-              "description": "CPU usage for this thread. This should not exceed 100% for an individual thread."
-            },
-            {
-              "name": "type",
-              "type": "string",
-              "enum": ["main", "webkit"],
-              "optional": true,
-              "description": "Type of thread. There should be a single main thread."
-            },
-            {
-              "name": "targetId",
-              "type": "string",
-              "optional": true,
-              "description": "A thread may be associated with a target, such as a Worker, in the process."
-            }
-          ]
-        },
-        {
-          "id": "Event",
-          "type": "object",
-          "properties": [
-            { "name": "timestamp", "type": "number" },
-            {
-              "name": "usage",
-              "type": "number",
-              "description": "Percent of total cpu usage. If there are multiple cores the usage may be greater than 100%."
-            },
-            {
-              "name": "threads",
-              "type": "array",
-              "items": { "$ref": "ThreadInfo" },
-              "optional": true,
-              "description": "Per-thread CPU usage information. Does not include the main thread."
-            }
-          ]
-        }
-      ],
-      "commands": [
-        { "name": "startTracking", "description": "Start tracking cpu usage." },
-        {
-          "name": "stopTracking",
-          "description": "Stop tracking cpu usage. This will produce a `trackingComplete` event."
-        }
-      ],
-      "events": [
-        {
-          "name": "trackingStart",
-          "description": "Tracking started.",
-          "parameters": [{ "name": "timestamp", "type": "number" }]
-        },
-        {
-          "name": "trackingUpdate",
-          "description": "Periodic tracking updates with event data.",
-          "parameters": [{ "name": "event", "$ref": "Event" }]
-        },
-        {
-          "name": "trackingComplete",
-          "description": "Tracking stopped.",
-          "parameters": [{ "name": "timestamp", "type": "number" }]
-        }
-      ]
-    },
-    {
       "domain": "Debugger",
       "description": "Debugger domain exposes JavaScript debugging capabilities. It allows setting and removing breakpoints, stepping through execution, exploring stack traces, etc.",
       "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
       "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
       "types": [
-        { "id": "BreakpointId", "type": "string", "description": "Breakpoint identifier." },
-        { "id": "BreakpointActionIdentifier", "type": "integer", "description": "Breakpoint action identifier." },
-        { "id": "ScriptId", "type": "string", "description": "Unique script identifier." },
-        { "id": "CallFrameId", "type": "string", "description": "Call frame identifier." },
+        {
+          "id": "BreakpointId",
+          "type": "string",
+          "description": "Breakpoint identifier."
+        },
+        {
+          "id": "BreakpointActionIdentifier",
+          "type": "integer",
+          "description": "Breakpoint action identifier."
+        },
+        {
+          "id": "ScriptId",
+          "type": "string",
+          "description": "Unique script identifier."
+        },
+        {
+          "id": "CallFrameId",
+          "type": "string",
+          "description": "Call frame identifier."
+        },
         {
           "id": "Location",
           "type": "object",
@@ -337,7 +430,11 @@
               "$ref": "ScriptId",
               "description": "Script identifier as reported in the <code>Debugger.scriptParsed</code>."
             },
-            { "name": "lineNumber", "type": "integer", "description": "Line number in the script (0-based)." },
+            {
+              "name": "lineNumber",
+              "type": "integer",
+              "description": "Line number in the script (0-based)."
+            },
             {
               "name": "columnNumber",
               "type": "integer",
@@ -392,7 +489,9 @@
               "name": "actions",
               "type": "array",
               "optional": true,
-              "items": { "$ref": "BreakpointAction" },
+              "items": {
+                "$ref": "BreakpointAction"
+              },
               "description": "Actions to perform automatically when the breakpoint is triggered."
             },
             {
@@ -414,7 +513,11 @@
           "type": "object",
           "description": "Information about the function.",
           "properties": [
-            { "name": "location", "$ref": "Location", "description": "Location of the function." },
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Location of the function."
+            },
             {
               "name": "name",
               "type": "string",
@@ -431,7 +534,9 @@
               "name": "scopeChain",
               "type": "array",
               "optional": true,
-              "items": { "$ref": "Scope" },
+              "items": {
+                "$ref": "Scope"
+              },
               "description": "Scope chain for this closure."
             }
           ]
@@ -451,11 +556,17 @@
               "type": "string",
               "description": "Name of the JavaScript function called on this call frame."
             },
-            { "name": "location", "$ref": "Location", "description": "Location in the source code." },
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Location in the source code."
+            },
             {
               "name": "scopeChain",
               "type": "array",
-              "items": { "$ref": "Scope" },
+              "items": {
+                "$ref": "Scope"
+              },
               "description": "Scope chain for this call frame."
             },
             {
@@ -494,7 +605,12 @@
               ],
               "description": "Scope type."
             },
-            { "name": "name", "type": "string", "optional": true, "description": "Name associated with the scope." },
+            {
+              "name": "name",
+              "type": "string",
+              "optional": true,
+              "description": "Name associated with the scope."
+            },
             {
               "name": "location",
               "$ref": "Location",
@@ -519,14 +635,26 @@
               "$ref": "BreakpointActionIdentifier",
               "description": "Identifier of the probe breakpoint action that created the sample."
             },
-            { "name": "sampleId", "type": "integer", "description": "Unique identifier for this sample." },
+            {
+              "name": "sampleId",
+              "type": "integer",
+              "description": "Unique identifier for this sample."
+            },
             {
               "name": "batchId",
               "type": "integer",
               "description": "A batch identifier which is the same for all samples taken at the same breakpoint hit."
             },
-            { "name": "timestamp", "type": "number", "description": "Timestamp of when the sample was taken." },
-            { "name": "payload", "$ref": "Runtime.RemoteObject", "description": "Contents of the sample." }
+            {
+              "name": "timestamp",
+              "type": "number",
+              "description": "Timestamp of when the sample was taken."
+            },
+            {
+              "name": "payload",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Contents of the sample."
+            }
           ]
         },
         {
@@ -559,7 +687,11 @@
           "type": "object",
           "description": "The pause reason auxiliary data when paused because of a Content Security Policy directive.",
           "properties": [
-            { "name": "directive", "type": "string", "description": "The CSP directive that blocked script execution." }
+            {
+              "name": "directive",
+              "type": "string",
+              "description": "The CSP directive that blocked script execution."
+            }
           ]
         }
       ],
@@ -568,24 +700,41 @@
           "name": "enable",
           "description": "Enables debugger for the given page. Clients should not assume that the debugging has been enabled until the result for this command is received."
         },
-        { "name": "disable", "description": "Disables debugger for given page." },
+        {
+          "name": "disable",
+          "description": "Disables debugger for given page."
+        },
         {
           "name": "setAsyncStackTraceDepth",
           "description": "Set the async stack trace depth for the page. A value of zero disables recording of async stack traces.",
-          "parameters": [{ "name": "depth", "type": "integer", "description": "Async stack trace depth." }]
+          "parameters": [
+            {
+              "name": "depth",
+              "type": "integer",
+              "description": "Async stack trace depth."
+            }
+          ]
         },
         {
           "name": "setBreakpointsActive",
           "description": "Activates / deactivates all breakpoints on the page.",
           "parameters": [
-            { "name": "active", "type": "boolean", "description": "New value for breakpoints active state." }
+            {
+              "name": "active",
+              "type": "boolean",
+              "description": "New value for breakpoints active state."
+            }
           ]
         },
         {
           "name": "setBreakpointByUrl",
           "description": "Sets JavaScript breakpoint at given location specified either by URL or URL regex. Once this command is issued, all existing parsed scripts will have breakpoints resolved and returned in <code>locations</code> property. Further matching script parsing will result in subsequent <code>breakpointResolved</code> events issued. This logical breakpoint will survive page reloads.",
           "parameters": [
-            { "name": "lineNumber", "type": "integer", "description": "Line number to set breakpoint at." },
+            {
+              "name": "lineNumber",
+              "type": "integer",
+              "description": "Line number to set breakpoint at."
+            },
             {
               "name": "url",
               "type": "string",
@@ -620,7 +769,9 @@
             {
               "name": "locations",
               "type": "array",
-              "items": { "$ref": "Location" },
+              "items": {
+                "$ref": "Location"
+              },
               "description": "List of the locations this breakpoint resolved into upon addition."
             }
           ]
@@ -629,7 +780,11 @@
           "name": "setBreakpoint",
           "description": "Sets JavaScript breakpoint at a given location.",
           "parameters": [
-            { "name": "location", "$ref": "Location", "description": "Location to set breakpoint in." },
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Location to set breakpoint in."
+            },
             {
               "name": "options",
               "$ref": "BreakpointOptions",
@@ -643,19 +798,32 @@
               "$ref": "BreakpointId",
               "description": "Id of the created breakpoint for further reference."
             },
-            { "name": "actualLocation", "$ref": "Location", "description": "Location this breakpoint resolved into." }
+            {
+              "name": "actualLocation",
+              "$ref": "Location",
+              "description": "Location this breakpoint resolved into."
+            }
           ]
         },
         {
           "name": "removeBreakpoint",
           "description": "Removes JavaScript breakpoint.",
-          "parameters": [{ "name": "breakpointId", "$ref": "BreakpointId" }]
+          "parameters": [
+            {
+              "name": "breakpointId",
+              "$ref": "BreakpointId"
+            }
+          ]
         },
         {
           "name": "addSymbolicBreakpoint",
           "description": "Adds a JavaScript breakpoint that pauses execution whenever a function with the given name is about to be called.",
           "parameters": [
-            { "name": "symbol", "type": "string", "description": "The name of the function to pause in when called." },
+            {
+              "name": "symbol",
+              "type": "string",
+              "description": "The name of the function to pause in when called."
+            },
             {
               "name": "caseSensitive",
               "type": "boolean",
@@ -680,7 +848,11 @@
           "name": "removeSymbolicBreakpoint",
           "description": "Removes a previously added symbolic breakpoint.",
           "parameters": [
-            { "name": "symbol", "type": "string", "description": "The name of the function to pause in when called." },
+            {
+              "name": "symbol",
+              "type": "string",
+              "description": "The name of the function to pause in when called."
+            },
             {
               "name": "caseSensitive",
               "type": "boolean",
@@ -702,7 +874,13 @@
         {
           "name": "continueToLocation",
           "description": "Continues execution until specific location is reached. This will trigger either a Debugger.paused or Debugger.resumed event.",
-          "parameters": [{ "name": "location", "$ref": "Location", "description": "Location to continue to." }]
+          "parameters": [
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Location to continue to."
+            }
+          ]
         },
         {
           "name": "stepNext",
@@ -720,7 +898,10 @@
           "name": "stepOut",
           "description": "Steps out of the function call. This will trigger either a Debugger.paused or Debugger.resumed event."
         },
-        { "name": "pause", "description": "Stops on the next JavaScript statement." },
+        {
+          "name": "pause",
+          "description": "Stops on the next JavaScript statement."
+        },
         {
           "name": "resume",
           "description": "Resumes JavaScript execution. This will trigger a Debugger.resumed event."
@@ -729,8 +910,16 @@
           "name": "searchInContent",
           "description": "Searches for given string in script content.",
           "parameters": [
-            { "name": "scriptId", "$ref": "ScriptId", "description": "Id of the script to search in." },
-            { "name": "query", "type": "string", "description": "String to search for." },
+            {
+              "name": "scriptId",
+              "$ref": "ScriptId",
+              "description": "Id of the script to search in."
+            },
+            {
+              "name": "query",
+              "type": "string",
+              "description": "String to search for."
+            },
             {
               "name": "caseSensitive",
               "type": "boolean",
@@ -748,7 +937,9 @@
             {
               "name": "result",
               "type": "array",
-              "items": { "$ref": "GenericTypes.SearchMatch" },
+              "items": {
+                "$ref": "GenericTypes.SearchMatch"
+              },
               "description": "List of search matches."
             }
           ]
@@ -757,9 +948,19 @@
           "name": "getScriptSource",
           "description": "Returns source for the script with given id.",
           "parameters": [
-            { "name": "scriptId", "$ref": "ScriptId", "description": "Id of the script to get source for." }
+            {
+              "name": "scriptId",
+              "$ref": "ScriptId",
+              "description": "Id of the script to get source for."
+            }
           ],
-          "returns": [{ "name": "scriptSource", "type": "string", "description": "Script source." }]
+          "returns": [
+            {
+              "name": "scriptSource",
+              "type": "string",
+              "description": "Script source."
+            }
+          ]
         },
         {
           "name": "getFunctionDetails",
@@ -772,7 +973,11 @@
             }
           ],
           "returns": [
-            { "name": "details", "$ref": "FunctionDetails", "description": "Information about the function." }
+            {
+              "name": "details",
+              "$ref": "FunctionDetails",
+              "description": "Information about the function."
+            }
           ]
         },
         {
@@ -794,7 +999,9 @@
             {
               "name": "locations",
               "type": "array",
-              "items": { "$ref": "Location" },
+              "items": {
+                "$ref": "Location"
+              },
               "description": "List of resolved breakpoint locations."
             }
           ]
@@ -803,7 +1010,10 @@
           "name": "setPauseOnDebuggerStatements",
           "description": "Control whether the debugger pauses execution before `debugger` statements.",
           "parameters": [
-            { "name": "enabled", "type": "boolean" },
+            {
+              "name": "enabled",
+              "type": "boolean"
+            },
             {
               "name": "options",
               "$ref": "BreakpointOptions",
@@ -834,7 +1044,10 @@
           "name": "setPauseOnAssertions",
           "description": "Set pause on assertions state. Assertions are console.assert assertions.",
           "parameters": [
-            { "name": "enabled", "type": "boolean" },
+            {
+              "name": "enabled",
+              "type": "boolean"
+            },
             {
               "name": "options",
               "$ref": "BreakpointOptions",
@@ -847,7 +1060,10 @@
           "name": "setPauseOnMicrotasks",
           "description": "Pause when running the next JavaScript microtask.",
           "parameters": [
-            { "name": "enabled", "type": "boolean" },
+            {
+              "name": "enabled",
+              "type": "boolean"
+            },
             {
               "name": "options",
               "$ref": "BreakpointOptions",
@@ -859,14 +1075,27 @@
         {
           "name": "setPauseForInternalScripts",
           "description": "Change whether to pause in the debugger for internal scripts. The default value is false.",
-          "parameters": [{ "name": "shouldPause", "type": "boolean" }]
+          "parameters": [
+            {
+              "name": "shouldPause",
+              "type": "boolean"
+            }
+          ]
         },
         {
           "name": "evaluateOnCallFrame",
           "description": "Evaluates expression on a given call frame.",
           "parameters": [
-            { "name": "callFrameId", "$ref": "CallFrameId", "description": "Call frame identifier to evaluate on." },
-            { "name": "expression", "type": "string", "description": "Expression to evaluate." },
+            {
+              "name": "callFrameId",
+              "$ref": "CallFrameId",
+              "description": "Call frame identifier to evaluate on."
+            },
+            {
+              "name": "expression",
+              "type": "string",
+              "description": "Expression to evaluate."
+            },
             {
               "name": "objectGroup",
               "type": "string",
@@ -932,28 +1161,48 @@
         },
         {
           "name": "setShouldBlackboxURL",
-          "description": "Sets whether the given URL should be in the list of blackboxed scripts, which are ignored when pausing/stepping/debugging.",
+          "description": "Sets whether the given URL should be in the list of blackboxed scripts, which are ignored when pausing.",
           "parameters": [
-            { "name": "url", "type": "string" },
-            { "name": "shouldBlackbox", "type": "boolean" },
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "shouldBlackbox",
+              "type": "boolean"
+            },
             {
               "name": "caseSensitive",
               "type": "boolean",
               "optional": true,
-              "description": "If true, <code>url</code> is case sensitive."
+              "description": "If <code>true</code>, <code>url</code> is case sensitive."
             },
             {
               "name": "isRegex",
               "type": "boolean",
               "optional": true,
-              "description": "If true, treat <code>url</code> as regular expression."
+              "description": "If <code>true</code>, treat <code>url</code> as regular expression."
+            },
+            {
+              "name": "sourceRanges",
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "optional": true,
+              "description": "If provided, limits where in the script the debugger will skip pauses. Expected structure is a repeated <code>[startLine, startColumn, endLine, endColumn]</code>. Ignored if <code>shouldBlackbox</code> is <code>false</code>."
             }
           ]
         },
         {
           "name": "setBlackboxBreakpointEvaluations",
           "description": "Sets whether evaluation of breakpoint conditions, ignore counts, and actions happen at the location of the breakpoint or are deferred due to blackboxing.",
-          "parameters": [{ "name": "blackboxBreakpointEvaluations", "type": "boolean" }]
+          "parameters": [
+            {
+              "name": "blackboxBreakpointEvaluations",
+              "type": "boolean"
+            }
+          ]
         }
       ],
       "events": [
@@ -965,8 +1214,16 @@
           "name": "scriptParsed",
           "description": "Fired when virtual machine parses script. This event is also fired for all known and uncollected scripts upon enabling debugger.",
           "parameters": [
-            { "name": "scriptId", "$ref": "ScriptId", "description": "Identifier of the script parsed." },
-            { "name": "url", "type": "string", "description": "URL of the script parsed (if any)." },
+            {
+              "name": "scriptId",
+              "$ref": "ScriptId",
+              "description": "Identifier of the script parsed."
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "URL of the script parsed (if any)."
+            },
             {
               "name": "startLine",
               "type": "integer",
@@ -977,8 +1234,16 @@
               "type": "integer",
               "description": "Column offset of the script within the resource with given URL."
             },
-            { "name": "endLine", "type": "integer", "description": "Last line of the script." },
-            { "name": "endColumn", "type": "integer", "description": "Length of the last line of the script." },
+            {
+              "name": "endLine",
+              "type": "integer",
+              "description": "Last line of the script."
+            },
+            {
+              "name": "endColumn",
+              "type": "integer",
+              "description": "Length of the last line of the script."
+            },
             {
               "name": "isContentScript",
               "type": "boolean",
@@ -1009,23 +1274,47 @@
           "name": "scriptFailedToParse",
           "description": "Fired when virtual machine fails to parse the script.",
           "parameters": [
-            { "name": "url", "type": "string", "description": "URL of the script that failed to parse." },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "URL of the script that failed to parse."
+            },
             {
               "name": "scriptSource",
               "type": "string",
               "description": "Source text of the script that failed to parse."
             },
-            { "name": "startLine", "type": "integer", "description": "Line offset of the script within the resource." },
-            { "name": "errorLine", "type": "integer", "description": "Line with error." },
-            { "name": "errorMessage", "type": "string", "description": "Parse error message." }
+            {
+              "name": "startLine",
+              "type": "integer",
+              "description": "Line offset of the script within the resource."
+            },
+            {
+              "name": "errorLine",
+              "type": "integer",
+              "description": "Line with error."
+            },
+            {
+              "name": "errorMessage",
+              "type": "string",
+              "description": "Parse error message."
+            }
           ]
         },
         {
           "name": "breakpointResolved",
           "description": "Fired when breakpoint is resolved to an actual script and location.",
           "parameters": [
-            { "name": "breakpointId", "$ref": "BreakpointId", "description": "Breakpoint unique identifier." },
-            { "name": "location", "$ref": "Location", "description": "Actual breakpoint location." }
+            {
+              "name": "breakpointId",
+              "$ref": "BreakpointId",
+              "description": "Breakpoint unique identifier."
+            },
+            {
+              "name": "location",
+              "$ref": "Location",
+              "description": "Actual breakpoint location."
+            }
           ]
         },
         {
@@ -1035,7 +1324,9 @@
             {
               "name": "callFrames",
               "type": "array",
-              "items": { "$ref": "CallFrame" },
+              "items": {
+                "$ref": "CallFrame"
+              },
               "description": "Call stack the virtual machine stopped on."
             },
             {
@@ -1075,11 +1366,20 @@
             }
           ]
         },
-        { "name": "resumed", "description": "Fired when the virtual machine resumed execution." },
+        {
+          "name": "resumed",
+          "description": "Fired when the virtual machine resumed execution."
+        },
         {
           "name": "didSampleProbe",
           "description": "Fires when a new probe sample is collected.",
-          "parameters": [{ "name": "sample", "$ref": "ProbeSample", "description": "A collected probe sample." }]
+          "parameters": [
+            {
+              "name": "sample",
+              "$ref": "ProbeSample",
+              "description": "A collected probe sample."
+            }
+          ]
         },
         {
           "name": "playBreakpointActionSound",
@@ -1090,21 +1390,6 @@
               "$ref": "BreakpointActionIdentifier",
               "description": "Breakpoint action identifier."
             }
-          ]
-        }
-      ]
-    },
-    {
-      "domain": "GenericTypes",
-      "description": "Exposes generic types to be used by any domain.",
-      "types": [
-        {
-          "id": "SearchMatch",
-          "type": "object",
-          "description": "Search match in a resource.",
-          "properties": [
-            { "name": "lineNumber", "type": "number", "description": "Line number in resource content." },
-            { "name": "lineContent", "type": "string", "description": "Line with match content." }
           ]
         }
       ]
@@ -1126,20 +1411,48 @@
               "enum": ["full", "partial"],
               "description": "The type of garbage collection."
             },
-            { "name": "startTime", "type": "number" },
-            { "name": "endTime", "type": "number" }
+            {
+              "name": "startTime",
+              "type": "number"
+            },
+            {
+              "name": "endTime",
+              "type": "number"
+            }
           ]
         },
-        { "id": "HeapSnapshotData", "description": "JavaScriptCore HeapSnapshot JSON data.", "type": "string" }
+        {
+          "id": "HeapSnapshotData",
+          "description": "JavaScriptCore HeapSnapshot JSON data.",
+          "type": "string"
+        }
       ],
       "commands": [
-        { "name": "enable", "description": "Enables Heap domain events." },
-        { "name": "disable", "description": "Disables Heap domain events." },
-        { "name": "gc", "description": "Trigger a full garbage collection." },
+        {
+          "name": "enable",
+          "description": "Enables Heap domain events."
+        },
+        {
+          "name": "disable",
+          "description": "Disables Heap domain events."
+        },
+        {
+          "name": "gc",
+          "description": "Trigger a full garbage collection."
+        },
         {
           "name": "snapshot",
           "description": "Take a heap snapshot.",
-          "returns": [{ "name": "timestamp", "type": "number" }, { "name": "snapshotData", "$ref": "HeapSnapshotData" }]
+          "returns": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "snapshotData",
+              "$ref": "HeapSnapshotData"
+            }
+          ]
         },
         {
           "name": "startTracking",
@@ -1160,14 +1473,24 @@
             }
           ],
           "returns": [
-            { "name": "string", "type": "string", "optional": true, "description": "String value." },
+            {
+              "name": "string",
+              "type": "string",
+              "optional": true,
+              "description": "String value."
+            },
             {
               "name": "functionDetails",
               "$ref": "Debugger.FunctionDetails",
               "optional": true,
               "description": "Function details."
             },
-            { "name": "preview", "$ref": "Runtime.ObjectPreview", "optional": true, "description": "Object preview." }
+            {
+              "name": "preview",
+              "$ref": "Runtime.ObjectPreview",
+              "optional": true,
+              "description": "Object preview."
+            }
           ]
         },
         {
@@ -1186,29 +1509,54 @@
               "description": "Symbolic group name that can be used to release multiple objects."
             }
           ],
-          "returns": [{ "name": "result", "$ref": "Runtime.RemoteObject", "description": "Resulting object." }]
+          "returns": [
+            {
+              "name": "result",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Resulting object."
+            }
+          ]
         }
       ],
       "events": [
         {
           "name": "garbageCollected",
           "description": "Information about the garbage collection.",
-          "parameters": [{ "name": "collection", "$ref": "GarbageCollection" }]
+          "parameters": [
+            {
+              "name": "collection",
+              "$ref": "GarbageCollection"
+            }
+          ]
         },
         {
           "name": "trackingStart",
           "description": "Tracking started.",
           "parameters": [
-            { "name": "timestamp", "type": "number" },
-            { "name": "snapshotData", "$ref": "HeapSnapshotData", "description": "Snapshot at the start of tracking." }
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "snapshotData",
+              "$ref": "HeapSnapshotData",
+              "description": "Snapshot at the start of tracking."
+            }
           ]
         },
         {
           "name": "trackingComplete",
           "description": "Tracking stopped.",
           "parameters": [
-            { "name": "timestamp", "type": "number" },
-            { "name": "snapshotData", "$ref": "HeapSnapshotData", "description": "Snapshot at the end of tracking." }
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "snapshotData",
+              "$ref": "HeapSnapshotData",
+              "description": "Snapshot at the end of tracking."
+            }
           ]
         }
       ]
@@ -1218,809 +1566,110 @@
       "debuggableTypes": ["itml", "javascript", "page", "web-page"],
       "targetTypes": ["itml", "javascript", "page"],
       "commands": [
-        { "name": "enable", "description": "Enables inspector domain notifications." },
-        { "name": "disable", "description": "Disables inspector domain notifications." },
+        {
+          "name": "enable",
+          "description": "Enables inspector domain notifications."
+        },
+        {
+          "name": "disable",
+          "description": "Disables inspector domain notifications."
+        },
         {
           "name": "initialized",
           "description": "Sent by the frontend after all initialization messages have been sent."
         }
       ],
       "events": [
-        { "name": "evaluateForTestInFrontend", "parameters": [{ "name": "script", "type": "string" }] },
+        {
+          "name": "evaluateForTestInFrontend",
+          "parameters": [
+            {
+              "name": "script",
+              "type": "string"
+            }
+          ]
+        },
         {
           "name": "inspect",
-          "parameters": [{ "name": "object", "$ref": "Runtime.RemoteObject" }, { "name": "hints", "type": "object" }]
+          "parameters": [
+            {
+              "name": "object",
+              "$ref": "Runtime.RemoteObject"
+            },
+            {
+              "name": "hints",
+              "type": "object"
+            }
+          ]
         }
       ]
     },
     {
-      "domain": "Network",
-      "description": "Network domain allows tracking network activities of the page. It exposes information about http, file, data and other requests and responses, their headers, bodies, timing, etc.",
-      "debuggableTypes": ["itml", "page", "service-worker", "web-page"],
-      "targetTypes": ["itml", "page", "service-worker"],
-      "types": [
-        { "id": "LoaderId", "type": "string", "description": "Unique loader identifier." },
-        { "id": "FrameId", "type": "string", "description": "Unique frame identifier." },
-        { "id": "RequestId", "type": "string", "description": "Unique request identifier." },
-        { "id": "Timestamp", "type": "number", "description": "Elapsed seconds since frontend connected." },
-        { "id": "Walltime", "type": "number", "description": "Number of seconds since epoch." },
-        {
-          "id": "ReferrerPolicy",
-          "type": "string",
-          "description": "Controls how much referrer information is sent with the request",
-          "enum": [
-            "empty-string",
-            "no-referrer",
-            "no-referrer-when-downgrade",
-            "same-origin",
-            "origin",
-            "strict-origin",
-            "origin-when-cross-origin",
-            "strict-origin-when-cross-origin",
-            "unsafe-url"
-          ]
-        },
-        {
-          "id": "Headers",
-          "type": "object",
-          "description": "Request / response headers as keys / values of JSON object."
-        },
-        {
-          "id": "ResourceTiming",
-          "type": "object",
-          "description": "Timing information for the request.",
-          "properties": [
-            { "name": "startTime", "$ref": "Timestamp", "description": "Request is initiated" },
-            { "name": "redirectStart", "$ref": "Timestamp", "description": "Started redirect resolution." },
-            { "name": "redirectEnd", "$ref": "Timestamp", "description": "Finished redirect resolution." },
-            { "name": "fetchStart", "$ref": "Timestamp", "description": "Resource fetching started." },
-            {
-              "name": "domainLookupStart",
-              "type": "number",
-              "description": "Started DNS address resolve in milliseconds relative to fetchStart."
-            },
-            {
-              "name": "domainLookupEnd",
-              "type": "number",
-              "description": "Finished DNS address resolve in milliseconds relative to fetchStart."
-            },
-            {
-              "name": "connectStart",
-              "type": "number",
-              "description": "Started connecting to the remote host in milliseconds relative to fetchStart."
-            },
-            {
-              "name": "connectEnd",
-              "type": "number",
-              "description": "Connected to the remote host in milliseconds relative to fetchStart."
-            },
-            {
-              "name": "secureConnectionStart",
-              "type": "number",
-              "description": "Started SSL handshake in milliseconds relative to fetchStart."
-            },
-            {
-              "name": "requestStart",
-              "type": "number",
-              "description": "Started sending request in milliseconds relative to fetchStart."
-            },
-            {
-              "name": "responseStart",
-              "type": "number",
-              "description": "Started receiving response headers in milliseconds relative to fetchStart."
-            },
-            {
-              "name": "responseEnd",
-              "type": "number",
-              "description": "Finished receiving response headers in milliseconds relative to fetchStart."
-            }
-          ]
-        },
-        {
-          "id": "Request",
-          "type": "object",
-          "description": "HTTP request data.",
-          "properties": [
-            { "name": "url", "type": "string", "description": "Request URL." },
-            { "name": "method", "type": "string", "description": "HTTP request method." },
-            { "name": "headers", "$ref": "Headers", "description": "HTTP request headers." },
-            { "name": "postData", "type": "string", "optional": true, "description": "HTTP POST request data." },
-            {
-              "name": "referrerPolicy",
-              "$ref": "ReferrerPolicy",
-              "optional": true,
-              "description": "The level of included referrer information."
-            },
-            {
-              "name": "integrity",
-              "type": "string",
-              "optional": true,
-              "description": "The base64 cryptographic hash of the resource."
-            }
-          ]
-        },
-        {
-          "id": "Response",
-          "type": "object",
-          "description": "HTTP response data.",
-          "properties": [
-            {
-              "name": "url",
-              "type": "string",
-              "description": "Response URL. This URL can be different from CachedResource.url in case of redirect."
-            },
-            { "name": "status", "type": "integer", "description": "HTTP response status code." },
-            { "name": "statusText", "type": "string", "description": "HTTP response status text." },
-            { "name": "headers", "$ref": "Headers", "description": "HTTP response headers." },
-            { "name": "mimeType", "type": "string", "description": "Resource mimeType as determined by the browser." },
-            {
-              "name": "source",
-              "type": "string",
-              "enum": ["unknown", "network", "memory-cache", "disk-cache", "service-worker", "inspector-override"],
-              "description": "Specifies where the response came from."
-            },
-            {
-              "name": "requestHeaders",
-              "$ref": "Headers",
-              "optional": true,
-              "description": "Refined HTTP request headers that were actually transmitted over the network."
-            },
-            {
-              "name": "timing",
-              "$ref": "ResourceTiming",
-              "optional": true,
-              "description": "Timing information for the given request."
-            },
-            {
-              "name": "security",
-              "$ref": "Security.Security",
-              "optional": true,
-              "description": "The security information for the given request."
-            }
-          ]
-        },
-        {
-          "id": "Metrics",
-          "type": "object",
-          "description": "Network load metrics.",
-          "properties": [
-            {
-              "name": "protocol",
-              "type": "string",
-              "optional": true,
-              "description": "Network protocol. ALPN Protocol ID Identification Sequence, as per RFC 7301 (for example, http/2, http/1.1, spdy/3.1)"
-            },
-            {
-              "name": "priority",
-              "type": "string",
-              "enum": ["low", "medium", "high"],
-              "optional": true,
-              "description": "Network priority."
-            },
-            {
-              "name": "connectionIdentifier",
-              "type": "string",
-              "optional": true,
-              "description": "Connection identifier."
-            },
-            { "name": "remoteAddress", "type": "string", "optional": true, "description": "Remote IP address." },
-            {
-              "name": "requestHeaders",
-              "$ref": "Headers",
-              "optional": true,
-              "description": "Refined HTTP request headers that were actually transmitted over the network."
-            },
-            {
-              "name": "requestHeaderBytesSent",
-              "type": "number",
-              "optional": true,
-              "description": "Total HTTP request header bytes sent over the network."
-            },
-            {
-              "name": "requestBodyBytesSent",
-              "type": "number",
-              "optional": true,
-              "description": "Total HTTP request body bytes sent over the network."
-            },
-            {
-              "name": "responseHeaderBytesReceived",
-              "type": "number",
-              "optional": true,
-              "description": "Total HTTP response header bytes received over the network."
-            },
-            {
-              "name": "responseBodyBytesReceived",
-              "type": "number",
-              "optional": true,
-              "description": "Total HTTP response body bytes received over the network."
-            },
-            {
-              "name": "responseBodyDecodedSize",
-              "type": "number",
-              "optional": true,
-              "description": "Total decoded response body size in bytes."
-            },
-            {
-              "name": "securityConnection",
-              "$ref": "Security.Connection",
-              "optional": true,
-              "description": "Connection information for the completed request."
-            },
-            {
-              "name": "isProxyConnection",
-              "type": "boolean",
-              "optional": true,
-              "description": "Whether or not the connection was proxied through a server. If <code>true</code>, the <code>remoteAddress</code> will be for the proxy server, not the server that provided the resource to the proxy server."
-            }
-          ]
-        },
-        {
-          "id": "WebSocketRequest",
-          "type": "object",
-          "description": "WebSocket request data.",
-          "properties": [{ "name": "headers", "$ref": "Headers", "description": "HTTP response headers." }]
-        },
-        {
-          "id": "WebSocketResponse",
-          "type": "object",
-          "description": "WebSocket response data.",
-          "properties": [
-            { "name": "status", "type": "integer", "description": "HTTP response status code." },
-            { "name": "statusText", "type": "string", "description": "HTTP response status text." },
-            { "name": "headers", "$ref": "Headers", "description": "HTTP response headers." }
-          ]
-        },
-        {
-          "id": "WebSocketFrame",
-          "type": "object",
-          "description": "WebSocket frame data.",
-          "properties": [
-            { "name": "opcode", "type": "number", "description": "WebSocket frame opcode." },
-            { "name": "mask", "type": "boolean", "description": "WebSocket frame mask." },
-            {
-              "name": "payloadData",
-              "type": "string",
-              "description": "WebSocket frame payload data, binary frames (opcode = 2) are base64-encoded."
-            },
-            { "name": "payloadLength", "type": "number", "description": "WebSocket frame payload length in bytes." }
-          ]
-        },
-        {
-          "id": "CachedResource",
-          "type": "object",
-          "description": "Information about the cached resource.",
-          "properties": [
-            {
-              "name": "url",
-              "type": "string",
-              "description": "Resource URL. This is the url of the original network request."
-            },
-            { "name": "type", "$ref": "Page.ResourceType", "description": "Type of this resource." },
-            { "name": "response", "$ref": "Response", "optional": true, "description": "Cached response data." },
-            { "name": "bodySize", "type": "number", "description": "Cached response body size." },
-            {
-              "name": "sourceMapURL",
-              "type": "string",
-              "optional": true,
-              "description": "URL of source map associated with this resource (if any)."
-            }
-          ]
-        },
-        {
-          "id": "Initiator",
-          "type": "object",
-          "description": "Information about the request initiator.",
-          "properties": [
-            {
-              "name": "type",
-              "type": "string",
-              "enum": ["parser", "script", "other"],
-              "description": "Type of this initiator."
-            },
-            {
-              "name": "stackTrace",
-              "$ref": "Console.StackTrace",
-              "optional": true,
-              "description": "Initiator JavaScript stack trace, set for Script only."
-            },
-            {
-              "name": "url",
-              "type": "string",
-              "optional": true,
-              "description": "Initiator URL, set for Parser type only."
-            },
-            {
-              "name": "lineNumber",
-              "type": "number",
-              "optional": true,
-              "description": "Initiator line number, set for Parser type only."
-            },
-            {
-              "name": "nodeId",
-              "$ref": "DOM.NodeId",
-              "optional": true,
-              "description": "Set if the load was triggered by a DOM node, in addition to the other initiator information."
-            }
-          ]
-        },
-        {
-          "id": "NetworkStage",
-          "type": "string",
-          "description": "Different stages of a network request.",
-          "enum": ["request", "response"]
-        },
-        {
-          "id": "ResourceErrorType",
-          "type": "string",
-          "description": "Different stages of a network request.",
-          "enum": ["General", "AccessControl", "Cancellation", "Timeout"]
-        }
-      ],
+      "domain": "LifecycleReporter",
+      "description": "LifecycleReporter domain allows reporting of lifecycle events.",
+      "debuggableTypes": ["itml", "javascript"],
+      "targetTypes": ["itml", "javascript"],
+      "types": [],
       "commands": [
         {
           "name": "enable",
-          "description": "Enables network tracking, network events will now be delivered to the client."
+          "description": "Enables LifecycleReporter domain events."
         },
         {
           "name": "disable",
-          "description": "Disables network tracking, prevents network events from being sent to the client."
+          "description": "Disables LifecycleReporter domain events."
         },
         {
-          "name": "setExtraHTTPHeaders",
-          "description": "Specifies whether to always send extra HTTP headers with the requests from this page.",
-          "targetTypes": ["page"],
-          "parameters": [{ "name": "headers", "$ref": "Headers", "description": "Map with extra HTTP headers." }]
+          "name": "preventExit",
+          "description": "Prevents the process from exiting."
         },
         {
-          "name": "getResponseBody",
-          "description": "Returns content served for the given request.",
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier of the network request to get content for."
-            }
-          ],
-          "returns": [
-            { "name": "body", "type": "string", "description": "Response body." },
-            { "name": "base64Encoded", "type": "boolean", "description": "True, if content was sent as base64." }
-          ]
-        },
-        {
-          "name": "setResourceCachingDisabled",
-          "description": "Toggles whether the resource cache may be used when loading resources in the inspected page. If <code>true</code>, the resource cache will not be used when loading resources.",
-          "parameters": [
-            { "name": "disabled", "type": "boolean", "description": "Whether to prevent usage of the resource cache." }
-          ]
-        },
-        {
-          "name": "loadResource",
-          "description": "Loads a resource in the context of a frame on the inspected page without cross origin checks.",
-          "targetTypes": ["page"],
-          "async": true,
-          "parameters": [
-            { "name": "frameId", "$ref": "FrameId", "description": "Frame to load the resource from." },
-            { "name": "url", "type": "string", "description": "URL of the resource to load." }
-          ],
-          "returns": [
-            { "name": "content", "type": "string", "description": "Resource content." },
-            { "name": "mimeType", "type": "string", "description": "Resource mimeType." },
-            { "name": "status", "type": "integer", "description": "HTTP response status code." }
-          ]
-        },
-        {
-          "name": "getSerializedCertificate",
-          "description": "Fetches a serialized secure certificate for the given requestId to be displayed via InspectorFrontendHost.showCertificate.",
-          "targetTypes": ["page"],
-          "parameters": [{ "name": "requestId", "$ref": "RequestId" }],
-          "returns": [
-            {
-              "name": "serializedCertificate",
-              "type": "string",
-              "description": "Represents a base64 encoded WebCore::CertificateInfo object."
-            }
-          ]
-        },
-        {
-          "name": "resolveWebSocket",
-          "description": "Resolves JavaScript WebSocket object for given request id.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier of the WebSocket resource to resolve."
-            },
-            {
-              "name": "objectGroup",
-              "type": "string",
-              "optional": true,
-              "description": "Symbolic group name that can be used to release multiple objects."
-            }
-          ],
-          "returns": [
-            {
-              "name": "object",
-              "$ref": "Runtime.RemoteObject",
-              "description": "JavaScript object wrapper for given node."
-            }
-          ]
-        },
-        {
-          "name": "setInterceptionEnabled",
-          "description": "Enable interception of network requests.",
-          "targetTypes": ["page"],
-          "parameters": [{ "name": "enabled", "type": "boolean" }]
-        },
-        {
-          "name": "addInterception",
-          "description": "Add an interception.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "url",
-              "type": "string",
-              "description": "URL pattern to intercept, intercept everything if not specified or empty"
-            },
-            { "name": "stage", "$ref": "NetworkStage", "description": "Stage to intercept." },
-            {
-              "name": "caseSensitive",
-              "type": "boolean",
-              "optional": true,
-              "description": "If false, ignores letter casing of `url` parameter."
-            },
-            {
-              "name": "isRegex",
-              "type": "boolean",
-              "optional": true,
-              "description": "If true, treats `url` parameter as a regular expression."
-            }
-          ]
-        },
-        {
-          "name": "removeInterception",
-          "description": "Remove an interception.",
-          "targetTypes": ["page"],
-          "parameters": [
-            { "name": "url", "type": "string" },
-            { "name": "stage", "$ref": "NetworkStage", "description": "Stage to intercept." },
-            {
-              "name": "caseSensitive",
-              "type": "boolean",
-              "optional": true,
-              "description": "If false, ignores letter casing of `url` parameter."
-            },
-            {
-              "name": "isRegex",
-              "type": "boolean",
-              "optional": true,
-              "description": "If true, treats `url` parameter as a regular expression."
-            }
-          ]
-        },
-        {
-          "name": "interceptContinue",
-          "description": "Continue request or response without modifications.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier for the intercepted Network request or response to continue."
-            },
-            { "name": "stage", "$ref": "NetworkStage", "description": "Stage to continue." }
-          ]
-        },
-        {
-          "name": "interceptWithRequest",
-          "description": "Replace intercepted request with the provided one.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier for the intercepted Network request or response to continue."
-            },
-            { "name": "url", "type": "string", "optional": true, "description": "HTTP request url." },
-            { "name": "method", "type": "string", "optional": true, "description": "HTTP request method." },
-            {
-              "name": "headers",
-              "$ref": "Headers",
-              "optional": true,
-              "description": "HTTP response headers. Pass through original values if unmodified."
-            },
-            {
-              "name": "postData",
-              "type": "string",
-              "optional": true,
-              "description": "HTTP POST request data, base64-encoded."
-            }
-          ]
-        },
-        {
-          "name": "interceptWithResponse",
-          "description": "Provide response content for an intercepted response.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier for the intercepted Network response to modify."
-            },
-            { "name": "content", "type": "string" },
-            { "name": "base64Encoded", "type": "boolean", "description": "True, if content was sent as base64." },
-            { "name": "mimeType", "type": "string", "optional": true, "description": "MIME Type for the data." },
-            {
-              "name": "status",
-              "type": "integer",
-              "optional": true,
-              "description": "HTTP response status code. Pass through original values if unmodified."
-            },
-            {
-              "name": "statusText",
-              "type": "string",
-              "optional": true,
-              "description": "HTTP response status text. Pass through original values if unmodified."
-            },
-            {
-              "name": "headers",
-              "$ref": "Headers",
-              "optional": true,
-              "description": "HTTP response headers. Pass through original values if unmodified."
-            }
-          ]
-        },
-        {
-          "name": "interceptRequestWithResponse",
-          "description": "Provide response for an intercepted request. Request completely bypasses the network in this case and is immediately fulfilled with the provided data.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier for the intercepted Network response to modify."
-            },
-            { "name": "content", "type": "string" },
-            { "name": "base64Encoded", "type": "boolean", "description": "True, if content was sent as base64." },
-            { "name": "mimeType", "type": "string", "description": "MIME Type for the data." },
-            { "name": "status", "type": "integer", "description": "HTTP response status code." },
-            { "name": "statusText", "type": "string", "description": "HTTP response status text." },
-            { "name": "headers", "$ref": "Headers", "description": "HTTP response headers." }
-          ]
-        },
-        {
-          "name": "interceptRequestWithError",
-          "description": "Fail request with given error type.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier for the intercepted Network request to fail."
-            },
-            {
-              "name": "errorType",
-              "$ref": "ResourceErrorType",
-              "description": "Deliver error reason for the request failure."
-            }
-          ]
-        },
-        {
-          "name": "setEmulatedConditions",
-          "description": "Emulate various network conditions (e.g. bytes per second, latency, etc.).",
-          "targetTypes": ["page"],
-          "condition": "defined(ENABLE_INSPECTOR_NETWORK_THROTTLING) && ENABLE_INSPECTOR_NETWORK_THROTTLING",
-          "parameters": [
-            {
-              "name": "bytesPerSecondLimit",
-              "type": "integer",
-              "optional": true,
-              "description": "Limits the bytes per second of requests if positive. Removes any limits if zero or not provided."
-            }
-          ]
+          "name": "stopPreventingExit",
+          "description": "Does not prevent the process from exiting."
         }
       ],
       "events": [
         {
-          "name": "requestWillBeSent",
-          "description": "Fired when page is about to send HTTP request.",
+          "name": "reload",
+          "parameters": []
+        },
+        {
+          "name": "error",
           "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "frameId", "$ref": "FrameId", "description": "Frame identifier." },
-            { "name": "loaderId", "$ref": "LoaderId", "description": "Loader identifier." },
             {
-              "name": "documentURL",
+              "name": "message",
               "type": "string",
-              "description": "URL of the document this request is loaded for."
+              "description": "string associated with the error"
             },
-            { "name": "request", "$ref": "Request", "description": "Request data." },
-            { "name": "timestamp", "$ref": "Timestamp" },
-            { "name": "walltime", "$ref": "Walltime" },
-            { "name": "initiator", "$ref": "Initiator", "description": "Request initiator." },
             {
-              "name": "redirectResponse",
-              "optional": true,
-              "$ref": "Response",
-              "description": "Redirect response data."
-            },
-            { "name": "type", "$ref": "Page.ResourceType", "optional": true, "description": "Resource type." },
-            {
-              "name": "targetId",
+              "name": "name",
               "type": "string",
-              "optional": true,
-              "description": "Identifier for the context of where the load originated. In general this is the target identifier. For Workers this will be the workerId."
-            }
-          ]
-        },
-        {
-          "name": "responseReceived",
-          "description": "Fired when HTTP response is available.",
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "frameId", "$ref": "FrameId", "description": "Frame identifier." },
-            { "name": "loaderId", "$ref": "LoaderId", "description": "Loader identifier." },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
-            { "name": "type", "$ref": "Page.ResourceType", "description": "Resource type." },
-            { "name": "response", "$ref": "Response", "description": "Response data." }
-          ]
-        },
-        {
-          "name": "dataReceived",
-          "description": "Fired when data chunk was received over the network.",
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
-            { "name": "dataLength", "type": "integer", "description": "Data chunk length." },
-            {
-              "name": "encodedDataLength",
-              "type": "integer",
-              "description": "Actual bytes received (might be less than dataLength for compressed encodings)."
-            }
-          ]
-        },
-        {
-          "name": "loadingFinished",
-          "description": "Fired when HTTP request has finished loading.",
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
-            {
-              "name": "sourceMapURL",
-              "type": "string",
-              "optional": true,
-              "description": "URL of source map associated with this resource (if any)."
-            },
-            { "name": "metrics", "$ref": "Metrics", "optional": true, "description": "Network metrics." }
-          ]
-        },
-        {
-          "name": "loadingFailed",
-          "description": "Fired when HTTP request has failed to load.",
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
-            { "name": "errorText", "type": "string", "description": "User friendly error message." },
-            { "name": "canceled", "type": "boolean", "optional": true, "description": "True if loading was canceled." }
-          ]
-        },
-        {
-          "name": "requestServedFromMemoryCache",
-          "description": "Fired when HTTP request has been served from memory cache.",
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "frameId", "$ref": "FrameId", "description": "Frame identifier." },
-            { "name": "loaderId", "$ref": "LoaderId", "description": "Loader identifier." },
-            {
-              "name": "documentURL",
-              "type": "string",
-              "description": "URL of the document this request is loaded for."
-            },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
-            { "name": "initiator", "$ref": "Initiator", "description": "Request initiator." },
-            { "name": "resource", "$ref": "CachedResource", "description": "Cached resource data." }
-          ]
-        },
-        {
-          "name": "requestIntercepted",
-          "description": "Fired when HTTP request has been intercepted. The frontend must respond with <code>Network.interceptContinue</code>, <code>Network.interceptWithRequest</code>` or <code>Network.interceptWithResponse</code>` to resolve this request.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier for this intercepted network. Corresponds with an earlier <code>Network.requestWillBeSent</code>."
+              "description": "If an Error instance, the error.name property"
             },
             {
-              "name": "request",
-              "$ref": "Request",
-              "description": "Original request content that would proceed if this is continued."
-            }
-          ]
-        },
-        {
-          "name": "responseIntercepted",
-          "description": "Fired when HTTP response has been intercepted. The frontend must response with <code>Network.interceptContinue</code> or <code>Network.interceptWithResponse</code>` to continue this response.",
-          "targetTypes": ["page"],
-          "parameters": [
-            {
-              "name": "requestId",
-              "$ref": "RequestId",
-              "description": "Identifier for this intercepted network. Corresponds with an earlier <code>Network.requestWillBeSent</code>."
+              "name": "urls",
+              "type": "array",
+              "description": "Array of URLs associated with the error",
+              "items": {
+                "type": "string"
+              }
             },
             {
-              "name": "response",
-              "$ref": "Response",
-              "description": "Original response content that would proceed if this is continued."
+              "name": "lineColumns",
+              "type": "array",
+              "description": "Line, column pairs associated with the error. Already sourcemapped.",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "name": "sourceLines",
+              "type": "array",
+              "description": "Source code preview associated with the error for up to 5 lines before the error, relative to the first non-internal stack frame.",
+              "items": {
+                "type": "string"
+              }
             }
-          ]
-        },
-        {
-          "name": "webSocketWillSendHandshakeRequest",
-          "description": "Fired when WebSocket is about to initiate handshake.",
-          "targetTypes": ["page"],
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp" },
-            { "name": "walltime", "$ref": "Walltime" },
-            { "name": "request", "$ref": "WebSocketRequest", "description": "WebSocket request data." }
-          ]
-        },
-        {
-          "name": "webSocketHandshakeResponseReceived",
-          "description": "Fired when WebSocket handshake response becomes available.",
-          "targetTypes": ["page"],
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp" },
-            { "name": "response", "$ref": "WebSocketResponse", "description": "WebSocket response data." }
-          ]
-        },
-        {
-          "name": "webSocketCreated",
-          "description": "Fired upon WebSocket creation.",
-          "targetTypes": ["page"],
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "url", "type": "string", "description": "WebSocket request URL." }
-          ]
-        },
-        {
-          "name": "webSocketClosed",
-          "description": "Fired when WebSocket is closed.",
-          "targetTypes": ["page"],
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." }
-          ]
-        },
-        {
-          "name": "webSocketFrameReceived",
-          "description": "Fired when WebSocket frame is received.",
-          "targetTypes": ["page"],
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
-            { "name": "response", "$ref": "WebSocketFrame", "description": "WebSocket response data." }
-          ]
-        },
-        {
-          "name": "webSocketFrameError",
-          "description": "Fired when WebSocket frame error occurs.",
-          "targetTypes": ["page"],
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
-            { "name": "errorMessage", "type": "string", "description": "WebSocket frame error message." }
-          ]
-        },
-        {
-          "name": "webSocketFrameSent",
-          "description": "Fired when WebSocket frame is sent.",
-          "targetTypes": ["page"],
-          "parameters": [
-            { "name": "requestId", "$ref": "RequestId", "description": "Request identifier." },
-            { "name": "timestamp", "$ref": "Timestamp", "description": "Timestamp." },
-            { "name": "response", "$ref": "WebSocketFrame", "description": "WebSocket response data." }
           ]
         }
       ]
@@ -2031,7 +1680,11 @@
       "debuggableTypes": ["itml", "javascript", "page", "service-worker", "web-page"],
       "targetTypes": ["itml", "javascript", "page", "service-worker", "worker"],
       "types": [
-        { "id": "RemoteObjectId", "type": "string", "description": "Unique object identifier." },
+        {
+          "id": "RemoteObjectId",
+          "type": "string",
+          "description": "Unique object identifier."
+        },
         {
           "id": "RemoteObject",
           "type": "object",
@@ -2162,14 +1815,18 @@
             {
               "name": "properties",
               "type": "array",
-              "items": { "$ref": "PropertyPreview" },
+              "items": {
+                "$ref": "PropertyPreview"
+              },
               "optional": true,
               "description": "List of the properties."
             },
             {
               "name": "entries",
               "type": "array",
-              "items": { "$ref": "EntryPreview" },
+              "items": {
+                "$ref": "EntryPreview"
+              },
               "optional": true,
               "description": "List of the entries. Specified for <code>map</code> and <code>set</code> subtype values only."
             },
@@ -2185,7 +1842,11 @@
           "id": "PropertyPreview",
           "type": "object",
           "properties": [
-            { "name": "name", "type": "string", "description": "Property name." },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Property name."
+            },
             {
               "name": "type",
               "type": "string",
@@ -2260,7 +1921,11 @@
               "optional": true,
               "description": "Entry key. Specified for map-like collection entries."
             },
-            { "name": "value", "$ref": "ObjectPreview", "description": "Entry value." }
+            {
+              "name": "value",
+              "$ref": "ObjectPreview",
+              "description": "Entry value."
+            }
           ]
         },
         {
@@ -2273,7 +1938,11 @@
               "optional": true,
               "description": "Entry key of a map-like collection, otherwise not provided."
             },
-            { "name": "value", "$ref": "Runtime.RemoteObject", "description": "Entry value." }
+            {
+              "name": "value",
+              "$ref": "Runtime.RemoteObject",
+              "description": "Entry value."
+            }
           ]
         },
         {
@@ -2281,7 +1950,11 @@
           "type": "object",
           "description": "Object property descriptor.",
           "properties": [
-            { "name": "name", "type": "string", "description": "Property name or symbol description." },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Property name or symbol description."
+            },
             {
               "name": "value",
               "$ref": "RemoteObject",
@@ -2355,7 +2028,11 @@
           "type": "object",
           "description": "Object internal property descriptor. This property isn't normally visible in JavaScript code.",
           "properties": [
-            { "name": "name", "type": "string", "description": "Conventional property name." },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Conventional property name."
+            },
             {
               "name": "value",
               "$ref": "RemoteObject",
@@ -2369,11 +2046,25 @@
           "type": "object",
           "description": "Represents function call argument. Either remote object id <code>objectId</code> or primitive <code>value</code> or neither of (for undefined) them should be specified.",
           "properties": [
-            { "name": "value", "type": "any", "optional": true, "description": "Primitive value." },
-            { "name": "objectId", "$ref": "RemoteObjectId", "optional": true, "description": "Remote object handle." }
+            {
+              "name": "value",
+              "type": "any",
+              "optional": true,
+              "description": "Primitive value."
+            },
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "optional": true,
+              "description": "Remote object handle."
+            }
           ]
         },
-        { "id": "ExecutionContextId", "type": "integer", "description": "Id of an execution context." },
+        {
+          "id": "ExecutionContextId",
+          "type": "integer",
+          "description": "Id of an execution context."
+        },
         {
           "id": "ExecutionContextType",
           "type": "string",
@@ -2390,9 +2081,20 @@
               "$ref": "ExecutionContextId",
               "description": "Unique id of the execution context. It can be used to specify in which execution context script evaluation should be performed."
             },
-            { "name": "type", "$ref": "ExecutionContextType" },
-            { "name": "name", "type": "string", "description": "Human readable name describing given context." },
-            { "name": "frameId", "$ref": "Network.FrameId", "description": "Id of the owning frame." }
+            {
+              "name": "type",
+              "$ref": "ExecutionContextType"
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Human readable name describing given context."
+            },
+            {
+              "name": "frameId",
+              "$ref": "Network.FrameId",
+              "description": "Id of the owning frame."
+            }
           ]
         },
         {
@@ -2406,8 +2108,16 @@
           "type": "object",
           "description": "Range of an error in source code.",
           "properties": [
-            { "name": "startOffset", "type": "integer", "description": "Start offset of range (inclusive)." },
-            { "name": "endOffset", "type": "integer", "description": "End offset of range (exclusive)." }
+            {
+              "name": "startOffset",
+              "type": "integer",
+              "description": "Start offset of range (inclusive)."
+            },
+            {
+              "name": "endOffset",
+              "type": "integer",
+              "description": "End offset of range (exclusive)."
+            }
           ]
         },
         {
@@ -2417,14 +2127,18 @@
             {
               "name": "fields",
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "optional": true,
               "description": "Array of strings, where the strings represent object properties."
             },
             {
               "name": "optionalFields",
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "optional": true,
               "description": "Array of strings, where the strings represent optional object properties."
             },
@@ -2529,7 +2243,9 @@
             {
               "name": "structures",
               "type": "array",
-              "items": { "$ref": "StructureDescription" },
+              "items": {
+                "$ref": "StructureDescription"
+              },
               "optional": true,
               "description": "Array of descriptions for all structures seen for this variable."
             },
@@ -2551,8 +2267,16 @@
               "type": "integer",
               "description": "What kind of type information do we want (normal, function return values, 'this' statement)."
             },
-            { "name": "sourceID", "type": "string", "description": "sourceID uniquely identifying a script" },
-            { "name": "divot", "type": "integer", "description": "character offset for assignment range" }
+            {
+              "name": "sourceID",
+              "type": "string",
+              "description": "sourceID uniquely identifying a script"
+            },
+            {
+              "name": "divot",
+              "type": "integer",
+              "description": "character offset for assignment range"
+            }
           ]
         },
         {
@@ -2560,8 +2284,16 @@
           "type": "object",
           "description": "From Wikipedia: a basic block is a portion of the code within a program with only one entry point and only one exit point. This type gives the location of a basic block and if that basic block has executed.",
           "properties": [
-            { "name": "startOffset", "type": "integer", "description": "Start offset of the basic block." },
-            { "name": "endOffset", "type": "integer", "description": "End offset of the basic block." },
+            {
+              "name": "startOffset",
+              "type": "integer",
+              "description": "Start offset of the basic block."
+            },
+            {
+              "name": "endOffset",
+              "type": "integer",
+              "description": "End offset of the basic block."
+            },
             {
               "name": "hasExecuted",
               "type": "boolean",
@@ -2579,10 +2311,25 @@
         {
           "name": "parse",
           "description": "Parses JavaScript source code for errors.",
-          "parameters": [{ "name": "source", "type": "string", "description": "Source code to parse." }],
+          "parameters": [
+            {
+              "name": "source",
+              "type": "string",
+              "description": "Source code to parse."
+            }
+          ],
           "returns": [
-            { "name": "result", "$ref": "SyntaxErrorType", "description": "Parse result." },
-            { "name": "message", "type": "string", "optional": true, "description": "Parse error message." },
+            {
+              "name": "result",
+              "$ref": "SyntaxErrorType",
+              "description": "Parse result."
+            },
+            {
+              "name": "message",
+              "type": "string",
+              "optional": true,
+              "description": "Parse error message."
+            },
             {
               "name": "range",
               "$ref": "ErrorRange",
@@ -2595,7 +2342,11 @@
           "name": "evaluate",
           "description": "Evaluates expression on global object.",
           "parameters": [
-            { "name": "expression", "type": "string", "description": "Expression to evaluate." },
+            {
+              "name": "expression",
+              "type": "string",
+              "description": "Expression to evaluate."
+            },
             {
               "name": "objectGroup",
               "type": "string",
@@ -2646,7 +2397,11 @@
             }
           ],
           "returns": [
-            { "name": "result", "$ref": "RemoteObject", "description": "Evaluation result." },
+            {
+              "name": "result",
+              "$ref": "RemoteObject",
+              "description": "Evaluation result."
+            },
             {
               "name": "wasThrown",
               "type": "boolean",
@@ -2665,7 +2420,11 @@
           "name": "awaitPromise",
           "description": "Calls the async callback when the promise with the given ID gets settled.",
           "parameters": [
-            { "name": "promiseObjectId", "$ref": "RemoteObjectId", "description": "Identifier of the promise." },
+            {
+              "name": "promiseObjectId",
+              "$ref": "RemoteObjectId",
+              "description": "Identifier of the promise."
+            },
             {
               "name": "returnByValue",
               "type": "boolean",
@@ -2686,7 +2445,11 @@
             }
           ],
           "returns": [
-            { "name": "result", "$ref": "RemoteObject", "description": "Evaluation result." },
+            {
+              "name": "result",
+              "$ref": "RemoteObject",
+              "description": "Evaluation result."
+            },
             {
               "name": "wasThrown",
               "type": "boolean",
@@ -2711,11 +2474,18 @@
               "$ref": "RemoteObjectId",
               "description": "Identifier of the object to call function on."
             },
-            { "name": "functionDeclaration", "type": "string", "description": "Declaration of the function to call." },
+            {
+              "name": "functionDeclaration",
+              "type": "string",
+              "description": "Declaration of the function to call."
+            },
             {
               "name": "arguments",
               "type": "array",
-              "items": { "$ref": "CallArgument", "description": "Call argument." },
+              "items": {
+                "$ref": "CallArgument",
+                "description": "Call argument."
+              },
               "optional": true,
               "description": "Call arguments. All call arguments must belong to the same JavaScript world as the target object."
             },
@@ -2751,7 +2521,11 @@
             }
           ],
           "returns": [
-            { "name": "result", "$ref": "RemoteObject", "description": "Call result." },
+            {
+              "name": "result",
+              "$ref": "RemoteObject",
+              "description": "Call result."
+            },
             {
               "name": "wasThrown",
               "type": "boolean",
@@ -2771,7 +2545,12 @@
               "description": "Identifier of the object to return a preview for."
             }
           ],
-          "returns": [{ "name": "preview", "$ref": "ObjectPreview" }]
+          "returns": [
+            {
+              "name": "preview",
+              "$ref": "ObjectPreview"
+            }
+          ]
         },
         {
           "name": "getProperties",
@@ -2811,14 +2590,18 @@
             {
               "name": "properties",
               "type": "array",
-              "items": { "$ref": "PropertyDescriptor" },
+              "items": {
+                "$ref": "PropertyDescriptor"
+              },
               "description": "Object properties."
             },
             {
               "name": "internalProperties",
               "optional": true,
               "type": "array",
-              "items": { "$ref": "InternalPropertyDescriptor" },
+              "items": {
+                "$ref": "InternalPropertyDescriptor"
+              },
               "description": "Internal object properties. Only included if `fetchStart` is 0."
             }
           ]
@@ -2855,14 +2638,18 @@
             {
               "name": "properties",
               "type": "array",
-              "items": { "$ref": "PropertyDescriptor" },
+              "items": {
+                "$ref": "PropertyDescriptor"
+              },
               "description": "Object properties."
             },
             {
               "name": "internalProperties",
               "optional": true,
               "type": "array",
-              "items": { "$ref": "InternalPropertyDescriptor" },
+              "items": {
+                "$ref": "InternalPropertyDescriptor"
+              },
               "description": "Internal object properties. Only included if `fetchStart` is 0."
             }
           ]
@@ -2899,7 +2686,9 @@
             {
               "name": "entries",
               "type": "array",
-              "items": { "$ref": "CollectionEntry" },
+              "items": {
+                "$ref": "CollectionEntry"
+              },
               "description": "Array of collection entries."
             }
           ]
@@ -2908,7 +2697,11 @@
           "name": "saveResult",
           "description": "Assign a saved result index to this value.",
           "parameters": [
-            { "name": "value", "$ref": "CallArgument", "description": "Id or value of the object to save." },
+            {
+              "name": "value",
+              "$ref": "CallArgument",
+              "description": "Id or value of the object to save."
+            },
             {
               "name": "contextId",
               "optional": true,
@@ -2941,19 +2734,32 @@
           "name": "releaseObject",
           "description": "Releases remote object with given id.",
           "parameters": [
-            { "name": "objectId", "$ref": "RemoteObjectId", "description": "Identifier of the object to release." }
+            {
+              "name": "objectId",
+              "$ref": "RemoteObjectId",
+              "description": "Identifier of the object to release."
+            }
           ]
         },
         {
           "name": "releaseObjectGroup",
           "description": "Releases all remote objects that belong to a given group.",
-          "parameters": [{ "name": "objectGroup", "type": "string", "description": "Symbolic object group name." }]
+          "parameters": [
+            {
+              "name": "objectGroup",
+              "type": "string",
+              "description": "Symbolic object group name."
+            }
+          ]
         },
         {
           "name": "enable",
           "description": "Enables reporting of execution contexts creation by means of <code>executionContextCreated</code> event. When the reporting gets enabled the event will be sent immediately for each existing execution context."
         },
-        { "name": "disable", "description": "Disables reporting of execution contexts creation." },
+        {
+          "name": "disable",
+          "description": "Disables reporting of execution contexts creation."
+        },
         {
           "name": "getRuntimeTypesForVariablesAtOffsets",
           "description": "Returns detailed information on the given function.",
@@ -2961,7 +2767,9 @@
             {
               "name": "locations",
               "type": "array",
-              "items": { "$ref": "TypeLocation" },
+              "items": {
+                "$ref": "TypeLocation"
+              },
               "description": "An array of type locations we're requesting information for. Results are expected in the same order they're sent in."
             }
           ],
@@ -2969,14 +2777,29 @@
             {
               "name": "types",
               "type": "array",
-              "items": { "$ref": "TypeDescription", "description": "Types for requested variable." }
+              "items": {
+                "$ref": "TypeDescription",
+                "description": "Types for requested variable."
+              }
             }
           ]
         },
-        { "name": "enableTypeProfiler", "description": "Enables type profiling on the VM." },
-        { "name": "disableTypeProfiler", "description": "Disables type profiling on the VM." },
-        { "name": "enableControlFlowProfiler", "description": "Enables control flow profiling on the VM." },
-        { "name": "disableControlFlowProfiler", "description": "Disables control flow profiling on the VM." },
+        {
+          "name": "enableTypeProfiler",
+          "description": "Enables type profiling on the VM."
+        },
+        {
+          "name": "disableTypeProfiler",
+          "description": "Disables type profiling on the VM."
+        },
+        {
+          "name": "enableControlFlowProfiler",
+          "description": "Enables control flow profiling on the VM."
+        },
+        {
+          "name": "disableControlFlowProfiler",
+          "description": "Disables control flow profiling on the VM."
+        },
         {
           "name": "getBasicBlocks",
           "description": "Returns a list of basic blocks for the given sourceID with information about their text ranges and whether or not they have executed.",
@@ -2991,7 +2814,10 @@
             {
               "name": "basicBlocks",
               "type": "array",
-              "items": { "$ref": "BasicBlock", "description": "Array of basic blocks." }
+              "items": {
+                "$ref": "BasicBlock",
+                "description": "Array of basic blocks."
+              }
             }
           ]
         }
@@ -3016,49 +2842,94 @@
       "debuggableTypes": ["itml", "javascript", "page", "web-page"],
       "targetTypes": ["itml", "javascript", "page"],
       "types": [
-        { "id": "EventType", "type": "string", "enum": ["API", "Microtask", "Other"] },
+        {
+          "id": "EventType",
+          "type": "string",
+          "enum": ["API", "Microtask", "Other"]
+        },
         {
           "id": "Event",
           "type": "object",
           "properties": [
-            { "name": "startTime", "type": "number" },
-            { "name": "endTime", "type": "number" },
-            { "name": "type", "$ref": "EventType" }
+            {
+              "name": "startTime",
+              "type": "number"
+            },
+            {
+              "name": "endTime",
+              "type": "number"
+            },
+            {
+              "name": "type",
+              "$ref": "EventType"
+            }
           ]
         },
         {
           "id": "ExpressionLocation",
           "type": "object",
           "properties": [
-            { "name": "line", "type": "integer", "description": "1-based." },
-            { "name": "column", "type": "integer", "description": "1-based." }
+            {
+              "name": "line",
+              "type": "integer",
+              "description": "1-based."
+            },
+            {
+              "name": "column",
+              "type": "integer",
+              "description": "1-based."
+            }
           ]
         },
         {
           "id": "StackFrame",
           "type": "object",
           "properties": [
-            { "name": "sourceID", "$ref": "Debugger.ScriptId", "description": "Unique script identifier." },
+            {
+              "name": "sourceID",
+              "$ref": "Debugger.ScriptId",
+              "description": "Unique script identifier."
+            },
             {
               "name": "name",
               "type": "string",
               "description": "A displayable name for the stack frame. i.e function name, (program), etc."
             },
-            { "name": "line", "type": "integer", "description": "-1 if unavailable. 1-based if available." },
-            { "name": "column", "type": "integer", "description": "-1 if unavailable. 1-based if available." },
-            { "name": "url", "type": "string" },
-            { "name": "expressionLocation", "$ref": "ExpressionLocation", "optional": true }
+            {
+              "name": "line",
+              "type": "integer",
+              "description": "-1 if unavailable. 1-based if available."
+            },
+            {
+              "name": "column",
+              "type": "integer",
+              "description": "-1 if unavailable. 1-based if available."
+            },
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "expressionLocation",
+              "$ref": "ExpressionLocation",
+              "optional": true
+            }
           ]
         },
         {
           "id": "StackTrace",
           "type": "object",
           "properties": [
-            { "name": "timestamp", "type": "number" },
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
             {
               "name": "stackFrames",
               "type": "array",
-              "items": { "$ref": "StackFrame" },
+              "items": {
+                "$ref": "StackFrame"
+              },
               "description": "First array item is the bottom of the call stack and last array item is the top of the call stack."
             }
           ]
@@ -3066,7 +2937,15 @@
         {
           "id": "Samples",
           "type": "object",
-          "properties": [{ "name": "stackTraces", "type": "array", "items": { "$ref": "StackTrace" } }]
+          "properties": [
+            {
+              "name": "stackTraces",
+              "type": "array",
+              "items": {
+                "$ref": "StackTrace"
+              }
+            }
+          ]
         }
       ],
       "commands": [
@@ -3091,19 +2970,125 @@
         {
           "name": "trackingStart",
           "description": "Tracking started.",
-          "parameters": [{ "name": "timestamp", "type": "number" }]
+          "parameters": [
+            {
+              "name": "timestamp",
+              "type": "number"
+            }
+          ]
         },
         {
           "name": "trackingUpdate",
           "description": "Periodic tracking updates with event data.",
-          "parameters": [{ "name": "event", "$ref": "Event" }]
+          "parameters": [
+            {
+              "name": "event",
+              "$ref": "Event"
+            }
+          ]
         },
         {
           "name": "trackingComplete",
           "description": "Tracking stopped. Includes any buffered data during tracking, such as profiling information.",
           "parameters": [
-            { "name": "timestamp", "type": "number" },
-            { "name": "samples", "$ref": "Samples", "optional": true, "description": "Stack traces." }
+            {
+              "name": "timestamp",
+              "type": "number"
+            },
+            {
+              "name": "samples",
+              "$ref": "Samples",
+              "optional": true,
+              "description": "Stack traces."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "domain": "TestReporter",
+      "description": "TestReporter domain allows reporting of test-related events.",
+      "debuggableTypes": ["itml", "javascript"],
+      "targetTypes": ["itml", "javascript"],
+      "types": [
+        {
+          "id": "TestStatus",
+          "type": "string",
+          "enum": ["pass", "fail", "timeout", "skip", "todo"]
+        }
+      ],
+      "commands": [
+        {
+          "name": "enable",
+          "description": "Enables TestReporter domain events."
+        },
+        {
+          "name": "disable",
+          "description": "Disables TestReporter domain events."
+        }
+      ],
+      "events": [
+        {
+          "name": "found",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "integer",
+              "description": "Unique identifier of the test that was found."
+            },
+            {
+              "name": "scriptId",
+              "$ref": "Debugger.ScriptId",
+              "description": "Unique identifier of the script the test is in. Available when the debugger is attached.",
+              "optional": true
+            },
+            {
+              "name": "url",
+              "type": "string",
+              "description": "url of the script the test is in. Available when the debugger is not attached.",
+              "optional": true
+            },
+            {
+              "name": "line",
+              "type": "integer",
+              "description": "Line number in the script that started the test."
+            },
+            {
+              "name": "name",
+              "type": "string",
+              "description": "Name of the test that started.",
+              "optional": true
+            }
+          ]
+        },
+        {
+          "name": "start",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "integer",
+              "description": "Unique identifier of the test that started."
+            }
+          ]
+        },
+        {
+          "name": "end",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "integer",
+              "description": "Unique identifier of the test that ended."
+            },
+            {
+              "name": "status",
+              "$ref": "TestStatus",
+              "description": "Status of the test that ended."
+            },
+            {
+              "name": "elapsed",
+              "type": "integer",
+              "description": "Elapsed time in milliseconds since the test started."
+            }
           ]
         }
       ]

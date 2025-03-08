@@ -11,5 +11,11 @@ packages/**/bun-profile
 src/bun.js/WebKit
 src/bun.js/WebKit/LayoutTests
 zig-build
-zig-cache
+.zig-cache
 zig-out
+build
+vendor
+node_modules
+*.trace
+
+packages/bun-uws/fuzzing

@@ -394,6 +394,7 @@ exports[`fast-glob e2e tests patterns regular relative cwd ./*: ./* 1`] = `
 [
   "./leak.test.ts",
   "./match.test.ts",
+  "./proto.test.ts",
   "./scan.test.ts",
   "./stress.test.ts",
   "./util.ts",

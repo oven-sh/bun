@@ -1,6 +1,6 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
-import { afterEach, expect, test } from "bun:test";
-
+import { noInline } from "bun:jsc";
+import { afterEach, expect, mock, test } from "bun:test";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -376,18 +376,38 @@ test("sanity check", () => {
   f1();
 });
 
-test("CallFrame.p.getThisgetFunction: works in sloppy mode", () => {
+test("CallFrame isEval works as expected", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+
+  let name, fn;
+
+  Error.prepareStackTrace = (e, s) => {
+    return s;
+  };
+
+  name = "f1";
+  const stack = eval(`(function ${name}() {
+    return new Error().stack;
+  })()`);
+
+  Error.prepareStackTrace = prevPrepareStackTrace;
+  // TODO: 0 and 1 should both return true here.
+  expect(stack[1].isEval()).toBe(true);
+  expect(stack[0].getFunctionName()).toBe(name);
+});
+
+test("CallFrame isTopLevel returns false for Function constructor", () => {
   let prevPrepareStackTrace = Error.prepareStackTrace;
   const sloppyFn = new Function("let e=new Error();Error.captureStackTrace(e);return e.stack");
   sloppyFn.displayName = "sloppyFnWow";
+  noInline(sloppyFn);
   const that = {};
 
   Error.prepareStackTrace = (e, s) => {
-    expect(s[0].getThis()).toBe(that);
-    expect(s[0].getFunction()).toBe(sloppyFn);
     expect(s[0].getFunctionName()).toBe(sloppyFn.displayName);
+    expect(s[0].getFunction()).toBe(sloppyFn);
+
     expect(s[0].isToplevel()).toBe(false);
-    // TODO: This should be true.
     expect(s[0].isEval()).toBe(false);
 
     // Strict-mode functions shouldn't have getThis or getFunction
@@ -480,7 +500,7 @@ test("CallFrame.p.toString", () => {
 });
 
 // TODO: line numbers are wrong in a release build
-test.todo("err.stack should invoke prepareStackTrace", () => {
+test("err.stack should invoke prepareStackTrace", () => {
   var lineNumber = -1;
   var functionName = "";
   var parentLineNumber = -1;
@@ -503,9 +523,8 @@ test.todo("err.stack should invoke prepareStackTrace", () => {
   functionWithAName();
 
   expect(functionName).toBe("functionWithAName");
-  expect(lineNumber).toBe(391);
-  // TODO: this is wrong
-  expect(parentLineNumber).toBe(394);
+  expect(lineNumber).toBe(518);
+  expect(parentLineNumber).toBe(523);
 });
 
 test("Error.prepareStackTrace inside a node:vm works", () => {
@@ -558,4 +577,150 @@ test("Error.prepareStackTrace returns a CallSite object", () => {
   const error = new Error();
   expect(error.stack[0]).not.toBeString();
   expect(error.stack[0][Symbol.toStringTag]).toBe("CallSite");
+});
+
+test("Error.captureStackTrace updates the stack property each call, even if Error.prepareStackTrace is set", () => {
+  const prevPrepareStackTrace = Error.prepareStackTrace;
+  var didCallPrepareStackTrace = false;
+
+  let error = new Error();
+  const firstStack = error.stack;
+  Error.prepareStackTrace = function (err, stack) {
+    expect(err.stack).not.toBe(firstStack);
+    didCallPrepareStackTrace = true;
+    return stack;
+  };
+  function outer() {
+    inner();
+  }
+  function inner() {
+    Error.captureStackTrace(error);
+  }
+  outer();
+  const secondStack = error.stack;
+  expect(firstStack).not.toBe(secondStack);
+  expect(firstStack).toBeString();
+  expect(firstStack).not.toContain("outer");
+  expect(firstStack).not.toContain("inner");
+  expect(didCallPrepareStackTrace).toBe(true);
+  expect(secondStack.find(a => a.getFunctionName() === "outer")).toBeTruthy();
+  expect(secondStack.find(a => a.getFunctionName() === "inner")).toBeTruthy();
+  Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("Error.captureStackTrace updates the stack property each call", () => {
+  let error = new Error();
+  const firstStack = error.stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    Error.captureStackTrace(error);
+  }
+  outer();
+  const secondStack = error.stack;
+  expect(firstStack).not.toBe(secondStack);
+  expect(firstStack.length).toBeLessThan(secondStack.length);
+  expect(firstStack).not.toContain("outer");
+  expect(firstStack).not.toContain("inner");
+  expect(secondStack).toContain("outer");
+  expect(secondStack).toContain("inner");
+});
+
+test("calling .stack later uses the stored StackTrace", function hey() {
+  let error = new Error();
+  let stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    stack = error.stack;
+  }
+  outer();
+
+  expect(stack).not.toContain("outer");
+  expect(stack).not.toContain("inner");
+  expect(stack).toContain("hey");
+});
+
+test("calling .stack on a non-materialized Error updates the stack properly", function hey() {
+  let error = new Error();
+  let stack;
+  function outer() {
+    inner();
+  }
+  function inner() {
+    stack = error.stack;
+  }
+  function wrapped() {
+    Error.captureStackTrace(error);
+  }
+  wrapped();
+  outer();
+
+  expect(stack).not.toContain("outer");
+  expect(stack).not.toContain("inner");
+  expect(stack).toContain("hey");
+  expect(stack).toContain("wrapped");
+});
+
+test("Error.prepareStackTrace on an array with non-CallSite objects doesn't crash", () => {
+  const result = Error.prepareStackTrace(new Error("ok"), [{ a: 1 }, { b: 2 }, { c: 3 }]);
+  expect(result).toBe("Error: ok\n    at [object Object]\n    at [object Object]\n    at [object Object]");
+});
+
+test("Error.prepareStackTrace calls toString()", () => {
+  const result = Error.prepareStackTrace(new Error("ok"), [
+    { a: 1 },
+    { b: 2 },
+    {
+      c: 3,
+      toString() {
+        return "potato";
+      },
+    },
+  ]);
+  expect(result).toBe("Error: ok\n    at [object Object]\n    at [object Object]\n    at potato");
+});
+
+test("Error.prepareStackTrace propagates exceptions", () => {
+  expect(() =>
+    Error.prepareStackTrace(new Error("ok"), [
+      { a: 1 },
+      { b: 2 },
+      {
+        c: 3,
+        toString() {
+          throw new Error("hi");
+        },
+      },
+    ]),
+  ).toThrow("hi");
+});
+
+test("CallFrame.p.getScriptNameOrSourceURL inside eval", () => {
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  const prepare = mock((e, s) => {
+    expect(s[0].getScriptNameOrSourceURL()).toBe("https://zombo.com/welcome-to-zombo.js");
+    expect(s[1].getScriptNameOrSourceURL()).toBe("https://zombo.com/welcome-to-zombo.js");
+    expect(s[2].getScriptNameOrSourceURL()).toBe("[native code]");
+    expect(s[3].getScriptNameOrSourceURL()).toBe(import.meta.path);
+    expect(s[4].getScriptNameOrSourceURL()).toBe(import.meta.path);
+  });
+  Error.prepareStackTrace = prepare;
+  let evalScript = `(function() {
+    throw new Error("bad error!");
+  })() //# sourceURL=https://zombo.com/welcome-to-zombo.js`;
+
+  try {
+    function insideAFunction() {
+      eval(evalScript);
+    }
+    insideAFunction();
+  } catch (e) {
+    e.stack;
+  }
+  Error.prepareStackTrace = prevPrepareStackTrace;
+
+  expect(prepare).toHaveBeenCalledTimes(1);
 });

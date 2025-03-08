@@ -1,5 +1,5 @@
 import { dlopen } from "bun:ffi";
-import { bench, group, run } from "./runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 const types = {
   returns_true: {

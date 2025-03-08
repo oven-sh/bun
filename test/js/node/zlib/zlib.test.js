@@ -8,6 +8,51 @@ import * as stream from "node:stream";
 import * as util from "node:util";
 import * as zlib from "node:zlib";
 
+describe("prototype and name and constructor", () => {
+  for (let [name, Class] of [
+    ["Gzip", zlib.Gzip],
+    ["Gunzip", zlib.Gunzip],
+    ["Deflate", zlib.Deflate],
+    ["Inflate", zlib.Inflate],
+    ["DeflateRaw", zlib.DeflateRaw],
+  ]) {
+    describe(`${name}`, () => {
+      it(`${name}.prototype should be instanceof ${name}.__proto__`, () => {
+        expect(Class.prototype).toBeInstanceOf(Class.__proto__);
+      });
+      it(`${name}.prototype.constructor should be ${name}`, () => {
+        expect(Class.prototype.constructor).toBe(Class);
+      });
+      it(`${name}.name should be ${name}`, () => {
+        expect(Class.name).toBe(name);
+      });
+      it(`${name}.prototype.__proto__.constructor.name should be Zlib`, () => {
+        expect(Class.prototype.__proto__.constructor.name).toBe("Zlib");
+      });
+    });
+  }
+
+  for (let [name, Class] of [
+    ["BrotliCompress", zlib.BrotliCompress],
+    ["BrotliDecompress", zlib.BrotliDecompress],
+  ]) {
+    describe(`${name}`, () => {
+      it(`${name}.prototype should be instanceof ${name}.__proto__`, () => {
+        expect(Class.prototype).toBeInstanceOf(Class.__proto__);
+      });
+      it(`${name}.prototype.constructor should be ${name}`, () => {
+        expect(Class.prototype.constructor).toBe(Class);
+      });
+      it(`${name}.name should be ${name}`, () => {
+        expect(Class.name).toBe(name);
+      });
+      it(`${name}.prototype.__proto__.constructor.name should be Brotli`, () => {
+        expect(Class.prototype.__proto__.constructor.name).toBe("Brotli");
+      });
+    });
+  }
+});
+
 describe("zlib", () => {
   for (let library of ["zlib", "libdeflate"]) {
     for (let outputLibrary of ["zlib", "libdeflate"]) {
@@ -109,32 +154,24 @@ describe("zlib.brotli", () => {
     expect(roundtrip.toString()).toEqual(inputString);
   });
 
-  it("can compress streaming", () => {
+  it("can compress streaming", async () => {
     const encoder = zlib.createBrotliCompress();
     for (const chunk of window(inputString, 55)) {
-      encoder._transform(chunk, undefined, (err, data) => {
-        expect(err).toBeUndefined();
-        expect(data).toEqual(Buffer(0));
-      });
+      encoder.push(chunk);
     }
-    encoder._flush((err, data) => {
-      expect(err).toBeUndefined();
-      expect(data).toEqual(compressedBuffer);
-    });
+    encoder.push(null);
+    const buf = await new Response(encoder).text();
+    expect(buf).toEqual(inputString);
   });
 
-  it("can decompress streaming", () => {
+  it("can decompress streaming", async () => {
     const decoder = zlib.createBrotliDecompress();
     for (const chunk of window(compressedBuffer, 10)) {
-      decoder._transform(chunk, undefined, (err, data) => {
-        expect(err).toBeUndefined();
-        expect(data).toEqual(Buffer(0));
-      });
+      decoder.push(chunk);
     }
-    decoder._flush((err, data) => {
-      expect(err).toBeUndefined();
-      expect(data).toEqual(Buffer.from(inputString));
-    });
+    decoder.push(null);
+    const buf = await new Response(decoder).bytes();
+    expect(buf).toEqual(compressedBuffer);
   });
 
   it("can roundtrip an empty string", async () => {
@@ -144,19 +181,15 @@ describe("zlib.brotli", () => {
     expect(roundtrip.toString()).toEqual(input);
   });
 
-  it("can compress streaming big", () => {
+  it("can compress streaming big", async () => {
     const encoder = zlib.createBrotliCompress();
-    // prettier-ignore
-    for (const chunk of window(inputString+inputString+inputString+inputString, 65)) {
-      encoder._transform(chunk, undefined, (err, data) => {
-        expect(err).toBeUndefined();
-        expect(data).toEqual(Buffer(0));
-      });
+    const input = inputString + inputString + inputString + inputString;
+    for (const chunk of window(input, 65)) {
+      encoder.push(chunk);
     }
-    encoder._flush((err, data) => {
-      expect(err).toBeUndefined();
-      expect(data.length).toBeGreaterThan(0);
-    });
+    encoder.push(null);
+    const buf = await new Response(encoder).text();
+    expect(buf).toEqual(input);
   });
 
   it("fully works as a stream.Transform", async () => {
@@ -315,17 +348,17 @@ for (const [compress, decompressor] of [
     stream => {
       stream.end(compressed);
     },
-    // stream => {
-    //   stream.write(compressed);
-    //   stream.write(trailingData);
-    // },
+    stream => {
+      stream.write(compressed);
+      stream.write(trailingData);
+    },
     stream => {
       stream.write(compressed);
       stream.end(trailingData);
     },
-    // stream => {
-    //   stream.write(Buffer.concat([compressed, trailingData]));
-    // },
+    stream => {
+      stream.write(Buffer.concat([compressed, trailingData]));
+    },
     stream => {
       stream.end(Buffer.concat([compressed, trailingData]));
     },
@@ -409,3 +442,30 @@ it.each([
     expect(result).toBe(expected);
   }
 });
+
+for (const C of [zlib.Deflate, zlib.Inflate, zlib.DeflateRaw, zlib.InflateRaw, zlib.Gzip, zlib.Gunzip, zlib.Unzip]) {
+  for (const op of [
+    "flush",
+    "finishFlush",
+    "chunkSize",
+    "windowBits",
+    "level",
+    "memLevel",
+    "strategy",
+    "dictionary",
+    "info",
+    "maxOutputLength",
+  ]) {
+    it(`new ${C.name}({ ${op}: undefined }) doesn't throw`, () => {
+      expect(() => new C({ [op]: undefined })).not.toThrow();
+    });
+  }
+}
+
+for (const C of [zlib.BrotliCompress, zlib.BrotliDecompress]) {
+  for (const op of ["flush", "finishFlush", "chunkSize", "params", "maxOutputLength"]) {
+    it(`new ${C.name}({ ${op}: undefined }) doesn't throw`, () => {
+      expect(() => new C({ [op]: undefined })).not.toThrow();
+    });
+  }
+}

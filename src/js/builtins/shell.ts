@@ -25,18 +25,25 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       this.#output = output;
       this.name = "ShellError";
 
-      // Maybe we should just print all the properties on the Error instance
-      // instead of speical ones
-      this.info = {
-        exitCode: code,
-        stderr: output.stderr,
-        stdout: output.stdout,
-      };
+      // We previously added this so that errors would display the "info" property
+      // We fixed that, but now it displays both.
+      Object.defineProperty(this, "info", {
+        value: {
+          exitCode: code,
+          stderr: output.stderr,
+          stdout: output.stdout,
+        },
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      });
 
       this.info.stdout.toJSON = lazyBufferToHumanReadableString;
       this.info.stderr.toJSON = lazyBufferToHumanReadableString;
 
-      Object.assign(this, this.info);
+      this.stdout = output.stdout;
+      this.stderr = output.stderr;
+      this.exitCode = code;
     }
 
     text(encoding) {
@@ -348,6 +355,10 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
     },
     ShellPromise: {
       value: ShellPromise,
+      enumerable: true,
+    },
+    ShellError: {
+      value: ShellError,
       enumerable: true,
     },
   });

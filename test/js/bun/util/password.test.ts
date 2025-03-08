@@ -217,7 +217,7 @@ for (let algorithmValue of algorithms) {
           expect(verifySync(input + "\0", hashed)).toBeFalse();
         });
 
-        test("password", async () => {
+        describe("password", async () => {
           async function runSlowTest(algorithm = algorithmValue as any) {
             const hashed = await password.hash(input, algorithm);
             const prefix = "$" + algorithm;
@@ -228,12 +228,13 @@ for (let algorithmValue of algorithms) {
           }
 
           async function runSlowTestWithOptions(algorithmLabel: any) {
-            const algorithm = { algorithm: algorithmLabel, timeCost: 5, memoryCost: 4 };
+            const algorithm = { algorithm: algorithmLabel, timeCost: 5, memoryCost: 8 };
             const hashed = await password.hash(input, algorithm);
             const prefix = "$" + algorithmLabel;
             expect(hashed).toStartWith(prefix);
             expect(hashed).toContain("t=5");
-            expect(hashed).toContain("m=4");
+            expect(hashed).toContain("m=8");
+            expect(hashed).toContain("p=1");
             expect(await password.verify(input, hashed, algorithmLabel)).toBeTrue();
             expect(() => password.verify(hashed, input, algorithmLabel)).toThrow();
             expect(await password.verify(input + "\0", hashed, algorithmLabel)).toBeFalse();
@@ -252,7 +253,12 @@ for (let algorithmValue of algorithms) {
           if (algorithmValue === defaultAlgorithm) {
             // these tests are very slow
             // run the hashing tests in parallel
-            await Promise.all([...argons.map(runSlowTest), ...argons.map(runSlowTestWithOptions)]);
+            for (const a of argons) {
+              test(`${a}`, async () => {
+                await runSlowTest(a);
+                await runSlowTestWithOptions(a);
+              })
+            }
             return;
           }
 
@@ -265,9 +271,14 @@ for (let algorithmValue of algorithms) {
           }
 
           if (algorithmValue === "bcrypt") {
-            await Promise.all([defaultTest(), runSlowBCryptTest()]);
+            test("bcrypt", async () => {
+              await defaultTest();
+              await runSlowBCryptTest();
+            });
           } else {
-            await defaultTest();
+            test("default", async () => {
+              await defaultTest();
+            });
           }
         });
       });

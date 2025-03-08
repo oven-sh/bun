@@ -1,6 +1,9 @@
 #include "V8Array.h"
 
 #include "V8HandleScope.h"
+#include "v8_compatibility_assertions.h"
+
+ASSERT_V8_TYPE_LAYOUT_MATCHES(v8::Array)
 
 using JSC::ArrayAllocationProfile;
 using JSC::JSArray;
@@ -20,4 +23,4 @@ Local<Array> Array::New(Isolate* isolate, Local<Value>* elements, size_t length)
     return isolate->currentHandleScope()->createLocal<Array>(isolate->vm(), array);
 }
 
-}
+} // namespace v8

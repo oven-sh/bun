@@ -3,6 +3,7 @@ import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { tmpdir } from "os";
 import { join } from "path";
+import { once } from "node:events";
 
 const { describe, expect, it, createCallCheckCtx } = createTest(import.meta.path);
 
@@ -284,7 +285,8 @@ describe("net.createServer listen", () => {
 
         expect(err).not.toBeNull();
         expect(err!.message).toBe("Failed to connect");
-        expect(err!.name).toBe("ECONNREFUSED");
+        expect(err!.name).toBe("Error");
+        expect(err!.code).toBe("ECONNREFUSED");
 
         server.close();
         done();
@@ -564,5 +566,28 @@ describe("net.createServer events", () => {
         },
       }).catch(closeAndFail);
     });
+  });
+
+  it("#8374", async () => {
+    const server = createServer();
+    const socketPath = join(tmpdir(), "test-unix-socket");
+
+    server.listen({ path: socketPath });
+    await once(server, "listening");
+
+    try {
+      const address = server.address() as string;
+      expect(address).toBe(socketPath);
+
+      const client = await Bun.connect({
+        unix: socketPath,
+        socket: {
+          data() {},
+        },
+      });
+      client.end();
+    } finally {
+      server.close();
+    }
   });
 });

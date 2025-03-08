@@ -165,8 +165,14 @@ declare module "bun:test" {
    * @param label the label for the tests
    * @param fn the function that defines the tests
    */
+
+  interface FunctionLike {
+    readonly name: string;
+  }
   export interface Describe {
-    (label: string, fn: () => void): void;
+    (fn: () => void): void;
+
+    (label: number | string | Function | FunctionLike, fn: () => void): void;
     /**
      * Skips all other tests, except this group of tests.
      *
@@ -387,9 +393,9 @@ declare module "bun:test" {
     /**
      * Marks this test as to be written or to be fixed.
      *
-     * When a test function is passed, it will be marked as `todo` in the test results
-     * as long the test does not pass. When the test passes, the test will be marked as
-     * `fail` in the results; you will have to remove the `.todo` or check that your test
+     * These tests will not be executed unless the `--todo` flag is passed. With the flag,
+     * if the test passes, the test will be marked as `fail` in the results; you will have to
+     * remove the `.todo` or check that your test
      * is implemented correctly.
      *
      * @param label the label for the test
@@ -401,6 +407,22 @@ declare module "bun:test" {
       fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
+    /**
+     * Marks this test as failing.
+     *
+     * Use `test.failing` when you are writing a test and expecting it to fail.
+     * These tests will behave the other way normal tests do. If failing test
+     * will throw any errors then it will pass. If it does not throw it will
+     * fail.
+     *
+     * `test.failing` is very similar to {@link test.todo} except that it always
+     * runs, regardless of the `--todo` flag.
+     *
+     * @param label the label for the test
+     * @param fn the test function
+     * @param options the test timeout or options
+     */
+    failing(label: string, fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
     /**
      * Runs this test, if `condition` is true.
      *
@@ -1050,7 +1072,7 @@ declare module "bun:test" {
      *
      * @example
      * const o = { a: 'foo', b: 'bar', c: 'baz' };
-  `  * expect(o).toContainAnyValues(['qux', 'foo']);
+     * expect(o).toContainAnyValues(['qux', 'foo']);
      * expect(o).toContainAnyValues(['qux', 'bar']);
      * expect(o).toContainAnyValues(['qux', 'baz']);
      * expect(o).not.toContainAnyValues(['qux']);
@@ -1060,6 +1082,8 @@ declare module "bun:test" {
 
     /**
      * Asserts that an `object` contains all the provided keys.
+     *
+     * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).not.toContainKeys(['a', 'b', 'e']);
@@ -1295,6 +1319,57 @@ declare module "bun:test" {
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
     toMatchSnapshot(propertyMatchers?: object, hint?: string): void;
+    /**
+     * Asserts that a value matches the most recent inline snapshot.
+     *
+     * @example
+     * expect("Hello").toMatchInlineSnapshot();
+     * expect("Hello").toMatchInlineSnapshot(`"Hello"`);
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toMatchInlineSnapshot(value?: string): void;
+    /**
+     * Asserts that a value matches the most recent inline snapshot.
+     *
+     * @example
+     * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) });
+     * expect({ c: new Date() }).toMatchInlineSnapshot({ c: expect.any(Date) }, `
+     * {
+     *   "v": Any<Date>,
+     * }
+     * `);
+     *
+     * @param propertyMatchers Object containing properties to match against the value.
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toMatchInlineSnapshot(propertyMatchers?: object, value?: string): void;
+    /**
+     * Asserts that a function throws an error matching the most recent snapshot.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowErrorMatchingSnapshot();
+     * expect(fail).toThrowErrorMatchingSnapshot("This one should say Oops!");
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toThrowErrorMatchingSnapshot(hint?: string): void;
+    /**
+     * Asserts that a function throws an error matching the most recent snapshot.
+     *
+     * @example
+     * function fail() {
+     *   throw new Error("Oops!");
+     * }
+     * expect(fail).toThrowErrorMatchingInlineSnapshot();
+     * expect(fail).toThrowErrorMatchingInlineSnapshot(`"Oops!"`);
+     *
+     * @param value The latest automatically-updated snapshot value.
+     */
+    toThrowErrorMatchingInlineSnapshot(value?: string): void;
     /**
      * Asserts that an object matches a subset of properties.
      *

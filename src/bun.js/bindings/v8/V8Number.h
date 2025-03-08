@@ -14,4 +14,4 @@ public:
     BUN_EXPORT double Value() const;
 };
 
-}
+} // namespace v8

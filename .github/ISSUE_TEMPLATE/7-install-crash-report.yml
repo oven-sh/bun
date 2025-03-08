@@ -11,8 +11,8 @@ body:
   - type: textarea
     id: package_json
     attributes:
-      label: `package.json` file
-      description: Can you upload your `package.json` file? This helps us reproduce the crash.
+      label: "`package.json` file"
+      description: "Can you upload your `package.json` file? This helps us reproduce the crash."
       render: json
   - type: textarea
     id: repro

@@ -1,4 +1,4 @@
-import { bench, group, run } from "./runner.mjs";
+import { bench, group, run } from "../runner.mjs";
 
 var bunEscapeHTML = globalThis.escapeHTML || Bun.escapeHTML;
 
@@ -92,24 +92,21 @@ function reactEscapeHtml(string) {
 // }
 
 for (let input of [
-  `long string, nothing to escape... `.repeat(9999999 * 3),
+  "long string, nothing to escape... ".repeat(9999999 * 3),
   FIXTURE.repeat(8000),
   // "[unicode]" + FIXTURE_WITH_UNICODE,
 ]) {
+  const name = `"${input.substring(0, Math.min(input.length, 32))}" (${new Intl.NumberFormat().format(input.length / 100_000_000_0)} GB)`
   group(
     {
       summary: true,
-      name:
-        `"` +
-        input.substring(0, Math.min(input.length, 32)) +
-        `"` +
-        ` (${new Intl.NumberFormat().format(input.length / 100_000_000_0)} GB)`,
+      name
     },
     () => {
       // bench(`ReactDOM.escapeHTML`, () => reactEscapeHtml(input));
       // bench(`html-entities.encode`, () => htmlEntityEncode(input));
       // bench(`he.escape`, () => heEscape(input));
-      bench(`Bun.escapeHTML`, () => bunEscapeHTML(input));
+      bench(`Bun.escapeHTML (${name})`, () => bunEscapeHTML(input));
     },
   );
 }

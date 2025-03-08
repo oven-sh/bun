@@ -23,7 +23,7 @@ $ hyperfine --prepare 'rm -rf node_modules' --runs 1 'bun install' 'pnpm install
 To run the benchmark with offline mode but without lockfiles:
 
 ```sh
-$ hyperfine --prepare 'rm -rf node_modules' --warmup 1 'rm bun.lockb && bun install' 'rm pnpm-lock.yaml && pnpm install --prefer-offline' 'rm yarn.lock && yarn --offline' 'rm package-lock.json && npm install --prefer-offline'
+$ hyperfine --prepare 'rm -rf node_modules' --warmup 1 'rm bun.lock && bun install' 'rm pnpm-lock.yaml && pnpm install --prefer-offline' 'rm yarn.lock && yarn --offline' 'rm package-lock.json && npm install --prefer-offline'
 ```
 
 ##

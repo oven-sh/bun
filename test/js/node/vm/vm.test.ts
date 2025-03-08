@@ -272,19 +272,42 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
       expect(result).toContain("foo.js");
     });
   }
-  test.skip("can specify a line offset", () => {
-    // TODO: use test.todo
+  test.todo("can specify filename", () => {
+    //
   });
-  test.skip("can specify a column offset", () => {
-    // TODO: use test.todo
+  test.todo("can specify lineOffset", () => {
+    //
   });
-  test.skip("can specify a timeout", () => {
-    const context = createContext({});
-    const result = () =>
-      fn("while (true) {};", context, {
-        timeout: 1,
-      });
-    expect(result).toThrow(); // TODO: does not timeout
+  test.todo("can specify columnOffset", () => {
+    //
+  });
+  test.todo("can specify displayErrors", () => {
+    //
+  });
+  test.todo("can specify timeout", () => {
+    //
+  });
+  test.todo("can specify breakOnSigint", () => {
+    //
+  });
+  test.todo("can specify cachedData", () => {
+    //
+  });
+  test.todo("can specify importModuleDynamically", () => {
+    //
+  });
+
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify contextName", () => {
+    //
+  });
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify contextOrigin", () => {
+    //
+  });
+  // https://github.com/oven-sh/bun/issues/10885 .if(isNew == true)
+  test.todo("can specify microtaskMode", () => {
+    //
   });
 }
 
@@ -429,4 +452,75 @@ resp.text().then((a) => {
     await vm.runInContext(code, context);
     delete URL.prototype.ok;
   }
+});
+
+test("can get sourceURL from eval inside node:vm", () => {
+  try {
+    runInNewContext(
+      `
+throw new Error("hello");
+//# sourceURL=hellohello.js
+`,
+      {},
+    );
+  } catch (e: any) {
+    var err: Error = e;
+  }
+
+  expect(err!.stack!.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
+"Error: hello
+    at hellohello.js:2:16
+    at runInNewContext (unknown)
+    at <anonymous> (<this-url>:459:5)"
+`);
+});
+
+test("can get sourceURL inside node:vm", () => {
+  const err = runInNewContext(
+    `
+
+function hello() {
+    return Bun.inspect(new Error("hello"));
+}
+
+hello();
+
+//# sourceURL=hellohello.js
+`,
+    { Bun },
+  );
+
+  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
+"4 |     return Bun.inspect(new Error("hello"));
+                           ^
+error: hello
+      at hello (hellohello.js:4:24)
+      at hellohello.js:7:6
+      at <anonymous> (<this-url>:479:15)
+"
+`);
+});
+
+test("eval sourceURL is correct", () => {
+  const err = eval(
+    `
+
+function hello() {
+    return Bun.inspect(new Error("hello"));
+}
+
+hello();
+
+//# sourceURL=hellohello.js
+`,
+  );
+  expect(err.replaceAll("\r\n", "\n").replaceAll(import.meta.path, "<this-url>")).toMatchInlineSnapshot(`
+"4 |     return Bun.inspect(new Error("hello"));
+                           ^
+error: hello
+      at hello (hellohello.js:4:24)
+      at eval (hellohello.js:7:6)
+      at <anonymous> (<this-url>:505:15)
+"
+`);
 });

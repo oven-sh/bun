@@ -29,8 +29,62 @@ it("undici", () => {
   expect(undici.Headers).toBe(Headers);
   expect(undici.FormData).toBe(FormData);
   expect(undici.File).toBe(File);
-  expect(undici.URL).toBe(URL);
-  expect(undici.URLSearchParams).toBe(URLSearchParams);
+
+  const props = [
+    "Agent",
+    "BalancedPool",
+    "Client",
+    "CloseEvent",
+    "DecoratorHandler",
+    "Dispatcher",
+    "EnvHttpProxyAgent",
+    "ErrorEvent",
+    "EventSource",
+    "File",
+    "FileReader",
+    "FormData",
+    "Headers",
+    "MessageEvent",
+    "MockAgent",
+    "MockClient",
+    "MockPool",
+    "Pool",
+    "ProxyAgent",
+    "RedirectHandler",
+    "Request",
+    "Response",
+    "RetryAgent",
+    "RetryHandler",
+    "WebSocket",
+    "buildConnector",
+    "caches",
+    "connect",
+    "createRedirectInterceptor",
+    "default",
+    "deleteCookie",
+    "errors",
+    "fetch",
+    "getCookies",
+    "getGlobalDispatcher",
+    "getGlobalOrigin",
+    "getSetCookies",
+    "interceptors",
+    "mockErrors",
+    "parseMIMEType",
+    "pipeline",
+    "request",
+    "serializeAMimeType",
+    "setCookie",
+    "setGlobalDispatcher",
+    "setGlobalOrigin",
+    "stream",
+    "upgrade",
+    "util",
+  ];
+
+  for (const prop of props) {
+    expect(undici).toHaveProperty(prop);
+  }
 
   // Note: AbortSignal is not exported. It's just used internally.
 });

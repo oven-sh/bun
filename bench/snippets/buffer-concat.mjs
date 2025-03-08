@@ -1,4 +1,4 @@
-import { bench, run } from "./runner.mjs";
+import { bench, run } from "../runner.mjs";
 
 for (let size of [32, 2048, 1024 * 16, 1024 * 1024 * 2, 1024 * 1024 * 16]) {
   const first = Buffer.allocUnsafe(size);

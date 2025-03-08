@@ -12,6 +12,7 @@ const Syscall = bun.sys;
 const SourceMap = bun.sourcemap;
 const StringPointer = bun.StringPointer;
 
+const macho = bun.macho;
 const w = std.os.windows;
 
 pub const StandaloneModuleGraph = struct {
@@ -36,6 +37,17 @@ pub const StandaloneModuleGraph = struct {
     pub const base_public_path = targetBasePublicPath(Environment.os, "");
 
     pub const base_public_path_with_default_suffix = targetBasePublicPath(Environment.os, "root/");
+    const Instance = struct {
+        pub var instance: ?*StandaloneModuleGraph = null;
+    };
+
+    pub fn get() ?*StandaloneModuleGraph {
+        return Instance.instance;
+    }
+
+    pub fn set(instance: *StandaloneModuleGraph) void {
+        Instance.instance = instance;
+    }
 
     pub fn targetBasePublicPath(target: Environment.OperatingSystem, comptime suffix: [:0]const u8) [:0]const u8 {
         return switch (target) {
@@ -62,10 +74,16 @@ pub const StandaloneModuleGraph = struct {
         return this.findAssumeStandalonePath(name);
     }
 
+    pub fn stat(this: *const StandaloneModuleGraph, name: []const u8) ?bun.Stat {
+        const file = this.find(name) orelse return null;
+        return file.stat();
+    }
+
     pub fn findAssumeStandalonePath(this: *const StandaloneModuleGraph, name: []const u8) ?*File {
         if (Environment.isWindows) {
             var normalized_buf: bun.PathBuffer = undefined;
-            const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);
+            const input = strings.withoutNTPrefix(u8, name);
+            const normalized = bun.path.platformToPosixBuf(u8, input, &normalized_buf);
             return this.files.getPtr(normalized);
         }
         return this.files.getPtr(name);
@@ -75,8 +93,10 @@ pub const StandaloneModuleGraph = struct {
         name: Schema.StringPointer = .{},
         contents: Schema.StringPointer = .{},
         sourcemap: Schema.StringPointer = .{},
+        bytecode: Schema.StringPointer = .{},
         encoding: Encoding = .latin1,
         loader: bun.options.Loader = .file,
+        module_format: ModuleFormat = .none,
     };
 
     pub const Encoding = enum(u8) {
@@ -88,6 +108,29 @@ pub const StandaloneModuleGraph = struct {
         utf8 = 2,
     };
 
+    pub const ModuleFormat = enum(u8) {
+        none = 0,
+        esm = 1,
+        cjs = 2,
+    };
+
+    const Macho = struct {
+        pub extern "C" fn Bun__getStandaloneModuleGraphMachoLength() ?*align(1) u32;
+
+        pub fn getData() ?[]const u8 {
+            if (Bun__getStandaloneModuleGraphMachoLength()) |length| {
+                if (length.* < 8) {
+                    return null;
+                }
+
+                const slice_ptr: [*]const u8 = @ptrCast(length);
+                return slice_ptr[4..][0..length.*];
+            }
+
+            return null;
+        }
+    };
+
     pub const File = struct {
         name: []const u8 = "",
         loader: bun.options.Loader,
@@ -96,6 +139,15 @@ pub const StandaloneModuleGraph = struct {
         cached_blob: ?*bun.JSC.WebCore.Blob = null,
         encoding: Encoding = .binary,
         wtf_string: bun.String = bun.String.empty,
+        bytecode: []u8 = "",
+        module_format: ModuleFormat = .none,
+
+        pub fn stat(this: *const File) bun.Stat {
+            var result = std.mem.zeroes(bun.Stat);
+            result.size = @intCast(this.contents.len);
+            result.mode = bun.S.IFREG | 0o644;
+            return result;
+        }
 
         pub fn lessThanByIndex(ctx: []const File, lhs_i: u32, rhs_i: u32) bool {
             const lhs = ctx[lhs_i];
@@ -158,7 +210,7 @@ pub const StandaloneModuleGraph = struct {
         none,
 
         /// It probably is not possible to run two decoding jobs on the same file
-        var init_lock: bun.Lock = .{};
+        var init_lock: bun.Mutex = .{};
 
         pub fn load(this: *LazySourceMap) ?*SourceMap.ParsedSourceMap {
             init_lock.lock();
@@ -199,7 +251,7 @@ pub const StandaloneModuleGraph = struct {
                     });
 
                     stored.external_source_names = file_names;
-                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)) };
+                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)), .load_hint = .none };
                     stored.is_standalone_module_graph = true;
 
                     const parsed = stored.new(); // allocate this on the heap
@@ -225,7 +277,7 @@ pub const StandaloneModuleGraph = struct {
         };
 
         const modules_list_bytes = sliceTo(raw_bytes, offsets.modules_ptr);
-        const modules_list = std.mem.bytesAsSlice(CompiledModuleGraphFile, modules_list_bytes);
+        const modules_list: []align(1) const CompiledModuleGraphFile = std.mem.bytesAsSlice(CompiledModuleGraphFile, modules_list_bytes);
 
         if (offsets.entry_point_id > modules_list.len) {
             return error.@"Corrupted module graph: entry point ID is greater than module list count";
@@ -246,6 +298,8 @@ pub const StandaloneModuleGraph = struct {
                         } }
                     else
                         .none,
+                    .bytecode = if (module.bytecode.length > 0) @constCast(sliceTo(raw_bytes, module.bytecode)) else &.{},
+                    .module_format = module.module_format,
                 },
             );
         }
@@ -271,14 +325,14 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length :0];
     }
 
-    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile) ![]u8 {
+    pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile, output_format: bun.options.Format) ![]u8 {
         var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
 
         var entry_point_id: ?usize = null;
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
-        for (output_files, 0..) |output_file, i| {
+        for (output_files) |output_file| {
             string_builder.countZ(output_file.dest_path);
             string_builder.countZ(prefix);
             if (output_file.value == .buffer) {
@@ -288,10 +342,13 @@ pub const StandaloneModuleGraph = struct {
                     // the exact amount is not possible without allocating as it
                     // involves a JSON parser.
                     string_builder.cap += output_file.value.buffer.bytes.len * 2;
+                } else if (output_file.output_kind == .bytecode) {
+                    // Allocate up to 256 byte alignment for bytecode
+                    string_builder.cap += (output_file.value.buffer.bytes.len + 255) / 256 * 256 + 256;
                 } else {
                     if (entry_point_id == null) {
                         if (output_file.output_kind == .@"entry-point") {
-                            entry_point_id = i;
+                            entry_point_id = module_count;
                         }
                     }
 
@@ -320,7 +377,7 @@ pub const StandaloneModuleGraph = struct {
         defer source_map_arena.deinit();
 
         for (output_files) |output_file| {
-            if (output_file.output_kind == .sourcemap) {
+            if (!output_file.output_kind.isFileInStandaloneMode()) {
                 continue;
             }
 
@@ -329,6 +386,23 @@ pub const StandaloneModuleGraph = struct {
             }
 
             const dest_path = bun.strings.removeLeadingDotSlash(output_file.dest_path);
+
+            const bytecode: StringPointer = brk: {
+                if (output_file.bytecode_index != std.math.maxInt(u32)) {
+                    // Use up to 256 byte alignment for bytecode
+                    // Not aligning it correctly will cause a runtime assertion error, or a segfault.
+                    const bytecode = output_files[output_file.bytecode_index].value.buffer.bytes;
+                    const aligned = std.mem.alignInSlice(string_builder.writable(), 128).?;
+                    @memcpy(aligned[0..bytecode.len], bytecode[0..bytecode.len]);
+                    const unaligned_space = aligned[bytecode.len..];
+                    const offset = @intFromPtr(aligned.ptr) - @intFromPtr(string_builder.ptr.?);
+                    const len = bytecode.len + @min(unaligned_space.len, 128);
+                    string_builder.len += len;
+                    break :brk StringPointer{ .offset = @truncate(offset), .length = @truncate(len) };
+                } else {
+                    break :brk .{};
+                }
+            };
 
             var module = CompiledModuleGraphFile{
                 .name = string_builder.fmtAppendCountZ("{s}{s}", .{
@@ -341,7 +415,14 @@ pub const StandaloneModuleGraph = struct {
                     .js, .jsx, .ts, .tsx => .latin1,
                     else => .binary,
                 },
+                .module_format = if (output_file.loader.isJavaScriptLike()) switch (output_format) {
+                    .cjs => .cjs,
+                    .esm => .esm,
+                    else => .none,
+                } else .none,
+                .bytecode = bytecode,
             };
+
             if (output_file.source_map_index != std.math.maxInt(u32)) {
                 defer source_map_header_list.clearRetainingCapacity();
                 defer source_map_string_list.clearRetainingCapacity();
@@ -391,7 +472,11 @@ pub const StandaloneModuleGraph = struct {
     else
         std.mem.page_size;
 
-    pub fn inject(bytes: []const u8, self_exe: [:0]const u8) bun.FileDescriptor {
+    pub const InjectOptions = struct {
+        windows_hide_console: bool = false,
+    };
+
+    pub fn inject(bytes: []const u8, self_exe: [:0]const u8, inject_options: InjectOptions, target: *const CompileTarget) bun.FileDescriptor {
         var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
@@ -400,6 +485,11 @@ pub const StandaloneModuleGraph = struct {
 
         const cleanup = struct {
             pub fn toClean(name: [:0]const u8, fd: bun.FileDescriptor) void {
+                // Ensure we own the file
+                if (Environment.isPosix) {
+                    // Make the file writable so we can delete it
+                    _ = Syscall.fchmod(fd, 0o777);
+                }
                 _ = Syscall.close(fd);
                 _ = Syscall.unlink(name);
             }
@@ -425,12 +515,11 @@ pub const StandaloneModuleGraph = struct {
                 const file = bun.sys.openFileAtWindows(
                     bun.invalid_fd,
                     out,
-                    // access_mask
-                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
-                    // create disposition
-                    w.FILE_OPEN,
-                    // create options
-                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_WRITE | w.GENERIC_READ | w.DELETE,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
                 ).unwrap() catch |e| {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}", .{e});
                     Global.exit(1);
@@ -526,71 +615,136 @@ pub const StandaloneModuleGraph = struct {
             break :brk fd;
         };
 
-        var total_byte_count: usize = undefined;
+        switch (target.os) {
+            .mac => {
+                const input_result = bun.sys.File.readToEnd(.{ .handle = cloned_executable_fd }, bun.default_allocator);
+                if (input_result.err) |err| {
+                    Output.prettyErrorln("Error reading standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                }
+                var macho_file = bun.macho.MachoFile.init(bun.default_allocator, input_result.bytes.items, bytes.len) catch |err| {
+                    Output.prettyErrorln("Error initializing standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                defer macho_file.deinit();
+                macho_file.writeSection(bytes) catch |err| {
+                    Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                input_result.bytes.deinit();
 
-        if (Environment.isWindows) {
-            total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(cloned_executable_fd).unwrap() catch |err| {
-                Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}", .{err});
-                cleanup(zname, cloned_executable_fd);
-                Global.exit(1);
-            });
-        } else {
-            const seek_position = @as(u64, @intCast(brk: {
-                const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
-                    .result => |res| res,
+                switch (Syscall.setFileOffset(cloned_executable_fd, 0)) {
                     .err => |err| {
-                        Output.prettyErrorln("{}", .{err});
+                        Output.prettyErrorln("Error seeking to start of temporary file: {}", .{err});
                         cleanup(zname, cloned_executable_fd);
                         Global.exit(1);
                     },
+                    else => {},
+                }
+
+                var file = bun.sys.File{ .handle = cloned_executable_fd };
+                const writer = file.writer();
+                const BufferedWriter = std.io.BufferedWriter(512 * 1024, @TypeOf(writer));
+                var buffered_writer = bun.default_allocator.create(BufferedWriter) catch bun.outOfMemory();
+                buffered_writer.* = .{
+                    .unbuffered_writer = writer,
                 };
+                macho_file.buildAndSign(buffered_writer.writer()) catch |err| {
+                    Output.prettyErrorln("Error writing standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                buffered_writer.flush() catch |err| {
+                    Output.prettyErrorln("Error flushing standalone module graph: {}", .{err});
+                    cleanup(zname, cloned_executable_fd);
+                    Global.exit(1);
+                };
+                if (comptime !Environment.isWindows) {
+                    _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+                }
+                return cloned_executable_fd;
+            },
+            else => {
+                var total_byte_count: usize = undefined;
+                if (Environment.isWindows) {
+                    total_byte_count = bytes.len + 8 + (Syscall.setFileOffsetToEndWindows(cloned_executable_fd).unwrap() catch |err| {
+                        Output.prettyErrorln("<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}", .{err});
+                        cleanup(zname, cloned_executable_fd);
+                        Global.exit(1);
+                    });
+                } else {
+                    const seek_position = @as(u64, @intCast(brk: {
+                        const fstat = switch (Syscall.fstat(cloned_executable_fd)) {
+                            .result => |res| res,
+                            .err => |err| {
+                                Output.prettyErrorln("{}", .{err});
+                                cleanup(zname, cloned_executable_fd);
+                                Global.exit(1);
+                            },
+                        };
 
-                break :brk @max(fstat.size, 0);
-            }));
+                        break :brk @max(fstat.size, 0);
+                    }));
 
-            total_byte_count = seek_position + bytes.len + 8;
+                    total_byte_count = seek_position + bytes.len + 8;
 
-            // From https://man7.org/linux/man-pages/man2/lseek.2.html
-            //
-            //  lseek() allows the file offset to be set beyond the end of the
-            //  file (but this does not change the size of the file).  If data is
-            //  later written at this point, subsequent reads of the data in the
-            //  gap (a "hole") return null bytes ('\0') until data is actually
-            //  written into the gap.
-            //
-            switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
-                .err => |err| {
-                    Output.prettyErrorln(
-                        "{}\nwhile seeking to end of temporary file (pos: {d})",
-                        .{
-                            err,
-                            seek_position,
+                    // From https://man7.org/linux/man-pages/man2/lseek.2.html
+                    //
+                    //  lseek() allows the file offset to be set beyond the end of the
+                    //  file (but this does not change the size of the file).  If data is
+                    //  later written at this point, subsequent reads of the data in the
+                    //  gap (a "hole") return null bytes ('\0') until data is actually
+                    //  written into the gap.
+                    //
+                    switch (Syscall.setFileOffset(cloned_executable_fd, seek_position)) {
+                        .err => |err| {
+                            Output.prettyErrorln(
+                                "{}\nwhile seeking to end of temporary file (pos: {d})",
+                                .{
+                                    err,
+                                    seek_position,
+                                },
+                            );
+                            cleanup(zname, cloned_executable_fd);
+                            Global.exit(1);
                         },
-                    );
-                    cleanup(zname, cloned_executable_fd);
-                    Global.exit(1);
-                },
-                else => {},
-            }
+                        else => {},
+                    }
+                }
+
+                var remain = bytes;
+                while (remain.len > 0) {
+                    switch (Syscall.write(cloned_executable_fd, bytes)) {
+                        .result => |written| remain = remain[written..],
+                        .err => |err| {
+                            Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
+                            cleanup(zname, cloned_executable_fd);
+
+                            Global.exit(1);
+                        },
+                    }
+                }
+
+                // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
+                _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
+                if (comptime !Environment.isWindows) {
+                    _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+                }
+
+                return cloned_executable_fd;
+            },
         }
 
-        var remain = bytes;
-        while (remain.len > 0) {
-            switch (Syscall.write(cloned_executable_fd, bytes)) {
-                .result => |written| remain = remain[written..],
-                .err => |err| {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> failed to write to temporary file\n{}", .{err});
-                    cleanup(zname, cloned_executable_fd);
+        if (Environment.isWindows and inject_options.windows_hide_console) {
+            bun.windows.editWin32BinarySubsystem(.{ .handle = cloned_executable_fd }, .windows_gui) catch |err| {
+                Output.err(err, "failed to disable console on executable", .{});
+                cleanup(zname, cloned_executable_fd);
 
-                    Global.exit(1);
-                },
-            }
-        }
-
-        // the final 8 bytes in the file are the length of the module graph with padding, excluding the trailer and offsets
-        _ = Syscall.write(cloned_executable_fd, std.mem.asBytes(&total_byte_count));
-        if (comptime !Environment.isWindows) {
-            _ = bun.C.fchmod(cloned_executable_fd.int(), 0o777);
+                Global.exit(1);
+            };
         }
 
         return cloned_executable_fd;
@@ -619,8 +773,11 @@ pub const StandaloneModuleGraph = struct {
         module_prefix: []const u8,
         outfile: []const u8,
         env: *bun.DotEnv.Loader,
+        output_format: bun.options.Format,
+        windows_hide_console: bool,
+        windows_icon: ?[]const u8,
     ) !void {
-        const bytes = try toBytes(allocator, module_prefix, output_files);
+        const bytes = try toBytes(allocator, module_prefix, output_files, output_format);
         if (bytes.len == 0) return;
 
         const fd = inject(
@@ -635,6 +792,8 @@ pub const StandaloneModuleGraph = struct {
                     Output.err(err, "failed to download cross-compiled bun executable", .{});
                     Global.exit(1);
                 },
+            .{ .windows_hide_console = windows_hide_console },
+            target,
         );
         fd.assertKind(.system);
 
@@ -659,6 +818,15 @@ pub const StandaloneModuleGraph = struct {
 
                 Global.exit(1);
             };
+            _ = bun.sys.close(fd);
+
+            if (windows_icon) |icon_utf8| {
+                var icon_buf: bun.OSPathBuffer = undefined;
+                const icon = bun.strings.toWPathNormalized(&icon_buf, icon_utf8);
+                bun.windows.rescle.setIcon(outfile_slice, icon) catch {
+                    Output.warn("Failed to set executable icon", .{});
+                };
+            }
             return;
         }
 
@@ -667,29 +835,6 @@ pub const StandaloneModuleGraph = struct {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
             Global.exit(1);
         };
-
-        if (comptime Environment.isMac) {
-            if (target.os == .mac) {
-                var signer = std.process.Child.init(
-                    &.{
-                        "codesign",
-                        "--remove-signature",
-                        temp_location,
-                    },
-                    bun.default_allocator,
-                );
-                if (bun.logger.Log.default_log_level.atLeast(.verbose)) {
-                    signer.stdout_behavior = .Inherit;
-                    signer.stderr_behavior = .Inherit;
-                    signer.stdin_behavior = .Inherit;
-                } else {
-                    signer.stdout_behavior = .Ignore;
-                    signer.stderr_behavior = .Ignore;
-                    signer.stdin_behavior = .Ignore;
-                }
-                _ = signer.spawnAndWait() catch {};
-            }
-        }
 
         bun.C.moveFileZWithHandle(
             fd,
@@ -712,6 +857,22 @@ pub const StandaloneModuleGraph = struct {
     }
 
     pub fn fromExecutable(allocator: std.mem.Allocator) !?StandaloneModuleGraph {
+        if (comptime Environment.isMac) {
+            const macho_bytes = Macho.getData() orelse return null;
+            if (macho_bytes.len < @sizeOf(Offsets) + trailer.len) {
+                Output.debugWarn("bun standalone module graph is too small to be valid", .{});
+                return null;
+            }
+            const macho_bytes_slice = macho_bytes[macho_bytes.len - @sizeOf(Offsets) - trailer.len ..];
+            const trailer_bytes = macho_bytes[macho_bytes.len - trailer.len ..][0..trailer.len];
+            if (!bun.strings.eqlComptime(trailer_bytes, trailer)) {
+                Output.debugWarn("bun standalone module graph has invalid trailer", .{});
+                return null;
+            }
+            const offsets = std.mem.bytesAsValue(Offsets, macho_bytes_slice).*;
+            return try StandaloneModuleGraph.fromBytes(allocator, @constCast(macho_bytes), offsets);
+        }
+
         // Do not invoke libuv here.
         const self_exe = openSelf() catch return null;
         defer _ = Syscall.close(self_exe);
@@ -883,7 +1044,7 @@ pub const StandaloneModuleGraph = struct {
                 const image_path = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2];
 
                 var nt_path_buf: bun.WPathBuffer = undefined;
-                const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);
+                const nt_path = bun.strings.addNTPathPrefixIfNeeded(&nt_path_buf, image_path);
 
                 const basename_start = std.mem.lastIndexOfScalar(u16, nt_path, '\\') orelse
                     return error.FileNotFound;
@@ -895,12 +1056,11 @@ pub const StandaloneModuleGraph = struct {
                 return bun.sys.openFileAtWindows(
                     bun.FileDescriptor.cwd(),
                     nt_path,
-                    // access_mask
-                    w.SYNCHRONIZE | w.GENERIC_READ,
-                    // create disposition
-                    w.FILE_OPEN,
-                    // create options
-                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    .{
+                        .access_mask = w.SYNCHRONIZE | w.GENERIC_READ,
+                        .disposition = w.FILE_OPEN,
+                        .options = w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                    },
                 ).unwrap() catch {
                     return error.FileNotFound;
                 };
@@ -999,7 +1159,7 @@ pub const StandaloneModuleGraph = struct {
             bun.JSAst.Expr.Data.Store.reset();
             bun.JSAst.Stmt.Data.Store.reset();
         }
-        var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch
+        var json = bun.JSON.parse(&json_src, &log, arena, false) catch
             return error.InvalidSourceMap;
 
         const mappings_str = json.get("mappings") orelse
@@ -1032,7 +1192,7 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const decoded = try item.data.e_string.stringDecodedUTF8(arena);
+            const decoded = try item.data.e_string.stringCloned(arena);
 
             const offset = string_payload.items.len;
             try string_payload.appendSlice(decoded);
@@ -1049,7 +1209,7 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const utf8 = try item.data.e_string.stringDecodedUTF8(arena);
+            const utf8 = try item.data.e_string.stringCloned(arena);
             defer arena.free(utf8);
 
             const offset = string_payload.items.len;

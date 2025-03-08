@@ -1,11 +1,11 @@
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
-const { isTypedArray } = require("node:util/types");
+const { isTypedArray, isArrayBuffer } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
+const { validateFunction, checkIsHttpToken } = require("internal/validators");
 
 const {
   getHeader,
@@ -58,8 +58,7 @@ function checkInvalidHeaderChar(val: string) {
 
 const validateHeaderName = (name, label) => {
   if (typeof name !== "string" || !name || !checkIsHttpToken(name)) {
-    // throw new ERR_INVALID_HTTP_TOKEN(label || "Header name", name);
-    throw new Error("ERR_INVALID_HTTP_TOKEN");
+    throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
   }
 };
 
@@ -80,7 +79,7 @@ function ERR_HTTP_SOCKET_ASSIGNED() {
 
 // TODO: add primordial for URL
 // Importing from node:url is unnecessary
-const { URL } = globalThis;
+const { URL, WebSocket, CloseEvent, MessageEvent } = globalThis;
 
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
@@ -112,12 +111,11 @@ const kfakeSocket = Symbol("kfakeSocket");
 const kEmptyBuffer = Buffer.alloc(0);
 
 function isValidTLSArray(obj) {
-  if (typeof obj === "string" || isTypedArray(obj) || obj instanceof ArrayBuffer || obj instanceof Blob) return true;
+  if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
       const item = obj[i];
-      if (typeof item !== "string" && !isTypedArray(item) && !(item instanceof ArrayBuffer) && !(item instanceof Blob))
-        return false;
+      if (typeof item !== "string" && !isTypedArray(item) && !isArrayBuffer(item) && !$inheritsBlob(item)) return false;
     }
     return true;
   }
@@ -126,17 +124,10 @@ function isValidTLSArray(obj) {
 
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
-    throw ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+    throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
   }
 
   return numberlike;
-}
-function validateFunction(callable: any, field: string) {
-  if (typeof callable !== "function") {
-    throw ERR_INVALID_ARG_TYPE(field, "Function", callable);
-  }
-
-  return callable;
 }
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
@@ -284,7 +275,7 @@ function Agent(options = kEmptyObject) {
   this.defaultPort = options.defaultPort || 80;
   this.protocol = options.protocol || "http:";
 }
-Agent.prototype = Object.create(EventEmitter.prototype);
+$toClass(Agent, "Agent", EventEmitter);
 
 ObjectDefineProperty(Agent, "globalAgent", {
   get: function () {
@@ -784,6 +775,9 @@ function requestHasNoBody(method, req) {
   if ("GET" === method || "HEAD" === method || "TRACE" === method || "CONNECT" === method || "OPTIONS" === method)
     return true;
   const headers = req?.headers;
+  const encoding = headers?.["transfer-encoding"];
+  if (encoding?.indexOf?.("chunked") !== -1) return false;
+
   const contentLength = headers?.["content-length"];
   if (!parseInt(contentLength, 10)) return true;
 
@@ -845,12 +839,15 @@ IncomingMessage.prototype = {
       return;
     }
 
-    const contentLength = this.headers["content-length"];
-    const length = contentLength ? parseInt(contentLength, 10) : 0;
-    if (length === 0) {
-      this[noBodySymbol] = true;
-      callback();
-      return;
+    const encoding = this.headers["transfer-encoding"];
+    if (encoding?.indexOf?.("chunked") === -1) {
+      const contentLength = this.headers["content-length"];
+      const length = contentLength ? parseInt(contentLength, 10) : 0;
+      if (length === 0) {
+        this[noBodySymbol] = true;
+        callback();
+        return;
+      }
     }
 
     callback();
@@ -982,7 +979,6 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
       } else {
         ({ done, value } = result);
       }
-
       if (self.destroyed || (aborted = self[abortedSymbol])) {
         break;
       }
@@ -1029,6 +1025,9 @@ OutgoingMessage.prototype._implicitHeader = function () {};
 
 OutgoingMessage.prototype.appendHeader = function (name, value) {
   var headers = (this[headersSymbol] ??= new Headers());
+  if (typeof value === "number") {
+    value = String(value);
+  }
   headers.append(name, value);
 };
 
@@ -1057,6 +1056,9 @@ OutgoingMessage.prototype.removeHeader = function (name) {
 OutgoingMessage.prototype.setHeader = function (name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   var headers = this[headersSymbol];
+  if (typeof value === "number") {
+    value = String(value);
+  }
   headers.set(name, value);
   return this;
 };
@@ -1392,6 +1394,9 @@ ServerResponse.prototype.setTimeout = function (msecs, callback) {
 ServerResponse.prototype.appendHeader = function (name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   const headers = this[headersSymbol];
+  if (typeof value === "number") {
+    value = String(value);
+  }
   headers.append(name, value);
 };
 
@@ -1421,6 +1426,9 @@ ServerResponse.prototype.removeHeader = function (name) {
 ServerResponse.prototype.setHeader = function (name, value) {
   this[headersSymbol] = this[headersSymbol] ?? new Headers();
   const headers = this[headersSymbol];
+  if (typeof value === "number") {
+    value = String(value);
+  }
   setHeader(headers, name, value);
   return this;
 };
@@ -1486,6 +1494,9 @@ class ClientRequest extends OutgoingMessage {
   #socketPath;
 
   #bodyChunks: Buffer[] | null = null;
+  #stream: ReadableStream | null = null;
+  #controller: ReadableStream | null = null;
+
   #fetchRequest;
   #signal: AbortSignal | null = null;
   [kAbortController]: AbortController | null = null;
@@ -1519,24 +1530,97 @@ class ClientRequest extends OutgoingMessage {
     return this.#agent;
   }
 
+  set agent(value) {
+    this.#agent = value;
+  }
+
+  #createStream() {
+    if (!this.#stream) {
+      var self = this;
+
+      this.#stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          self.#controller = controller;
+          for (let chunk of self.#bodyChunks) {
+            if (chunk === null) {
+              controller.close();
+            } else {
+              controller.write(chunk);
+            }
+          }
+          self.#bodyChunks = null;
+        },
+      });
+      this.#startStream();
+    }
+  }
+
   _write(chunk, encoding, callback) {
-    if (!this.#bodyChunks) {
-      this.#bodyChunks = [chunk];
-      callback();
+    if (this.#controller) {
+      if (typeof chunk === "string") {
+        this.#controller.write(Buffer.from(chunk, encoding));
+      } else {
+        this.#controller.write(chunk);
+      }
+      process.nextTick(callback);
       return;
     }
+    if (!this.#bodyChunks) {
+      this.#bodyChunks = [chunk];
+      process.nextTick(callback);
+      return;
+    }
+
     this.#bodyChunks.push(chunk);
-    callback();
+    this.#createStream();
+    process.nextTick(callback);
   }
 
   _writev(chunks, callback) {
-    if (!this.#bodyChunks) {
-      this.#bodyChunks = chunks;
-      callback();
+    if (this.#controller) {
+      const allBuffers = chunks.allBuffers;
+
+      if (allBuffers) {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#controller.write(chunks[i].chunk);
+        }
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#controller.write(Buffer.from(chunks[i].chunk, chunks[i].encoding));
+        }
+      }
+      process.nextTick(callback);
       return;
     }
-    this.#bodyChunks.push(...chunks);
-    callback();
+    const allBuffers = chunks.allBuffers;
+    if (this.#bodyChunks) {
+      if (allBuffers) {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#bodyChunks.push(chunks[i].chunk);
+        }
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#bodyChunks.push(Buffer.from(chunks[i].chunk, chunks[i].encoding));
+        }
+      }
+    } else {
+      this.#bodyChunks = new Array(chunks.length);
+
+      if (allBuffers) {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#bodyChunks[i] = chunks[i].chunk;
+        }
+      } else {
+        for (let i = 0; i < chunks.length; i++) {
+          this.#bodyChunks[i] = Buffer.from(chunks[i].chunk, chunks[i].encoding);
+        }
+      }
+    }
+    if (this.#bodyChunks.length > 1) {
+      this.#createStream();
+    }
+    process.nextTick(callback);
   }
 
   _destroy(err, callback) {
@@ -1552,26 +1636,12 @@ class ClientRequest extends OutgoingMessage {
     return this.#tls;
   }
 
-  _final(callback) {
-    this.#finished = true;
-    this[kAbortController] = new AbortController();
-    this[kAbortController].signal.addEventListener(
-      "abort",
-      () => {
-        this[kClearTimeout]?.();
-        if (this.destroyed) return;
-        this.emit("abort");
-        this.destroy();
-      },
-      { once: true },
-    );
-    if (this.#signal?.aborted) {
-      this[kAbortController].abort();
-    }
+  #startStream() {
+    if (this.#fetchRequest) return;
 
     var method = this.#method,
-      body = this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []);
-
+      body =
+        this.#stream || (this.#bodyChunks?.length === 1 ? this.#bodyChunks[0] : Buffer.concat(this.#bodyChunks || []));
     let url: string;
     let proxy: string | undefined;
     const protocol = this.#protocol;
@@ -1581,6 +1651,19 @@ class ClientRequest extends OutgoingMessage {
       proxy = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}`;
     } else {
       url = `${protocol}//${this.#host}${this.#useDefaultPort ? "" : ":" + this.#port}${path}`;
+      // support agent proxy url/string for http/https
+      try {
+        // getters can throw
+        const agentProxy = this.#agent?.proxy;
+        // this should work for URL like objects and strings
+        proxy = agentProxy?.href || agentProxy;
+      } catch {}
+    }
+
+    let keepalive = true;
+    const agentKeepalive = this.#agent?.keepalive;
+    if (agentKeepalive !== undefined) {
+      keepalive = agentKeepalive;
     }
     const tls = protocol === "https:" && this.#tls ? { ...this.#tls, serverName: this.#tls.servername } : undefined;
     try {
@@ -1588,11 +1671,12 @@ class ClientRequest extends OutgoingMessage {
         method,
         headers: this.getHeaders(),
         redirect: "manual",
-        signal: this[kAbortController].signal,
+        signal: this[kAbortController]?.signal,
         // Timeouts are handled via this.setTimeout.
         timeout: false,
         // Disable auto gzip/deflate
         decompress: false,
+        keepalive,
       };
 
       if (body && method !== "GET" && method !== "HEAD" && method !== "OPTIONS") {
@@ -1653,9 +1737,38 @@ class ClientRequest extends OutgoingMessage {
     } catch (err) {
       if (!!$debug) globalReportError(err);
       this.emit("error", err);
-    } finally {
-      callback();
     }
+  }
+
+  _final(callback) {
+    this.#finished = true;
+    this[kAbortController] = new AbortController();
+    this[kAbortController].signal.addEventListener(
+      "abort",
+      () => {
+        this[kClearTimeout]?.();
+        if (this.destroyed) return;
+        this.emit("abort");
+        this.destroy();
+      },
+      { once: true },
+    );
+    if (this.#signal?.aborted) {
+      this[kAbortController].abort();
+    }
+
+    if (this.#controller) {
+      this.#controller.close();
+      callback();
+      return;
+    }
+    if (this.#bodyChunks?.length > 1) {
+      this.#bodyChunks?.push(null);
+    }
+
+    this.#startStream();
+
+    callback();
   }
 
   get aborted() {
@@ -1676,7 +1789,6 @@ class ClientRequest extends OutgoingMessage {
 
   constructor(input, options, cb) {
     super();
-
     if (typeof input === "string") {
       const urlStr = input;
       try {
@@ -1708,7 +1820,7 @@ class ClientRequest extends OutgoingMessage {
     } else if (agent == null) {
       agent = defaultAgent;
     } else if (typeof agent.addRequest !== "function") {
-      throw ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
+      throw $ERR_INVALID_ARG_TYPE("options.agent", "Agent-like Object, undefined, or false", agent);
     }
     this.#agent = agent;
 
@@ -1718,7 +1830,7 @@ class ClientRequest extends OutgoingMessage {
       expectedProtocol = this.agent.protocol;
     }
     if (protocol !== expectedProtocol) {
-      throw ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
+      throw $ERR_INVALID_PROTOCOL(protocol, expectedProtocol);
     }
     this.#protocol = protocol;
 
@@ -1754,14 +1866,12 @@ class ClientRequest extends OutgoingMessage {
     let method = options.method;
     const methodIsString = typeof method === "string";
     if (method !== null && method !== undefined && !methodIsString) {
-      // throw ERR_INVALID_ARG_TYPE("options.method", "string", method);
-      throw new Error("ERR_INVALID_ARG_TYPE: options.method");
+      throw $ERR_INVALID_ARG_TYPE("options.method", "string", method);
     }
 
     if (methodIsString && method) {
       if (!checkIsHttpToken(method)) {
-        // throw new ERR_INVALID_HTTP_TOKEN("Method", method);
-        throw new Error("ERR_INVALID_HTTP_TOKEN: Method");
+        throw $ERR_INVALID_HTTP_TOKEN("Method");
       }
       method = this.#method = StringPrototypeToUpperCase.$call(method);
     } else {
@@ -1793,7 +1903,17 @@ class ClientRequest extends OutgoingMessage {
     if (options.pfx) {
       throw new Error("pfx is not supported");
     }
+
     if (options.rejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = options.rejectUnauthorized;
+    else {
+      let agentRejectUnauthorized = agent?.options?.rejectUnauthorized;
+      if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+      else {
+        // popular https-proxy-agent uses connectOpts
+        agentRejectUnauthorized = agent?.connectOpts?.rejectUnauthorized;
+        if (agentRejectUnauthorized !== undefined) this._ensureTls().rejectUnauthorized = agentRejectUnauthorized;
+      }
+    }
     if (options.ca) {
       if (!isValidTLSArray(options.ca))
         throw new TypeError(
@@ -1981,24 +2101,9 @@ class ClientRequest extends OutgoingMessage {
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {
-    // throw ERR_INVALID_ARG_TYPE(
-    //   `options.${name}`,
-    //   ["string", "undefined", "null"],
-    //   host,
-    // );
-    throw new Error("Invalid arg type in options");
+    throw $ERR_INVALID_ARG_TYPE(`options.${name}`, ["string", "undefined", "null"], host);
   }
   return host;
-}
-
-const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
-/**
- * Verifies that the given val is a valid HTTP token
- * per the rules defined in RFC 7230
- * See https://tools.ietf.org/html/rfc7230#section-3.2.6
- */
-function checkIsHttpToken(val) {
-  return RegExpPrototypeExec.$call(tokenRegExp, val) !== null;
 }
 
 // Copyright Joyent, Inc. and other Node contributors.
@@ -2291,4 +2396,7 @@ export default {
   globalAgent,
   ClientRequest,
   OutgoingMessage,
+  WebSocket,
+  CloseEvent,
+  MessageEvent,
 };

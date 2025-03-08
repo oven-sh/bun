@@ -7,7 +7,7 @@
     "esModuleInterop": true,
     "isolatedModules": false,
     "skipLibCheck": true,
-    "types": ["bun-types"]
+    "strict": true
   },
   "include": ["src", "test", "types", "../../bun-devtools", "../../bun-debug-adapter-protocol"],
   "exclude": ["node_modules"]

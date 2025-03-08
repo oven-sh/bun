@@ -1294,6 +1294,7 @@ pub const Transpiler = struct {
                                 js_ast.S.ExportClause,
                                 js_ast.S.ExportClause{
                                     .items = export_clauses[0..count],
+                                    .is_single_line = false,
                                 },
                                 logger.Loc{
                                     .start = 0,

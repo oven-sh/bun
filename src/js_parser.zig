@@ -2403,8 +2403,6 @@ pub const SideEffects = enum(u1) {
                 .hot_enabled,
                 => return .{ .ok = true, .value = true, .side_effects = .no_side_effects },
                 .hot_disabled,
-                .hot_accept_disabled,
-                .hot_function_disabled,
                 => return .{ .ok = true, .value = false, .side_effects = .no_side_effects },
             },
             else => {},
@@ -9821,7 +9819,10 @@ fn NewParser_(
                                 }
                             }
                             p.has_es_module_syntax = true;
-                            return p.s(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
+                            return p.s(S.ExportClause{
+                                .items = export_clause.clauses,
+                                .is_single_line = export_clause.is_single_line,
+                            }, loc);
                         },
                         T.t_equals => {
                             // "export = value;"
@@ -17310,8 +17311,9 @@ fn NewParser_(
                             p.should_fold_typescript_constant_expressions = true;
                         }
 
+                        // When a value is targeted by `--drop`, it will be removed.
+                        // The HMR APIs in `import.meta.hot` are implicitly dropped when HMR is disabled.
                         var method_call_should_be_replaced_with_undefined = p.method_call_must_be_replaced_with_undefined;
-
                         if (method_call_should_be_replaced_with_undefined) {
                             p.method_call_must_be_replaced_with_undefined = false;
                             switch (e_.target.data) {
@@ -17319,19 +17321,13 @@ fn NewParser_(
                                 .e_index, .e_dot => {
                                     p.is_control_flow_dead = true;
                                 },
+                                // Special case from `import.meta.hot.*` functions.
+                                .e_undefined => {
+                                    p.is_control_flow_dead = true;
+                                },
                                 else => {
                                     method_call_should_be_replaced_with_undefined = false;
                                 },
-                            }
-                        }
-
-                        if (e_.target.data.as(.e_special)) |special| {
-                            switch (special) {
-                                .hot_accept_disabled, .hot_function_disabled => {
-                                    method_call_should_be_replaced_with_undefined = true;
-                                    p.is_control_flow_dead = true;
-                                },
-                                else => {},
                             }
                         }
 
@@ -17425,11 +17421,6 @@ fn NewParser_(
                                 // expression in production.
                                 if (!p.options.features.hot_module_reloading)
                                     return .{ .data = .e_undefined, .loc = expr.loc };
-                            },
-                            // These APIs do not have any special parser transforms.
-                            .hot_function_disabled, .hot_accept_disabled => {
-                                bun.debugAssert(false);
-                                return .{ .data = .e_undefined, .loc = expr.loc };
                             },
                             else => {},
                         };
@@ -18879,8 +18870,12 @@ fn NewParser_(
                                 Expr.init(E.Object, .{}, loc);
                         }
                         if (bun.strings.eqlComptime(name, "accept")) {
+                            if (!enabled) {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                                return .{ .data = .e_undefined, .loc = loc };
+                            }
                             return .{ .data = .{
-                                .e_special = if (enabled) .hot_accept else .hot_accept_disabled,
+                                .e_special = .hot_accept,
                             }, .loc = loc };
                         }
                         const lookup_table = comptime bun.ComptimeStringMap(void, [_]struct { [:0]const u8, void }{
@@ -18900,7 +18895,8 @@ fn NewParser_(
                                     .name_loc = name_loc,
                                 }, loc);
                             } else {
-                                return .{ .data = .{ .e_special = .hot_function_disabled }, .loc = loc };
+                                p.method_call_must_be_replaced_with_undefined = true;
+                                return .{ .data = .e_undefined, .loc = loc };
                             }
                         } else {
                             // This error is a bit out of place since the HMR
@@ -19321,6 +19317,7 @@ fn NewParser_(
                             };
                             stmts.appendAssumeCapacity(p.s(S.ExportClause{
                                 .items = items,
+                                .is_single_line = false,
                             }, stmt.loc));
                         }
 
@@ -23316,6 +23313,7 @@ fn NewParser_(
                 if (exports.items.len > 0) {
                     result.appendAssumeCapacity(p.s(S.ExportClause{
                         .items = exports.items,
+                        .is_single_line = false,
                     }, loc));
                 }
 
@@ -24351,10 +24349,9 @@ pub const ConvertESMExportsForHmr = struct {
                         try ctx.visitBindingToExport(p, decl.binding, true);
                     }
                 } else {
-                    // TODO: remove this dupe
-                    var dupe_decls = try std.ArrayListUnmanaged(G.Decl).initCapacity(p.allocator, st.decls.len);
-
-                    for (st.decls.slice()) |decl| {
+                    var new_len: usize = 0;
+                    for (st.decls.slice()) |*decl_ptr| {
+                        const decl = decl_ptr.*; // explicit copy to avoid aliasinng
                         bun.assert(decl.value != null); // const must be initialized
 
                         switch (decl.binding.data) {
@@ -24376,24 +24373,24 @@ pub const ConvertESMExportsForHmr = struct {
                                         .value = decl.value,
                                     });
                                 } else {
-                                    dupe_decls.appendAssumeCapacity(decl);
+                                    st.decls.mut(new_len).* = decl;
+                                    new_len += 1;
                                     try ctx.visitBindingToExport(p, decl.binding, false);
                                 }
                             },
 
                             else => {
                                 ctx.can_implicitly_accept = false;
-                                dupe_decls.appendAssumeCapacity(decl);
+                                st.decls.mut(new_len).* = decl;
+                                new_len += 1;
                                 try ctx.visitBindingToExport(p, decl.binding, false);
                             },
                         }
                     }
-
-                    if (dupe_decls.items.len == 0) {
+                    if (new_len == 0) {
                         return;
                     }
-
-                    st.decls = G.Decl.List.fromList(dupe_decls);
+                    st.decls.len = @intCast(new_len);
                 }
 
                 break :stmt stmt;
@@ -24526,6 +24523,14 @@ pub const ConvertESMExportsForHmr = struct {
                 for (st.items) |item| {
                     const ref = item.name.ref.?;
                     try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, false);
+
+                    if (ctx.can_implicitly_accept) {
+                        const symbol: *Symbol = &p.symbols.items[ref.inner_index];
+                        switch (symbol.kind) {
+                            .hoisted_function, .generator_or_async_function => {},
+                            else => ctx.can_implicitly_accept = false,
+                        }
+                    }
                 }
 
                 return; // do not emit a statement here
@@ -24592,7 +24597,6 @@ pub const ConvertESMExportsForHmr = struct {
                     });
                 } else {
                     // 'export * from' creates a spread, hoisted at the top.
-                    // TODO: for perfect HMR, this likely needs more instrumentation
                     try ctx.export_star_props.append(p.allocator, .{
                         .kind = .spread,
                         .value = Expr.initIdentifier(namespace_ref, stmt.loc),

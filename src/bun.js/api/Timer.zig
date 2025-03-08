@@ -26,6 +26,38 @@ pub const TimeoutMap = std.AutoArrayHashMapUnmanaged(
 
 const TimerHeap = heap.Intrusive(EventLoopTimer, void, EventLoopTimer.less);
 
+pub const TimerRef = struct {
+    state: enum {
+        unset,
+        ref,
+        unref,
+    } = .unset,
+
+    fn setRef(this: *TimerRef, enable: bool, vm: *JSC.VirtualMachine) void {
+        if (enable and this.state == .ref) {
+            return;
+        } else if (!enable and this.state != .ref) {
+            return;
+        }
+
+        if (enable) {
+            this.state = .ref;
+            vm.timer.incrementTimerRef(1);
+        } else {
+            this.state = .unref;
+            vm.timer.incrementTimerRef(-1);
+        }
+    }
+
+    pub fn unref(this: *TimerRef, vm: *JSC.VirtualMachine) void {
+        setRef(this, false, vm);
+    }
+
+    pub fn ref(this: *TimerRef, vm: *JSC.VirtualMachine) void {
+        setRef(this, true, vm);
+    }
+};
+
 pub const All = struct {
     last_id: i32 = 1,
     lock: bun.Mutex = .{},
@@ -39,7 +71,7 @@ pub const All = struct {
     warned_not_number: bool = false,
     /// Incremented when timers are scheduled or rescheduled. See doc comment on
     /// TimerObjectInternals.epoch.
-    epoch: u32 = 0,
+    epoch: u25 = 0,
 
     // We split up the map here to avoid storing an extra "repeat" boolean
     maps: struct {
@@ -99,7 +131,7 @@ pub const All = struct {
         timer.next = time.*;
         if (timer.jsTimerInternals()) |internals| {
             this.epoch +%= 1;
-            internals.epoch = this.epoch;
+            internals.flags.epoch = this.epoch;
         }
 
         this.timers.insert(timer);
@@ -173,9 +205,6 @@ pub const All = struct {
     }
 
     pub fn getTimeout(this: *All, spec: *timespec, vm: *VirtualMachine) bool {
-        if (this.active_timer_count == 0) {
-            return false;
-        }
         if (vm.event_loop.immediate_tasks.count > 0 or vm.event_loop.next_immediate_tasks.count > 0) {
             spec.* = .{ .nsec = 0, .sec = 0 };
             return true;
@@ -287,7 +316,7 @@ pub const All = struct {
             Debugger.didScheduleAsyncCall(
                 globalThis,
                 .DOMTimer,
-                ID.asyncID(.{ .id = id, .kind = kind }),
+                ID.asyncID(.{ .id = id, .kind = kind.big() }),
                 kind != .setInterval, // single_shot
             );
         }
@@ -709,32 +738,37 @@ pub const ImmediateObject = struct {
 const TimerObjectInternals = struct {
     /// Identifier for this timer that is exposed to JavaScript (by `+timer`)
     id: i32 = -1,
-    /// Whenever a timer is inserted into the heap (which happen on creation or refresh), the global
-    /// epoch is incremented and the new epoch is set on the timer. For timers created by
-    /// JavaScript, the epoch is used to break ties between timers scheduled for the same
-    /// millisecond. This ensures that if you set two timers for the same amount of time, and
-    /// refresh the first one, the first one will fire last. This mimics Node.js's behavior where
-    /// the refreshed timer will be inserted at the end of a list, which makes it fire later.
-    epoch: u32,
-    kind: Kind = .setTimeout,
     interval: u31 = 0,
-    // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
-    has_cleared_timer: bool = false,
-    is_keeping_event_loop_alive: bool = false,
-
-    // if they never access the timer by integer, don't create a hashmap entry.
-    has_accessed_primitive: bool = false,
-
     strong_this: JSC.Strong = .empty,
+    flags: Flags = .{},
 
-    has_js_ref: bool = true,
+    const Flags = packed struct(u32) {
+        /// Whenever a timer is inserted into the heap (which happen on creation or refresh), the global
+        /// epoch is incremented and the new epoch is set on the timer. For timers created by
+        /// JavaScript, the epoch is used to break ties between timers scheduled for the same
+        /// millisecond. This ensures that if you set two timers for the same amount of time, and
+        /// refresh the first one, the first one will fire last. This mimics Node.js's behavior where
+        /// the refreshed timer will be inserted at the end of a list, which makes it fire later.
+        epoch: u25 = 0,
 
-    /// Set to `true` only during execution of the JavaScript function so that `_destroyed` can be
-    /// false during the callback, even though the `state` will be `FIRED`.
-    in_callback: bool = false,
+        kind: Kind = .setTimeout,
+
+        // we do not allow the timer to be refreshed after we call clearInterval/clearTimeout
+        has_cleared_timer: bool = false,
+        is_keeping_event_loop_alive: bool = false,
+
+        // if they never access the timer by integer, don't create a hashmap entry.
+        has_accessed_primitive: bool = false,
+
+        has_js_ref: bool = true,
+
+        /// Set to `true` only during execution of the JavaScript function so that `_destroyed` can be
+        /// false during the callback, even though the `state` will be `FIRED`.
+        in_callback: bool = false,
+    };
 
     fn eventLoopTimer(this: *TimerObjectInternals) *EventLoopTimer {
-        switch (this.kind) {
+        switch (this.flags.kind) {
             .setImmediate => {
                 const parent: *ImmediateObject = @fieldParentPtr("internals", this);
                 assert(parent.event_loop_timer.tag == .ImmediateObject);
@@ -749,14 +783,14 @@ const TimerObjectInternals = struct {
     }
 
     fn ref(this: *TimerObjectInternals) void {
-        switch (this.kind) {
+        switch (this.flags.kind) {
             .setImmediate => @as(*ImmediateObject, @fieldParentPtr("internals", this)).ref(),
             .setTimeout, .setInterval => @as(*TimeoutObject, @fieldParentPtr("internals", this)).ref(),
         }
     }
 
     fn deref(this: *TimerObjectInternals) void {
-        switch (this.kind) {
+        switch (this.flags.kind) {
             .setImmediate => @as(*ImmediateObject, @fieldParentPtr("internals", this)).deref(),
             .setTimeout, .setInterval => @as(*TimeoutObject, @fieldParentPtr("internals", this)).deref(),
         }
@@ -765,10 +799,10 @@ const TimerObjectInternals = struct {
     extern "c" fn Bun__JSTimeout__call(encodedTimeoutValue: JSValue, globalObject: *JSC.JSGlobalObject) void;
 
     pub fn runImmediateTask(this: *TimerObjectInternals, vm: *VirtualMachine) void {
-        if (this.has_cleared_timer or
+        if (this.flags.has_cleared_timer or
             // unref'd setImmediate callbacks should only run if there are things keeping the event
             // loop alive other than setImmediates
-            (!this.is_keeping_event_loop_alive and !vm.isEventLoopAliveExcludingImmediates()))
+            (!this.flags.is_keeping_event_loop_alive and !vm.isEventLoopAliveExcludingImmediates()))
         {
             this.deref();
             return;
@@ -800,13 +834,13 @@ const TimerObjectInternals = struct {
     }
 
     pub fn asyncID(this: *const TimerObjectInternals) u64 {
-        return ID.asyncID(.{ .id = this.id, .kind = this.kind });
+        return ID.asyncID(.{ .id = this.id, .kind = this.flags.kind.big() });
     }
 
     pub fn fire(this: *TimerObjectInternals, _: *const timespec, vm: *JSC.VirtualMachine) EventLoopTimer.Arm {
         const id = this.id;
-        const kind = this.kind;
-        const has_been_cleared = this.eventLoopTimer().state == .CANCELLED or this.has_cleared_timer or vm.scriptExecutionStatus() != .running;
+        const kind = this.flags.kind.big();
+        const has_been_cleared = this.eventLoopTimer().state == .CANCELLED or this.flags.has_cleared_timer or vm.scriptExecutionStatus() != .running;
 
         this.eventLoopTimer().state = .FIRED;
 
@@ -817,7 +851,7 @@ const TimerObjectInternals = struct {
                 Debugger.didCancelAsyncCall(globalThis, .DOMTimer, ID.asyncID(.{ .id = id, .kind = kind }));
             }
 
-            this.has_cleared_timer = true;
+            this.flags.has_cleared_timer = true;
             this.strong_this.deinit();
             this.deref();
 
@@ -851,7 +885,7 @@ const TimerObjectInternals = struct {
                         // If we didn't clear the setInterval, reschedule it starting from
                         vm.timer.update(this.eventLoopTimer(), &time_before_call);
 
-                        if (this.has_js_ref) {
+                        if (this.flags.has_js_ref) {
                             this.setEnableKeepingEventLoopAlive(vm, true);
                         }
 
@@ -896,8 +930,8 @@ const TimerObjectInternals = struct {
         }
 
         // Bun__JSTimeout__call handles exceptions.
-        this.in_callback = true;
-        defer this.in_callback = false;
+        this.flags.in_callback = true;
+        defer this.flags.in_callback = false;
         Bun__JSTimeout__call(this_object, globalThis);
     }
 
@@ -911,11 +945,11 @@ const TimerObjectInternals = struct {
         callback: JSValue,
         arguments: JSValue,
     ) void {
+        const vm = globalThis.bunVM();
         this.* = .{
             .id = id,
-            .kind = kind,
+            .flags = .{ .kind = kind, .epoch = vm.timer.epoch },
             .interval = interval,
-            .epoch = globalThis.bunVM().timer.epoch,
         };
 
         if (kind == .setImmediate) {
@@ -923,8 +957,8 @@ const TimerObjectInternals = struct {
                 ImmediateObject.argumentsSetCached(timer_js, globalThis, arguments);
             ImmediateObject.callbackSetCached(timer_js, globalThis, callback);
             const parent: *ImmediateObject = @fieldParentPtr("internals", this);
-            globalThis.bunVM().enqueueImmediateTask(JSC.Task.init(parent));
-            this.setEnableKeepingEventLoopAlive(globalThis.bunVM(), true);
+            vm.enqueueImmediateTask(JSC.Task.init(parent));
+            this.setEnableKeepingEventLoopAlive(vm, true);
             // ref'd by event loop
             parent.ref();
         } else {
@@ -932,7 +966,7 @@ const TimerObjectInternals = struct {
                 TimeoutObject.argumentsSetCached(timer_js, globalThis, arguments);
             TimeoutObject.callbackSetCached(timer_js, globalThis, callback);
             // this increments the refcount
-            this.reschedule(globalThis.bunVM());
+            this.reschedule(vm);
         }
 
         this.strong_this.set(globalThis, timer_js);
@@ -942,8 +976,8 @@ const TimerObjectInternals = struct {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
-        const did_have_js_ref = this.has_js_ref;
-        this.has_js_ref = true;
+        const did_have_js_ref = this.flags.has_js_ref;
+        this.flags.has_js_ref = true;
 
         if (!did_have_js_ref) {
             this.setEnableKeepingEventLoopAlive(JSC.VirtualMachine.get(), true);
@@ -957,10 +991,10 @@ const TimerObjectInternals = struct {
         // Immediates do not have a refresh function, and our binding generator should not let this
         // function be reached even if you override the `this` value calling a Timeout object's
         // `refresh` method
-        assert(this.kind != .setImmediate);
+        assert(this.flags.kind != .setImmediate);
 
         // setImmediate does not support refreshing and we do not support refreshing after cleanup
-        if (this.id == -1 or this.kind == .setImmediate or this.has_cleared_timer) {
+        if (this.id == -1 or this.flags.kind == .setImmediate or this.flags.has_cleared_timer) {
             return this_value;
         }
 
@@ -974,8 +1008,8 @@ const TimerObjectInternals = struct {
         const this_value = callframe.this();
         this_value.ensureStillAlive();
 
-        const did_have_js_ref = this.has_js_ref;
-        this.has_js_ref = false;
+        const did_have_js_ref = this.flags.has_js_ref;
+        this.flags.has_js_ref = false;
 
         if (did_have_js_ref) {
             this.setEnableKeepingEventLoopAlive(JSC.VirtualMachine.get(), false);
@@ -986,9 +1020,9 @@ const TimerObjectInternals = struct {
 
     pub fn cancel(this: *TimerObjectInternals, vm: *VirtualMachine) void {
         this.setEnableKeepingEventLoopAlive(vm, false);
-        this.has_cleared_timer = true;
+        this.flags.has_cleared_timer = true;
 
-        if (this.kind == .setImmediate) return;
+        if (this.flags.kind == .setImmediate) return;
 
         const was_active = this.eventLoopTimer().state == .ACTIVE;
 
@@ -1002,7 +1036,7 @@ const TimerObjectInternals = struct {
     }
 
     pub fn reschedule(this: *TimerObjectInternals, vm: *VirtualMachine) void {
-        if (this.kind == .setImmediate) return;
+        if (this.flags.kind == .setImmediate) return;
 
         const now = timespec.msFromNow(this.interval);
         const was_active = this.eventLoopTimer().state == .ACTIVE;
@@ -1013,19 +1047,19 @@ const TimerObjectInternals = struct {
         }
 
         vm.timer.update(this.eventLoopTimer(), &now);
-        this.has_cleared_timer = false;
+        this.flags.has_cleared_timer = false;
 
-        if (this.has_js_ref) {
+        if (this.flags.has_js_ref) {
             this.setEnableKeepingEventLoopAlive(vm, true);
         }
     }
 
     fn setEnableKeepingEventLoopAlive(this: *TimerObjectInternals, vm: *VirtualMachine, enable: bool) void {
-        if (this.is_keeping_event_loop_alive == enable) {
+        if (this.flags.is_keeping_event_loop_alive == enable) {
             return;
         }
-        this.is_keeping_event_loop_alive = enable;
-        switch (this.kind) {
+        this.flags.is_keeping_event_loop_alive = enable;
+        switch (this.flags.kind) {
             .setTimeout, .setInterval => vm.timer.incrementTimerRef(if (enable) 1 else -1),
             // If setImmediate calls ref the event loop, then when the only pending tasks are
             // immediate callbacks we will still try to check for I/O activity, when really we only
@@ -1035,24 +1069,24 @@ const TimerObjectInternals = struct {
     }
 
     pub fn hasRef(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        return JSValue.jsBoolean(this.is_keeping_event_loop_alive);
+        return JSValue.jsBoolean(this.flags.is_keeping_event_loop_alive);
     }
 
     pub fn toPrimitive(this: *TimerObjectInternals, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSValue {
-        if (!this.has_accessed_primitive) {
-            this.has_accessed_primitive = true;
+        if (!this.flags.has_accessed_primitive) {
+            this.flags.has_accessed_primitive = true;
             const vm = VirtualMachine.get();
-            vm.timer.maps.get(this.kind).put(bun.default_allocator, this.id, this.eventLoopTimer()) catch bun.outOfMemory();
+            vm.timer.maps.get(this.flags.kind).put(bun.default_allocator, this.id, this.eventLoopTimer()) catch bun.outOfMemory();
         }
         return JSValue.jsNumber(this.id);
     }
 
     /// This is the getter for `_destroyed` on JS Timeout and Immediate objects
     pub fn getDestroyed(this: *TimerObjectInternals) bool {
-        if (this.has_cleared_timer) {
+        if (this.flags.has_cleared_timer) {
             return true;
         }
-        if (this.in_callback) {
+        if (this.flags.in_callback) {
             return false;
         }
         return switch (this.eventLoopTimer().state) {
@@ -1069,13 +1103,14 @@ const TimerObjectInternals = struct {
     pub fn deinit(this: *TimerObjectInternals) void {
         this.strong_this.deinit();
         const vm = VirtualMachine.get();
+        const kind = this.flags.kind;
 
         if (this.eventLoopTimer().state == .ACTIVE) {
             vm.timer.remove(this.eventLoopTimer());
         }
 
-        if (this.has_accessed_primitive) {
-            const map = vm.timer.maps.get(this.kind);
+        if (this.flags.has_accessed_primitive) {
+            const map = vm.timer.maps.get(kind);
             if (map.orderedRemove(this.id)) {
                 // If this array gets large, let's shrink it down
                 // Array keys are i32
@@ -1091,24 +1126,34 @@ const TimerObjectInternals = struct {
         }
 
         this.setEnableKeepingEventLoopAlive(vm, false);
-        switch (this.kind) {
+        switch (kind) {
             .setImmediate => @as(*ImmediateObject, @fieldParentPtr("internals", this)).destroy(),
             .setTimeout, .setInterval => @as(*TimeoutObject, @fieldParentPtr("internals", this)).destroy(),
         }
     }
 };
 
-pub const Kind = enum(u32) {
-    setTimeout,
-    setInterval,
-    setImmediate,
+pub const Kind = enum(u2) {
+    setTimeout = 0,
+    setInterval = 1,
+    setImmediate = 2,
+
+    pub fn big(this: Kind) Big {
+        return @enumFromInt(@intFromEnum(this));
+    }
+
+    pub const Big = enum(u32) {
+        setTimeout = 0,
+        setInterval = 1,
+        setImmediate = 2,
+    };
 };
 
 // this is sized to be the same as one pointer
 pub const ID = extern struct {
     id: i32,
 
-    kind: Kind = Kind.setTimeout,
+    kind: Kind.Big = .setTimeout,
 
     pub inline fn asyncID(this: ID) u64 {
         return @bitCast(this);
@@ -1146,11 +1191,17 @@ pub const EventLoopTimer = struct {
         if (order == .eq) {
             if (maybe_a_internals) |a_internals| {
                 if (maybe_b_internals) |b_internals| {
-                    // try to still maintain the order if epoch overflowed
-                    // if the difference is greater than half u32 range, it more likely got that way
-                    // because b has overflowed and a hasn't than because b is really so much newer
-                    // than a
-                    return b_internals.epoch -% a_internals.epoch < std.math.maxInt(u32) / 2;
+                    // We expect that the epoch will overflow sometimes.
+                    // If it does, we would ideally like timers with an epoch from before the
+                    // overflow to be sorted *before* timers with an epoch from after the overflow
+                    // (even though their epoch will be numerically *larger*).
+                    //
+                    // Wrapping subtraction gives us a distance that is consistent even if one
+                    // epoch has overflowed and the other hasn't. If the distance from a to b is
+                    // small, it's likely that b is really newer than a, so we consider a less than
+                    // b. If the distance from a to b is large (greater than half the u25 range),
+                    // it's more likely that b is older than a so the true distance is from b to a.
+                    return b_internals.flags.epoch -% a_internals.flags.epoch < std.math.maxInt(u25) / 2;
                 }
             }
         }

@@ -2108,7 +2108,7 @@ fn NewPrinter(
                         }
                         p.print("import.meta.main");
                     } else {
-                        bun.assert(p.options.module_type != .internal_bake_dev);
+                        bun.debugAssert(p.options.module_type != .internal_bake_dev);
 
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
@@ -2155,34 +2155,31 @@ fn NewPrinter(
                         }
                     },
                     .hot_enabled => {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
                         p.printSymbol(p.options.hmr_ref);
                         p.print(".indirectHot");
                     },
                     .hot_data => {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
                         p.printSymbol(p.options.hmr_ref);
                         p.print(".data");
                     },
                     .hot_accept => {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
                         p.printSymbol(p.options.hmr_ref);
                         p.print(".accept");
                     },
                     .hot_accept_visited => {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
                         p.printSymbol(p.options.hmr_ref);
                         p.print(".acceptSpecifiers");
                     },
-                    .hot_function_disabled,
-                    .hot_accept_disabled,
-                    .hot_disabled,
-                    => {
-                        bun.assert(p.options.module_type != .internal_bake_dev);
+                    .hot_disabled => {
+                        bun.debugAssert(p.options.module_type != .internal_bake_dev);
                         p.printExpr(.{ .data = .e_undefined, .loc = expr.loc }, level, in_flags);
                     },
                     .resolved_specifier_string => |index| {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
                         p.printStringLiteralUTF8(p.importRecord(index.get()).path.pretty, true);
                     },
                 },
@@ -5368,16 +5365,19 @@ fn NewPrinter(
                 p.print("], [");
 
                 // Print export stars
-                if (ast.export_star_import_records.len > 0) {
-                    p.indent();
-                    for (ast.export_star_import_records) |star| {
-                        p.printNewline();
-                        p.printIndent();
-                        const record = p.importRecord(star);
-                        p.printStringLiteralUTF8(record.path.pretty, false);
-                        p.print(",");
-                    }
-                    p.unindent();
+                p.indent();
+                var had_any_stars = false;
+                for (ast.export_star_import_records) |star| {
+                    const record = p.importRecord(star);
+                    if (record.path.is_disabled) continue;
+                    had_any_stars = true;
+                    p.printNewline();
+                    p.printIndent();
+                    p.printStringLiteralUTF8(record.path.pretty, false);
+                    p.print(",");
+                }
+                p.unindent();
+                if (had_any_stars) {
                     p.printNewline();
                     p.printIndent();
                 }

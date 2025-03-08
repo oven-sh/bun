@@ -267,3 +267,62 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
+devTest("importing html file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./index.html";
+      console.log(html);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["index.ts:1:18: error: Browser builds cannot import HTML files."],
+    });
+  },
+});
+devTest("importing bun on the client", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import bun from "bun";
+      console.log(bun);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ['index.ts:1:17: error: Browser build cannot import Bun builtin: "bun"'],
+    });
+  },
+});
+devTest("import.meta.main", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log(import.meta.main);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(false); // import.meta.main is always false because there is no single entry point
+
+    await dev.write(
+      "index.ts",
+      `
+        require;
+        console.log(import.meta.main);
+      `,
+    );
+    await c.expectMessage(false);
+  },
+});

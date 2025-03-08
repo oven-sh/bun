@@ -2987,6 +2987,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// exact size, instead of the log approach that dynamic arrays use.
         stale_files: DynamicBitSetUnmanaged,
 
+        // TODO: rename `dependencies` to something that clearly indicates direction.
+        // such as "parent" or "consumer"
+
         /// Start of a file's 'dependencies' linked list. These are the other
         /// files that have imports to this file. Walk this list to discover
         /// what files are to be reloaded when something changes.
@@ -3276,9 +3279,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
         // for a simpler example. It is more complicated here because this
         // structure is two-way.
         pub const Edge = struct {
-            /// The file with the `import` statement
+            /// The file with the import statement
             dependency: FileIndex,
-            /// The file that `dependency` is importing
+            /// The file the import statement references.
             imported: FileIndex,
 
             next_import: EdgeIndex.Optional,

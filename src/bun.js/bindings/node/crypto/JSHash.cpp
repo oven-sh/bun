@@ -166,7 +166,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, inputString->length()));
         }
 
-        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputString, encoding));
+        WTF::StringView inputView = inputString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue converted = JSValue::decode(WebCore::constructFromEncoding(globalObject, inputView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* convertedView = jsDynamicCast<JSC::JSArrayBufferView*>(converted);

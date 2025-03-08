@@ -232,7 +232,9 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
         }
 
-        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataString, encoding));
+        auto dataView = dataString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
+        JSValue buf = JSValue::decode(constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);

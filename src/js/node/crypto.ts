@@ -8687,7 +8687,7 @@ crypto_exports.createDiffieHellman = createDiffieHellman;
 crypto_exports.DiffieHellman = _DiffieHellman;
 
 crypto_exports.diffieHellman = function diffieHellman(options) {
-  validateObject(options);
+  validateObject(options, "options");
 
   const { privateKey, publicKey } = options;
 

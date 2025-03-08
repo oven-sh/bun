@@ -10,6 +10,7 @@
 #include "ncrypto.h"
 #include "./util.h"
 #include "JSBuffer.h"
+
 namespace Bun {
 
 // Template implementations for Diffie-Hellman functions that are shared between
@@ -37,7 +38,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGenerateKeysTemplate(JSC::JSGlobalOb
             auto stringView = string->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto encoding = WebCore::parseEnumeration2(*globalObject, stringView);
+            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
             if (!encoding) {
                 return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
             }
@@ -52,7 +53,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGenerateKeysTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    return WebCore::constructFromEncoding(vm, globalObject, keys.span(), encodingType);
+    return WebCore::constructFromEncoding(globalObject, keys.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -139,7 +140,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
     }
 
     // If output encoding is specified and not "buffer", return a string
-    return WebCore::constructFromEncoding(vm, globalObject, secret.span(), outputEncodingType);
+    return WebCore::constructFromEncoding(globalObject, secret.span(), outputEncodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -164,7 +165,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrimeTemplate(JSC::JSGlobalObject
             auto stringView = string->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto encoding = WebCore::parseEnumeration2(*globalObject, stringView);
+            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
             if (!encoding) {
                 return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
             }
@@ -179,7 +180,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrimeTemplate(JSC::JSGlobalObject
         return {};
     }
 
-    return WebCore::constructFromEncoding(vm, globalObject, prime.span(), encodingType);
+    return WebCore::constructFromEncoding(globalObject, prime.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -204,7 +205,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetGeneratorTemplate(JSC::JSGlobalOb
             auto stringView = string->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto encoding = WebCore::parseEnumeration2(*globalObject, stringView);
+            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
             if (!encoding) {
                 return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
             }
@@ -219,7 +220,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetGeneratorTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    return WebCore::constructFromEncoding(vm, globalObject, gen.span(), encodingType);
+    return WebCore::constructFromEncoding(globalObject, gen.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -244,7 +245,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPublicKeyTemplate(JSC::JSGlobalOb
             auto stringView = string->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto encoding = WebCore::parseEnumeration2(*globalObject, stringView);
+            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
             if (!encoding) {
                 return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
             }
@@ -259,7 +260,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPublicKeyTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    return WebCore::constructFromEncoding(vm, globalObject, key.span(), encodingType);
+    return WebCore::constructFromEncoding(globalObject, key.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -284,7 +285,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrivateKeyTemplate(JSC::JSGlobalO
             auto stringView = string->view(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto encoding = WebCore::parseEnumeration2(*globalObject, stringView);
+            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
             if (!encoding) {
                 return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
             }
@@ -299,7 +300,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrivateKeyTemplate(JSC::JSGlobalO
         return {};
     }
 
-    return WebCore::constructFromEncoding(vm, globalObject, key.span(), encodingType);
+    return WebCore::constructFromEncoding(globalObject, key.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>

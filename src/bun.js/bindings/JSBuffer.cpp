@@ -499,18 +499,21 @@ static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObj
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
 }
 
-JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, JSString* str, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, std::span<const uint8_t> bytes, WebCore::BufferEncodingType encoding)
+{
+    WTF::StringView view(bytes);
+    return constructFromEncoding(lexicalGlobalObject, view, encoding);
+}
+
+JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, WTF::StringView view, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Use ->view() here instead of ->value() as that will avoid flattening ropestrings from .slice()
-    const auto& view = str->view(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
     JSC::EncodedJSValue result;
 
-    if (view->is8Bit()) {
-        const auto span = view->span8();
+    if (view.is8Bit()) {
+        const auto span = view.span8();
 
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
@@ -534,7 +537,7 @@ JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, J
         }
         }
     } else {
-        const auto span = view->span16();
+        const auto span = view.span16();
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
         case WebCore::BufferEncodingType::base64:
@@ -582,6 +585,9 @@ static JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObj
     auto* str = arg0.toString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto view = str->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
     if (arg1 && arg1.isString()) {
         std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, arg1);
         if (!encoded) {
@@ -597,7 +603,7 @@ static JSC::EncodedJSValue constructBufferFromStringAndEncoding(JSC::JSGlobalObj
     if (str->length() == 0)
         return constructBufferEmpty(lexicalGlobalObject);
 
-    JSC::EncodedJSValue result = constructFromEncoding(lexicalGlobalObject, str, encoding);
+    JSC::EncodedJSValue result = constructFromEncoding(lexicalGlobalObject, view, encoding);
 
     RELEASE_AND_RETURN(scope, result);
 }
@@ -1432,10 +1438,19 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     ssize_t byteOffset = indexOfOffset(byteLength, byteOffsetD, str->length(), !last);
     if (byteOffset == -1) return -1;
     if (str->length() == 0) return byteOffset;
-    JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, str, encoding);
+
+    VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto view = str->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, -1);
+    JSC::EncodedJSValue encodedBuffer = constructFromEncoding(lexicalGlobalObject, view, encoding);
+    RETURN_IF_EXCEPTION(scope, -1);
+
     auto* arrayValue = JSC::jsCast<JSC::JSUint8Array*>(JSC::JSValue::decode(encodedBuffer));
     auto lengthValue = static_cast<int64_t>(arrayValue->byteLength());
     if (lengthValue == 0) return byteOffset;
+
     const uint8_t* typedVectorValue = arrayValue->typedVector();
     if (last) {
         return lastIndexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
@@ -1443,6 +1458,7 @@ static int64_t indexOfString(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     if (encoding == BufferEncodingType::ucs2) {
         return indexOf16(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
     }
+
     return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
 }
 
@@ -1796,8 +1812,9 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
     }
 }
 
-JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
 {
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (UNLIKELY(!castedThis->byteLength())) {
@@ -1864,7 +1881,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     JSC::JSValue arg3 = callFrame->argument(2);
 
     if (argsCount == 0)
-        return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end, encoding);
+        return jsBufferToString(lexicalGlobalObject, castedThis, start, end, encoding);
 
     if (!arg1.isUndefined()) {
         encoding = parseEncoding(scope, lexicalGlobalObject, arg1, false);
@@ -1894,7 +1911,7 @@ lstart:
 
     auto offset = start;
     auto length = end > start ? end - start : 0;
-    return jsBufferToString(vm, lexicalGlobalObject, castedThis, offset, length, encoding);
+    return jsBufferToString(lexicalGlobalObject, castedThis, offset, length, encoding);
 }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L544
@@ -1937,7 +1954,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
         return {};
     }
 
-    return jsBufferToString(vm, lexicalGlobalObject, castedThis, start, end - start, encoding);
+    return jsBufferToString(lexicalGlobalObject, castedThis, start, end - start, encoding);
 }
 
 // DOMJIT makes it slower! TODO: investigate why

@@ -398,7 +398,10 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
             return {};
         }
 
-        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataString, *encoding));
+        auto dataView = dataString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, *encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
@@ -746,8 +749,11 @@ void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<ui
             encoding = WebCore::BufferEncodingType::utf8;
         }
 
+        auto keyView = keyString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+
         // TODO(dylan-conway): add a way to do this with just the Vector. no need to create a buffer
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyString, encoding));
+        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
         out.append(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() });
         return;

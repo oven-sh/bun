@@ -8,8 +8,8 @@ const { urlToHttpOptions } = require("internal/url");
 const { validateFunction, checkIsHttpToken } = require("internal/validators");
 
 const {
-  getHeader,
-  setHeader,
+  getHeader: getHeader_,
+  setHeader: setHeader_,
   assignHeaders: assignHeadersFast,
   assignEventCallback,
   setRequestTimeout,
@@ -1034,7 +1034,7 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(name, value) {
 OutgoingMessage.prototype.flushHeaders = function flushHeaders() {};
 
 OutgoingMessage.prototype.getHeader = function getHeader(name) {
-  return getHeader(this[headersSymbol], name);
+  return getHeader_(this[headersSymbol], name);
 };
 
 OutgoingMessage.prototype.getHeaders = function getHeaders() {
@@ -1429,7 +1429,7 @@ ServerResponse.prototype.setHeader = function setHeader(name, value) {
   if (typeof value === "number") {
     value = String(value);
   }
-  setHeader(headers, name, value);
+  setHeader_(headers, name, value);
   return this;
 };
 

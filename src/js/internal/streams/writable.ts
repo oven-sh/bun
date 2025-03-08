@@ -1072,7 +1072,7 @@ ObjectDefineProperties(Writable.prototype, {
   },
 });
 
-const destroy = destroyImpl.destroy;
+const destroy_ = destroyImpl.destroy;
 Writable.prototype.destroy = function destroy(err, cb) {
   const state = this._writableState;
 
@@ -1081,7 +1081,7 @@ Writable.prototype.destroy = function destroy(err, cb) {
     process.nextTick(errorBuffer, state);
   }
 
-  destroy.$call(this, err, cb);
+  destroy_.$call(this, err, cb);
   return this;
 };
 

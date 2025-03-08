@@ -24,7 +24,7 @@ const {
 const { aggregateTwoErrors } = require("internal/errors");
 const { validateObject } = require("internal/validators");
 const { StringDecoder } = require("node:string_decoder");
-const from = require("internal/streams/from");
+const from_ = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
 const { kAutoDestroyed } = require("internal/shared");
 
@@ -1136,21 +1136,21 @@ Readable.prototype.resume = function resume() {
     } else {
       state[kState] &= ~kFlowing;
     }
-    emitResumeNT(this, state);
+    resume2(this, state);
   }
   state[kState] |= kHasPaused;
   state[kState] &= ~kPaused;
   return this;
 };
 
-function emitResumeNT(stream, state) {
+function resume2(stream, state) {
   if ((state[kState] & kResumeScheduled) === 0) {
     state[kState] |= kResumeScheduled;
-    process.nextTick(emitResume, stream, state);
+    process.nextTick(resume3, stream, state);
   }
 }
 
-function emitResume(stream, state) {
+function resume3(stream, state) {
   $debug("resume", (state[kState] & kReading) !== 0);
   if ((state[kState] & kReading) === 0) {
     stream.read(0);
@@ -1618,7 +1618,7 @@ function endWritableNT(stream) {
 }
 
 Readable.from = function from(iterable, opts) {
-  return from(Readable, iterable, opts);
+  return from_(Readable, iterable, opts);
 };
 
 // Lazy to avoid circular references

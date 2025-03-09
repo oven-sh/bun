@@ -1257,7 +1257,7 @@ pub const FileSystem = struct {
                             debug("Convert {s} BOM", .{@tagName(bom)});
                             file_contents = try bom.removeAndConvertToUTF8AndFree(allocator, file_contents);
                         }
-                        if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?).unwrap();
+                        if (comptime Environment.isWindows) try file.seekTo(@intCast(prev_file_pos.?)).unwrap();
 
                         return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
                     }
@@ -1267,7 +1267,7 @@ pub const FileSystem = struct {
 
                 if (comptime Environment.isWindows) {
                     if (prev_file_pos == null) {
-                        prev_file_pos = try file.getPos();
+                        prev_file_pos = try file.getPos().unwrap();
                     }
                 }
 

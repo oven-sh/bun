@@ -188,23 +188,19 @@ Bun.serve({
   },
 });
 
+new URL("", "");
+const myUrl: URL = new URL("");
 URL.canParse;
 URL.createObjectURL;
 URL.revokeObjectURL;
 
-Response.json();
+Response.json("");
 Response.redirect("bun.sh", 300);
 Response.error();
 Response.redirect("bun.sh", {
-  status: 200,
-  headers: new Headers(
-    (() => {
-      const h = new Headers();
-      h.set("key", "value");
-      h.toJSON();
-      return h;
-    })(),
-  ),
+  headers: {
+    "x-bun": "is cool",
+  },
 });
 
 Bun.fetch.preconnect;
@@ -232,13 +228,19 @@ Bun.serve({
   },
 });
 
+import.meta.hot.accept();
+import.meta.hot.data;
+
 fetch("", {
   tls: {
     rejectUnauthorized: false,
   },
 });
 
-import.meta.hot?.data;
+new AbortController();
+const myAbortController: AbortController = new AbortController();
+new AbortSignal();
+const myAbortSignal: AbortSignal = new AbortSignal();
 
 import { serve } from "bun";
 

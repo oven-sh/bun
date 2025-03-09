@@ -1241,12 +1241,156 @@ declare var Blob: {
   new (parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
 };
 
-interface URL {}
+declare module "bun" {
+  namespace __internal {
+    type NodeURL = import("node:url").URL;
+  }
+}
+
+interface URL extends Bun.__internal.NodeURL {}
 declare var URL: {
   prototype: URL;
   new (url: string | URL, base?: string | URL): URL;
-  canParse(url: string): boolean;
-  createObjectURL(object: any): string;
+  /** Not implemented yet */
+  createObjectURL(obj: Blob): string;
+  /** Not implemented yet */
   revokeObjectURL(url: string): void;
-  parse(url: string): URL;
+
+  /**
+   * Check if `url` is a valid URL string
+   *
+   * @param url URL string to parse
+   * @param base URL to resolve against
+   */
+  canParse(url: string, base?: string): boolean;
+};
+
+type URLSearchParamsInit =
+  | URLSearchParams
+  | string
+  | Record<string, string | readonly string[]>
+  | Iterable<[string, string]>
+  | ReadonlyArray<[string, string]>;
+
+declare var URLSearchParams: {
+  prototype: URLSearchParams;
+  new (init?: URLSearchParamsInit): URLSearchParams;
+};
+
+declare var AbortController: {
+  prototype: AbortController;
+  new (): AbortController;
+};
+
+declare var AbortSignal: {
+  prototype: AbortSignal;
+  new (): AbortSignal;
+};
+
+declare var FormData: {
+  prototype: FormData;
+  new (): FormData;
+};
+
+declare var EventSource: {
+  prototype: EventSource;
+  new (url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
+};
+
+declare module "bun" {
+  namespace __internal {
+    type NodePerfHooksPerformanceMark = import("node:perf_hooks").PerformanceMark;
+    type NodePerfHooksPerformanceMeasure = import("node:perf_hooks").PerformanceMeasure;
+    type NodePerfHooksPerformanceObserver = import("node:perf_hooks").PerformanceObserver;
+    type NodePerfHooksPerformanceObserverEntryList = import("node:perf_hooks").PerformanceObserverEntryList;
+    type NodePerfHooksPerformanceResourceTiming = import("node:perf_hooks").PerformanceResourceTiming;
+  }
+}
+
+declare var PerformanceEntry: {
+  prototype: import("node:perf_hooks").PerformanceEntry;
+  new (name: string, duration?: number, startTime?: number): import("node:perf_hooks").PerformanceEntry;
+};
+
+interface PerformanceMark extends Bun.__internal.NodePerfHooksPerformanceMark {}
+declare var PerformanceMark: {
+  prototype: PerformanceMark;
+  new (name: string, duration?: number, startTime?: number): PerformanceMark;
+};
+
+interface PerformanceMeasure extends Bun.__internal.NodePerfHooksPerformanceMeasure {}
+declare var PerformanceMeasure: {
+  prototype: PerformanceMeasure;
+  new (name: string, duration?: number, startTime?: number): PerformanceMeasure;
+};
+
+interface PerformanceObserver extends Bun.__internal.NodePerfHooksPerformanceObserver {}
+declare var PerformanceObserver: {
+  prototype: PerformanceObserver;
+  new (callback: import("node:perf_hooks").PerformanceObserverCallback): PerformanceObserver;
+};
+
+interface PerformanceObserverEntryList extends Bun.__internal.NodePerfHooksPerformanceObserverEntryList {}
+declare var PerformanceObserverEntryList: {
+  prototype: PerformanceObserverEntryList;
+  getEntries(): import("node:perf_hooks").PerformanceEntry[];
+  getEntriesByName(name: string, type?: string): import("node:perf_hooks").PerformanceEntry[];
+  getEntriesByType(type: string): import("node:perf_hooks").PerformanceEntry[];
+};
+
+interface PerformanceResourceTiming extends Bun.__internal.NodePerfHooksPerformanceResourceTiming {}
+declare var PerformanceResourceTiming: {
+  prototype: PerformanceResourceTiming;
+  new (name: string, duration?: number, startTime?: number): PerformanceResourceTiming;
+};
+
+declare var ReadableByteStreamController: {
+  prototype: ReadableByteStreamController;
+  new (): ReadableByteStreamController;
+};
+
+declare var ReadableStreamBYOBReader: {
+  prototype: ReadableStreamBYOBReader;
+  new (): ReadableStreamBYOBReader;
+};
+
+declare var ReadableStreamBYOBRequest: {
+  prototype: ReadableStreamBYOBRequest;
+  new (): ReadableStreamBYOBRequest;
+};
+
+declare var TextDecoderStream: {
+  prototype: TextDecoderStream;
+  new (): TextDecoderStream;
+};
+
+declare var TextEncoderStream: {
+  prototype: TextEncoderStream;
+  new (): TextEncoderStream;
+};
+
+declare module "bun" {
+  namespace __internal {
+    type NodeBroadcastChannel = import("node:worker_threads").BroadcastChannel;
+    type NodeMessageChannel = import("node:worker_threads").MessageChannel;
+    type NodeMessagePort = import("node:worker_threads").MessagePort;
+  }
+}
+
+interface BroadcastChannel extends Bun.__internal.NodeBroadcastChannel {}
+declare var BroadcastChannel: {
+  prototype: BroadcastChannel;
+  new (name: string): BroadcastChannel;
+};
+
+interface MessageChannel extends Bun.__internal.NodeMessageChannel {}
+declare var MessageChannel: {
+  prototype: MessageChannel;
+  new (): MessageChannel;
+};
+
+interface MessagePort extends Bun.__internal.NodeMessagePort {}
+declare var MessagePort: {
+  prototype: MessagePort;
+  new (): MessagePort;
 };

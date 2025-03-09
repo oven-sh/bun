@@ -175,6 +175,8 @@ fetch;
 
 fetch.preconnect(new URL(""));
 
+document.getElementById("id");
+
 Bun.serve({
   port: 3000,
   fetch: () => new Response("ok"),
@@ -193,6 +195,8 @@ const myUrl: URL = new URL("");
 URL.canParse;
 URL.createObjectURL;
 URL.revokeObjectURL;
+
+new File(["code"], "name.ts");
 
 Response.json("");
 Response.redirect("bun.sh", 300);

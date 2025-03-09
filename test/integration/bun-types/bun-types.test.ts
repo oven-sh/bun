@@ -1,4 +1,4 @@
-import { fileURLToPath, $ as Shell, ShellError } from "bun";
+import { fileURLToPath, $ as Shell } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 
@@ -55,9 +55,20 @@ beforeAll(() => {
 });
 
 describe("@types/bun integration test", () => {
-  test("it typechecks successfully", async () => {
+  test("it typechecks successfully with DOM lib", async () => {
     const p = await $`
       cd ${FIXTURE_DIR}
+      bun run check
+    `;
+
+    expect(p.exitCode).toBe(0);
+  });
+
+  test("it typechecks successfully with DOM lib", async () => {
+    const p = await $`
+      cd ${FIXTURE_DIR}
+      # modify tsconfig.json to remove dom lib
+      sed -i 's/"lib": \["esnext", "dom"\]/"lib": \["esnext"\]/' tsconfig.json
       bun run check
     `;
 

@@ -40,7 +40,7 @@ declare var Worker: typeof globalThis extends { Worker: infer T }
       data: any;
     };
 
-declare var WebSocket: typeof globalThis extends { WebSocket: infer T } ? T : typeof import("ws").WebSocket;
+declare var WebSocket: typeof import("ws").WebSocket;
 
 interface Crypto {}
 declare var Crypto: {
@@ -75,12 +75,10 @@ interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
    */
   encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
 }
-declare var TextEncoder: typeof globalThis extends { TextEncoder: infer T }
-  ? T
-  : {
-      prototype: TextEncoder;
-      new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
-    };
+declare var TextEncoder: {
+  prototype: TextEncoder;
+  new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
+};
 
 /**
  * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API. All
@@ -90,15 +88,10 @@ declare var TextEncoder: typeof globalThis extends { TextEncoder: infer T }
  * const decoder = new TextDecoder();
  * const uint8array = decoder.decode('this is some data');
  */
-declare var TextDecoder: typeof globalThis extends { TextDecoder: infer T }
-  ? T
-  : {
-      prototype: Bun.__internal.NodeUtilTextDecoder;
-      new (
-        encoding?: Bun.Encoding,
-        options?: { fatal?: boolean; ignoreBOM?: boolean },
-      ): Bun.__internal.NodeUtilTextDecoder;
-    };
+declare var TextDecoder: {
+  prototype: Bun.__internal.NodeUtilTextDecoder;
+  new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): Bun.__internal.NodeUtilTextDecoder;
+};
 
 interface Performance extends Bun.__internal.NodePerfHooksPerformance {}
 declare var performance: Performance;
@@ -182,8 +175,10 @@ interface File extends Blob {
   readonly name: string;
 }
 
-declare var File: typeof globalThis extends { File: infer T }
-  ? T
+declare var File: typeof globalThis extends { onabort: any }
+  ? typeof globalThis extends { File: infer T }
+    ? T
+    : never
   : {
       prototype: File;
       /**
@@ -390,7 +385,7 @@ declare var CloseEvent: {
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
 declare var MessageEvent: {
   prototype: MessageEvent;
-  new <T>(type: string, eventInitDict?: MessageEventInit<T>): MessageEvent<T>;
+  new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
 };
 
 interface CustomEvent<T = any> extends Event {
@@ -1218,6 +1213,8 @@ interface BlobPropertyBag {
   // endings?: "transparent" | "native";
 }
 
+interface WorkerOptions extends Bun.WorkerOptions {}
+
 interface Blob {
   /**
    * Read the data from the blob as a JSON object.
@@ -1248,3 +1245,5 @@ interface Blob {
    */
   bytes(): Promise<Uint8Array>;
 }
+
+declare var Blob: typeof globalThis extends { Blob: infer T } ? T : Blob;

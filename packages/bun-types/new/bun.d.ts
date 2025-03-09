@@ -490,13 +490,6 @@ declare module "bun" {
     threadId: number;
   }
 
-  interface BlobPropertyBag {
-    /** Set a default "type". Not yet implemented. */
-    type?: string;
-    /** Not implemented in Bun yet. */
-    // endings?: "transparent" | "native";
-  }
-
   interface Env {
     NODE_ENV?: string;
     /**

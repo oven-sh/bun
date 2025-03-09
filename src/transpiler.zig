@@ -910,6 +910,12 @@ pub const Transpiler = struct {
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
                         .hmr_ref = ast.wrapper_ref,
                         .mangled_props = null,
+
+                        .source_map_cover_lines_without_mappings = if (is_bun)
+                            // If the sourcemaps are strictly for internal usage, we can disable this
+                            transpiler.options.debugger or transpiler.options.code_coverage or transpiler.options.dead_code_elimination == false
+                        else
+                            true,
                     },
                     enable_source_map,
                 ),

@@ -115,6 +115,7 @@ pub const SavedSourceMap = struct {
     mutex: bun.Mutex = .{},
 
     pub const vlq_offset = 24;
+    const debug = bun.Output.scoped(.SourceMap, true);
 
     pub fn init(this: *SavedSourceMap, map: *HashTable) void {
         this.* = .{
@@ -240,7 +241,7 @@ pub const SavedSourceMap = struct {
 
     pub const HashTable = std.HashMap(u64, *anyopaque, IdentityContext(u64), 80);
 
-    pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+    pub fn onSourceMapChunk(this: *SavedSourceMap, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
         try this.putMappings(source, chunk.buffer);
     }
 
@@ -269,7 +270,8 @@ pub const SavedSourceMap = struct {
         this.map.deinit();
     }
 
-    pub fn putMappings(this: *SavedSourceMap, source: logger.Source, mappings: MutableString) !void {
+    pub fn putMappings(this: *SavedSourceMap, source: *const logger.Source, mappings: MutableString) !void {
+        debug("put {s} = {}", .{ source.path.text, bun.fmt.size(mappings.list.items.len, .{}) });
         try this.putValue(source.path.text, Value.init(bun.cast(*SavedMappings, mappings.list.items.ptr)));
     }
 
@@ -278,6 +280,7 @@ pub const SavedSourceMap = struct {
         defer this.unlock();
 
         const entry = try this.map.getOrPut(bun.hash(path));
+
         if (entry.found_existing) {
             var old_value = Value.from(entry.value_ptr.*);
             if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
@@ -1056,7 +1059,7 @@ pub const VirtualMachine = struct {
         /// When the inspector is enabled, we want to generate an inline sourcemap.
         /// And, for now, we also store it in source_mappings like normal
         /// This is hideously expensive memory-wise...
-        pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: logger.Source) anyerror!void {
+        pub fn onChunk(this: *SourceMapHandlerGetter, chunk: SourceMap.Chunk, source: *const logger.Source) anyerror!void {
             var temp_json_buffer = bun.MutableString.initEmpty(bun.default_allocator);
             defer temp_json_buffer.deinit();
             temp_json_buffer = try chunk.printSourceMapContentsAtOffset(source, temp_json_buffer, true, SavedSourceMap.vlq_offset, true);

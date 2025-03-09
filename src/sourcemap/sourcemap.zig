@@ -1226,7 +1226,7 @@ pub const Chunk = struct {
 
     pub fn printSourceMapContents(
         chunk: Chunk,
-        source: Logger.Source,
+        source: *const Logger.Source,
         mutable: MutableString,
         include_sources_contents: bool,
         comptime ascii_only: bool,
@@ -1243,7 +1243,7 @@ pub const Chunk = struct {
 
     pub fn printSourceMapContentsAtOffset(
         chunk: Chunk,
-        source: Logger.Source,
+        source: *const Logger.Source,
         mutable: MutableString,
         include_sources_contents: bool,
         offset: usize,

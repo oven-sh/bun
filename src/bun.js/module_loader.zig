@@ -548,7 +548,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (cache.entry) |*entry| {
-                vm.source_mappings.putMappings(parse_result.source, .{
+                vm.source_mappings.putMappings(&parse_result.source, .{
                     .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                     .allocator = bun.default_allocator,
                 }) catch {};
@@ -1787,7 +1787,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (cache.entry) |*entry| {
-                    jsc_vm.source_mappings.putMappings(parse_result.source, .{
+                    jsc_vm.source_mappings.putMappings(&parse_result.source, .{
                         .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
                         .allocator = bun.default_allocator,
                     }) catch {};

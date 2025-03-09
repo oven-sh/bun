@@ -94,44 +94,48 @@ declare var TextDecoder: {
 interface Performance extends Bun.__internal.NodePerfHooksPerformance {}
 declare var performance: Performance;
 
-interface Event {
-  /** This is not used in Node.js and is provided purely for completeness. */
-  readonly bubbles: boolean;
-  /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
-  cancelBubble: () => void;
-  /** True if the event was created with the cancelable option */
-  readonly cancelable: boolean;
-  /** This is not used in Node.js and is provided purely for completeness. */
-  readonly composed: boolean;
-  /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
-  composedPath(): [EventTarget?];
-  /** Alias for event.target. */
-  readonly currentTarget: EventTarget | null;
-  /** Is true if cancelable is true and event.preventDefault() has been called. */
-  readonly defaultPrevented: boolean;
-  /** This is not used in Node.js and is provided purely for completeness. */
-  readonly eventPhase: 0 | 2;
-  /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
-  readonly isTrusted: boolean;
-  /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
-  preventDefault(): void;
-  /** This is not used in Node.js and is provided purely for completeness. */
-  returnValue: boolean;
-  /** Alias for event.target. */
-  readonly srcElement: EventTarget | null;
-  /** Stops the invocation of event listeners after the current one completes. */
-  stopImmediatePropagation(): void;
-  /** This is not used in Node.js and is provided purely for completeness. */
-  stopPropagation(): void;
-  /** The `EventTarget` dispatching the event */
-  readonly target: EventTarget | null;
-  /** The millisecond timestamp when the Event object was created. */
-  readonly timeStamp: number;
-  /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
-  readonly type: string;
-}
+// interface Event {
+//   /** This is not used in Node.js and is provided purely for completeness. */
+//   readonly bubbles: boolean;
+//   /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
+//   cancelBubble: () => void;
+//   /** True if the event was created with the cancelable option */
+//   readonly cancelable: boolean;
+//   /** This is not used in Node.js and is provided purely for completeness. */
+//   readonly composed: boolean;
+//   /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
+//   composedPath(): [EventTarget?];
+//   /** Alias for event.target. */
+//   readonly currentTarget: EventTarget | null;
+//   /** Is true if cancelable is true and event.preventDefault() has been called. */
+//   readonly defaultPrevented: boolean;
+//   /** This is not used in Node.js and is provided purely for completeness. */
+//   readonly eventPhase: typeof globalThis extends { Event: infer T extends {eventPhase: number} } ? T['eventPhase'] : 0 | 2;
+//   /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
+//   readonly isTrusted: boolean;
+//   /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
+//   preventDefault(): void;
+//   /** This is not used in Node.js and is provided purely for completeness. */
+//   returnValue: boolean;
+//   /** Alias for event.target. */
+//   readonly srcElement: EventTarget | null;
+//   /** Stops the invocation of event listeners after the current one completes. */
+//   stopImmediatePropagation(): void;
+//   /** This is not used in Node.js and is provided purely for completeness. */
+//   stopPropagation(): void;
+//   /** The `EventTarget` dispatching the event */
+//   readonly target: EventTarget | null;
+//   /** The millisecond timestamp when the Event object was created. */
+//   readonly timeStamp: number;
+//   /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+//   readonly type: string;
+// }
 declare var Event: {
   prototype: Event;
+  readonly NONE: 0;
+  readonly CAPTURING_PHASE: 1;
+  readonly AT_TARGET: 2;
+  readonly BUBBLING_PHASE: 3;
   new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
 
@@ -169,17 +173,23 @@ interface File extends Blob {
   readonly name: string;
 }
 
-declare var File: {
-  prototype: File;
-  /**
-   * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-   *
-   * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-   * @param `name` - The name of the file
-   * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-   */
-  new (parts: Bun.BlobPart[], name: string, options?: BlobPropertyBag & { lastModified?: Date | number }): File;
-};
+declare var File: typeof globalThis extends { File: infer T }
+  ? T
+  : {
+      prototype: File;
+      /**
+       * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+       *
+       * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+       * @param `name` - The name of the file
+       * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+       */
+      new (
+        parts: Bun.BlobPart[],
+        name: string,
+        options?: BlobPropertyBag & { lastModified?: Date | number | undefined },
+      ): File;
+    };
 
 /**
  * ShadowRealms are a distinct global environment, with its own global object
@@ -371,7 +381,7 @@ declare var CloseEvent: {
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
 declare var MessageEvent: {
   prototype: MessageEvent;
-  new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
+  new <T>(type: string, eventInitDict?: MessageEventInit<T>): MessageEvent<T>;
 };
 
 interface CustomEvent<T = any> extends Event {
@@ -746,10 +756,10 @@ interface DOMException extends Error {
   readonly DATA_CLONE_ERR: 25;
 }
 
-declare var DOMException: {
-  prototype: DOMException;
-  new (message?: string, name?: string): DOMException;
-};
+// declare var DOMException: {
+//   prototype: DOMException;
+//   new (message?: string, name?: string): DOMException;
+// };
 
 declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
@@ -1229,168 +1239,3 @@ interface Blob {
    */
   bytes(): Promise<Uint8Array>;
 }
-
-/**
- * Create a new [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
- *
- * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
- * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
- */
-declare var Blob: {
-  prototype: Blob;
-  new (parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
-};
-
-declare module "bun" {
-  namespace __internal {
-    type NodeURL = import("node:url").URL;
-  }
-}
-
-interface URL extends Bun.__internal.NodeURL {}
-declare var URL: {
-  prototype: URL;
-  new (url: string | URL, base?: string | URL): URL;
-  /** Not implemented yet */
-  createObjectURL(obj: Blob): string;
-  /** Not implemented yet */
-  revokeObjectURL(url: string): void;
-
-  /**
-   * Check if `url` is a valid URL string
-   *
-   * @param url URL string to parse
-   * @param base URL to resolve against
-   */
-  canParse(url: string, base?: string): boolean;
-};
-
-type URLSearchParamsInit =
-  | URLSearchParams
-  | string
-  | Record<string, string | readonly string[]>
-  | Iterable<[string, string]>
-  | ReadonlyArray<[string, string]>;
-
-declare var URLSearchParams: {
-  prototype: URLSearchParams;
-  new (init?: URLSearchParamsInit): URLSearchParams;
-};
-
-declare var AbortController: {
-  prototype: AbortController;
-  new (): AbortController;
-};
-
-declare var AbortSignal: {
-  prototype: AbortSignal;
-  new (): AbortSignal;
-};
-
-declare var FormData: {
-  prototype: FormData;
-  new (): FormData;
-};
-
-declare var EventSource: {
-  prototype: EventSource;
-  new (url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
-};
-
-declare module "bun" {
-  namespace __internal {
-    type NodePerfHooksPerformanceMark = import("node:perf_hooks").PerformanceMark;
-    type NodePerfHooksPerformanceMeasure = import("node:perf_hooks").PerformanceMeasure;
-    type NodePerfHooksPerformanceObserver = import("node:perf_hooks").PerformanceObserver;
-    type NodePerfHooksPerformanceObserverEntryList = import("node:perf_hooks").PerformanceObserverEntryList;
-    type NodePerfHooksPerformanceResourceTiming = import("node:perf_hooks").PerformanceResourceTiming;
-  }
-}
-
-declare var PerformanceEntry: {
-  prototype: import("node:perf_hooks").PerformanceEntry;
-  new (name: string, duration?: number, startTime?: number): import("node:perf_hooks").PerformanceEntry;
-};
-
-interface PerformanceMark extends Bun.__internal.NodePerfHooksPerformanceMark {}
-declare var PerformanceMark: {
-  prototype: PerformanceMark;
-  new (name: string, duration?: number, startTime?: number): PerformanceMark;
-};
-
-interface PerformanceMeasure extends Bun.__internal.NodePerfHooksPerformanceMeasure {}
-declare var PerformanceMeasure: {
-  prototype: PerformanceMeasure;
-  new (name: string, duration?: number, startTime?: number): PerformanceMeasure;
-};
-
-interface PerformanceObserver extends Bun.__internal.NodePerfHooksPerformanceObserver {}
-declare var PerformanceObserver: {
-  prototype: PerformanceObserver;
-  new (callback: import("node:perf_hooks").PerformanceObserverCallback): PerformanceObserver;
-};
-
-interface PerformanceObserverEntryList extends Bun.__internal.NodePerfHooksPerformanceObserverEntryList {}
-declare var PerformanceObserverEntryList: {
-  prototype: PerformanceObserverEntryList;
-  getEntries(): import("node:perf_hooks").PerformanceEntry[];
-  getEntriesByName(name: string, type?: string): import("node:perf_hooks").PerformanceEntry[];
-  getEntriesByType(type: string): import("node:perf_hooks").PerformanceEntry[];
-};
-
-interface PerformanceResourceTiming extends Bun.__internal.NodePerfHooksPerformanceResourceTiming {}
-declare var PerformanceResourceTiming: {
-  prototype: PerformanceResourceTiming;
-  new (name: string, duration?: number, startTime?: number): PerformanceResourceTiming;
-};
-
-declare var ReadableByteStreamController: {
-  prototype: ReadableByteStreamController;
-  new (): ReadableByteStreamController;
-};
-
-declare var ReadableStreamBYOBReader: {
-  prototype: ReadableStreamBYOBReader;
-  new (): ReadableStreamBYOBReader;
-};
-
-declare var ReadableStreamBYOBRequest: {
-  prototype: ReadableStreamBYOBRequest;
-  new (): ReadableStreamBYOBRequest;
-};
-
-declare var TextDecoderStream: {
-  prototype: TextDecoderStream;
-  new (): TextDecoderStream;
-};
-
-declare var TextEncoderStream: {
-  prototype: TextEncoderStream;
-  new (): TextEncoderStream;
-};
-
-declare module "bun" {
-  namespace __internal {
-    type NodeBroadcastChannel = import("node:worker_threads").BroadcastChannel;
-    type NodeMessageChannel = import("node:worker_threads").MessageChannel;
-    type NodeMessagePort = import("node:worker_threads").MessagePort;
-  }
-}
-
-interface BroadcastChannel extends Bun.__internal.NodeBroadcastChannel {}
-declare var BroadcastChannel: {
-  prototype: BroadcastChannel;
-  new (name: string): BroadcastChannel;
-};
-
-interface MessageChannel extends Bun.__internal.NodeMessageChannel {}
-declare var MessageChannel: {
-  prototype: MessageChannel;
-  new (): MessageChannel;
-};
-
-interface MessagePort extends Bun.__internal.NodeMessagePort {}
-declare var MessagePort: {
-  prototype: MessagePort;
-  new (): MessagePort;
-};

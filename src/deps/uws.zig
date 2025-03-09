@@ -35,7 +35,8 @@ pub const CloseCode = enum(i32) {
     failure = 1,
 };
 
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
+
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
         return BoringSSL.SSL;
@@ -125,10 +126,10 @@ pub const UpgradedDuplex = struct {
     onEndCallback: JSC.Strong = .empty,
     onWritableCallback: JSC.Strong = .empty,
     onCloseCallback: JSC.Strong = .empty,
-    event_loop_timer: EventLoopTimer.Node = .{ .data = .{
+    event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .UpgradedDuplex,
-    } },
+    },
     current_timeout: u32 = 0,
 
     pub const Handlers = struct {
@@ -315,9 +316,10 @@ pub const UpgradedDuplex = struct {
     pub fn onTimeout(this: *UpgradedDuplex) EventLoopTimer.Arm {
         log("onTimeout", .{});
 
-        const has_been_cleared = this.event_loop_timer.data.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
+        const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
 
-        this.event_loop_timer.data.state = .FIRED;
+        this.event_loop_timer.state = .FIRED;
+        this.event_loop_timer.heap = .{};
 
         if (has_been_cleared) {
             return .disarm;
@@ -508,7 +510,7 @@ pub const UpgradedDuplex = struct {
         this.setTimeoutInMilliseconds(this.current_timeout);
     }
     pub fn setTimeoutInMilliseconds(this: *UpgradedDuplex, ms: c_uint) void {
-        if (this.event_loop_timer.data.state == .ACTIVE) {
+        if (this.event_loop_timer.state == .ACTIVE) {
             this.vm.timer.remove(&this.event_loop_timer);
         }
         this.current_timeout = ms;
@@ -519,7 +521,7 @@ pub const UpgradedDuplex = struct {
         }
 
         // reschedule the timer
-        this.event_loop_timer.data.next = bun.timespec.msFromNow(ms);
+        this.event_loop_timer.next = bun.timespec.msFromNow(ms);
         this.vm.timer.insert(&this.event_loop_timer);
     }
     pub fn setTimeout(this: *UpgradedDuplex, seconds: c_uint) void {
@@ -576,10 +578,10 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     handlers: Handlers,
     connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
 
-    event_loop_timer: EventLoopTimer.Node = .{ .data = .{
+    event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .WindowsNamedPipe,
-    } },
+    },
     current_timeout: u32 = 0,
     flags: Flags = .{},
 
@@ -786,9 +788,10 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
     pub fn onTimeout(this: *WindowsNamedPipe) EventLoopTimer.Arm {
         log("onTimeout", .{});
 
-        const has_been_cleared = this.event_loop_timer.data.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
+        const has_been_cleared = this.event_loop_timer.state == .CANCELLED or this.vm.scriptExecutionStatus() != .running;
 
-        this.event_loop_timer.data.state = .FIRED;
+        this.event_loop_timer.state = .FIRED;
+        this.event_loop_timer.heap = .{};
 
         if (has_been_cleared) {
             return .disarm;
@@ -1076,7 +1079,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         this.setTimeoutInMilliseconds(this.current_timeout);
     }
     pub fn setTimeoutInMilliseconds(this: *WindowsNamedPipe, ms: c_uint) void {
-        if (this.event_loop_timer.data.state == .ACTIVE) {
+        if (this.event_loop_timer.state == .ACTIVE) {
             this.vm.timer.remove(&this.event_loop_timer);
         }
         this.current_timeout = ms;
@@ -1087,7 +1090,7 @@ pub const WindowsNamedPipe = if (Environment.isWindows) struct {
         }
 
         // reschedule the timer
-        this.event_loop_timer.data.next = bun.timespec.msFromNow(ms);
+        this.event_loop_timer.next = bun.timespec.msFromNow(ms);
         this.vm.timer.insert(&this.event_loop_timer);
     }
     pub fn setTimeout(this: *WindowsNamedPipe, seconds: c_uint) void {

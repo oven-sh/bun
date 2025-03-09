@@ -45,6 +45,45 @@ pub fn needsDeepclone(comptime V: type) bool {
     };
 }
 
+const Tag_ = enum(u8) {
+    /// A literal value.
+    value = 1,
+    /// A literal number.
+    number = 2,
+    /// A sum of two calc expressions.
+    sum = 4,
+    /// A product of a number and another calc expression.
+    product = 8,
+    /// A math function, such as `calc()`, `min()`, or `max()`.
+    function = 16,
+};
+
+const CalcUnit = enum {
+    abs,
+    acos,
+    asin,
+    atan,
+    atan2,
+    calc,
+    clamp,
+    cos,
+    exp,
+    hypot,
+    log,
+    max,
+    min,
+    mod,
+    pow,
+    rem,
+    round,
+    sign,
+    sin,
+    sqrt,
+    tan,
+
+    pub const Map = bun.ComptimeEnumMap(CalcUnit);
+};
+
 /// A mathematical expression used within the `calc()` function.
 ///
 /// This type supports generic value types. Values such as `Length`, `Percentage`,
@@ -72,18 +111,7 @@ pub fn Calc(comptime V: type) type {
         /// A math function, such as `calc()`, `min()`, or `max()`.
         function: *MathFunction(V),
 
-        const Tag = enum(u8) {
-            /// A literal value.
-            value = 1,
-            /// A literal number.
-            number = 2,
-            /// A sum of two calc expressions.
-            sum = 4,
-            /// A product of a number and another calc expression.
-            product = 8,
-            /// A math function, such as `calc()`, `min()`, or `max()`.
-            function = 16,
-        };
+        const Tag = Tag_;
 
         const This = @This();
 
@@ -266,32 +294,6 @@ pub fn Calc(comptime V: type) type {
             };
             return parseWith(input, {}, Fn.parseWithFn);
         }
-
-        const CalcUnit = enum {
-            abs,
-            acos,
-            asin,
-            atan,
-            atan2,
-            calc,
-            clamp,
-            cos,
-            exp,
-            hypot,
-            log,
-            max,
-            min,
-            mod,
-            pow,
-            rem,
-            round,
-            sign,
-            sin,
-            sqrt,
-            tan,
-
-            pub const Map = bun.ComptimeEnumMap(CalcUnit);
-        };
 
         pub fn parseWith(
             input: *css.Parser,

@@ -5850,11 +5850,10 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .composes => {
-                if (css.generic.parseWithOptions(Composes, input, options).asValue()) |c| {
-                    if (input.expectExhausted().isOk()) {
-                        return .{ .result = .{ .composes = c } };
-                    }
-                }
+                return switch (css.generic.parseWithOptions(Composes, input, options)) {
+                    .result => |c| return .{ .result = .{ .composes = c } },
+                    .err => |e| return .{ .err = e },
+                };
             },
             .@"mask-image" => |pre| {
                 if (css.generic.parseWithOptions(SmallList(Image, 1), input, options).asValue()) |c| {

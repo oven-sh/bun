@@ -156,11 +156,18 @@ pub const Lexer = struct {
     }
 
     inline fn nextCodepointSlice(it: *Lexer) []const u8 {
+        if (it.current >= it.source.contents.len) {
+            return "";
+        }
         const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
         return if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
     }
 
     inline fn nextCodepoint(it: *Lexer) CodePoint {
+        if (it.current >= it.source.contents.len) {
+            it.end = it.source.contents.len;
+            return -1;
+        }
         const cp_len = strings.wtf8ByteSequenceLengthWithInvalid(it.source.contents.ptr[it.current]);
         const slice = if (!(cp_len + it.current > it.source.contents.len)) it.source.contents[it.current .. cp_len + it.current] else "";
 

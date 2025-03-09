@@ -22,12 +22,18 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { SocketAddress, addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("internal/net");
+const {
+  SocketAddress,
+  addServerName,
+  upgradeDuplexToTLS,
+  isNamedPipeSocket,
+  normalizedArgsSymbol,
+} = require("internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction } = require("internal/validators");
+const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -517,6 +523,13 @@ const Socket = (function (InternalSocket) {
         ...opts
       } = options || {};
 
+      if (options?.objectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.objectMode", options.objectMode, "is not supported");
+      if (options?.readableObjectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.readableObjectMode", options.readableObjectMode, "is not supported");
+      if (options?.writableObjectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
+
       super({
         ...opts,
         allowHalfOpen,
@@ -646,8 +659,14 @@ const Socket = (function (InternalSocket) {
       connection.destroy();
     }
 
-    connect(...args) {
-      const [options, connectListener] = normalizeArgs(args);
+    public connect(...args) {
+      const [options, connectListener] =
+        $isArray(args[0]) && args[0][normalizedArgsSymbol]
+          ? // args have already been normalized.
+            // Normalized array is passed as the first and only argument.
+            ($assert(args[0].length == 2 && typeof args[0][0] === "object"), args[0])
+          : normalizeArgs(args);
+
       let connection = this.#socket;
 
       let upgradeDuplex = false;
@@ -658,9 +677,9 @@ const Socket = (function (InternalSocket) {
         host,
         path,
         socket,
-        // TODOs
         localAddress,
         localPort,
+        // TODOs
         family,
         hints,
         lookup,
@@ -674,6 +693,13 @@ const Socket = (function (InternalSocket) {
         checkServerIdentity,
         session,
       } = options;
+
+      if (localAddress && !isIP(localAddress)) {
+        throw $ERR_INVALID_IP_ADDRESS(localAddress);
+      }
+      if (localPort) {
+        validateNumber(localPort, "options.localPort");
+      }
 
       this.servername = servername;
 
@@ -704,6 +730,16 @@ const Socket = (function (InternalSocket) {
 
       if (fd) {
         return this;
+      }
+
+      if (
+        // TLSSocket already created a socket and is forwarding it here. This is a private API.
+        !(socket && $isObject(socket) && socket instanceof Duplex) &&
+        // public api for net.Socket.connect
+        port === undefined &&
+        path == null
+      ) {
+        throw $ERR_MISSING_ARGS(["options", "port", "path"]);
       }
 
       this.remotePort = port;
@@ -971,6 +1007,11 @@ const Socket = (function (InternalSocket) {
       }
     }
 
+    _reset() {
+      this.resetAndClosing = true;
+      return this.destroy();
+    }
+
     get readyState() {
       if (this.connecting) return "opening";
       if (this.readable) {
@@ -1001,13 +1042,14 @@ const Socket = (function (InternalSocket) {
     resetAndDestroy() {
       if (this._handle) {
         if (this.connecting) {
-          this.once("connect", () => this._handle?.terminate());
+          this.once("connect", () => this._reset());
         } else {
-          this._handle.terminate();
+          this._reset();
         }
       } else {
-        this.destroy($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+        this.destroy($ERR_SOCKET_CLOSED());
       }
+      return this;
     }
 
     setKeepAlive(enable = false, initialDelayMsecs = 0) {
@@ -1119,7 +1161,7 @@ const Socket = (function (InternalSocket) {
         this._pendingData = chunk;
         this._pendingEncoding = encoding;
         function onClose() {
-          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION());
         }
         this.once("connect", function connect() {
           this.off("close", onClose);
@@ -1132,7 +1174,7 @@ const Socket = (function (InternalSocket) {
       this.#writeCallback = null;
       const socket = this._handle;
       if (!socket) {
-        callback($ERR_SOCKET_CLOSED("Socket is closed"));
+        callback($ERR_SOCKET_CLOSED());
         return false;
       }
       const success = socket.$write(chunk, encoding);
@@ -1225,11 +1267,13 @@ Object.defineProperty(Server.prototype, "listening", {
 });
 
 Server.prototype.ref = function ref() {
+  this._unref = false;
   this._handle?.ref();
   return this;
 };
 
 Server.prototype.unref = function unref() {
+  this._unref = true;
   this._handle?.unref();
   return this;
 };
@@ -1347,7 +1391,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       port = 0;
     } else if (typeof port === "object") {
       const options = port;
-      options.signal?.addEventListener("abort", () => this.close());
+      addServerAbortSignalOption(this, options);
 
       hostname = options.host;
       exclusive = options.exclusive;
@@ -1401,6 +1445,14 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       port = 0;
     }
     hostname = hostname || "::";
+  }
+
+  if (this._handle) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
+  if (onListen != null) {
+    this.once("listening", onListen);
   }
 
   try {
@@ -1490,6 +1542,9 @@ Server.prototype[kRealListen] = function realListen(
     }
   }
 
+  // Unref the handle if the server was unref'ed prior to listening
+  if (this._unref) this.unref();
+
   // We must schedule the emitListeningNextTick() only after the next run of
   // the event loop's IO queue. Otherwise, the server may not actually be listening
   // when the 'listening' event is emitted.
@@ -1497,7 +1552,7 @@ Server.prototype[kRealListen] = function realListen(
   // That leads to all sorts of confusion.
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this, onListen?.bind(this));
+  setTimeout(emitListeningNextTick, 1, this);
 };
 
 Server.prototype.getsockname = function getsockname(out) {
@@ -1513,6 +1568,21 @@ function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
   self.emit("close");
 }
+
+function addServerAbortSignalOption(self, options) {
+  if (options?.signal === undefined) {
+    return;
+  }
+  validateAbortSignal(options.signal, "options.signal");
+  const { signal } = options;
+  const onAborted = () => self.close();
+  if (signal.aborted) {
+    process.nextTick(onAborted);
+  } else {
+    signal.addEventListener("abort", onAborted);
+  }
+}
+
 class ConnResetException extends Error {
   constructor(msg) {
     super(msg);
@@ -1524,14 +1594,8 @@ class ConnResetException extends Error {
   }
 }
 
-function emitListeningNextTick(self, onListen) {
-  if (typeof onListen === "function") {
-    try {
-      onListen.$call(self);
-    } catch (err) {
-      self.emit("error", err);
-    }
-  }
+function emitListeningNextTick(self) {
+  if (!self._handle) return;
   self.emit("listening");
 }
 
@@ -1586,12 +1650,13 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
-function normalizeArgs(args) {
-  while (args[args.length - 1] == null) args.pop();
+function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb: Function | null] {
+  while (args.length && args[args.length - 1] == null) args.pop();
   let arr;
 
   if (args.length === 0) {
     arr = [{}, null];
+    arr[normalizedArgsSymbol as symbol] = true;
     return arr;
   }
 
@@ -1611,6 +1676,7 @@ function normalizeArgs(args) {
   const cb = args[args.length - 1];
   if (typeof cb !== "function") arr = [options, null];
   else arr = [options, cb];
+  arr[normalizedArgsSymbol as symbol] = true;
 
   return arr;
 }

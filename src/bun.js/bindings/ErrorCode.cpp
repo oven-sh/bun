@@ -637,6 +637,23 @@ JSC::EncodedJSValue INVALID_ARG_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     return {};
 }
 
+// When you want INVALID_ARG_TYPE to say "The argument must be an instance of X. Received Y." instead of "The argument must be of type X. Received Y."
+JSC::EncodedJSValue INVALID_ARG_INSTANCE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, const WTF::String& expected_type, JSC::JSValue val_actual_value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    WTF::StringBuilder builder;
+    builder.append("The \""_s);
+    builder.append(arg_name);
+    builder.append("\" argument must be an instance of "_s);
+    builder.append(expected_type);
+    builder.append(". Received "_s);
+    determineSpecificType(vm, globalObject, builder, val_actual_value);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_TYPE, builder.toString()));
+    return {};
+}
+
 JSC::EncodedJSValue OUT_OF_RANGE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& arg_name, double lower, double upper, JSC::JSValue actual)
 {
     WTF::StringBuilder builder;
@@ -789,6 +806,93 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     return {};
 }
 
+// for validateOneOf
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSC::JSValue name, JSC::JSValue value, WTF::ASCIILiteral reason, JSC::JSArray* oneOf)
+{
+    WTF::StringBuilder builder;
+    builder.append("The argument '"_s);
+    JSValueToStringSafe(globalObject, builder, name);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    builder.append("' "_s);
+    builder.append(reason);
+    unsigned length = oneOf->length();
+    for (size_t i = 0; i < length; i++) {
+        JSValue index = oneOf->getIndex(globalObject, i);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (index.isString()) {
+            JSString* str = index.toString(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            builder.append('\'');
+            builder.append(str->view(globalObject));
+            builder.append('\'');
+        } else {
+            JSValueToStringSafe(globalObject, builder, index);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+
+        if (i < length - 1) {
+            builder.append(", "_s);
+        }
+    }
+    builder.append(". Received "_s);
+    JSValueToStringSafe(globalObject, builder, value, true);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral name, WTF::ASCIILiteral reason, JSC::JSValue value, const WTF::Vector<ASCIILiteral>& oneOf)
+{
+    WTF::StringBuilder builder;
+    builder.append("The "_s);
+    if (WTF::StringView(name).contains('.')) {
+        builder.append("property '"_s);
+    } else {
+        builder.append("argument '"_s);
+    }
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+
+    bool first = true;
+    for (ASCIILiteral oneOfStr : oneOf) {
+        if (!first) {
+            builder.append(", "_s);
+        }
+        first = false;
+        builder.append('`');
+        builder.append(oneOfStr);
+        builder.append('`');
+    }
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& name, JSC::JSValue value, const WTF::String& reason)
+{
+    WTF::StringBuilder builder;
+
+    builder.append("The "_s);
+    if (name.contains('.')) {
+        builder.append("property '"_s);
+    } else {
+        builder.append("argument '"_s);
+    }
+    builder.append(name);
+    builder.append("' "_s);
+    builder.append(reason);
+    builder.append(". Received "_s);
+
+    JSValueToStringSafe(globalObject, builder, value);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, builder.toString()));
+    return {};
+}
+
 JSC::EncodedJSValue INVALID_URL_SCHEME(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& expectedScheme)
 {
     auto message = makeString("The URL must be of scheme "_s, expectedScheme);
@@ -906,8 +1010,81 @@ JSC::EncodedJSValue CRYPTO_INVALID_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlo
 
 JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& curve)
 {
-    auto message = makeString("Unsupported JWK EC curve: "_s, curve);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, message));
+    WTF::StringBuilder builder;
+    builder.append("Unsupported JWK EC curve: "_s);
+    builder.append(curve);
+    builder.append('.');
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_JWK(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_JWK, "Invalid JWK data"_s));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_SIGN_KEY_REQUIRED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "No key provided to sign"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_SIGN_KEY_REQUIRED, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEY_OBJECT_TYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, JSValue received, WTF::ASCIILiteral expected)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid key object type "_s);
+    JSValueToStringSafe(globalObject, builder, received);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    builder.append(". Expected "_s);
+    builder.append(expected);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& receivedKeyEncoding, const WTF::String& expectedOperation)
+{
+    WTF::StringBuilder builder;
+    builder.append("The selected key encoding "_s);
+    builder.append(receivedKeyEncoding);
+    builder.append(" does not support "_s);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& digest)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid digest: "_s);
+    builder.append(digest);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_DIGEST, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_HASH_FINALIZED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_HASH_FINALIZED, "Digest already called"_s));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_HASH_UPDATE_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_HASH_UPDATE_FAILED, "Hash update failed"_s));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_TIMING_SAFE_EQUAL_LENGTH(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Input buffers must have the same byte length"_s;
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH, message));
+    return {};
+}
+
+JSC::EncodedJSValue MISSING_PASSPHRASE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_MISSING_PASSPHRASE, message));
     return {};
 }
 
@@ -1186,6 +1363,29 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         }
         case 2: {
             JSValue arg0 = callFrame->argument(1);
+            // ["foo", "bar", "baz"] -> 'The "foo", "bar", or "baz" argument must be specified'
+            if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
+                ASSERT(arr->length() > 0);
+                WTF::StringBuilder builder;
+                builder.append("The "_s);
+                for (unsigned i = 0, length = arr->length(); i < length; i++) {
+                    JSValue index = arr->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (i == length - 1) builder.append("or "_s);
+                    builder.append('"');
+                    auto* jsString = index.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto str = jsString->view(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    builder.append(str);
+                    builder.append('"');
+                    if (i != length - 1) builder.append(',');
+                    builder.append(' ');
+                }
+                builder.append("argument must be specified"_s);
+                return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+            }
+
             auto* jsString = arg0.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto str0 = jsString->view(globalObject);
@@ -1443,6 +1643,12 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
     case ErrorCode::ERR_DIR_CLOSED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
+    case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
+    case ErrorCode::ERR_SOCKET_CLOSED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED, "Socket is closed"_s));
+    case ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION, "Socket closed before the connection was established"_s));
 
     default: {
         break;

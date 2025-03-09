@@ -387,9 +387,14 @@ pub const base64 = struct {
     extern fn simdutf__base64_encode(input: [*]const u8, length: usize, output: [*]u8, is_urlsafe: c_int) usize;
     extern fn simdutf__base64_decode_from_binary(input: [*]const u8, length: usize, output: [*]u8, outlen: usize, is_urlsafe: c_int) SIMDUTFResult;
     extern fn simdutf__base64_decode_from_binary16(input: [*]const u16, length: usize, output: [*]u8, outlen: usize, is_urlsafe: c_int) SIMDUTFResult;
+    extern fn simdutf__base64_length_from_binary(length: usize, options: c_int) usize;
 
     pub fn encode(input: []const u8, output: []u8, is_urlsafe: bool) usize {
         return simdutf__base64_encode(input.ptr, input.len, output.ptr, @intFromBool(is_urlsafe));
+    }
+
+    pub fn encode_len(input: usize, is_urlsafe: bool) usize {
+        return simdutf__base64_length_from_binary(input, @intFromBool(is_urlsafe));
     }
 
     pub fn decode(input: []const u8, output: []u8, is_urlsafe: bool) SIMDUTFResult {

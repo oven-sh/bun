@@ -646,6 +646,7 @@ pub const Framework = struct {
         out.options.minify_whitespace = mode != .development;
         out.options.css_chunking = true;
         out.options.framework = framework;
+        out.options.inline_entrypoint_import_meta_main = true;
         if (bundler_options.ignoreDCEAnnotations) |ignore|
             out.options.ignore_dce_annotations = ignore;
 
@@ -807,14 +808,6 @@ pub fn addImportMetaDefines(
         "import.meta.env.STATIC",
         Define.Data.initBoolean(mode == .production_static),
     );
-
-    if (mode != .development) {
-        try define.insert(
-            allocator,
-            "import.meta.hot",
-            Define.Data.initBoolean(false),
-        );
-    }
 }
 
 pub const server_virtual_source: bun.logger.Source = .{

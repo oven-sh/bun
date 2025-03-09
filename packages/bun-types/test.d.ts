@@ -165,8 +165,14 @@ declare module "bun:test" {
    * @param label the label for the tests
    * @param fn the function that defines the tests
    */
+
+  interface FunctionLike {
+    readonly name: string;
+  }
   export interface Describe {
-    (label: string, fn: () => void): void;
+    (fn: () => void): void;
+
+    (label: number | string | Function | FunctionLike, fn: () => void): void;
     /**
      * Skips all other tests, except this group of tests.
      *
@@ -401,6 +407,22 @@ declare module "bun:test" {
       fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void),
       options?: number | TestOptions,
     ): void;
+    /**
+     * Marks this test as failing.
+     *
+     * Use `test.failing` when you are writing a test and expecting it to fail.
+     * These tests will behave the other way normal tests do. If failing test
+     * will throw any errors then it will pass. If it does not throw it will
+     * fail.
+     *
+     * `test.failing` is very similar to {@link test.todo} except that it always
+     * runs, regardless of the `--todo` flag.
+     *
+     * @param label the label for the test
+     * @param fn the test function
+     * @param options the test timeout or options
+     */
+    failing(label: string, fn?: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
     /**
      * Runs this test, if `condition` is true.
      *
@@ -1060,7 +1082,7 @@ declare module "bun:test" {
 
     /**
      * Asserts that an `object` contains all the provided keys.
-     * 
+     *
      * @example
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b']);
      * expect({ a: 'foo', b: 'bar', c: 'baz' }).toContainKeys(['a', 'b', 'c']);

@@ -68,7 +68,7 @@ async function run() {
       // A second pass is used to convert global variables into parameters, while
       // allowing for renaming to properly function when minification is enabled.
       const in_names = [
-        file !== "error" && "input_graph",
+        file !== "error" && "unloadedModuleRegistry",
         file !== "error" && "config",
         file === "server" && "server_exports",
         file === "server" && "$separateSSRGraph",
@@ -132,7 +132,7 @@ async function run() {
 
           const params = `${outName("$separateSSRGraph")},${outName("$importMeta")}`;
           code = code.replaceAll("import.meta", outName("$importMeta"));
-          code = `let ${outName("input_graph")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
+          code = `let ${outName("unloadedModuleRegistry")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;
         } else {

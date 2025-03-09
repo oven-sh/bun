@@ -2134,6 +2134,25 @@ pub const Formatter = struct {
                     return;
                 }
 
+                if (jsType == .StringObject) {
+                    if (enable_ansi_colors) {
+                        writer.print(comptime Output.prettyFmt("<r><green>", enable_ansi_colors), .{});
+                    }
+                    defer if (comptime enable_ansi_colors)
+                        writer.writeAll(Output.prettyFmt("<r>", true));
+
+                    writer.print("[String: ", .{});
+
+                    if (str.isUTF16()) {
+                        try this.printAs(.JSON, Writer, writer_, value, .StringObject, enable_ansi_colors);
+                    } else {
+                        JSPrinter.writeJSONString(str.latin1(), Writer, writer_, .latin1) catch unreachable;
+                    }
+
+                    writer.print("]", .{});
+                    return;
+                }
+
                 if (jsType == .RegExpObject and enable_ansi_colors) {
                     writer.print(comptime Output.prettyFmt("<r><red>", enable_ansi_colors), .{});
                 }
@@ -2591,7 +2610,7 @@ pub const Formatter = struct {
                     return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
                 } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
                     this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
-                    if (timer.internals.kind == .setInterval) {
+                    if (timer.internals.flags.kind == .setInterval) {
                         this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
                         writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
                             timer.internals.id,

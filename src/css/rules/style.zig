@@ -127,17 +127,18 @@ pub fn StyleRule(comptime R: type) type {
                         if (decl.* == .composes) {
                             const composes = &decl.composes;
                             if (dest.isNested() and dest.css_module != null) {
-                                return dest.newError(css.PrinterErrorKind.invalid_composes_nesting, composes.loc);
+                                return dest.newError(css.PrinterErrorKind.invalid_composes_nesting, composes.cssparser_loc);
                             }
 
                             if (dest.css_module) |*css_module| {
                                 if (css_module.handleComposes(
-                                    dest.allocator,
+                                    W,
+                                    dest,
                                     &this.selectors,
                                     composes,
                                     this.loc.source_index,
                                 ).asErr()) |error_kind| {
-                                    return dest.newError(error_kind, composes.loc);
+                                    return dest.newError(error_kind, composes.cssparser_loc);
                                 }
                                 continue;
                             }
@@ -198,7 +199,7 @@ pub fn StyleRule(comptime R: type) type {
         pub fn minify(this: *This, context: *css.MinifyContext, parent_is_unused: bool) css.MinifyErr!bool {
             var unused = false;
             if (context.unused_symbols.count() > 0) {
-                if (css.selector.isUnused(this.selectors.v.slice(), context.unused_symbols, parent_is_unused)) {
+                if (css.selector.isUnused(this.selectors.v.slice(), context.unused_symbols, &context.extra.symbols, parent_is_unused)) {
                     if (this.rules.v.items.len == 0) {
                         return true;
                     }

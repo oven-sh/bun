@@ -20,24 +20,26 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
+// This test binds to one port, then attempts to start a server on that
+// port. It should be EADDRINUSE but be able to then bind to another port.
 const common = require('../common');
-const fixtures = require('../common/fixtures');
-
-// Check that the calls to Integer::New() and Date::New() succeed and bail out
-// if they don't.
-// V8 returns an empty handle on stack overflow. Trying to set the empty handle
-// as a property on an object results in a NULL pointer dereference in release
-// builds and an assert in debug builds.
-// https://github.com/nodejs/node-v0.x-archive/issues/4015
-
 const assert = require('assert');
-const { spawn } = require('child_process');
+const net = require('net');
 
-const cp = spawn(process.execPath, [fixtures.path('test-fs-stat-sync-overflow.js')]);
+const server1 = net.Server();
 
-const stderr = [];
-cp.stderr.on('data', (chunk) => stderr.push(chunk));
+const server2 = net.Server();
 
-cp.on('exit', common.mustCall(() => {
-  assert.match(Buffer.concat(stderr).toString('utf8'), /RangeError: Maximum call stack size exceeded/);
+server2.on('error', common.mustCall(function(e) {
+  assert.strictEqual(e.code, 'EADDRINUSE');
+
+  server2.listen(0, common.mustCall(function() {
+    server1.close();
+    server2.close();
+  }));
+}));
+
+server1.listen(0, common.mustCall(function() {
+  // This should make server2 emit EADDRINUSE
+  server2.listen(this.address().port);
 }));

@@ -55,7 +55,7 @@ RUN apt-get update -qq \
     && which bun \
     && bun --version
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 
 # Disable the runtime transpiler cache by default inside Docker containers.
 # On ephemeral containers, the cache is not useful

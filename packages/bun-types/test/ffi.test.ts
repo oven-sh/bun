@@ -1,12 +1,4 @@
-import {
-	CString,
-	dlopen,
-	FFIType,
-	JSCallback,
-	Pointer,
-	read,
-	suffix,
-} from "bun:ffi";
+import { CString, dlopen, FFIType, JSCallback, Pointer, read, suffix } from "bun:ffi";
 import * as tsd from "./utilities.test";
 
 // `suffix` is either "dylib", "so", or "dll" depending on the platform
@@ -14,60 +6,60 @@ import * as tsd from "./utilities.test";
 const path = `libsqlite3.${suffix}`;
 
 const lib = dlopen(
-	path, // a library name or file path
-	{
-		sqlite3_libversion: {
-			// no arguments, returns a string
-			args: [],
-			returns: FFIType.cstring,
-		},
-		add: {
-			args: [FFIType.i32, FFIType.i32],
-			returns: FFIType.i32,
-		},
-		ptr_type: {
-			args: [FFIType.pointer],
-			returns: FFIType.pointer,
-		},
-		fn_type: {
-			args: [FFIType.function],
-			returns: FFIType.function,
-		},
-		allArgs: {
-			args: [
-				FFIType.char, // string
-				FFIType.int8_t,
-				FFIType.i8,
-				FFIType.uint8_t,
-				FFIType.u8,
-				FFIType.int16_t,
-				FFIType.i16,
-				FFIType.uint16_t,
-				FFIType.u16,
-				FFIType.int32_t,
-				FFIType.i32,
-				FFIType.int,
-				FFIType.uint32_t,
-				FFIType.u32,
-				FFIType.int64_t,
-				FFIType.i64,
-				FFIType.uint64_t,
-				FFIType.u64,
-				FFIType.double,
-				FFIType.f64,
-				FFIType.float,
-				FFIType.f32,
-				FFIType.bool,
-				FFIType.ptr,
-				FFIType.pointer,
-				FFIType.void,
-				FFIType.cstring,
-				FFIType.i64_fast,
-				FFIType.u64_fast,
-			],
-			returns: FFIType.void,
-		},
-	},
+  path, // a library name or file path
+  {
+    sqlite3_libversion: {
+      // no arguments, returns a string
+      args: [],
+      returns: FFIType.cstring,
+    },
+    add: {
+      args: [FFIType.i32, FFIType.i32],
+      returns: FFIType.i32,
+    },
+    ptr_type: {
+      args: [FFIType.pointer],
+      returns: FFIType.pointer,
+    },
+    fn_type: {
+      args: [FFIType.function],
+      returns: FFIType.function,
+    },
+    allArgs: {
+      args: [
+        FFIType.char, // string
+        FFIType.int8_t,
+        FFIType.i8,
+        FFIType.uint8_t,
+        FFIType.u8,
+        FFIType.int16_t,
+        FFIType.i16,
+        FFIType.uint16_t,
+        FFIType.u16,
+        FFIType.int32_t,
+        FFIType.i32,
+        FFIType.int,
+        FFIType.uint32_t,
+        FFIType.u32,
+        FFIType.int64_t,
+        FFIType.i64,
+        FFIType.uint64_t,
+        FFIType.u64,
+        FFIType.double,
+        FFIType.f64,
+        FFIType.float,
+        FFIType.f32,
+        FFIType.bool,
+        FFIType.ptr,
+        FFIType.pointer,
+        FFIType.void,
+        FFIType.cstring,
+        FFIType.i64_fast,
+        FFIType.u64_fast,
+      ],
+      returns: FFIType.void,
+    },
+  },
 );
 
 declare const ptr: Pointer;
@@ -77,46 +69,44 @@ tsd.expectType<number>(lib.symbols.add(1, 2));
 
 tsd.expectType<Pointer | null>(lib.symbols.ptr_type(ptr));
 
-tsd.expectType<Pointer | null>(
-	lib.symbols.fn_type(new JSCallback(() => {}, {})),
-);
+tsd.expectType<Pointer | null>(lib.symbols.fn_type(new JSCallback(() => {}, {})));
 
 function _arg(
-	...params: [
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		number,
-		boolean,
-		Pointer,
-		Pointer,
-		// tslint:disable-next-line: void-return
-		// eslint-disable-next-line @typescript-eslint/no-invalid-void-type
-		void,
-		CString,
-		number | bigint,
-		number | bigint,
-	]
+  ...params: [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    boolean,
+    Pointer,
+    Pointer,
+    // tslint:disable-next-line: void-return
+    // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
+    void,
+    CString,
+    number | bigint,
+    number | bigint,
+  ]
 ) {
-	console.log("asdf");
+  console.log("asdf");
 }
 _arg;
 
@@ -153,20 +143,20 @@ tsd.expectTypeEquals<libParams[28], number | bigint>(true);
 
 // tslint:disable-next-line:no-object-literal-type-assertion
 const as_const_test = {
-	sqlite3_libversion: {
-		args: [],
-		returns: FFIType.cstring,
-	},
-	multi_args: {
-		args: [FFIType.i32, FFIType.f32],
-		returns: FFIType.void,
-	},
-	no_returns: {
-		args: [FFIType.i32],
-	},
-	no_args: {
-		returns: FFIType.i32,
-	},
+  sqlite3_libversion: {
+    args: [],
+    returns: FFIType.cstring,
+  },
+  multi_args: {
+    args: [FFIType.i32, FFIType.f32],
+    returns: FFIType.void,
+  },
+  no_returns: {
+    args: [FFIType.i32],
+  },
+  no_args: {
+    returns: FFIType.i32,
+  },
 } as const;
 
 const lib2 = dlopen(path, as_const_test);
@@ -175,10 +165,7 @@ tsd.expectType<CString>(lib2.symbols.sqlite3_libversion());
 // tslint:disable-next-line:no-void-expression
 // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
 tsd.expectType<void>(lib2.symbols.multi_args(1, 2));
-tsd.expectTypeEquals<
-	ReturnType<(typeof lib2)["symbols"]["no_returns"]>,
-	undefined
->(true);
+tsd.expectTypeEquals<ReturnType<(typeof lib2)["symbols"]["no_returns"]>, undefined>(true);
 tsd.expectTypeEquals<Parameters<(typeof lib2)["symbols"]["no_args"]>, []>(true);
 
 tsd.expectType<number>(read.u8(ptr));

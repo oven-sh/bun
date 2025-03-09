@@ -11,10 +11,10 @@ tsd.expectType<Promise<boolean>>(fs.promises.exists("/etc/passwd"));
 
 // file path
 watch(".", (eventType, filename) => {
-	console.log(`event type = ${eventType}`);
-	if (filename) {
-		console.log(`filename = ${filename}`);
-	}
+  console.log(`event type = ${eventType}`);
+  if (filename) {
+    console.log(`filename = ${filename}`);
+  }
 });
 
 await Bun.file("sdf").exists();

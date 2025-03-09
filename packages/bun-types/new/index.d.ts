@@ -16,6 +16,8 @@
 /// <reference path="./jsc.d.ts" />
 /// <reference path="./sqlite.d.ts" />
 /// <reference path="./test.d.ts" />
+/// <reference path="./wasm.d.ts" />
+/// <reference path="./overrides.d.ts" />
 
 /// <reference path="./bun.ns.d.ts" />
 

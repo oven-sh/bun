@@ -1,52 +1,40 @@
 interface ReadableStream<R = any> {}
 declare var ReadableStream: {
-	prototype: ReadableStream;
-	new <R = any>(
-		underlyingSource?: Bun.UnderlyingSource<R>,
-		strategy?: QueuingStrategy<R>,
-	): ReadableStream<R>;
-	new <R = any>(
-		underlyingSource?: Bun.DirectUnderlyingSource<R>,
-		strategy?: QueuingStrategy<R>,
-	): ReadableStream<R>;
+  prototype: ReadableStream;
+  new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+  new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
 };
 
 interface WritableStream<W = any> {}
 declare var WritableStream: {
-	prototype: WritableStream;
-	new <W = any>(
-		underlyingSink?: Bun.UnderlyingSink<W>,
-		strategy?: QueuingStrategy<W>,
-	): WritableStream<W>;
+  prototype: WritableStream;
+  new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
 };
 
 declare module "bun" {
-	namespace __internal {
-		type NodeWorkerThreadsWorker = import("worker_threads").Worker;
-	}
+  namespace __internal {
+    type NodeWorkerThreadsWorker = import("worker_threads").Worker;
+  }
 }
 
 interface Worker extends Bun.__internal.NodeWorkerThreadsWorker {}
 declare var Worker: {
-	prototype: Worker;
-	new (
-		scriptURL: string | URL,
-		options?: Bun.WorkerOptions | undefined,
-	): Worker;
-	/**
-	 * This is the cloned value of the `data` property passed to `new Worker()`
-	 *
-	 * This is Bun's equivalent of `workerData` in Node.js.
-	 */
-	data: any;
+  prototype: Worker;
+  new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
+  /**
+   * This is the cloned value of the `data` property passed to `new Worker()`
+   *
+   * This is Bun's equivalent of `workerData` in Node.js.
+   */
+  data: any;
 };
 
 declare var WebSocket: typeof import("ws").WebSocket;
 
 interface Crypto {}
 declare var Crypto: {
-	prototype: Crypto;
-	new (): Crypto;
+  prototype: Crypto;
+  new (): Crypto;
 };
 
 declare var crypto: Crypto;
@@ -62,8 +50,8 @@ declare var crypto: Crypto;
  */
 interface TextEncoder extends Bun.TextEncoder {}
 declare var TextEncoder: {
-	prototype: TextEncoder;
-	new (): TextEncoder;
+  prototype: TextEncoder;
+  new (): TextEncoder;
 };
 
 /**
@@ -76,8 +64,8 @@ declare var TextEncoder: {
  */
 interface TextDecoder extends Bun.TextDecoder {}
 declare var TextDecoder: {
-	prototype: TextDecoder;
-	new (): TextDecoder;
+  prototype: TextDecoder;
+  new (): TextDecoder;
 };
 
 type _Performance = import("perf_hooks").Performance;
@@ -85,94 +73,90 @@ interface Performance extends _Performance {}
 declare var performance: Performance;
 
 interface Event {
-	/** This is not used in Node.js and is provided purely for completeness. */
-	readonly bubbles: boolean;
-	/** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
-	cancelBubble: () => void;
-	/** True if the event was created with the cancelable option */
-	readonly cancelable: boolean;
-	/** This is not used in Node.js and is provided purely for completeness. */
-	readonly composed: boolean;
-	/** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
-	composedPath(): [EventTarget?];
-	/** Alias for event.target. */
-	readonly currentTarget: EventTarget | null;
-	/** Is true if cancelable is true and event.preventDefault() has been called. */
-	readonly defaultPrevented: boolean;
-	/** This is not used in Node.js and is provided purely for completeness. */
-	readonly eventPhase: 0 | 2;
-	/** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
-	readonly isTrusted: boolean;
-	/** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
-	preventDefault(): void;
-	/** This is not used in Node.js and is provided purely for completeness. */
-	returnValue: boolean;
-	/** Alias for event.target. */
-	readonly srcElement: EventTarget | null;
-	/** Stops the invocation of event listeners after the current one completes. */
-	stopImmediatePropagation(): void;
-	/** This is not used in Node.js and is provided purely for completeness. */
-	stopPropagation(): void;
-	/** The `EventTarget` dispatching the event */
-	readonly target: EventTarget | null;
-	/** The millisecond timestamp when the Event object was created. */
-	readonly timeStamp: number;
-	/** Returns the type of event, e.g. "click", "hashchange", or "submit". */
-	readonly type: string;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly bubbles: boolean;
+  /** Alias for event.stopPropagation(). This is not used in Node.js and is provided purely for completeness. */
+  cancelBubble: () => void;
+  /** True if the event was created with the cancelable option */
+  readonly cancelable: boolean;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly composed: boolean;
+  /** Returns an array containing the current EventTarget as the only entry or empty if the event is not being dispatched. This is not used in Node.js and is provided purely for completeness. */
+  composedPath(): [EventTarget?];
+  /** Alias for event.target. */
+  readonly currentTarget: EventTarget | null;
+  /** Is true if cancelable is true and event.preventDefault() has been called. */
+  readonly defaultPrevented: boolean;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  readonly eventPhase: 0 | 2;
+  /** The `AbortSignal` "abort" event is emitted with `isTrusted` set to `true`. The value is `false` in all other cases. */
+  readonly isTrusted: boolean;
+  /** Sets the `defaultPrevented` property to `true` if `cancelable` is `true`. */
+  preventDefault(): void;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  returnValue: boolean;
+  /** Alias for event.target. */
+  readonly srcElement: EventTarget | null;
+  /** Stops the invocation of event listeners after the current one completes. */
+  stopImmediatePropagation(): void;
+  /** This is not used in Node.js and is provided purely for completeness. */
+  stopPropagation(): void;
+  /** The `EventTarget` dispatching the event */
+  readonly target: EventTarget | null;
+  /** The millisecond timestamp when the Event object was created. */
+  readonly timeStamp: number;
+  /** Returns the type of event, e.g. "click", "hashchange", or "submit". */
+  readonly type: string;
 }
 declare var Event: {
-	prototype: Event;
-	new (type: string, eventInitDict?: Bun.EventInit): Event;
+  prototype: Event;
+  new (type: string, eventInitDict?: Bun.EventInit): Event;
 };
 
 interface EventTarget {
-	/**
-	 * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
-	 *
-	 * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
-	 *
-	 * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
-	 * Specifically, the `capture` option is used as part of the key when registering a `listener`.
-	 * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
-	 */
-	addEventListener(
-		type: string,
-		listener: EventListener | EventListenerObject,
-		options?: AddEventListenerOptions | boolean,
-	): void;
-	/** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
-	dispatchEvent(event: Event): boolean;
-	/** Removes the event listener in target's event listener list with the same type, callback, and options. */
-	removeEventListener(
-		type: string,
-		listener: EventListener | EventListenerObject,
-		options?: Bun.EventListenerOptions | boolean,
-	): void;
+  /**
+   * Adds a new handler for the `type` event. Any given `listener` is added only once per `type` and per `capture` option value.
+   *
+   * If the `once` option is true, the `listener` is removed after the next time a `type` event is dispatched.
+   *
+   * The `capture` option is not used by Node.js in any functional way other than tracking registered event listeners per the `EventTarget` specification.
+   * Specifically, the `capture` option is used as part of the key when registering a `listener`.
+   * Any individual `listener` may be added once with `capture = false`, and once with `capture = true`.
+   */
+  addEventListener(
+    type: string,
+    listener: EventListener | EventListenerObject,
+    options?: AddEventListenerOptions | boolean,
+  ): void;
+  /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
+  dispatchEvent(event: Event): boolean;
+  /** Removes the event listener in target's event listener list with the same type, callback, and options. */
+  removeEventListener(
+    type: string,
+    listener: EventListener | EventListenerObject,
+    options?: Bun.EventListenerOptions | boolean,
+  ): void;
 }
 declare var EventTarget: {
-	prototype: EventTarget;
-	new (): EventTarget;
+  prototype: EventTarget;
+  new (): EventTarget;
 };
 
 interface File extends Blob {
-	readonly lastModified: number;
-	readonly name: string;
+  readonly lastModified: number;
+  readonly name: string;
 }
 
 declare var File: {
-	prototype: File;
-	/**
-	 * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-	 *
-	 * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
-	 * @param `name` - The name of the file
-	 * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
-	 */
-	new (
-		parts: Bun.BlobPart[],
-		name: string,
-		options?: BlobPropertyBag & { lastModified?: Date | number },
-	): File;
+  prototype: File;
+  /**
+   * Create a new [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+   *
+   * @param `parts` - An array of strings, numbers, BufferSource, or [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob) objects
+   * @param `name` - The name of the file
+   * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
+   */
+  new (parts: Bun.BlobPart[], name: string, options?: BlobPropertyBag & { lastModified?: Date | number }): File;
 };
 
 /**
@@ -215,50 +199,50 @@ declare var File: {
  * ```
  */
 interface ShadowRealm {
-	/**
-	 * Creates a new [ShadowRealm](https://github.com/tc39/proposal-shadowrealm/blob/main/explainer.md#introduction)
-	 *
-	 * @example
-	 *
-	 * ```js
-	 * const red = new ShadowRealm();
-	 *
-	 * // realms can import modules that will execute within it's own environment.
-	 * // When the module is resolved, it captured the binding value, or creates a new
-	 * // wrapped function that is connected to the callable binding.
-	 * const redAdd = await red.importValue('./inside-code.js', 'add');
-	 *
-	 * // redAdd is a wrapped function exotic object that chains it's call to the
-	 * // respective imported binding.
-	 * let result = redAdd(2, 3);
-	 *
-	 * console.assert(result === 5); // yields true
-	 *
-	 * // The evaluate method can provide quick code evaluation within the constructed
-	 * // shadowRealm without requiring any module loading, while it still requires CSP
-	 * // relaxing.
-	 * globalThis.someValue = 1;
-	 * red.evaluate('globalThis.someValue = 2'); // Affects only the ShadowRealm's global
-	 * console.assert(globalThis.someValue === 1);
-	 *
-	 * // The wrapped functions can also wrap other functions the other way around.
-	 * const setUniqueValue =
-	 * await red.importValue('./inside-code.js', 'setUniqueValue');
-	 *
-	 * // setUniqueValue = (cb) => (cb(globalThis.someValue) * 2);
-	 *
-	 * result = setUniqueValue((x) => x ** 3);
-	 *
-	 * console.assert(result === 16); // yields true
-	 * ```
-	 */
-	importValue(specifier: string, bindingName: string): Promise<any>;
-	evaluate(sourceText: string): any;
+  /**
+   * Creates a new [ShadowRealm](https://github.com/tc39/proposal-shadowrealm/blob/main/explainer.md#introduction)
+   *
+   * @example
+   *
+   * ```js
+   * const red = new ShadowRealm();
+   *
+   * // realms can import modules that will execute within it's own environment.
+   * // When the module is resolved, it captured the binding value, or creates a new
+   * // wrapped function that is connected to the callable binding.
+   * const redAdd = await red.importValue('./inside-code.js', 'add');
+   *
+   * // redAdd is a wrapped function exotic object that chains it's call to the
+   * // respective imported binding.
+   * let result = redAdd(2, 3);
+   *
+   * console.assert(result === 5); // yields true
+   *
+   * // The evaluate method can provide quick code evaluation within the constructed
+   * // shadowRealm without requiring any module loading, while it still requires CSP
+   * // relaxing.
+   * globalThis.someValue = 1;
+   * red.evaluate('globalThis.someValue = 2'); // Affects only the ShadowRealm's global
+   * console.assert(globalThis.someValue === 1);
+   *
+   * // The wrapped functions can also wrap other functions the other way around.
+   * const setUniqueValue =
+   * await red.importValue('./inside-code.js', 'setUniqueValue');
+   *
+   * // setUniqueValue = (cb) => (cb(globalThis.someValue) * 2);
+   *
+   * result = setUniqueValue((x) => x ** 3);
+   *
+   * console.assert(result === 16); // yields true
+   * ```
+   */
+  importValue(specifier: string, bindingName: string): Promise<any>;
+  evaluate(sourceText: string): any;
 }
 
 declare var ShadowRealm: {
-	prototype: ShadowRealm;
-	new (): ShadowRealm;
+  prototype: ShadowRealm;
+  new (): ShadowRealm;
 };
 
 declare function queueMicrotask(callback: (...args: any[]) => void): void;
@@ -269,12 +253,12 @@ declare function queueMicrotask(callback: (...args: any[]) => void): void;
 declare function reportError(error: any): void;
 
 interface Timer {
-	ref(): Timer;
-	unref(): Timer;
-	hasRef(): boolean;
-	refresh(): Timer;
+  ref(): Timer;
+  unref(): Timer;
+  hasRef(): boolean;
+  refresh(): Timer;
 
-	[Symbol.toPrimitive](): number;
+  [Symbol.toPrimitive](): number;
 }
 
 /**
@@ -296,129 +280,115 @@ declare function clearImmediate(id?: number | Timer): void;
  * Run a function immediately after main event loop is vacant
  * @param handler function to call
  */
-declare function setImmediate(
-	handler: Bun.TimerHandler,
-	...arguments: any[]
-): Timer;
+declare function setImmediate(handler: Bun.TimerHandler, ...arguments: any[]): Timer;
 /**
  * Run a function every `interval` milliseconds
  * @param handler function to call
  * @param interval milliseconds to wait between calls
  */
-declare function setInterval(
-	handler: Bun.TimerHandler,
-	interval?: number,
-	...arguments: any[]
-): Timer;
+declare function setInterval(handler: Bun.TimerHandler, interval?: number, ...arguments: any[]): Timer;
 /**
  * Run a function after `timeout` (milliseconds)
  * @param handler function to call
  * @param timeout milliseconds to wait between calls
  */
-declare function setTimeout(
-	handler: Bun.TimerHandler,
-	timeout?: number,
-	...arguments: any[]
-): Timer;
+declare function setTimeout(handler: Bun.TimerHandler, timeout?: number, ...arguments: any[]): Timer;
 
 declare function addEventListener<K extends keyof EventMap>(
-	type: K,
-	listener: (this: object, ev: EventMap[K]) => any,
-	options?: boolean | AddEventListenerOptions,
+  type: K,
+  listener: (this: object, ev: EventMap[K]) => any,
+  options?: boolean | AddEventListenerOptions,
 ): void;
 declare function addEventListener(
-	type: string,
-	listener: Bun.EventListenerOrEventListenerObject,
-	options?: boolean | AddEventListenerOptions,
+  type: string,
+  listener: Bun.EventListenerOrEventListenerObject,
+  options?: boolean | AddEventListenerOptions,
 ): void;
 declare function removeEventListener<K extends keyof EventMap>(
-	type: K,
-	listener: (this: object, ev: EventMap[K]) => any,
-	options?: boolean | Bun.EventListenerOptions,
+  type: K,
+  listener: (this: object, ev: EventMap[K]) => any,
+  options?: boolean | Bun.EventListenerOptions,
 ): void;
 declare function removeEventListener(
-	type: string,
-	listener: Bun.EventListenerOrEventListenerObject,
-	options?: boolean | Bun.EventListenerOptions,
+  type: string,
+  listener: Bun.EventListenerOrEventListenerObject,
+  options?: boolean | Bun.EventListenerOptions,
 ): void;
 
 /**
  * Events providing information related to errors in scripts or in files.
  */
 interface ErrorEvent extends Event {
-	readonly colno: number;
-	readonly error: any;
-	readonly filename: string;
-	readonly lineno: number;
-	readonly message: string;
+  readonly colno: number;
+  readonly error: any;
+  readonly filename: string;
+  readonly lineno: number;
+  readonly message: string;
 }
 
 declare var ErrorEvent: {
-	prototype: ErrorEvent;
-	new (type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
+  prototype: ErrorEvent;
+  new (type: string, eventInitDict?: Bun.ErrorEventInit): ErrorEvent;
 };
 
 /** A CloseEvent is sent to clients using WebSockets when the connection is closed. This is delivered to the listener indicated by the WebSocket object's onclose attribute. */
 interface CloseEvent extends Event {
-	/** Returns the WebSocket connection close code provided by the server. */
-	readonly code: number;
-	/** Returns the WebSocket connection close reason provided by the server. */
-	readonly reason: string;
-	/** Returns true if the connection closed cleanly; false otherwise. */
-	readonly wasClean: boolean;
+  /** Returns the WebSocket connection close code provided by the server. */
+  readonly code: number;
+  /** Returns the WebSocket connection close reason provided by the server. */
+  readonly reason: string;
+  /** Returns true if the connection closed cleanly; false otherwise. */
+  readonly wasClean: boolean;
 }
 
 declare var CloseEvent: {
-	prototype: CloseEvent;
-	new (type: string, eventInitDict?: Bun.CloseEventInit): CloseEvent;
+  prototype: CloseEvent;
+  new (type: string, eventInitDict?: Bun.CloseEventInit): CloseEvent;
 };
 
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
 declare var MessageEvent: {
-	prototype: MessageEvent;
-	new <T>(
-		type: string,
-		eventInitDict?: Bun.MessageEventInit<T>,
-	): MessageEvent<T>;
+  prototype: MessageEvent;
+  new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
 };
 
 interface CustomEvent<T = any> extends Event {
-	/** Returns any custom data event was created with. Typically used for synthetic events. */
-	readonly detail: T;
+  /** Returns any custom data event was created with. Typically used for synthetic events. */
+  readonly detail: T;
 }
 
 declare var CustomEvent: {
-	prototype: CustomEvent;
-	new <T>(type: string, eventInitDict?: Bun.CustomEventInit<T>): CustomEvent<T>;
+  prototype: CustomEvent;
+  new <T>(type: string, eventInitDict?: Bun.CustomEventInit<T>): CustomEvent<T>;
 };
 
 interface EventListener {
-	(evt: Event): void;
+  (evt: Event): void;
 }
 
 interface EventListenerObject {
-	handleEvent(object: Event): void;
+  handleEvent(object: Event): void;
 }
 
 interface FetchEvent extends Event {
-	readonly request: Request;
-	readonly url: string;
+  readonly request: Request;
+  readonly url: string;
 
-	waitUntil(promise: Promise<any>): void;
-	respondWith(response: Response | Promise<Response>): void;
+  waitUntil(promise: Promise<any>): void;
+  respondWith(response: Response | Promise<Response>): void;
 }
 
 interface EventMap {
-	fetch: FetchEvent;
-	message: MessageEvent;
-	messageerror: MessageEvent;
-	// exit: Event;
+  fetch: FetchEvent;
+  message: MessageEvent;
+  messageerror: MessageEvent;
+  // exit: Event;
 }
 
 interface AddEventListenerOptions extends Bun.EventListenerOptions {
-	once?: boolean;
-	passive?: boolean;
-	signal?: AbortSignal;
+  once?: boolean;
+  passive?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -437,333 +407,326 @@ interface AddEventListenerOptions extends Bun.EventListenerOptions {
  * Bun may inject additional imports into your code. This usually has a `bun:` prefix.
  */
 declare var Loader: {
-	/**
-	 * ESM module registry
-	 *
-	 * This lets you implement live reload in Bun. If you
-	 * delete a module specifier from this map, the next time it's imported, it
-	 * will be re-transpiled and loaded again.
-	 *
-	 * The keys are the module specifiers and the
-	 * values are metadata about the module.
-	 *
-	 * The keys are an implementation detail for Bun that will change between
-	 * versions.
-	 *
-	 * - Userland modules are an absolute file path
-	 * - Virtual modules have a `bun:` prefix or `node:` prefix
-	 * - JS polyfills start with `"/bun-vfs/"`. `"buffer"` is an example of a JS polyfill
-	 * - If you have a `node_modules.bun` file, many modules will point to that file
-	 *
-	 * Virtual modules and JS polyfills are embedded in bun's binary. They don't
-	 * point to anywhere in your local filesystem.
-	 */
-	registry: Map<
-		string,
-		{
-			key: string;
-			/**
-			 * This refers to the state the ESM module is in
-			 *
-			 * TODO: make an enum for this number
-			 */
-			state: number;
-			fetch: Promise<any>;
-			instantiate: Promise<any>;
-			satisfy: Promise<any>;
-			dependencies: Array<
-				(typeof Loader)["registry"] extends Map<any, infer V> ? V : any
-			>;
-			/**
-			 * Your application will probably crash if you mess with this.
-			 */
-			module: {
-				dependenciesMap: (typeof Loader)["registry"];
-			};
-			linkError?: any;
-			linkSucceeded: boolean;
-			evaluated: boolean;
-			then?: any;
-			isAsync: boolean;
-		}
-	>;
-	/**
-	 * For an already-evaluated module, return the dependencies as module specifiers
-	 *
-	 * This list is already sorted and uniqued.
-	 *
-	 * @example
-	 *
-	 * For this code:
-	 * ```js
-	 * // /foo.js
-	 * import classNames from 'classnames';
-	 * import React from 'react';
-	 * import {createElement} from 'react';
-	 * ```
-	 *
-	 * This would return:
-	 * ```js
-	 * Loader.dependencyKeysIfEvaluated("/foo.js")
-	 * ["bun:wrap", "/path/to/node_modules/classnames/index.js", "/path/to/node_modules/react/index.js"]
-	 * ```
-	 *
-	 * @param specifier - module specifier as it appears in transpiled source code
-	 */
-	dependencyKeysIfEvaluated: (specifier: string) => string[];
-	/**
-	 * The function JavaScriptCore internally calls when you use an import statement.
-	 *
-	 * This may return a path to `node_modules.server.bun`, which will be confusing.
-	 *
-	 * Consider {@link Bun.resolve} or {@link ImportMeta.resolve}
-	 * instead.
-	 *
-	 * @param specifier - module specifier as it appears in transpiled source code
-	 * @param referrer - module specifier that is resolving this specifier
-	 */
-	resolve: (specifier: string, referrer: string) => string;
+  /**
+   * ESM module registry
+   *
+   * This lets you implement live reload in Bun. If you
+   * delete a module specifier from this map, the next time it's imported, it
+   * will be re-transpiled and loaded again.
+   *
+   * The keys are the module specifiers and the
+   * values are metadata about the module.
+   *
+   * The keys are an implementation detail for Bun that will change between
+   * versions.
+   *
+   * - Userland modules are an absolute file path
+   * - Virtual modules have a `bun:` prefix or `node:` prefix
+   * - JS polyfills start with `"/bun-vfs/"`. `"buffer"` is an example of a JS polyfill
+   * - If you have a `node_modules.bun` file, many modules will point to that file
+   *
+   * Virtual modules and JS polyfills are embedded in bun's binary. They don't
+   * point to anywhere in your local filesystem.
+   */
+  registry: Map<
+    string,
+    {
+      key: string;
+      /**
+       * This refers to the state the ESM module is in
+       *
+       * TODO: make an enum for this number
+       */
+      state: number;
+      fetch: Promise<any>;
+      instantiate: Promise<any>;
+      satisfy: Promise<any>;
+      dependencies: Array<(typeof Loader)["registry"] extends Map<any, infer V> ? V : any>;
+      /**
+       * Your application will probably crash if you mess with this.
+       */
+      module: {
+        dependenciesMap: (typeof Loader)["registry"];
+      };
+      linkError?: any;
+      linkSucceeded: boolean;
+      evaluated: boolean;
+      then?: any;
+      isAsync: boolean;
+    }
+  >;
+  /**
+   * For an already-evaluated module, return the dependencies as module specifiers
+   *
+   * This list is already sorted and uniqued.
+   *
+   * @example
+   *
+   * For this code:
+   * ```js
+   * // /foo.js
+   * import classNames from 'classnames';
+   * import React from 'react';
+   * import {createElement} from 'react';
+   * ```
+   *
+   * This would return:
+   * ```js
+   * Loader.dependencyKeysIfEvaluated("/foo.js")
+   * ["bun:wrap", "/path/to/node_modules/classnames/index.js", "/path/to/node_modules/react/index.js"]
+   * ```
+   *
+   * @param specifier - module specifier as it appears in transpiled source code
+   */
+  dependencyKeysIfEvaluated: (specifier: string) => string[];
+  /**
+   * The function JavaScriptCore internally calls when you use an import statement.
+   *
+   * This may return a path to `node_modules.server.bun`, which will be confusing.
+   *
+   * Consider {@link Bun.resolve} or {@link ImportMeta.resolve}
+   * instead.
+   *
+   * @param specifier - module specifier as it appears in transpiled source code
+   * @param referrer - module specifier that is resolving this specifier
+   */
+  resolve: (specifier: string, referrer: string) => string;
 };
 
 interface QueuingStrategy<T = any> {
-	highWaterMark?: number;
-	size?: QueuingStrategySize<T>;
+  highWaterMark?: number;
+  size?: QueuingStrategySize<T>;
 }
 
 interface QueuingStrategyInit {
-	/**
-	 * Creates a new ByteLengthQueuingStrategy with the provided high water mark.
-	 *
-	 * Note that the provided high water mark will not be validated ahead of time. Instead, if it is negative, NaN, or not a number, the resulting ByteLengthQueuingStrategy will cause the corresponding stream constructor to throw.
-	 */
-	highWaterMark: number;
+  /**
+   * Creates a new ByteLengthQueuingStrategy with the provided high water mark.
+   *
+   * Note that the provided high water mark will not be validated ahead of time. Instead, if it is negative, NaN, or not a number, the resulting ByteLengthQueuingStrategy will cause the corresponding stream constructor to throw.
+   */
+  highWaterMark: number;
 }
 
 /** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
 interface ByteLengthQueuingStrategy extends QueuingStrategy<ArrayBufferView> {
-	readonly highWaterMark: number;
-	// changed from QueuingStrategySize<BufferSource>
-	// to avoid conflict with lib.dom.d.ts
-	readonly size: QueuingStrategySize<ArrayBufferView>;
+  readonly highWaterMark: number;
+  // changed from QueuingStrategySize<BufferSource>
+  // to avoid conflict with lib.dom.d.ts
+  readonly size: QueuingStrategySize<ArrayBufferView>;
 }
 
 declare var ByteLengthQueuingStrategy: {
-	prototype: ByteLengthQueuingStrategy;
-	new (init: QueuingStrategyInit): ByteLengthQueuingStrategy;
+  prototype: ByteLengthQueuingStrategy;
+  new (init: QueuingStrategyInit): ByteLengthQueuingStrategy;
 };
 
 interface ReadableStreamDefaultController<R = any> {
-	readonly desiredSize: number | null;
-	close(): void;
-	enqueue(chunk?: R): void;
-	error(e?: any): void;
+  readonly desiredSize: number | null;
+  close(): void;
+  enqueue(chunk?: R): void;
+  error(e?: any): void;
 }
 
 interface ReadableStreamDirectController {
-	close(error?: Error): void;
-	write(
-		data: Bun.BufferSource | ArrayBuffer | string,
-	): number | Promise<number>;
-	end(): number | Promise<number>;
-	flush(): number | Promise<number>;
-	start(): void;
+  close(error?: Error): void;
+  write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
+  end(): number | Promise<number>;
+  flush(): number | Promise<number>;
+  start(): void;
 }
 
 declare var ReadableStreamDefaultController: {
-	prototype: ReadableStreamDefaultController;
-	new (): ReadableStreamDefaultController;
+  prototype: ReadableStreamDefaultController;
+  new (): ReadableStreamDefaultController;
 };
 
-interface ReadableStreamDefaultReader<R = any>
-	extends ReadableStreamGenericReader {
-	read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
-	/**
-	 * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
-	 * Will only return a promise if the data is not immediately available.
-	 */
-	readMany():
-		| Promise<Bun.ReadableStreamDefaultReadManyResult<R>>
-		| Bun.ReadableStreamDefaultReadManyResult<R>;
-	releaseLock(): void;
+interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
+  read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
+  /**
+   * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
+   * Will only return a promise if the data is not immediately available.
+   */
+  readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
+  releaseLock(): void;
 }
 
 declare var ReadableStreamDefaultReader: {
-	prototype: ReadableStreamDefaultReader;
-	new <R = any>(stream: ReadableStream<R>): ReadableStreamDefaultReader<R>;
+  prototype: ReadableStreamDefaultReader;
+  new <R = any>(stream: ReadableStream<R>): ReadableStreamDefaultReader<R>;
 };
 
 interface ReadableStreamGenericReader {
-	readonly closed: Promise<undefined>;
-	cancel(reason?: any): Promise<void>;
+  readonly closed: Promise<undefined>;
+  cancel(reason?: any): Promise<void>;
 }
 
 interface ReadableStreamDefaultReadDoneResult {
-	done: true;
-	value?: undefined;
+  done: true;
+  value?: undefined;
 }
 
 interface ReadableStreamDefaultReadValueResult<T> {
-	done: false;
-	value: T;
+  done: false;
+  value: T;
 }
 
 interface ReadableWritablePair<R = any, W = any> {
-	readable: ReadableStream<R>;
-	/**
-	 * Provides a convenient, chainable way of piping this readable stream through a transform stream (or any other { writable, readable } pair). It simply pipes the stream into the writable side of the supplied pair, and returns the readable side for further use.
-	 *
-	 * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
-	 */
-	writable: WritableStream<W>;
+  readable: ReadableStream<R>;
+  /**
+   * Provides a convenient, chainable way of piping this readable stream through a transform stream (or any other { writable, readable } pair). It simply pipes the stream into the writable side of the supplied pair, and returns the readable side for further use.
+   *
+   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
+   */
+  writable: WritableStream<W>;
 }
 
 interface WritableStreamDefaultController {
-	error(e?: any): void;
+  error(e?: any): void;
 }
 
 declare var WritableStreamDefaultController: {
-	prototype: WritableStreamDefaultController;
-	new (): WritableStreamDefaultController;
+  prototype: WritableStreamDefaultController;
+  new (): WritableStreamDefaultController;
 };
 
 /** This Streams API interface is the object returned by WritableStream.getWriter() and once created locks the < writer to the WritableStream ensuring that no other streams can write to the underlying sink. */
 interface WritableStreamDefaultWriter<W = any> {
-	readonly closed: Promise<undefined>;
-	readonly desiredSize: number | null;
-	readonly ready: Promise<undefined>;
-	abort(reason?: any): Promise<void>;
-	close(): Promise<void>;
-	releaseLock(): void;
-	write(chunk?: W): Promise<void>;
+  readonly closed: Promise<undefined>;
+  readonly desiredSize: number | null;
+  readonly ready: Promise<undefined>;
+  abort(reason?: any): Promise<void>;
+  close(): Promise<void>;
+  releaseLock(): void;
+  write(chunk?: W): Promise<void>;
 }
 
 declare var WritableStreamDefaultWriter: {
-	prototype: WritableStreamDefaultWriter;
-	new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
+  prototype: WritableStreamDefaultWriter;
+  new <W = any>(stream: WritableStream<W>): WritableStreamDefaultWriter<W>;
 };
 
 interface TransformStream<I = any, O = any> {
-	readonly readable: ReadableStream<O>;
-	readonly writable: WritableStream<I>;
+  readonly readable: ReadableStream<O>;
+  readonly writable: WritableStream<I>;
 }
 
 declare var TransformStream: {
-	prototype: TransformStream;
-	new <I = any, O = any>(
-		transformer?: Transformer<I, O>,
-		writableStrategy?: QueuingStrategy<I>,
-		readableStrategy?: QueuingStrategy<O>,
-	): TransformStream<I, O>;
+  prototype: TransformStream;
+  new <I = any, O = any>(
+    transformer?: Transformer<I, O>,
+    writableStrategy?: QueuingStrategy<I>,
+    readableStrategy?: QueuingStrategy<O>,
+  ): TransformStream<I, O>;
 };
 
 interface TransformStreamDefaultController<O = any> {
-	readonly desiredSize: number | null;
-	enqueue(chunk?: O): void;
-	error(reason?: any): void;
-	terminate(): void;
+  readonly desiredSize: number | null;
+  enqueue(chunk?: O): void;
+  error(reason?: any): void;
+  terminate(): void;
 }
 
 declare var TransformStreamDefaultController: {
-	prototype: TransformStreamDefaultController;
-	new (): TransformStreamDefaultController;
+  prototype: TransformStreamDefaultController;
+  new (): TransformStreamDefaultController;
 };
 
 interface StreamPipeOptions {
-	preventAbort?: boolean;
-	preventCancel?: boolean;
-	/**
-	 * Pipes this readable stream to a given writable stream destination. The way in which the piping process behaves under various error conditions can be customized with a number of passed options. It returns a promise that fulfills when the piping process completes successfully, or rejects if any errors were encountered.
-	 *
-	 * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
-	 *
-	 * Errors and closures of the source and destination streams propagate as follows:
-	 *
-	 * An error in this source readable stream will abort destination, unless preventAbort is truthy. The returned promise will be rejected with the source's error, or with any error that occurs during aborting the destination.
-	 *
-	 * An error in destination will cancel this source readable stream, unless preventCancel is truthy. The returned promise will be rejected with the destination's error, or with any error that occurs during canceling the source.
-	 *
-	 * When this source readable stream closes, destination will be closed, unless preventClose is truthy. The returned promise will be fulfilled once this process completes, unless an error is encountered while closing the destination, in which case it will be rejected with that error.
-	 *
-	 * If destination starts out closed or closing, this source readable stream will be canceled, unless preventCancel is true. The returned promise will be rejected with an error indicating piping to a closed stream failed, or with any error that occurs during canceling the source.
-	 *
-	 * The signal option can be set to an AbortSignal to allow aborting an ongoing pipe operation via the corresponding AbortController. In this case, this source readable stream will be canceled, and destination aborted, unless the respective options preventCancel or preventAbort are set.
-	 */
-	preventClose?: boolean;
-	signal?: AbortSignal;
+  preventAbort?: boolean;
+  preventCancel?: boolean;
+  /**
+   * Pipes this readable stream to a given writable stream destination. The way in which the piping process behaves under various error conditions can be customized with a number of passed options. It returns a promise that fulfills when the piping process completes successfully, or rejects if any errors were encountered.
+   *
+   * Piping a stream will lock it for the duration of the pipe, preventing any other consumer from acquiring a reader.
+   *
+   * Errors and closures of the source and destination streams propagate as follows:
+   *
+   * An error in this source readable stream will abort destination, unless preventAbort is truthy. The returned promise will be rejected with the source's error, or with any error that occurs during aborting the destination.
+   *
+   * An error in destination will cancel this source readable stream, unless preventCancel is truthy. The returned promise will be rejected with the destination's error, or with any error that occurs during canceling the source.
+   *
+   * When this source readable stream closes, destination will be closed, unless preventClose is truthy. The returned promise will be fulfilled once this process completes, unless an error is encountered while closing the destination, in which case it will be rejected with that error.
+   *
+   * If destination starts out closed or closing, this source readable stream will be canceled, unless preventCancel is true. The returned promise will be rejected with an error indicating piping to a closed stream failed, or with any error that occurs during canceling the source.
+   *
+   * The signal option can be set to an AbortSignal to allow aborting an ongoing pipe operation via the corresponding AbortController. In this case, this source readable stream will be canceled, and destination aborted, unless the respective options preventCancel or preventAbort are set.
+   */
+  preventClose?: boolean;
+  signal?: AbortSignal;
 }
 
 /** This Streams API interface provides a built-in byte length queuing strategy that can be used when constructing streams. */
 interface CountQueuingStrategy extends QueuingStrategy {
-	readonly highWaterMark: number;
-	readonly size: QueuingStrategySize;
+  readonly highWaterMark: number;
+  readonly size: QueuingStrategySize;
 }
 
 declare var CountQueuingStrategy: {
-	prototype: CountQueuingStrategy;
-	new (init: QueuingStrategyInit): CountQueuingStrategy;
+  prototype: CountQueuingStrategy;
+  new (init: QueuingStrategyInit): CountQueuingStrategy;
 };
 
 interface QueuingStrategySize<T = any> {
-	(chunk?: T): number;
+  (chunk?: T): number;
 }
 
 interface Transformer<I = any, O = any> {
-	flush?: Bun.TransformerFlushCallback<O>;
-	readableType?: undefined;
-	start?: Bun.TransformerStartCallback<O>;
-	transform?: Bun.TransformerTransformCallback<I, O>;
-	writableType?: undefined;
+  flush?: Bun.TransformerFlushCallback<O>;
+  readableType?: undefined;
+  start?: Bun.TransformerStartCallback<O>;
+  transform?: Bun.TransformerTransformCallback<I, O>;
+  writableType?: undefined;
 }
 
 interface Dict<T> {
-	[key: string]: T | undefined;
+  [key: string]: T | undefined;
 }
 
 interface ReadOnlyDict<T> {
-	readonly [key: string]: T | undefined;
+  readonly [key: string]: T | undefined;
 }
 
 interface ErrnoException extends Error {
-	errno?: number | undefined;
-	code?: string | undefined;
-	path?: string | undefined;
-	syscall?: string | undefined;
+  errno?: number | undefined;
+  code?: string | undefined;
+  path?: string | undefined;
+  syscall?: string | undefined;
 }
 
 /** An abnormal event (called an exception) which occurs as a result of calling a method or accessing a property of a web API. */
 interface DOMException extends Error {
-	readonly message: string;
-	readonly name: string;
-	readonly INDEX_SIZE_ERR: 1;
-	readonly DOMSTRING_SIZE_ERR: 2;
-	readonly HIERARCHY_REQUEST_ERR: 3;
-	readonly WRONG_DOCUMENT_ERR: 4;
-	readonly INVALID_CHARACTER_ERR: 5;
-	readonly NO_DATA_ALLOWED_ERR: 6;
-	readonly NO_MODIFICATION_ALLOWED_ERR: 7;
-	readonly NOT_FOUND_ERR: 8;
-	readonly NOT_SUPPORTED_ERR: 9;
-	readonly INUSE_ATTRIBUTE_ERR: 10;
-	readonly INVALID_STATE_ERR: 11;
-	readonly SYNTAX_ERR: 12;
-	readonly INVALID_MODIFICATION_ERR: 13;
-	readonly NAMESPACE_ERR: 14;
-	readonly INVALID_ACCESS_ERR: 15;
-	readonly VALIDATION_ERR: 16;
-	readonly TYPE_MISMATCH_ERR: 17;
-	readonly SECURITY_ERR: 18;
-	readonly NETWORK_ERR: 19;
-	readonly ABORT_ERR: 20;
-	readonly URL_MISMATCH_ERR: 21;
-	readonly QUOTA_EXCEEDED_ERR: 22;
-	readonly TIMEOUT_ERR: 23;
-	readonly INVALID_NODE_TYPE_ERR: 24;
-	readonly DATA_CLONE_ERR: 25;
+  readonly message: string;
+  readonly name: string;
+  readonly INDEX_SIZE_ERR: 1;
+  readonly DOMSTRING_SIZE_ERR: 2;
+  readonly HIERARCHY_REQUEST_ERR: 3;
+  readonly WRONG_DOCUMENT_ERR: 4;
+  readonly INVALID_CHARACTER_ERR: 5;
+  readonly NO_DATA_ALLOWED_ERR: 6;
+  readonly NO_MODIFICATION_ALLOWED_ERR: 7;
+  readonly NOT_FOUND_ERR: 8;
+  readonly NOT_SUPPORTED_ERR: 9;
+  readonly INUSE_ATTRIBUTE_ERR: 10;
+  readonly INVALID_STATE_ERR: 11;
+  readonly SYNTAX_ERR: 12;
+  readonly INVALID_MODIFICATION_ERR: 13;
+  readonly NAMESPACE_ERR: 14;
+  readonly INVALID_ACCESS_ERR: 15;
+  readonly VALIDATION_ERR: 16;
+  readonly TYPE_MISMATCH_ERR: 17;
+  readonly SECURITY_ERR: 18;
+  readonly NETWORK_ERR: 19;
+  readonly ABORT_ERR: 20;
+  readonly URL_MISMATCH_ERR: 21;
+  readonly QUOTA_EXCEEDED_ERR: 22;
+  readonly TIMEOUT_ERR: 23;
+  readonly INVALID_NODE_TYPE_ERR: 24;
+  readonly DATA_CLONE_ERR: 25;
 }
 
 declare var DOMException: {
-	prototype: DOMException;
-	new (message?: string, name?: string): DOMException;
+  prototype: DOMException;
+  new (message?: string, name?: string): DOMException;
 };
 
 declare function alert(message?: string): void;
@@ -772,374 +735,370 @@ declare function prompt(message?: string, _default?: string): string | null;
 
 type _SubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
 declare var SubtleCrypto: {
-	prototype: _SubtleCrypto;
-	new (): _SubtleCrypto;
+  prototype: _SubtleCrypto;
+  new (): _SubtleCrypto;
 };
 
 type _CryptoKey = import("crypto").webcrypto.CryptoKey;
 interface CryptoKey extends _CryptoKey {}
 declare var CryptoKey: {
-	prototype: CryptoKey;
-	new (): CryptoKey;
+  prototype: CryptoKey;
+  new (): CryptoKey;
 };
 
 interface Position {
-	lineText: string;
-	file: string;
-	namespace: string;
-	line: number;
-	column: number;
-	length: number;
-	offset: number;
+  lineText: string;
+  file: string;
+  namespace: string;
+  line: number;
+  column: number;
+  length: number;
+  offset: number;
 }
 
 declare class ResolveMessage {
-	readonly name: "ResolveMessage";
-	readonly position: Position | null;
-	readonly code: string;
-	readonly message: string;
-	readonly referrer: string;
-	readonly specifier: string;
-	readonly importKind:
-		| "entry_point"
-		| "stmt"
-		| "require"
-		| "import"
-		| "dynamic"
-		| "require_resolve"
-		| "at"
-		| "at_conditional"
-		| "url"
-		| "internal";
-	readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly name: "ResolveMessage";
+  readonly position: Position | null;
+  readonly code: string;
+  readonly message: string;
+  readonly referrer: string;
+  readonly specifier: string;
+  readonly importKind:
+    | "entry_point"
+    | "stmt"
+    | "require"
+    | "import"
+    | "dynamic"
+    | "require_resolve"
+    | "at"
+    | "at_conditional"
+    | "url"
+    | "internal";
+  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 
-	toString(): string;
+  toString(): string;
 }
 
 declare class BuildMessage {
-	readonly name: "BuildMessage";
-	readonly position: Position | null;
-	readonly message: string;
-	readonly level: "error" | "warning" | "info" | "debug" | "verbose";
+  readonly name: "BuildMessage";
+  readonly position: Position | null;
+  readonly message: string;
+  readonly level: "error" | "warning" | "info" | "debug" | "verbose";
 }
 
 // Declare "static" methods in Error
 interface ErrorConstructor {
-	/** Create .stack property on a target object */
-	// eslint-disable-next-line @typescript-eslint/ban-types
-	captureStackTrace(targetObject: object, constructorOpt?: Function): void;
+  /** Create .stack property on a target object */
 
-	/**
-	 * Optional override for formatting stack traces
-	 *
-	 * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
-	 */
-	prepareStackTrace?:
-		| ((err: Error, stackTraces: NodeJS.CallSite[]) => any)
-		| undefined;
+  captureStackTrace(targetObject: object, constructorOpt?: Function): void;
 
-	stackTraceLimit: number;
+  /**
+   * Optional override for formatting stack traces
+   *
+   * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
+   */
+  prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+
+  stackTraceLimit: number;
 }
 
 interface ArrayBufferConstructor {
-	new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
+  new (byteLength: number, options: { maxByteLength?: number }): ArrayBuffer;
 }
 
 interface ArrayBuffer {
-	/**
-	 * Read-only. The length of the ArrayBuffer (in bytes).
-	 */
-	readonly byteLength: number;
-	/**
-	 * Resize an ArrayBuffer in-place.
-	 */
-	resize(byteLength: number): ArrayBuffer;
+  /**
+   * Read-only. The length of the ArrayBuffer (in bytes).
+   */
+  readonly byteLength: number;
+  /**
+   * Resize an ArrayBuffer in-place.
+   */
+  resize(byteLength: number): ArrayBuffer;
 
-	/**
-	 * Returns a section of an ArrayBuffer.
-	 */
-	slice(begin: number, end?: number): ArrayBuffer;
-	readonly [Symbol.toStringTag]: string;
+  /**
+   * Returns a section of an ArrayBuffer.
+   */
+  slice(begin: number, end?: number): ArrayBuffer;
+  readonly [Symbol.toStringTag]: string;
 }
 
 interface SharedArrayBuffer {
-	/**
-	 * Grow the SharedArrayBuffer in-place.
-	 */
-	grow(size: number): SharedArrayBuffer;
+  /**
+   * Grow the SharedArrayBuffer in-place.
+   */
+  grow(size: number): SharedArrayBuffer;
 }
 
 interface ArrayConstructor {
-	/**
-	 * Create an array from an iterable or async iterable object.
-	 * Values from the iterable are awaited.
-	 *
-	 * ```ts
-	 * await Array.fromAsync([1]); // [1]
-	 * await Array.fromAsync([Promise.resolve(1)]); // [1]
-	 * await Array.fromAsync((async function*() { yield 1 })()); // [1]
-	 * ```
-	 *
-	 * @param arrayLike - The iterable or async iterable to convert to an array.
-	 * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
-	 */
-	fromAsync<T>(
-		arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
-	): Promise<Awaited<T>[]>;
+  /**
+   * Create an array from an iterable or async iterable object.
+   * Values from the iterable are awaited.
+   *
+   * ```ts
+   * await Array.fromAsync([1]); // [1]
+   * await Array.fromAsync([Promise.resolve(1)]); // [1]
+   * await Array.fromAsync((async function*() { yield 1 })()); // [1]
+   * ```
+   *
+   * @param arrayLike - The iterable or async iterable to convert to an array.
+   * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
+   */
+  fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
 
-	/**
-	 * Create an array from an iterable or async iterable object.
-	 * Values from the iterable are awaited. Results of the map function are also awaited.
-	 *
-	 * ```ts
-	 * await Array.fromAsync([1]); // [1]
-	 * await Array.fromAsync([Promise.resolve(1)]); // [1]
-	 * await Array.fromAsync((async function*() { yield 1 })()); // [1]
-	 * await Array.fromAsync([1], (n) => n + 1); // [2]
-	 * await Array.fromAsync([1], (n) => Promise.resolve(n + 1)); // [2]
-	 * ```
-	 *
-	 * @param arrayLike - The iterable or async iterable to convert to an array.
-	 * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
-	 * @param thisArg - The `this` to which `mapFn` is bound.
-	 * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
-	 */
-	fromAsync<T, U>(
-		arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
-		mapFn?: (value: T, index: number) => U,
-		thisArg?: any,
-	): Promise<Awaited<U>[]>;
+  /**
+   * Create an array from an iterable or async iterable object.
+   * Values from the iterable are awaited. Results of the map function are also awaited.
+   *
+   * ```ts
+   * await Array.fromAsync([1]); // [1]
+   * await Array.fromAsync([Promise.resolve(1)]); // [1]
+   * await Array.fromAsync((async function*() { yield 1 })()); // [1]
+   * await Array.fromAsync([1], (n) => n + 1); // [2]
+   * await Array.fromAsync([1], (n) => Promise.resolve(n + 1)); // [2]
+   * ```
+   *
+   * @param arrayLike - The iterable or async iterable to convert to an array.
+   * @param mapFn - A mapper function that transforms each element of `arrayLike` after awaiting them.
+   * @param thisArg - The `this` to which `mapFn` is bound.
+   * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
+   */
+  fromAsync<T, U>(
+    arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
+    mapFn?: (value: T, index: number) => U,
+    thisArg?: any,
+  ): Promise<Awaited<U>[]>;
 }
 
 interface ConsoleOptions {
-	stdout: import("stream").Writable;
-	stderr?: import("stream").Writable;
-	ignoreErrors?: boolean;
-	colorMode?: boolean | "auto";
-	inspectOptions?: import("util").InspectOptions;
-	groupIndentation?: number;
+  stdout: import("stream").Writable;
+  stderr?: import("stream").Writable;
+  ignoreErrors?: boolean;
+  colorMode?: boolean | "auto";
+  inspectOptions?: import("util").InspectOptions;
+  groupIndentation?: number;
 }
 
 interface Console {
-	/**
-	 * Asynchronously read lines from standard input (fd 0)
-	 *
-	 * ```ts
-	 * for await (const line of console) {
-	 *   console.log(line);
-	 * }
-	 * ```
-	 */
-	[Symbol.asyncIterator](): AsyncIterableIterator<string>;
+  /**
+   * Asynchronously read lines from standard input (fd 0)
+   *
+   * ```ts
+   * for await (const line of console) {
+   *   console.log(line);
+   * }
+   * ```
+   */
+  [Symbol.asyncIterator](): AsyncIterableIterator<string>;
 
-	/**
-	 * Write text or bytes to stdout
-	 *
-	 * Unlike {@link console.log}, this does no formatting and doesn't add a
-	 * newline or spaces between arguments. You can pass it strings or bytes or
-	 * any combination of the two.
-	 *
-	 * ```ts
-	 * console.write("hello world!", "\n"); // "hello world\n"
-	 * ```
-	 *
-	 * @param data - The data to write
-	 * @returns The number of bytes written
-	 *
-	 * This function is not available in the browser.
-	 */
-	write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number;
+  /**
+   * Write text or bytes to stdout
+   *
+   * Unlike {@link console.log}, this does no formatting and doesn't add a
+   * newline or spaces between arguments. You can pass it strings or bytes or
+   * any combination of the two.
+   *
+   * ```ts
+   * console.write("hello world!", "\n"); // "hello world\n"
+   * ```
+   *
+   * @param data - The data to write
+   * @returns The number of bytes written
+   *
+   * This function is not available in the browser.
+   */
+  write(...data: Array<string | ArrayBufferView | ArrayBuffer>): number;
 
-	/**
-	 * Clear the console
-	 */
-	clear(): void;
+  /**
+   * Clear the console
+   */
+  clear(): void;
 
-	assert(condition?: boolean, ...data: any[]): void;
+  assert(condition?: boolean, ...data: any[]): void;
 
-	/**
-	 * Increment a [count](https://www.youtube.com/watch?v=2AoxCkySv34&t=22s)
-	 * @param label label counter
-	 */
-	count(label?: string): void;
-	countReset(label?: string): void;
-	debug(...data: any[]): void;
-	dir(item?: any, options?: any): void;
-	dirxml(...data: any[]): void;
-	/**
-	 * Log to stderr in your terminal
-	 *
-	 * Appears in red
-	 *
-	 * @param data something to display
-	 */
-	error(...data: any[]): void;
-	/** Does nothing currently */
-	group(...data: any[]): void;
-	/** Does nothing currently */
-	groupCollapsed(...data: any[]): void;
-	/** Does nothing currently */
-	groupEnd(): void;
-	info(...data: any[]): void;
-	log(...data: any[]): void;
-	/**
-	 * Try to construct a table with the columns of the properties of `tabularData` (or use `properties`) and rows of `tabularData` and log it. Falls back to just
-	 * logging the argument if it can't be parsed as tabular.
-	 *
-	 * ```js
-	 * // These can't be parsed as tabular data
-	 * console.table(Symbol());
-	 * // Symbol()
-	 *
-	 * console.table(undefined);
-	 * // undefined
-	 *
-	 * console.table([{ a: 1, b: 'Y' }, { a: 'Z', b: 2 }]);
-	 * // ┌────┬─────┬─────┐
-	 * // │    │  a  │  b  │
-	 * // ├────┼─────┼─────┤
-	 * // │  0 │  1  │ 'Y' │
-	 * // │  1 │ 'Z' │  2  │
-	 * // └────┴─────┴─────┘
-	 *
-	 * console.table([{ a: 1, b: 'Y' }, { a: 'Z', b: 2 }], ['a']);
-	 * // ┌────┬─────┐
-	 * // │    │  a  │
-	 * // ├────┼─────┤
-	 * // │ 0  │  1  │
-	 * // │ 1  │ 'Z' │
-	 * // └────┴─────┘
-	 * ```
-	 * @param properties Alternate properties for constructing the table.
-	 */
-	table(tabularData?: any, properties?: string[]): void;
-	/**
-	 * Begin a timer to log with {@link console.timeEnd}
-	 *
-	 * @param label - The label to use for the timer
-	 *
-	 * ```ts
-	 *  console.time("how long????");
-	 * for (let i = 0; i < 999999; i++) {
-	 *    // do stuff
-	 *    let x = i * i;
-	 * }
-	 * console.timeEnd("how long????");
-	 * ```
-	 */
-	time(label?: string): void;
-	/**
-	 * End a timer to log with {@link console.time}
-	 *
-	 * @param label - The label to use for the timer
-	 *
-	 * ```ts
-	 *  console.time("how long????");
-	 * for (let i = 0; i < 999999; i++) {
-	 *  // do stuff
-	 *  let x = i * i;
-	 * }
-	 * console.timeEnd("how long????");
-	 * ```
-	 */
-	timeEnd(label?: string): void;
-	timeLog(label?: string, ...data: any[]): void;
-	timeStamp(label?: string): void;
-	trace(...data: any[]): void;
-	warn(...data: any[]): void;
+  /**
+   * Increment a [count](https://www.youtube.com/watch?v=2AoxCkySv34&t=22s)
+   * @param label label counter
+   */
+  count(label?: string): void;
+  countReset(label?: string): void;
+  debug(...data: any[]): void;
+  dir(item?: any, options?: any): void;
+  dirxml(...data: any[]): void;
+  /**
+   * Log to stderr in your terminal
+   *
+   * Appears in red
+   *
+   * @param data something to display
+   */
+  error(...data: any[]): void;
+  /** Does nothing currently */
+  group(...data: any[]): void;
+  /** Does nothing currently */
+  groupCollapsed(...data: any[]): void;
+  /** Does nothing currently */
+  groupEnd(): void;
+  info(...data: any[]): void;
+  log(...data: any[]): void;
+  /**
+   * Try to construct a table with the columns of the properties of `tabularData` (or use `properties`) and rows of `tabularData` and log it. Falls back to just
+   * logging the argument if it can't be parsed as tabular.
+   *
+   * ```js
+   * // These can't be parsed as tabular data
+   * console.table(Symbol());
+   * // Symbol()
+   *
+   * console.table(undefined);
+   * // undefined
+   *
+   * console.table([{ a: 1, b: 'Y' }, { a: 'Z', b: 2 }]);
+   * // ┌────┬─────┬─────┐
+   * // │    │  a  │  b  │
+   * // ├────┼─────┼─────┤
+   * // │  0 │  1  │ 'Y' │
+   * // │  1 │ 'Z' │  2  │
+   * // └────┴─────┴─────┘
+   *
+   * console.table([{ a: 1, b: 'Y' }, { a: 'Z', b: 2 }], ['a']);
+   * // ┌────┬─────┐
+   * // │    │  a  │
+   * // ├────┼─────┤
+   * // │ 0  │  1  │
+   * // │ 1  │ 'Z' │
+   * // └────┴─────┘
+   * ```
+   * @param properties Alternate properties for constructing the table.
+   */
+  table(tabularData?: any, properties?: string[]): void;
+  /**
+   * Begin a timer to log with {@link console.timeEnd}
+   *
+   * @param label - The label to use for the timer
+   *
+   * ```ts
+   *  console.time("how long????");
+   * for (let i = 0; i < 999999; i++) {
+   *    // do stuff
+   *    let x = i * i;
+   * }
+   * console.timeEnd("how long????");
+   * ```
+   */
+  time(label?: string): void;
+  /**
+   * End a timer to log with {@link console.time}
+   *
+   * @param label - The label to use for the timer
+   *
+   * ```ts
+   *  console.time("how long????");
+   * for (let i = 0; i < 999999; i++) {
+   *  // do stuff
+   *  let x = i * i;
+   * }
+   * console.timeEnd("how long????");
+   * ```
+   */
+  timeEnd(label?: string): void;
+  timeLog(label?: string, ...data: any[]): void;
+  timeStamp(label?: string): void;
+  trace(...data: any[]): void;
+  warn(...data: any[]): void;
 
-	/**
-	 * Creates a new Console with one or two writable stream instances. stdout is a writable stream to print log or info output. stderr is used for warning or error output. If stderr is not provided, stdout is used for stderr.
-	 */
-	// Console: {
-	//   new (options: ConsoleOptions): Console;
-	//   new (
-	//     stdout: import("stream").Writable,
-	//     stderr?: import("stream").Writable,
-	//     ignoreErrors?: boolean,
-	//   ): Console;
-	// };
+  /**
+   * Creates a new Console with one or two writable stream instances. stdout is a writable stream to print log or info output. stderr is used for warning or error output. If stderr is not provided, stdout is used for stderr.
+   */
+  // Console: {
+  //   new (options: ConsoleOptions): Console;
+  //   new (
+  //     stdout: import("stream").Writable,
+  //     stderr?: import("stream").Writable,
+  //     ignoreErrors?: boolean,
+  //   ): Console;
+  // };
 }
 
 declare var console: Console;
 
 interface ImportMeta {
-	/**
-	 * `file://` url string for the current module.
-	 *
-	 * @example
-	 * ```ts
-	 * console.log(import.meta.url);
-	 * "file:///Users/me/projects/my-app/src/my-app.ts"
-	 * ```
-	 */
-	url: string;
-	/**
-	 * Absolute path to the source file
-	 */
-	readonly path: string;
-	/**
-	 * Absolute path to the directory containing the source file.
-	 *
-	 * Does not have a trailing slash
-	 */
-	readonly dir: string;
-	/**
-	 * Filename of the source file
-	 */
-	readonly file: string;
-	/**
-	 * The environment variables of the process
-	 *
-	 * ```ts
-	 * import.meta.env === process.env
-	 * ```
-	 */
-	readonly env: NodeJS.ProcessEnv;
+  /**
+   * `file://` url string for the current module.
+   *
+   * @example
+   * ```ts
+   * console.log(import.meta.url);
+   * "file:///Users/me/projects/my-app/src/my-app.ts"
+   * ```
+   */
+  url: string;
+  /**
+   * Absolute path to the source file
+   */
+  readonly path: string;
+  /**
+   * Absolute path to the directory containing the source file.
+   *
+   * Does not have a trailing slash
+   */
+  readonly dir: string;
+  /**
+   * Filename of the source file
+   */
+  readonly file: string;
+  /**
+   * The environment variables of the process
+   *
+   * ```ts
+   * import.meta.env === process.env
+   * ```
+   */
+  readonly env: NodeJS.ProcessEnv;
 
-	/**
-	 * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
-	 *
-	 * Resolve a module ID the same as if you imported it
-	 *
-	 * The `parent` argument is optional, and defaults to the current module's path.
-	 */
-	resolveSync(moduleId: string, parent?: string): string;
+  /**
+   * @deprecated Use `require.resolve` or `Bun.resolveSync(moduleId, path.dirname(parent))` instead
+   *
+   * Resolve a module ID the same as if you imported it
+   *
+   * The `parent` argument is optional, and defaults to the current module's path.
+   */
+  resolveSync(moduleId: string, parent?: string): string;
 
-	/**
-	 * Load a CommonJS module within an ES Module. Bun's transpiler rewrites all
-	 * calls to `require` with `import.meta.require` when transpiling ES Modules
-	 * for the runtime.
-	 *
-	 * Warning: **This API is not stable** and may change or be removed in the
-	 * future. Use at your own risk.
-	 */
-	require: NodeJS.Require;
+  /**
+   * Load a CommonJS module within an ES Module. Bun's transpiler rewrites all
+   * calls to `require` with `import.meta.require` when transpiling ES Modules
+   * for the runtime.
+   *
+   * Warning: **This API is not stable** and may change or be removed in the
+   * future. Use at your own risk.
+   */
+  require: NodeJS.Require;
 
-	/**
-	 * Did the current file start the process?
-	 *
-	 * @example
-	 * ```ts
-	 * if (import.meta.main) {
-	 *  console.log("I started the process!");
-	 * }
-	 * ```
-	 *
-	 * @example
-	 * ```ts
-	 * console.log(
-	 *   import.meta.main === (import.meta.path === Bun.main)
-	 * )
-	 * ```
-	 */
-	readonly main: boolean;
+  /**
+   * Did the current file start the process?
+   *
+   * @example
+   * ```ts
+   * if (import.meta.main) {
+   *  console.log("I started the process!");
+   * }
+   * ```
+   *
+   * @example
+   * ```ts
+   * console.log(
+   *   import.meta.main === (import.meta.path === Bun.main)
+   * )
+   * ```
+   */
+  readonly main: boolean;
 
-	/** Alias of `import.meta.dir`. Exists for Node.js compatibility */
-	dirname: string;
+  /** Alias of `import.meta.dir`. Exists for Node.js compatibility */
+  dirname: string;
 
-	/** Alias of `import.meta.path`. Exists for Node.js compatibility */
-	filename: string;
+  /** Alias of `import.meta.path`. Exists for Node.js compatibility */
+  filename: string;
 }
 
 /**
@@ -1153,7 +1112,7 @@ declare var require: NodeJS.Require;
 declare var exports: any;
 
 interface NodeModule {
-	exports: any;
+  exports: any;
 }
 
 declare var module: NodeModule;
@@ -1163,10 +1122,7 @@ declare var module: NodeModule;
  *
  * [MDN Reference](https://developer.mozilla.org/docs/Web/API/structuredClone)
  */
-declare function structuredClone<T>(
-	value: T,
-	options?: Bun.StructuredSerializeOptions,
-): T;
+declare function structuredClone<T>(value: T, options?: Bun.StructuredSerializeOptions): T;
 
 /**
  * Post a message to the parent thread.
@@ -1176,81 +1132,81 @@ declare function structuredClone<T>(
 declare function postMessage(message: any, transfer?: Bun.Transferable[]): void;
 
 interface EventSourceInit {
-	withCredentials?: boolean;
+  withCredentials?: boolean;
 }
 
 interface PromiseConstructor {
-	/**
-	 * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called
-	 * separately.
-	 *
-	 * This is useful when you want to return a Promise and have code outside the Promise
-	 * resolve or reject it.
-	 *
-	 * ## Example
-	 * ```ts
-	 * const { promise, resolve, reject } = Promise.withResolvers();
-	 *
-	 * setTimeout(() => {
-	 *  resolve("Hello world!");
-	 * }, 1000);
-	 *
-	 * await promise; // "Hello world!"
-	 * ```
-	 *
-	 * `Promise.withResolvers()` is a [stage3 proposal](https://github.com/tc39/proposal-promise-with-resolvers).
-	 */
-	withResolvers<T>(): {
-		promise: Promise<T>;
-		resolve: (value?: T | PromiseLike<T>) => void;
-		reject: (reason?: any) => void;
-	};
+  /**
+   * Create a deferred promise, with exposed `resolve` and `reject` methods which can be called
+   * separately.
+   *
+   * This is useful when you want to return a Promise and have code outside the Promise
+   * resolve or reject it.
+   *
+   * ## Example
+   * ```ts
+   * const { promise, resolve, reject } = Promise.withResolvers();
+   *
+   * setTimeout(() => {
+   *  resolve("Hello world!");
+   * }, 1000);
+   *
+   * await promise; // "Hello world!"
+   * ```
+   *
+   * `Promise.withResolvers()` is a [stage3 proposal](https://github.com/tc39/proposal-promise-with-resolvers).
+   */
+  withResolvers<T>(): {
+    promise: Promise<T>;
+    resolve: (value?: T | PromiseLike<T>) => void;
+    reject: (reason?: any) => void;
+  };
 }
 
 interface Navigator {
-	readonly userAgent: string;
-	readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
-	readonly hardwareConcurrency: number;
+  readonly userAgent: string;
+  readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
+  readonly hardwareConcurrency: number;
 }
 
 declare var navigator: Navigator;
 
 interface BlobPropertyBag {
-	/** Set a default "type". Not yet implemented. */
-	type?: string;
-	/** Not implemented in Bun yet. */
-	// endings?: "transparent" | "native";
+  /** Set a default "type". Not yet implemented. */
+  type?: string;
+  /** Not implemented in Bun yet. */
+  // endings?: "transparent" | "native";
 }
 
 interface Blob {
-	/**
-	 * Read the data from the blob as a JSON object.
-	 *
-	 * This first decodes the data from UTF-8, then parses it as JSON.
-	 */
-	// eslint-disable-next-line @definitelytyped/no-unnecessary-generics
-	json(): Promise<any>;
+  /**
+   * Read the data from the blob as a JSON object.
+   *
+   * This first decodes the data from UTF-8, then parses it as JSON.
+   */
+  // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
+  json(): Promise<any>;
 
-	/**
-	 * Read the data from the blob as a {@link FormData} object.
-	 *
-	 * This first decodes the data from UTF-8, then parses it as a
-	 * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
-	 *
-	 * The `type` property of the blob is used to determine the format of the
-	 * body.
-	 *
-	 * This is a non-standard addition to the `Blob` API, to make it conform more
-	 * closely to the `BodyMixin` API.
-	 */
-	formData(): Promise<FormData>;
+  /**
+   * Read the data from the blob as a {@link FormData} object.
+   *
+   * This first decodes the data from UTF-8, then parses it as a
+   * `multipart/form-data` body or a `application/x-www-form-urlencoded` body.
+   *
+   * The `type` property of the blob is used to determine the format of the
+   * body.
+   *
+   * This is a non-standard addition to the `Blob` API, to make it conform more
+   * closely to the `BodyMixin` API.
+   */
+  formData(): Promise<FormData>;
 
-	arrayBuffer(): Promise<ArrayBuffer>;
+  arrayBuffer(): Promise<ArrayBuffer>;
 
-	/**
-	 * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
-	 */
-	bytes(): Promise<Uint8Array>;
+  /**
+   * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
+   */
+  bytes(): Promise<Uint8Array>;
 }
 
 /**
@@ -1260,16 +1216,16 @@ interface Blob {
  * @param `options` - An object containing properties to be added to the [Blob](https://developer.mozilla.org/en-US/docs/Web/API/Blob)
  */
 declare var Blob: {
-	prototype: Blob;
-	new (parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
+  prototype: Blob;
+  new (parts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
 };
 
 interface URL {}
 declare var URL: {
-	prototype: URL;
-	new (url: string | URL, base?: string | URL): URL;
-	canParse(url: string): boolean;
-	createObjectURL(object: any): string;
-	revokeObjectURL(url: string): void;
-	parse(url: string): URL;
+  prototype: URL;
+  new (url: string | URL, base?: string | URL): URL;
+  canParse(url: string): boolean;
+  createObjectURL(object: any): string;
+  revokeObjectURL(url: string): void;
+  parse(url: string): URL;
 };

@@ -10,6 +10,32 @@ sqlite.Database;
 
 Bun satisfies typeof import("bun");
 
+type ConstructorOf<T> = new (...args: any[]) => T;
+
+import * as NodeTLS from "node:tls";
+import * as TLS from "tls";
+
+process.revision;
+
+NodeTLS satisfies typeof TLS;
+TLS satisfies typeof NodeTLS;
+
+type NodeTLSOverrideTest = NodeTLS.BunConnectionOptions;
+type TLSOverrideTest = TLS.BunConnectionOptions;
+
+WebAssembly.Global;
+WebAssembly.Memory;
+WebAssembly.compile;
+WebAssembly.compileStreaming;
+WebAssembly.instantiate;
+WebAssembly.instantiateStreaming;
+WebAssembly.validate;
+
+WebAssembly.Global satisfies ConstructorOf<Bun.WebAssembly.Global>;
+WebAssembly.Memory satisfies ConstructorOf<Bun.WebAssembly.Memory>;
+
+type wasmglobalthing = Bun.WebAssembly.Global;
+
 type S3OptionsFromNamespace = Bun.S3Options;
 type S3OptionsFromImport = import("bun").S3Options;
 

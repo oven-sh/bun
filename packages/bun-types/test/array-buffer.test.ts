@@ -1,5 +1,5 @@
 const buffer = new ArrayBuffer(1024, {
-	maxByteLength: 2048,
+  maxByteLength: 2048,
 });
 
 console.log(buffer.byteLength); // 1024

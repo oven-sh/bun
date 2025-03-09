@@ -1,10 +1,10 @@
 import * as tty from "tty";
 
 const rs = new tty.ReadStream(234, {
-	allowHalfOpen: true,
-	readable: true,
-	signal: new AbortSignal(),
-	writable: true,
+  allowHalfOpen: true,
+  readable: true,
+  signal: new AbortSignal(),
+  writable: true,
 });
 
 const ws = new tty.WriteStream(234);

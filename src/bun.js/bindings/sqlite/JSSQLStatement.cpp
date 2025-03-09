@@ -1087,6 +1087,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
     if (callFrame->argumentCount() > 2) {
         deserializeFlags |= callFrame->argument(2).toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (UNLIKELY(!thisObject)) {

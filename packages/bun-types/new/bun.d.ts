@@ -70,30 +70,6 @@ declare module "bun" {
 
   type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
 
-  type _TextEncoder = import("util").TextEncoder;
-  interface TextEncoder extends _TextEncoder {
-    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
-    /**
-     * UTF-8 encodes the `src` string to the `dest` Uint8Array and returns an object
-     * containing the read Unicode code units and written UTF-8 bytes.
-     *
-     * ```js
-     * const encoder = new TextEncoder();
-     * const src = 'this is some data';
-     * const dest = new Uint8Array(10);
-     * const { read, written } = encoder.encodeInto(src, dest);
-     * ```
-     * @param src The text to encode.
-     * @param dest The array to hold the encode result.
-     */
-    encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
-  }
-
-  type _TextDecoder = import("util").TextDecoder;
-  interface TextDecoder extends _TextDecoder {
-    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
-  }
-
   interface ErrorEventInit extends EventInit {
     colno?: number;
     error?: any;

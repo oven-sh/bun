@@ -1,3 +1,14 @@
+declare module "bun" {
+  namespace __internal {
+    type NodeWorkerThreadsWorker = import("worker_threads").Worker;
+    type NodePerfHooksPerformance = import("perf_hooks").Performance;
+    type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
+    type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
+    type NodeUtilTextEncoder = import("util").TextEncoder;
+    type NodeUtilTextDecoder = import("util").TextDecoder;
+  }
+}
+
 interface ReadableStream<R = any> {}
 declare var ReadableStream: {
   prototype: ReadableStream;
@@ -10,12 +21,6 @@ declare var WritableStream: {
   prototype: WritableStream;
   new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
 };
-
-declare module "bun" {
-  namespace __internal {
-    type NodeWorkerThreadsWorker = import("worker_threads").Worker;
-  }
-}
 
 interface Worker extends Bun.__internal.NodeWorkerThreadsWorker {}
 declare var Worker: {
@@ -48,7 +53,23 @@ declare var crypto: Crypto;
  * const uint8array = encoder.encode('this is some data');
  * ```
  */
-interface TextEncoder extends Bun.TextEncoder {}
+interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
+  new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
+  /**
+   * UTF-8 encodes the `src` string to the `dest` Uint8Array and returns an object
+   * containing the read Unicode code units and written UTF-8 bytes.
+   *
+   * ```js
+   * const encoder = new TextEncoder();
+   * const src = 'this is some data';
+   * const dest = new Uint8Array(10);
+   * const { read, written } = encoder.encodeInto(src, dest);
+   * ```
+   * @param src The text to encode.
+   * @param dest The array to hold the encode result.
+   */
+  encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
+}
 declare var TextEncoder: {
   prototype: TextEncoder;
   new (): TextEncoder;
@@ -62,14 +83,15 @@ declare var TextEncoder: {
  * const decoder = new TextDecoder();
  * const uint8array = decoder.decode('this is some data');
  */
-interface TextDecoder extends Bun.TextDecoder {}
+interface TextDecoder extends Bun.__internal.NodeUtilTextDecoder {
+  new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
+}
 declare var TextDecoder: {
   prototype: TextDecoder;
   new (): TextDecoder;
 };
 
-type _Performance = import("perf_hooks").Performance;
-interface Performance extends _Performance {}
+interface Performance extends Bun.__internal.NodePerfHooksPerformance {}
 declare var performance: Performance;
 
 interface Event {
@@ -733,14 +755,13 @@ declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;
 
-type _SubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
+interface SubtleCrypto extends Bun.__internal.NodeCryptoWebcryptoSubtleCrypto {}
 declare var SubtleCrypto: {
-  prototype: _SubtleCrypto;
-  new (): _SubtleCrypto;
+  prototype: SubtleCrypto;
+  new (): SubtleCrypto;
 };
 
-type _CryptoKey = import("crypto").webcrypto.CryptoKey;
-interface CryptoKey extends _CryptoKey {}
+interface CryptoKey extends Bun.__internal.NodeCryptoWebcryptoCryptoKey {}
 declare var CryptoKey: {
   prototype: CryptoKey;
   new (): CryptoKey;

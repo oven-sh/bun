@@ -5,6 +5,12 @@ import * as test from "bun:test";
 test.describe;
 test.it;
 
+new SubtleCrypto();
+declare const mySubtleCrypto: SubtleCrypto;
+
+new CryptoKey();
+declare const myCryptoKey: CryptoKey;
+
 import * as sqlite from "bun:sqlite";
 sqlite.Database;
 

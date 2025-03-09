@@ -3826,7 +3826,7 @@ pub const File = struct {
 
         return .{ .result = total };
     }
-    
+
     pub fn openat(other: anytype, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
         return switch (This.openat(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },

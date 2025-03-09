@@ -1,0 +1,15 @@
+empty-1 = """"""
+
+# A newline immediately following the opening delimiter will be trimmed.
+empty-2 = """
+"""
+
+# \ at the end of line trims newlines as well; note that last \ is followed by
+# two spaces, which are ignored.
+empty-3 = """\
+    """
+empty-4 = """\
+   \
+   \  
+   """
+

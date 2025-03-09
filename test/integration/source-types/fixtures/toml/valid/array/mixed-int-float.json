@@ -1,0 +1,6 @@
+{
+    "ints-and-floats": [
+        {"type": "integer", "value": "1"},
+        {"type": "float", "value": "1.1"}
+    ]
+}

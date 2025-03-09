@@ -1,0 +1,9 @@
+# RECOMMENDED
+
+apple.type = "fruit"
+apple.skin = "thin"
+apple.color = "red"
+
+orange.type = "fruit"
+orange.skin = "thick"
+orange.color = "orange"

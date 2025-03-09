@@ -1,0 +1,31 @@
+{
+    "hash#tag": {
+        "#!":   {"type": "string", "value": "hash bang"},
+        "arr5": [[[[[{"type": "string", "value": "#"}]]]]],
+        "arr3": [
+            {"type": "string", "value": "#"},
+            {"type": "string", "value": "#"},
+            {"type": "string", "value": "###"}
+        ],
+        "arr4": [
+            {"type": "integer", "value": "1"},
+            {"type": "integer", "value": "2"},
+            {"type": "integer", "value": "3"},
+            {"type": "integer", "value": "4"}
+        ],
+        "tbl1": {
+            "#": {"type": "string", "value": "}#"}
+        }
+    },
+    "section": {
+        "8":      {"type": "string", "value": "eight"},
+        "eleven": {"type": "float", "value": "11.1"},
+        "five":   {"type": "float", "value": "5.5"},
+        "four":   {"type": "string", "value": "# no comment\n# nor this\n#also not comment"},
+        "one":    {"type": "string", "value": "11"},
+        "six":    {"type": "integer", "value": "6"},
+        "ten":    {"type": "float", "value": "1000.0"},
+        "three":  {"type": "string", "value": "#"},
+        "two":    {"type": "string", "value": "22#"}
+    }
+}

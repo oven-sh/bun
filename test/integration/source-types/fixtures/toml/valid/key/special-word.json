@@ -1,0 +1,6 @@
+{
+    "false": {"type": "bool", "value": "false"},
+    "inf":   {"type": "integer", "value": "100000000"},
+    "nan":   {"type": "string", "value": "ceci n'est pas un nombre"},
+    "true":  {"type": "integer", "value": "1"}
+}

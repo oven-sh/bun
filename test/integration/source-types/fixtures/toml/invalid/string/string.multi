@@ -1,0 +1,12 @@
+bad-hex-esc-1 = "\x0g"
+bad-hex-esc-2 = "\xG0"
+bad-hex-esc-3 = "\x"
+bad-hex-esc-4 = "\x 50"
+
+bad-uni-esc-1 = "val\ue"
+bad-uni-esc-2 = "val\Ux"
+bad-uni-esc-3 = "val\U0000000"
+bad-uni-esc-4 = "val\U0000"
+bad-uni-esc-5 = "val\Ugggggggg"
+bad-uni-esc-6 = "This string contains a non scalar unicode codepoint \uD801"
+bad-uni-esc-7 = "\uabag"

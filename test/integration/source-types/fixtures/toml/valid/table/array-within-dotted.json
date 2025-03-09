@@ -1,0 +1,10 @@
+{
+    "fruit": {
+        "apple": {
+            "color": {"type": "string", "value": "red"},
+            "seeds": [{
+                "size": {"type": "integer", "value": "2"}
+            }]
+        }
+    }
+}

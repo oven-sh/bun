@@ -1,0 +1,13 @@
+# "No newlines are allowed between the curly braces unless they are valid within
+# a value"
+
+a = { a = [
+]}
+
+b = { a = [
+		1,
+		2,
+	], b = [
+		3,
+		4,
+	]}

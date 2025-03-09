@@ -1,0 +1,10 @@
+tbl_tbl_empty = { tbl_0 = {} }
+tbl_tbl_val   = { tbl_1 = { one = 1 } }
+tbl_arr_tbl   = { arr_tbl = [ { one = 1 } ] }
+arr_tbl_tbl   = [ { tbl = { one = 1 } } ]
+
+# Array-of-array-of-table is interesting because it can only
+# be represented in inline form.
+arr_arr_tbl_empty = [ [ {} ] ]
+arr_arr_tbl_val = [ [ { one = 1 } ] ]
+arr_arr_tbls  = [ [ { one = 1 }, { two = 2 } ] ]

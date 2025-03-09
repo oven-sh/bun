@@ -1,0 +1,6 @@
+
+escaped_string = "\u0000 \u0008 \u000c \U00000041 \u007f \u0080 \u00ff \ud7ff \ue000 \uffff \U00010000 \U0010ffff"
+not_escaped_string = '\u0000 \u0008 \u000c \U00000041 \u007f \u0080 \u00ff \ud7ff \ue000 \uffff \U00010000 \U0010ffff'
+
+basic_string = "~  ÿ ퟿  ￿ 𐀀 􏿿"
+literal_string = '~  ÿ ퟿  ￿ 𐀀 􏿿'

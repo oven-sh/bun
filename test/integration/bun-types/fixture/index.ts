@@ -5,6 +5,12 @@ import * as test from "bun:test";
 test.describe;
 test.it;
 
+const options: Bun.TLSOptions = {
+  keyFile: "",
+};
+
+process.assert;
+
 new SubtleCrypto();
 declare const mySubtleCrypto: SubtleCrypto;
 

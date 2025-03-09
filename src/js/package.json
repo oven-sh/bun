@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "lint": "bun run eslint --format ./eslint.fmt.mjs"
+  },
+  "dependencies": {
+    "typescript-eslint": "^8.8.0"
+  }
+}

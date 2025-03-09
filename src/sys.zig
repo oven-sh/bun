@@ -2101,6 +2101,14 @@ pub fn pread(fd: bun.FileDescriptor, buf: []u8, offset: i64) Maybe(usize) {
         }
     }
 
+    if (comptime Environment.isWindows) {
+        if (bun.FDImpl.decode(fd).kind == .uv) {
+            return sys_uv.pread(fd, buf, offset);
+        }
+
+        return bun.C.readFile(fd, buf, @as(u64, @intCast(offset)));
+    }
+
     const ioffset = @as(i64, @bitCast(offset)); // the OS treats this as unsigned
     while (true) {
         const rc = pread_sym(fd.cast(), buf.ptr, adjusted_len, ioffset);
@@ -3771,6 +3779,54 @@ pub const File = struct {
     // "handle" matches std.fs.File
     handle: bun.FileDescriptor,
 
+    pub fn pread(this: File, buf: []u8, offset: usize) Maybe(usize) {
+        return bun.sys.pread(this.handle, buf, @intCast(offset));
+    }
+
+    pub fn seekTo(this: File, offset: i64) Maybe(void) {
+        if (comptime Environment.isWindows) {
+            const rc = std.os.windows.kernel32.SetFilePointerEx(this.handle.cast(), offset, null, std.os.windows.FILE_BEGIN);
+            if (Maybe(void).errnoSys(rc, .lseek)) |err| {
+                return err;
+            }
+
+            return .{ .result = {} };
+        }
+
+        return bun.sys.lseek(this.handle, offset, std.posix.SEEK.SET);
+    }
+
+    pub fn getPos(this: File) Maybe(usize) {
+        if (comptime Environment.isWindows) {
+            const rc = std.os.windows.kernel32.SetFilePointerEx(this.handle.cast(), 0, null, std.os.windows.FILE_CURRENT);
+            if (Maybe(usize).errnoSys(rc, .lseek)) |err| {
+                return err;
+            }
+
+            // Windows casts as unsigned
+            return .{ .result = @as(u32, @bitCast(rc)) };
+        }
+        return bun.sys.lseek(this.handle, 0, std.posix.SEEK.CUR);
+    }
+
+    pub fn preadAll(this: File, buf: []u8, offset: usize) Maybe(usize) {
+        var total: usize = 0;
+        while (true) {
+            const read_amount = switch (this.pread(buf[total..], offset + total)) {
+                .err => |err| return .{ .err = err },
+                .result => |amt| amt,
+            };
+
+            if (read_amount == 0) {
+                break;
+            }
+
+            total += read_amount;
+        }
+
+        return .{ .result = total };
+    }
+    
     pub fn openat(other: anytype, path: [:0]const u8, flags: i32, mode: bun.Mode) Maybe(File) {
         return switch (This.openat(bun.toFD(other), path, flags, mode)) {
             .result => |fd| .{ .result = .{ .handle = fd } },

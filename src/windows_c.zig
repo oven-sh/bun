@@ -1399,4 +1399,30 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
 
 pub extern fn windows_enable_stdio_inheritance() void;
 
+/// If buffer's length exceeds what a Windows DWORD integer can hold, it will be broken into
+/// multiple non-atomic reads.
+pub fn readFile(in_hFile: bun.FileDescriptor, buffer: []u8, offset: ?u64) Maybe(usize) {
+    const want_read_count: w.DWORD = @min(@as(w.DWORD, std.math.maxInt(w.DWORD)), buffer.len);
+    var amt_read: w.DWORD = undefined;
+    var overlapped_data: w.OVERLAPPED = undefined;
+    const overlapped: ?*w.OVERLAPPED = if (offset) |off| blk: {
+        overlapped_data = .{
+            .Internal = 0,
+            .InternalHigh = 0,
+            .DUMMYUNIONNAME = .{
+                .DUMMYSTRUCTNAME = .{
+                    .Offset = @as(u32, @truncate(off)),
+                    .OffsetHigh = @as(u32, @truncate(off >> 32)),
+                },
+            },
+            .hEvent = null,
+        };
+        break :blk &overlapped_data;
+    } else null;
+    if (w.kernel32.ReadFile(in_hFile.cast(), buffer.ptr, want_read_count, &amt_read, overlapped) == 0) {
+        return .{ .err = bun.sys.Error.fromCode(bun.windows.getLastErrno(), .read) };
+    }
+    return .{ .result = amt_read };
+}
+
 pub extern "c" fn quick_exit(code: c_int) noreturn;

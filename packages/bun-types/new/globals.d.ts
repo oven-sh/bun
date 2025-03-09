@@ -10,31 +10,37 @@ declare module "bun" {
 }
 
 interface ReadableStream<R = any> {}
-declare var ReadableStream: {
-  prototype: ReadableStream;
-  new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-  new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-};
+declare var ReadableStream: typeof globalThis extends { ReadableStream: infer T }
+  ? T
+  : {
+      prototype: ReadableStream;
+      new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+      new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    };
 
 interface WritableStream<W = any> {}
-declare var WritableStream: {
-  prototype: WritableStream;
-  new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
-};
+declare var WritableStream: typeof globalThis extends { WritableStream: infer T }
+  ? T
+  : {
+      prototype: WritableStream;
+      new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
+    };
 
 interface Worker extends Bun.__internal.NodeWorkerThreadsWorker {}
-declare var Worker: {
-  prototype: Worker;
-  new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
-  /**
-   * This is the cloned value of the `data` property passed to `new Worker()`
-   *
-   * This is Bun's equivalent of `workerData` in Node.js.
-   */
-  data: any;
-};
+declare var Worker: typeof globalThis extends { Worker: infer T }
+  ? T
+  : {
+      prototype: Worker;
+      new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
+      /**
+       * This is the cloned value of the `data` property passed to `new Worker()`
+       *
+       * This is Bun's equivalent of `workerData` in Node.js.
+       */
+      data: any;
+    };
 
-declare var WebSocket: typeof import("ws").WebSocket;
+declare var WebSocket: typeof globalThis extends { WebSocket: infer T } ? T : typeof import("ws").WebSocket;
 
 interface Crypto {}
 declare var Crypto: {
@@ -54,7 +60,6 @@ declare var crypto: Crypto;
  * ```
  */
 interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
-  new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
   /**
    * UTF-8 encodes the `src` string to the `dest` Uint8Array and returns an object
    * containing the read Unicode code units and written UTF-8 bytes.
@@ -70,10 +75,12 @@ interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
    */
   encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
 }
-declare var TextEncoder: {
-  prototype: TextEncoder;
-  new (): TextEncoder;
-};
+declare var TextEncoder: typeof globalThis extends { TextEncoder: infer T }
+  ? T
+  : {
+      prototype: TextEncoder;
+      new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
+    };
 
 /**
  * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API. All
@@ -83,13 +90,15 @@ declare var TextEncoder: {
  * const decoder = new TextDecoder();
  * const uint8array = decoder.decode('this is some data');
  */
-interface TextDecoder extends Bun.__internal.NodeUtilTextDecoder {
-  new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
-}
-declare var TextDecoder: {
-  prototype: TextDecoder;
-  new (): TextDecoder;
-};
+declare var TextDecoder: typeof globalThis extends { TextDecoder: infer T }
+  ? T
+  : {
+      prototype: Bun.__internal.NodeUtilTextDecoder;
+      new (
+        encoding?: Bun.Encoding,
+        options?: { fatal?: boolean; ignoreBOM?: boolean },
+      ): Bun.__internal.NodeUtilTextDecoder;
+    };
 
 interface Performance extends Bun.__internal.NodePerfHooksPerformance {}
 declare var performance: Performance;

@@ -579,7 +579,7 @@ pub const RuntimeTranspilerStore = struct {
                 const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                 this.resolved_source = ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.createLatin1(parse_result.source.contents),
+                    .source_code = bun.String.createLatin1OrUTF8(parse_result.source.contents),
                     .already_bundled = true,
                     .hash = 0,
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
@@ -659,7 +659,7 @@ pub const RuntimeTranspilerStore = struct {
             const source_code = brk: {
                 const written = printer.ctx.getWritten();
 
-                const result = cache.output_code orelse bun.String.createLatin1(written);
+                const result = cache.output_code orelse bun.String.createLatin1OrUTF8(written);
 
                 if (written.len > 1024 * 1024 * 2 or vm.smol) {
                     printer.ctx.buffer.deinit();
@@ -1440,7 +1440,7 @@ pub const ModuleLoader = struct {
 
             return ResolvedSource{
                 .allocator = null,
-                .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
+                .source_code = bun.String.createLatin1OrUTF8(printer.ctx.getWritten()),
                 .specifier = String.init(specifier),
                 .source_url = String.init(path.text),
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
@@ -1775,7 +1775,7 @@ pub const ModuleLoader = struct {
                     const bytecode_slice = parse_result.already_bundled.bytecodeSlice();
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.createLatin1(parse_result.source.contents),
+                        .source_code = bun.String.createLatin1OrUTF8(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .already_bundled = true,
@@ -1933,7 +1933,7 @@ pub const ModuleLoader = struct {
                     .allocator = null,
                     .source_code = brk: {
                         const written = printer.ctx.getWritten();
-                        const result = cache.output_code orelse bun.String.createLatin1(written);
+                        const result = cache.output_code orelse bun.String.createLatin1OrUTF8(written);
 
                         if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                             printer.ctx.buffer.deinit();

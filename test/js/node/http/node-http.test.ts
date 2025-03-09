@@ -1859,17 +1859,14 @@ it("#11425 http no payload limit", done => {
 });
 
 it("should emit events in the right order", async () => {
-  const { stdout, stderr, exited } = Bun.spawn({
+  const { stdout, exited } = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "fixtures/log-events.mjs")],
     stdout: "pipe",
     stdin: "ignore",
-    stderr: "pipe",
+    stderr: "inherit",
     env: bunEnv,
   });
-  const err = await new Response(stderr).text();
-  expect(err).toBeEmpty();
   const out = await new Response(stdout).text();
-  // TODO prefinish and socket are not emitted in the right order
   expect(out.split("\n")).toEqual([
     `[ "req", "prefinish" ]`,
     `[ "req", "socket" ]`,
@@ -1884,6 +1881,7 @@ it("should emit events in the right order", async () => {
     // `[ "res", "close" ]`,
     "",
   ]);
+  expect(await exited).toBe(0);
 });
 
 it("destroy should end download", async () => {
@@ -2556,4 +2554,42 @@ it("client should use content-length if only one write is called", async () => {
   expect(chunks.length).toBe(1);
   expect(chunks[0]?.toString()).toBe("Hello World BUN!");
   expect(Buffer.concat(chunks).toString()).toBe("Hello World BUN!");
+});
+
+
+it("should allow numbers headers to be set in node:http server and client", async () => {
+  let server_headers;
+  await using server = http.createServer((req, res) => {
+    server_headers = req.headers;
+    res.setHeader("x-number", 10);
+    res.appendHeader("x-number-2", 20);
+    res.end();
+  });
+
+  await once(server.listen(0, "localhost"), "listening");
+  const { promise, resolve } = Promise.withResolvers();
+
+  {
+    const response = http.request(`http://localhost:${server.address().port}`, resolve);
+    response.setHeader("x-number", 30);
+    response.appendHeader("x-number-2", 40);
+    response.end();
+  }
+  const response = (await promise) as Record<string, string>;
+  expect(response.headers["x-number"]).toBe("10");
+  expect(response.headers["x-number-2"]).toBe("20");
+  expect(server_headers["x-number"]).toBe("30");
+  expect(server_headers["x-number-2"]).toBe("40");
+});
+
+it("should allow Strict-Transport-Security when using node:http", async () => {
+  await using server = http.createServer((req, res) => {
+    res.writeHead(200, { "Strict-Transport-Security": "max-age=31536000" });
+    res.end();
+  });
+  server.listen(0, "localhost");
+  await once(server, "listening");
+  const response = await fetch(`http://localhost:${server.address().port}`);
+  expect(response.status).toBe(200);
+  expect(response.headers.get("strict-transport-security")).toBe("max-age=31536000");
 });

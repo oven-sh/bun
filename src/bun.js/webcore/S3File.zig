@@ -11,15 +11,17 @@ const Output = bun.Output;
 const S3Client = @import("./S3Client.zig");
 const S3 = bun.S3;
 const S3Stat = @import("./S3Stat.zig").S3Stat;
-pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool) !void {
+pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Formatter, writer: anytype, comptime enable_ansi_colors: bool, content_type: []const u8, offset: usize) !void {
     try writer.writeAll(comptime Output.prettyFmt("<r>S3Ref<r>", enable_ansi_colors));
     const credentials = s3.getCredentials();
+    // detect virtual host style bucket name
+    const bucket_name = if (credentials.virtual_hosted_style and credentials.endpoint.len > 0) S3.S3Credentials.guessBucket(credentials.endpoint) orelse credentials.bucket else credentials.bucket;
 
-    if (credentials.bucket.len > 0) {
+    if (bucket_name.len > 0) {
         try writer.print(
             comptime Output.prettyFmt(" (<green>\"{s}/{s}\"<r>)<r> {{", enable_ansi_colors),
             .{
-                credentials.bucket,
+                bucket_name,
                 s3.path(),
             },
         );
@@ -32,6 +34,40 @@ pub fn writeFormat(s3: *Blob.S3Store, comptime Formatter: type, formatter: *Form
         );
     }
 
+    if (content_type.len > 0) {
+        try writer.writeAll("\n");
+        formatter.indent += 1;
+        defer formatter.indent -|= 1;
+
+        try formatter.writeIndent(@TypeOf(writer), writer);
+        try writer.print(
+            comptime Output.prettyFmt("type<d>:<r> <green>\"{s}\"<r>", enable_ansi_colors),
+            .{
+                content_type,
+            },
+        );
+
+        try formatter.printComma(@TypeOf(writer), writer, enable_ansi_colors);
+        if (offset > 0) {
+            try writer.writeAll("\n");
+        }
+    }
+
+    if (offset > 0) {
+        formatter.indent += 1;
+        defer formatter.indent -|= 1;
+
+        try formatter.writeIndent(@TypeOf(writer), writer);
+
+        try writer.print(
+            comptime Output.prettyFmt("offset<d>:<r> <yellow>{d}<r>", enable_ansi_colors),
+            .{
+                offset,
+            },
+        );
+
+        try formatter.printComma(@TypeOf(writer), writer, enable_ansi_colors);
+    }
     try S3Client.writeFormatCredentials(credentials, s3.options, s3.acl, Formatter, formatter, writer, enable_ansi_colors);
     try formatter.writeIndent(@TypeOf(writer), writer);
     try writer.writeAll("}");
@@ -327,15 +363,16 @@ fn constructS3FileInternal(
 
 pub const S3BlobStatTask = struct {
     promise: JSC.JSPromise.Strong,
+    global: *JSC.JSGlobalObject,
     store: *Blob.Store,
+
     usingnamespace bun.New(S3BlobStatTask);
 
     pub fn onS3ExistsResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
-        const globalThis = this.promise.globalObject().?;
         switch (result) {
             .not_found => {
-                this.promise.resolve(globalThis, .false);
+                this.promise.resolve(this.global, .false);
             },
             .success => |_| {
                 // calling .exists() should not prevent it to download a bigger file
@@ -343,31 +380,30 @@ pub const S3BlobStatTask = struct {
                 // if (this.blob.size == Blob.max_size) {
                 //     this.blob.size = @truncate(stat.size);
                 // }
-                this.promise.resolve(globalThis, .true);
+                this.promise.resolve(this.global, .true);
             },
             .failure => |err| {
-                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
             },
         }
     }
 
     pub fn onS3SizeResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
-        const globalThis = this.promise.globalObject().?;
 
         switch (result) {
             .success => |stat_result| {
-                this.promise.resolve(globalThis, JSValue.jsNumber(stat_result.size));
+                this.promise.resolve(this.global, JSValue.jsNumber(stat_result.size));
             },
-            inline .not_found, .failure => |err| {
-                this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
+            .not_found, .failure => |err| {
+                this.promise.reject(this.global, err.toJS(this.global, this.store.data.s3.path()));
             },
         }
     }
 
     pub fn onS3StatResolved(result: S3.S3StatResult, this: *S3BlobStatTask) void {
         defer this.deinit();
-        const globalThis = this.promise.globalObject().?;
+        const globalThis = this.global;
         switch (result) {
             .success => |stat_result| {
                 this.promise.resolve(globalThis, S3Stat.init(
@@ -378,7 +414,7 @@ pub const S3BlobStatTask = struct {
                     globalThis,
                 ).toJS(globalThis));
             },
-            inline .not_found, .failure => |err| {
+            .not_found, .failure => |err| {
                 this.promise.reject(globalThis, err.toJS(globalThis, this.store.data.s3.path()));
             },
         }
@@ -388,6 +424,7 @@ pub const S3BlobStatTask = struct {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
+            .global = globalThis,
         });
         this.store.ref();
         const promise = this.promise.value();
@@ -402,6 +439,7 @@ pub const S3BlobStatTask = struct {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
+            .global = globalThis,
         });
         this.store.ref();
         const promise = this.promise.value();
@@ -416,6 +454,7 @@ pub const S3BlobStatTask = struct {
         const this = S3BlobStatTask.new(.{
             .promise = JSC.JSPromise.Strong.init(globalThis),
             .store = blob.store.?,
+            .global = globalThis,
         });
         this.store.ref();
         const promise = this.promise.value();
@@ -603,11 +642,11 @@ pub fn hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) c
 }
 
 comptime {
-    @export(exports.JSS3File__presign, .{ .name = "JSS3File__presign" });
-    @export(construct, .{ .name = "JSS3File__construct" });
-    @export(hasInstance, .{ .name = "JSS3File__hasInstance" });
-    @export(getBucket, .{ .name = "JSS3File__bucket" });
-    @export(getStat, .{ .name = "JSS3File__stat" });
+    @export(&exports.JSS3File__presign, .{ .name = "JSS3File__presign" });
+    @export(&construct, .{ .name = "JSS3File__construct" });
+    @export(&hasInstance, .{ .name = "JSS3File__hasInstance" });
+    @export(&getBucket, .{ .name = "JSS3File__bucket" });
+    @export(&getStat, .{ .name = "JSS3File__stat" });
 }
 
 pub const exports = struct {

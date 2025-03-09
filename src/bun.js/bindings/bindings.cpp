@@ -133,8 +133,10 @@
 
 #if OS(DARWIN)
 #if BUN_DEBUG
+#if !__has_feature(address_sanitizer)
 #include <malloc/malloc.h>
 #define IS_MALLOC_DEBUGGING_ENABLED 1
+#endif
 #endif
 #endif
 
@@ -670,6 +672,10 @@ template<bool isStrict, bool enableAsymmetricMatchers>
 bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope* scope, bool addToStack)
 {
     VM& vm = globalObject->vm();
+    if (UNLIKELY(!vm.isSafeToRecurse())) {
+        throwStackOverflowError(globalObject, *scope);
+        return false;
+    }
 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
@@ -752,7 +758,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if (v1Array != v2Array)
         return false;
 
-    if (v1Array && v2Array) {
+    if (v1Array && v2Array && !(o1->isProxy() || o2->isProxy())) {
         JSC::JSArray* array1 = JSC::jsCast<JSC::JSArray*>(v1);
         JSC::JSArray* array2 = JSC::jsCast<JSC::JSArray*>(v2);
 
@@ -1068,6 +1074,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
                     foundMatchingKey = true;
                     break;
                 }
+                RETURN_IF_EXCEPTION(*scope, false);
             }
 
             if (!foundMatchingKey) {
@@ -1106,6 +1113,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
                         foundMatchingKey = true;
                         break;
                     }
+                    RETURN_IF_EXCEPTION(*scope, false);
                 }
 
                 if (!foundMatchingKey) {
@@ -1185,6 +1193,7 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        // NOTE(@DonIsaac): could `left` ever _not_ be a JSC::ErrorInstance?
         if (JSC::ErrorInstance* left = jsDynamicCast<JSC::ErrorInstance*, JSCell>(c1)) {
             JSC::ErrorInstance* right = jsDynamicCast<JSC::ErrorInstance*, JSCell>(c2);
 
@@ -1192,9 +1201,109 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
                 return false;
             }
 
-            return (
-                left->sanitizedNameString(globalObject) == right->sanitizedNameString(globalObject) && left->sanitizedMessageString(globalObject) == right->sanitizedMessageString(globalObject));
+            if (
+                left->errorType() != right->errorType() || // quick check on ctors (does not handle subclasses)
+                left->sanitizedNameString(globalObject) != right->sanitizedNameString(globalObject) || // manual `.name` changes (usually in subclasses)
+                left->sanitizedMessageString(globalObject) != right->sanitizedMessageString(globalObject) // `.message`
+            ) {
+                return false;
+            }
+
+            if constexpr (isStrict) {
+                if (left->runtimeTypeForCause() != right->runtimeTypeForCause()) {
+                    return false;
+                }
+            }
+
+            VM& vm = globalObject->vm();
+
+            // `.cause` is non-enumerable, so it must be checked explicitly.
+            // note that an undefined cause is different than a missing cause in
+            // strict mode.
+            const PropertyName cause(vm.propertyNames->cause);
+            if constexpr (isStrict) {
+                if (left->hasProperty(globalObject, cause) != right->hasProperty(globalObject, cause)) {
+                    return false;
+                }
+            }
+            auto leftCause = left->get(globalObject, cause);
+            RETURN_IF_EXCEPTION(*scope, false);
+            auto rightCause = right->get(globalObject, cause);
+            RETURN_IF_EXCEPTION(*scope, false);
+            if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, leftCause, rightCause, gcBuffer, stack, scope, true)) {
+                return false;
+            }
+            RETURN_IF_EXCEPTION(*scope, false);
+
+            // check arbitrary enumerable properties. `.stack` is not checked.
+            left->materializeErrorInfoIfNeeded(vm);
+            right->materializeErrorInfoIfNeeded(vm);
+            JSC::PropertyNameArray a1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            JSC::PropertyNameArray a2(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+            left->getPropertyNames(globalObject, a1, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(*scope, false);
+            right->getPropertyNames(globalObject, a2, DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(*scope, false);
+
+            const size_t propertyArrayLength1 = a1.size();
+            const size_t propertyArrayLength2 = a2.size();
+            if constexpr (isStrict) {
+                if (propertyArrayLength1 != propertyArrayLength2) {
+                    return false;
+                }
+            }
+
+            // take a property name from one, try to get it from both
+            size_t i;
+            for (i = 0; i < propertyArrayLength1; i++) {
+                Identifier i1 = a1[i];
+                if (i1 == vm.propertyNames->stack) continue;
+                PropertyName propertyName1 = PropertyName(i1);
+
+                JSValue prop1 = left->get(globalObject, propertyName1);
+                RETURN_IF_EXCEPTION(*scope, false);
+
+                if (UNLIKELY(!prop1)) {
+                    return false;
+                }
+
+                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName1);
+                RETURN_IF_EXCEPTION(*scope, false);
+
+                if constexpr (!isStrict) {
+                    if (prop1.isUndefined() && prop2.isEmpty()) {
+                        continue;
+                    }
+                }
+
+                if (!prop2) {
+                    return false;
+                }
+
+                if (!Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, prop1, prop2, gcBuffer, stack, scope, true)) {
+                    return false;
+                }
+
+                RETURN_IF_EXCEPTION(*scope, false);
+            }
+
+            // for the remaining properties in the other object, make sure they are undefined
+            for (; i < propertyArrayLength2; i++) {
+                Identifier i2 = a2[i];
+                if (i2 == vm.propertyNames->stack) continue;
+                PropertyName propertyName2 = PropertyName(i2);
+
+                JSValue prop2 = right->getIfPropertyExists(globalObject, propertyName2);
+                RETURN_IF_EXCEPTION(*scope, false);
+
+                if (!prop2.isUndefined()) {
+                    return false;
+                }
+            }
+
+            return true;
         }
+        break;
     }
     case Int8ArrayType:
     case Uint8ArrayType:
@@ -1209,6 +1318,11 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
     case BigInt64ArrayType:
     case BigUint64ArrayType: {
         if (!isTypedArrayType(static_cast<JSC::JSType>(c2Type)) || c1Type != c2Type) {
+            return false;
+        }
+        auto info = c1->classInfo();
+        auto info2 = c2->classInfo();
+        if (!info || !info2) {
             return false;
         }
 
@@ -1371,7 +1485,20 @@ std::optional<bool> specialObjectsDequal(JSC__JSGlobalObject* globalObject, Mark
     compareAsNormalValue:
         break;
     }
-
+    // globalThis is only equal to globalThis
+    // NOTE: Zig::GlobalObject is tagged as GlobalProxyType
+    case GlobalObjectType: {
+        if (c1Type != c2Type) return false;
+        auto* g1 = jsDynamicCast<JSC::JSGlobalObject*, JSCell>(c1);
+        auto* g2 = jsDynamicCast<JSC::JSGlobalObject*, JSCell>(c2);
+        return g1->m_globalThis == g2->m_globalThis;
+    }
+    case GlobalProxyType: {
+        if (c1Type != c2Type) return false;
+        auto* gp1 = jsDynamicCast<JSC::JSGlobalProxy*, JSCell>(c1);
+        auto* gp2 = jsDynamicCast<JSC::JSGlobalProxy*, JSCell>(c2);
+        return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
+    }
     default: {
         break;
     }
@@ -1524,6 +1651,19 @@ bool Bun__deepMatch(
     }
 
     return true;
+}
+
+// anonymous namespace to avoid name collision
+namespace {
+template<bool isStrict, bool enableAsymmetricMatchers>
+inline bool deepEqualsWrapperImpl(JSC__JSValue a, JSC__JSValue b, JSC__JSGlobalObject* global)
+{
+    auto& vm = global->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16> stack;
+    MarkedArgumentBuffer args;
+    return Bun__deepEquals<isStrict, enableAsymmetricMatchers>(global, JSC::JSValue::decode(a), JSC::JSValue::decode(b), args, stack, &scope, true);
+}
 }
 
 extern "C" {
@@ -2369,19 +2509,6 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
     }
 }
 
-JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
-{
-    JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
-
-    JSC::JSValue result = JSC::JSONParse(arg1, jsValue.toWTFString(arg1));
-
-    if (!result) {
-        result = JSC::JSValue(JSC::createSyntaxError(arg1->globalObject(), "Failed to parse JSON"_s));
-    }
-
-    return JSC::JSValue::encode(result);
-}
-
 JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* globalObject, const ZigString* arg1)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2425,35 +2552,6 @@ size_t JSC__VM__heapSize(JSC__VM* arg0)
     return arg0->heap.size();
 }
 
-// This is very naive!
-JSC__JSInternalPromise* JSC__VM__reloadModule(JSC__VM* vm, JSC__JSGlobalObject* arg1,
-    ZigString arg2)
-{
-    return nullptr;
-    // JSC::JSMap *map = JSC::jsDynamicCast<JSC::JSMap *>(
-    //   arg1->vm(), arg1->moduleLoader()->getDirect(
-    //                 arg1->vm(), JSC::Identifier::fromString(arg1->vm(), "registry"_s)));
-
-    // const JSC::Identifier identifier = Zig::toIdentifier(arg2, arg1);
-    // JSC::JSValue val = JSC::identifierToJSValue(arg1->vm(), identifier);
-
-    // if (!map->has(arg1, val)) return nullptr;
-
-    // if (JSC::JSObject *registryEntry =
-    //       JSC::jsDynamicCast<JSC::JSObject *>(arg1-> map->get(arg1, val))) {
-    //   auto moduleIdent = JSC::Identifier::fromString(arg1->vm(), "module");
-    //   if (JSC::JSModuleRecord *record = JSC::jsDynamicCast<JSC::JSModuleRecord *>(
-    //         arg1->vm(), registryEntry->getDirect(arg1->vm(), moduleIdent))) {
-    //     registryEntry->putDirect(arg1->vm(), moduleIdent, JSC::jsUndefined());
-    //     JSC::JSModuleRecord::destroy(static_cast<JSC::JSCell *>(record));
-    //   }
-    //   map->remove(arg1, val);
-    //   return JSC__JSModuleLoader__loadAndEvaluateModule(arg1, arg2);
-    // }
-
-    // return nullptr;
-}
-
 bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
     JSC__JSGlobalObject* globalObject)
 {
@@ -2464,49 +2562,25 @@ bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
 
 bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    ASSERT_NO_PENDING_EXCEPTION(globalObject);
-    JSValue v1 = JSValue::decode(JSValue0);
-    JSValue v2 = JSValue::decode(JSValue1);
-
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Vector<std::pair<JSValue, JSValue>, 16> stack;
-    MarkedArgumentBuffer args;
-    return Bun__deepEquals<false, false>(globalObject, v1, v2, args, stack, &scope, true);
+    return deepEqualsWrapperImpl<false, false>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__jestDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    JSValue v1 = JSValue::decode(JSValue0);
-    JSValue v2 = JSValue::decode(JSValue1);
-
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Vector<std::pair<JSValue, JSValue>, 16> stack;
-    MarkedArgumentBuffer args;
-    return Bun__deepEquals<false, true>(globalObject, v1, v2, args, stack, &scope, true);
+    return deepEqualsWrapperImpl<false, true>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__strictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    JSValue v1 = JSValue::decode(JSValue0);
-    JSValue v2 = JSValue::decode(JSValue1);
-
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Vector<std::pair<JSValue, JSValue>, 16> stack;
-    MarkedArgumentBuffer args;
-    return Bun__deepEquals<true, false>(globalObject, v1, v2, args, stack, &scope, true);
+    return deepEqualsWrapperImpl<true, false>(JSValue0, JSValue1, globalObject);
 }
 
 bool JSC__JSValue__jestStrictDeepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
-    JSValue v1 = JSValue::decode(JSValue0);
-    JSValue v2 = JSValue::decode(JSValue1);
-
-    ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    Vector<std::pair<JSValue, JSValue>, 16> stack;
-    MarkedArgumentBuffer args;
-
-    return Bun__deepEquals<true, true>(globalObject, v1, v2, args, stack, &scope, true);
+    return deepEqualsWrapperImpl<true, true>(JSValue0, JSValue1, globalObject);
 }
+
+#undef IMPL_DEEP_EQUALS_WRAPPER
 
 bool JSC__JSValue__deepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
 {
@@ -2679,7 +2753,10 @@ unsigned char JSC__JSCell__getType(JSC__JSCell* arg0) { return arg0->type(); }
 
 void JSC__JSString__toZigString(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, ZigString* arg2)
 {
-    *arg2 = Zig::toZigString(arg0->value(arg1));
+    auto value = arg0->value(arg1);
+    *arg2 = Zig::toZigString(value.data.impl());
+
+    // We don't need to assert here because ->value returns a reference to the same string as the one owned by the JSString.
 }
 
 bool JSC__JSString__eql(const JSC__JSString* arg0, JSC__JSGlobalObject* obj, JSC__JSString* arg2)
@@ -3699,7 +3776,7 @@ bool JSC__JSValue__isUndefinedOrNull(JSC__JSValue JSValue0)
 JSC__JSValue JSC__JSValue__jsBoolean(bool arg0)
 {
     return JSC::JSValue::encode(JSC::jsBoolean(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
@@ -3708,32 +3785,35 @@ JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 JSC__JSValue JSC__JSValue__jsEmptyString(JSC__JSGlobalObject* arg0)
 {
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
-};
-JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
+}
+JSC__JSValue JSC__JSValue__jsNull()
+{
+    return JSC::JSValue::encode(JSC::jsNull());
+}
 JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromDouble(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromInt32(int32_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromU16(uint16_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 
 int64_t JSC__JSValue__toInt64(JSC__JSValue val)
 {
@@ -5192,13 +5272,6 @@ void JSC__JSString__iterator(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, voi
     jsstring_iterator* iter = (jsstring_iterator*)arg2;
     arg0->value(iter);
 }
-void JSC__VM__deferGC(JSC__VM* vm, void* ctx, void (*callback)(void* arg0))
-{
-    JSC::GCDeferralContext deferralContext(reinterpret_cast<JSC__VM&>(vm));
-    JSC::DisallowGC disallowGC;
-
-    callback(ctx);
-}
 
 void JSC__VM__deleteAllCode(JSC__VM* arg1, JSC__JSGlobalObject* globalObject)
 {
@@ -5317,9 +5390,13 @@ enum class BuiltinNamesMap : uint8_t {
     error,
     defaultKeyword,
     encoding,
+    fatal,
+    ignoreBOM,
+    type,
+    signal,
 };
 
-static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char name)
+static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
 {
 
     auto clientData = WebCore::clientData(vm);
@@ -5352,7 +5429,7 @@ static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char na
         return clientData->builtinNames().redirectPublicName();
     }
     case BuiltinNamesMap::inspectCustom: {
-        return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
+        return clientData->builtinNames().inspectCustomPublicName();
     }
     case BuiltinNamesMap::highWaterMark: {
         return clientData->builtinNames().highWaterMarkPublicName();
@@ -5381,9 +5458,21 @@ static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char na
     case BuiltinNamesMap::encoding: {
         return clientData->builtinNames().encodingPublicName();
     }
+    case BuiltinNamesMap::fatal: {
+        return clientData->builtinNames().fatalPublicName();
+    }
+    case BuiltinNamesMap::ignoreBOM: {
+        return clientData->builtinNames().ignoreBOMPublicName();
+    }
+    case BuiltinNamesMap::type: {
+        return vm.propertyNames->type;
+    }
+    case BuiltinNamesMap::signal: {
+        return clientData->builtinNames().signalPublicName();
+    }
     default: {
         ASSERT_NOT_REACHED();
-        return Identifier();
+        __builtin_unreachable();
     }
     }
 }
@@ -5405,8 +5494,8 @@ JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     JSC::JSObject* object = value.getObject();
     ASSERT_WITH_MESSAGE(object, "fastGet() called on non-object. Check that the JSValue is an object before calling fastGet().");
     auto& vm = JSC::getVM(globalObject);
-    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
 
+    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
     return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
 }
 
@@ -5417,6 +5506,7 @@ extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSG
     PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
     const Identifier name = builtinNameMap(globalObject->vm(), arg2);
     auto* object = value.getObject();
+
     if (object->getOwnPropertySlot(object, globalObject, name, slot)) {
         return JSValue::encode(slot.getValue(globalObject, name));
     }
@@ -6356,7 +6446,7 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
         remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
         remappedFrame.source_url = Bun::toStringRef(sourceURL);
 
-        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+        Bun__remapStackFramePositions(Bun::vm(globalObject), &remappedFrame, 1);
 
         sourceURL = remappedFrame.source_url.toWTFString();
         lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();

@@ -310,7 +310,7 @@ const CountedKeepAlive = struct {
 };
 
 pub const SNativeZlib = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSNativeZlib;
     pub usingnamespace CompressionStream(@This());
 
@@ -320,7 +320,7 @@ pub const SNativeZlib = struct {
     stream: ZlibContext = .{},
     write_result: ?[*]u32 = null,
     poll_ref: CountedKeepAlive = .{},
-    this_value: JSC.Strong = .{},
+    this_value: JSC.Strong = .empty,
     write_in_progress: bool = false,
     pending_close: bool = false,
     closed: bool = false,
@@ -676,7 +676,7 @@ const ZlibContext = struct {
 pub const NativeBrotli = JSC.Codegen.JSNativeBrotli.getConstructor;
 
 pub const SNativeBrotli = struct {
-    pub usingnamespace bun.NewRefCounted(@This(), deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
     pub usingnamespace JSC.Codegen.JSNativeBrotli;
     pub usingnamespace CompressionStream(@This());
 
@@ -686,7 +686,7 @@ pub const SNativeBrotli = struct {
     stream: BrotliContext = .{},
     write_result: ?[*]u32 = null,
     poll_ref: CountedKeepAlive = .{},
-    this_value: JSC.Strong = .{},
+    this_value: JSC.Strong = .empty,
     write_in_progress: bool = false,
     pending_close: bool = false,
     closed: bool = false,

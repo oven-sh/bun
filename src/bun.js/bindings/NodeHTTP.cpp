@@ -213,7 +213,11 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         auto pair = *it;
         StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
         std::span<LChar> data;
-        auto value = String::createUninitialized(pair.second.length(), data);
+        auto value = String::tryCreateUninitialized(pair.second.length(), data);
+        if (UNLIKELY(value.isNull())) {
+            throwOutOfMemoryError(globalObject, scope);
+            return JSValue::encode({});
+        }
         if (pair.second.length() > 0)
             memcpy(data.data(), pair.second.data(), pair.second.length());
 

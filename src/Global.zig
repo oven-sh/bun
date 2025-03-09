@@ -91,6 +91,10 @@ export fn Bun__atexit(function: ExitFn) void {
     }
 }
 
+pub fn addExitCallback(function: ExitFn) void {
+    Bun__atexit(function);
+}
+
 pub fn runExitCallbacks() void {
     for (on_exit_callbacks.items) |callback| {
         callback();
@@ -170,13 +174,13 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
 }
 
 pub fn notimpl() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover
 pub fn crash() noreturn {
-    @setCold(true);
+    @branchHint(.cold);
     Global.exit(1);
 }
 

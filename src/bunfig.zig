@@ -658,28 +658,98 @@ pub const Bunfig = struct {
 
                         // TODO: accept entire config object.
                         this.bunfig.serve_plugins = plugins;
-                        if (serve_obj.get("minify")) |minify| {
-                            if (minify.asBool()) |value| {
-                                this.bunfig.serve_minify_syntax = value;
-                                this.bunfig.serve_minify_whitespace = value;
-                                this.bunfig.serve_minify_identifiers = value;
-                            } else if (minify.isObject()) {
-                                if (minify.get("syntax")) |syntax| {
-                                    this.bunfig.serve_minify_syntax = syntax.asBool() orelse false;
-                                }
+                    }
 
-                                if (minify.get("whitespace")) |whitespace| {
-                                    this.bunfig.serve_minify_whitespace = whitespace.asBool() orelse false;
-                                }
-
-                                if (minify.get("identifiers")) |identifiers| {
-                                    this.bunfig.serve_minify_identifiers = identifiers.asBool() orelse false;
-                                }
-                            } else {
-                                try this.addError(minify.loc, "Expected minify to be boolean or object");
-                            }
+                    if (serve_obj.get("hmr")) |hmr| {
+                        if (hmr.asBool()) |value| {
+                            this.bunfig.serve_hmr = value;
                         }
-                        this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+                    }
+
+                    if (serve_obj.get("minify")) |minify| {
+                        if (minify.asBool()) |value| {
+                            this.bunfig.serve_minify_syntax = value;
+                            this.bunfig.serve_minify_whitespace = value;
+                            this.bunfig.serve_minify_identifiers = value;
+                        } else if (minify.isObject()) {
+                            if (minify.get("syntax")) |syntax| {
+                                this.bunfig.serve_minify_syntax = syntax.asBool() orelse false;
+                            }
+
+                            if (minify.get("whitespace")) |whitespace| {
+                                this.bunfig.serve_minify_whitespace = whitespace.asBool() orelse false;
+                            }
+
+                            if (minify.get("identifiers")) |identifiers| {
+                                this.bunfig.serve_minify_identifiers = identifiers.asBool() orelse false;
+                            }
+                        } else {
+                            try this.addError(minify.loc, "Expected minify to be boolean or object");
+                        }
+                    }
+
+                    if (serve_obj.get("define")) |expr| {
+                        try this.expect(expr, .e_object);
+                        var valid_count: usize = 0;
+                        const properties = expr.data.e_object.properties.slice();
+                        for (properties) |prop| {
+                            if (prop.value.?.data != .e_string) continue;
+                            valid_count += 1;
+                        }
+                        var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
+                        var keys = buffer[0..valid_count];
+                        var values = buffer[valid_count..];
+                        var i: usize = 0;
+                        for (properties) |prop| {
+                            if (prop.value.?.data != .e_string) continue;
+                            keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
+                            values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+                            i += 1;
+                        }
+                        this.bunfig.serve_define = Api.StringMap{
+                            .keys = keys,
+                            .values = values,
+                        };
+                    }
+                    this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
+
+                    if (serve_obj.get("publicPath")) |public_path| {
+                        if (public_path.asString(allocator)) |value| {
+                            this.bunfig.serve_public_path = value;
+                        }
+                    }
+
+                    if (serve_obj.get("env")) |env| {
+                        switch (env.data) {
+                            .e_null => {
+                                this.bunfig.serve_env_behavior = .disable;
+                            },
+                            .e_boolean => |boolean| {
+                                this.bunfig.serve_env_behavior = if (boolean.value) .load_all else .disable;
+                            },
+                            .e_string => |str| {
+                                if (str.eqlComptime("inline")) {
+                                    this.bunfig.serve_env_behavior = .load_all;
+                                } else if (str.eqlComptime("disable")) {
+                                    this.bunfig.serve_env_behavior = .disable;
+                                } else {
+                                    const slice = try str.string(allocator);
+                                    if (strings.indexOfChar(slice, '*')) |asterisk| {
+                                        if (asterisk > 0) {
+                                            this.bunfig.serve_env_prefix = slice[0..asterisk];
+                                            this.bunfig.serve_env_behavior = .prefix;
+                                        } else {
+                                            this.bunfig.serve_env_behavior = .load_all;
+                                        }
+                                    } else {
+                                        try this.addError(env.loc, "Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character");
+                                    }
+                                }
+                            },
+                            else => {
+                                try this.addError(env.loc, "Invalid env behavior, must be 'inline', 'disable', or a string with a '*' character");
+                            },
+                        }
                     }
                 }
             }
@@ -788,7 +858,6 @@ pub const Bunfig = struct {
                     .import_source = @constCast(jsx_import_source),
                     .runtime = jsx_runtime,
                     .development = jsx_dev,
-                    .react_fast_refresh = false,
                 };
             } else {
                 var jsx: *Api.Jsx = &this.bunfig.jsx.?;

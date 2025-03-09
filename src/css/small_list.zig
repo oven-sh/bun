@@ -48,6 +48,17 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
 
         const This = @This();
 
+        pub fn initInlined(values: []const T) This {
+            bun.assert(values.len <= N);
+            var this = This{
+                .capacity = values.len,
+                .data = .{ .inlined = undefined },
+            };
+
+            @memcpy(this.data.inlined[0..values.len], values);
+
+            return this;
+        }
         pub fn parse(input: *Parser) Result(@This()) {
             const parseFn = comptime voidWrap(T, generic.parseFor(T));
             var values: @This() = .{};
@@ -575,7 +586,7 @@ pub fn SmallList(comptime T: type, comptime N: comptime_int) type {
         }
 
         fn reserveOneUnchecked(this: *@This(), allocator: Allocator) void {
-            @setCold(true);
+            @branchHint(.cold);
             bun.assert(this.len() == this.capacity);
             const new_cap = growCapacity(this.capacity, this.len() + 1);
             this.tryGrow(allocator, new_cap);

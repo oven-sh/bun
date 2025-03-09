@@ -51,6 +51,7 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
     // similar code as Bun__Process__send
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+    defer formatter.deinit();
     if (Environment.isDebug) log("child: {}", .{message.toFmt(&formatter)});
 
     const ipc_instance = vm.getIPCInstance().?;
@@ -103,8 +104,8 @@ pub const InternalMsgHolder = struct {
     // TODO: move this to an Array or a JS Object or something which doesn't
     // individually create a Strong for every single IPC message...
     callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong) = .{},
-    worker: JSC.Strong = .{},
-    cb: JSC.Strong = .{},
+    worker: JSC.Strong = .empty,
+    cb: JSC.Strong = .empty,
     messages: std.ArrayListUnmanaged(JSC.Strong) = .{},
 
     pub fn isReady(this: *InternalMsgHolder) bool {
@@ -205,6 +206,7 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
     // similar code as bun.JSC.Subprocess.doSend
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+    defer formatter.deinit();
     if (Environment.isDebug) log("primary: {}", .{message.toFmt(&formatter)});
 
     _ = handle;
@@ -235,7 +237,7 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
             const ack = p.toInt32();
             if (ipc_data.internal_msg_queue.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
-                defer cbstrong.clear();
+                defer cbstrong.deinit();
                 _ = ipc_data.internal_msg_queue.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
                 event_loop.runCallback(cb, globalThis, ipc_data.internal_msg_queue.worker.get().?, &.{

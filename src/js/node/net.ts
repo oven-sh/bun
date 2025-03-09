@@ -22,8 +22,18 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const { Duplex } = require("node:stream");
 const EventEmitter = require("node:events");
-const { addServerName, upgradeDuplexToTLS, isNamedPipeSocket } = require("../internal/net");
+const {
+  SocketAddress,
+  addServerName,
+  upgradeDuplexToTLS,
+  isNamedPipeSocket,
+  normalizedArgsSymbol,
+} = require("internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
+import type { SocketListener } from "bun";
+import type { ServerOpts, Server as ServerType } from "node:net";
+const { getTimerDuration } = require("internal/timers");
+const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -37,11 +47,11 @@ var IPv6Reg;
 const DEFAULT_IPV4_ADDR = "0.0.0.0";
 const DEFAULT_IPV6_ADDR = "::";
 
-function isIPv4(s) {
+function isIPv4(s): boolean {
   return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
 }
 
-function isIPv6(s) {
+function isIPv6(s): boolean {
   return (IPv6Reg ??= new RegExp(
     "^(?:" +
       `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
@@ -56,7 +66,7 @@ function isIPv6(s) {
   )).test(s);
 }
 
-function isIP(s) {
+function isIP(s): 0 | 4 | 6 {
   if (isIPv4(s)) return 4;
   if (isIPv6(s)) return 6;
   return 0;
@@ -78,6 +88,7 @@ const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
+const kConnectOptions = Symbol("connect-options");
 
 function endNT(socket, callback, err) {
   socket.$end();
@@ -107,6 +118,12 @@ function destroyWhenAborted(err) {
     this.destroy(err.target.reason);
   }
 }
+// in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
+function onSocketEnd() {
+  if (!this.allowHalfOpen) {
+    this.write = writeAfterFIN;
+  }
+}
 // Provide a better error message when we call end() as a result
 // of the other side sending a FIN.  The standard 'write after end'
 // is overly vague, and makes it seem like the user's code is to blame.
@@ -130,6 +147,20 @@ function writeAfterFIN(chunk, encoding, cb) {
   return false;
 }
 
+function onConnectEnd() {
+  if (!this._hadError && this.secureConnecting) {
+    const options = this[kConnectOptions];
+    this._hadError = true;
+    const error = new ConnResetException(
+      "Client network socket disconnected before secure TLS connection was established",
+    );
+    error.path = options.path;
+    error.host = options.host;
+    error.port = options.port;
+    error.localAddress = options.localAddress;
+    this.destroy(error);
+  }
+}
 var SocketClass;
 const Socket = (function (InternalSocket) {
   SocketClass = InternalSocket;
@@ -162,9 +193,11 @@ const Socket = (function (InternalSocket) {
       },
       drain: Socket.#Drain,
       end: Socket.#End,
-      error(socket, error) {
+      error(socket, error, ignoreHadError) {
         const self = socket.data;
         if (!self) return;
+        if (self._hadError && !ignoreHadError) return;
+        self._hadError = true;
 
         const callback = self.#writeCallback;
         if (callback) {
@@ -211,6 +244,10 @@ const Socket = (function (InternalSocket) {
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
         if (!self) return;
+        if (!success && verifyError?.code === "ECONNRESET") {
+          // will be handled in onConnectEnd
+          return;
+        }
 
         self._securePending = false;
         self.secureConnecting = false;
@@ -238,6 +275,7 @@ const Socket = (function (InternalSocket) {
           self.authorized = true;
         }
         self.emit("secureConnect", verifyError);
+        self.removeListener("end", onConnectEnd);
       },
       timeout(socket) {
         const self = socket.data;
@@ -247,7 +285,6 @@ const Socket = (function (InternalSocket) {
       },
       binaryType: "buffer",
     };
-
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
@@ -277,7 +314,6 @@ const Socket = (function (InternalSocket) {
       Socket.#EmitEndNT(self, err);
       self.data = null;
     }
-
     static #Drain(socket) {
       const self = socket.data;
       if (!self) return;
@@ -285,7 +321,7 @@ const Socket = (function (InternalSocket) {
       self.connecting = false;
       if (callback) {
         const writeChunk = self._pendingData;
-        if (!writeChunk || socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+        if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
           self._pendingData = self.#writeCallback = null;
           callback(null);
         } else {
@@ -295,14 +331,23 @@ const Socket = (function (InternalSocket) {
         self[kBytesWritten] = socket.bytesWritten;
       }
     }
-
     static [bunSocketServerHandlers] = {
       data: Socket.#Handlers.data,
       close(socket, err) {
         const data = this.data;
         if (!data) return;
-        Socket.#Handlers.close(socket, err);
+
         data.server[bunSocketServerConnections]--;
+        {
+          if (!data.#closed) {
+            data.#closed = true;
+            //socket cannot be used after close
+            detachSocket(data);
+            Socket.#EmitEndNT(data, err);
+            data.data = null;
+          }
+        }
+
         data.server._emitCloseIfDrained();
       },
       end(socket) {
@@ -356,6 +401,15 @@ const Socket = (function (InternalSocket) {
 
       handshake(socket, success, verifyError) {
         const { data: self } = socket;
+        if (!success && verifyError?.code === "ECONNRESET") {
+          const err = new ConnResetException("socket hang up");
+          self.emit("_tlsError", err);
+          self.server.emit("tlsClientError", err, self);
+          self._hadError = true;
+          // error before handshake on the server side will only be emitted using tlsClientError
+          self.destroy();
+          return;
+        }
         self._securePending = false;
         self.secureConnecting = false;
         self._secureEstablished = !!success;
@@ -394,12 +448,35 @@ const Socket = (function (InternalSocket) {
       error(socket, error) {
         const data = this.data;
         if (!data) return;
-        Socket.#Handlers.error(socket, error);
-        data.emit("error", error);
+
+        if (data._hadError) return;
+        data._hadError = true;
+        const bunTLS = this[bunTlsSymbol];
+
+        if (typeof bunTLS === "function") {
+          // Destroy socket if error happened before handshake's finish
+          if (!data._secureEstablished) {
+            data.destroy(error);
+          } else if (
+            data.isServer &&
+            data._rejectUnauthorized &&
+            /peer did not return a certificate/.test(error?.message)
+          ) {
+            // Ignore server's authorization errors
+            data.destroy();
+          } else {
+            // Emit error
+            data._emitTLSError(error);
+            this.emit("_tlsError", error);
+            this.server.emit("tlsClientError", error, data);
+            Socket.#Handlers.error(socket, error, true);
+            return;
+          }
+        }
+        Socket.#Handlers.error(socket, error, true);
         data.server.emit("clientError", error, data);
       },
       timeout: Socket.#Handlers.timeout,
-      connectError: Socket.#Handlers.connectError,
       drain: Socket.#Handlers.drain,
       binaryType: "buffer",
     };
@@ -417,7 +494,7 @@ const Socket = (function (InternalSocket) {
     _pendingData;
     _pendingEncoding; // for compatibility
     #pendingRead;
-
+    _hadError = false;
     isServer = false;
     _handle = null;
     _parent;
@@ -427,6 +504,7 @@ const Socket = (function (InternalSocket) {
     pauseOnConnect = false;
     #upgraded;
     #unrefOnConnected = false;
+
     #handlers = Socket.#Handlers;
     [kSetNoDelay];
     [kSetKeepAlive];
@@ -444,6 +522,13 @@ const Socket = (function (InternalSocket) {
         keepAliveInitialDelay = 0,
         ...opts
       } = options || {};
+
+      if (options?.objectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.objectMode", options.objectMode, "is not supported");
+      if (options?.readableObjectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.readableObjectMode", options.readableObjectMode, "is not supported");
+      if (options?.writableObjectMode)
+        throw $ERR_INVALID_ARG_VALUE("options.writableObjectMode", options.writableObjectMode, "is not supported");
 
       super({
         ...opts,
@@ -464,6 +549,10 @@ const Socket = (function (InternalSocket) {
       this[kSetNoDelay] = Boolean(noDelay);
       this[kSetKeepAlive] = Boolean(keepAlive);
       this[kSetKeepAliveInitialDelay] = ~~(keepAliveInitialDelay / 1000);
+
+      // Shut down the socket when we're finished with it.
+      this.on("end", onSocketEnd);
+
       if (socket instanceof Socket) {
         this.#socket = socket;
       }
@@ -570,8 +659,14 @@ const Socket = (function (InternalSocket) {
       connection.destroy();
     }
 
-    connect(...args) {
-      const [options, connectListener] = normalizeArgs(args);
+    public connect(...args) {
+      const [options, connectListener] =
+        $isArray(args[0]) && args[0][normalizedArgsSymbol]
+          ? // args have already been normalized.
+            // Normalized array is passed as the first and only argument.
+            ($assert(args[0].length == 2 && typeof args[0][0] === "object"), args[0])
+          : normalizeArgs(args);
+
       let connection = this.#socket;
 
       let upgradeDuplex = false;
@@ -582,9 +677,9 @@ const Socket = (function (InternalSocket) {
         host,
         path,
         socket,
-        // TODOs
         localAddress,
         localPort,
+        // TODOs
         family,
         hints,
         lookup,
@@ -598,6 +693,13 @@ const Socket = (function (InternalSocket) {
         checkServerIdentity,
         session,
       } = options;
+
+      if (localAddress && !isIP(localAddress)) {
+        throw $ERR_INVALID_IP_ADDRESS(localAddress);
+      }
+      if (localPort) {
+        validateNumber(localPort, "options.localPort");
+      }
 
       this.servername = servername;
 
@@ -628,6 +730,16 @@ const Socket = (function (InternalSocket) {
 
       if (fd) {
         return this;
+      }
+
+      if (
+        // TLSSocket already created a socket and is forwarding it here. This is a private API.
+        !(socket && $isObject(socket) && socket instanceof Duplex) &&
+        // public api for net.Socket.connect
+        port === undefined &&
+        path == null
+      ) {
+        throw $ERR_MISSING_ARGS(["options", "port", "path"]);
       }
 
       this.remotePort = port;
@@ -675,6 +787,9 @@ const Socket = (function (InternalSocket) {
         this._securePending = true;
 
         if (connectListener) this.on("secureConnect", connectListener);
+        this[kConnectOptions] = options;
+
+        this.prependListener("end", onConnectEnd);
       } else if (connectListener) this.on("connect", connectListener);
 
       // start using existing connection
@@ -820,15 +935,13 @@ const Socket = (function (InternalSocket) {
     _destroy(err, callback) {
       this.connecting = false;
       const { ending } = this._writableState;
-      if (!err && this.secureConnecting && !this.isServer) {
-        this.secureConnecting = false;
-        err = new ConnResetException("Client network socket disconnected before secure TLS connection was established");
-      }
+
       // lets make sure that the writable side is closed
       if (!ending) {
         // at this state destroyed will be true but we need to close the writable side
         this._writableState.destroyed = false;
         this.end();
+
         // we now restore the destroyed flag
         this._writableState.destroyed = true;
       }
@@ -894,6 +1007,11 @@ const Socket = (function (InternalSocket) {
       }
     }
 
+    _reset() {
+      this.resetAndClosing = true;
+      return this.destroy();
+    }
+
     get readyState() {
       if (this.connecting) return "opening";
       if (this.readable) {
@@ -924,13 +1042,14 @@ const Socket = (function (InternalSocket) {
     resetAndDestroy() {
       if (this._handle) {
         if (this.connecting) {
-          this.once("connect", () => this._handle?.terminate());
+          this.once("connect", () => this._reset());
         } else {
-          this._handle.terminate();
+          this._reset();
         }
       } else {
-        this.destroy($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+        this.destroy($ERR_SOCKET_CLOSED());
       }
+      return this;
     }
 
     setKeepAlive(enable = false, initialDelayMsecs = 0) {
@@ -973,11 +1092,15 @@ const Socket = (function (InternalSocket) {
     }
 
     setTimeout(timeout, callback) {
+      timeout = getTimerDuration(timeout, "msecs");
       // internally or timeouts are in seconds
       // we use Math.ceil because 0 would disable the timeout and less than 1 second but greater than 1ms would be 1 second (the minimum)
       this._handle?.timeout(Math.ceil(timeout / 1000));
       this.timeout = timeout;
-      if (callback) this.once("timeout", callback);
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
       return this;
     }
     // for compatibility
@@ -1038,7 +1161,7 @@ const Socket = (function (InternalSocket) {
         this._pendingData = chunk;
         this._pendingEncoding = encoding;
         function onClose() {
-          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION());
         }
         this.once("connect", function connect() {
           this.off("close", onClose);
@@ -1051,10 +1174,9 @@ const Socket = (function (InternalSocket) {
       this.#writeCallback = null;
       const socket = this._handle;
       if (!socket) {
-        callback($ERR_SOCKET_CLOSED("Socket is closed"));
+        callback($ERR_SOCKET_CLOSED());
         return false;
       }
-
       const success = socket.$write(chunk, encoding);
       this[kBytesWritten] = socket.bytesWritten;
       if (success) {
@@ -1079,17 +1201,18 @@ function createConnection(port, host, connectListener) {
 
 const connect = createConnection;
 
-function Server(options, connectionListener): void {
+type MaybeListener = SocketListener<unknown> | null;
+
+function Server(): void;
+function Server(options?: null | undefined): void;
+function Server(connectionListener: () => {}): void;
+function Server(options: ServerOpts, connectionListener?: () => {}): void;
+function Server(options?, connectionListener?): void {
   if (!(this instanceof Server)) {
     return new Server(options, connectionListener);
   }
 
   EventEmitter.$apply(this, []);
-
-  this[bunSocketServerConnections] = 0;
-  this[bunSocketServerOptions] = undefined;
-  this.maxConnections = 0;
-  this._handle = null;
 
   if (typeof options === "function") {
     connectionListener = options;
@@ -1097,10 +1220,40 @@ function Server(options, connectionListener): void {
   } else if (options == null || typeof options === "object") {
     options = { ...options };
   } else {
-    throw new Error("bun-net-polyfill: invalid arguments");
+    throw $ERR_INVALID_ARG_TYPE("options", ["Object", "Function"], options);
   }
-  const { maxConnections } = options;
+
+  $assert(typeof Duplex.getDefaultHighWaterMark === "function");
+
+  // https://nodejs.org/api/net.html#netcreateserveroptions-connectionlistener
+  const {
+    maxConnections, //
+    allowHalfOpen = false,
+    keepAlive = false,
+    keepAliveInitialDelay = 0,
+    highWaterMark = Duplex.getDefaultHighWaterMark(),
+    pauseOnConnect = false,
+    noDelay = false,
+  } = options;
+
+  this._connections = 0;
+
+  this._handle = null as MaybeListener;
+  this._usingWorkers = false;
+  this.workers = [];
+  this._unref = false;
+  this.listeningId = 1;
+
+  this[bunSocketServerConnections] = 0;
+  this[bunSocketServerOptions] = undefined;
+  this.allowHalfOpen = allowHalfOpen;
+  this.keepAlive = keepAlive;
+  this.keepAliveInitialDelay = keepAliveInitialDelay;
+  this.highWaterMark = highWaterMark;
+  this.pauseOnConnect = Boolean(pauseOnConnect);
+  this.noDelay = noDelay;
   this.maxConnections = Number.isSafeInteger(maxConnections) && maxConnections > 0 ? maxConnections : 0;
+  // TODO: options.blockList
 
   options.connectionListener = connectionListener;
   this[bunSocketServerOptions] = options;
@@ -1113,17 +1266,19 @@ Object.defineProperty(Server.prototype, "listening", {
   },
 });
 
-Server.prototype.ref = function () {
+Server.prototype.ref = function ref() {
+  this._unref = false;
   this._handle?.ref();
   return this;
 };
 
-Server.prototype.unref = function () {
+Server.prototype.unref = function unref() {
+  this._unref = true;
   this._handle?.unref();
   return this;
 };
 
-Server.prototype.close = function (callback) {
+Server.prototype.close = function close(callback) {
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -1144,7 +1299,7 @@ Server.prototype.close = function (callback) {
   return this;
 };
 
-Server.prototype[Symbol.asyncDispose] = function () {
+Server.prototype[Symbol.asyncDispose] = function asyncDispose() {
   const { resolve, reject, promise } = Promise.withResolvers();
   this.close(function (err, ...args) {
     if (err) reject(err);
@@ -1153,7 +1308,7 @@ Server.prototype[Symbol.asyncDispose] = function () {
   return promise;
 };
 
-Server.prototype._emitCloseIfDrained = function () {
+Server.prototype._emitCloseIfDrained = function _emitCloseIfDrained() {
   if (this._handle || this[bunSocketServerConnections] > 0) {
     return;
   }
@@ -1162,7 +1317,7 @@ Server.prototype._emitCloseIfDrained = function () {
   });
 };
 
-Server.prototype.address = function () {
+Server.prototype.address = function address() {
   const server = this._handle;
   if (server) {
     const unix = server.unix;
@@ -1193,7 +1348,7 @@ Server.prototype.address = function () {
   return null;
 };
 
-Server.prototype.getConnections = function (callback) {
+Server.prototype.getConnections = function getConnections(callback) {
   if (typeof callback === "function") {
     //in Bun case we will never error on getConnections
     //node only errors if in the middle of the couting the server got disconnected, what never happens in Bun
@@ -1203,7 +1358,7 @@ Server.prototype.getConnections = function (callback) {
   return this;
 };
 
-Server.prototype.listen = function (port, hostname, onListen) {
+Server.prototype.listen = function listen(port, hostname, onListen) {
   let backlog;
   let path;
   let exclusive = false;
@@ -1236,7 +1391,7 @@ Server.prototype.listen = function (port, hostname, onListen) {
       port = 0;
     } else if (typeof port === "object") {
       const options = port;
-      options.signal?.addEventListener("abort", () => this.close());
+      addServerAbortSignalOption(this, options);
 
       hostname = options.host;
       exclusive = options.exclusive;
@@ -1292,6 +1447,14 @@ Server.prototype.listen = function (port, hostname, onListen) {
     hostname = hostname || "::";
   }
 
+  if (this._handle) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
+  if (onListen != null) {
+    this.once("listening", onListen);
+  }
+
   try {
     var tls = undefined;
     var TLSSocketClass = undefined;
@@ -1335,7 +1498,7 @@ Server.prototype.listen = function (port, hostname, onListen) {
   return this;
 };
 
-Server.prototype[kRealListen] = function (
+Server.prototype[kRealListen] = function realListen(
   path,
   port,
   hostname,
@@ -1379,6 +1542,9 @@ Server.prototype[kRealListen] = function (
     }
   }
 
+  // Unref the handle if the server was unref'ed prior to listening
+  if (this._unref) this.unref();
+
   // We must schedule the emitListeningNextTick() only after the next run of
   // the event loop's IO queue. Otherwise, the server may not actually be listening
   // when the 'listening' event is emitted.
@@ -1386,10 +1552,10 @@ Server.prototype[kRealListen] = function (
   // That leads to all sorts of confusion.
   //
   // process.nextTick() is not sufficient because it will run before the IO queue.
-  setTimeout(emitListeningNextTick, 1, this, onListen?.bind(this));
+  setTimeout(emitListeningNextTick, 1, this);
 };
 
-Server.prototype.getsockname = function (out) {
+Server.prototype.getsockname = function getsockname(out) {
   out.port = this.address().port;
   return out;
 };
@@ -1402,6 +1568,21 @@ function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
   self.emit("close");
 }
+
+function addServerAbortSignalOption(self, options) {
+  if (options?.signal === undefined) {
+    return;
+  }
+  validateAbortSignal(options.signal, "options.signal");
+  const { signal } = options;
+  const onAborted = () => self.close();
+  if (signal.aborted) {
+    process.nextTick(onAborted);
+  } else {
+    signal.addEventListener("abort", onAborted);
+  }
+}
+
 class ConnResetException extends Error {
   constructor(msg) {
     super(msg);
@@ -1413,14 +1594,8 @@ class ConnResetException extends Error {
   }
 }
 
-function emitListeningNextTick(self, onListen) {
-  if (typeof onListen === "function") {
-    try {
-      onListen.$call(self);
-    } catch (err) {
-      self.emit("error", err);
-    }
-  }
+function emitListeningNextTick(self) {
+  if (!self._handle) return;
   self.emit("listening");
 }
 
@@ -1475,12 +1650,13 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
-function normalizeArgs(args) {
-  while (args[args.length - 1] == null) args.pop();
+function normalizeArgs(args: unknown[]): [options: Record<PropertyKey, any>, cb: Function | null] {
+  while (args.length && args[args.length - 1] == null) args.pop();
   let arr;
 
   if (args.length === 0) {
     arr = [{}, null];
+    arr[normalizedArgsSymbol as symbol] = true;
     return arr;
   }
 
@@ -1500,6 +1676,7 @@ function normalizeArgs(args) {
   const cb = args[args.length - 1];
   if (typeof cb !== "function") arr = [options, null];
   else arr = [options, cb];
+  arr[normalizedArgsSymbol as symbol] = true;
 
   return arr;
 }
@@ -1558,6 +1735,7 @@ export default {
   setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
 
   BlockList,
+  SocketAddress,
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
 };

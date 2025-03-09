@@ -323,6 +323,7 @@ function getCppAgent(platform, options) {
  */
 function getZigAgent(platform, options) {
   const { arch } = platform;
+
   return {
     queue: "build-zig",
   };
@@ -383,14 +384,22 @@ function getBuildEnv(target, options) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
+  const isMusl = abi === "musl";
+
+  let CMAKE_BUILD_TYPE = release ? "Release" : profile === "debug" ? "Debug" : "RelWithDebInfo";
+  if (isMusl && release) {
+    CMAKE_BUILD_TYPE = "MinSizeRel";
+  }
+
   return {
-    CMAKE_BUILD_TYPE: release ? "Release" : profile === "debug" ? "Debug" : "RelWithDebInfo",
+    CMAKE_BUILD_TYPE,
     ENABLE_BASELINE: baseline ? "ON" : "OFF",
     ENABLE_CANARY: revision > 0 ? "ON" : "OFF",
     CANARY_REVISION: revision,
     ENABLE_ASSERTIONS: release ? "OFF" : "ON",
     ENABLE_LOGS: release ? "OFF" : "ON",
-    ABI: abi === "musl" ? "musl" : undefined,
+    ABI: isMusl ? "musl" : undefined,
+    CMAKE_TLS_VERIFY: "0",
   };
 }
 
@@ -462,7 +471,7 @@ function getBuildZigStep(platform, options) {
     cancel_on_build_failing: isMergeQueue(),
     env: getBuildEnv(platform, options),
     command: `bun run build:ci --target bun-zig --toolchain ${toolchain}`,
-    timeout_in_minutes: 25,
+    timeout_in_minutes: 35,
   };
 }
 
@@ -616,6 +625,21 @@ function getReleaseStep(buildPlatforms, options) {
       CANARY: revision,
     },
     command: ".buildkite/scripts/upload-release.sh",
+  };
+}
+
+/**
+ * @returns {Step}
+ */
+function getBenchmarkStep() {
+  return {
+    key: "benchmark",
+    label: "📊",
+    agents: {
+      queue: "build-zig",
+    },
+    command: "bun .buildkite/scripts/upload-benchmark.ts",
+    depends_on: [`linux-x64-build-bun`],
   };
 }
 
@@ -1096,6 +1120,8 @@ async function getPipeline(options = {}) {
   if (isMainBranch()) {
     steps.push(getReleaseStep(buildPlatforms, options));
   }
+
+  steps.push(getBenchmarkStep());
 
   /** @type {Map<string, GroupStep>} */
   const stepsByGroup = new Map();

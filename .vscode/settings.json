@@ -36,6 +36,7 @@
   // "zig.buildOnSave": true,
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
   "zig.path": "${workspaceFolder}/vendor/zig/zig.exe",
+  "zig.zls.path": "${workspaceFolder}/vendor/zig/zls.exe",
   "zig.formattingProvider": "zls",
   "zig.zls.enableInlayHints": false,
   "[zig]": {
@@ -63,6 +64,7 @@
     "editor.tabSize": 4,
     "editor.defaultFormatter": "xaver.clang-format",
   },
+  "clangd.arguments": ["--header-insertion=never"],
 
   // JavaScript
   "prettier.enable": true,
@@ -139,8 +141,11 @@
     "packages/bun-uws/fuzzing": true,
   },
   "files.associations": {
+    "*.css": "tailwindcss",
     "*.idl": "cpp",
+    "*.mdc": "markdown",
     "array": "cpp",
+    "ios": "cpp",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

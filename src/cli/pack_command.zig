@@ -15,7 +15,7 @@ const stringZ = bun.stringZ;
 const libarchive = @import("../libarchive/libarchive.zig").lib;
 const Archive = libarchive.Archive;
 const Expr = bun.js_parser.Expr;
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 const File = bun.sys.File;
 const FD = bun.FD;
 const strings = bun.strings;
@@ -71,7 +71,7 @@ pub const PackCommand = struct {
             if (log_level != .silent) {
                 Output.prettyln("\n<r><b><blue>Total files<r>: {d}", .{stats.total_files});
                 if (maybe_shasum) |shasum| {
-                    Output.prettyln("<b><blue>Shasum<r>: {s}", .{bun.fmt.bytesToHex(shasum, .lower)});
+                    Output.prettyln("<b><blue>Shasum<r>: {s}", .{std.fmt.bytesToHex(shasum, .lower)});
                 }
                 if (maybe_integrity) |integrity| {
                     Output.prettyln("<b><blue>Integrity<r>: {}", .{bun.fmt.integrity(integrity, .short)});
@@ -218,7 +218,7 @@ pub const PackCommand = struct {
 
     const package_prefix = "package/";
 
-    const root_default_ignore_patterns = [_][]const u32{
+    const root_default_ignore_patterns = [_][]const u8{
         &.{ 112, 97, 99, 107, 97, 103, 101, 45, 108, 111, 99, 107, 46, 106, 115, 111, 110 }, // package-lock.json
         &.{ 121, 97, 114, 110, 46, 108, 111, 99, 107 }, // yarn.lock
         &.{ 112, 110, 112, 109, 45, 108, 111, 99, 107, 46, 121, 97, 109, 108 }, // pnpm-lock.yaml
@@ -227,7 +227,7 @@ pub const PackCommand = struct {
     };
 
     // pattern, can override
-    const default_ignore_patterns = [_]struct { []const u32, bool }{
+    const default_ignore_patterns = [_]struct { []const u8, bool }{
         .{ &.{ '.', '*', '.', 's', 'w', 'p' }, true },
         .{ &.{ 46, 95, 42 }, true }, // "._*",
         .{ &.{ 46, 68, 83, 95, 83, 116, 111, 114, 101 }, true }, // ".DS_Store",
@@ -335,7 +335,7 @@ pub const PackCommand = struct {
                         // normally the behavior of `index.js` and `**/index.js` are the same,
                         // but includes require `**/`
                         const match_path = if (include.@"leading **/") entry_name else entry_subpath;
-                        switch (glob.walk.matchImpl(include.glob, match_path)) {
+                        switch (glob.walk.matchImpl(allocator, include.glob, match_path)) {
                             .match => included = true,
                             .negate_no_match => included = false,
 
@@ -432,9 +432,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -739,9 +739,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, &.{})) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -837,9 +837,9 @@ pub const PackCommand = struct {
                 if (isExcluded(entry, entry_subpath, dir_depth, ignores.items)) |used_pattern_info| {
                     if (comptime log_level.isVerbose()) {
                         const pattern, const kind = used_pattern_info;
-                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{}]<r> {s}{s}", .{
+                        Output.prettyln("<r><blue>ignore<r> <d>[{s}:{s}]<r> {s}{s}", .{
                             @tagName(kind),
-                            bun.fmt.debugUtf32PathFormatter(pattern),
+                            pattern,
                             entry_subpath,
                             if (entry.kind == .directory) "/" else "",
                         });
@@ -1021,7 +1021,7 @@ pub const PackCommand = struct {
         entry_subpath: stringZ,
         dir_depth: usize,
         ignores: []const IgnorePatterns,
-    ) ?struct { []const u32, IgnorePatterns.Kind } {
+    ) ?struct { []const u8, IgnorePatterns.Kind } {
         const entry_name = entry.name.slice();
 
         if (dir_depth == 1) {
@@ -1045,7 +1045,7 @@ pub const PackCommand = struct {
 
             // check default ignores that only apply to the root project directory
             for (root_default_ignore_patterns) |pattern| {
-                switch (glob.walk.matchImpl(pattern, entry_name)) {
+                switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
                     .match => {
                         // cannot be reversed
                         return .{
@@ -1063,7 +1063,7 @@ pub const PackCommand = struct {
             }
         }
 
-        var ignore_pattern: []const u32 = &.{};
+        var ignore_pattern: []const u8 = &.{};
         var ignore_kind: IgnorePatterns.Kind = .@".npmignore";
 
         // then check default ignore list. None of the defaults contain slashes
@@ -1072,7 +1072,7 @@ pub const PackCommand = struct {
 
         for (default_ignore_patterns) |pattern_info| {
             const pattern, const can_override = pattern_info;
-            switch (glob.walk.matchImpl(pattern, entry_name)) {
+            switch (glob.walk.matchImpl(bun.default_allocator, pattern, entry_name)) {
                 .match => {
                     if (can_override) {
                         ignored = true;
@@ -1114,7 +1114,7 @@ pub const PackCommand = struct {
                 if (pattern.dirs_only and entry.kind != .directory) continue;
 
                 const match_path = if (pattern.rel_path) rel else entry_name;
-                switch (glob.walk.matchImpl(pattern.glob, match_path)) {
+                switch (glob.walk.matchImpl(bun.default_allocator, pattern.glob, match_path)) {
                     .match => {
                         ignored = true;
                         ignore_pattern = pattern.glob;
@@ -1356,10 +1356,12 @@ pub const PackCommand = struct {
                         var includes: std.ArrayListUnmanaged(Pattern) = .{};
                         defer includes.deinit(ctx.allocator);
 
+                        var path_buf: PathBuffer = undefined;
                         var files_array = _files_array;
                         while (files_array.next()) |files_entry| {
                             if (files_entry.asString(ctx.allocator)) |file_entry_str| {
-                                const parsed = try Pattern.fromUTF8(ctx.allocator, file_entry_str) orelse continue;
+                                const normalized = bun.path.normalizeBuf(file_entry_str, &path_buf, .posix);
+                                const parsed = try Pattern.fromUTF8(ctx.allocator, normalized) orelse continue;
                                 try includes.append(ctx.allocator, parsed);
                                 continue;
                             }
@@ -1401,12 +1403,13 @@ pub const PackCommand = struct {
             printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, 0);
 
             if (comptime !for_publish) {
-                if (manager.options.pack_destination.len == 0) {
+                if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
                     Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
                 } else {
                     var dest_buf: PathBuffer = undefined;
-                    const abs_tarball_dest, _ = absTarballDestination(
+                    const abs_tarball_dest, _ = tarballDestination(
                         ctx.manager.options.pack_destination,
+                        ctx.manager.options.pack_filename,
                         abs_workspace_path,
                         package_name,
                         package_version,
@@ -1442,8 +1445,9 @@ pub const PackCommand = struct {
 
             if (comptime for_publish) {
                 var dest_buf: bun.PathBuffer = undefined;
-                const abs_tarball_dest, _ = absTarballDestination(
+                const abs_tarball_dest, _ = tarballDestination(
                     ctx.manager.options.pack_destination,
+                    ctx.manager.options.pack_filename,
                     abs_workspace_path,
                     package_name,
                     package_version,
@@ -1524,8 +1528,9 @@ pub const PackCommand = struct {
         }
 
         var dest_buf: PathBuffer = undefined;
-        const abs_tarball_dest, const abs_tarball_dest_dir_end = absTarballDestination(
+        const abs_tarball_dest, const abs_tarball_dest_dir_end = tarballDestination(
             ctx.manager.options.pack_destination,
+            ctx.manager.options.pack_filename,
             abs_workspace_path,
             package_name,
             package_version,
@@ -1737,7 +1742,7 @@ pub const PackCommand = struct {
         );
 
         if (comptime !for_publish) {
-            if (manager.options.pack_destination.len == 0) {
+            if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
                 Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
             } else {
                 Output.pretty("\n{s}\n", .{abs_tarball_dest});
@@ -1793,34 +1798,58 @@ pub const PackCommand = struct {
         }
     }
 
-    fn absTarballDestination(
+    fn tarballDestination(
         pack_destination: string,
+        pack_filename: string,
         abs_workspace_path: string,
         package_name: string,
         package_version: string,
         dest_buf: []u8,
     ) struct { stringZ, usize } {
-        const tarball_destination_dir = bun.path.joinAbsStringBuf(
-            abs_workspace_path,
-            dest_buf,
-            &.{pack_destination},
-            .auto,
-        );
-
-        const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
-            fmtTarballFilename(package_name, package_version, .normalize),
-        }) catch {
-            Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
-                strings.withoutTrailingSlash(tarball_destination_dir),
-                fmtTarballFilename(package_name, package_version, .normalize),
+        if (pack_filename.len > 0 and pack_destination.len > 0) {
+            Output.errGeneric("cannot use both filename and destination at the same time with tarball: filename \"{s}\" and destination \"{s}\"", .{
+                strings.withoutTrailingSlash(pack_filename),
+                strings.withoutTrailingSlash(pack_destination),
             });
             Global.crash();
-        };
+        }
+        if (pack_filename.len > 0) {
+            const tarball_name = std.fmt.bufPrint(dest_buf[0..], "{s}\x00", .{
+                pack_filename,
+            }) catch {
+                Output.errGeneric("archive filename too long: \"{s}\"", .{
+                    pack_filename,
+                });
+                Global.crash();
+            };
 
-        return .{
-            dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0],
-            tarball_destination_dir.len,
-        };
+            return .{
+                dest_buf[0 .. tarball_name.len - 1 :0],
+                0,
+            };
+        } else {
+            const tarball_destination_dir = bun.path.joinAbsStringBuf(
+                abs_workspace_path,
+                dest_buf,
+                &.{pack_destination},
+                .auto,
+            );
+
+            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
+                fmtTarballFilename(package_name, package_version, .normalize),
+            }) catch {
+                Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
+                    strings.withoutTrailingSlash(tarball_destination_dir),
+                    fmtTarballFilename(package_name, package_version, .normalize),
+                });
+                Global.crash();
+            };
+
+            return .{
+                dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0],
+                tarball_destination_dir.len,
+            };
+        }
     }
 
     pub fn fmtTarballFilename(package_name: string, package_version: string, style: TarballNameFormatter.Style) TarballNameFormatter {
@@ -2081,6 +2110,7 @@ pub const PackCommand = struct {
             &json.source,
             .{
                 .indent = json.indentation,
+                .mangled_props = null,
             },
         ) catch |err| {
             return switch (err) {
@@ -2101,7 +2131,7 @@ pub const PackCommand = struct {
     /// from .npmignore, .gitignore, or `files`
     /// in package.json
     const Pattern = struct {
-        glob: []const u32,
+        glob: []const u8,
         /// beginning or middle slash (leading slash was trimmed)
         rel_path: bool,
         // can only match directories (had an ending slash, also trimmed)
@@ -2151,20 +2181,17 @@ pub const PackCommand = struct {
                 break :check_slashes .{ leading_or_middle_slash, trailing_slash, skipped_negate };
             };
 
-            const length = bun.simdutf.length.utf32.from.utf8.le(remain) + @intFromBool(add_negate);
-            const buf = try allocator.alloc(u32, length);
-            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(remain, buf[@intFromBool(add_negate)..]);
-            if (!result.isSuccessful()) {
-                allocator.free(buf);
-                return null;
-            }
-
+            const length = remain.len + @intFromBool(add_negate);
+            const buf = try allocator.alloc(u8, length);
+            const start_index = @intFromBool(add_negate);
+            const end = start_index + remain.len;
+            @memcpy(buf[start_index..end], remain);
             if (add_negate) {
                 buf[0] = '!';
             }
 
             return .{
-                .glob = buf[0 .. result.count + @intFromBool(add_negate)],
+                .glob = buf[0..end],
                 .rel_path = has_leading_or_middle_slash,
                 .@"leading **/" = @"has leading **/, (could start with '!')",
                 .dirs_only = has_trailing_slash,
@@ -2382,7 +2409,7 @@ pub const bindings = struct {
             return global.throw("expected tarball path string argument", .{});
         }
 
-        const tarball_path_str = args[0].toBunString(global);
+        const tarball_path_str = try args[0].toBunString(global);
         defer tarball_path_str.deref();
 
         const tarball_path = tarball_path_str.toUTF8(bun.default_allocator);
@@ -2403,7 +2430,7 @@ pub const bindings = struct {
         defer sha1.deinit();
         sha1.update(tarball);
         sha1.final(&sha1_digest);
-        const shasum_str = String.createFormat("{s}", .{bun.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
+        const shasum_str = String.createFormat("{s}", .{std.fmt.bytesToHex(sha1_digest, .lower)}) catch bun.outOfMemory();
 
         var sha512_digest: sha.SHA512.Digest = undefined;
         var sha512 = sha.SHA512.init();

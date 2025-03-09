@@ -1,6 +1,5 @@
 const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
-const JavaScript = @import("../javascript.zig");
 const QueryStringMap = @import("../../url.zig").QueryStringMap;
 const CombinedScanner = @import("../../url.zig").CombinedScanner;
 const bun = @import("root").bun;
@@ -11,7 +10,6 @@ const WebCore = @import("../webcore/response.zig");
 const Transpiler = bun.transpiler;
 const options = @import("../../options.zig");
 const resolve_path = @import("../../resolver/resolve_path.zig");
-const VirtualMachine = JavaScript.VirtualMachine;
 const ScriptSrcStream = std.io.FixedBufferStream([]u8);
 const ZigString = JSC.ZigString;
 const Fs = @import("../../fs.zig");
@@ -60,6 +58,7 @@ pub const JSBundler = struct {
         rootdir: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         serve: Serve = .{},
         jsx: options.JSX.Pragma = .{},
+        force_node_env: options.BundleOptions.ForceNodeEnv = .unspecified,
         code_splitting: bool = false,
         minify: Minify = .{},
         no_macros: bool = false,
@@ -446,7 +445,7 @@ pub const JSBundler = struct {
                     }
 
                     var val = JSC.ZigString.init("");
-                    property_value.toZigString(&val, globalThis);
+                    try property_value.toZigString(&val, globalThis);
                     if (val.len == 0) {
                         val = JSC.ZigString.fromUTF8("\"\"");
                     }
@@ -579,6 +578,7 @@ pub const JSBundler = struct {
         );
     }
 
+    /// `Bun.build(config)`
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -600,7 +600,7 @@ pub const JSBundler = struct {
             source_file: string = "",
             namespace: string = "",
             specifier: string = "",
-            importer_source_index: ?u32 = null,
+            importer_source_index: u32,
             import_record_index: u32 = 0,
             range: logger.Range = logger.Range.None,
             original_target: Target,
@@ -850,7 +850,7 @@ pub const JSBundler = struct {
 
                 if (this.was_file) {
                     // Faster path: skip the extra threadpool dispatch
-                    this.bv2.graph.pool.pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
+                    this.bv2.graph.pool.worker_pool.schedule(bun.ThreadPool.Batch.from(&this.parse_task.task));
                     this.deinit();
                     return;
                 }
@@ -1093,7 +1093,7 @@ pub const BuildArtifact = struct {
     path: []const u8 = "",
     hash: u64 = std.math.maxInt(u64),
     output_kind: OutputKind,
-    sourcemap: JSC.Strong = .{},
+    sourcemap: JSC.Strong = .empty,
 
     pub const OutputKind = enum {
         chunk,

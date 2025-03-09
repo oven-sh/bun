@@ -62,7 +62,11 @@ pub const FileOperation = struct {
     }
 };
 
-pub const Value = union(Kind) {
+pub const Kind = @typeInfo(Value).Union.tag_type.?;
+// TODO: document how and why all variants of this union(enum) are used,
+// specifically .move and .copy; the new bundler has to load files in memory
+// in order to hash them, so i think it uses .buffer for those
+pub const Value = union(enum) {
     move: FileOperation,
     copy: FileOperation,
     noop: u0,
@@ -141,8 +145,6 @@ pub const SavedFile = struct {
         return blob.toJS(globalThis);
     }
 };
-
-pub const Kind = enum { move, copy, noop, buffer, pending, saved };
 
 pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
     return .{
@@ -231,99 +233,55 @@ pub fn init(options: Options) OutputFile {
     };
 }
 
-pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, longest_common_path: []const u8) ![]const u8 {
+pub fn writeToDisk(f: OutputFile, root_dir: std.fs.Dir, root_dir_path: []const u8) !void {
     switch (f.value) {
+        .noop => {},
         .saved => {
-            var rel_path = f.dest_path;
-            if (f.dest_path.len > longest_common_path.len) {
-                rel_path = resolve_path.relative(longest_common_path, f.dest_path);
-            }
-            return rel_path;
+            // already written to disk
         },
         .buffer => |value| {
             var rel_path = f.dest_path;
-
-            if (f.dest_path.len > longest_common_path.len) {
-                rel_path = resolve_path.relative(longest_common_path, f.dest_path);
+            if (f.dest_path.len > root_dir_path.len) {
+                rel_path = resolve_path.relative(root_dir_path, f.dest_path);
                 if (std.fs.path.dirname(rel_path)) |parent| {
-                    if (parent.len > longest_common_path.len) {
+                    if (parent.len > root_dir_path.len) {
                         try root_dir.makePath(parent);
                     }
                 }
             }
 
-            var handled_file_not_found = false;
-            while (true) {
-                var path_buf: bun.PathBuffer = undefined;
-                JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
-                    .data = .{ .buffer = .{
-                        .buffer = .{
-                            .ptr = @constCast(value.bytes.ptr),
-                            .len = value.bytes.len,
-                            .byte_len = value.bytes.len,
-                        },
-                    } },
-                    .encoding = .buffer,
-                    .mode = if (f.is_executable) 0o755 else 0o644,
-                    .dirfd = bun.toFD(root_dir.fd),
-                    .file = .{ .path = .{
-                        .string = JSC.PathString.init(rel_path),
-                    } },
-                }).unwrap() catch |err| switch (err) {
-                    error.FileNotFound, error.ENOENT => {
-                        if (handled_file_not_found) return err;
-                        handled_file_not_found = true;
-                        try root_dir.makePath(
-                            std.fs.path.dirname(rel_path) orelse
-                                return err,
-                        );
-                        continue;
+            var path_buf: bun.PathBuffer = undefined;
+            _ = try JSC.Node.NodeFS.writeFileWithPathBuffer(&path_buf, .{
+                .data = .{ .buffer = .{
+                    .buffer = .{
+                        .ptr = @constCast(value.bytes.ptr),
+                        .len = value.bytes.len,
+                        .byte_len = value.bytes.len,
                     },
-                    else => return err,
-                };
-                break;
-            }
-
-            return rel_path;
+                } },
+                .encoding = .buffer,
+                .mode = if (f.is_executable) 0o755 else 0o644,
+                .dirfd = bun.toFD(root_dir.fd),
+                .file = .{ .path = .{
+                    .string = JSC.PathString.init(rel_path),
+                } },
+            }).unwrap();
         },
         .move => |value| {
-            _ = value;
-            // var filepath_buf: bun.PathBuffer = undefined;
-            // filepath_buf[0] = '.';
-            // filepath_buf[1] = '/';
-            // const primary = f.dest_path[root_dir_path.len..];
-            // bun.copy(u8, filepath_buf[2..], primary);
-            // var rel_path: []const u8 = filepath_buf[0 .. primary.len + 2];
-            // rel_path = value.pathname;
-
-            // try f.moveTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-            {
-                @panic("TODO: Regressed behavior");
-            }
-
-            // return primary;
+            try f.moveTo(root_dir_path, value.pathname, bun.toFD(root_dir.fd));
         },
         .copy => |value| {
-            _ = value;
-            // rel_path = value.pathname;
-
-            // try f.copyTo(root_path, @constCast(rel_path), bun.toFD(root_dir.fd));
-            {
-                @panic("TODO: Regressed behavior");
-            }
-        },
-        .noop => {
-            return f.dest_path;
+            try f.copyTo(root_dir_path, value.pathname, bun.toFD(root_dir.fd));
         },
         .pending => unreachable,
     }
 }
 
-pub fn moveTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
+pub fn moveTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {
     try bun.C.moveFileZ(file.value.move.dir, bun.sliceTo(&(try std.posix.toPosixPath(file.value.move.getPathname())), 0), dir, bun.sliceTo(&(try std.posix.toPosixPath(rel_path)), 0));
 }
 
-pub fn copyTo(file: *const OutputFile, _: string, rel_path: []u8, dir: FileDescriptorType) !void {
+pub fn copyTo(file: *const OutputFile, _: string, rel_path: []const u8, dir: FileDescriptorType) !void {
     const file_out = (try dir.asDir().createFile(rel_path, .{}));
 
     const fd_out = file_out.handle;
@@ -367,7 +325,7 @@ pub fn toJS(
                     JSC.Node.PathOrFileDescriptor{
                         .path = JSC.Node.PathLike{ .string = bun.PathString.init(globalObject.allocator().dupe(u8, copy.pathname) catch unreachable) },
                     },
-                this.loader.toMimeType(),
+                this.loader.toMimeType(&.{owned_pathname orelse ""}),
                 globalObject.allocator(),
             ) catch |err| {
                 Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
@@ -398,7 +356,7 @@ pub fn toJS(
                 JSC.Node.PathOrFileDescriptor{
                     .path = JSC.Node.PathLike{ .string = bun.PathString.init(owned_pathname orelse (bun.default_allocator.dupe(u8, this.src_path.text) catch unreachable)) },
                 },
-                this.loader.toMimeType(),
+                this.loader.toMimeType(&.{owned_pathname orelse ""}),
                 globalObject.allocator(),
             ) catch |err| {
                 Output.panic("error: Unable to create file blob: \"{s}\"", .{@errorName(err)});
@@ -424,10 +382,10 @@ pub fn toJS(
         .buffer => |buffer| brk: {
             var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalObject);
             if (blob.store) |store| {
-                store.mime_type = this.loader.toMimeType();
+                store.mime_type = this.loader.toMimeType(&.{owned_pathname orelse ""});
                 blob.content_type = store.mime_type.value;
             } else {
-                blob.content_type = this.loader.toMimeType().value;
+                blob.content_type = this.loader.toMimeType(&.{owned_pathname orelse ""}).value;
             }
 
             blob.size = @as(JSC.WebCore.Blob.SizeType, @truncate(buffer.bytes.len));
@@ -471,7 +429,7 @@ pub fn toBlob(
                     JSC.Node.PathOrFileDescriptor{
                         .path = JSC.Node.PathLike{ .string = bun.PathString.init(allocator.dupe(u8, copy.pathname) catch unreachable) },
                     },
-                this.loader.toMimeType(),
+                this.loader.toMimeType(&.{ this.dest_path, this.src_path.text }),
                 allocator,
             );
 
@@ -489,7 +447,7 @@ pub fn toBlob(
                 JSC.Node.PathOrFileDescriptor{
                     .path = JSC.Node.PathLike{ .string = bun.PathString.init(allocator.dupe(u8, this.src_path.text) catch unreachable) },
                 },
-                this.loader.toMimeType(),
+                this.loader.toMimeType(&.{ this.dest_path, this.src_path.text }),
                 allocator,
             );
 
@@ -505,10 +463,10 @@ pub fn toBlob(
         .buffer => |buffer| brk: {
             var blob = JSC.WebCore.Blob.init(@constCast(buffer.bytes), buffer.allocator, globalThis);
             if (blob.store) |store| {
-                store.mime_type = this.loader.toMimeType();
+                store.mime_type = this.loader.toMimeType(&.{ this.dest_path, this.src_path.text });
                 blob.content_type = store.mime_type.value;
             } else {
-                blob.content_type = this.loader.toMimeType().value;
+                blob.content_type = this.loader.toMimeType(&.{ this.dest_path, this.src_path.text }).value;
             }
 
             this.value = .{

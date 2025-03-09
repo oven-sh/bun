@@ -20,7 +20,7 @@ pub const Socket = opaque {
         debug("us_socket_write2({d}, {d}) = {d}", .{ first.len, second.len, rc });
         return rc;
     }
-    extern "C" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
+    extern "c" fn us_socket_write2(ssl: i32, *Socket, header: ?[*]const u8, len: usize, payload: ?[*]const u8, usize) i32;
 };
 pub const ConnectingSocket = opaque {};
 const debug = bun.Output.scoped(.uws, false);
@@ -35,7 +35,8 @@ pub const CloseCode = enum(i32) {
     failure = 1,
 };
 
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
+
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
         return BoringSSL.SSL;
@@ -116,15 +117,15 @@ pub const UpgradedDuplex = struct {
     const WrapperType = SSLWrapper(*UpgradedDuplex);
 
     wrapper: ?WrapperType,
-    origin: JSC.Strong = .{}, // any duplex
+    origin: JSC.Strong = .empty, // any duplex
+    global: ?*JSC.JSGlobalObject = null,
     ssl_error: CertError = .{},
     vm: *JSC.VirtualMachine,
     handlers: Handlers,
-
-    onDataCallback: JSC.Strong = .{},
-    onEndCallback: JSC.Strong = .{},
-    onWritableCallback: JSC.Strong = .{},
-    onCloseCallback: JSC.Strong = .{},
+    onDataCallback: JSC.Strong = .empty,
+    onEndCallback: JSC.Strong = .empty,
+    onWritableCallback: JSC.Strong = .empty,
+    onCloseCallback: JSC.Strong = .empty,
     event_loop_timer: EventLoopTimer = .{
         .next = .{},
         .tag = .UpgradedDuplex,
@@ -179,7 +180,7 @@ pub const UpgradedDuplex = struct {
             return;
         }
         if (this.origin.get()) |duplex| {
-            const globalThis = this.origin.globalThis.?;
+            const globalThis = this.global.?;
             const writeOrEnd = if (msg_more) duplex.getFunction(globalThis, "write") catch return orelse return else duplex.getFunction(globalThis, "end") catch return orelse return;
             if (data) |data_| {
                 const buffer = JSC.BinaryType.toJS(.Buffer, data_, globalThis);
@@ -336,7 +337,8 @@ pub const UpgradedDuplex = struct {
     ) UpgradedDuplex {
         return UpgradedDuplex{
             .vm = globalThis.bunVM(),
-            .origin = JSC.Strong.create(origin, globalThis),
+            .origin = .create(origin, globalThis),
+            .global = globalThis,
             .wrapper = null,
             .handlers = handlers,
         };
@@ -1769,7 +1771,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ///
         /// # Returns
         /// This function returns a slice of the buffer on success, or null on failure.
-        pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
+        pub fn localAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             switch (this.socket) {
                 .connected => |socket| {
                     var length: i32 = @intCast(buf.len);
@@ -1787,39 +1789,6 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 },
                 .pipe, .upgradedDuplex, .connecting, .detached => return null,
             }
-        }
-
-        /// Get the local address of a socket in text format.
-        ///
-        /// # Arguments
-        /// - `buf`: A buffer to store the text address data.
-        /// - `is_ipv6`: A pointer to a boolean representing whether the address is IPv6.
-        ///
-        /// # Returns
-        /// This function returns a slice of the buffer on success, or null on failure.
-        pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
-            const addr_v4_len = @sizeOf(std.meta.FieldType(std.posix.sockaddr.in, .addr));
-            const addr_v6_len = @sizeOf(std.meta.FieldType(std.posix.sockaddr.in6, .addr));
-
-            var sa_buf: [addr_v6_len + 1]u8 = undefined;
-            const binary = this.localAddressBinary(&sa_buf) orelse return null;
-            const addr_len: usize = binary.len;
-            sa_buf[addr_len] = 0;
-
-            var ret: ?[*:0]const u8 = null;
-            if (addr_len == addr_v4_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.posix.AF.INET, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
-                is_ipv6.* = false;
-            } else if (addr_len == addr_v6_len) {
-                ret = bun.c_ares.ares_inet_ntop(std.posix.AF.INET6, &sa_buf, buf.ptr, @as(u32, @intCast(buf.len)));
-                is_ipv6.* = true;
-            }
-
-            if (ret) |_| {
-                const length: usize = @intCast(bun.len(bun.cast([*:0]u8, buf)));
-                return buf[0..length];
-            }
-            return null;
         }
 
         pub fn connect(
@@ -2104,23 +2073,23 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
             };
 
-            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .Null)
+            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .null)
                 us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
-            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .Null)
+            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .null)
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
-            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .Null)
+            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
-            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .Null)
+            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
-            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .Null)
+            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null) {
+            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .null) {
                 us_socket_context_on_socket_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
                 us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error_connecting_socket);
             }
-            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .Null)
+            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
-            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
+            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .null)
                 us_socket_context_on_handshake(ssl_int, ctx, SocketHandler.on_handshake, null);
         }
 
@@ -2249,25 +2218,25 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
             };
 
-            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .Null)
+            if (comptime @hasDecl(Type, "onOpen") and @typeInfo(@TypeOf(Type.onOpen)) != .null)
                 us_socket_context_on_open(ssl_int, ctx, SocketHandler.on_open);
-            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .Null)
+            if (comptime @hasDecl(Type, "onClose") and @typeInfo(@TypeOf(Type.onClose)) != .null)
                 us_socket_context_on_close(ssl_int, ctx, SocketHandler.on_close);
-            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .Null)
+            if (comptime @hasDecl(Type, "onData") and @typeInfo(@TypeOf(Type.onData)) != .null)
                 us_socket_context_on_data(ssl_int, ctx, SocketHandler.on_data);
-            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .Null)
+            if (comptime @hasDecl(Type, "onWritable") and @typeInfo(@TypeOf(Type.onWritable)) != .null)
                 us_socket_context_on_writable(ssl_int, ctx, SocketHandler.on_writable);
-            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .Null)
+            if (comptime @hasDecl(Type, "onTimeout") and @typeInfo(@TypeOf(Type.onTimeout)) != .null)
                 us_socket_context_on_timeout(ssl_int, ctx, SocketHandler.on_timeout);
-            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .Null) {
+            if (comptime @hasDecl(Type, "onConnectError") and @typeInfo(@TypeOf(Type.onConnectError)) != .null) {
                 us_socket_context_on_socket_connect_error(ssl_int, ctx, SocketHandler.on_connect_error);
                 us_socket_context_on_connect_error(ssl_int, ctx, SocketHandler.on_connect_error_connecting_socket);
             }
-            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .Null)
+            if (comptime @hasDecl(Type, "onEnd") and @typeInfo(@TypeOf(Type.onEnd)) != .null)
                 us_socket_context_on_end(ssl_int, ctx, SocketHandler.on_end);
-            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .Null)
+            if (comptime @hasDecl(Type, "onHandshake") and @typeInfo(@TypeOf(Type.onHandshake)) != .null)
                 us_socket_context_on_handshake(ssl_int, ctx, SocketHandler.on_handshake, null);
-            if (comptime @hasDecl(Type, "onLongTimeout") and @typeInfo(@TypeOf(Type.onLongTimeout)) != .Null)
+            if (comptime @hasDecl(Type, "onLongTimeout") and @typeInfo(@TypeOf(Type.onLongTimeout)) != .null)
                 us_socket_context_on_long_timeout(ssl_int, ctx, SocketHandler.on_long_timeout);
         }
 
@@ -3039,7 +3008,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn onMessage(raw_ws: *RawWebSocket, message: [*c]const u8, length: usize, opcode: Opcode) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onMessage, .{
+                @call(bun.callmod_inline, Type.onMessage, .{
                     this,
                     ws,
                     if (length > 0) message[0..length] else "",
@@ -3079,7 +3048,7 @@ pub const WebSocketBehavior = extern struct {
             pub fn onClose(raw_ws: *RawWebSocket, code: i32, message: [*c]const u8, length: usize) callconv(.C) void {
                 const ws = @unionInit(AnyWebSocket, active_field_name, @as(*WebSocket, @ptrCast(raw_ws)));
                 const this = ws.as(Type).?;
-                @call(.always_inline, Type.onClose, .{
+                @call(bun.callmod_inline, Type.onClose, .{
                     this,
                     ws,
                     code,
@@ -3088,7 +3057,7 @@ pub const WebSocketBehavior = extern struct {
             }
 
             pub fn onUpgrade(ptr: *anyopaque, res: *uws_res, req: *Request, context: *uws_socket_context_t, id: usize) callconv(.C) void {
-                @call(.always_inline, Server.onWebSocketUpgrade, .{
+                @call(bun.callmod_inline, Server.onWebSocketUpgrade, .{
                     bun.cast(*Server, ptr),
                     @as(*NewApp(is_ssl).Response, @ptrCast(res)),
                     req,
@@ -3191,7 +3160,7 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
-    pub fn init(response: anytype) AnyResponse {
+    pub inline fn init(response: anytype) AnyResponse {
         return switch (@TypeOf(response)) {
             *NewApp(true).Response => .{ .SSL = response },
             *NewApp(false).Response => .{ .TCP = response },
@@ -3220,12 +3189,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn write(this: AnyResponse, data: []const u8) void {
-        return switch (this) {
-            .SSL => |resp| resp.write(data),
-            .TCP => |resp| resp.write(data),
-        };
-    }
+    pub const write = @compileError("this function is not provided to discourage repeatedly checking the response type. use `switch(...) { inline else => ... }` so that multiple calls");
 
     pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
         return switch (this) {
@@ -3292,7 +3256,7 @@ pub const AnyResponse = union(enum) {
         };
     }
 
-    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, opcional_data: UserDataType) void {
+    pub fn onAborted(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
                 handler(user_data, .{ .SSL = resp });
@@ -3302,8 +3266,8 @@ pub const AnyResponse = union(enum) {
             }
         };
         return switch (this) {
-            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, opcional_data),
-            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, opcional_data),
+            .SSL => |resp| resp.onAborted(UserDataType, wrapper.ssl_handler, optional_data),
+            .TCP => |resp| resp.onAborted(UserDataType, wrapper.tcp_handler, optional_data),
         };
     }
 
@@ -3357,7 +3321,8 @@ pub const AnyResponse = union(enum) {
 };
 pub fn NewApp(comptime ssl: bool) type {
     return opaque {
-        const ssl_flag = @as(i32, @intFromBool(ssl));
+        pub const is_ssl = ssl;
+        const ssl_flag: i32 = @intFromBool(ssl);
         const ThisApp = @This();
 
         pub fn close(this: *ThisApp) void {
@@ -3496,6 +3461,27 @@ pub fn NewApp(comptime ssl: bool) type {
             comptime handler: (fn (UserDataType, *Request, *Response) void),
         ) void {
             uws_app_trace(ssl_flag, @as(*uws_app_t, @ptrCast(app)), pattern, RouteHandler(UserDataType, handler).handle, if (UserDataType == void) null else user_data);
+        }
+        pub fn method(
+            app: *ThisApp,
+            method_: bun.http.Method,
+            pattern: [:0]const u8,
+            comptime UserDataType: type,
+            user_data: UserDataType,
+            comptime handler: (fn (UserDataType, *Request, *Response) void),
+        ) void {
+            switch (method_) {
+                .GET => app.get(pattern, UserDataType, user_data, handler),
+                .POST => app.post(pattern, UserDataType, user_data, handler),
+                .PUT => app.put(pattern, UserDataType, user_data, handler),
+                .DELETE => app.delete(pattern, UserDataType, user_data, handler),
+                .PATCH => app.patch(pattern, UserDataType, user_data, handler),
+                .OPTIONS => app.options(pattern, UserDataType, user_data, handler),
+                .HEAD => app.head(pattern, UserDataType, user_data, handler),
+                .CONNECT => app.connect(pattern, UserDataType, user_data, handler),
+                .TRACE => app.trace(pattern, UserDataType, user_data, handler),
+                else => @panic("TODO: implement other methods"),
+            }
         }
         pub fn any(
             app: *ThisApp,
@@ -4510,6 +4496,7 @@ pub const udp = struct {
             return us_udp_socket_bind(this, hostname, port);
         }
 
+        /// Get the bound port in host byte order
         pub fn boundPort(this: *This) c_int {
             return us_udp_socket_bound_port(this);
         }
@@ -4582,13 +4569,11 @@ pub const udp = struct {
     extern fn us_udp_socket_set_source_specific_membership(socket: ?*udp.Socket, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: c_int) c_int;
 
     pub const PacketBuffer = opaque {
-        const This = @This();
-
-        pub fn getPeer(this: *This, index: c_int) *std.posix.sockaddr.storage {
+        pub fn getPeer(this: *PacketBuffer, index: c_int) *std.posix.sockaddr.storage {
             return us_udp_packet_buffer_peer(this, index);
         }
 
-        pub fn getPayload(this: *This, index: c_int) []u8 {
+        pub fn getPayload(this: *PacketBuffer, index: c_int) []u8 {
             const payload = us_udp_packet_buffer_payload(this, index);
             const len = us_udp_packet_buffer_payload_length(this, index);
             return payload[0..@as(usize, @intCast(len))];
@@ -4608,3 +4593,81 @@ pub fn onThreadExit() void {
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
 
 pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;
+
+export fn BUN__warn__extra_ca_load_failed(filename: [*c]const u8, error_msg: [*c]const u8) void {
+    bun.Output.warn("ignoring extra certs from {s}, load failed: {s}", .{ filename, error_msg });
+}
+
+/// Mixin to read an entire request body into memory and run a callback.
+/// Consumers should make sure a reference count is held on the server,
+/// and is unreferenced after one of the two callbacks are called.
+///
+/// See DevServer.zig's ErrorReportRequest for an example.
+pub fn BodyReaderMixin(
+    Wrap: type,
+    field: []const u8,
+    // `body` is freed after this function returns.
+    onBody: fn (*Wrap, body: []const u8, resp: AnyResponse) anyerror!void,
+    // Called on error or request abort
+    onError: fn (*Wrap) void,
+) type {
+    return struct {
+        body: std.ArrayList(u8),
+
+        pub fn init(allocator: std.mem.Allocator) @This() {
+            return .{ .body = .init(allocator) };
+        }
+
+        /// Memory is freed after the callback returns, or automatically on failure.
+        pub fn readBody(ctx: *@This(), resp: anytype) void {
+            const Mixin = @This();
+            const Response = @TypeOf(resp);
+            const handlers = struct {
+                fn onDataGeneric(mixin: *Mixin, r: Response, chunk: []const u8, last: bool) void {
+                    const any = AnyResponse.init(r);
+                    onData(mixin, any, chunk, last) catch |e| switch (e) {
+                        error.OutOfMemory => return mixin.onOOM(any),
+                        else => return mixin.onInvalid(any),
+                    };
+                }
+                fn onAborted(mixin: *Mixin, _: Response) void {
+                    mixin.body.deinit();
+                    onError(@fieldParentPtr(field, mixin));
+                }
+            };
+            resp.onData(*@This(), handlers.onDataGeneric, ctx);
+            resp.onAborted(*@This(), handlers.onAborted, ctx);
+        }
+
+        fn onData(ctx: *@This(), resp: AnyResponse, chunk: []const u8, last: bool) !void {
+            if (last) {
+                var body = ctx.body; // stack copy so onBody can free everything
+                resp.clearAborted();
+                resp.clearOnData();
+                if (body.items.len > 0) {
+                    try body.appendSlice(chunk);
+                    try onBody(@fieldParentPtr(field, ctx), ctx.body.items, resp);
+                } else {
+                    try onBody(@fieldParentPtr(field, ctx), chunk, resp);
+                }
+                body.deinit();
+            } else {
+                try ctx.body.appendSlice(chunk);
+            }
+        }
+
+        fn onOOM(ctx: *@This(), r: AnyResponse) void {
+            r.writeStatus("500 Internal Server Error");
+            r.endWithoutBody(false);
+            ctx.body.deinit();
+            onError(@fieldParentPtr(field, ctx));
+        }
+
+        fn onInvalid(ctx: *@This(), r: AnyResponse) void {
+            r.writeStatus("400 Bad Request");
+            r.endWithoutBody(false);
+            ctx.body.deinit();
+            onError(@fieldParentPtr(field, ctx));
+        }
+    };
+}

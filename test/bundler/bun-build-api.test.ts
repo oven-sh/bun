@@ -232,6 +232,7 @@ describe("Bun.build", () => {
       entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
       outdir,
     });
+    console.log(await x.outputs[0].text());
     const [blob] = x.outputs;
     expect(blob).toBeTruthy();
     expect(blob.type).toBe("text/javascript;charset=utf-8");
@@ -611,4 +612,23 @@ describe("Bun.build", () => {
     const html = build.outputs.find(o => o.type === "text/html;charset=utf-8");
     expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
   });
+});
+
+test("onEnd Plugin does not crash", async () => {
+  expect(
+    (async () => {
+      await Bun.build({
+        entrypoints: ["./build.js"],
+        plugins: [
+          {
+            name: "plugin",
+            setup(build) {
+              // @ts-expect-error
+              build.onEnd();
+            },
+          },
+        ],
+      });
+    })(),
+  ).rejects.toThrow("On-end callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
 });

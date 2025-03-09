@@ -38,7 +38,7 @@ pub const access = bun.sys.access;
 
 // Note: `req = undefined; req.deinit()` has a saftey-check in a debug build
 
-pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, _perm: bun.Mode) Maybe(bun.FileDescriptor) {
+pub fn open(file_path: [:0]const u8, c_flags: i32, _perm: bun.Mode) Maybe(bun.FileDescriptor) {
     assertIsValidWindowsPath(u8, file_path);
 
     var req: uv.fs_t = uv.fs_t.uninitialized;

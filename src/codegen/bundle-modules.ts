@@ -1,13 +1,13 @@
 // This script is run when you change anything in src/js/*
 //
+// Documentation is in src/js/README.md
+//
 // Originally, the builtin bundler only supported function files, but then the module files were
 // added to this, which has made this entire setup extremely convoluted and a mess.
 //
 // One day, this entire setup should be rewritten, but also it would be cool if Bun natively
 // supported macros that aren't json value -> json value. Otherwise, I'd use a real JS parser/ast
 // library, instead of RegExp hacks.
-//
-// For explanation on this, please nag @paperclover to write documentation on how everything works.
 import fs from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { builtinModules } from "node:module";
@@ -82,16 +82,18 @@ for (let i = 0; i < moduleList.length; i++) {
   try {
     let input = fs.readFileSync(path.join(BASE, moduleList[i]), "utf8");
 
-    // NOTE: internal modules are parsed as functions. They must use ESM to export and require to import.
-    // TODO: Bother @paperdave and have him check for module.exports, and create/return a module object if detected.
     if (!/\bexport\s+(?:function|class|const|default|{)/.test(input)) {
       if (input.includes("module.exports")) {
-        throw new Error("Cannot use CommonJS module.exports in ESM modules. Use `export default { ... }` instead.");
+        throw new Error(
+          "Do not use CommonJS module.exports in ESM modules. Use `export default { ... }` instead. See src/js/README.md",
+        );
       } else {
-        throw new Error("Internal modules must have an `export default` statement.");
+        throw new Error("Internal modules must have at least one ESM export statement. See src/js/README.md");
       }
     }
 
+    // TODO: there is no reason this cannot be converted automatically.
+    // import { ... } from '...' -> `const { ... } = require('...')`
     const scannedImports = t.scanImports(input);
     for (const imp of scannedImports) {
       if (imp.kind === "import-statement") {
@@ -104,7 +106,9 @@ for (let i = 0; i < moduleList.length; i++) {
           isBuiltin = false;
         }
         if (isBuiltin) {
-          throw new Error(`Cannot use ESM import on builtin modules. Use require("${imp.path}") instead.`);
+          throw new Error(
+            `Cannot use ESM import statement within builtin modules. Use require("${imp.path}") instead. See src/js/README.md`,
+          );
         }
       }
     }

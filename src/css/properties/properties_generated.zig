@@ -17,6 +17,8 @@ const CustomProperty = css.css_properties.custom.CustomProperty;
 const Targets = css.targets.Targets;
 const Feature = css.prefixes.Feature;
 
+const ColorScheme = css.css_properties.ui.ColorScheme;
+
 const TransformList = css.css_properties.transform.TransformList;
 const TransformStyle = css.css_properties.transform.TransformStyle;
 const TransformBox = css.css_properties.transform.TransformBox;
@@ -501,6 +503,7 @@ pub const Property = union(PropertyIdTag) {
     @"mask-box-image-width": struct { Rect(BorderImageSideWidth), VendorPrefix },
     @"mask-box-image-outset": struct { Rect(LengthOrNumber), VendorPrefix },
     @"mask-box-image-repeat": struct { BorderImageRepeat, VendorPrefix },
+    @"color-scheme": ColorScheme,
     all: CSSWideKeyword,
     unparsed: UnparsedProperty,
     custom: CustomProperty,
@@ -4295,6 +4298,22 @@ pub const Property = union(PropertyIdTag) {
                 compile_error = compile_error ++ @typeName(BorderImageRepeat) ++ ": does not have a eql() function.\n";
             }
 
+            if (!@hasDecl(ColorScheme, "deepClone")) {
+                compile_error = compile_error ++ @typeName(ColorScheme) ++ ": does not have a deepClone() function.\n";
+            }
+
+            if (!@hasDecl(ColorScheme, "parse")) {
+                compile_error = compile_error ++ @typeName(ColorScheme) ++ ": does not have a parse() function.\n";
+            }
+
+            if (!@hasDecl(ColorScheme, "toCss")) {
+                compile_error = compile_error ++ @typeName(ColorScheme) ++ ": does not have a toCss() function.\n";
+            }
+
+            if (!@hasDecl(ColorScheme, "eql")) {
+                compile_error = compile_error ++ @typeName(ColorScheme) ++ ": does not have a eql() function.\n";
+            }
+
             const final_compile_error = compile_error;
             break :compile_error final_compile_error;
         };
@@ -5831,11 +5850,10 @@ pub const Property = union(PropertyIdTag) {
                 }
             },
             .composes => {
-                if (css.generic.parseWithOptions(Composes, input, options).asValue()) |c| {
-                    if (input.expectExhausted().isOk()) {
-                        return .{ .result = .{ .composes = c } };
-                    }
-                }
+                return switch (css.generic.parseWithOptions(Composes, input, options)) {
+                    .result => |c| return .{ .result = .{ .composes = c } },
+                    .err => |e| return .{ .err = e },
+                };
             },
             .@"mask-image" => |pre| {
                 if (css.generic.parseWithOptions(SmallList(Image, 1), input, options).asValue()) |c| {
@@ -6024,6 +6042,13 @@ pub const Property = union(PropertyIdTag) {
                 if (css.generic.parseWithOptions(BorderImageRepeat, input, options).asValue()) |c| {
                     if (input.expectExhausted().isOk()) {
                         return .{ .result = .{ .@"mask-box-image-repeat" = .{ c, pre } } };
+                    }
+                }
+            },
+            .@"color-scheme" => {
+                if (css.generic.parseWithOptions(ColorScheme, input, options).asValue()) |c| {
+                    if (input.expectExhausted().isOk()) {
+                        return .{ .result = .{ .@"color-scheme" = c } };
                     }
                 }
             },
@@ -6296,6 +6321,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*v| PropertyId{ .@"mask-box-image-width" = v[1] },
             .@"mask-box-image-outset" => |*v| PropertyId{ .@"mask-box-image-outset" = v[1] },
             .@"mask-box-image-repeat" => |*v| PropertyId{ .@"mask-box-image-repeat" = v[1] },
+            .@"color-scheme" => .@"color-scheme",
             .all => PropertyId.all,
             .unparsed => |unparsed| unparsed.property_id,
             .custom => |c| .{ .custom = c.name },
@@ -6549,6 +6575,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*v| .{ .@"mask-box-image-width" = .{ v[0].deepClone(allocator), v[1] } },
             .@"mask-box-image-outset" => |*v| .{ .@"mask-box-image-outset" = .{ v[0].deepClone(allocator), v[1] } },
             .@"mask-box-image-repeat" => |*v| .{ .@"mask-box-image-repeat" = .{ v[0].deepClone(allocator), v[1] } },
+            .@"color-scheme" => |*v| .{ .@"color-scheme" = v.deepClone(allocator) },
             .all => |*a| return .{ .all = a.deepClone(allocator) },
             .unparsed => |*u| return .{ .unparsed = u.deepClone(allocator) },
             .custom => |*c| return .{ .custom = c.deepClone(allocator) },
@@ -6812,6 +6839,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*x| .{ "mask-box-image-width", x.@"1" },
             .@"mask-box-image-outset" => |*x| .{ "mask-box-image-outset", x.@"1" },
             .@"mask-box-image-repeat" => |*x| .{ "mask-box-image-repeat", x.@"1" },
+            .@"color-scheme" => .{ "color-scheme", VendorPrefix{ .none = true } },
             .all => .{ "all", VendorPrefix{ .none = true } },
             .unparsed => |*unparsed| brk: {
                 var prefix = unparsed.property_id.prefix();
@@ -7072,6 +7100,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*value| value[0].toCss(W, dest),
             .@"mask-box-image-outset" => |*value| value[0].toCss(W, dest),
             .@"mask-box-image-repeat" => |*value| value[0].toCss(W, dest),
+            .@"color-scheme" => |*value| value.toCss(W, dest),
             .all => |*keyword| keyword.toCss(W, dest),
             .unparsed => |*unparsed| unparsed.value.toCss(W, dest, false),
             .custom => |*c| c.value.toCss(W, dest, c.name == .custom),
@@ -7402,6 +7431,7 @@ pub const Property = union(PropertyIdTag) {
             .@"mask-box-image-width" => |*v| css.generic.eql(Rect(BorderImageSideWidth), &v[0], &rhs.@"mask-box-image-width"[0]) and v[1].eq(rhs.@"mask-box-image-width"[1]),
             .@"mask-box-image-outset" => |*v| css.generic.eql(Rect(LengthOrNumber), &v[0], &rhs.@"mask-box-image-outset"[0]) and v[1].eq(rhs.@"mask-box-image-outset"[1]),
             .@"mask-box-image-repeat" => |*v| css.generic.eql(BorderImageRepeat, &v[0], &rhs.@"mask-box-image-repeat"[0]) and v[1].eq(rhs.@"mask-box-image-repeat"[1]),
+            .@"color-scheme" => |*v| css.generic.eql(ColorScheme, v, &rhs.@"color-scheme"),
             .unparsed => |*u| u.eql(&rhs.unparsed),
             .all => true,
             .custom => |*c| c.eql(&rhs.custom),
@@ -7654,6 +7684,7 @@ pub const PropertyId = union(PropertyIdTag) {
     @"mask-box-image-width": VendorPrefix,
     @"mask-box-image-outset": VendorPrefix,
     @"mask-box-image-repeat": VendorPrefix,
+    @"color-scheme",
     all,
     unparsed,
     custom: CustomPropertyName,
@@ -7914,12 +7945,13 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-width" => |p| p,
             .@"mask-box-image-outset" => |p| p,
             .@"mask-box-image-repeat" => |p| p,
+            .@"color-scheme" => VendorPrefix.empty(),
             .all, .custom, .unparsed => VendorPrefix.empty(),
         };
     }
 
     pub fn fromNameAndPrefix(name1: []const u8, pre: VendorPrefix) ?PropertyId {
-        const Enum = enum { @"background-color", @"background-image", @"background-position-x", @"background-position-y", @"background-position", @"background-size", @"background-repeat", @"background-attachment", @"background-clip", @"background-origin", background, @"box-shadow", opacity, color, display, visibility, width, height, @"min-width", @"min-height", @"max-width", @"max-height", @"block-size", @"inline-size", @"min-block-size", @"min-inline-size", @"max-block-size", @"max-inline-size", @"box-sizing", @"aspect-ratio", overflow, @"overflow-x", @"overflow-y", @"text-overflow", position, top, bottom, left, right, @"inset-block-start", @"inset-block-end", @"inset-inline-start", @"inset-inline-end", @"inset-block", @"inset-inline", inset, @"border-spacing", @"border-top-color", @"border-bottom-color", @"border-left-color", @"border-right-color", @"border-block-start-color", @"border-block-end-color", @"border-inline-start-color", @"border-inline-end-color", @"border-top-style", @"border-bottom-style", @"border-left-style", @"border-right-style", @"border-block-start-style", @"border-block-end-style", @"border-inline-start-style", @"border-inline-end-style", @"border-top-width", @"border-bottom-width", @"border-left-width", @"border-right-width", @"border-block-start-width", @"border-block-end-width", @"border-inline-start-width", @"border-inline-end-width", @"border-top-left-radius", @"border-top-right-radius", @"border-bottom-left-radius", @"border-bottom-right-radius", @"border-start-start-radius", @"border-start-end-radius", @"border-end-start-radius", @"border-end-end-radius", @"border-radius", @"border-image-source", @"border-image-outset", @"border-image-repeat", @"border-image-width", @"border-image-slice", @"border-image", @"border-color", @"border-style", @"border-width", @"border-block-color", @"border-block-style", @"border-block-width", @"border-inline-color", @"border-inline-style", @"border-inline-width", border, @"border-top", @"border-bottom", @"border-left", @"border-right", @"border-block", @"border-block-start", @"border-block-end", @"border-inline", @"border-inline-start", @"border-inline-end", outline, @"outline-color", @"outline-style", @"outline-width", @"flex-direction", @"flex-wrap", @"flex-flow", @"flex-grow", @"flex-shrink", @"flex-basis", flex, order, @"align-content", @"justify-content", @"place-content", @"align-self", @"justify-self", @"place-self", @"align-items", @"justify-items", @"place-items", @"row-gap", @"column-gap", gap, @"box-orient", @"box-direction", @"box-ordinal-group", @"box-align", @"box-flex", @"box-flex-group", @"box-pack", @"box-lines", @"flex-pack", @"flex-order", @"flex-align", @"flex-item-align", @"flex-line-pack", @"flex-positive", @"flex-negative", @"flex-preferred-size", @"margin-top", @"margin-bottom", @"margin-left", @"margin-right", @"margin-block-start", @"margin-block-end", @"margin-inline-start", @"margin-inline-end", @"margin-block", @"margin-inline", margin, @"padding-top", @"padding-bottom", @"padding-left", @"padding-right", @"padding-block-start", @"padding-block-end", @"padding-inline-start", @"padding-inline-end", @"padding-block", @"padding-inline", padding, @"scroll-margin-top", @"scroll-margin-bottom", @"scroll-margin-left", @"scroll-margin-right", @"scroll-margin-block-start", @"scroll-margin-block-end", @"scroll-margin-inline-start", @"scroll-margin-inline-end", @"scroll-margin-block", @"scroll-margin-inline", @"scroll-margin", @"scroll-padding-top", @"scroll-padding-bottom", @"scroll-padding-left", @"scroll-padding-right", @"scroll-padding-block-start", @"scroll-padding-block-end", @"scroll-padding-inline-start", @"scroll-padding-inline-end", @"scroll-padding-block", @"scroll-padding-inline", @"scroll-padding", @"font-weight", @"font-size", @"font-stretch", @"font-family", @"font-style", @"font-variant-caps", @"line-height", font, @"transition-property", @"transition-duration", @"transition-delay", @"transition-timing-function", transition, transform, @"transform-origin", @"transform-style", @"transform-box", @"backface-visibility", perspective, @"perspective-origin", translate, rotate, scale, @"text-decoration-color", @"text-emphasis-color", @"text-shadow", direction, composes, @"mask-image", @"mask-mode", @"mask-repeat", @"mask-position-x", @"mask-position-y", @"mask-position", @"mask-clip", @"mask-origin", @"mask-size", @"mask-composite", @"mask-type", mask, @"mask-border-source", @"mask-border-mode", @"mask-border-slice", @"mask-border-width", @"mask-border-outset", @"mask-border-repeat", @"mask-border", @"-webkit-mask-composite", @"mask-source-type", @"mask-box-image", @"mask-box-image-source", @"mask-box-image-slice", @"mask-box-image-width", @"mask-box-image-outset", @"mask-box-image-repeat" };
+        const Enum = enum { @"background-color", @"background-image", @"background-position-x", @"background-position-y", @"background-position", @"background-size", @"background-repeat", @"background-attachment", @"background-clip", @"background-origin", background, @"box-shadow", opacity, color, display, visibility, width, height, @"min-width", @"min-height", @"max-width", @"max-height", @"block-size", @"inline-size", @"min-block-size", @"min-inline-size", @"max-block-size", @"max-inline-size", @"box-sizing", @"aspect-ratio", overflow, @"overflow-x", @"overflow-y", @"text-overflow", position, top, bottom, left, right, @"inset-block-start", @"inset-block-end", @"inset-inline-start", @"inset-inline-end", @"inset-block", @"inset-inline", inset, @"border-spacing", @"border-top-color", @"border-bottom-color", @"border-left-color", @"border-right-color", @"border-block-start-color", @"border-block-end-color", @"border-inline-start-color", @"border-inline-end-color", @"border-top-style", @"border-bottom-style", @"border-left-style", @"border-right-style", @"border-block-start-style", @"border-block-end-style", @"border-inline-start-style", @"border-inline-end-style", @"border-top-width", @"border-bottom-width", @"border-left-width", @"border-right-width", @"border-block-start-width", @"border-block-end-width", @"border-inline-start-width", @"border-inline-end-width", @"border-top-left-radius", @"border-top-right-radius", @"border-bottom-left-radius", @"border-bottom-right-radius", @"border-start-start-radius", @"border-start-end-radius", @"border-end-start-radius", @"border-end-end-radius", @"border-radius", @"border-image-source", @"border-image-outset", @"border-image-repeat", @"border-image-width", @"border-image-slice", @"border-image", @"border-color", @"border-style", @"border-width", @"border-block-color", @"border-block-style", @"border-block-width", @"border-inline-color", @"border-inline-style", @"border-inline-width", border, @"border-top", @"border-bottom", @"border-left", @"border-right", @"border-block", @"border-block-start", @"border-block-end", @"border-inline", @"border-inline-start", @"border-inline-end", outline, @"outline-color", @"outline-style", @"outline-width", @"flex-direction", @"flex-wrap", @"flex-flow", @"flex-grow", @"flex-shrink", @"flex-basis", flex, order, @"align-content", @"justify-content", @"place-content", @"align-self", @"justify-self", @"place-self", @"align-items", @"justify-items", @"place-items", @"row-gap", @"column-gap", gap, @"box-orient", @"box-direction", @"box-ordinal-group", @"box-align", @"box-flex", @"box-flex-group", @"box-pack", @"box-lines", @"flex-pack", @"flex-order", @"flex-align", @"flex-item-align", @"flex-line-pack", @"flex-positive", @"flex-negative", @"flex-preferred-size", @"margin-top", @"margin-bottom", @"margin-left", @"margin-right", @"margin-block-start", @"margin-block-end", @"margin-inline-start", @"margin-inline-end", @"margin-block", @"margin-inline", margin, @"padding-top", @"padding-bottom", @"padding-left", @"padding-right", @"padding-block-start", @"padding-block-end", @"padding-inline-start", @"padding-inline-end", @"padding-block", @"padding-inline", padding, @"scroll-margin-top", @"scroll-margin-bottom", @"scroll-margin-left", @"scroll-margin-right", @"scroll-margin-block-start", @"scroll-margin-block-end", @"scroll-margin-inline-start", @"scroll-margin-inline-end", @"scroll-margin-block", @"scroll-margin-inline", @"scroll-margin", @"scroll-padding-top", @"scroll-padding-bottom", @"scroll-padding-left", @"scroll-padding-right", @"scroll-padding-block-start", @"scroll-padding-block-end", @"scroll-padding-inline-start", @"scroll-padding-inline-end", @"scroll-padding-block", @"scroll-padding-inline", @"scroll-padding", @"font-weight", @"font-size", @"font-stretch", @"font-family", @"font-style", @"font-variant-caps", @"line-height", font, @"transition-property", @"transition-duration", @"transition-delay", @"transition-timing-function", transition, transform, @"transform-origin", @"transform-style", @"transform-box", @"backface-visibility", perspective, @"perspective-origin", translate, rotate, scale, @"text-decoration-color", @"text-emphasis-color", @"text-shadow", direction, composes, @"mask-image", @"mask-mode", @"mask-repeat", @"mask-position-x", @"mask-position-y", @"mask-position", @"mask-clip", @"mask-origin", @"mask-size", @"mask-composite", @"mask-type", mask, @"mask-border-source", @"mask-border-mode", @"mask-border-slice", @"mask-border-width", @"mask-border-outset", @"mask-border-repeat", @"mask-border", @"-webkit-mask-composite", @"mask-source-type", @"mask-box-image", @"mask-box-image-source", @"mask-box-image-slice", @"mask-box-image-width", @"mask-box-image-outset", @"mask-box-image-repeat", @"color-scheme" };
         const Map = comptime bun.ComptimeEnumMap(Enum);
         if (Map.getASCIIICaseInsensitive(name1)) |prop| {
             switch (prop) {
@@ -8903,6 +8935,10 @@ pub const PropertyId = union(PropertyIdTag) {
                     const allowed_prefixes = VendorPrefix{ .none = true, .webkit = true };
                     if (allowed_prefixes.contains(pre)) return .{ .@"mask-box-image-repeat" = pre };
                 },
+                .@"color-scheme" => {
+                    const allowed_prefixes = VendorPrefix{ .none = true };
+                    if (allowed_prefixes.contains(pre)) return .@"color-scheme";
+                },
             }
         }
 
@@ -9156,6 +9192,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-width" => .{ .@"mask-box-image-width" = pre },
             .@"mask-box-image-outset" => .{ .@"mask-box-image-outset" = pre },
             .@"mask-box-image-repeat" => .{ .@"mask-box-image-repeat" = pre },
+            .@"color-scheme" => .@"color-scheme",
             else => this.*,
         };
     }
@@ -9537,6 +9574,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-repeat" => |*p| {
                 p.insert(pre);
             },
+            .@"color-scheme" => {},
             else => {},
         };
     }
@@ -9937,6 +9975,7 @@ pub const PropertyId = union(PropertyIdTag) {
             .@"mask-box-image-width" => {},
             .@"mask-box-image-outset" => {},
             .@"mask-box-image-repeat" => {},
+            .@"color-scheme" => {},
             else => {},
         }
     }
@@ -10187,6 +10226,7 @@ pub const PropertyIdTag = enum(u16) {
     @"mask-box-image-width",
     @"mask-box-image-outset",
     @"mask-box-image-repeat",
+    @"color-scheme",
     all,
     unparsed,
     custom,
@@ -10440,6 +10480,7 @@ pub const PropertyIdTag = enum(u16) {
             .@"mask-box-image-width" => true,
             .@"mask-box-image-outset" => true,
             .@"mask-box-image-repeat" => true,
+            .@"color-scheme" => false,
             .unparsed => false,
             .custom => false,
             .all => false,
@@ -10695,6 +10736,7 @@ pub const PropertyIdTag = enum(u16) {
             .@"mask-box-image-width" => Rect(BorderImageSideWidth),
             .@"mask-box-image-outset" => Rect(LengthOrNumber),
             .@"mask-box-image-repeat" => BorderImageRepeat,
+            .@"color-scheme" => ColorScheme,
             .all => CSSWideKeyword,
             .unparsed => UnparsedProperty,
             .custom => CustomProperty,

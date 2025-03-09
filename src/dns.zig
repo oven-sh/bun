@@ -3,9 +3,9 @@ const std = @import("std");
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 
-pub const AI_V4MAPPED: c_int = if (bun.Environment.isWindows) 2048 else bun.C.translated.AI_V4MAPPED;
-pub const AI_ADDRCONFIG: c_int = if (bun.Environment.isWindows) 1024 else bun.C.translated.AI_ADDRCONFIG;
-pub const AI_ALL: c_int = if (bun.Environment.isWindows) 256 else bun.C.translated.AI_ALL;
+pub const AI_V4MAPPED: c_int = if (bun.Environment.isWindows) 2048 else bun.c.AI_V4MAPPED;
+pub const AI_ADDRCONFIG: c_int = if (bun.Environment.isWindows) 1024 else bun.c.AI_ADDRCONFIG;
+pub const AI_ALL: c_int = if (bun.Environment.isWindows) 256 else bun.c.AI_ALL;
 
 pub const GetAddrInfo = struct {
     name: []const u8 = "",
@@ -27,7 +27,7 @@ pub const GetAddrInfo = struct {
         hints.ai_family = this.options.family.toLibC();
         hints.ai_socktype = this.options.socktype.toLibC();
         hints.ai_protocol = this.options.protocol.toLibC();
-        hints.ai_flags = this.options.flags;
+        hints.ai_flags = @bitCast(this.options.flags);
 
         return hints;
     }
@@ -54,10 +54,10 @@ pub const GetAddrInfo = struct {
         socktype: SocketType = .stream,
         protocol: Protocol = .unspecified,
         backend: Backend = Backend.default,
-        flags: i32 = 0,
+        flags: std.c.AI = .{},
 
         pub fn toLibC(this: Options) ?std.c.addrinfo {
-            if (this.family == .unspecified and this.socktype == .unspecified and this.protocol == .unspecified and this.flags == 0) {
+            if (this.family == .unspecified and this.socktype == .unspecified and this.protocol == .unspecified and this.flags == std.c.AI{}) {
                 return null;
             }
 
@@ -98,9 +98,9 @@ pub const GetAddrInfo = struct {
                     if (!flags.isNumber())
                         return error.InvalidFlags;
 
-                    options.flags = flags.coerce(i32, globalObject);
+                    options.flags = flags.coerce(std.c.AI, globalObject);
 
-                    if (options.flags & ~(AI_ALL | AI_ADDRCONFIG | AI_V4MAPPED) != 0)
+                    if (!options.flags.ALL and !options.flags.ADDRCONFIG and !options.flags.V4MAPPED)
                         return error.InvalidFlags;
                 }
 

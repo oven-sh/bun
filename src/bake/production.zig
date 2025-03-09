@@ -171,17 +171,17 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     try loader.map.put("NODE_ENV", "production");
     bun.DotEnv.instance = loader;
 
-    var client_bundler: bun.transpiler.Transpiler = undefined;
-    var server_bundler: bun.transpiler.Transpiler = undefined;
-    var ssr_bundler: bun.transpiler.Transpiler = undefined;
-    try framework.initBundler(allocator, vm.log, .production_static, .server, &server_bundler);
-    try framework.initBundler(allocator, vm.log, .production_static, .client, &client_bundler);
+    var client_transpiler: bun.transpiler.Transpiler = undefined;
+    var server_transpiler: bun.transpiler.Transpiler = undefined;
+    var ssr_transpiler: bun.transpiler.Transpiler = undefined;
+    try framework.initTranspiler(allocator, vm.log, .production_static, .server, &server_transpiler, &options.bundler_options.server);
+    try framework.initTranspiler(allocator, vm.log, .production_static, .client, &client_transpiler, &options.bundler_options.client);
     if (separate_ssr_graph) {
-        try framework.initBundler(allocator, vm.log, .production_static, .ssr, &ssr_bundler);
+        try framework.initTranspiler(allocator, vm.log, .production_static, .ssr, &ssr_transpiler, &options.bundler_options.ssr);
     }
 
     if (ctx.bundler_options.bake_debug_disable_minify) {
-        for ([_]*bun.transpiler.Transpiler{ &client_bundler, &server_bundler, &ssr_bundler }) |transpiler| {
+        for ([_]*bun.transpiler.Transpiler{ &client_transpiler, &server_transpiler, &ssr_transpiler }) |transpiler| {
             transpiler.options.minify_syntax = false;
             transpiler.options.minify_identifiers = false;
             transpiler.options.minify_whitespace = false;
@@ -192,14 +192,14 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     }
 
     // these share pointers right now, so setting NODE_ENV == production on one should affect all
-    bun.assert(server_bundler.env == client_bundler.env);
+    bun.assert(server_transpiler.env == client_transpiler.env);
 
-    framework.* = framework.resolve(&server_bundler.resolver, &client_bundler.resolver, allocator) catch {
+    framework.* = framework.resolve(&server_transpiler.resolver, &client_transpiler.resolver, allocator) catch {
         if (framework.is_built_in_react)
-            try bake.Framework.addReactInstallCommandNote(server_bundler.log);
+            try bake.Framework.addReactInstallCommandNote(server_transpiler.log);
         Output.errGeneric("Failed to resolve all imports required by the framework", .{});
         Output.flush();
-        server_bundler.log.print(Output.errorWriter()) catch {};
+        server_transpiler.log.print(Output.errorWriter()) catch {};
         bun.Global.crash();
     };
 
@@ -222,7 +222,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
 
     for (options.framework.file_system_router_types) |fsr| {
         const joined_root = bun.path.joinAbs(cwd, .auto, fsr.root);
-        const entry = server_bundler.resolver.readDirInfoIgnoreError(joined_root) orelse
+        const entry = server_transpiler.resolver.readDirInfoIgnoreError(joined_root) orelse
             continue;
         try router_types.append(allocator, .{
             .abs_root = bun.strings.withoutTrailingSlashWindowsPath(entry.abs_path),
@@ -237,24 +237,24 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 (try entry_points.getOrPutEntryPoint(client, .client)).toOptional()
             else
                 .none,
-            .server_file_string = .{},
+            .server_file_string = .empty,
         });
     }
 
     var router = try FrameworkRouter.initEmpty(cwd, router_types.items, allocator);
     try router.scanAll(
         allocator,
-        &server_bundler.resolver,
+        &server_transpiler.resolver,
         FrameworkRouter.InsertionContext.wrap(EntryPointMap, &entry_points),
     );
 
     const bundled_outputs_list = try bun.BundleV2.generateFromBakeProductionCLI(
         entry_points,
-        &server_bundler,
+        &server_transpiler,
         .{
             .framework = framework.*,
-            .client_bundler = &client_bundler,
-            .ssr_bundler = if (separate_ssr_graph) &ssr_bundler else &server_bundler,
+            .client_transpiler = &client_transpiler,
+            .ssr_transpiler = if (separate_ssr_graph) &ssr_transpiler else &server_transpiler,
             .plugins = options.bundler_options.plugin,
         },
         allocator,
@@ -286,7 +286,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             file.dest_path,
             file.entry_point_index,
         });
-        if (file.loader == .css) {
+        if (file.loader.isCSS()) {
             if (css_chunks_count == 0) css_chunks_first = i;
             css_chunks_count += 1;
         }
@@ -417,7 +417,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const css_chunk_js_strings = try allocator.alloc(JSValue, css_chunks_count);
     for (bundled_outputs[css_chunks_first..][0..css_chunks_count], css_chunk_js_strings) |output_file, *str| {
         bun.assert(output_file.dest_path[0] != '.');
-        bun.assert(output_file.loader == .css);
+        bun.assert(output_file.loader.isCSS());
         str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
 

@@ -38,7 +38,7 @@ const DirWatcher = struct {
 
     // invalidates any EventIterators
     fn prepare(this: *DirWatcher) bun.JSC.Maybe(void) {
-        const filter = w.FILE_NOTIFY_CHANGE_FILE_NAME | w.FILE_NOTIFY_CHANGE_DIR_NAME | w.FILE_NOTIFY_CHANGE_LAST_WRITE | w.FILE_NOTIFY_CHANGE_CREATION;
+        const filter: w.FileNotifyChangeFilter = .{ .file_name = true, .dir_name = true, .last_write = true, .creation = true };
         if (w.kernel32.ReadDirectoryChangesW(this.dirHandle, &this.buf, this.buf.len, 1, filter, null, &this.overlapped, null) == 0) {
             const err = w.kernel32.GetLastError();
             log("failed to start watching directory: {s}", .{@tagName(err)});
@@ -117,10 +117,10 @@ pub fn init(this: *WindowsWatcher, root: []const u8) !void {
         log("failed to open directory for watching: {s}", .{@tagName(err)});
         return Error.CreateFileFailed;
     }
-    errdefer _ = w.kernel32.CloseHandle(handle);
+    errdefer _ = bun.windows.CloseHandle(handle);
 
     this.iocp = try w.CreateIoCompletionPort(handle, null, 0, 1);
-    errdefer _ = w.kernel32.CloseHandle(this.iocp);
+    errdefer _ = bun.windows.CloseHandle(this.iocp);
 
     this.watcher = .{ .dirHandle = handle };
 
@@ -229,19 +229,14 @@ pub fn watchLoopCycle(this: *bun.Watcher) bun.JSC.Maybe(void) {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            for (item_paths, 0..) |path_, item_idx| {
-                var path = path_;
-                if (path.len > 0 and bun.strings.charIsAnySlash(path[path.len - 1])) {
-                    path = path[0 .. path.len - 1];
-                }
-                // log("checking path: {s}\n", .{path});
+            for (item_paths, 0..) |path, item_idx| {
                 // check if the current change applies to this item
                 // if so, add it to the eventlist
-                const rel = bun.path.isParentOrEqual(eventpath, path);
+                const rel = bun.path.isParentOrEqual(path, eventpath);
+                log("checking path: {s} = .{s}", .{ path, @tagName(rel) });
                 // skip unrelated items
                 if (rel == .unrelated) continue;
                 // if the event is for a parent dir of the item, only emit it if it's a delete or rename
-                if (rel == .parent and (event.action != .Removed or event.action != .RenamedOld)) continue;
                 this.watch_events[event_id] = createWatchEvent(event, @truncate(item_idx));
                 event_id += 1;
             }

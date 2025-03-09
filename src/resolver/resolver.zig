@@ -43,7 +43,7 @@ const Install = @import("../install/install.zig");
 const Lockfile = @import("../install/lockfile.zig").Lockfile;
 const Package = @import("../install/lockfile.zig").Package;
 const Resolution = @import("../install/resolution.zig").Resolution;
-const Semver = @import("../install/semver.zig");
+const Semver = bun.Semver;
 const DotEnv = @import("../env_loader.zig");
 
 pub fn isPackagePath(path: string) bool {
@@ -341,17 +341,17 @@ pub const DebugLogs = struct {
     }
 
     pub fn increaseIndent(d: *DebugLogs) void {
-        @setCold(true);
+        @branchHint(.cold);
         d.indent.append(" ") catch unreachable;
     }
 
     pub fn decreaseIndent(d: *DebugLogs) void {
-        @setCold(true);
+        @branchHint(.cold);
         d.indent.list.shrinkRetainingCapacity(d.indent.list.items.len - 1);
     }
 
     pub fn addNote(d: *DebugLogs, _text: string) void {
-        @setCold(true);
+        @branchHint(.cold);
         var text = _text;
         const len = d.indent.len();
         if (len > 0) {
@@ -366,7 +366,7 @@ pub const DebugLogs = struct {
     }
 
     pub fn addNoteFmt(d: *DebugLogs, comptime fmt: string, args: anytype) void {
-        @setCold(true);
+        @branchHint(.cold);
         return d.addNote(std.fmt.allocPrint(d.notes.allocator, fmt, args) catch unreachable);
     }
 };
@@ -1631,12 +1631,20 @@ pub const Resolver = struct {
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
-    pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source: []const u8, specifier: []const u8) bool {
+    pub fn bustDirCacheFromSpecifier(r: *ThisResolver, import_source_file: []const u8, specifier: []const u8) bool {
+        if (std.fs.path.isAbsolute(specifier)) {
+            const dir = bun.path.dirname(specifier, .auto);
+            const a = r.bustDirCache(dir);
+            const b = r.bustDirCache(specifier);
+            return a or b;
+        }
+
         if (!(bun.strings.startsWith(specifier, "./") or
             bun.strings.startsWith(specifier, "../"))) return false;
-        if (!std.fs.path.isAbsolute(import_source)) return false;
+        if (!std.fs.path.isAbsolute(import_source_file))
+            return false;
 
-        const joined = bun.path.joinAbs(import_source, .auto, specifier);
+        const joined = bun.path.joinAbs(bun.path.dirname(import_source_file, .auto), .auto, specifier);
         const dir = bun.path.dirname(joined, .auto);
 
         const a = r.bustDirCache(dir);
@@ -1846,7 +1854,7 @@ pub const Resolver = struct {
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
         const node_path: []const u8 = if (r.env_loader) |env_loader| env_loader.get("NODE_PATH") orelse "" else "";
         if (node_path.len > 0) {
-            var it = std.mem.tokenize(u8, node_path, if (Environment.isWindows) ";" else ":");
+            var it = std.mem.tokenizeScalar(u8, node_path, if (Environment.isWindows) ';' else ':');
             while (it.next()) |path| {
                 const abs_path = r.fs.absBuf(&[_]string{ path, import_path }, bufs(.node_modules_check));
                 if (r.debug_logs) |*debug| {
@@ -1869,7 +1877,7 @@ pub const Resolver = struct {
                 // check the global cache directory for a package.json file.
                 const manager = r.getPackageManager();
                 var dependency_version = Dependency.Version{};
-                var dependency_behavior = Dependency.Behavior.prod;
+                var dependency_behavior: Dependency.Behavior = .{ .prod = true };
                 var string_buf = esm.version;
 
                 // const initial_pending_tasks = manager.pending_tasks;
@@ -2559,7 +2567,6 @@ pub const Resolver = struct {
                 package_id,
                 .ignore_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         } else {
             pkg = PackageJSON.parse(
@@ -2569,7 +2576,6 @@ pub const Resolver = struct {
                 package_id,
                 .include_scripts,
                 if (allow_dependencies) .local else .none,
-                .generate_hash,
             ) orelse return null;
         }
 
@@ -3365,7 +3371,7 @@ pub const Resolver = struct {
 
     comptime {
         const Resolver__nodeModulePathsForJS = JSC.toJSHostFunction(Resolver__nodeModulePathsForJS_);
-        @export(Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
+        @export(&Resolver__nodeModulePathsForJS, .{ .name = "Resolver__nodeModulePathsForJS" });
     }
     pub fn Resolver__nodeModulePathsForJS_(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) bun.JSError!JSC.JSValue {
         bun.JSC.markBinding(@src());
@@ -3375,7 +3381,7 @@ pub const Resolver = struct {
             return globalThis.throwInvalidArgumentType("nodeModulePaths", "path", "string");
         }
 
-        const in_str = argument.toBunString(globalThis);
+        const in_str = try argument.toBunString(globalThis);
         defer in_str.deref();
         const r = &globalThis.bunVM().transpiler.resolver;
         return nodeModulePathsJSValue(r, in_str, globalThis);

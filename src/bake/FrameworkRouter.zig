@@ -133,7 +133,17 @@ pub fn initEmpty(root: []const u8, types: []Type, allocator: Allocator) !Framewo
 
 pub fn deinit(fr: *FrameworkRouter, allocator: Allocator) void {
     fr.routes.deinit(allocator);
+    fr.static_routes.deinit(allocator);
+    fr.dynamic_routes.deinit(allocator);
     allocator.free(fr.types);
+}
+
+pub fn memoryCost(fr: *FrameworkRouter) usize {
+    var cost: usize = @sizeOf(FrameworkRouter);
+    cost += fr.routes.capacity * @sizeOf(Route);
+    cost += StaticRouteMap.DataList.capacityInBytes(fr.static_routes.entries.capacity);
+    cost += DynamicRouteMap.DataList.capacityInBytes(fr.dynamic_routes.entries.capacity);
+    return cost;
 }
 
 pub fn scanAll(fr: *FrameworkRouter, allocator: Allocator, r: *Resolver, ctx: anytype) !void {
@@ -331,7 +341,7 @@ pub const Part = union(enum(u3)) {
     group: []const u8,
 
     const SerializedHeader = packed struct(u32) {
-        tag: @typeInfo(Part).Union.tag_type.?,
+        tag: @typeInfo(Part).@"union".tag_type.?,
         len: u29,
     };
 
@@ -413,7 +423,7 @@ pub const Style = union(enum) {
 
     pub fn fromJS(value: JSValue, global: *JSC.JSGlobalObject) !Style {
         if (value.isString()) {
-            const bun_string = try value.toBunString2(global);
+            const bun_string = try value.toBunString(global);
             var sfa = std.heap.stackFallback(4096, bun.default_allocator);
             const utf8 = bun_string.toUTF8(sfa.get());
             defer utf8.deinit();
@@ -691,7 +701,7 @@ pub fn insert(
                 .type = ty,
                 .parent = route_index.toOptional(),
                 .first_child = .none,
-                .prev_sibling = Route.Index.Optional.init(next),
+                .prev_sibling = .init(next),
                 .next_sibling = .none,
             });
 
@@ -709,7 +719,7 @@ pub fn insert(
                     .type = ty,
                     .parent = new_route_index.toOptional(),
                     .first_child = .none,
-                    .prev_sibling = Route.Index.Optional.init(next),
+                    .prev_sibling = .init(next),
                     .next_sibling = .none,
                 });
                 fr.routePtr(new_route_index).first_child = newer_route_index.toOptional();
@@ -1071,7 +1081,8 @@ fn scanInner(
 /// creation. A production-grade JS api would be able to re-use objects.
 pub const JSFrameworkRouter = struct {
     pub const codegen = JSC.Codegen.JSFrameworkFileSystemRouter;
-    pub usingnamespace codegen;
+    pub const toJS = codegen.toJS;
+    pub const fromJS = codegen.fromJS;
 
     files: std.ArrayListUnmanaged(bun.String),
     router: FrameworkRouter,
@@ -1155,7 +1166,7 @@ pub const JSFrameworkRouter = struct {
 
     pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const path_js = callframe.argumentsAsArray(1)[0];
-        const path_str = try path_js.toBunString2(global);
+        const path_str = try path_js.toBunString(global);
         defer path_str.deref();
         const path_slice = path_str.toSlice(bun.default_allocator);
         defer path_slice.deinit();

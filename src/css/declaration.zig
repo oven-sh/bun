@@ -27,6 +27,8 @@ const FlexHandler = css.css_properties.flex.FlexHandler;
 const AlignHandler = css.css_properties.@"align".AlignHandler;
 const TransitionHandler = css.css_properties.transition.TransitionHandler;
 const TransformHandler = css.css_properties.transform.TransformHandler;
+const ColorSchemeHandler = css.css_properties.ui.ColorSchemeHandler;
+const BoxShadowHandler = css.css_properties.box_shadow.BoxShadowHandler;
 // const GridHandler = css.css_properties.g
 
 /// A CSS declaration block.
@@ -54,7 +56,8 @@ pub const DeclarationBlock = struct {
             var arraylist = ArrayList(u8){};
             const w = arraylist.writer(bun.default_allocator);
             defer arraylist.deinit(bun.default_allocator);
-            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null);
+            var symbols = bun.JSAst.Symbol.Map{};
+            var printer = css.Printer(@TypeOf(w)).new(bun.default_allocator, std.ArrayList(u8).init(bun.default_allocator), w, css.PrinterOptions.default(), null, null, &symbols);
             defer printer.deinit();
             this.self.toCss(@TypeOf(w), &printer) catch |e| return try writer.print("<error writing declaration block: {s}>\n", .{@errorName(e)});
             try writer.writeAll(arraylist.items);
@@ -297,6 +300,17 @@ pub fn parse_declaration(
     important_declarations: *DeclarationList,
     options: *const css.ParserOptions,
 ) Result(void) {
+    return parse_declaration_impl(name, input, declarations, important_declarations, options, {});
+}
+
+pub fn parse_declaration_impl(
+    name: []const u8,
+    input: *css.Parser,
+    declarations: *DeclarationList,
+    important_declarations: *DeclarationList,
+    options: *const css.ParserOptions,
+    composes_ctx: anytype,
+) Result(void) {
     const property_id = css.PropertyId.fromStr(name);
     var delimiters = css.Delimiters{ .bang = true };
     if (property_id != .custom or property_id.custom != .custom) {
@@ -310,7 +324,8 @@ pub fn parse_declaration(
         .property_id = property_id,
         .options = options,
     };
-    const property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, struct {
+    const source_location = input.currentSourceLocation();
+    var property = switch (input.parseUntilBefore(delimiters, css.Property, &closure, struct {
         pub fn parseFn(this: *Closure, input2: *css.Parser) Result(css.Property) {
             return css.Property.parse(this.property_id, input2, this.options);
         }
@@ -325,6 +340,43 @@ pub fn parse_declaration(
         }
     }.parsefn, .{}).isOk();
     if (input.expectExhausted().asErr()) |e| return .{ .err = e };
+
+    if (comptime @TypeOf(composes_ctx) != void) {
+        if (input.flags.css_modules and property == .composes) {
+            switch (composes_ctx.composes_state) {
+                .disallow_entirely => {},
+                .allow => {
+                    composes_ctx.recordComposes(input.allocator(), &property.composes);
+                },
+                .disallow_nested => |info| {
+                    options.warnFmtWithNotes(
+                        "\"composes\" is not allowed inside nested selectors",
+                        .{},
+                        info.line,
+                        info.column,
+                        &[_]bun.logger.Data{},
+                    );
+                },
+                .disallow_not_single_class => |info| {
+                    options.warnFmtWithNotes(
+                        "\"composes\" only works inside single class selectors",
+                        .{},
+                        source_location.line,
+                        source_location.column,
+                        options.allocator.dupe(
+                            bun.logger.Data,
+                            &[_]bun.logger.Data{
+                                bun.logger.Data{
+                                    .text = options.allocator.dupe(u8, "The parent selector is not a single class selector because of the syntax here:") catch bun.outOfMemory(),
+                                    .location = info.toLoggerLocation(options.filename),
+                                },
+                            },
+                        ) catch bun.outOfMemory(),
+                    );
+                },
+            }
+        }
+    }
     if (important) {
         important_declarations.append(input.allocator(), property) catch bun.outOfMemory();
     } else {
@@ -347,6 +399,8 @@ pub const DeclarationHandler = struct {
     font: FontHandler = .{},
     inset: InsetHandler = .{},
     transform: TransformHandler = .{},
+    box_shadow: BoxShadowHandler = .{},
+    color_scheme: ColorSchemeHandler = .{},
     fallback: FallbackHandler = .{},
     direction: ?css.css_properties.text.Direction,
     decls: DeclarationList,
@@ -375,6 +429,8 @@ pub const DeclarationHandler = struct {
         this.font.finalize(&this.decls, context);
         this.inset.finalize(&this.decls, context);
         this.transform.finalize(&this.decls, context);
+        this.box_shadow.finalize(&this.decls, context);
+        this.color_scheme.finalize(&this.decls, context);
         this.fallback.finalize(&this.decls, context);
     }
 
@@ -392,6 +448,8 @@ pub const DeclarationHandler = struct {
             this.font.handleProperty(property, &this.decls, context) or
             this.inset.handleProperty(property, &this.decls, context) or
             this.transform.handleProperty(property, &this.decls, context) or
+            this.box_shadow.handleProperty(property, &this.decls, context) or
+            this.color_scheme.handleProperty(property, &this.decls, context) or
             this.fallback.handleProperty(property, &this.decls, context);
     }
 

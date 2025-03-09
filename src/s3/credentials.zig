@@ -21,9 +21,10 @@ pub const S3Credentials = struct {
     storage_class: ?StorageClass = null,
     /// Important for MinIO support.
     insecure_http: bool = false,
-
+    /// indicates if the endpoint is a virtual hosted style bucket
+    virtual_hosted_style: bool = false,
     ref_count: u32 = 1,
-    pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
 
     pub fn estimatedSize(this: *const @This()) usize {
         return @sizeOf(S3Credentials) + this.accessKeyId.len + this.region.len + this.secretAccessKey.len + this.endpoint.len + this.bucket.len;
@@ -113,7 +114,7 @@ pub const S3Credentials = struct {
                                 new_credentials._endpointSlice = str.toUTF8(bun.default_allocator);
                                 const endpoint = new_credentials._endpointSlice.?.slice();
                                 const url = bun.URL.parse(endpoint);
-                                const normalized_endpoint = url.host;
+                                const normalized_endpoint = url.hostWithPath();
                                 if (normalized_endpoint.len > 0) {
                                     new_credentials.credentials.endpoint = normalized_endpoint;
 
@@ -146,6 +147,11 @@ pub const S3Credentials = struct {
                             return globalObject.throwInvalidArgumentTypeValue("bucket", "string", js_value);
                         }
                     }
+                }
+
+                if (try opts.getBooleanStrict(globalObject, "virtualHostedStyle")) |virtual_hosted_style| {
+                    new_credentials.credentials.virtual_hosted_style = virtual_hosted_style;
+                    new_credentials.changed_credentials = true;
                 }
 
                 if (try opts.getTruthyComptime(globalObject, "sessionToken")) |js_value| {
@@ -242,6 +248,7 @@ pub const S3Credentials = struct {
                 "",
 
             .insecure_http = this.insecure_http,
+            .virtual_hosted_style = this.virtual_hosted_style,
         });
     }
     pub fn deinit(this: *@This()) void {
@@ -350,27 +357,27 @@ pub const S3Credentials = struct {
 
         pub fn deinit(this: *const @This()) void {
             if (this.amz_date.len > 0) {
-                bun.default_allocator.free(this.amz_date);
+                bun.freeSensitive(bun.default_allocator, this.amz_date);
             }
 
             if (this.session_token.len > 0) {
-                bun.default_allocator.free(this.session_token);
+                bun.freeSensitive(bun.default_allocator, this.session_token);
             }
 
             if (this.content_disposition.len > 0) {
-                bun.default_allocator.free(this.content_disposition);
+                bun.freeSensitive(bun.default_allocator, this.content_disposition);
             }
 
             if (this.host.len > 0) {
-                bun.default_allocator.free(this.host);
+                bun.freeSensitive(bun.default_allocator, this.host);
             }
 
             if (this.authorization.len > 0) {
-                bun.default_allocator.free(this.authorization);
+                bun.freeSensitive(bun.default_allocator, this.authorization);
             }
 
             if (this.url.len > 0) {
-                bun.default_allocator.free(this.url);
+                bun.freeSensitive(bun.default_allocator, this.url);
             }
         }
     };
@@ -387,7 +394,33 @@ pub const S3Credentials = struct {
         acl: ?ACL = null,
         storage_class: ?StorageClass = null,
     };
-
+    /// This is not used for signing but for console.log output, is just nice to have
+    pub fn guessBucket(endpoint: []const u8) ?[]const u8 {
+        // check if is amazonaws.com
+        if (strings.indexOf(endpoint, ".amazonaws.com")) |_| {
+            // check if is .s3. virtual host style
+            if (strings.indexOf(endpoint, ".s3.")) |end| {
+                // its https://bucket-name.s3.region-code.amazonaws.com/key-name
+                const start = strings.indexOf(endpoint, "/") orelse {
+                    return endpoint[0..end];
+                };
+                return endpoint[start + 1 .. end];
+            }
+        } else if (strings.indexOf(endpoint, ".r2.cloudflarestorage.com")) |r2_start| {
+            // check if is <BUCKET>.<ACCOUNT_ID>.r2.cloudflarestorage.com
+            const end = strings.indexOf(endpoint, ".") orelse return null; // actually unreachable
+            if (end > 0 and r2_start == end) {
+                // its https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+                return null;
+            }
+            // ok its virtual host style
+            const start = strings.indexOf(endpoint, "/") orelse {
+                return endpoint[0..end];
+            };
+            return endpoint[start + 1 .. end];
+        }
+        return null;
+    }
     pub fn guessRegion(endpoint: []const u8) []const u8 {
         if (endpoint.len > 0) {
             if (strings.endsWith(endpoint, ".r2.cloudflarestorage.com")) return "auto";
@@ -485,24 +518,24 @@ pub const S3Credentials = struct {
         var path: []const u8 = full_path;
         var bucket: []const u8 = this.bucket;
 
-        if (bucket.len == 0) {
-            //TODO: r2 supports bucket in the endpoint
-
-            // guess bucket using path
-            if (strings.indexOf(full_path, "/")) |end| {
-                if (strings.indexOf(full_path, "\\")) |backslash_index| {
-                    if (backslash_index < end) {
-                        bucket = full_path[0..backslash_index];
-                        path = full_path[backslash_index + 1 ..];
+        if (!this.virtual_hosted_style) {
+            if (bucket.len == 0) {
+                // guess bucket using path
+                if (strings.indexOf(full_path, "/")) |end| {
+                    if (strings.indexOf(full_path, "\\")) |backslash_index| {
+                        if (backslash_index < end) {
+                            bucket = full_path[0..backslash_index];
+                            path = full_path[backslash_index + 1 ..];
+                        }
                     }
+                    bucket = full_path[0..end];
+                    path = full_path[end + 1 ..];
+                } else if (strings.indexOf(full_path, "\\")) |backslash_index| {
+                    bucket = full_path[0..backslash_index];
+                    path = full_path[backslash_index + 1 ..];
+                } else {
+                    return error.InvalidPath;
                 }
-                bucket = full_path[0..end];
-                path = full_path[end + 1 ..];
-            } else if (strings.indexOf(full_path, "\\")) |backslash_index| {
-                bucket = full_path[0..backslash_index];
-                path = full_path[backslash_index + 1 ..];
-            } else {
-                return error.InvalidPath;
             }
         }
         if (strings.endsWith(path, "/")) {
@@ -524,7 +557,44 @@ pub const S3Credentials = struct {
         var bucket_buffer: [63]u8 = undefined;
         bucket = encodeURIComponent(bucket, &bucket_buffer, false) catch return error.InvalidPath;
         path = encodeURIComponent(path, &path_buffer, false) catch return error.InvalidPath;
-        const normalizedPath = std.fmt.bufPrint(&normalized_path_buffer, "/{s}/{s}", .{ bucket, path }) catch return error.InvalidPath;
+        // Default to https. Only use http if they explicit pass "http://" as the endpoint.
+        const protocol = if (this.insecure_http) "http" else "https";
+
+        // detect service name and host from region or endpoint
+        var endpoint = this.endpoint;
+        var extra_path: []const u8 = "";
+        const host = brk_host: {
+            if (this.endpoint.len > 0) {
+                if (this.endpoint.len >= 2048) return error.InvalidEndpoint;
+                var host = this.endpoint;
+                if (bun.strings.indexOf(this.endpoint, "/")) |index| {
+                    host = this.endpoint[0..index];
+                    extra_path = this.endpoint[index..];
+                }
+                // only the host part is needed here
+                break :brk_host try bun.default_allocator.dupe(u8, host);
+            } else {
+                if (this.virtual_hosted_style) {
+                    // virtual hosted style requires a bucket name if an endpoint is not provided
+                    if (bucket.len == 0) {
+                        return error.InvalidEndpoint;
+                    }
+                    // default to https://<BUCKET_NAME>.s3.<REGION>.amazonaws.com/
+                    endpoint = try std.fmt.allocPrint(bun.default_allocator, "{s}.s3.{s}.amazonaws.com", .{ bucket, region });
+                    break :brk_host endpoint;
+                }
+                endpoint = try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
+                break :brk_host endpoint;
+            }
+        };
+        errdefer bun.default_allocator.free(host);
+        const normalizedPath = brk: {
+            if (this.virtual_hosted_style) {
+                break :brk std.fmt.bufPrint(&normalized_path_buffer, "{s}/{s}", .{ extra_path, path }) catch return error.InvalidPath;
+            } else {
+                break :brk std.fmt.bufPrint(&normalized_path_buffer, "{s}/{s}/{s}", .{ extra_path, bucket, path }) catch return error.InvalidPath;
+            }
+        };
 
         const date_result = getAMZDate(bun.default_allocator);
         const amz_date = date_result.date;
@@ -595,29 +665,15 @@ pub const S3Credentials = struct {
             }
         };
 
-        // Default to https. Only use http if they explicit pass "http://" as the endpoint.
-        const protocol = if (this.insecure_http) "http" else "https";
-
-        // detect service name and host from region or endpoint
-        const host = brk_host: {
-            if (this.endpoint.len > 0) {
-                if (this.endpoint.len >= 512) return error.InvalidEndpoint;
-                break :brk_host try bun.default_allocator.dupe(u8, this.endpoint);
-            } else {
-                break :brk_host try std.fmt.allocPrint(bun.default_allocator, "s3.{s}.amazonaws.com", .{region});
-            }
-        };
         const service_name = "s3";
-
-        errdefer bun.default_allocator.free(host);
 
         const aws_content_hash = if (content_hash) |hash| hash else ("UNSIGNED-PAYLOAD");
         var tmp_buffer: [4096]u8 = undefined;
 
         const authorization = brk: {
             // we hash the hash so we need 2 buffers
-            var hmac_sig_service: [bun.BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
-            var hmac_sig_service2: [bun.BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
+            var hmac_sig_service: [bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8 = undefined;
+            var hmac_sig_service2: [bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8 = undefined;
 
             const sigDateRegionServiceReq = brk_sign: {
                 const key = try std.fmt.bufPrint(&tmp_buffer, "{s}{s}{s}", .{ region, service_name, this.secretAccessKey });
@@ -674,7 +730,7 @@ pub const S3Credentials = struct {
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
-                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
+                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, std.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
 
@@ -684,13 +740,13 @@ pub const S3Credentials = struct {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         } else {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Acl={s}&x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, acl_value, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         }
                     } else {
@@ -698,13 +754,13 @@ pub const S3Credentials = struct {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         } else {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?x-amz-storage-class={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, storage_class_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         }
                     }
@@ -714,13 +770,13 @@ pub const S3Credentials = struct {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         } else {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Acl={s}&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, acl_value, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         }
                     } else {
@@ -728,13 +784,13 @@ pub const S3Credentials = struct {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-Security-Token={s}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, token, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         } else {
                             break :brk try std.fmt.allocPrint(
                                 bun.default_allocator,
                                 "{s}://{s}{s}?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={s}%2F{s}%2F{s}%2F{s}%2Faws4_request&X-Amz-Date={s}&X-Amz-Expires={}&X-Amz-SignedHeaders=host&X-Amz-Signature={s}",
-                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                                .{ protocol, host, normalizedPath, this.accessKeyId, amz_day, region, service_name, amz_date, expires, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                             );
                         }
                     }
@@ -808,14 +864,14 @@ pub const S3Credentials = struct {
                 var sha_digest = std.mem.zeroes(bun.sha.SHA256.Digest);
                 bun.sha.SHA256.hash(canonical, &sha_digest, JSC.VirtualMachine.get().rareData().boringEngine());
 
-                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, bun.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
+                const signValue = try std.fmt.bufPrint(&tmp_buffer, "AWS4-HMAC-SHA256\n{s}\n{s}/{s}/{s}/aws4_request\n{s}", .{ amz_date, amz_day, region, service_name, std.fmt.bytesToHex(sha_digest[0..bun.sha.SHA256.digest], .lower) });
 
                 const signature = bun.hmac.generate(sigDateRegionServiceReq, signValue, .sha256, &hmac_sig_service) orelse return error.FailedToGenerateSignature;
 
                 break :brk try std.fmt.allocPrint(
                     bun.default_allocator,
                     "AWS4-HMAC-SHA256 Credential={s}/{s}/{s}/{s}/aws4_request, SignedHeaders={s}, Signature={s}",
-                    .{ this.accessKeyId, amz_day, region, service_name, signed_headers, bun.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
+                    .{ this.accessKeyId, amz_day, region, service_name, signed_headers, std.fmt.bytesToHex(signature[0..DIGESTED_HMAC_256_LEN], .lower) },
                 );
             }
         };
@@ -890,7 +946,8 @@ pub const S3CredentialsWithOptions = struct {
     storage_class: ?StorageClass = null,
     /// indicates if the credentials have changed
     changed_credentials: bool = false,
-
+    /// indicates if the virtual hosted style is used
+    virtual_hosted_style: bool = false,
     _accessKeyIdSlice: ?JSC.ZigString.Slice = null,
     _secretAccessKeySlice: ?JSC.ZigString.Slice = null,
     _regionSlice: ?JSC.ZigString.Slice = null,

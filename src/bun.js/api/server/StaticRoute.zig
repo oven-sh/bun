@@ -1,16 +1,51 @@
-const std = @import("std");
+//! StaticRoute stores and serves a static blob. This can be created out of a JS
+//! Response object, or from globally allocated bytes.
+const StaticRoute = @This();
 
+// TODO: Remove optional. StaticRoute requires a server object or else it will
+// not ensure it is alive while sending a large blob.
 server: ?AnyServer = null,
 status_code: u16,
 blob: AnyBlob,
-cached_blob_size: u64 = 0,
+cached_blob_size: u64,
 has_content_disposition: bool = false,
 headers: Headers = .{
     .allocator = bun.default_allocator,
 },
 ref_count: u32 = 1,
 
-pub usingnamespace bun.NewRefCounted(@This(), deinit);
+pub usingnamespace bun.NewRefCounted(@This(), deinit, null);
+
+pub const InitFromBytesOptions = struct {
+    server: ?AnyServer,
+    mime_type: ?*const bun.http.MimeType = null,
+    status_code: u16 = 200,
+};
+
+/// Ownership of `blob` is transferred to this function.
+pub fn initFromAnyBlob(blob: *const AnyBlob, options: InitFromBytesOptions) *StaticRoute {
+    var headers = Headers.from(null, bun.default_allocator, .{ .body = blob }) catch bun.outOfMemory();
+    if (options.mime_type) |mime_type| {
+        if (headers.getContentType() == null) {
+            headers.append("Content-Type", mime_type.value) catch bun.outOfMemory();
+        }
+    }
+    return StaticRoute.new(.{
+        .blob = blob.*,
+        .cached_blob_size = blob.size(),
+        .has_content_disposition = false,
+        .headers = headers,
+        .server = options.server,
+        .status_code = options.status_code,
+    });
+}
+
+/// Create a static route to be used on a single response, freeing the bytes once sent.
+pub fn sendBlobThenDeinit(resp: AnyResponse, blob: *const AnyBlob, options: InitFromBytesOptions) void {
+    const temp_route = StaticRoute.initFromAnyBlob(blob, options);
+    defer temp_route.deref();
+    temp_route.on(resp);
+}
 
 fn deinit(this: *StaticRoute) void {
     this.blob.detach();
@@ -44,17 +79,14 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         // Let's let them do that.
         response.body.value.toBlobIfPossible();
 
-        var blob: AnyBlob = brk: {
+        const blob: AnyBlob = brk: {
             switch (response.body.value) {
                 .Used => {
                     return globalThis.throwInvalidArguments("Response body has already been used", .{});
                 },
 
-                else => {
-                    return globalThis.throwInvalidArguments("Body must be fully buffered before it can be used in a static route. Consider calling new Response(await response.blob()) to buffer the body.", .{});
-                },
                 .Null, .Empty => {
-                    break :brk AnyBlob{
+                    break :brk .{
                         .InternalBlob = JSC.WebCore.InternalBlob{
                             .bytes = std.ArrayList(u8).init(bun.default_allocator),
                         },
@@ -71,6 +103,10 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
                     response.body.value = .{ .Blob = blob.dupe() };
 
                     break :brk .{ .Blob = blob };
+                },
+
+                else => {
+                    return globalThis.throwInvalidArguments("Body must be fully buffered before it can be used in a static route. Consider calling new Response(await response.blob()) to buffer the body.", .{});
                 },
             }
         };
@@ -107,7 +143,7 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
     }
 
     return globalThis.throwInvalidArguments(
-        \\'static' expects a Record<string, Response | HTMLBundle>
+        \\'routes' expects a Record<string, Response | HTMLBundle | {[method: string]: (req: BunRequest) => Response|Promise<Response>}>
         \\
         \\To bundle frontend apps on-demand with Bun.serve(), import HTML files.
         \\
@@ -118,9 +154,21 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
         \\import app from "./app.html";
         \\
         \\serve({
-        \\  static: {
+        \\  routes: {
         \\    "/index.json": Response.json({ message: "Hello World" }),
         \\    "/app": app,
+        \\    "/path/:param": (req) => {
+        \\      const param = req.params.param;
+        \\      return Response.json({ message: `Hello ${param}` });
+        \\    },
+        \\    "/path": {
+        \\      GET(req) {
+        \\        return Response.json({ message: "Hello World" });
+        \\      },
+        \\      POST(req) {
+        \\        return Response.json({ message: "Hello World" });
+        \\      },
+        \\    },
         \\  },
         \\
         \\  fetch(request) {
@@ -136,12 +184,13 @@ pub fn fromJS(globalThis: *JSC.JSGlobalObject, argument: JSC.JSValue) bun.JSErro
 }
 
 // HEAD requests have no body.
-pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: HTTPResponse) void {
+pub fn onHEADRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
     req.setYield(false);
     this.onHEAD(resp);
 }
 
-pub fn onHEAD(this: *StaticRoute, resp: HTTPResponse) void {
+pub fn onHEAD(this: *StaticRoute, resp: AnyResponse) void {
+    bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();
@@ -151,18 +200,19 @@ pub fn onHEAD(this: *StaticRoute, resp: HTTPResponse) void {
     this.onResponseComplete(resp);
 }
 
-fn renderMetadataAndEnd(this: *StaticRoute, resp: HTTPResponse) void {
+fn renderMetadataAndEnd(this: *StaticRoute, resp: AnyResponse) void {
     this.renderMetadata(resp);
     resp.writeHeaderInt("Content-Length", this.cached_blob_size);
     resp.endWithoutBody(resp.shouldCloseConnection());
 }
 
-pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: HTTPResponse) void {
+pub fn onRequest(this: *StaticRoute, req: *uws.Request, resp: AnyResponse) void {
     req.setYield(false);
     this.on(resp);
 }
 
-pub fn on(this: *StaticRoute, resp: HTTPResponse) void {
+pub fn on(this: *StaticRoute, resp: AnyResponse) void {
+    bun.debugAssert(this.server != null);
     this.ref();
     if (this.server) |server| {
         server.onPendingRequest();
@@ -178,28 +228,26 @@ pub fn on(this: *StaticRoute, resp: HTTPResponse) void {
     this.toAsync(resp);
 }
 
-fn toAsync(this: *StaticRoute, resp: HTTPResponse) void {
+fn toAsync(this: *StaticRoute, resp: AnyResponse) void {
     resp.onAborted(*StaticRoute, onAborted, this);
-    resp.onWritable(*StaticRoute, onWritableBytes, this);
+    resp.onWritable(*StaticRoute, onWritable, this);
 }
 
-fn onAborted(this: *StaticRoute, resp: HTTPResponse) void {
+fn onAborted(this: *StaticRoute, resp: AnyResponse) void {
     this.onResponseComplete(resp);
 }
 
-fn onResponseComplete(this: *StaticRoute, resp: HTTPResponse) void {
+fn onResponseComplete(this: *StaticRoute, resp: AnyResponse) void {
     resp.clearAborted();
     resp.clearOnWritable();
     resp.clearTimeout();
-
     if (this.server) |server| {
         server.onStaticRequestComplete();
     }
-
     this.deref();
 }
 
-pub fn doRenderBlob(this: *StaticRoute, resp: HTTPResponse, did_finish: *bool) void {
+pub fn doRenderBlob(this: *StaticRoute, resp: AnyResponse, did_finish: *bool) void {
     // We are not corked
     // The body is small
     // Faster to do the memcpy than to do the two network calls
@@ -212,49 +260,41 @@ pub fn doRenderBlob(this: *StaticRoute, resp: HTTPResponse, did_finish: *bool) v
     }
 }
 
-pub fn doRenderBlobCorked(this: *StaticRoute, resp: HTTPResponse, did_finish: *bool) void {
+pub fn doRenderBlobCorked(this: *StaticRoute, resp: AnyResponse, did_finish: *bool) void {
     this.renderMetadata(resp);
     this.renderBytes(resp, did_finish);
 }
 
-fn onWritable(this: *StaticRoute, write_offset: u64, resp: HTTPResponse) void {
+fn onWritable(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
     if (this.server) |server| {
         resp.timeout(server.config().idleTimeout);
     }
 
     if (!this.onWritableBytes(write_offset, resp)) {
-        this.toAsync(resp);
-        return;
-    }
-
-    this.onResponseComplete(resp);
-}
-
-fn onWritableBytes(this: *StaticRoute, write_offset: u64, resp: HTTPResponse) bool {
-    const blob = this.blob;
-    const all_bytes = blob.slice();
-
-    const bytes = all_bytes[@min(all_bytes.len, @as(usize, @truncate(write_offset)))..];
-
-    if (!resp.tryEnd(
-        bytes,
-        all_bytes.len,
-        resp.shouldCloseConnection(),
-    )) {
         return false;
     }
 
+    this.onResponseComplete(resp);
     return true;
 }
 
-fn doWriteStatus(_: *StaticRoute, status: u16, resp: HTTPResponse) void {
+fn onWritableBytes(this: *StaticRoute, write_offset: u64, resp: AnyResponse) bool {
+    const blob = this.blob;
+    const all_bytes = blob.slice();
+
+    const bytes = all_bytes[@min(all_bytes.len, write_offset)..];
+
+    return resp.tryEnd(bytes, all_bytes.len, resp.shouldCloseConnection());
+}
+
+fn doWriteStatus(_: *StaticRoute, status: u16, resp: AnyResponse) void {
     switch (resp) {
         .SSL => |r| writeStatus(true, r, status),
         .TCP => |r| writeStatus(false, r, status),
     }
 }
 
-fn doWriteHeaders(this: *StaticRoute, resp: HTTPResponse) void {
+fn doWriteHeaders(this: *StaticRoute, resp: AnyResponse) void {
     switch (resp) {
         inline .SSL, .TCP => |s| {
             const entries = this.headers.entries.slice();
@@ -269,11 +309,11 @@ fn doWriteHeaders(this: *StaticRoute, resp: HTTPResponse) void {
     }
 }
 
-fn renderBytes(this: *StaticRoute, resp: HTTPResponse, did_finish: *bool) void {
+fn renderBytes(this: *StaticRoute, resp: AnyResponse, did_finish: *bool) void {
     did_finish.* = this.onWritableBytes(0, resp);
 }
 
-fn renderMetadata(this: *StaticRoute, resp: HTTPResponse) void {
+fn renderMetadata(this: *StaticRoute, resp: AnyResponse) void {
     var status = this.status_code;
     const size = this.cached_blob_size;
 
@@ -286,8 +326,18 @@ fn renderMetadata(this: *StaticRoute, resp: HTTPResponse) void {
     this.doWriteHeaders(resp);
 }
 
-const StaticRoute = @This();
+pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyResponse) void {
+    switch (method) {
+        .GET => this.on(resp),
+        .HEAD => this.onHEAD(resp),
+        else => {
+            this.doWriteStatus(405, resp); // Method not allowed
+            resp.endWithoutBody(resp.shouldCloseConnection());
+        },
+    }
+}
 
+const std = @import("std");
 const bun = @import("root").bun;
 
 const Api = @import("../../../api/schema.zig").Api;
@@ -297,4 +347,4 @@ const Headers = JSC.WebCore.Headers;
 const AnyServer = JSC.API.AnyServer;
 const AnyBlob = JSC.WebCore.AnyBlob;
 const writeStatus = @import("../server.zig").writeStatus;
-const HTTPResponse = uws.AnyResponse;
+const AnyResponse = uws.AnyResponse;

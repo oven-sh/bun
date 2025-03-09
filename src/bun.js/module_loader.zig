@@ -18,7 +18,7 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
@@ -39,12 +39,6 @@ const ImportRecord = ast.ImportRecord;
 const DotEnv = @import("../env_loader.zig");
 const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
-const WebCore = bun.JSC.WebCore;
-const Request = WebCore.Request;
-const Response = WebCore.Response;
-const Headers = WebCore.Headers;
-const Fetch = WebCore.Fetch;
-const FetchEvent = WebCore.FetchEvent;
 const js = bun.JSC.C;
 const JSC = bun.JSC;
 const JSError = @import("./base.zig").JSError;
@@ -58,13 +52,10 @@ const JSGlobalObject = bun.JSC.JSGlobalObject;
 const ExceptionValueRef = bun.JSC.ExceptionValueRef;
 const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
-const Node = bun.JSC.Node;
 const ZigException = bun.JSC.ZigException;
 const ZigStackTrace = bun.JSC.ZigStackTrace;
-const ErrorableResolvedSource = bun.JSC.ErrorableResolvedSource;
 const ResolvedSource = bun.JSC.ResolvedSource;
 const JSPromise = bun.JSC.JSPromise;
-const JSInternalPromise = bun.JSC.JSInternalPromise;
 const JSModuleLoader = bun.JSC.JSModuleLoader;
 const JSPromiseRejectionOperation = bun.JSC.JSPromiseRejectionOperation;
 const ErrorableZigString = bun.JSC.ErrorableZigString;
@@ -79,7 +70,7 @@ const PendingResolution = @import("../resolver/resolver.zig").PendingResolution;
 const ThreadSafeFunction = JSC.napi.ThreadSafeFunction;
 const PackageManager = @import("../install/install.zig").PackageManager;
 const Install = @import("../install/install.zig");
-const VirtualMachine = JSC.VirtualMachine;
+const VirtualMachine = bun.JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
 const Async = bun.Async;
 const String = bun.String;
@@ -169,6 +160,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 specifier,
                 std.math.maxInt(u64),
             ) catch "";
+            defer bun.default_allocator.free(source_file);
 
             var bufw = std.io.bufferedWriter(file.writer());
             const w = bufw.writer();
@@ -221,7 +213,7 @@ pub const RuntimeTranspilerStore = struct {
         };
     }
 
-    // Thsi is run at the top of the event loop on the JS thread.
+    // This is run at the top of the event loop on the JS thread.
     pub fn drain(this: *RuntimeTranspilerStore) void {
         var batch = this.queue.popBatch();
         var iter = batch.iterator();
@@ -231,7 +223,7 @@ pub const RuntimeTranspilerStore = struct {
         } else {
             return;
         }
-        var vm: *JSC.VirtualMachine = @fieldParentPtr("transpiler_store", this);
+        var vm: *VirtualMachine = @fieldParentPtr("transpiler_store", this);
         const event_loop = vm.eventLoop();
         const global = vm.global;
         const jsc_vm = vm.jsc;
@@ -246,11 +238,12 @@ pub const RuntimeTranspilerStore = struct {
 
     pub fn transpile(
         this: *RuntimeTranspilerStore,
-        vm: *JSC.VirtualMachine,
-        globalObject: *JSC.JSGlobalObject,
+        vm: *VirtualMachine,
+        globalObject: *JSGlobalObject,
         input_specifier: bun.String,
         path: Fs.Path,
         referrer: bun.String,
+        loader: bun.options.Loader,
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
@@ -262,8 +255,8 @@ pub const RuntimeTranspilerStore = struct {
             .non_threadsafe_referrer = referrer,
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
-            .loader = vm.transpiler.options.loader(owned_path.name.ext),
-            .promise = JSC.Strong.create(JSC.JSValue.fromCell(promise), globalObject),
+            .loader = loader,
+            .promise = JSC.Strong.create(JSValue.fromCell(promise), globalObject),
             .poll_ref = .{},
             .fetcher = TranspilerJob.Fetcher{
                 .file = {},
@@ -280,9 +273,9 @@ pub const RuntimeTranspilerStore = struct {
         non_threadsafe_input_specifier: String,
         non_threadsafe_referrer: String,
         loader: options.Loader,
-        promise: JSC.Strong = .{},
-        vm: *JSC.VirtualMachine,
-        globalThis: *JSC.JSGlobalObject,
+        promise: JSC.Strong = .empty,
+        vm: *VirtualMachine,
+        globalThis: *JSGlobalObject,
         fetcher: Fetcher,
         poll_ref: Async.KeepAlive = .{},
         generation_number: u32 = 0,
@@ -483,7 +476,7 @@ pub const RuntimeTranspilerStore = struct {
                 .virtual_source = null,
                 .dont_bundle_twice = true,
                 .allow_commonjs = true,
-                .inject_jest_globals = transpiler.options.rewrite_jest_for_tests and is_main,
+                .inject_jest_globals = transpiler.options.rewrite_jest_for_tests,
                 .set_breakpoint_on_first_line = vm.debugger != null and
                     vm.debugger.?.set_breakpoint_on_first_line and
                     is_main and
@@ -713,7 +706,7 @@ pub const ModuleLoader = struct {
         }
     }
 
-    pub fn resolveEmbeddedFile(vm: *JSC.VirtualMachine, input_path: []const u8, extname: []const u8) ?[]const u8 {
+    pub fn resolveEmbeddedFile(vm: *VirtualMachine, input_path: []const u8, extname: []const u8) ?[]const u8 {
         if (input_path.len == 0) return null;
         var graph = vm.standalone_module_graph orelse return null;
         const file = graph.find(input_path) orelse return null;
@@ -739,7 +732,7 @@ pub const ModuleLoader = struct {
 
             .{
                 .data = .{
-                    .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(file.contents),
+                    .encoded_slice = ZigString.Slice.fromUTF8NeverFree(file.contents),
                 },
                 .dirfd = bun.toFD(tmpdir.fd),
                 .file = .{
@@ -760,7 +753,7 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        promise: JSC.Strong = .{},
+        promise: JSC.Strong = .empty,
         path: Fs.Path,
         specifier: string = "",
         referrer: string = "",
@@ -769,7 +762,7 @@ pub const ModuleLoader = struct {
         package_json: ?*PackageJSON = null,
         loader: Api.Loader,
         hash: u32 = std.math.maxInt(u32),
-        globalThis: *JSC.JSGlobalObject = undefined,
+        globalThis: *JSGlobalObject = undefined,
         arena: *bun.ArenaAllocator,
 
         // This is the specific state for making it async
@@ -805,7 +798,7 @@ pub const ModuleLoader = struct {
 
             pub const Map = std.ArrayListUnmanaged(AsyncModule);
 
-            pub fn enqueue(this: *Queue, globalObject: *JSC.JSGlobalObject, opts: anytype) void {
+            pub fn enqueue(this: *Queue, globalObject: *JSGlobalObject, opts: anytype) void {
                 debug("enqueue: {s}", .{opts.specifier});
                 var module = AsyncModule.init(opts, globalObject) catch unreachable;
                 module.poll_ref.ref(this.vm());
@@ -1063,12 +1056,11 @@ pub const ModuleLoader = struct {
             }
         };
 
-        pub fn init(opts: anytype, globalObject: *JSC.JSGlobalObject) !AsyncModule {
-            var promise = JSC.Strong{};
+        pub fn init(opts: anytype, globalObject: *JSGlobalObject) !AsyncModule {
             // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
             // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
             const this_promise = JSValue.createInternalPromise(globalObject);
-            promise.set(globalObject, this_promise);
+            const promise = JSC.Strong.create(this_promise, globalObject);
 
             var buf = bun.StringBuilder{};
             buf.count(opts.referrer);
@@ -1098,7 +1090,7 @@ pub const ModuleLoader = struct {
             };
         }
 
-        pub fn done(this: *AsyncModule, jsc_vm: *JSC.VirtualMachine) void {
+        pub fn done(this: *AsyncModule, jsc_vm: *VirtualMachine) void {
             var clone = jsc_vm.allocator.create(AsyncModule) catch unreachable;
             clone.* = this.*;
             jsc_vm.modules.scheduled += 1;
@@ -1115,11 +1107,11 @@ pub const ModuleLoader = struct {
             }
             var log = logger.Log.init(jsc_vm.allocator);
             defer log.deinit();
-            var errorable: ErrorableResolvedSource = undefined;
+            var errorable: JSC.ErrorableResolvedSource = undefined;
             this.poll_ref.unref(jsc_vm);
             outer: {
-                errorable = ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
-                    JSC.VirtualMachine.processFetchLog(
+                errorable = JSC.ErrorableResolvedSource.ok(this.resumeLoadingModule(&log) catch |err| {
+                    VirtualMachine.processFetchLog(
                         this.globalThis,
                         bun.String.init(this.specifier),
                         bun.String.init(this.referrer),
@@ -1145,8 +1137,8 @@ pub const ModuleLoader = struct {
         }
 
         pub fn fulfill(
-            globalThis: *JSC.JSGlobalObject,
-            promise: JSC.JSValue,
+            globalThis: *JSGlobalObject,
+            promise: JSValue,
             resolved_source: ResolvedSource,
             err: ?anyerror,
             specifier_: bun.String,
@@ -1161,9 +1153,9 @@ pub const ModuleLoader = struct {
                 referrer.deref();
             }
 
-            var errorable: ErrorableResolvedSource = undefined;
+            var errorable: JSC.ErrorableResolvedSource = undefined;
             if (err) |e| {
-                JSC.VirtualMachine.processFetchLog(
+                VirtualMachine.processFetchLog(
                     globalThis,
                     specifier,
                     referrer,
@@ -1172,7 +1164,7 @@ pub const ModuleLoader = struct {
                     e,
                 );
             } else {
-                errorable = ErrorableResolvedSource.ok(resolved_source);
+                errorable = JSC.ErrorableResolvedSource.ok(resolved_source);
             }
             log.deinit();
 
@@ -1187,7 +1179,7 @@ pub const ModuleLoader = struct {
             );
         }
 
-        pub fn resolveError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
+        pub fn resolveError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageResolveError) !void {
             const globalThis = this.globalThis;
 
             const msg: []u8 = try switch (result.err) {
@@ -1279,7 +1271,7 @@ pub const ModuleLoader = struct {
             this.deinit();
             promise.rejectAsHandled(globalThis, error_instance);
         }
-        pub fn downloadError(this: *AsyncModule, vm: *JSC.VirtualMachine, import_record_id: u32, result: PackageDownloadError) !void {
+        pub fn downloadError(this: *AsyncModule, vm: *VirtualMachine, import_record_id: u32, result: PackageDownloadError) !void {
             const globalThis = this.globalThis;
 
             const msg_args = .{
@@ -1378,7 +1370,7 @@ pub const ModuleLoader = struct {
             debug("resumeLoadingModule: {s}", .{this.specifier});
             var parse_result = this.parse_result;
             const path = this.path;
-            var jsc_vm = JSC.VirtualMachine.get();
+            var jsc_vm = VirtualMachine.get();
             const specifier = this.specifier;
             const old_log = jsc_vm.log;
 
@@ -1468,16 +1460,16 @@ pub const ModuleLoader = struct {
             bun.default_allocator.free(this.string_buf);
         }
 
-        extern "C" fn Bun__onFulfillAsyncModule(
-            globalObject: *JSC.JSGlobalObject,
-            promiseValue: JSC.JSValue,
+        extern "c" fn Bun__onFulfillAsyncModule(
+            globalObject: *JSGlobalObject,
+            promiseValue: JSValue,
             res: *JSC.ErrorableResolvedSource,
             specifier: *bun.String,
             referrer: *bun.String,
         ) void;
     };
 
-    pub export fn Bun__getDefaultLoader(global: *JSC.JSGlobalObject, str: *const bun.String) Api.Loader {
+    pub export fn Bun__getDefaultLoader(global: *JSGlobalObject, str: *const bun.String) Api.Loader {
         var jsc_vm = global.bunVM();
         const filename = str.toUTF8(jsc_vm.allocator);
         defer filename.deinit();
@@ -1500,13 +1492,13 @@ pub const ModuleLoader = struct {
         virtual_source: ?*const logger.Source,
         promise_ptr: ?*?*JSC.JSInternalPromise,
         source_code_printer: *js_printer.BufferPrinter,
-        globalObject: ?*JSC.JSGlobalObject,
+        globalObject: ?*JSGlobalObject,
         comptime flags: FetchFlags,
     ) !ResolvedSource {
         const disable_transpilying = comptime flags.disableTranspiling();
 
         if (comptime disable_transpilying) {
-            if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json)) {
+            if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json or loader == .jsonc)) {
                 // Don't print "export default <file path>"
                 return ResolvedSource{
                     .allocator = null,
@@ -1519,7 +1511,7 @@ pub const ModuleLoader = struct {
         }
 
         switch (loader) {
-            .js, .jsx, .ts, .tsx, .json, .toml, .text => {
+            .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.transpiler.resetStore();
                 const hash = bun.Watcher.getHash(path.text);
@@ -1632,7 +1624,7 @@ pub const ModuleLoader = struct {
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
-                    .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests and is_main,
+                    .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests,
                     .keep_json_and_toml_as_one_statement = true,
                     .allow_bytecode_cache = true,
                     .set_breakpoint_on_first_line = is_main and
@@ -1658,7 +1650,7 @@ pub const ModuleLoader = struct {
                 }
 
                 var parse_result: ParseResult = switch (disable_transpilying or
-                    (loader == .json and !path.isJSONCFile())) {
+                    (loader == .json)) {
                     inline else => |return_file_only| brk: {
                         break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                             parse_options,
@@ -1731,7 +1723,7 @@ pub const ModuleLoader = struct {
                     return error.ParseError;
                 }
 
-                if (loader == .json and !path.isJSONCFile()) {
+                if (loader == .json) {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createUTF8(parse_result.source.contents),
@@ -1757,14 +1749,14 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                if (loader == .json or loader == .toml) {
+                if (loader == .json or loader == .jsonc or loader == .toml) {
                     if (parse_result.empty) {
                         return ResolvedSource{
                             .allocator = null,
                             .specifier = input_specifier,
                             .source_url = input_specifier.createIfDifferent(path.text),
                             .hash = 0,
-                            .jsvalue_for_export = JSC.JSValue.createEmptyObject(jsc_vm.global, 0),
+                            .jsvalue_for_export = JSValue.createEmptyObject(jsc_vm.global, 0),
                             .tag = .exports_object,
                         };
                     }
@@ -2007,10 +1999,10 @@ pub const ModuleLoader = struct {
                             const encoded = JSC.EncodedJSValue{
                                 .asPtr = globalThis,
                             };
-                            const globalValue = @as(JSC.JSValue, @enumFromInt(encoded.asInt64));
+                            const globalValue = @as(JSValue, @enumFromInt(encoded.asInt64));
                             globalValue.put(
                                 globalThis,
-                                JSC.ZigString.static("wasmSourceBytes"),
+                                ZigString.static("wasmSourceBytes"),
                                 JSC.ArrayBuffer.create(globalThis, source.contents, .Uint8Array),
                             );
                         }
@@ -2100,7 +2092,7 @@ pub const ModuleLoader = struct {
                     return error.NotSupported;
                 }
 
-                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text, jsc_vm.transpiler.options.bunfig_path, jsc_vm.transpiler.options.serve_plugins);
+                const html_bundle = try JSC.API.HTMLBundle.init(globalObject.?, path.text);
                 return ResolvedSource{
                     .allocator = &jsc_vm.allocator,
                     .jsvalue_for_export = html_bundle.toJS(globalObject.?),
@@ -2129,10 +2121,10 @@ pub const ModuleLoader = struct {
                             const input_fd: bun.StoredFileDescriptorType = brk: {
                                 // on macOS, we need a file descriptor to receive event notifications on it.
                                 // so we use O_EVTONLY to open the file descriptor without asking any additional permissions.
-                                if (comptime Environment.isMac) {
+                                if (bun.Watcher.requires_file_descriptors) {
                                     switch (bun.sys.open(
                                         &(std.posix.toPosixPath(path.text) catch break :auto_watch),
-                                        bun.C.O_EVTONLY,
+                                        bun.c.O_EVTONLY,
                                         0,
                                     )) {
                                         .err => break :auto_watch,
@@ -2197,38 +2189,12 @@ pub const ModuleLoader = struct {
         }
     }
 
-    pub fn normalizeSpecifier(
-        jsc_vm: *VirtualMachine,
-        slice_: string,
-    ) struct { string, string } {
-        var slice = slice_;
-        if (slice.len == 0) return .{ slice, slice };
-
-        if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
-            slice = slice[jsc_vm.origin.host.len..];
-        }
-
-        if (jsc_vm.origin.path.len > 1) {
-            if (strings.hasPrefix(slice, jsc_vm.origin.path)) {
-                slice = slice[jsc_vm.origin.path.len..];
-            }
-        }
-
-        const specifier = slice;
-
-        if (strings.indexOfChar(slice, '?')) |i| {
-            slice = slice[0..i];
-        }
-
-        return .{ slice, specifier };
-    }
-
     pub export fn Bun__fetchBuiltinModule(
         jsc_vm: *VirtualMachine,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *JSGlobalObject,
         specifier: *bun.String,
         referrer: *bun.String,
-        ret: *ErrorableResolvedSource,
+        ret: *JSC.ErrorableResolvedSource,
     ) bool {
         JSC.markBinding(@src());
         var log = logger.Log.init(jsc_vm.transpiler.allocator);
@@ -2245,7 +2211,7 @@ pub const ModuleLoader = struct {
             VirtualMachine.processFetchLog(globalObject, specifier.*, referrer.*, &log, ret, err);
             return true;
         }) |builtin| {
-            ret.* = ErrorableResolvedSource.ok(builtin);
+            ret.* = JSC.ErrorableResolvedSource.ok(builtin);
             return true;
         } else {
             return false;
@@ -2254,11 +2220,11 @@ pub const ModuleLoader = struct {
 
     pub export fn Bun__transpileFile(
         jsc_vm: *VirtualMachine,
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *JSGlobalObject,
         specifier_ptr: *bun.String,
         referrer: *bun.String,
         type_attribute: ?*const bun.String,
-        ret: *ErrorableResolvedSource,
+        ret: *JSC.ErrorableResolvedSource,
         allow_promise: bool,
     ) ?*anyopaque {
         JSC.markBinding(@src());
@@ -2269,98 +2235,19 @@ pub const ModuleLoader = struct {
         var referrer_slice = referrer.toUTF8(jsc_vm.allocator);
         defer _specifier.deinit();
         defer referrer_slice.deinit();
-        const normalized_file_path_from_specifier, const specifier = normalizeSpecifier(
-            jsc_vm,
-            _specifier.slice(),
-        );
-        var path = Fs.Path.init(normalized_file_path_from_specifier);
 
-        var virtual_source: ?*logger.Source = null;
+        var type_attribute_str: ?string = null;
+        if (type_attribute) |attribute| if (attribute.asUTF8()) |attr_utf8| {
+            type_attribute_str = attr_utf8;
+        };
+
         var virtual_source_to_use: ?logger.Source = null;
         var blob_to_deinit: ?JSC.WebCore.Blob = null;
-        defer {
-            if (blob_to_deinit != null) {
-                blob_to_deinit.?.deinit();
-            }
-        }
-
-        // Deliberately optional.
-        // The concurrent one only handles javascript-like loaders right now.
-        var loader: ?options.Loader = jsc_vm.transpiler.options.loaders.get(path.name.ext);
-
-        if (jsc_vm.module_loader.eval_source) |eval_source| {
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_source;
-                loader = .tsx;
-            }
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                virtual_source = eval_source;
-                loader = .tsx;
-            }
-        }
-
-        if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
-            if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
-                blob_to_deinit = blob;
-
-                // "file:" loader makes no sense for blobs
-                // so let's default to tsx.
-                if (blob.getFileName()) |filename| {
-                    const current_path = Fs.Path.init(filename);
-
-                    // Only treat it as a file if is a Bun.file()
-                    if (blob.needsToReadFile()) {
-                        path = current_path;
-                    }
-
-                    loader = jsc_vm.transpiler.options.loaders.get(current_path.name.ext) orelse .tsx;
-                } else {
-                    loader = .tsx;
-                }
-
-                if (!blob.needsToReadFile()) {
-                    virtual_source_to_use = logger.Source{
-                        .path = path,
-                        .contents = blob.sharedView(),
-                    };
-                    virtual_source = &virtual_source_to_use.?;
-                }
-            } else {
-                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
-                return null;
-            }
-        }
-
-        if (type_attribute) |attribute| {
-            if (attribute.eqlComptime("sqlite")) {
-                loader = .sqlite;
-            } else if (attribute.eqlComptime("text")) {
-                loader = .text;
-            } else if (attribute.eqlComptime("json")) {
-                loader = .json;
-            } else if (attribute.eqlComptime("toml")) {
-                loader = .toml;
-            } else if (attribute.eqlComptime("file")) {
-                loader = .file;
-            } else if (attribute.eqlComptime("js")) {
-                loader = .js;
-            } else if (attribute.eqlComptime("jsx")) {
-                loader = .jsx;
-            } else if (attribute.eqlComptime("ts")) {
-                loader = .ts;
-            } else if (attribute.eqlComptime("tsx")) {
-                loader = .tsx;
-            } else if (attribute.eqlComptime("html")) {
-                loader = .html;
-            }
-        }
-
-        // If we were going to choose file loader, see if it's a bun.lock
-        if (loader == null) {
-            if (strings.eqlComptime(path.name.filename, "bun.lock")) {
-                loader = .json;
-            }
-        }
+        const lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
+            ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
+            return null;
+        };
+        defer if (blob_to_deinit) |*blob| blob.deinit();
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -2369,28 +2256,29 @@ pub const ModuleLoader = struct {
         //   Import Expressions (import('foo'))
         //
         if (comptime bun.FeatureFlags.concurrent_transpiler) {
-            const concurrent_loader = loader orelse .file;
+            const concurrent_loader = lr.loader orelse .file;
             if (blob_to_deinit == null and allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
                 jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
             {
-                if (!strings.eqlLong(specifier, jsc_vm.main, true)) {
+                if (!lr.is_main) {
                     return jsc_vm.transpiler_store.transpile(
                         jsc_vm,
                         globalObject,
                         specifier_ptr.dupeRef(),
-                        path,
+                        lr.path,
                         referrer.dupeRef(),
+                        concurrent_loader,
                     );
                 }
             }
         }
 
-        const synchronous_loader = loader orelse loader: {
+        const synchronous_loader = lr.loader orelse loader: {
             if (jsc_vm.has_loaded or jsc_vm.is_in_preload) {
                 // Extensionless files in this context are treated as the JS loader
-                if (path.name.ext.len == 0) {
+                if (lr.path.name.ext.len == 0) {
                     break :loader options.Loader.tsx;
                 }
 
@@ -2404,21 +2292,21 @@ pub const ModuleLoader = struct {
         };
 
         if (comptime Environment.allow_assert)
-            debug("transpile({s}, {s}, sync)", .{ specifier, @tagName(synchronous_loader) });
+            debug("transpile({s}, {s}, sync)", .{ lr.specifier, @tagName(synchronous_loader) });
 
         defer jsc_vm.module_loader.resetArena(jsc_vm);
 
         var promise: ?*JSC.JSInternalPromise = null;
-        ret.* = ErrorableResolvedSource.ok(
+        ret.* = JSC.ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
-                specifier,
+                lr.specifier,
                 referrer_slice.slice(),
                 specifier_ptr.*,
-                path,
+                lr.path,
                 synchronous_loader,
                 &log,
-                virtual_source,
+                lr.virtual_source,
                 if (allow_promise) &promise else null,
                 VirtualMachine.source_code_printer.?,
                 globalObject,
@@ -2440,7 +2328,7 @@ pub const ModuleLoader = struct {
         return promise;
     }
 
-    export fn Bun__runVirtualModule(globalObject: *JSC.JSGlobalObject, specifier_ptr: *const bun.String) JSValue {
+    export fn Bun__runVirtualModule(globalObject: *JSGlobalObject, specifier_ptr: *const bun.String) JSValue {
         JSC.markBinding(@src());
         if (globalObject.bunVM().plugin_runner == null) return JSValue.zero;
 
@@ -2627,12 +2515,12 @@ pub const ModuleLoader = struct {
     }
 
     export fn Bun__transpileVirtualModule(
-        globalObject: *JSC.JSGlobalObject,
+        globalObject: *JSGlobalObject,
         specifier_ptr: *const bun.String,
         referrer_ptr: *const bun.String,
         source_code: *ZigString,
         loader_: Api.Loader,
-        ret: *ErrorableResolvedSource,
+        ret: *JSC.ErrorableResolvedSource,
     ) bool {
         JSC.markBinding(@src());
         const jsc_vm = globalObject.bunVM();
@@ -2664,7 +2552,7 @@ pub const ModuleLoader = struct {
         defer log.deinit();
         defer jsc_vm.module_loader.resetArena(jsc_vm);
 
-        ret.* = ErrorableResolvedSource.ok(
+        ret.* = JSC.ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
                 specifier_slice.slice(),
@@ -3104,7 +2992,7 @@ pub const HardcodedModule = enum {
 };
 
 /// Support embedded .node files
-export fn Bun__resolveEmbeddedNodeFile(vm: *JSC.VirtualMachine, in_out_str: *bun.String) bool {
+export fn Bun__resolveEmbeddedNodeFile(vm: *VirtualMachine, in_out_str: *bun.String) bool {
     if (vm.standalone_module_graph == null) return false;
 
     const input_path = in_out_str.toUTF8(bun.default_allocator);

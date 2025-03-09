@@ -43,10 +43,6 @@ const StringOrBuffer = JSC.Node.StringOrBuffer;
 const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 const UvFsCallback = fn (*uv.fs_t) callconv(.C) void;
 
-const Stats = JSC.Node.Stats;
-const Dirent = JSC.Node.Dirent;
-const StatFS = JSC.Node.StatFS;
-
 pub const default_permission = if (Environment.isPosix)
     Syscall.S.IRUSR |
         Syscall.S.IWUSR |
@@ -1015,7 +1011,7 @@ pub const AsyncReaddirRecursiveTask = struct {
 
     pub const ResultListEntry = struct {
         pub const Value = union(Return.Readdir.Tag) {
-            with_file_types: std.ArrayList(Dirent),
+            with_file_types: std.ArrayList(bun.JSC.Node.Dirent),
             buffers: std.ArrayList(Buffer),
             files: std.ArrayList(bun.String),
 
@@ -1096,7 +1092,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             .root_path = PathString.init(bun.default_allocator.dupeZ(u8, args.path.slice()) catch bun.outOfMemory()),
             .result_list = switch (args.tag()) {
                 .files => .{ .files = std.ArrayList(bun.String).init(bun.default_allocator) },
-                .with_file_types => .{ .with_file_types = std.ArrayList(Dirent).init(bun.default_allocator) },
+                .with_file_types => .{ .with_file_types = .init(bun.default_allocator) },
                 .buffers => .{ .buffers = std.ArrayList(Buffer).init(bun.default_allocator) },
             },
         });
@@ -1114,7 +1110,7 @@ pub const AsyncReaddirRecursiveTask = struct {
             inline else => |tag| {
                 const ResultType = comptime switch (tag) {
                     .files => bun.String,
-                    .with_file_types => Dirent,
+                    .with_file_types => bun.JSC.Node.Dirent,
                     .buffers => Buffer,
                 };
                 var stack = std.heap.stackFallback(8192, bun.default_allocator);
@@ -1137,7 +1133,7 @@ pub const AsyncReaddirRecursiveTask = struct {
                         for (entries.items) |*item| {
                             switch (ResultType) {
                                 bun.String => item.deref(),
-                                Dirent => item.deref(),
+                                bun.JSC.Node.Dirent => item.deref(),
                                 Buffer => bun.default_allocator.free(item.buffer.byteSlice()),
                                 else => @compileError("unreachable"),
                             }
@@ -1174,7 +1170,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         if (result.items.len > 0) {
             const Field = switch (ResultType) {
                 bun.String => .files,
-                Dirent => .with_file_types,
+                bun.JSC.Node.Dirent => .with_file_types,
                 Buffer => .buffers,
                 else => @compileError("unreachable"),
             };
@@ -1604,7 +1600,7 @@ pub const Arguments = struct {
     };
 
     fn wrapTo(T: type, in: i64) T {
-        comptime bun.assert(@typeInfo(T).Int.signedness == .unsigned);
+        comptime bun.assert(@typeInfo(T).int.signedness == .unsigned);
         return @intCast(@mod(in, std.math.maxInt(T)));
     }
 
@@ -1920,7 +1916,7 @@ pub const Arguments = struct {
                     }
                     if (next_val.isString()) {
                         arguments.eat();
-                        var str = next_val.toBunString(ctx);
+                        var str = try next_val.toBunString(ctx);
                         defer str.deref();
                         if (str.eqlComptime("dir")) break :link_type .dir;
                         if (str.eqlComptime("file")) break :link_type .file;
@@ -3066,16 +3062,16 @@ pub const Arguments = struct {
             };
             errdefer dest.deinit();
 
-            var mode: Mode = 0;
+            var mode: Constants.Copyfile = @enumFromInt(0);
             if (arguments.next()) |arg| {
                 arguments.eat();
-                mode = @intFromEnum(try FileSystemFlags.fromJSNumberOnly(ctx, arg, .copy_file));
+                mode = @enumFromInt(@intFromEnum(try FileSystemFlags.fromJSNumberOnly(ctx, arg, .copy_file)));
             }
 
             return CopyFile{
                 .src = src,
                 .dest = dest,
-                .mode = @enumFromInt(mode),
+                .mode = mode,
             };
         }
     };
@@ -3187,7 +3183,7 @@ pub const Arguments = struct {
 };
 
 pub const StatOrNotFound = union(enum) {
-    stats: Stats,
+    stats: bun.JSC.Node.Stats,
     not_found: void,
 
     pub fn toJS(this: *StatOrNotFound, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -3235,7 +3231,7 @@ const Return = struct {
     pub const Chmod = void;
     pub const Fchown = void;
     pub const Fdatasync = void;
-    pub const Fstat = Stats;
+    pub const Fstat = bun.JSC.Node.Stats;
     pub const Rm = void;
     pub const Fsync = void;
     pub const Ftruncate = void;
@@ -3249,7 +3245,7 @@ const Return = struct {
     pub const Open = FDImpl;
     pub const WriteFile = void;
     pub const Readv = Read;
-    pub const StatFS = JSC.Node.StatFS;
+    pub const StatFS = bun.JSC.Node.StatFS;
     pub const Read = struct {
         bytes_read: u52,
 
@@ -3315,7 +3311,7 @@ const Return = struct {
         }
     };
     pub const Readdir = union(Tag) {
-        with_file_types: []Dirent,
+        with_file_types: []bun.JSC.Node.Dirent,
         buffers: []Buffer,
         files: []const bun.String,
 
@@ -3357,7 +3353,7 @@ const Return = struct {
     pub const ReadFileWithOptions = union(enum) {
         string: string,
         transcoded_string: bun.String,
-        buffer: JSC.Node.Buffer,
+        buffer: Buffer,
         null_terminated: [:0]const u8,
     };
     pub const Readlink = StringOrBuffer;
@@ -3639,7 +3635,7 @@ pub const NodeFS = struct {
             // we fallback to copyfile() when the file is > 128 KB and clonefile fails
             // clonefile() isn't supported on all devices
             // nor is it supported across devices
-            var mode: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;
+            var mode: u32 = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA;
             if (args.mode.shouldntOverwrite()) {
                 mode |= C.darwin.COPYFILE_EXCL;
             }
@@ -3670,7 +3666,7 @@ pub const NodeFS = struct {
                 return Maybe(Return.CopyFile){ .err = .{ .errno = @intFromEnum(C.SystemErrno.ENOTSUP), .syscall = .copyfile } };
             }
 
-            var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
             var wrote: usize = 0;
             if (args.mode.shouldntOverwrite()) {
                 flags |= bun.O.EXCL;
@@ -3793,10 +3789,18 @@ pub const NodeFS = struct {
     pub fn exists(this: *NodeFS, args: Arguments.Exists, _: Flavor) Maybe(Return.Exists) {
         // NOTE: exists cannot return an error
         const path: PathLike = args.path orelse return .{ .result = false };
+
+        if (bun.StandaloneModuleGraph.get()) |graph| {
+            if (graph.find(path.slice()) != null) {
+                return .{ .result = true };
+            }
+        }
+
         const slice = if (path.slice().len == 0)
             comptime bun.OSPathLiteral("")
         else
             path.osPathKernel32(&this.sync_error_buf);
+
         return .{ .result = bun.sys.existsOSPath(slice, false) };
     }
 
@@ -3846,7 +3850,7 @@ pub const NodeFS = struct {
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, _: Flavor) Maybe(Return.Fstat) {
         return switch (Syscall.fstat(args.fd)) {
-            .result => |result| .{ .result = Stats.init(result, args.big_int) },
+            .result => |result| .{ .result = .init(result, args.big_int) },
             .err => |err| .{ .err = err },
         };
     }
@@ -3917,13 +3921,13 @@ pub const NodeFS = struct {
             };
         }
 
-        return Maybe(Return.Link).errnoSysPD(system.link(from, to, 0), .link, args.old_path.slice(), args.new_path.slice()) orelse
+        return Maybe(Return.Link).errnoSysPD(system.link(from, to), .link, args.old_path.slice(), args.new_path.slice()) orelse
             Maybe(Return.Link).success;
     }
 
     pub fn lstat(this: *NodeFS, args: Arguments.Lstat, _: Flavor) Maybe(Return.Lstat) {
         return switch (Syscall.lstat(args.path.sliceZ(&this.sync_error_buf))) {
-            .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = Stats.init(result, args.big_int) } },
+            .result => |result| Maybe(Return.Lstat){ .result = .{ .stats = .init(result, args.big_int) } },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
                     return Maybe(Return.Lstat){ .result = .{ .not_found = {} } };
@@ -3994,7 +3998,7 @@ pub const NodeFS = struct {
         };
 
         const Char = bun.OSPathChar;
-        const len = @as(u16, @truncate(path.len));
+        const len: u16 = @truncate(path.len);
 
         // First, attempt to create the desired directory
         // If that fails, then walk back up the path until we have a match
@@ -4443,7 +4447,7 @@ pub const NodeFS = struct {
         const maybe = switch (args.recursive) {
             inline else => |recursive| switch (args.tag()) {
                 .buffers => readdirInner(&this.sync_error_buf, args, Buffer, recursive, flavor),
-                .with_file_types => readdirInner(&this.sync_error_buf, args, Dirent, recursive, flavor),
+                .with_file_types => readdirInner(&this.sync_error_buf, args, bun.JSC.Node.Dirent, recursive, flavor),
                 .files => readdirInner(&this.sync_error_buf, args, bun.String, recursive, flavor),
             },
         };
@@ -4465,7 +4469,7 @@ pub const NodeFS = struct {
         entries: *std.ArrayList(ExpectedType),
     ) Maybe(void) {
         const dir = fd.asDir();
-        const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == Dirent);
+        const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == bun.JSC.Node.Dirent);
 
         var dirent_path: bun.String = bun.String.dead;
         defer {
@@ -4486,7 +4490,7 @@ pub const NodeFS = struct {
             .err => |err| {
                 for (entries.items) |*item| {
                     switch (ExpectedType) {
-                        Dirent => {
+                        bun.JSC.Node.Dirent => {
                             item.deref();
                         },
                         Buffer => {
@@ -4507,7 +4511,7 @@ pub const NodeFS = struct {
             },
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
-            if (ExpectedType == Dirent) {
+            if (ExpectedType == JSC.Node.Dirent) {
                 if (dirent_path.isEmpty()) {
                     dirent_path = JSC.WebCore.Encoder.toBunString(strings.withoutNTPrefix(std.meta.Child(@TypeOf(basename)), basename), args.encoding);
                 }
@@ -4515,7 +4519,7 @@ pub const NodeFS = struct {
             if (comptime !is_u16) {
                 const utf8_name = current.name.slice();
                 switch (ExpectedType) {
-                    Dirent => {
+                    JSC.Node.Dirent => {
                         dirent_path.ref();
                         entries.append(.{
                             .name = JSC.WebCore.Encoder.toBunString(utf8_name, args.encoding),
@@ -4534,7 +4538,7 @@ pub const NodeFS = struct {
             } else {
                 const utf16_name = current.name.slice();
                 switch (ExpectedType) {
-                    Dirent => {
+                    JSC.Node.Dirent => {
                         dirent_path.ref();
                         entries.append(.{
                             .name = bun.String.createUTF16(utf16_name),
@@ -4669,7 +4673,7 @@ pub const NodeFS = struct {
             }
 
             switch (comptime ExpectedType) {
-                Dirent => {
+                bun.JSC.Node.Dirent => {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                     if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                         dirent_path_prev.deref();
@@ -4809,7 +4813,7 @@ pub const NodeFS = struct {
                 }
 
                 switch (comptime ExpectedType) {
-                    Dirent => {
+                    bun.JSC.Node.Dirent => {
                         const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
                         if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
                             dirent_path_prev.deref();
@@ -4867,7 +4871,7 @@ pub const NodeFS = struct {
         comptime flavor: Flavor,
     ) Maybe(Return.Readdir) {
         const file_type = switch (ExpectedType) {
-            Dirent => "with_file_types",
+            bun.JSC.Node.Dirent => "with_file_types",
             bun.String => "files",
             Buffer => "buffers",
             else => @compileError("unreachable"),
@@ -4883,7 +4887,7 @@ pub const NodeFS = struct {
                 .err => |err| {
                     for (entries.items) |*result| {
                         switch (ExpectedType) {
-                            Dirent => {
+                            bun.JSC.Node.Dirent => {
                                 result.name.deref();
                             },
                             Buffer => {
@@ -4972,32 +4976,31 @@ pub const NodeFS = struct {
         const fd_maybe_windows: FileDescriptor = switch (args.path) {
             .path => brk: {
                 path = args.path.path.sliceZ(&this.sync_error_buf);
-                if (this.vm) |vm| {
-                    if (vm.standalone_module_graph) |graph| {
-                        if (graph.find(path)) |file| {
-                            if (args.encoding == .buffer) {
-                                return .{
-                                    .result = .{
-                                        .buffer = Buffer.fromBytes(
-                                            bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
-                                            bun.default_allocator,
-                                            .Uint8Array,
-                                        ),
-                                    },
-                                };
-                            } else if (comptime string_type == .default)
-                                return .{
-                                    .result = .{
-                                        .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
-                                    },
-                                }
-                            else
-                                return .{
-                                    .result = .{
-                                        .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
-                                    },
-                                };
-                        }
+
+                if (bun.StandaloneModuleGraph.get()) |graph| {
+                    if (graph.find(path)) |file| {
+                        if (args.encoding == .buffer) {
+                            return .{
+                                .result = .{
+                                    .buffer = Buffer.fromBytes(
+                                        bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
+                                        bun.default_allocator,
+                                        .Uint8Array,
+                                    ),
+                                },
+                            };
+                        } else if (comptime string_type == .default)
+                            return .{
+                                .result = .{
+                                    .string = bun.default_allocator.dupe(u8, file.contents) catch bun.outOfMemory(),
+                                },
+                            }
+                        else
+                            return .{
+                                .result = .{
+                                    .null_terminated = bun.default_allocator.dupeZ(u8, file.contents) catch bun.outOfMemory(),
+                                },
+                            };
                     }
                 }
 
@@ -5383,7 +5386,7 @@ pub const NodeFS = struct {
             // If this errors, we silently ignore it.
             // Not all files are seekable (and thus, not all files can be truncated).
             if (Environment.isWindows) {
-                _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
+                _ = bun.windows.SetEndOfFile(fd.cast());
             } else {
                 _ = Syscall.ftruncate(fd, @intCast(@as(u63, @truncate(written))));
             }
@@ -5752,9 +5755,15 @@ pub const NodeFS = struct {
 
     pub fn stat(this: *NodeFS, args: Arguments.Stat, _: Flavor) Maybe(Return.Stat) {
         const path = args.path.sliceZ(&this.sync_error_buf);
+        if (bun.StandaloneModuleGraph.get()) |graph| {
+            if (graph.stat(path)) |result| {
+                return .{ .result = .{ .stats = .init(result, args.big_int) } };
+            }
+        }
+
         return switch (Syscall.stat(path)) {
             .result => |result| .{
-                .result = .{ .stats = Stats.init(result, args.big_int) },
+                .result = .{ .stats = .init(result, args.big_int) },
             },
             .err => |err| brk: {
                 if (!args.throw_if_no_entry and err.getErrno() == .NOENT) {
@@ -5941,8 +5950,8 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        bun.assert(args.mtime.tv_nsec <= 1e9);
-        bun.assert(args.atime.tv_nsec <= 1e9);
+        bun.assert(args.mtime.nsec <= 1e9);
+        bun.assert(args.atime.nsec <= 1e9);
 
         return switch (Syscall.utimens(
             args.path.sliceZ(&this.sync_error_buf),
@@ -5976,8 +5985,8 @@ pub const NodeFS = struct {
                 Maybe(Return.Utimes).success;
         }
 
-        bun.assert(args.mtime.tv_nsec <= 1e9);
-        bun.assert(args.atime.tv_nsec <= 1e9);
+        bun.assert(args.mtime.nsec <= 1e9);
+        bun.assert(args.atime.nsec <= 1e9);
 
         return switch (Syscall.lutimes(args.path.sliceZ(&this.sync_error_buf), args.atime, args.mtime)) {
             .err => |err| .{ .err = err.withPath(args.path.slice()) },
@@ -6254,7 +6263,7 @@ pub const NodeFS = struct {
 
                 if (!posix.S.ISREG(stat_.mode)) {
                     if (posix.S.ISLNK(stat_.mode)) {
-                        var mode_: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA | C.darwin.COPYFILE_NOFOLLOW_SRC;
+                        var mode_: u32 = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA | C.darwin.COPYFILE_NOFOLLOW_SRC;
                         if (mode.shouldntOverwrite()) {
                             mode_ |= C.darwin.COPYFILE_EXCL;
                         }
@@ -6341,7 +6350,7 @@ pub const NodeFS = struct {
             // we fallback to copyfile() when the file is > 128 KB and clonefile fails
             // clonefile() isn't supported on all devices
             // nor is it supported across devices
-            var mode_: Mode = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA | C.darwin.COPYFILE_NOFOLLOW_SRC;
+            var mode_: u32 = C.darwin.COPYFILE_ACL | C.darwin.COPYFILE_DATA | C.darwin.COPYFILE_NOFOLLOW_SRC;
             if (mode.shouldntOverwrite()) {
                 mode_ |= C.darwin.COPYFILE_EXCL;
             }
@@ -6388,7 +6397,7 @@ pub const NodeFS = struct {
                 } };
             }
 
-            var flags: Mode = bun.O.CREAT | bun.O.WRONLY;
+            var flags: i32 = bun.O.CREAT | bun.O.WRONLY;
             var wrote: usize = 0;
             if (mode.shouldntOverwrite()) {
                 flags |= bun.O.EXCL;
@@ -6850,7 +6859,7 @@ fn zigDeleteTreeMinStackSizeWithKindHint(self: std.fs.Dir, sub_path: []const u8,
         // Valid use of MAX_PATH_BYTES because dir_name_buf will only
         // ever store a single path component that was returned from the
         // filesystem.
-        var dir_name_buf: [std.fs.MAX_PATH_BYTES]u8 = undefined;
+        var dir_name_buf: [std.fs.max_path_bytes]u8 = undefined;
         var dir_name: []const u8 = sub_path;
 
         // Here we must avoid recursion, in order to provide O(1) memory guarantee of this function.

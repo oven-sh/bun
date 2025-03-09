@@ -44,7 +44,6 @@
 #include "sqlite3_error_codes.h"
 #include "wtf/BitVector.h"
 #include "wtf/FastBitVector.h"
-#include "wtf/IsoMalloc.h"
 #include "wtf/Vector.h"
 #include <atomic>
 #include "wtf/LazyRef.h"
@@ -411,7 +410,7 @@ public:
 class JSSQLStatement : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr bool needsDestruction = true;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

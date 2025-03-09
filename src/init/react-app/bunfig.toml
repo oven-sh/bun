@@ -1,0 +1,2 @@
+[serve.static]
+env = "BUN_PUBLIC_*"

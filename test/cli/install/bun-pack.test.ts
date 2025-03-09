@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { exists, mkdir, rm } from "fs/promises";
 import { bunEnv, bunExe, runBunInstall, tmpdirSync, pack } from "harness";
 import { join } from "path";
+import fs from "node:fs/promises";
 
 var packageDir: string;
 
@@ -283,6 +284,72 @@ describe("flags", () => {
       expect(tarball.entries).toHaveLength(2);
     });
   }
+
+  const filenameTests = [
+    {
+      filename: "test.tgz",
+      error: false,
+    },
+    {
+      filename: "no-extension",
+      error: false
+    },
+    {
+      filename: "no-extension.tar",
+      error: false,
+    },
+    {
+      filename: "out/foo.tgz",
+      error: true
+    },
+    {
+      filename: "out/foo.tar",
+      mkdir: "out",
+      error: false
+    }
+  ];
+
+  for (const { filename, error, mkdir } of filenameTests) {
+    test(`--filename="${filename}"`, async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-dest-test",
+            version: "1.1.1",
+          }),
+        ),
+        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      ]);
+
+      const dest = join(packageDir, filename);
+      if (mkdir) await fs.mkdir(join(packageDir, mkdir));
+
+      try {
+        await pack(packageDir, bunEnv, `--filename=${filename}`);
+
+        const tarball = readTarball(dest);
+        expect(tarball.entries).toHaveLength(2);
+      } catch (packError) {
+        if (!error) expect(packError).toBeNil();
+      }
+    });
+  }
+
+  test("--filename and --destination", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-dest-test",
+          version: "1.1.1",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+    ]);
+
+    expect(async () => await pack(packageDir, bunEnv, "--filename=test.tgz", "--destination=packed")).toThrowError();
+  });
 
   test("--ignore-scripts", async () => {
     await Promise.all([
@@ -921,7 +988,7 @@ describe("files", () => {
       write(
         join(packageDir, "package.json"),
         JSON.stringify({
-          name: "pack-files-3",
+          name: "pack-files-2",
           version: "1.2.3",
           files: ["index.js"],
         }),
@@ -932,8 +999,33 @@ describe("files", () => {
     ]);
 
     await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
+    const tarball = readTarball(join(packageDir, "pack-files-2-1.2.3.tgz"));
     expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
+  });
+
+  test("matches './' as the root", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-3",
+          version: "1.2.3",
+          files: ["./dist", "!./subdir", "!./dist/index.js", "./////src//index.ts"],
+        }),
+      ),
+      write(join(packageDir, "dist", "index.js"), "console.log('hello ./dist/index.js')"),
+      write(join(packageDir, "subdir", "index.js"), "console.log('hello ./subdir/index.js')"),
+      write(join(packageDir, "src", "dist", "index.js"), "console.log('hello ./src/dist/index.js')"),
+      write(join(packageDir, "src", "index.ts"), "console.log('hello ./src/index.ts')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-3-1.2.3.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/dist/index.js" },
+      { "pathname": "package/src/index.ts" },
+    ]);
   });
 
   test("recursive only if leading **/", async () => {
@@ -941,7 +1033,7 @@ describe("files", () => {
       write(
         join(packageDir, "package.json"),
         JSON.stringify({
-          name: "pack-files-2",
+          name: "pack-files-4",
           version: "1.2.123",
           files: ["**/index.js"],
         }),
@@ -953,7 +1045,7 @@ describe("files", () => {
     ]);
 
     await pack(packageDir, bunEnv);
-    const tarball = readTarball(join(packageDir, "pack-files-2-1.2.123.tgz"));
+    const tarball = readTarball(join(packageDir, "pack-files-4-1.2.123.tgz"));
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
       { "pathname": "package/index.js" },

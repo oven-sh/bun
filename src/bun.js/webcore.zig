@@ -267,7 +267,7 @@ pub const Prompt = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+            bun.win32.updateStdioModeFlags(0, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -361,7 +361,7 @@ pub const Prompt = struct {
 
 pub const Crypto = struct {
     garbage: i32 = 0,
-    const BoringSSL = bun.BoringSSL;
+    const BoringSSL = bun.BoringSSL.c;
 
     pub const doScryptSync = JSC.wrapInstanceMethod(Crypto, "scryptSync", false);
 
@@ -533,34 +533,14 @@ pub const Crypto = struct {
         return globalThis.ERR_CRYPTO_SCRYPT_INVALID_PARAMETER("Invalid scrypt parameters", .{}).throw();
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.enum_literal), comptime message: [:0]const u8, fmt: anytype) bun.JSError {
         if (error_type != .RangeError) @compileError("Error type not added!");
         BoringSSL.ERR_clear_error();
         return globalThis.ERR_CRYPTO_INVALID_SCRYPT_PARAMS(message, fmt).throw();
     }
 
-    pub fn timingSafeEqual(_: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const arguments = callframe.arguments_old(2).slice();
-
-        if (arguments.len < 2) {
-            return globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
-        }
-
-        const array_buffer_a = arguments[0].asArrayBuffer(globalThis) orelse {
-            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-        };
-        const a = array_buffer_a.byteSlice();
-
-        const array_buffer_b = arguments[1].asArrayBuffer(globalThis) orelse {
-            return globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
-        };
-        const b = array_buffer_b.byteSlice();
-
-        const len = a.len;
-        if (b.len != len) {
-            return globalThis.throw("Input buffers must have the same byte length", .{});
-        }
-        return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
+    pub fn timingSafeEqual(_: *@This(), global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+        return JSC.Node.Crypto.timingSafeEqual(global, callframe);
     }
 
     pub fn timingSafeEqualWithoutTypeChecks(
@@ -574,10 +554,10 @@ pub const Crypto = struct {
 
         const len = a.len;
         if (b.len != len) {
-            return globalThis.throw("Input buffers must have the same byte length", .{});
+            return globalThis.ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH("Input buffers must have the same byte length", .{}).throw();
         }
 
-        return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
+        return JSC.jsBoolean(bun.BoringSSL.c.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
 
     pub fn getRandomValues(
@@ -644,7 +624,7 @@ pub const Crypto = struct {
 
     comptime {
         const Bun__randomUUIDv7 = JSC.toJSHostFunction(Bun__randomUUIDv7_);
-        @export(Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
+        @export(&Bun__randomUUIDv7, .{ .name = "Bun__randomUUIDv7" });
     }
     pub fn Bun__randomUUIDv7_(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.argumentsUndef(2).slice();
@@ -736,9 +716,9 @@ pub const Crypto = struct {
 
 comptime {
     const js_alert = JSC.toJSHostFunction(alert);
-    @export(js_alert, .{ .name = "WebCore__alert" });
+    @export(&js_alert, .{ .name = "WebCore__alert" });
     const js_prompt = JSC.toJSHostFunction(Prompt.call);
-    @export(js_prompt, .{ .name = "WebCore__prompt" });
+    @export(&js_prompt, .{ .name = "WebCore__prompt" });
     const js_confirm = JSC.toJSHostFunction(confirm);
-    @export(js_confirm, .{ .name = "WebCore__confirm" });
+    @export(&js_confirm, .{ .name = "WebCore__confirm" });
 }

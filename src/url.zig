@@ -39,6 +39,20 @@ pub const URL = struct {
     pub fn isFile(this: *const URL) bool {
         return strings.eqlComptime(this.protocol, "file");
     }
+    /// host + path without the ending slash, protocol, searchParams and hash
+    pub fn hostWithPath(this: *const URL) []const u8 {
+        if (this.host.len > 0) {
+            if (this.path.len > 1 and bun.isSliceInBuffer(this.path, this.href) and bun.isSliceInBuffer(this.host, this.href)) {
+                const end = @intFromPtr(this.path.ptr) + this.path.len;
+                const start = @intFromPtr(this.host.ptr);
+                const len: usize = end - start - (if (bun.strings.endsWithComptime(this.path, "/")) @as(usize, 1) else @as(usize, 0));
+                const ptr: [*]u8 = @ptrFromInt(start);
+                return ptr[0..len];
+            }
+            return this.host;
+        }
+        return "";
+    }
 
     pub fn isBlob(this: *const URL) bool {
         return this.href.len == JSC.WebCore.ObjectURLRegistry.specifier_len and strings.hasPrefixComptime(this.href, "blob:");
@@ -1043,7 +1057,7 @@ pub const FormData = struct {
 
     comptime {
         const jsFunctionFromMultipartData = JSC.toJSHostFunction(fromMultipartData);
-        @export(jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
+        @export(&jsFunctionFromMultipartData, .{ .name = "FormData__jsFunctionFromMultipartData" });
     }
 
     pub fn toJSFromMultipartData(

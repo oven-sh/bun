@@ -278,7 +278,7 @@ function _duplexify(pair) {
       onfinished(err);
     });
 
-    d._write = function (chunk, encoding, callback) {
+    d._write = function _write(chunk, encoding, callback) {
       if (w.write(chunk, encoding)) {
         callback();
       } else {
@@ -286,7 +286,7 @@ function _duplexify(pair) {
       }
     };
 
-    d._final = function (callback) {
+    d._final = function _final(callback) {
       w.end();
       onfinish = callback;
     };
@@ -329,7 +329,7 @@ function _duplexify(pair) {
       d.push(null);
     });
 
-    d._read = function () {
+    d._read = function _read() {
       while (true) {
         const buf = r.read();
 
@@ -345,7 +345,7 @@ function _duplexify(pair) {
     };
   }
 
-  d._destroy = function (err, callback) {
+  d._destroy = function _destroy(err, callback) {
     if (!err && onclose !== null) {
       err = $makeAbortError();
     }

@@ -47,7 +47,7 @@ else if (process.platform === "win32") {
 } else schedulingPolicy = SCHED_RR;
 cluster.schedulingPolicy = schedulingPolicy;
 
-cluster.setupPrimary = function (options) {
+cluster.setupPrimary = function setupPrimary(options) {
   const settings = {
     args: ArrayPrototypeSlice.$call(process.argv, 2),
     exec: process.argv[1],
@@ -119,7 +119,7 @@ function removeHandlesForWorker(worker) {
   });
 }
 
-cluster.fork = function (env) {
+cluster.fork = function fork(env) {
   cluster.setupPrimary();
   const id = ++ids;
   const workerProcess = createWorkerProcess(id, env);
@@ -183,7 +183,7 @@ function emitForkNT(worker) {
   cluster.emit("fork", worker);
 }
 
-cluster.disconnect = function (cb) {
+cluster.disconnect = function disconnect(cb) {
   const workers = ObjectKeys(cluster.workers);
 
   if (workers.length === 0) {
@@ -304,7 +304,7 @@ function send(worker, message, handle?, cb?) {
 }
 
 // Extend generic Worker with methods specific to the primary process.
-Worker.prototype.disconnect = function () {
+Worker.prototype.disconnect = function disconnect() {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
   this.process.disconnect();
@@ -313,7 +313,7 @@ Worker.prototype.disconnect = function () {
   return this;
 };
 
-Worker.prototype.destroy = function (signo) {
+Worker.prototype.destroy = function destroy(signo) {
   const proc = this.process;
   const signal = signo || "SIGTERM";
 

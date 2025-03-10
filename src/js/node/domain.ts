@@ -5,7 +5,7 @@ const ObjectDefineProperty = Object.defineProperty;
 
 // Export Domain
 var domain: any = {};
-domain.createDomain = domain.create = function () {
+domain.createDomain = domain.create = function create() {
   if (!EventEmitter) {
     EventEmitter = require("node:events");
   }
@@ -27,13 +27,13 @@ domain.createDomain = domain.create = function () {
     d.emit("error", e);
   }
 
-  d.add = function (emitter) {
+  d.add = function add(emitter) {
     emitter.on("error", emitError);
   };
-  d.remove = function (emitter) {
+  d.remove = function remove(emitter) {
     emitter.removeListener("error", emitError);
   };
-  d.bind = function (fn) {
+  d.bind = function bind(fn) {
     return function () {
       var args = Array.prototype.slice.$call(arguments);
       try {
@@ -43,7 +43,7 @@ domain.createDomain = domain.create = function () {
       }
     };
   };
-  d.intercept = function (fn) {
+  d.intercept = function intercept(fn) {
     return function (err) {
       if (err) {
         emitError(err);
@@ -57,7 +57,7 @@ domain.createDomain = domain.create = function () {
       }
     };
   };
-  d.run = function (fn) {
+  d.run = function run(fn) {
     try {
       fn();
     } catch (err) {
@@ -65,11 +65,14 @@ domain.createDomain = domain.create = function () {
     }
     return this;
   };
-  d.dispose = function () {
+  d.dispose = function dispose() {
     this.removeAllListeners();
     return this;
   };
-  d.enter = d.exit = function () {
+  d.enter = function enter() {
+    return this;
+  };
+  d.exit = function exit() {
     return this;
   };
   return d;

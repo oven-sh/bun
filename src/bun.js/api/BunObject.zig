@@ -4431,19 +4431,19 @@ pub fn getCSRFObject(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JS
 const CSRFObject = struct {
     pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const object = JSValue.createEmptyObject(globalThis, 2);
-        
+
         object.put(
             globalThis,
             ZigString.static("generate"),
             JSC.createCallback(globalThis, ZigString.static("generate"), 1, @import("../../csrf.zig").csrf__generate),
         );
-        
+
         object.put(
             globalThis,
             ZigString.static("verify"),
             JSC.createCallback(globalThis, ZigString.static("verify"), 1, @import("../../csrf.zig").csrf__verify),
         );
-        
+
         return object;
     }
 };

@@ -169,6 +169,9 @@ static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__disturbedGetterWrap, 
     return JSValue::encode(jsBoolean(thisObject->disturbed()));
 }
 
+// keep this in sync with src/codegen/replacements.ts
+static const ASCIILiteral stateNames[] = { ""_s, "closed"_s, "closing"_s, "errored"_s, "readable"_s, "waiting"_s, "writable"_s };
+
 JSC_DEFINE_HOST_FUNCTION(JSReadableStreamPrototype__customInspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -178,7 +181,7 @@ JSC_DEFINE_HOST_FUNCTION(JSReadableStreamPrototype__customInspect, (JSGlobalObje
     auto& builtinNames = WebCore::builtinNames(vm);
 
     auto locked = thisObject->get(lexicalGlobalObject, Identifier::fromString(vm, "locked"_s)).toBoolean(lexicalGlobalObject) ? "true"_s : "false"_s;
-    auto state = thisObject->getDirect(vm, builtinNames.statePrivateName()).toWTFString(lexicalGlobalObject);
+    auto state = stateNames[thisObject->getDirect(vm, builtinNames.statePrivateName()).toInt32(lexicalGlobalObject)];
     auto supportsBYOB = thisObject->getDirect(vm, builtinNames.readableStreamControllerPrivateName()).inherits<JSReadableByteStreamController>() ? "true"_s : "false"_s;
     return JSValue::encode(jsString(vm, WTF::makeString("ReadableStream { locked: "_s, locked, ", state: '"_s, state, "', supportsBYOB: "_s, supportsBYOB, " }"_s)));
 }

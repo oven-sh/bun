@@ -122,12 +122,15 @@ export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
 
-  $streamClosed: "'closed'",
-  $streamClosing: "'closing'",
-  $streamErrored: "'errored'",
-  $streamReadable: "'readable'",
-  $streamWaiting: "'waiting'",
-  $streamWritable: "'writable'",
+  // keep this in sync with src/bun.js/bindings/webcore/JSReadableStream.cpp customInspect
+  // keep this in sync with src/bun.js/bindings/webcore/JSWritableStream.cpp customInspect
+  $streamClosed: "1",
+  $streamClosing: "2",
+  $streamErrored: "3",
+  $streamReadable: "4",
+  $streamWaiting: "5",
+  $streamWritable: "6",
+  $streamErroring: "7",
 
   "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
   "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),

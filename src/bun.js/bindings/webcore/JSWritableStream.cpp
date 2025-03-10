@@ -262,6 +262,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter, (JSGlobalO
     return IDLOperation<JSWritableStream>::call<jsWritableStreamPrototypeFunction_getWriterBody>(*lexicalGlobalObject, *callFrame, "getWriter");
 }
 
+// keep this in sync with src/codegen/replacements.ts
+static const ASCIILiteral stateNames[] = { ""_s, "closed"_s, "closing"_s, "errored"_s, "readable"_s, "waiting"_s, "writable"_s, "erroring"_s };
+
 JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_customInspect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -271,7 +274,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_customInspect, (JSGlo
     auto& builtinNames = WebCore::builtinNames(vm);
 
     auto locked = !thisObject->get(lexicalGlobalObject, WebCore::builtinNames(vm).writerPrivateName()).isUndefined() ? "true"_s : "false"_s;
-    auto state = thisObject->wrapped().internalWritableStream().guardedObject().getObject()->getDirect(vm, builtinNames.statePrivateName()).toWTFString(lexicalGlobalObject);
+    auto state = stateNames[thisObject->wrapped().internalWritableStream().guardedObject().getObject()->getDirect(vm, builtinNames.statePrivateName()).toInt32(lexicalGlobalObject)];
     return JSValue::encode(jsString(vm, WTF::makeString("WritableStream { locked: "_s, locked, ", state: '"_s, state, "' }"_s)));
 }
 

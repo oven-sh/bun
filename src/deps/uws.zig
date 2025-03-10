@@ -1627,12 +1627,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             // debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket)});
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_shutdown({d})", .{@intFromPtr(socket)});
                     return us_socket_shutdown(
                         comptime ssl_int,
                         socket,
                     );
                 },
                 .connecting => |socket| {
+                    debug("us_connecting_socket_shutdown({d})", .{@intFromPtr(socket)});
                     return us_connecting_socket_shutdown(
                         comptime ssl_int,
                         socket,
@@ -1651,14 +1653,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn shutdownRead(this: ThisSocket) void {
             switch (this.socket) {
                 .connected => |socket| {
-                    // debug("us_socket_shutdown_read({d})", .{@intFromPtr(socket)});
+                    debug("us_socket_shutdown_read({d})", .{@intFromPtr(socket)});
                     return us_socket_shutdown_read(
                         comptime ssl_int,
                         socket,
                     );
                 },
                 .connecting => |socket| {
-                    // debug("us_connecting_socket_shutdown_read({d})", .{@intFromPtr(socket)});
+                    debug("us_connecting_socket_shutdown_read({d})", .{@intFromPtr(socket)});
                     return us_connecting_socket_shutdown_read(
                         comptime ssl_int,
                         socket,
@@ -1677,12 +1679,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn isShutdown(this: ThisSocket) bool {
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_is_shut_down({d})", .{@intFromPtr(socket)});
                     return us_socket_is_shut_down(
                         comptime ssl_int,
                         socket,
                     ) > 0;
                 },
                 .connecting => |socket| {
+                    debug("us_connecting_socket_is_shut_down({d})", .{@intFromPtr(socket)});
                     return us_connecting_socket_is_shut_down(
                         comptime ssl_int,
                         socket,
@@ -1709,12 +1713,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn getError(this: ThisSocket) i32 {
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_get_error({d})", .{@intFromPtr(socket)});
                     return us_socket_get_error(
                         comptime ssl_int,
                         socket,
                     );
                 },
                 .connecting => |socket| {
+                    debug("us_connecting_socket_get_error({d})", .{@intFromPtr(socket)});
                     return us_connecting_socket_get_error(
                         comptime ssl_int,
                         socket,
@@ -1740,6 +1746,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn localPort(this: ThisSocket) i32 {
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_local_port({d})", .{@intFromPtr(socket)});
                     return us_socket_local_port(
                         comptime ssl_int,
                         socket,
@@ -1751,6 +1758,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn remoteAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_remote_address({d})", .{@intFromPtr(socket)});
                     return us_socket_remote_address(
                         comptime ssl_int,
                         socket,

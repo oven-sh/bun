@@ -42,7 +42,7 @@ beforeAll(async () => {
       rm ${BUN_TYPES_TARBALL_NAME}
     `;
   } catch (e) {
-    if (e instanceof ShellError) {
+    if (e instanceof Bun.$.ShellError) {
       console.log(e.stderr.toString());
     }
 

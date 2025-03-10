@@ -9,36 +9,58 @@ declare module "bun" {
   }
 }
 
+/**
+ * Helper type for avoiding conflicts in types.
+ *
+ * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
+ *
+ * This is to avoid type conflicts between lib.dom.d.ts and @types/bun.
+ *
+ * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
+ * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
+ * to the type that lib.dom.d.ts provides.
+ */
+type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
+  // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
+  typeof globalThis extends { onabort: any }
+    ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
+      ? T
+      : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
+    : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
+
 interface ReadableStream<R = any> {}
-declare var ReadableStream: typeof globalThis extends { ReadableStream: infer T }
-  ? T
-  : {
-      prototype: ReadableStream;
-      new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-      new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
-    };
+declare var ReadableStream: UseLibDomIfAvailable<
+  "ReadableStream",
+  {
+    prototype: ReadableStream;
+    new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+  }
+>;
 
 interface WritableStream<W = any> {}
-declare var WritableStream: typeof globalThis extends { WritableStream: infer T }
-  ? T
-  : {
-      prototype: WritableStream;
-      new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
-    };
+declare var WritableStream: UseLibDomIfAvailable<
+  "WritableStream",
+  {
+    prototype: WritableStream;
+    new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
+  }
+>;
 
 interface Worker extends Bun.__internal.NodeWorkerThreadsWorker {}
-declare var Worker: typeof globalThis extends { Worker: infer T }
-  ? T
-  : {
-      prototype: Worker;
-      new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
-      /**
-       * This is the cloned value of the `data` property passed to `new Worker()`
-       *
-       * This is Bun's equivalent of `workerData` in Node.js.
-       */
-      data: any;
-    };
+declare var Worker: UseLibDomIfAvailable<
+  "Worker",
+  {
+    prototype: Worker;
+    new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
+    /**
+     * This is the cloned value of the `data` property passed to `new Worker()`
+     *
+     * This is Bun's equivalent of `workerData` in Node.js.
+     */
+    data: any;
+  }
+>;
 
 declare var WebSocket: typeof import("ws").WebSocket;
 
@@ -1223,7 +1245,6 @@ interface Blob {
    */
   // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
   json(): Promise<any>;
-
   /**
    * Read the data from the blob as a {@link FormData} object.
    *
@@ -1237,13 +1258,153 @@ interface Blob {
    * closely to the `BodyMixin` API.
    */
   formData(): Promise<FormData>;
-
   arrayBuffer(): Promise<ArrayBuffer>;
-
   /**
    * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
    */
   bytes(): Promise<Uint8Array>;
 }
 
-declare var Blob: typeof globalThis extends { Blob: infer T } ? T : Blob;
+declare var Blob: UseLibDomIfAvailable<
+  "Blob",
+  {
+    prototype: Blob;
+    new (blobParts?: Bun.BlobPart[], options?: BlobPropertyBag): Blob;
+  }
+>;
+
+interface BroadcastChannel {}
+declare var BroadcastChannel: UseLibDomIfAvailable<"BroadcastChannel", import("node:worker_threads").BroadcastChannel>;
+
+declare var URL: UseLibDomIfAvailable<
+  "URL",
+  {
+    prototype: URL;
+    new (url: string | URL, base?: string | URL): URL;
+    /**
+     * Check if a URL can be parsed.
+     *
+     * @param url - The URL to check.
+     * @param base - The base URL to use.
+     */
+    canParse(url: string, base?: string): boolean;
+    /**
+     * Create a URL from an object.
+     *
+     * @param object - The object to create a URL from.
+     */
+    createObjectURL(object: Blob): `blob:${string}`;
+    /**
+     * Revoke a URL.
+     *
+     * @param url - The URL to revoke.
+     */
+    revokeObjectURL(url: string): void;
+  }
+>;
+
+declare var AbortController: UseLibDomIfAvailable<
+  "AbortController",
+  {
+    prototype: AbortController;
+    new (): AbortController;
+  }
+>;
+
+declare var AbortSignal: UseLibDomIfAvailable<
+  "AbortSignal",
+  {
+    prototype: AbortSignal;
+    new (): AbortSignal;
+  }
+>;
+
+interface DOMException {}
+declare var DOMException: UseLibDomIfAvailable<"DOMException", { prototype: DOMException; new (): DOMException }>;
+
+interface FormData {}
+declare var FormData: UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
+
+interface EventSource {}
+declare var EventSource: UseLibDomIfAvailable<"EventSource", { prototype: EventSource; new (): EventSource }>;
+
+interface PerformanceEntry {}
+declare var PerformanceEntry: UseLibDomIfAvailable<
+  "PerformanceEntry",
+  { prototype: PerformanceEntry; new (): PerformanceEntry }
+>;
+
+interface PerformanceMark {}
+declare var PerformanceMark: UseLibDomIfAvailable<
+  "PerformanceMark",
+  { prototype: PerformanceMark; new (): PerformanceMark }
+>;
+
+interface PerformanceMeasure {}
+declare var PerformanceMeasure: UseLibDomIfAvailable<
+  "PerformanceMeasure",
+  { prototype: PerformanceMeasure; new (): PerformanceMeasure }
+>;
+
+interface PerformanceObserver {}
+declare var PerformanceObserver: UseLibDomIfAvailable<
+  "PerformanceObserver",
+  { prototype: PerformanceObserver; new (): PerformanceObserver }
+>;
+
+interface PerformanceObserverEntryList {}
+declare var PerformanceObserverEntryList: UseLibDomIfAvailable<
+  "PerformanceObserverEntryList",
+  { prototype: PerformanceObserverEntryList; new (): PerformanceObserverEntryList }
+>;
+
+interface PerformanceResourceTiming {}
+declare var PerformanceResourceTiming: UseLibDomIfAvailable<
+  "PerformanceResourceTiming",
+  { prototype: PerformanceResourceTiming; new (): PerformanceResourceTiming }
+>;
+
+interface ReadableByteStreamController {}
+declare var ReadableByteStreamController: UseLibDomIfAvailable<
+  "ReadableByteStreamController",
+  { prototype: ReadableByteStreamController; new (): ReadableByteStreamController }
+>;
+
+interface ReadableStreamBYOBReader {}
+declare var ReadableStreamBYOBReader: UseLibDomIfAvailable<
+  "ReadableStreamBYOBReader",
+  { prototype: ReadableStreamBYOBReader; new (): ReadableStreamBYOBReader }
+>;
+
+interface ReadableStreamBYOBRequest {}
+declare var ReadableStreamBYOBRequest: UseLibDomIfAvailable<
+  "ReadableStreamBYOBRequest",
+  { prototype: ReadableStreamBYOBRequest; new (): ReadableStreamBYOBRequest }
+>;
+
+interface TextDecoderStream {}
+declare var TextDecoderStream: UseLibDomIfAvailable<
+  "TextDecoderStream",
+  { prototype: TextDecoderStream; new (): TextDecoderStream }
+>;
+
+interface TextEncoderStream {}
+declare var TextEncoderStream: UseLibDomIfAvailable<
+  "TextEncoderStream",
+  { prototype: TextEncoderStream; new (): TextEncoderStream }
+>;
+
+interface URLSearchParams {}
+declare var URLSearchParams: UseLibDomIfAvailable<
+  "URLSearchParams",
+  { prototype: URLSearchParams; new (): URLSearchParams }
+>;
+
+interface MessageChannel {}
+declare var MessageChannel: UseLibDomIfAvailable<
+  "MessageChannel",
+  { prototype: MessageChannel; new (): MessageChannel }
+>;
+
+interface MessagePort {}
+declare var MessagePort: UseLibDomIfAvailable<"MessagePort", { prototype: MessagePort; new (): MessagePort }>;

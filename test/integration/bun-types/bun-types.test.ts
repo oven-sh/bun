@@ -64,7 +64,7 @@ describe("@types/bun integration test", () => {
     expect(p.exitCode).toBe(0);
   });
 
-  test("it typechecks successfully with DOM lib", async () => {
+  test("it typechecks successfully without DOM lib", async () => {
     const p = await $`
       cd ${FIXTURE_DIR}
       # modify tsconfig.json to remove dom lib

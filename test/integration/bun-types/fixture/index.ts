@@ -194,6 +194,8 @@ URL.canParse;
 URL.createObjectURL;
 URL.revokeObjectURL;
 
+new MessagePort();
+
 new File(["code"], "name.ts");
 
 Response.json("");

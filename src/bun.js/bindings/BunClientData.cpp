@@ -44,7 +44,7 @@ JSHeapData::JSHeapData(Heap& heap)
 
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
-JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider)
+JSVMClientData::JSVMClientData(VM& vm, void* bunVM, RefPtr<SourceProvider> sourceProvider, JSC::HeapType heapType)
     : m_builtinNames(vm)
     , m_builtinFunctions(vm, sourceProvider, m_builtinNames)
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
@@ -52,6 +52,8 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
+    , m_gcController(vm, bunVM, heapType)
+    , bunVM(bunVM)
 {
 }
 
@@ -77,26 +79,25 @@ JSVMClientData::~JSVMClientData()
     ASSERT(m_normalWorld->hasOneRef());
     m_normalWorld = nullptr;
 }
-void JSVMClientData::create(VM* vm, void* bunVM)
+void JSVMClientData::create(VM& vm, void* bunVM, JSC::HeapType heapType)
 {
     auto provider = WebCore::createBuiltinsSourceProvider();
-    JSVMClientData* clientData = new JSVMClientData(*vm, provider);
-    clientData->bunVM = bunVM;
-    vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
+    JSVMClientData* clientData = new JSVMClientData(vm, bunVM, provider, heapType);
+    vm.deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
         Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTFMove(ticket), kind);
     };
-    vm->deferredWorkTimer->onScheduleWorkSoon = [clientData](JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task) -> void {
+    vm.deferredWorkTimer->onScheduleWorkSoon = [clientData](JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task) -> void {
         Bun::JSCTaskScheduler::onScheduleWorkSoon(clientData, ticket, WTFMove(task));
     };
-    vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket ticket) -> void {
+    vm.deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket ticket) -> void {
         Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);
     };
 
-    vm->clientData = clientData; // ~VM deletes this pointer.
-    clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
+    vm.clientData = clientData; // ~VM deletes this pointer.
+    clientData->m_normalWorld = DOMWrapperWorld::create(vm, DOMWrapperWorld::Type::Normal);
 
-    vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
-    vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
+    vm.heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(vm, clientData->heapData()));
+    vm.m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
     clientData->builtinFunctions().exportNames();
 }
 

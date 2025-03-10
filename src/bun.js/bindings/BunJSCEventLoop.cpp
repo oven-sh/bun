@@ -11,23 +11,30 @@ static thread_local std::optional<JSC::JSLock::DropAllLocks> drop_all_locks { st
 
 extern "C" void WTFTimer__runIfImminent(void* bun_vm);
 
-// Safe if VM is nullptr
-extern "C" void Bun__JSC_onBeforeWait(JSC::VM* vm)
+extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
 {
     ASSERT(!drop_all_locks.has_value());
-    if (vm) {
-        bool previouslyHadAccess = vm->heap.hasHeapAccess();
-        drop_all_locks.emplace(*vm);
-        if (previouslyHadAccess) {
-            vm->heap.releaseAccess();
-        }
+
+    bool previouslyHadAccess = vm->heap.hasHeapAccess();
+    drop_all_locks.emplace(*vm);
+    if (previouslyHadAccess) {
+        vm->heap.releaseAccess();
     }
 }
 
-extern "C" void Bun__JSC_onAfterWait(JSC::VM* vm)
+extern "C" void Bun__JSC_onAfterWait(JSC::VM* _Nonnull vm, bool hasMoreEventLoopWorkToDo)
 {
-    if (vm) {
-        vm->heap.acquireAccess();
-        drop_all_locks.reset();
+    vm->heap.acquireAccess();
+    drop_all_locks.reset();
+
+    if (hasMoreEventLoopWorkToDo) {
+        auto& gcController = WebCore::clientData(*vm)->gcController();
+        gcController.setHasMoreEventLoopWorkToDo(true);
     }
+}
+
+extern "C" void Bun__JSC_onDidRunCallbacks(JSC::VM* _Nonnull vm)
+{
+    auto& gcController = WebCore::clientData(*vm)->gcController();
+    gcController.setHasMoreEventLoopWorkToDo(false);
 }

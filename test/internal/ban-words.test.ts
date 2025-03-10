@@ -18,7 +18,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
   "std.unicode": { reason: "Use bun.strings instead", limit: 36 },
-  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 251, regex: true },
+  [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 249, regex: true },
 };
 const words_keys = [...Object.keys(words)];
 

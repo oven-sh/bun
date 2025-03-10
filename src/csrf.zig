@@ -285,7 +285,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
     };
 
     // Encode the token
-    return encoding.toNodeEncoding().encodeWithMaxSize(globalObject, boring.EVP_MAX_MD_SIZE, token_bytes);
+    return encoding.toNodeEncoding().encodeWithMaxSize(globalObject, boring.EVP_MAX_MD_SIZE + 32, token_bytes);
 }
 
 pub const csrf__generate: JSC.JSHostFunctionType = JSC.toJSHostFunction(csrf__generate_impl);

@@ -307,7 +307,6 @@ function send(worker, message, handle?, cb?) {
 Worker.prototype.disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
-  this.process.disconnect();
   removeHandlesForWorker(this);
   removeWorker(this);
   return this;

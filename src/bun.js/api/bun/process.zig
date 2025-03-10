@@ -1236,7 +1236,7 @@ pub fn spawnProcessPosix(
     }
 
     if (options.cwd.len > 0) {
-        actions.chdir(options.cwd) catch return error.ChangingDirectoryFailed;
+        try actions.chdir(options.cwd);
     }
     var spawned = PosixSpawnResult{};
     var extra_fds = std.ArrayList(bun.FileDescriptor).init(bun.default_allocator);

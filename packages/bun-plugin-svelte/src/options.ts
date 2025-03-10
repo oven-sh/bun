@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
-import type { BuildConfig } from "bun";
-import type { CompileOptions } from "svelte/compiler";
+import { plugin, type BuildConfig } from "bun";
+import type { CompileOptions, ModuleCompileOptions } from "svelte/compiler";
 
 export interface SvelteOptions {
   /**
@@ -60,6 +60,38 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
         identifiers: shouldMinify,
       };
 
+  const generate = generateSide(pluginOptions, config);
+
+  return {
+    css: "external",
+    generate,
+    preserveWhitespace: !minifyWhitespace,
+    preserveComments: !shouldMinify,
+    dev: development,
+    cssHash({ css }) {
+      // same prime number seed used by svelte/compiler.
+      // TODO: ensure this provides enough entropy
+      return `svelte-${hash(css)}`;
+    },
+  };
+}
+
+export function getBaseModuleCompileOptions(
+  pluginOptions: SvelteOptions,
+  config: Partial<BuildConfig>,
+): ModuleCompileOptions {
+  const { development = false } = pluginOptions;
+  const generate = generateSide(pluginOptions, config);
+  return {
+    dev: development,
+    generate,
+  };
+}
+
+function generateSide(pluginOptions: SvelteOptions, config: Partial<BuildConfig>) {
+  let { forceSide } = pluginOptions;
+  const { target } = config;
+
   if (forceSide == null && typeof target === "string") {
     switch (target) {
       case "browser":
@@ -73,19 +105,7 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
       // warn? throw?
     }
   }
-
-  return {
-    css: "external",
-    generate: forceSide,
-    preserveWhitespace: !minifyWhitespace,
-    preserveComments: !shouldMinify,
-    dev: development,
-    cssHash({ css }) {
-      // same prime number seed used by svelte/compiler.
-      // TODO: ensure this provides enough entropy
-      return `svelte-${hash(css)}`;
-    },
-  };
+  return forceSide;
 }
 
 export const hash = (content: string): string => Bun.hash(content, 5381).toString(36);

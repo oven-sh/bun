@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { render } from "svelte/server";
 import { SveltePlugin } from "../src";
+import type { BuildOutput } from "bun";
 
 const fixturePath = (...segs: string[]) => path.join(import.meta.dirname, "fixtures", ...segs);
 
@@ -30,6 +31,22 @@ it("hello world component", async () => {
     plugins: [SveltePlugin()],
   });
   expect(res.success).toBeTrue();
+});
+
+describe("when importing `.svelte.ts` files", () => {
+  let res: BuildOutput;
+
+  beforeAll(async () => {
+    res = await Bun.build({
+      entrypoints: [fixturePath("with-modules.svelte")],
+      outdir,
+      plugins: [SveltePlugin()],
+    });
+  });
+
+  it.only("builds successfully", () => {
+    expect(res.success).toBeTrue();
+  });
 });
 
 describe("Bun.build", () => {

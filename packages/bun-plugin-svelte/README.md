@@ -84,3 +84,11 @@ Bun.build({
 
 `bun-plugin-svelte` does not yet support server-side imports (e.g. for SSR).
 This will be added in the near future.
+
+## Not Yet Supported
+Support for these features will be added in the near future
+- Server-side imports/rendering
+- Source maps
+- CSS extensions (e.g. tailwind) in `<style>` blocks
+- TypeScript-specific features (e.g. enums and namespaces). If you're using
+  TypeScript 5.8, consider enabling [`--erasableSyntaxOnly`](https://devblogs.microsoft.com/typescript/announcing-typescript-5-8-beta/#the---erasablesyntaxonly-option)

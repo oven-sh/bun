@@ -1766,25 +1766,6 @@ declare global {
     bytes(): Promise<Uint8Array>;
   }
 
-  var Response: typeof globalThis extends {
-    onerror: any;
-    Response: infer T;
-  }
-    ? T
-    : typeof import("./fetch").Response;
-
-  var Request: typeof globalThis extends {
-    onerror: any;
-    Request: infer T;
-  }
-    ? T
-    : {
-        prototype: Request;
-        new (requestInfo: string, requestInit?: RequestInit): Request;
-        new (requestInfo: RequestInit & { url: string }): Request;
-        new (requestInfo: Request, requestInit?: RequestInit): Request;
-      };
-
   interface Headers {
     /**
      * Convert {@link Headers} to a plain JavaScript object.

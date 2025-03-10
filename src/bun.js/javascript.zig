@@ -2768,6 +2768,12 @@ pub const VirtualMachine = struct {
 
     pub const main_file_name: string = "bun:main";
 
+    pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        _ = callframe; // autofix
+        globalObject.bunVM().drainMicrotasks();
+        return .undefined;
+    }
+
     pub fn drainMicrotasks(this: *VirtualMachine) void {
         this.eventLoop().drainMicrotasks();
     }

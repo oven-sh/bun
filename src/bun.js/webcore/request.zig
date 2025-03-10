@@ -115,10 +115,8 @@ pub const Request = struct {
     pub const InternalJSEventCallback = struct {
         function: JSC.Strong = .empty,
 
-        pub const EventType = enum(u8) {
-            timeout = 0,
-            abort = 1,
-        };
+        pub const EventType = JSC.API.NodeHTTPResponse.AbortEvent;
+
         pub fn init(function: JSC.JSValue, globalThis: *JSC.JSGlobalObject) InternalJSEventCallback {
             return InternalJSEventCallback{
                 .function = JSC.Strong.create(function, globalThis),

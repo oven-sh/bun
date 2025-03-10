@@ -10,6 +10,7 @@
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
+const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
@@ -1171,6 +1172,8 @@ fn ensureRouteIsBundled(
                     },
                     .loaded => {},
                 }
+
+                // TODO(@heimskr): store the request?
 
                 // Prepare a bundle with just this route.
                 var sfa = std.heap.stackFallback(4096, dev.allocator);
@@ -2770,16 +2773,13 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
         return;
     }
 
-    switch (dev.server.?) {
-        inline else => |s| {
-            if (@typeInfo(@TypeOf(s.app.?)).pointer.child.Response != @typeInfo(@TypeOf(resp)).pointer.child) {
-                unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
-            }
-            if (s.config.onRequest != .zero) {
-                s.onRequest(req, resp);
-                return;
-            }
-        },
+    if (DevServer.AnyResponse != @typeInfo(@TypeOf(resp)).pointer.child) {
+        unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
+    }
+
+    if (dev.server.?.config.onRequest != .zero) {
+        dev.server.?.onRequest(req, resp);
+        return;
     }
 
     sendBuiltInNotFound(resp);
@@ -5692,7 +5692,7 @@ pub fn onWebSocketUpgrade(
         .active_route = .none,
     });
     dev.active_websocket_connections.put(dev.allocator, dw, {}) catch bun.outOfMemory();
-    res.upgrade(
+    _ = res.upgrade(
         *HmrSocket,
         dw,
         req.header("sec-websocket-key") orelse "",

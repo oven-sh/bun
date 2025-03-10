@@ -1,8 +1,10 @@
 import { describe, it, expect } from "bun:test";
 import { pathToFileURL } from "bun";
 import { mkdirSync, writeFileSync } from "fs";
-import { join, sep } from "path";
-import { bunExe, bunEnv, tempDirWithFiles, joinP, isWindows } from "harness";
+import { join, sep, resolve } from "path";
+import { bunExe, bunEnv, tempDirWithFiles, joinP, isWindows, bunRun } from "harness";
+
+const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
 it("spawn test file", () => {
   writePackageJSONImportsFixture();
@@ -431,4 +433,14 @@ it("can resolve with source directories that do not exist", () => {
   });
 
   expect(exitCode).toBe(0);
+});
+
+describe("When CJS and ESM are mixed", () => {
+  const fixturePath = fixture("tsyringe.ts");
+
+  // https://github.com/oven-sh/bun/issues/4677
+  it("loads reflect-metadata before tsyringe", async () => {
+    const { stderr } = bunRun(fixturePath);
+    expect(stderr).toBeEmpty();
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CSRF } from "bun";
+import { CSRF, type CSRFAlgorithm } from "bun";
 describe("Bun.CSRF", () => {
   const secret = "this-is-my-super-secure-secret-key";
 
@@ -110,24 +110,18 @@ describe("Bun.CSRF", () => {
     expect(CSRF.verify(hexToken, { secret, encoding: "hex" })).toBe(true);
   });
 
-  test("test with different algorithms", async () => {
+  test("test with default algorithm", async () => {
     // default
     const token = CSRF.generate(secret);
-    // console.log(token, Buffer.from(token, "base64url").toString("hex"));
     expect(CSRF.verify(token, { secret })).toBe(true);
-
-    // sha256
-    const token2 = CSRF.generate(secret, { algorithm: "sha256" });
-    expect(CSRF.verify(token2, { secret, algorithm: "sha256" })).toBe(true);
-
-    // sha384
-    const token3 = CSRF.generate(secret, { algorithm: "sha384" });
-    expect(CSRF.verify(token3, { secret, algorithm: "sha384" })).toBe(true);
-
-    // sha512
-    const token4 = CSRF.generate(secret, { algorithm: "sha512" });
-    expect(CSRF.verify(token4, { secret, algorithm: "sha512" })).toBe(true);
   });
+  const algorithms: Array<CSRFAlgorithm> = ["blake2b256", "blake2b512", "sha256", "sha384", "sha512", "sha512-256"];
+  for (const algorithm of algorithms) {
+    test(`test with algorithm ${algorithm}`, async () => {
+      const token2 = CSRF.generate(secret, { algorithm });
+      expect(CSRF.verify(token2, { secret, algorithm })).toBe(true);
+    });
+  }
 
   test("default secret", () => {
     const token = CSRF.generate();

@@ -258,15 +258,13 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
             if (!algorithm_js.isString()) {
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
-            const algorithm_enum = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
+            algorithm = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             };
-            algorithm = switch (algorithm_enum) {
-                .sha256 => .sha256,
-                .sha384 => .sha384,
-                .sha512 => .sha512,
-                else => return globalObject.throwInvalidArguments("Invalid algorithm: must be 'sha256', 'sha384', or 'sha512'", .{}),
-            };
+            switch (algorithm) {
+                .blake2b256, .blake2b512, .sha256, .sha384, .sha512, .@"sha512-256" => {},
+                else => return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js),
+            }
         }
     }
 
@@ -355,15 +353,13 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
             if (!algorithm_js.isString()) {
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
-            const algorithm_enum = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
+            algorithm = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             };
-            algorithm = switch (algorithm_enum) {
-                .sha256 => .sha256,
-                .sha384 => .sha384,
-                .sha512 => .sha512,
-                else => return globalObject.throwInvalidArguments("Invalid algorithm: must be 'sha256', 'sha384', or 'sha512'", .{}),
-            };
+            switch (algorithm) {
+                .blake2b256, .blake2b512, .sha256, .sha384, .sha512, .@"sha512-256" => {},
+                else => return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js),
+            }
         }
     }
     // Verify the token

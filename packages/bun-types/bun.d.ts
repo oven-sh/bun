@@ -2309,6 +2309,7 @@ declare module "bun" {
    */
   interface SavepointSQL extends SQL {}
 
+  type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
   interface CSRFGenerateOptions {
     /**
      * The number of milliseconds until the token expires. 0 means the token never expires.
@@ -2324,7 +2325,7 @@ declare module "bun" {
      * The algorithm to use for the token.
      * @default "sha256"
      */
-    algorithm?: "sha256" | "sha384" | "sha512";
+    algorithm?: CSRFAlgorithm;
   }
 
   interface CSRFVerifyOptions {
@@ -2341,7 +2342,7 @@ declare module "bun" {
      * The algorithm to use for the token.
      * @default "sha256"
      */
-    algorithm?: "sha256" | "sha384" | "sha512";
+    algorithm?: CSRFAlgorithm;
     /**
      * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)

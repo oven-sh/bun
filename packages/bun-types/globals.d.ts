@@ -1765,6 +1765,7 @@ declare global {
      */
     bytes(): Promise<Uint8Array>;
   }
+  var Blob: typeof Blob;
 
   interface Uint8Array {
     /**
@@ -1792,6 +1793,4 @@ declare global {
      */
     fromBase64(base64: string): Uint8Array;
   }
-
-  var Blob: typeof Blob;
 }

@@ -2311,7 +2311,7 @@ declare module "bun" {
 
   interface CSRFGenerateOptions {
     /**
-     * The number of milliseconds until the token expires.
+     * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     expiresIn?: number;
@@ -2329,9 +2329,9 @@ declare module "bun" {
 
   interface CSRFVerifyOptions {
     /**
-     * The secret to use for the token.
+     * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
      */
-    secret: string;
+    secret?: string;
     /**
      * The encoding of the token.
      * @default "base64url"
@@ -2343,7 +2343,7 @@ declare module "bun" {
      */
     algorithm?: "sha256" | "sha384" | "sha512";
     /**
-     * The number of milliseconds until the token expires.
+     * The number of milliseconds until the token expires. 0 means the token never expires.
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     maxAge?: number;
@@ -2351,18 +2351,18 @@ declare module "bun" {
   interface CSRF {
     /**
      * Generate a CSRF token.
-     * @param secret The secret to use for the token.
+     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
      * @param options The options for the token.
      * @returns The generated token.
      */
-    generate(secret: string, options?: CSRFGenerateOptions): string;
+    generate(secret?: string, options?: CSRFGenerateOptions): string;
     /**
      * Verify a CSRF token.
      * @param token The token to verify.
      * @param options The options for the token.
      * @returns True if the token is valid, false otherwise.
      */
-    verify(token: string, options: CSRFVerifyOptions): boolean;
+    verify(token: string, options?: CSRFVerifyOptions): boolean;
   }
 
   var sql: SQL;

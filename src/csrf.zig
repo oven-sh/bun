@@ -123,21 +123,30 @@ pub fn verify(options: VerifyOptions) bool {
 
     // Allocate output buffer for decoded data
     var buf: [boring.EVP_MAX_MD_SIZE + 32]u8 = undefined;
+    var token = options.token;
+    // check if ends with \0
+    if (token.len > 0 and token[token.len - 1] == 0) {
+        token = token[0 .. token.len - 1];
+    }
+
     const decoded: []const u8 = brk: switch (encoding) {
         // shares same decoder but encoder is different see encoding.zig
         .base64url, .base64 => {
-            const result = bun.base64.decode(&buf, options.token);
-            if (result.status == .success) {
-                break :brk buf[0..result.count];
-            }
-            return false;
+            // do the same as Buffer.from(token, "base64url" | "base64")
+            const slice = bun.strings.trim(token, "\r\n\t " ++ [_]u8{std.ascii.control_code.vt});
+            if (slice.len == 0) return false;
+
+            const outlen = bun.base64.decodeLen(slice);
+            if (outlen > buf.len) return false;
+            const wrote = bun.base64.decode(buf[0..outlen], slice).count;
+            break :brk buf[0..wrote];
         },
         .hex => {
-            if (options.token.len % 2 != 0) return false;
+            if (token.len % 2 != 0) return false;
             // decoded len
-            const decoded_len = options.token.len / 2;
+            const decoded_len = token.len / 2;
             if (decoded_len > buf.len) return false;
-            const result = bun.strings.decodeHexToBytesTruncate(buf[0..decoded_len], u8, options.token);
+            const result = bun.strings.decodeHexToBytesTruncate(buf[0..decoded_len], u8, token);
             if (result == decoded_len) {
                 break :brk buf[0..decoded_len];
             }
@@ -160,7 +169,7 @@ pub fn verify(options: VerifyOptions) bool {
     {
         // respect the token's expiration time
         if (expires_in > 0) {
-            if (timestamp + expires_in < current_time) {
+            if (current_time > timestamp + expires_in) {
                 return false;
             }
         }
@@ -169,7 +178,7 @@ pub fn verify(options: VerifyOptions) bool {
         // repect options.max_age_ms
         const expiry = options.max_age_ms;
         if (expiry > 0) {
-            if (timestamp + expiry < current_time) {
+            if (current_time > timestamp + expiry) {
                 return false;
             }
         }
@@ -204,19 +213,19 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
 
     // We should have at least one argument (secret)
     const args = callframe.arguments();
-    if (args.len < 1) {
-        return globalObject.throwInvalidArguments("Missing required secret parameter", .{});
+    var secret: ?JSC.ZigString.Slice = null;
+    if (args.len >= 1) {
+        const jsSecret = args[0];
+        // Extract the secret (required)
+        if (jsSecret.isEmptyOrUndefinedOrNull()) {
+            return globalObject.throwInvalidArguments("Secret is required", .{});
+        }
+        if (!jsSecret.isString() or jsSecret.getLength(globalObject) == 0) {
+            return globalObject.throwInvalidArguments("Secret must be a non-empty string", .{});
+        }
+        secret = try jsSecret.toSlice(globalObject, bun.default_allocator);
     }
-    const jsSecret = args[0];
-    // Extract the secret (required)
-    if (jsSecret.isEmptyOrUndefinedOrNull()) {
-        return globalObject.throwInvalidArguments("Secret is required", .{});
-    }
-    if (!jsSecret.isString()) {
-        return globalObject.throwInvalidArguments("Secret must be a string", .{});
-    }
-    const secret = try jsSecret.toSlice(globalObject, bun.default_allocator);
-    defer secret.deinit();
+    defer if (secret) |s| s.deinit();
 
     // Default values
     var expires_in: u64 = DEFAULT_EXPIRATION_MS;
@@ -247,10 +256,10 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
 
         if (try options_value.get(globalObject, "algorithm")) |algorithm_js| {
             if (!algorithm_js.isString()) {
-                return globalObject.throwInvalidArguments("Invalid algorithm: must be 'sha256', 'sha384', or 'sha512'", .{});
+                return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
             const algorithm_enum = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
-                return globalObject.throwInvalidArguments("Invalid algorithm: must be 'sha256', 'sha384', or 'sha512'", .{});
+                return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             };
             algorithm = switch (algorithm_enum) {
                 .sha256 => .sha256,
@@ -266,7 +275,7 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
 
     // Generate the token
     const token_bytes = generate(.{
-        .secret = secret.slice(),
+        .secret = if (secret) |s| s.slice() else globalObject.bunVM().rareData().defaultCSRFSecret(),
         .expires_in_ms = expires_in,
         .encoding = encoding,
         .algorithm = algorithm,
@@ -294,13 +303,13 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
     if (args.len < 1) {
         return globalObject.throwInvalidArguments("Missing required token parameter", .{});
     }
-    const jsToken = args[0];
+    const jsToken: JSC.JSValue = args[0];
     // Extract the token (required)
     if (jsToken.isUndefinedOrNull()) {
         return globalObject.throwInvalidArguments("Token is required", .{});
     }
-    if (!jsToken.isString()) {
-        return globalObject.throwInvalidArguments("Token must be a string", .{});
+    if (!jsToken.isString() or jsToken.getLength(globalObject) == 0) {
+        return globalObject.throwInvalidArguments("Token must be a non-empty string", .{});
     }
     const token = try jsToken.toSlice(globalObject, bun.default_allocator);
     defer token.deinit();
@@ -314,54 +323,53 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
     var algorithm: JSC.API.Bun.Crypto.EVP.Algorithm = DEFAULT_ALGORITHM;
 
     // Check if we have options object
-    if (args.len < 2 or !args[1].isObject()) {
-        return globalObject.throwInvalidArguments("Missing required options parameter with secret", .{});
-    }
-    const options_value = args[1];
+    if (args.len > 1 and args[1].isObject()) {
+        const options_value = args[1];
 
-    // Extract the secret (required)
-    if (try options_value.getOptional(globalObject, "secret", JSC.ZigString.Slice)) |secretSlice| {
-        secret = secretSlice;
-    } else {
-        return globalObject.throwInvalidArguments("Missing required 'secret' parameter in options", .{});
-    }
-
-    // Extract maxAge (optional)
-    if (try options_value.get(globalObject, "maxAge")) |max_age_js| {
-        max_age = @intCast(try globalObject.validateIntegerRange(max_age_js, i64, 0, .{ .min = 0, .max = JSC.MAX_SAFE_INTEGER }));
-    }
-
-    // Extract encoding (optional)
-    if (try options_value.get(globalObject, "encoding")) |encoding_js| {
-        const encoding_enum = try JSC.Node.Encoding.fromJSWithDefaultOnEmpty(encoding_js, globalObject, .base64url) orelse {
-            return globalObject.throwInvalidArguments("Invalid format: must be 'base64', 'base64url', or 'hex'", .{});
-        };
-        encoding = switch (encoding_enum) {
-            .base64 => .base64,
-            .base64url => .base64url,
-            .hex => .hex,
-            else => return globalObject.throwInvalidArguments("Invalid format: must be 'base64', 'base64url', or 'hex'", .{}),
-        };
-    }
-    if (try options_value.get(globalObject, "algorithm")) |algorithm_js| {
-        if (!algorithm_js.isString()) {
-            return globalObject.throwInvalidArguments("Invalid algorithm: must be 'sha256', 'sha384', or 'sha512'", .{});
+        // Extract the secret (required)
+        if (try options_value.getOptional(globalObject, "secret", JSC.ZigString.Slice)) |secretSlice| {
+            if (secretSlice.len == 0) {
+                return globalObject.throwInvalidArguments("Secret must be a non-empty string", .{});
+            }
+            secret = secretSlice;
         }
-        const algorithm_enum = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
-            return globalObject.throwInvalidArguments("Invalid algorithm: must be 'sha256', 'sha384', or 'sha512'", .{});
-        };
-        algorithm = switch (algorithm_enum) {
-            .sha256 => .sha256,
-            .sha384 => .sha384,
-            .sha512 => .sha512,
-            else => return globalObject.throwInvalidArguments("Invalid algorithm: must be 'sha256', 'sha384', or 'sha512'", .{}),
-        };
-    }
 
+        // Extract maxAge (optional)
+        if (try options_value.get(globalObject, "maxAge")) |max_age_js| {
+            max_age = @intCast(try globalObject.validateIntegerRange(max_age_js, i64, 0, .{ .min = 0, .max = JSC.MAX_SAFE_INTEGER }));
+        }
+
+        // Extract encoding (optional)
+        if (try options_value.get(globalObject, "encoding")) |encoding_js| {
+            const encoding_enum = try JSC.Node.Encoding.fromJSWithDefaultOnEmpty(encoding_js, globalObject, .base64url) orelse {
+                return globalObject.throwInvalidArguments("Invalid format: must be 'base64', 'base64url', or 'hex'", .{});
+            };
+            encoding = switch (encoding_enum) {
+                .base64 => .base64,
+                .base64url => .base64url,
+                .hex => .hex,
+                else => return globalObject.throwInvalidArguments("Invalid format: must be 'base64', 'base64url', or 'hex'", .{}),
+            };
+        }
+        if (try options_value.get(globalObject, "algorithm")) |algorithm_js| {
+            if (!algorithm_js.isString()) {
+                return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
+            }
+            const algorithm_enum = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
+                return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
+            };
+            algorithm = switch (algorithm_enum) {
+                .sha256 => .sha256,
+                .sha384 => .sha384,
+                .sha512 => .sha512,
+                else => return globalObject.throwInvalidArguments("Invalid algorithm: must be 'sha256', 'sha384', or 'sha512'", .{}),
+            };
+        }
+    }
     // Verify the token
     const is_valid = verify(.{
         .token = token.slice(),
-        .secret = if (secret) |s| s.slice() else "",
+        .secret = if (secret) |s| s.slice() else globalObject.bunVM().rareData().defaultCSRFSecret(),
         .max_age_ms = max_age,
         .encoding = encoding,
         .algorithm = algorithm,

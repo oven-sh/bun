@@ -665,15 +665,14 @@ JSMockModule JSMockModule::create(JSC::JSGlobalObject* globalObject)
             structure = structure->addPropertyTransition(
                 init.vm,
                 structure,
-                JSC::Identifier::fromString(init.vm, "type"_s),
+                init.vm.propertyNames->type,
                 0,
                 offset);
 
             structure = structure->addPropertyTransition(
                 init.vm,
                 structure,
-                JSC::Identifier::fromString(init.vm, "value"_s),
-
+                init.vm.propertyNames->value,
                 0,
                 offset);
 

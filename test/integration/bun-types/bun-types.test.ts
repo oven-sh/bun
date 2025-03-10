@@ -9,7 +9,8 @@ const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.
 const BUN_TYPES_PACKAGE_JSON_PATH = join(BUN_TYPES_PACKAGE_ROOT, "package.json");
 const BUN_VERSION = (process.env.BUN_VERSION || Bun.version || process.versions.bun).replace(/^.*v/, "");
 const BUN_TYPES_TARBALL_NAME = `types-bun-${BUN_VERSION}.tgz`;
-const $ = Shell.cwd(BUN_REPO_ROOT);
+
+const $ = Shell.cwd(BUN_REPO_ROOT).nothrow();
 
 beforeAll(async () => {
   try {

@@ -407,7 +407,7 @@ declare var CloseEvent: {
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
 declare var MessageEvent: {
   prototype: MessageEvent;
-  new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
+  new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): Bun.MessageEvent<T>;
 };
 
 interface CustomEvent<T = any> extends Event {

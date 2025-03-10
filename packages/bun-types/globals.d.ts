@@ -1766,60 +1766,6 @@ declare global {
     bytes(): Promise<Uint8Array>;
   }
 
-  var Response: typeof globalThis extends {
-    onerror: any;
-    Response: infer T;
-  }
-    ? T
-    : typeof import("./fetch").Response;
-
-  var Request: typeof globalThis extends {
-    onerror: any;
-    Request: infer T;
-  }
-    ? T
-    : {
-        prototype: Request;
-        new (requestInfo: string, requestInit?: RequestInit): Request;
-        new (requestInfo: RequestInit & { url: string }): Request;
-        new (requestInfo: Request, requestInit?: RequestInit): Request;
-      };
-
-  interface Headers {
-    /**
-     * Convert {@link Headers} to a plain JavaScript object.
-     *
-     * About 10x faster than `Object.fromEntries(headers.entries())`
-     *
-     * Called when you run `JSON.stringify(headers)`
-     *
-     * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
-     */
-    toJSON(): Record<string, string>;
-    /**
-     * Get the total number of headers
-     */
-    readonly count: number;
-    /**
-     * Get all headers matching the name
-     *
-     * Only supports `"Set-Cookie"`. All other headers are empty arrays.
-     *
-     * @param name - The header name to get
-     *
-     * @returns An array of header values
-     *
-     * @example
-     * ```ts
-     * const headers = new Headers();
-     * headers.append("Set-Cookie", "foo=bar");
-     * headers.append("Set-Cookie", "baz=qux");
-     * headers.getAll("Set-Cookie"); // ["foo=bar", "baz=qux"]
-     * ```
-     */
-    getAll(name: "set-cookie" | "Set-Cookie"): string[];
-  }
-
   interface Uint8Array {
     /**
      * Convert the Uint8Array to a base64 encoded string

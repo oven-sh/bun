@@ -1078,11 +1078,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     JSValue thisValue = callFrame->thisValue();
     JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
     JSC::JSArrayBufferView* array = jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->argument(0));
-    unsigned int flags = SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE;
+    unsigned int deserializeFlags = SQLITE_DESERIALIZE_FREEONCLOSE | SQLITE_DESERIALIZE_RESIZEABLE;
+    unsigned int openFlags = DEFAULT_SQLITE_FLAGS;
     JSC::EnsureStillAliveScope ensureAliveArray(array);
 
-    if (callFrame->argumentCount() > 1 and callFrame->argument(1).toBoolean(lexicalGlobalObject)) {
-        flags |= SQLITE_DESERIALIZE_READONLY;
+    if (callFrame->argumentCount() > 1) {
+        openFlags |= callFrame->argument(1).toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (callFrame->argumentCount() > 2) {
+        deserializeFlags |= callFrame->argument(2).toInt32(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     if (UNLIKELY(!thisObject)) {
@@ -1130,7 +1136,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
 
     sqlite3* db = nullptr;
-    if (sqlite3_open_v2(":memory:", &db, DEFAULT_SQLITE_FLAGS, nullptr) != SQLITE_OK) {
+    if (sqlite3_open_v2(":memory:", &db, openFlags, nullptr) != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Failed to open SQLite"_s));
         return {};
     }
@@ -1144,7 +1150,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         // TODO: log a warning here that defensive mode is not enabled
     }
 
-    status = sqlite3_deserialize(db, "main", reinterpret_cast<unsigned char*>(data), byteLength, byteLength, flags);
+    status = sqlite3_deserialize(db, "main", reinterpret_cast<unsigned char*>(data), byteLength, byteLength, deserializeFlags);
     if (status == SQLITE_BUSY) {
         sqlite3_free(data);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLITE_BUSY"_s));

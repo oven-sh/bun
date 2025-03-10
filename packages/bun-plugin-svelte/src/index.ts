@@ -1,6 +1,6 @@
 import type { BunPlugin, BuildConfig, OnLoadResult } from "bun";
 import { basename } from "node:path";
-import { compile, compileModule } from "svelte/compiler";
+import { compile, compileModule, type CompileResult } from "svelte/compiler";
 import { getBaseCompileOptions, validateOptions, type SvelteOptions, hash } from "./options";
 
 const kEmptyObject = Object.create(null);
@@ -24,20 +24,11 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
     name: "bun-plugin-svelte",
     setup(builder) {
       const { config = kEmptyObject as Partial<BuildConfig> } = builder;
-      const baseCompileOptions = getBaseCompileOptions(options ?? (kEmptyObject as Partial<SvelteOptions>), config);
+      const { common, component } = getBaseCompileOptions(options ?? (kEmptyObject as Partial<SvelteOptions>), config);
 
       builder
         .onLoad({ filter: /\.svelte(?:\.[tj]s)?$/ }, async args => {
           const { path } = args;
-
-          var isModule = false;
-
-          switch (path.substring(path.length - 2)) {
-            case "js":
-            case "ts":
-              isModule = true;
-              break;
-          }
 
           const sourceText = await Bun.file(path).text();
 
@@ -45,18 +36,28 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
             args && "side" in args // "side" only passed when run from dev server
               ? (args as { side: "client" | "server" }).side
               : "server";
-          const hmr = Boolean((args as { hmr?: boolean })["hmr"] ?? process.env.NODE_ENV !== "production");
-          const generate = baseCompileOptions.generate ?? side;
 
-          const compileFn = isModule ? compileModule : compile;
-          const result = compileFn(sourceText, {
-            ...baseCompileOptions,
-            generate,
-            filename: args.path,
-            hmr,
-          });
+          common.generate ||= side;
+          common.filename = path;
+
+          var result: CompileResult;
+
+          switch (path.substring(path.length - 2)) {
+            case "js":
+            case "ts":
+              result = compileModule(sourceText, common);
+              break;
+
+            default:
+              result = compile(sourceText, {
+                ...common,
+                ...component,
+                hmr: Boolean((args as { hmr?: boolean })["hmr"] ?? process.env.NODE_ENV !== "production"),
+              });
+          }
+
           var { js, css } = result;
-          if (css?.code && generate != "server") {
+          if (css?.code && common.generate != "server") {
             const uid = `${basename(path)}-${hash(path)}-style`.replaceAll(`"`, `'`);
             const virtualName = virtualNamespace + ":" + uid + ".css";
             virtualCssModules.set(virtualName, { sourcePath: path, source: css.code });

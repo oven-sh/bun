@@ -1,4 +1,5 @@
 <script lang="ts">
+  import "./Module.svelte.ts";
   let count: number = 0;
 </script>
 

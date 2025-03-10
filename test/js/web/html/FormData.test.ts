@@ -343,7 +343,7 @@ describe("FormData", () => {
     expect(await (body.get("foo") as Blob).text()).toBe("baz");
   });
   type FetchReqArgs = [request: Request, init?: RequestInit];
-  type FetchURLArgs = [url: string | URL | Request, init?: FetchRequestInit];
+  type FetchURLArgs = [url: string | URL | Request, init?: RequestInit];
   for (let useRequestConstructor of [true, false]) {
     describe(useRequestConstructor ? "Request constructor" : "fetch()", () => {
       function send(args: FetchReqArgs | FetchURLArgs) {

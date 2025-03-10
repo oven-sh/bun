@@ -672,8 +672,8 @@ pub const S3Credentials = struct {
 
         const authorization = brk: {
             // we hash the hash so we need 2 buffers
-            var hmac_sig_service: [bun.BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
-            var hmac_sig_service2: [bun.BoringSSL.EVP_MAX_MD_SIZE]u8 = undefined;
+            var hmac_sig_service: [bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8 = undefined;
+            var hmac_sig_service2: [bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8 = undefined;
 
             const sigDateRegionServiceReq = brk_sign: {
                 const key = try std.fmt.bufPrint(&tmp_buffer, "{s}{s}{s}", .{ region, service_name, this.secretAccessKey });

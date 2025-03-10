@@ -141,9 +141,11 @@
     "packages/bun-uws/fuzzing": true,
   },
   "files.associations": {
+    "*.css": "tailwindcss",
     "*.idl": "cpp",
     "*.mdc": "markdown",
     "array": "cpp",
+    "ios": "cpp",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

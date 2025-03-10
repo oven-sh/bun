@@ -235,7 +235,7 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
         input = try args[0].toSlice(globalThis, bun.default_allocator);
 
         var parser_input = css.ParserInput.new(allocator, input.slice());
-        var parser = css.Parser.new(&parser_input, null);
+        var parser = css.Parser.new(&parser_input, null, .{}, null);
         break :brk css.CssColor.parse(&parser);
     };
 
@@ -423,12 +423,15 @@ pub fn jsFunctionColor(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFram
             defer dest.deinit(allocator);
             const writer = dest.writer(allocator);
 
+            const symbols = bun.JSAst.Symbol.Map{};
             var printer = css.Printer(@TypeOf(writer)).new(
                 allocator,
                 std.ArrayList(u8).init(allocator),
                 writer,
                 css.PrinterOptions.default(),
                 null,
+                null,
+                &symbols,
             );
 
             result.toCss(@TypeOf(writer), &printer) catch |err| {

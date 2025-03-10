@@ -309,5 +309,4 @@ This works similarly to how [`Bun.build` processes HTML files](/docs/bundler/htm
 
 ## This is a work in progress
 
-- ~Client-side hot reloading isn't wired up yet. It will be in the future.~ New in Bun v1.2.3
 - This doesn't support `bun build` yet. It also will in the future.

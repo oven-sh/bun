@@ -266,11 +266,17 @@ class BunWebSocket extends EventEmitter {
   }
 
   close(code, reason) {
-    this.#ws.close(code, reason);
+    const ws = this.#ws;
+    if (ws) {
+      ws.close(code, reason);
+    }
   }
 
   terminate() {
-    this.#ws.terminate();
+    const ws = this.#ws;
+    if (ws) {
+      ws.terminate();
+    }
   }
 
   get url() {
@@ -872,6 +878,14 @@ class BunWebSocketMocked extends EventEmitter {
   }
 
   terminate() {
+    // Temporary workaround for CTRL + C error appearing in next dev with turobpack
+    //
+    // > ⨯ unhandledRejection:  TypeError: undefined is not an object (evaluating 'this.#state')
+    // > at terminate (ws:611:30)
+    // > at Promise (null)
+    //
+    if (!this) return;
+
     let state = this.#state;
     if (state === 3) return;
     if (state === 0) {

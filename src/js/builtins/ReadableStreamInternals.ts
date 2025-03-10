@@ -257,7 +257,7 @@ export function readableStreamPipeToWritableStream(
         pipeState,
         () => {
           const shouldAbortDestination =
-            !pipeState.preventAbort && $getByIdDirectPrivate(pipeState.destination, "state") === "writable";
+            !pipeState.preventAbort && $getByIdDirectPrivate(pipeState.destination, "state") === $streamWritable;
           const promiseDestination = shouldAbortDestination
             ? $writableStreamAbort(pipeState.destination, reason)
             : Promise.$resolve();
@@ -376,7 +376,7 @@ export function pipeToErrorsMustBePropagatedBackward(pipeState) {
     }
     $pipeToShutdown(pipeState, error);
   };
-  if ($getByIdDirectPrivate(pipeState.destination, "state") === "errored") {
+  if ($getByIdDirectPrivate(pipeState.destination, "state") === $streamErrored) {
     action();
     return;
   }
@@ -405,7 +405,7 @@ export function pipeToClosingMustBePropagatedForward(pipeState) {
 export function pipeToClosingMustBePropagatedBackward(pipeState) {
   if (
     !$writableStreamCloseQueuedOrInFlight(pipeState.destination) &&
-    $getByIdDirectPrivate(pipeState.destination, "state") !== "closed"
+    $getByIdDirectPrivate(pipeState.destination, "state") !== $streamClosed
   )
     return;
 
@@ -440,7 +440,7 @@ export function pipeToShutdownWithAction(pipeState, action) {
   };
 
   if (
-    $getByIdDirectPrivate(pipeState.destination, "state") === "writable" &&
+    $getByIdDirectPrivate(pipeState.destination, "state") === $streamWritable &&
     !$writableStreamCloseQueuedOrInFlight(pipeState.destination)
   ) {
     pipeState.pendingReadPromiseCapability.promise.$then(
@@ -468,7 +468,7 @@ export function pipeToShutdown(pipeState) {
   };
 
   if (
-    $getByIdDirectPrivate(pipeState.destination, "state") === "writable" &&
+    $getByIdDirectPrivate(pipeState.destination, "state") === $streamWritable &&
     !$writableStreamCloseQueuedOrInFlight(pipeState.destination)
   ) {
     pipeState.pendingReadPromiseCapability.promise.$then(

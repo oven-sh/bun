@@ -266,7 +266,7 @@ export function transformStreamDefaultControllerTerminate(controller) {
 export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
   const writable = $getByIdDirectPrivate(stream, "internalWritable");
 
-  $assert($getByIdDirectPrivate(writable, "state") === "writable");
+  $assert($getByIdDirectPrivate(writable, "state") === $streamWritable);
 
   const controller = $getByIdDirectPrivate(stream, "controller");
 
@@ -278,12 +278,12 @@ export function transformStreamDefaultSinkWriteAlgorithm(stream, chunk) {
     backpressureChangePromise.promise.$then(
       () => {
         const state = $getByIdDirectPrivate(writable, "state");
-        if (state === "erroring") {
+        if (state === $streamErroring) {
           promiseCapability.reject.$call(undefined, $getByIdDirectPrivate(writable, "storedError"));
           return;
         }
 
-        $assert(state === "writable");
+        $assert(state === $streamWritable);
         $transformStreamDefaultControllerPerformTransform(controller, chunk).$then(
           () => {
             promiseCapability.resolve();

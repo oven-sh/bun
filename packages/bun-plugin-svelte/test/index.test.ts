@@ -44,7 +44,7 @@ describe("when importing `.svelte.ts` files", () => {
     });
   });
 
-  it.only("builds successfully", () => {
+  it("builds successfully", () => {
     expect(res.success).toBeTrue();
   });
 });

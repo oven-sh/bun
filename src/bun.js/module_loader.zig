@@ -646,6 +646,7 @@ pub const RuntimeTranspilerStore = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    vm.canUseNonstandardSourceMaps(),
                 ) catch |err| {
                     this.parse_error = err;
                     return;
@@ -1409,6 +1410,7 @@ pub const ModuleLoader = struct {
                     &printer,
                     .esm_ascii,
                     mapper.get(),
+                    jsc_vm.canUseNonstandardSourceMaps(),
                 );
             }
 
@@ -1891,6 +1893,7 @@ pub const ModuleLoader = struct {
                         &printer,
                         .esm_ascii,
                         mapper.get(),
+                        jsc_vm.canUseNonstandardSourceMaps(),
                     );
                 };
 

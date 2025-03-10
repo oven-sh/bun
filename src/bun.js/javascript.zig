@@ -940,6 +940,36 @@ pub const VirtualMachine = struct {
         return this.is_shutting_down;
     }
 
+    /// When we know all the sourcemaps have the same source index, we can skip
+    /// including the source index in each mapping entry.
+    ///
+    /// The sourcemap format normally requires 4-5 VLQ-encoded values per mapping:
+    /// 1. Generated column
+    /// 2. Source index
+    /// 3. Original line
+    /// 4. Original column
+    /// 5. Name index (optional)
+    ///
+    /// With this optimization, we only include 3 values:
+    /// 1. Generated column
+    /// 2. Original line (interpreted as source index in standard parsers)
+    /// 3. Original column (interpreted as original line in standard parsers)
+    ///
+    /// Standard:  "AAAA,CAAC,IAAI,IAAI"
+    ///
+    /// Optimized: "AAA,CAC,IAI"
+    ///
+    /// This creates non-standard sourcemaps that are smaller and faster to
+    /// generate, but we can't use this if the sourcemaps are going to go to other
+    /// tools that expect the standard format.
+    pub fn canUseNonstandardSourceMaps(this: *const VirtualMachine) bool {
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_FORCE_STANDARD_SOURCE_MAPS")) {
+            return false;
+        }
+
+        return this.debugger == null and this.transpiler.options.dead_code_elimination == true and !this.transpiler.options.code_coverage;
+    }
+
     pub fn getTLSRejectUnauthorized(this: *const VirtualMachine) bool {
         return this.default_tls_reject_unauthorized orelse this.transpiler.env.getTLSRejectUnauthorized();
     }

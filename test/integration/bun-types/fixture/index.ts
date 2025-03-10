@@ -1,6 +1,70 @@
 import svgpath from "cool.svg";
 svgpath satisfies `${string}.svg`;
 
+import * as test from "bun:test";
+test.describe;
+test.it;
+
+const options: Bun.TLSOptions = {
+  keyFile: "",
+};
+
+process.assert;
+
+new SubtleCrypto();
+declare const mySubtleCrypto: SubtleCrypto;
+
+new CryptoKey();
+declare const myCryptoKey: CryptoKey;
+
+import * as sqlite from "bun:sqlite";
+sqlite.Database;
+
+Bun satisfies typeof import("bun");
+
+type ConstructorOf<T> = new (...args: any[]) => T;
+
+import * as NodeTLS from "node:tls";
+import * as TLS from "tls";
+
+process.revision;
+
+NodeTLS satisfies typeof TLS;
+TLS satisfies typeof NodeTLS;
+
+type NodeTLSOverrideTest = NodeTLS.BunConnectionOptions;
+type TLSOverrideTest = TLS.BunConnectionOptions;
+
+WebAssembly.Global;
+WebAssembly.Memory;
+WebAssembly.compile;
+WebAssembly.compileStreaming;
+WebAssembly.instantiate;
+WebAssembly.instantiateStreaming;
+WebAssembly.validate;
+
+WebAssembly.Global satisfies ConstructorOf<Bun.WebAssembly.Global>;
+WebAssembly.Memory satisfies ConstructorOf<Bun.WebAssembly.Memory>;
+
+type wasmglobalthing = Bun.WebAssembly.Global;
+
+type S3OptionsFromNamespace = Bun.S3Options;
+type S3OptionsFromImport = import("bun").S3Options;
+
+type c = import("bun").S3Client;
+
+Bun.s3.file("").name;
+
+const client = new Bun.S3Client({
+  secretAccessKey: "",
+});
+
+new TextEncoder();
+
+client.file("");
+
+Bun.fetch;
+
 // just some APIs
 new Request("url");
 new Response();
@@ -15,7 +79,24 @@ new TransformStream();
 new AbortSignal();
 new AbortController();
 
-fetch("url");
+new TextDecoder();
+new TextEncoder();
+
+fetch("url", {
+  proxy: "",
+});
+
+fetch(new URL("url"), {
+  proxy: "",
+});
+
+Bun.fetch(new URL("url"), {
+  proxy: "",
+});
+
+Bun.S3Client;
+
+Bun.$.ShellPromise;
 
 new Bun.$.ShellError();
 
@@ -47,6 +128,8 @@ await fetch("", {
 r.method;
 r.body;
 r.headers.get("content-type");
+
+new Request("", {});
 
 await r.json();
 await r.text();
@@ -83,7 +166,12 @@ new ReadableStream({});
 
 const body = await fetch(req1);
 
+Bun.fetch satisfies typeof fetch;
+Bun.fetch.preconnect satisfies typeof fetch.preconnect;
+
 await body.text();
+
+fetch;
 
 fetch.preconnect(new URL(""));
 
@@ -100,30 +188,34 @@ Bun.serve({
   },
 });
 
+new URL("", "");
+const myUrl: URL = new URL("");
 URL.canParse;
 URL.createObjectURL;
 URL.revokeObjectURL;
 
-Response.json();
+new MessagePort();
+
+new File(["code"], "name.ts");
+
+Response.json("");
 Response.redirect("bun.sh", 300);
 Response.error();
 Response.redirect("bun.sh", {
-  status: 200,
-  headers: new Headers(
-    (() => {
-      const h = new Headers();
-      h.set("key", "value");
-      h.toJSON();
-      return h;
-    })(),
-  ),
+  headers: {
+    "x-bun": "is cool",
+  },
 });
 
 Bun.fetch.preconnect;
 
+type g = BodyInit;
+
 Bun.fetch("", {
   proxy: "",
-  s3: {},
+  s3: {
+    acl: "public-read",
+  },
 });
 
 Bun.serve({
@@ -140,7 +232,19 @@ Bun.serve({
   },
 });
 
+import.meta.hot.accept();
 import.meta.hot.data;
+
+fetch("", {
+  tls: {
+    rejectUnauthorized: false,
+  },
+});
+
+new AbortController();
+const myAbortController: AbortController = new AbortController();
+new AbortSignal();
+const myAbortSignal: AbortSignal = new AbortSignal();
 
 import { serve } from "bun";
 

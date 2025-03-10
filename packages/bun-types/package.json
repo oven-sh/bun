@@ -1,7 +1,8 @@
 {
+  "version": "1.2.5",
   "name": "bun-types",
   "license": "MIT",
-  "types": "./index.d.ts",
+  "types": "./new/index.d.ts",
   "description": "Type definitions and documentation for Bun, an incredibly fast JavaScript runtime",
   "repository": {
     "type": "git",
@@ -9,7 +10,7 @@
     "directory": "packages/bun-types"
   },
   "files": [
-    "*.d.ts",
+    "new/**/*.d.ts",
     "docs/**/*.md",
     "docs/*.md"
   ],
@@ -27,7 +28,7 @@
   "scripts": {
     "prebuild": "echo $(pwd)",
     "copy-docs": "rm -rf docs && cp -rL ../../docs/ ./docs && find ./docs -type f -name '*.md' -exec sed -i 's/\\$BUN_LATEST_VERSION/'\"${BUN_VERSION#bun-v}\"'/g' {} +",
-    "build": "bun run copy-docs && bun scripts/build.ts && bun run fmt",
+    "build": "bun run copy-docs && bun scripts/build.ts",
     "test": "tsc",
     "fmt": "echo $(which biome) && biome format --write ."
   },

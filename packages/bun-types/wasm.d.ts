@@ -61,7 +61,7 @@ declare global {
     namespace WebAssembly {
       type ImportExportKind = "function" | "global" | "memory" | "table";
       type TableKind = "anyfunc" | "externref";
-      // eslint-disable-next-line @typescript-eslint/ban-types
+
       type ExportValue = Function | Global | WebAssembly.Memory | WebAssembly.Table;
       type Exports = Record<string, ExportValue>;
       type ImportValue = ExportValue | number;
@@ -69,7 +69,6 @@ declare global {
       type ModuleImports = Record<string, ImportValue>;
 
       interface ValueTypeMap {
-        // eslint-disable-next-line @typescript-eslint/ban-types
         anyfunc: Function;
         externref: any;
         f32: number;

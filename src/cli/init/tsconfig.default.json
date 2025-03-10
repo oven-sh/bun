@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     // Environment setup & latest features
-    "lib": ["esnext"],
+    "lib": ["esnext", "dom"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",
@@ -16,7 +16,7 @@
 
     // Best practices
     "strict": true,
-    "skipLibCheck": true,
+    "skipLibCheck": false,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
 

@@ -259,11 +259,11 @@ pub fn csrf__generate_impl(globalObject: *JSC.JSGlobalObject, callframe: *JSC.Ca
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
             algorithm = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
-                return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
+                return globalObject.throwInvalidArguments("Algorithm not supported", .{});
             };
             switch (algorithm) {
                 .blake2b256, .blake2b512, .sha256, .sha384, .sha512, .@"sha512-256" => {},
-                else => return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js),
+                else => return globalObject.throwInvalidArguments("Algorithm not supported", .{}),
             }
         }
     }
@@ -354,11 +354,11 @@ pub fn csrf__verify_impl(globalObject: *JSC.JSGlobalObject, call_frame: *JSC.Cal
                 return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
             }
             algorithm = JSC.API.Bun.Crypto.EVP.Algorithm.map.fromJSCaseInsensitive(globalObject, algorithm_js) orelse {
-                return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js);
+                return globalObject.throwInvalidArguments("Algorithm not supported", .{});
             };
             switch (algorithm) {
                 .blake2b256, .blake2b512, .sha256, .sha384, .sha512, .@"sha512-256" => {},
-                else => return globalObject.throwInvalidArgumentTypeValue("algorithm", "string", algorithm_js),
+                else => return globalObject.throwInvalidArguments("Algorithm not supported", .{}),
             }
         }
     }

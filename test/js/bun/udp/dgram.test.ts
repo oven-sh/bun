@@ -73,9 +73,9 @@ describe("createSocket()", () => {
 
   test("address before/after connecting", done => {
     const socket = createSocket("udp4");
-    socket.bind(() => {
+    socket.bind(0, () => {
       expect(socket.address().address).toBe("0.0.0.0");
-      socket.connect(60865, "127.0.0.1", () => {
+      socket.connect(socket.address().port, "127.0.0.1", () => {
         expect(socket.address().address).toBe("127.0.0.1");
         socket.close(done);
       });

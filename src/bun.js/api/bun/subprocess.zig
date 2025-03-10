@@ -2228,14 +2228,7 @@ pub fn spawnMaybeSync(
         .err => |err| {
             spawn_options.deinit();
             switch (err.getErrno()) {
-                .NOENT => {
-                    const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
-                        std.mem.sliceTo(argv.items[0].?, 0)
-                    else
-                        "";
-                    return throwCommandNotFound(globalThis, display_path);
-                },
-                .ACCES, .PERM, .ISDIR, .NOTDIR => {
+                .ACCES, .NOENT, .PERM, .ISDIR, .NOTDIR => {
                     const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
                         std.mem.sliceTo(argv.items[0].?, 0)
                     else

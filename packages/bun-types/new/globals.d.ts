@@ -9,27 +9,8 @@ declare module "bun" {
   }
 }
 
-/**
- * Helper type for avoiding conflicts in types.
- *
- * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
- *
- * This is to avoid type conflicts between lib.dom.d.ts and @types/bun.
- *
- * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
- * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
- * to the type that lib.dom.d.ts provides.
- */
-type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
-  // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
-  typeof globalThis extends { onabort: any }
-    ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
-      ? T
-      : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
-    : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
-
 interface ReadableStream<R = any> {}
-declare var ReadableStream: UseLibDomIfAvailable<
+declare var ReadableStream: Bun.UseLibDomIfAvailable<
   "ReadableStream",
   {
     prototype: ReadableStream;
@@ -39,7 +20,7 @@ declare var ReadableStream: UseLibDomIfAvailable<
 >;
 
 interface WritableStream<W = any> {}
-declare var WritableStream: UseLibDomIfAvailable<
+declare var WritableStream: Bun.UseLibDomIfAvailable<
   "WritableStream",
   {
     prototype: WritableStream;
@@ -48,7 +29,7 @@ declare var WritableStream: UseLibDomIfAvailable<
 >;
 
 interface Worker extends Bun.__internal.NodeWorkerThreadsWorker {}
-declare var Worker: UseLibDomIfAvailable<
+declare var Worker: Bun.UseLibDomIfAvailable<
   "Worker",
   {
     prototype: Worker;
@@ -62,7 +43,7 @@ declare var Worker: UseLibDomIfAvailable<
   }
 >;
 
-declare var WebSocket: UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
+declare var WebSocket: Bun.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
 
 interface Crypto {}
 declare var Crypto: {
@@ -97,7 +78,7 @@ interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
    */
   encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
 }
-declare var TextEncoder: UseLibDomIfAvailable<
+declare var TextEncoder: Bun.UseLibDomIfAvailable<
   "TextEncoder",
   {
     prototype: TextEncoder;
@@ -113,7 +94,7 @@ declare var TextEncoder: UseLibDomIfAvailable<
  * const decoder = new TextDecoder();
  * const uint8array = decoder.decode('this is some data');
  */
-declare var TextDecoder: UseLibDomIfAvailable<
+declare var TextDecoder: Bun.UseLibDomIfAvailable<
   "TextDecoder",
   {
     prototype: Bun.__internal.NodeUtilTextDecoder;
@@ -125,7 +106,7 @@ declare var TextDecoder: UseLibDomIfAvailable<
 >;
 
 interface Performance extends Bun.__internal.NodePerfHooksPerformance {}
-declare var performance: UseLibDomIfAvailable<"performance", Performance>;
+declare var performance: Bun.UseLibDomIfAvailable<"performance", Performance>;
 
 // interface Event {
 //   /** This is not used in Node.js and is provided purely for completeness. */
@@ -414,13 +395,7 @@ declare var CloseEvent: {
 };
 
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
-declare var MessageEvent: UseLibDomIfAvailable<
-  "MessageEvent",
-  {
-    prototype: MessageEvent;
-    new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): Bun.MessageEvent<T>;
-  }
->;
+declare var MessageEvent: Bun.UseLibDomIfAvailable<"MessageEvent", MessageEvent>;
 
 interface CustomEvent<T = any> extends Event {
   /** Returns any custom data event was created with. Typically used for synthetic events. */
@@ -1277,7 +1252,7 @@ interface Blob {
   bytes(): Promise<Uint8Array>;
 }
 
-declare var Blob: UseLibDomIfAvailable<
+declare var Blob: Bun.UseLibDomIfAvailable<
   "Blob",
   {
     prototype: Blob;
@@ -1285,10 +1260,37 @@ declare var Blob: UseLibDomIfAvailable<
   }
 >;
 
-interface BroadcastChannel {}
-declare var BroadcastChannel: UseLibDomIfAvailable<"BroadcastChannel", import("node:worker_threads").BroadcastChannel>;
+interface Uint8Array {
+  /**
+   * Convert the Uint8Array to a base64 encoded string
+   * @returns The base64 encoded string representation of the Uint8Array
+   */
+  toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
 
-declare var URL: UseLibDomIfAvailable<
+  /**
+   * Set the contents of the Uint8Array from a base64 encoded string
+   * @param base64 The base64 encoded string to decode into the array
+   * @param offset Optional starting index to begin setting the decoded bytes (default: 0)
+   */
+  setFromBase64(base64: string, offset?: number): void;
+}
+
+interface Uint8ArrayConstructor {
+  /**
+   * Create a new Uint8Array from a base64 encoded string
+   * @param base64 The base64 encoded string to convert to a Uint8Array
+   * @returns A new Uint8Array containing the decoded data
+   */
+  fromBase64(base64: string): Uint8Array;
+}
+
+interface BroadcastChannel {}
+declare var BroadcastChannel: Bun.UseLibDomIfAvailable<
+  "BroadcastChannel",
+  import("node:worker_threads").BroadcastChannel
+>;
+
+declare var URL: Bun.UseLibDomIfAvailable<
   "URL",
   {
     prototype: URL;
@@ -1315,7 +1317,7 @@ declare var URL: UseLibDomIfAvailable<
   }
 >;
 
-declare var AbortController: UseLibDomIfAvailable<
+declare var AbortController: Bun.UseLibDomIfAvailable<
   "AbortController",
   {
     prototype: AbortController;
@@ -1323,7 +1325,7 @@ declare var AbortController: UseLibDomIfAvailable<
   }
 >;
 
-declare var AbortSignal: UseLibDomIfAvailable<
+declare var AbortSignal: Bun.UseLibDomIfAvailable<
   "AbortSignal",
   {
     prototype: AbortSignal;
@@ -1332,91 +1334,97 @@ declare var AbortSignal: UseLibDomIfAvailable<
 >;
 
 interface DOMException {}
-declare var DOMException: UseLibDomIfAvailable<"DOMException", { prototype: DOMException; new (): DOMException }>;
+declare var DOMException: Bun.UseLibDomIfAvailable<"DOMException", { prototype: DOMException; new (): DOMException }>;
 
 interface FormData {}
-declare var FormData: UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
+declare var FormData: Bun.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
 interface EventSource {}
-declare var EventSource: UseLibDomIfAvailable<"EventSource", { prototype: EventSource; new (): EventSource }>;
+declare var EventSource: Bun.UseLibDomIfAvailable<"EventSource", { prototype: EventSource; new (): EventSource }>;
 
 interface PerformanceEntry {}
-declare var PerformanceEntry: UseLibDomIfAvailable<
+declare var PerformanceEntry: Bun.UseLibDomIfAvailable<
   "PerformanceEntry",
   { prototype: PerformanceEntry; new (): PerformanceEntry }
 >;
 
 interface PerformanceMark {}
-declare var PerformanceMark: UseLibDomIfAvailable<
+declare var PerformanceMark: Bun.UseLibDomIfAvailable<
   "PerformanceMark",
   { prototype: PerformanceMark; new (): PerformanceMark }
 >;
 
 interface PerformanceMeasure {}
-declare var PerformanceMeasure: UseLibDomIfAvailable<
+declare var PerformanceMeasure: Bun.UseLibDomIfAvailable<
   "PerformanceMeasure",
   { prototype: PerformanceMeasure; new (): PerformanceMeasure }
 >;
 
 interface PerformanceObserver {}
-declare var PerformanceObserver: UseLibDomIfAvailable<
+declare var PerformanceObserver: Bun.UseLibDomIfAvailable<
   "PerformanceObserver",
   { prototype: PerformanceObserver; new (): PerformanceObserver }
 >;
 
 interface PerformanceObserverEntryList {}
-declare var PerformanceObserverEntryList: UseLibDomIfAvailable<
+declare var PerformanceObserverEntryList: Bun.UseLibDomIfAvailable<
   "PerformanceObserverEntryList",
   { prototype: PerformanceObserverEntryList; new (): PerformanceObserverEntryList }
 >;
 
 interface PerformanceResourceTiming {}
-declare var PerformanceResourceTiming: UseLibDomIfAvailable<
+declare var PerformanceResourceTiming: Bun.UseLibDomIfAvailable<
   "PerformanceResourceTiming",
   { prototype: PerformanceResourceTiming; new (): PerformanceResourceTiming }
 >;
 
 interface ReadableByteStreamController {}
-declare var ReadableByteStreamController: UseLibDomIfAvailable<
+declare var ReadableByteStreamController: Bun.UseLibDomIfAvailable<
   "ReadableByteStreamController",
   { prototype: ReadableByteStreamController; new (): ReadableByteStreamController }
 >;
 
 interface ReadableStreamBYOBReader {}
-declare var ReadableStreamBYOBReader: UseLibDomIfAvailable<
+declare var ReadableStreamBYOBReader: Bun.UseLibDomIfAvailable<
   "ReadableStreamBYOBReader",
   { prototype: ReadableStreamBYOBReader; new (): ReadableStreamBYOBReader }
 >;
 
 interface ReadableStreamBYOBRequest {}
-declare var ReadableStreamBYOBRequest: UseLibDomIfAvailable<
+declare var ReadableStreamBYOBRequest: Bun.UseLibDomIfAvailable<
   "ReadableStreamBYOBRequest",
   { prototype: ReadableStreamBYOBRequest; new (): ReadableStreamBYOBRequest }
 >;
 
 interface TextDecoderStream {}
-declare var TextDecoderStream: UseLibDomIfAvailable<
+declare var TextDecoderStream: Bun.UseLibDomIfAvailable<
   "TextDecoderStream",
   { prototype: TextDecoderStream; new (): TextDecoderStream }
 >;
 
 interface TextEncoderStream {}
-declare var TextEncoderStream: UseLibDomIfAvailable<
+declare var TextEncoderStream: Bun.UseLibDomIfAvailable<
   "TextEncoderStream",
   { prototype: TextEncoderStream; new (): TextEncoderStream }
 >;
 
 interface URLSearchParams {}
-declare var URLSearchParams: UseLibDomIfAvailable<
+declare var URLSearchParams: Bun.UseLibDomIfAvailable<
   "URLSearchParams",
   { prototype: URLSearchParams; new (): URLSearchParams }
 >;
 
 interface MessageChannel {}
-declare var MessageChannel: UseLibDomIfAvailable<
+declare var MessageChannel: Bun.UseLibDomIfAvailable<
   "MessageChannel",
   { prototype: MessageChannel; new (): MessageChannel }
 >;
 
 interface MessagePort {}
-declare var MessagePort: UseLibDomIfAvailable<"MessagePort", { prototype: MessagePort; new (): MessagePort }>;
+declare var MessagePort: Bun.UseLibDomIfAvailable<
+  "MessagePort",
+  {
+    prototype: MessagePort;
+    new (): MessagePort;
+  }
+>;

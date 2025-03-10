@@ -2,7 +2,7 @@
   "name": "fixture",
   "module": "index.ts",
   "peerDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.8.2"
   },
   "scripts": {
     "check": "tsc --noEmit"

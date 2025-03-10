@@ -209,6 +209,8 @@ Response.redirect("bun.sh", {
 
 Bun.fetch.preconnect;
 
+new Uint8Array().toBase64();
+
 type g = BodyInit;
 
 Bun.fetch("", {

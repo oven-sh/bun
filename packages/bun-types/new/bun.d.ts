@@ -14,6 +14,27 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
+  /**
+   * Helper type for avoiding conflicts in types.
+   *
+   * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
+   *
+   * This is to avoid type conflicts between lib.dom.d.ts and @types/bun.
+   *
+   * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
+   * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
+   * to the type that lib.dom.d.ts provides.
+   *
+   * @internal
+   */
+  type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
+    // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
+    typeof globalThis extends { onabort: any }
+      ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
+        ? T
+        : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
+      : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
+
   type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView = NodeJS.TypedArray | DataView;
@@ -42,7 +63,6 @@ declare module "bun" {
   type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
-
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
 
   type Platform =
@@ -114,7 +134,7 @@ declare module "bun" {
     /** Returns the origin of the message, for server-sent events and cross-document messaging. */
     readonly origin: string;
     /** Returns the MessagePort array sent with the message, for cross-document messaging and channel messaging. */
-    readonly ports: readonly (typeof MessagePort)[]; // ReadonlyArray<typeof import("worker_threads").MessagePort["prototype"]>;
+    readonly ports: readonly MessagePort[]; // ReadonlyArray<typeof import("worker_threads").MessagePort["prototype"]>;
     readonly source: Bun.MessageEventSource | null;
   }
 
@@ -126,7 +146,7 @@ declare module "bun" {
   }
 
   interface ResponseInit {
-    headers?: HeadersInit;
+    headers?: import("./fetch.d.ts").HeadersInit;
     /** @default 200 */
     status?: number;
 
@@ -940,7 +960,6 @@ declare module "bun" {
    *
    * On failure, throws a `ResolveMessage`
    */
-  // tslint:disable-next-line:unified-signatures
   function resolveSync(moduleId: string, parent: string): string;
 
   /**
@@ -950,7 +969,6 @@ declare module "bun" {
    *
    * For now, use the sync version. There is zero performance benefit to using this async version. It exists for future-proofing.
    */
-  // tslint:disable-next-line:unified-signatures
   function resolve(moduleId: string, parent: string): Promise<string>;
 
   /**
@@ -962,7 +980,6 @@ declare module "bun" {
    * @param input The data to copy into `destination`.
    * @returns A promise that resolves with the number of bytes written.
    */
-  // tslint:disable-next-line:unified-signatures
   function write(
     destination: BunFile | S3File | PathLike,
     input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[],
@@ -1015,7 +1032,6 @@ declare module "bun" {
    * @param input - `Response` object
    * @returns A promise that resolves with the number of bytes written.
    */
-  // tslint:disable-next-line:unified-signatures
   function write(
     destinationPath: PathLike,
     input: Response,
@@ -1049,7 +1065,7 @@ declare module "bun" {
    * @param input The file to copy from.
    * @returns A promise that resolves with the number of bytes written.
    */
-  // tslint:disable-next-line:unified-signatures
+
   function write(
     destination: BunFile,
     input: BunFile,
@@ -1083,7 +1099,6 @@ declare module "bun" {
    * @param input The file to copy from.
    * @returns A promise that resolves with the number of bytes written.
    */
-  // tslint:disable-next-line:unified-signatures
   function write(
     destinationPath: PathLike,
     input: BunFile,
@@ -3991,7 +4006,7 @@ declare module "bun" {
         /**
          * Send any additional headers while upgrading, like cookies
          */
-        headers?: HeadersInit;
+        headers?: import("./fetch.d.ts").HeadersInit;
         /**
          * This value is passed to the {@link ServerWebSocket.data} property
          */
@@ -4350,7 +4365,7 @@ declare module "bun" {
    * ```
    * @param path The path to the file (lazily loaded) if the path starts with `s3://` it will behave like {@link S3File}
    */
-  // tslint:disable-next-line:unified-signatures
+
   function file(path: string | URL, options?: BlobPropertyBag): BunFile;
 
   /**
@@ -4376,7 +4391,7 @@ declare module "bun" {
    *
    * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
    */
-  // tslint:disable-next-line:unified-signatures
+
   function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): BunFile;
 
   /**
@@ -4393,7 +4408,7 @@ declare module "bun" {
    *
    * @param fileDescriptor The file descriptor of the file
    */
-  // tslint:disable-next-line:unified-signatures
+
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
 
   /**
@@ -4608,7 +4623,7 @@ declare module "bun" {
      *
      * **The input buffer must not be garbage collected**. That means you will need to hold on to it for the duration of the string's lifetime.
      */
-    // tslint:disable-next-line:unified-signatures
+
     arrayBufferToString(buffer: Uint16Array): string;
 
     /**

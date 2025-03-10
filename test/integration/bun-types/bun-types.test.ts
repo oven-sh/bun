@@ -69,7 +69,7 @@ describe("@types/bun integration test", () => {
     const p = await $`
       cd ${FIXTURE_DIR}
       # modify tsconfig.json to remove dom lib
-      sed -i 's/"lib": \["esnext", "dom"\]/"lib": \["esnext"\]/' tsconfig.json
+      sed -i 's/"lib": \["ESNext", "DOM"\]/"lib": \["ESNext"\]/' tsconfig.json
       bun run check
     `;
 

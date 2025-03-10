@@ -56,7 +56,7 @@ Then add the following to your `compilerOptions` in `tsconfig.json`:
 ```json#tsconfig.json
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleDetection": "force",

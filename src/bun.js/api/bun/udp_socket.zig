@@ -943,7 +943,9 @@ pub const UDPSocket = struct {
         this.connect_info = .{
             .port = port,
         };
-        // TODO reset cached remoteAddress property
+
+        UDPSocket.addressSetCached(callFrame.this(), globalThis, .zero);
+        UDPSocket.remoteAddressSetCached(callFrame.this(), globalThis, .zero);
 
         return .undefined;
     }

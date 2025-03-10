@@ -20,6 +20,7 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 import assert from "assert";
+import { test, expect } from "bun:test";
 import { isWindows } from "harness";
 import util, { inspect } from "util";
 import vm from "vm";
@@ -3263,3 +3264,28 @@ function mustCall(fn, criteria = 1) {
   });
   return _return;
 }
+
+test("ReadableStream", () => {
+  expect(util.inspect(new ReadableStream())).toEqual(
+    `ReadableStream { locked: false, state: 'readable', supportsBYOB: false }`,
+  );
+});
+test("WritableStream", () => {
+  expect(util.inspect(new WritableStream())).toEqual(`WritableStream { locked: false, state: 'writable' }`);
+});
+test("TextEncoderStream", () => {
+  expect(util.inspect(new TextEncoderStream())).toEqual(`TextEncoderStream {
+  encoding: 'utf-8',
+  readable: ReadableStream { locked: false, state: 'readable', supportsBYOB: false },
+  writable: WritableStream { locked: false, state: 'writable' }
+}`);
+});
+test("TextDecoderStream", () => {
+  expect(util.inspect(new TextDecoderStream())).toEqual(`TextDecoderStream {
+  encoding: 'utf-8',
+  fatal: false,
+  ignoreBOM: false,
+  readable: ReadableStream { locked: false, state: 'readable', supportsBYOB: false },
+  writable: WritableStream { locked: false, state: 'writable' }
+}`);
+});

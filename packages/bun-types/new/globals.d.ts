@@ -62,7 +62,7 @@ declare var Worker: UseLibDomIfAvailable<
   }
 >;
 
-declare var WebSocket: typeof import("ws").WebSocket;
+declare var WebSocket: UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
 
 interface Crypto {}
 declare var Crypto: {
@@ -97,10 +97,13 @@ interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
    */
   encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
 }
-declare var TextEncoder: {
-  prototype: TextEncoder;
-  new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
-};
+declare var TextEncoder: UseLibDomIfAvailable<
+  "TextEncoder",
+  {
+    prototype: TextEncoder;
+    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
+  }
+>;
 
 /**
  * An implementation of the [WHATWG Encoding Standard](https://encoding.spec.whatwg.org/) `TextDecoder` API. All
@@ -110,13 +113,19 @@ declare var TextEncoder: {
  * const decoder = new TextDecoder();
  * const uint8array = decoder.decode('this is some data');
  */
-declare var TextDecoder: {
-  prototype: Bun.__internal.NodeUtilTextDecoder;
-  new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): Bun.__internal.NodeUtilTextDecoder;
-};
+declare var TextDecoder: UseLibDomIfAvailable<
+  "TextDecoder",
+  {
+    prototype: Bun.__internal.NodeUtilTextDecoder;
+    new (
+      encoding?: Bun.Encoding,
+      options?: { fatal?: boolean; ignoreBOM?: boolean },
+    ): Bun.__internal.NodeUtilTextDecoder;
+  }
+>;
 
 interface Performance extends Bun.__internal.NodePerfHooksPerformance {}
-declare var performance: Performance;
+declare var performance: UseLibDomIfAvailable<"performance", Performance>;
 
 // interface Event {
 //   /** This is not used in Node.js and is provided purely for completeness. */
@@ -405,10 +414,13 @@ declare var CloseEvent: {
 };
 
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
-declare var MessageEvent: {
-  prototype: MessageEvent;
-  new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): Bun.MessageEvent<T>;
-};
+declare var MessageEvent: UseLibDomIfAvailable<
+  "MessageEvent",
+  {
+    prototype: MessageEvent;
+    new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): Bun.MessageEvent<T>;
+  }
+>;
 
 interface CustomEvent<T = any> extends Event {
   /** Returns any custom data event was created with. Typically used for synthetic events. */

@@ -1,5 +1,5 @@
 export class Todo {
-  title: string = $state();
+  title: string | undefined = $state();
   done: boolean = $state(false);
   createdAt: Date = $state(new Date());
 

@@ -1,6 +1,6 @@
 import type { BunPlugin, BuildConfig, OnLoadResult } from "bun";
 import { basename } from "node:path";
-import { compile, compileModule, type CompileResult, type ModuleCompileOptions } from "svelte/compiler";
+import { compile, compileModule } from "svelte/compiler";
 import {
   getBaseCompileOptions,
   validateOptions,

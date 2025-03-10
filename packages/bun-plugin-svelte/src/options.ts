@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { plugin, type BuildConfig } from "bun";
+import { type BuildConfig } from "bun";
 import type { CompileOptions, ModuleCompileOptions } from "svelte/compiler";
 
 export interface SvelteOptions {
@@ -44,8 +44,8 @@ export function validateOptions(options: unknown): asserts options is SvelteOpti
  * @internal
  */
 export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Partial<BuildConfig>): CompileOptions {
-  let { forceSide, development = false } = pluginOptions;
-  const { minify = false, target } = config;
+  let { development = false } = pluginOptions;
+  const { minify = false } = config;
 
   const shouldMinify = Boolean(minify);
   const {

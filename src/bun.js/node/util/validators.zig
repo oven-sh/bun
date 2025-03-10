@@ -167,7 +167,7 @@ pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name
     }
     if (!valid) {
         if (min != null and max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} and <= {d}. Received {s}", name_args ++ .{ min, max, value });
+            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {s}", name_args ++ .{ min, max, value });
         } else if (min != null) {
             return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {s}", name_args ++ .{ max, value });
         } else {
@@ -251,9 +251,10 @@ pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptim
     return i;
 }
 
-pub fn validateFunction(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) bun.JSError!JSValue {
-    if (!value.jsType().isFunction())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "function", value);
+pub fn validateFunction(global: *JSGlobalObject, name: string, value: JSValue) bun.JSError!JSValue {
+    if (!value.isFunction()) {
+        return global.throwInvalidArgumentTypeValue(name, "Function", value);
+    }
     return value;
 }
 

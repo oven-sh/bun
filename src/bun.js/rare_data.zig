@@ -244,7 +244,7 @@ pub const EntropyCache = struct {
     }
 
     pub fn fill(this: *EntropyCache) void {
-        bun.rand(&this.cache);
+        bun.csprng(&this.cache);
         this.index = 0;
     }
 

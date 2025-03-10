@@ -1777,7 +1777,7 @@ fn NewOutOfRangeFormatter(comptime T: type) type {
             const msg = self.msg;
 
             if (min != std.math.maxInt(i64) and max != std.math.maxInt(i64)) {
-                try std.fmt.format(writer, ">= {d} and <= {d}.", .{ min, max });
+                try std.fmt.format(writer, ">= {d} && <= {d}.", .{ min, max });
             } else if (min != std.math.maxInt(i64)) {
                 try std.fmt.format(writer, ">= {d}.", .{min});
             } else if (max != std.math.maxInt(i64)) {

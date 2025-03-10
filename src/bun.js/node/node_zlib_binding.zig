@@ -370,7 +370,7 @@ pub const SNativeZlib = struct {
         const strategy = try validators.validateInt32(globalThis, arguments[3], "strategy", .{}, null, null);
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
         const writeResult = arguments[4].asArrayBuffer(globalThis).?.asU32().ptr;
-        const writeCallback = try validators.validateFunction(globalThis, arguments[5], "writeCallback", .{});
+        const writeCallback = try validators.validateFunction(globalThis, "writeCallback", arguments[5]);
         const dictionary = if (arguments[6].isUndefined()) null else arguments[6].asArrayBuffer(globalThis).?.byteSlice();
 
         this.write_result = writeResult;
@@ -738,7 +738,7 @@ pub const SNativeBrotli = struct {
 
         // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
         const writeResult = arguments[1].asArrayBuffer(globalThis).?.asU32().ptr;
-        const writeCallback = try validators.validateFunction(globalThis, arguments[2], "writeCallback", .{});
+        const writeCallback = try validators.validateFunction(globalThis, "writeCallback", arguments[2]);
 
         this.write_result = writeResult;
 

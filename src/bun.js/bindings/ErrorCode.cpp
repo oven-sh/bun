@@ -399,7 +399,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         StringView view = str;
 
         const bool needsEllipsis = jsString->length() > 28;
-        const bool needsEscape = str->contains('"');
+        const bool needsEscape = str->contains('\'');
         if (needsEllipsis) {
             view = str->substring(0, 25);
         }
@@ -426,13 +426,17 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                 }
             }
         } else {
-            builder.append('"');
+            builder.append('\'');
             builder.append(view);
         }
         if (needsEllipsis) {
             builder.append("..."_s);
         }
-        builder.append('"');
+        if (UNLIKELY(needsEscape)) {
+            builder.append('"');
+        } else {
+            builder.append('\'');
+        }
         builder.append(')');
         return;
     }

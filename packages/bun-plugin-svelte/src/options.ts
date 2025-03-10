@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import type { BuildConfig } from "bun";
-import type { CompileOptions } from "svelte/compiler";
+import type { CompileOptions, ModuleCompileOptions } from "svelte/compiler";
 
 export interface SvelteOptions {
   /**
@@ -20,6 +20,11 @@ export interface SvelteOptions {
    * Defaults to `true` when run via Bun's dev server, `false` otherwise.
    */
   development?: boolean;
+}
+
+export type BaseCompileOptions = {
+  common: ModuleCompileOptions,
+  component: CompileOptions,
 }
 
 /**
@@ -43,7 +48,7 @@ export function validateOptions(options: unknown): asserts options is SvelteOpti
 /**
  * @internal
  */
-export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Partial<BuildConfig>): CompileOptions {
+export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Partial<BuildConfig>): BaseCompileOptions {
   let { forceSide, development = false } = pluginOptions;
   const { minify = false, target } = config;
 
@@ -75,15 +80,19 @@ export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Part
   }
 
   return {
-    css: "external",
-    generate: forceSide,
-    preserveWhitespace: !minifyWhitespace,
-    preserveComments: !shouldMinify,
-    dev: development,
-    cssHash({ css }) {
-      // same prime number seed used by svelte/compiler.
-      // TODO: ensure this provides enough entropy
-      return `svelte-${hash(css)}`;
+    common: {
+      generate: forceSide,
+      dev: development,
+    },
+    component: {
+      css: "external",
+      preserveWhitespace: !minifyWhitespace,
+      preserveComments: !shouldMinify,
+      cssHash({ css }) {
+        // same prime number seed used by svelte/compiler.
+        // TODO: ensure this provides enough entropy
+        return `svelte-${hash(css)}`;
+      },
     },
   };
 }

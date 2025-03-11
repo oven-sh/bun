@@ -1,6 +1,6 @@
 {
   "name": "bun-plugin-svelte",
-  "version": "0.0.1",
+  "version": "0.0.5",
   "description": "Official Svelte plugin for Bun",
   "repository": {
     "type": "git",
@@ -16,7 +16,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "example": "bun --config=./example/bunfig.toml example/index.html",
     "lint": "oxlint .",
+    "fmt": "prettier --write .",
     "check:types": "tsc --noEmit",
     "build:types": "tsc --emitDeclarationOnly --declaration --declarationDir ./dist"
   },

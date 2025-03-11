@@ -4573,6 +4573,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__FileStreamWrapper__onResolveRequestStream;
     } else if (handler == Bun__FileStreamWrapper__onRejectRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__FileStreamWrapper__onRejectRequestStream;
+    } else if (handler == DevServer__onInitSetupResolve) {
+        return GlobalObject::PromiseFunctions::DevServer__onInitSetupResolve;
+    } else if (handler == DevServer__onInitSetupReject) {
+        return GlobalObject::PromiseFunctions::DevServer__onInitSetupReject;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

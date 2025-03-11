@@ -14,6 +14,7 @@ import {
   __using,
   __callDispose,
 } from "../runtime.bun";
+import { mainWebSocket } from "./client/websocket";
 
 /** List of loaded modules. Every `Id` gets one HMRModule, mutated across updates. */
 let registry = new Map<Id, HMRModule>();
@@ -29,6 +30,7 @@ let refreshRuntime: any;
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
 let lazyDynamicImportWithOptions;
+let beforeUnload: null | Promise<void> = null;
 
 const enum State {
   Pending,
@@ -236,22 +238,17 @@ export class HMRModule {
     if (event.startsWith("vite:")) {
       event = "bun:" + event.slice(4);
     }
-
-    (eventHandlers[event] ??= []).push(cb);
+    onHotEvent(event, cb);
     this.dispose(() => this.off(event, cb));
   }
 
   off(event: string, cb: HotEventHandler) {
-    const handlers = eventHandlers[event];
-    if (!handlers) return;
-    const index = handlers.indexOf(cb);
-    if (index !== -1) {
-      handlers.splice(index, 1);
-    }
+    offHotEvent(event, cb);
   }
 
-  send(event: string, cb: HotEventHandler) {
-    throw new Error("TODO: implement ImportMetaHot.send");
+  send(event: string, data: any) {
+    const encodedData = JSON.stringify(data);
+    mainWebSocket.send("E" + event + "\0" + encodedData);
   }
 
   declare indirectHot: any;
@@ -272,6 +269,30 @@ HMRModule.prototype.indirectHot = new Proxy({}, {
     throw new Error(`The import.meta.hot object cannot be mutated.`);
   },
 });
+
+export function onHotEvent(event: string, cb: HotEventHandler) {
+  const handlers = (eventHandlers[event] ??= []);
+  handlers.push(cb);
+  if (!event.startsWith("bun:")) {
+    if (handlers.length === 1) {
+      mainWebSocket.send("a" + event);
+    }
+  }
+}
+
+export function offHotEvent(event: string, cb: HotEventHandler) {
+  const handlers = eventHandlers[event];
+  if (!handlers) return;
+  const index = handlers.indexOf(cb);
+  if (index !== -1) {
+    handlers.splice(index, 1);
+    if (!event.startsWith("bun:")) {
+      if (handlers.length === 0) {
+        mainWebSocket.send("r" + event);
+      }
+    }
+  }
+}
 
 // TODO: This function is currently recursive.
 export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
@@ -641,6 +662,12 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
 
   // If roots were hit, print a nice message before reloading.
   if (failures) {
+    // A reload is about to happen, but if that reload doesn't ever happen
+    // (cancel), Bun should propagate this HMR error
+    if (beforeUnload) {
+      await beforeUnload;
+    }
+
     let message =
       "[Bun] Hot update was not accepted because it or its importers do not call `import.meta.hot.accept`. To prevent full page reloads, call `import.meta.hot.accept` in one of the following files to handle the update:\n\n";
 
@@ -649,7 +676,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
       const path: Id[] = [];
       let current = registry.get(boundary)!;
       if (IS_BUN_DEVELOPMENT) {
-        assert(!boundary.endsWith(".html")); // caller should have already reloaded
         assert(current);
         assert(current.selfAccept === null);
       }
@@ -778,7 +804,7 @@ function createAcceptArray(modules: string[], key: Id) {
   return arr;
 }
 
-export function emitEvent(event: HMREvent, data: any) {
+export function emitEvent(event: HMREvent | string, data: any) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
   for (const handler of handlers) {
@@ -935,5 +961,16 @@ if (side === "server") {
 if (side === "client") {
   registerSynthetic("bun:bake/client", {
     onServerSideReload: cb => (onServerSideReload = cb),
+  });
+  window.addEventListener("navigate", ev => {
+    beforeUnload = new Promise(resolve => {
+      function done() {
+        window.removeEventListener("navigatesuccess", done);
+        window.removeEventListener("navigateerror", done);
+        resolve();
+      }
+      window.addEventListener("navigatesuccess", done);
+      window.addEventListener("navigateerror", done);
+    });
   });
 }

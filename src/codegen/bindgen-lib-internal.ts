@@ -953,8 +953,8 @@ export function cAbiTypeName(type: CAbiType) {
     {
       "*anyopaque": "void*",
       "*JSGlobalObject": "JSC::JSGlobalObject*",
-      "JSValue": "JSValue",
-      "JSValue.MaybeException": "JSValue",
+      "JSValue": "JSC::EncodedJSValue",
+      "JSValue.MaybeException": "JSC::EncodedJSValue",
       "bool": "bool",
       "u8": "uint8_t",
       "u16": "uint16_t",

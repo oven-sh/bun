@@ -667,7 +667,6 @@ declare global {
 }
 
 import { BundlerMessageLevel } from "../enums";
-import { css } from "../macros" with { type: "macro" };
 import {
   BundlerMessage,
   BundlerMessageLocation,

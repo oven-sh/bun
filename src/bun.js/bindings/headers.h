@@ -883,5 +883,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__S3UploadStream__onRejectRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onResolveRequestStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__FileStreamWrapper__onRejectRequestStream);
 
+BUN_DECLARE_HOST_FUNCTION(DevServer__onInitSetupResolve);
+BUN_DECLARE_HOST_FUNCTION(DevServer__onInitSetupReject);
 
 #endif

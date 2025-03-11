@@ -841,9 +841,7 @@ pub const JSValue = enum(i64) {
         return cppFn("createObject2", .{ global, key1, key2, value1, value2 });
     }
 
-    pub fn asPromisePtr(this: JSValue, comptime T: type) *T {
-        return asPtr(this, T);
-    }
+    pub const asPromisePtr = asPtr;
 
     pub fn createRopeString(this: JSValue, rhs: JSValue, globalThis: *JSC.JSGlobalObject) JSValue {
         return cppFn("createRopeString", .{ this, rhs, globalThis });

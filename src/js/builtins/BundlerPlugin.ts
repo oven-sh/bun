@@ -1,4 +1,12 @@
-import type { BuildConfig, BunPlugin, OnLoadCallback, OnResolveCallback, PluginBuilder, PluginConstraints } from "bun";
+import type {
+  BuildConfig,
+  BunPlugin,
+  OnLoadCallback,
+  OnResolveCallback,
+  PluginBuilder,
+  PluginConstraints,
+  Server,
+} from "bun";
 type AnyFunction = (...args: any[]) => any;
 
 /**
@@ -42,7 +50,78 @@ interface PluginBuilderExt extends PluginBuilder {
   esbuild: any;
 }
 
-type BeforeOnParseExternal = unknown;
+/**
+ * Used in wumbo.zig + DevServer to load and resolve plugins.
+ * TODO: if this experiment is successful, we can very easily move these
+ * functions all to the actual plugin api. for now, we special case things.
+ */
+export function loadEditPlugin(path, server, devServer, setRoutes, setCallbacks) {
+  let promiseResult = (async (
+    path: string,
+    server: Server,
+    devServer: any,
+    setRoutes: (server: any, routes: Record<string, any>) => void,
+    setCallbacks: (server: any, eventEmit: Function, error: Function) => void,
+  ) => {
+    let pluginModuleRaw = await import(path);
+    if (!pluginModuleRaw.default)
+      throw new TypeError(`Expected "${path}" to be a module which default exports a plugin.`);
+    const setup = pluginModuleRaw.default.setup;
+    if (!$isCallable(setup)) throw new TypeError(`Expected "${path}" to be a module which exports a "setup" function.`);
+
+    const ee = new (require("node:events"))();
+
+    let pendingErrors: any[] | undefined = undefined;
+
+    await setup({
+      unstable_devServer: {
+        server,
+        addRoutes: (routes: Record<string, any>) => void setRoutes(devServer, routes),
+        onEvent: (tag, data) => void ee.on(tag, data),
+        send: (tag, data) => {
+          server.publish("bun:dev:user:" + tag, "j" + tag + "\0" + JSON.stringify(data));
+        },
+      },
+    });
+
+    setCallbacks(
+      devServer,
+      // this function is absurdly overloaded for no good reason other than to ship the demo
+      // ----
+      // array -> build errors
+      // undefined -> end of build
+      // single object -> browser error
+      // value true -> build start
+      errorsOrUndefined => {
+        if (errorsOrUndefined != undefined) {
+          if (Array.isArray(pendingErrors)) {
+            pendingErrors.push(...errorsOrUndefined);
+          } else if (pendingErrors) {
+            if (typeof pendingErrors === "object") {
+              ee.emit("bun:browserError", pendingErrors);
+            } else if (pendingErrors === true) {
+              ee.emit("bun:buildStart");
+            } else {
+              $assert(false);
+            }
+          } else {
+            pendingErrors = errorsOrUndefined;
+          }
+        } else {
+          if (pendingErrors) {
+            ee.emit("bun:buildError", pendingErrors);
+            pendingErrors = undefined;
+          } else {
+            ee.emit("bun:successfulBuild", []);
+          }
+        }
+      },
+      (tag, data) => void ee.emit(tag, data),
+    );
+  })(path, server, devServer, setRoutes, setCallbacks);
+
+  return promiseResult;
+}
 
 /**
  * Used by Bun.serve() to resolve and load plugins.
@@ -52,14 +131,16 @@ export function loadAndResolvePluginsForServe(
   plugins: string[],
   bunfig_folder: string,
   runSetupFn: typeof runSetupFunction,
+  hasHmr: boolean,
 ) {
   // Same config as created in HTMLBundle.init
-  let config: BuildConfigExt = {
+  let config = {
     experimentalCss: true,
     experimentalHtml: true,
     target: "browser",
     root: bunfig_folder,
-  };
+    hot: hasHmr,
+  } as any as BuildConfigExt;
 
   class InvalidBundlerPluginError extends TypeError {
     pluginName: string;
@@ -137,7 +218,7 @@ export function runSetupFunction(
     if (map === onBeforeParsePlugins) {
       isOnBeforeParse = true;
       // TODO: how to check if it a napi module here?
-      if (!callback || !$isObject(callback) || !callback.$napiDlopenHandle) {
+      if (!callback || !$isObject(callback) || !(callback as any).$napiDlopenHandle) {
         throw new TypeError(
           "onBeforeParse `napiModule` must be a Napi module which exports the `BUN_PLUGIN_NAME` symbol.",
         );
@@ -148,7 +229,7 @@ export function runSetupFunction(
       }
     } else {
       if (!callback || !$isCallable(callback)) {
-        throw new TypeError("lmao callback must be a function");
+        throw new TypeError("callback must be a function");
       }
     }
 
@@ -183,12 +264,12 @@ export function runSetupFunction(
     }
   }
 
-  function onLoad(this: PluginBuilder, filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilder {
+  function onLoad(filterObject: PluginConstraints, callback: OnLoadCallback): PluginBuilder {
     validate(filterObject, callback, onLoadPlugins, undefined, undefined);
     return this;
   }
 
-  function onResolve(this: PluginBuilder, filterObject: PluginConstraints, callback): PluginBuilder {
+  function onResolve(filterObject: PluginConstraints, callback): PluginBuilder {
     validate(filterObject, callback, onResolvePlugins, undefined, undefined);
     return this;
   }
@@ -297,8 +378,19 @@ export function runSetupFunction(
     onBeforeParse,
     onStart,
     resolve: notImplementedIssueFn(2771, "build.resolve()"),
-    module: () => {
-      throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
+    module(specifier: string, callback: Function) {
+      if (typeof specifier !== "string") {
+        throw new TypeError("module() specifier must be a string");
+      }
+      if (typeof callback !== "function") {
+        throw new TypeError("module() callback must be a function");
+      }
+      const filter = new RegExp(`^${specifier.replace(/[^\w\s\d-]/g, "\\$&")}$`);
+      onResolve({ filter }, ({ path }) => ({
+        path: path,
+        namespace: "virtual-module",
+      }));
+      onLoad({ namespace: "virtual-module", filter }, () => callback());
     },
     addPreload: () => {
       throw new TypeError("addPreload() is not supported in Bun.build() yet.");
@@ -316,7 +408,7 @@ export function runSetupFunction(
       platform: config.target === "bun" ? "node" : config.target,
     },
     esbuild: {},
-  } as PluginBuilderExt);
+  } as any);
 
   if (setupResult && $isPromise(setupResult)) {
     if ($getPromiseInternalField(setupResult, $promiseFieldFlags) & $promiseStateFulfilled) {

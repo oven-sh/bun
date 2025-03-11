@@ -7,13 +7,51 @@ import {
   setRefreshRuntime,
   emitEvent,
   fullReload,
+  onHotEvent,
+  offHotEvent,
 } from "./hmr-module";
 import { hasFatalError, onServerErrorPayload, onRuntimeError } from "./client/overlay";
 import { DataViewReader } from "./client/data-view";
-import { initWebSocket } from "./client/websocket";
+import { initWebSocket, mainWebSocket } from "./client/websocket";
 import { MessageId } from "./generated";
 import { editCssContent, editCssArray } from "./client/css-reloader";
 import { td } from "./shared";
+
+// TODO: move this into overlay.ts
+const wumbo = document.createElement("button");
+wumbo.id = "bun-wumbo";
+wumbo.setAttribute(
+  "style",
+  `
+    position: fixed !important;
+    bottom: 16px !important;
+    left: 16px !important;
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 50% !important;
+    background: #ff4444 !important;
+    border: none !important;
+    cursor: pointer !important;
+    z-index: 2147483646 !important;
+    display: none !important;
+  `,
+);
+wumbo.addEventListener("click", async () => {
+  wumbo.remove();
+  const url = await (await fetch("/_bun/init_wumbo", { method: "POST" })).text();
+  if (!unloadedModuleRegistry[url]) {
+    const load = Promise.withResolvers();
+    onHotEvent("bun:afterUpdate", function handler() {
+      if (unloadedModuleRegistry[url]) {
+        offHotEvent("bun:afterUpdate", handler);
+        load.resolve();
+      }
+    });
+    await load.promise;
+  }
+  loadModuleAsync(url, false, null);
+});
+document.body.appendChild(wumbo);
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -71,8 +109,8 @@ const handlers = {
       return;
     }
 
-    ws.send("she"); // IncomingMessageId.subscribe with hot_update and errors
-    ws.send("n" + location.pathname); // IncomingMessageId.set_url
+    mainWebSocket.send("she"); // IncomingMessageId.subscribe with hot_update and errors
+    mainWebSocket.send("n" + location.pathname); // IncomingMessageId.set_url
   },
   [MessageId.hot_update](view) {
     const reader = new DataViewReader(view, 1);
@@ -157,13 +195,25 @@ const handlers = {
       }
     }
   },
+  [MessageId.user_event](view: string) {
+    const nullTerminator = view.indexOf("\0");
+    if (nullTerminator === -1) {
+      if (IS_BUN_DEVELOPMENT) {
+        console.error("Invalid user event", view);
+      }
+      return;
+    }
+    const event = view.slice(1, nullTerminator);
+    const data = view.slice(nullTerminator + 1);
+    emitEvent(event, JSON.parse(data));
+  },
   [MessageId.set_url_response](view) {
     const reader = new DataViewReader(view, 1);
     currentRouteIndex = reader.u32();
   },
   [MessageId.errors]: onServerErrorPayload,
 };
-const ws = initWebSocket(handlers, {
+initWebSocket(handlers, {
   onStatusChange(connected) {
     emitEvent(connected ? "bun:ws:connect" : "bun:ws:disconnect", null);
   },
@@ -174,7 +224,7 @@ const ws = initWebSocket(handlers, {
   const truePushState = History.prototype.pushState;
   History.prototype.pushState = function pushState(this: History, state: any, title: string, url?: string | null) {
     truePushState.call(this, state, title, url);
-    ws.send("n" + location.pathname);
+    mainWebSocket.send("n" + location.pathname);
   };
   const trueReplaceState = History.prototype.replaceState;
   History.prototype.replaceState = function replaceState(
@@ -184,7 +234,7 @@ const ws = initWebSocket(handlers, {
     url?: string | null,
   ) {
     trueReplaceState.call(this, state, title, url);
-    ws.send("n" + location.pathname);
+    mainWebSocket.send("n" + location.pathname);
   };
 }
 
@@ -215,7 +265,11 @@ try {
     setRefreshRuntime(refreshRuntime);
   }
 
-  await loadModuleAsync(config.main, false, null);
+  for (const entry of config.entry) {
+    await loadModuleAsync(entry, false, null);
+  }
+
+  wumbo.style.display = "block";
 } catch (e) {
   console.error(e);
   onRuntimeError(e, true, false);

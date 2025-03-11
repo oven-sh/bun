@@ -102,10 +102,8 @@ const random = struct {
         return @intFromFloat(offset);
     }
     fn assertSize(global: *JSGlobalObject, size_value: JSValue, element_size: u8, offset: u32, length: usize) JSError!u32 {
-        if (!size_value.isNumber()) {
-            return global.throwInvalidArgumentTypeValue("size", "number", size_value);
-        }
-        const size = size_value.asNumber() * @as(f32, @floatFromInt(element_size));
+        var size = try validators.validateNumber(global, size_value, "size", .{}, null, null);
+        size *= @as(f32, @floatFromInt(element_size));
 
         if (std.math.isNan(size) or size > max_possible_length or size < 0) {
             return global.throwRangeError(size, .{ .field_name = "size", .min = 0, .max = max_possible_length });

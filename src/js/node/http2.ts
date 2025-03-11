@@ -2183,7 +2183,10 @@ class ServerHttp2Stream extends Http2Stream {
         sensitiveNames[sensitives[i]] = true;
       }
     }
-    const statusCode = headers[HTTP2_HEADER_STATUS] || 200;
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
+    }
+    const statusCode = headers[HTTP2_HEADER_STATUS];
     let endStream = !!options?.endStream;
     if (
       endStream ||

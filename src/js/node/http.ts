@@ -1630,6 +1630,7 @@ const OutgoingMessagePrototype = {
   },
 
   setHeader(name, value) {
+    validateHeaderName(name);
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value);
     return this;
@@ -2836,7 +2837,7 @@ function ClientRequest(input, options, cb) {
     try {
       var urlObject = new URL(urlStr);
     } catch (e) {
-      throw new TypeError(`Invalid URL: ${urlStr}`);
+      throw $ERR_INVALID_URL(`Invalid URL: ${urlStr}`);
     }
     input = urlToHttpOptions(urlObject);
   } else if (input && typeof input === "object" && input instanceof URL) {
@@ -2883,9 +2884,7 @@ function ClientRequest(input, options, cb) {
   if (options.path) {
     const path = String(options.path);
     if (RegExpPrototypeExec.$call(INVALID_PATH_REGEX, path) !== null) {
-      $debug('Path contains unescaped characters: "%s"', path);
-      throw new Error("Path contains unescaped characters");
-      // throw new ERR_UNESCAPED_CHARACTERS("Request path");
+      throw $ERR_UNESCAPED_CHARACTERS("Request path contains unescaped characters");
     }
   }
 

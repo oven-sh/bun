@@ -958,6 +958,7 @@ const ServerPrototype = {
           let reachedRequestsLimit = false;
           if (isRequestsLimitSet) {
             const requestCount = (socket._requestCount || 0) + 1;
+            socket._requestCount = requestCount;
             if (server.maxRequestsPerSocket < requestCount) {
               reachedRequestsLimit = true;
             }
@@ -979,6 +980,7 @@ const ServerPrototype = {
             server.emit("dropRequest", http_req, socket);
             http_res.writeHead(503);
             http_res.end();
+            socket.destroy();
           } else {
             const upgrade = http_req.headers.upgrade;
             if (upgrade) {
@@ -2191,7 +2193,6 @@ const ServerResponsePrototype = {
       throw ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
-    socket._requestCount = (socket._requestCount || 0) + 1;
     socket.once("close", onServerResponseClose);
     this.socket = socket;
     this.emit("socket", socket);
@@ -2225,9 +2226,6 @@ const ServerResponsePrototype = {
     if (this.destroyed) return this;
     const handle = this[kHandle];
     this.destroyed = true;
-    if (this.socket) {
-      this.socket._requestCount--;
-    }
     if (handle) {
       handle.abort();
     }

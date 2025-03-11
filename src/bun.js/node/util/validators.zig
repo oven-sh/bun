@@ -253,7 +253,7 @@ pub fn validateBooleanArray(globalThis: *JSGlobalObject, value: JSValue, comptim
 
 pub fn validateFunction(global: *JSGlobalObject, name: string, value: JSValue) bun.JSError!JSValue {
     if (!value.isFunction()) {
-        return global.throwInvalidArgumentTypeValue(name, "Function", value);
+        return global.throwInvalidArgumentTypeValue(name, "function", value);
     }
     return value;
 }

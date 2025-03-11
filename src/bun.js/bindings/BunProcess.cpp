@@ -1958,7 +1958,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
                 stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
             });
 
-            javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "stack"_s), stackArray, 0);
+            javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
         }
 
         JSC::JSObject* errorProperties = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);

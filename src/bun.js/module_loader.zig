@@ -248,6 +248,23 @@ pub const RuntimeTranspilerStore = struct {
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         const promise = JSC.JSInternalPromise.create(globalObject);
+
+        // NOTE: DirInfo should already be cached since module loading happens
+        // after module resolution, so this should be cheap
+        var resolved_source = ResolvedSource{};
+        if (vm.transpiler.resolver.readDirInfo(owned_path.name.dir) catch null) |dir_info| {
+            if (dir_info.package_json orelse dir_info.enclosing_package_json) |package_json| {
+                switch (package_json.module_type) {
+                    .cjs => {
+                        resolved_source.tag = .package_json_type_commonjs;
+                        resolved_source.is_commonjs_module = true;
+                    },
+                    .esm => resolved_source.tag = .package_json_type_module,
+                    .unknown => {},
+                }
+            }
+        }
+
         job.* = TranspilerJob{
             .non_threadsafe_input_specifier = input_specifier,
             .path = owned_path,
@@ -261,6 +278,7 @@ pub const RuntimeTranspilerStore = struct {
             .fetcher = TranspilerJob.Fetcher{
                 .file = {},
             },
+            .resolved_source = resolved_source,
         };
         if (comptime Environment.allow_assert)
             debug("transpile({s}, {s}, async)", .{ path.text, @tagName(job.loader) });
@@ -347,17 +365,21 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             resolved_source.tag = brk: {
+                const actual_package_json: *PackageJSON = brk2: {
+                    // this should already be cached virtually always so it's fine to do this
+                    const dir_info = (vm.transpiler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
+                        break :brk .javascript;
+
+                    break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
+                } orelse break :brk .javascript;
                 if (resolved_source.is_commonjs_module) {
-                    const actual_package_json: *PackageJSON = brk2: {
-                        // this should already be cached virtually always so it's fine to do this
-                        const dir_info = (vm.transpiler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
-                            break :brk .javascript;
-
-                        break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
-                    } orelse break :brk .javascript;
-
                     if (actual_package_json.module_type == .esm) {
                         break :brk ResolvedSource.Tag.package_json_type_module;
+                    }
+                } else {
+                    if (actual_package_json.module_type == .cjs) {
+                        resolved_source.is_commonjs_module = true;
+                        break :brk ResolvedSource.Tag.package_json_type_commonjs;
                     }
                 }
 
@@ -462,6 +484,12 @@ pub const RuntimeTranspilerStore = struct {
                 vm.main_hash == hash and
                 strings.eqlLong(vm.main, path.text, false);
 
+            const module_type: options.ModuleType = switch (this.resolved_source.tag) {
+                .package_json_type_commonjs => .cjs,
+                .package_json_type_module => .esm,
+                else => .unknown,
+            };
+
             var parse_options = Transpiler.ParseOptions{
                 .allocator = allocator,
                 .path = path,
@@ -483,6 +511,7 @@ pub const RuntimeTranspilerStore = struct {
                     setBreakPointOnFirstLine(),
                 .runtime_transpiler_cache = if (!JSC.RuntimeTranspilerCache.is_disabled) &cache else null,
                 .remove_cjs_module_wrapper = is_main and vm.module_loader.eval_source != null,
+                .module_type = module_type,
                 .allow_bytecode_cache = true,
             };
 

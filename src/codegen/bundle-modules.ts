@@ -387,16 +387,17 @@ pub const ResolvedSourceTag = enum(u32) {
     // Predefined
     javascript = 0,
     package_json_type_module = 1,
-    wasm = 2,
-    object = 3,
-    file = 4,
-    esm = 5,
-    json_for_object_loader = 6,
+    package_json_type_commonjs = 2,
+    wasm = 3,
+    object = 4,
+    file = 5,
+    esm = 6,
+    json_for_object_loader = 7,
     /// Generate an object with "default" set to all the exports, including a "default" propert
-    exports_object = 7,
+    exports_object = 8,
 
     /// Generate a module that only exports default the input JSValue
-    export_default_object = 8,
+    export_default_object = 9,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
     // In this enum are represented as \`(1 << 9) & id\`

@@ -992,6 +992,8 @@ pub const Transpiler = struct {
 
         dont_bundle_twice: bool = false,
         allow_commonjs: bool = false,
+        /// `"type"` from `package.json`
+        module_type: options.ModuleType = .unknown,
 
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
@@ -1133,6 +1135,7 @@ pub const Transpiler = struct {
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.module_type = this_parse.module_type;
 
                 opts.tree_shaking = transpiler.options.tree_shaking;
                 opts.features.inlining = transpiler.options.inlining;

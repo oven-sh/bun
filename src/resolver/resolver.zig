@@ -1787,7 +1787,6 @@ pub const Resolver = struct {
                                     if (r.handleESMResolution(esm_resolution, abs_package_path, kind, package_json, esm.subpath)) |result| {
                                         var result_copy = result;
                                         result_copy.is_node_module = true;
-                                        result_copy.module_type = module_type;
                                         return .{ .success = result_copy };
                                     }
                                 }
@@ -2444,6 +2443,7 @@ pub const Resolver = struct {
                     }
                     break :brk entry_query.entry.abs_path.slice();
                 };
+                const module_type = if (resolved_dir_info.package_json) |pkg| pkg.module_type else .unknown;
 
                 return MatchResult{
                     .path_pair = PathPair{
@@ -2455,6 +2455,7 @@ pub const Resolver = struct {
                     .diff_case = entry_query.diff_case,
                     .is_node_module = true,
                     .package_json = resolved_dir_info.package_json orelse package_json,
+                    .module_type = module_type, 
                 };
             },
             .Inexact => {

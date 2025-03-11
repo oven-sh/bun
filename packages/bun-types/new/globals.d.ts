@@ -601,7 +601,7 @@ declare var ReadableStreamDefaultReader: {
 };
 
 interface ReadableStreamGenericReader {
-  readonly closed: Promise<undefined>;
+  readonly closed: Promise<void>;
   cancel(reason?: any): Promise<void>;
 }
 

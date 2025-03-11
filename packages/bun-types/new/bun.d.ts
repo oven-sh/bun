@@ -1771,12 +1771,12 @@ declare module "bun" {
      * @example
      * await sql.commitDistributed("my_distributed_transaction");
      */
-    commitDistributed(name: string): Promise<undefined>;
+    commitDistributed(name: string): Promise<void>;
     /** Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
      * @example
      * await sql.rollbackDistributed("my_distributed_transaction");
      */
-    rollbackDistributed(name: string): Promise<undefined>;
+    rollbackDistributed(name: string): Promise<void>;
     /** Waits for the database connection to be established
      * @example
      * await sql.connect();
@@ -1786,13 +1786,13 @@ declare module "bun" {
      * @example
      * await sql.close({ timeout: 1 });
      */
-    close(options?: { timeout?: number }): Promise<undefined>;
+    close(options?: { timeout?: number }): Promise<void>;
     /** Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
      * @alias close
      * @example
      * await sql.end({ timeout: 1 });
      */
-    end(options?: { timeout?: number }): Promise<undefined>;
+    end(options?: { timeout?: number }): Promise<void>;
     /** Flushes any pending operations */
     flush(): void;
     /**  The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
@@ -3427,7 +3427,7 @@ declare module "bun" {
           hmr?: boolean;
         };
 
-    error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | undefined | Promise<undefined>;
+    error?: (this: Server, error: ErrorLike) => Response | Promise<Response> | void | Promise<void>;
 
     /**
      * Uniquely identify a server instance with an ID

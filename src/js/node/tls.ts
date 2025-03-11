@@ -1,10 +1,11 @@
 // Hardcoded module "node:tls"
 const { isArrayBufferView, isArrayBuffer, isTypedArray } = require("node:util/types");
-const { addServerName } = require("../internal/net");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
+const { addServerName } = require("internal/net");
+const { throwNotImplemented } = require("internal/shared");
 
-const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
+const { Server: NetServer, Socket: NetSocket } = net;
 
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -305,7 +306,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     },
   });
 })(
-  class TLSSocket extends InternalTCPSocket {
+  class TLSSocket extends NetSocket {
     #secureContext;
     ALPNProtocols;
     #checkServerIdentity;
@@ -313,14 +314,14 @@ const TLSSocket = (function (InternalTLSSocket) {
     alpnProtocol = null;
 
     constructor(socket, options) {
-      super(socket instanceof InternalTCPSocket || socket instanceof Duplex ? options : options || socket);
+      super(socket instanceof NetSocket || socket instanceof Duplex ? options : options || socket);
       options = options || socket || {};
       if (typeof options === "object") {
         const { ALPNProtocols } = options;
         if (ALPNProtocols) {
           convertALPNProtocols(ALPNProtocols, this);
         }
-        if (socket instanceof InternalTCPSocket || socket instanceof Duplex) {
+        if (socket instanceof NetSocket || socket instanceof Duplex) {
           this._handle = socket;
           // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
           this._handle._parentWrap = this;

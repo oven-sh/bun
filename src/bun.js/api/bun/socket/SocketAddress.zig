@@ -131,13 +131,18 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
         if (!input_arg.isString()) return global.throwInvalidArgumentTypeValue("input", "string", input_arg);
         break :blk try bun.String.fromJS2(input_arg, global);
     };
-    var stackfb = std.heap.stackFallback(256, bun.default_allocator);
-    const alloc = stackfb.get();
 
-    const url_str = bun.String.createFromConcat(
-        alloc,
-        &[_]bun.String{ bun.String.static("http://"), input },
-    ) catch return global.throwOutOfMemory();
+    const prefix = "http://";
+    const url_str = switch (input.is8Bit()) {
+        inline else => |is_8_bit| with_prefix: {
+            const enc: bun.String.WTFEncoding = if (is_8_bit) .latin1 else .utf16;
+            const from_chars = if (is_8_bit) input.latin1() else input.utf16();
+            const str, const to_chars = bun.String.createUninitialized(enc, from_chars.len + prefix.len);
+            @memcpy(to_chars[0..prefix.len], bun.strings.literal(enc.Byte(), prefix));
+            @memcpy(to_chars[prefix.len..], from_chars);
+            break :with_prefix str;
+        },
+    };
     defer url_str.deref();
 
     const url = JSC.URL.fromString(url_str) orelse return JSValue.jsUndefined();

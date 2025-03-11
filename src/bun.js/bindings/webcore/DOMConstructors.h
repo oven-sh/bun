@@ -541,6 +541,8 @@ enum class DOMConstructorID : uint16_t {
     TextMetrics,
     TimeRanges,
     URLSearchParams,
+    Cookie,
+    CookieMap,
     ValidityState,
     WebKitMediaKeyError,
     ANGLEInstancedArrays,

@@ -33,6 +33,7 @@
     macro(embeddedFiles) \
     macro(S3Client) \
     macro(s3) \
+    macro(CSRF) \
 
 // --- Callbacks ---
 #define FOR_EACH_CALLBACK(macro) \

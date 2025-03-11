@@ -1,0 +1,35 @@
+{
+  "name": "bun-plugin-vue",
+  "version": "0.0.1",
+  "description": "Official Vue plugin for Bun",
+  "module": "src/index.ts",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "lint": "oxlint .",
+    "check:types": "tsc --noEmit",
+    "build:types": "tsc --emitDeclarationOnly --declaration --declarationDir ./dist"
+  },
+  "dependencies": {
+    "@vue/compiler-sfc": "^3.5.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5",
+    "vue": "^3"
+  },
+  "devDependencies": {
+    "bun-types": "canary",
+    "vue": "^3.5.13"
+  },
+  "files": [
+    "README.md",
+    "bunfig.toml",
+    "tsconfig.json",
+    "modules.d.ts",
+    "dist",
+    "src",
+    "!src/**/*.spec.ts"
+  ]
+}

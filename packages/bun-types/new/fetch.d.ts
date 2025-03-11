@@ -140,7 +140,7 @@ interface ResponseConstructor {
   error(): Response;
 }
 
-declare var Response: Bun.__internal.UseLibDomIfAvailable<"Response", ResponseConstructor>;
+declare var Response: ResponseConstructor;
 
 interface BunFetchRequestInitTLS extends Bun.TLSOptions {
   /**
@@ -194,6 +194,7 @@ interface BunFetchRequestInit extends RequestInit {
  * @returns A promise that resolves to {@link Response} object.
  */
 declare function fetch(request: Request, init?: BunFetchRequestInit): Promise<Response>;
+
 /**
  * Send a HTTP(s) request
  *

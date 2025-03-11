@@ -5,7 +5,7 @@
       "name": "fixture",
       "dependencies": {
         "@oven/typescript-bun-lib-dom": "github:alii/lib-dom-bun-testing",
-        "@types/bun": "types-bun-1.2.5.tgz",
+        "@types/bun": "types-bun-1.2.6.tgz",
       },
       "peerDependencies": {
         "typescript": "^5.8.2",
@@ -15,7 +15,7 @@
   "packages": {
     "@oven/typescript-bun-lib-dom": ["@oven/typescript-bun-lib-dom@github:alii/lib-dom-bun-testing#9ed8ccd", {}, "alii-lib-dom-bun-testing-9ed8ccd"],
 
-    "@types/bun": ["@types/bun@types-bun-1.2.5.tgz", { "dependencies": { "@types/node": "*", "@types/ws": "*", "@typescript/lib-dom": "github:alii/lib-dom-bun-testing" } }],
+    "@types/bun": ["@types/bun@types-bun-1.2.6.tgz", { "dependencies": { "@types/node": "*", "@types/ws": "*", "@typescript/lib-dom": "github:alii/lib-dom-bun-testing" } }],
 
     "@types/node": ["@types/node@22.13.10", "", { "dependencies": { "undici-types": "~6.20.0" } }, "sha512-I6LPUvlRH+O6VRUqYOcMudhaIdUVWfsjnZavnsraHvpBwaEyMN29ry+0UVJhImYL16xsscu0aske3yA+uPOWfw=="],
 

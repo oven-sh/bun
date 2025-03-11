@@ -636,9 +636,9 @@ declare var WritableStreamDefaultController: {
 
 /** This Streams API interface is the object returned by WritableStream.getWriter() and once created locks the < writer to the WritableStream ensuring that no other streams can write to the underlying sink. */
 interface WritableStreamDefaultWriter<W = any> {
-  readonly closed: Promise<undefined>;
+  readonly closed: Promise<void>;
   readonly desiredSize: number | null;
-  readonly ready: Promise<undefined>;
+  readonly ready: Promise<void>;
   abort(reason?: any): Promise<void>;
   close(): Promise<void>;
   releaseLock(): void;

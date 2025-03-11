@@ -90,7 +90,7 @@ export default function compose(...streams) {
 
   if (writable) {
     if (isNodeStream(head)) {
-      d._write = function (chunk, encoding, callback) {
+      d._write = function _write(chunk, encoding, callback) {
         if (head.write(chunk, encoding)) {
           callback();
         } else {
@@ -98,7 +98,7 @@ export default function compose(...streams) {
         }
       };
 
-      d._final = function (callback) {
+      d._final = function _final(callback) {
         head.end();
         onfinish = callback;
       };
@@ -114,7 +114,7 @@ export default function compose(...streams) {
       const writable = isTransformStream(head) ? head.writable : head;
       const writer = writable.getWriter();
 
-      d._write = async function (chunk, encoding, callback) {
+      d._write = async function _write(chunk, encoding, callback) {
         try {
           await writer.ready;
           writer.write(chunk).catch(() => {});
@@ -124,7 +124,7 @@ export default function compose(...streams) {
         }
       };
 
-      d._final = async function (callback) {
+      d._final = async function _final(callback) {
         try {
           await writer.ready;
           writer.close().catch(() => {});
@@ -160,7 +160,7 @@ export default function compose(...streams) {
         d.push(null);
       });
 
-      d._read = function () {
+      d._read = function _read() {
         while (true) {
           const buf = tail.read();
           if (buf === null) {
@@ -176,7 +176,7 @@ export default function compose(...streams) {
     } else if (isWebStream(tail)) {
       const readable = isTransformStream(tail) ? tail.readable : tail;
       const reader = readable.getReader();
-      d._read = async function () {
+      d._read = async function _read() {
         while (true) {
           try {
             const { value, done } = await reader.read();
@@ -197,7 +197,7 @@ export default function compose(...streams) {
     }
   }
 
-  d._destroy = function (err, callback) {
+  d._destroy = function _destroy(err, callback) {
     if (!err && onclose !== null) {
       err = $makeAbortError();
     }

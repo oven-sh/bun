@@ -174,7 +174,7 @@ var inherits = function inherits(ctor, superCtor) {
   });
   Object.setPrototypeOf(ctor.prototype, superCtor.prototype);
 };
-var _extend = function (origin, add) {
+function _extend(origin, add) {
   if (!add || !isObject(add)) return origin;
   var keys = Object.keys(add);
   var i = keys.length;
@@ -182,7 +182,7 @@ var _extend = function (origin, add) {
     origin[keys[i]] = add[keys[i]];
   }
   return origin;
-};
+}
 
 function callbackifyOnRejected(reason, cb) {
   if (!reason) {

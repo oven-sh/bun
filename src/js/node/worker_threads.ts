@@ -46,13 +46,13 @@ function injectFakeEmitter(Class) {
     }
   }
 
-  Class.prototype.on = function (event, listener) {
+  Class.prototype.on = function on(event, listener) {
     this.addEventListener(event, functionForEventType(event, listener));
 
     return this;
   };
 
-  Class.prototype.off = function (event, listener) {
+  Class.prototype.off = function off(event, listener) {
     if (listener) {
       this.removeEventListener(event, listener[wrappedListener] || listener);
     } else {
@@ -62,7 +62,7 @@ function injectFakeEmitter(Class) {
     return this;
   };
 
-  Class.prototype.once = function (event, listener) {
+  Class.prototype.once = function once(event, listener) {
     this.addEventListener(event, functionForEventType(event, listener), { once: true });
 
     return this;
@@ -76,7 +76,7 @@ function injectFakeEmitter(Class) {
     return MessageEvent;
   }
 
-  Class.prototype.emit = function (event, ...args) {
+  Class.prototype.emit = function emit(event, ...args) {
     this.dispatchEvent(new (EventClass(event))(event, ...args));
 
     return this;

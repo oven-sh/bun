@@ -74,6 +74,7 @@ const VirtualMachine = bun.JSC.VirtualMachine;
 const Dependency = @import("../install/dependency.zig");
 const Async = bun.Async;
 const String = bun.String;
+const ModuleType = options.ModuleType;
 
 const debug = Output.scoped(.ModuleLoader, true);
 const panic = std.debug.panic;
@@ -244,6 +245,7 @@ pub const RuntimeTranspilerStore = struct {
         path: Fs.Path,
         referrer: bun.String,
         loader: bun.options.Loader,
+        package_json: ?*const PackageJSON,
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
@@ -252,16 +254,14 @@ pub const RuntimeTranspilerStore = struct {
         // NOTE: DirInfo should already be cached since module loading happens
         // after module resolution, so this should be cheap
         var resolved_source = ResolvedSource{};
-        if (vm.transpiler.resolver.readDirInfo(owned_path.name.dir) catch null) |dir_info| {
-            if (dir_info.package_json orelse dir_info.enclosing_package_json) |package_json| {
-                switch (package_json.module_type) {
-                    .cjs => {
-                        resolved_source.tag = .package_json_type_commonjs;
-                        resolved_source.is_commonjs_module = true;
-                    },
-                    .esm => resolved_source.tag = .package_json_type_module,
-                    .unknown => {},
-                }
+        if (package_json) |pkg| {
+            switch (pkg.module_type) {
+                .cjs => {
+                    resolved_source.tag = .package_json_type_commonjs;
+                    resolved_source.is_commonjs_module = true;
+                },
+                .esm => resolved_source.tag = .package_json_type_module,
+                .unknown => {},
             }
         }
 
@@ -484,7 +484,7 @@ pub const RuntimeTranspilerStore = struct {
                 vm.main_hash == hash and
                 strings.eqlLong(vm.main, path.text, false);
 
-            const module_type: options.ModuleType = switch (this.resolved_source.tag) {
+            const module_type: ModuleType = switch (this.resolved_source.tag) {
                 .package_json_type_commonjs => .cjs,
                 .package_json_type_module => .esm,
                 else => .unknown,
@@ -599,6 +599,7 @@ pub const RuntimeTranspilerStore = struct {
                     },
                     .hash = 0,
                     .is_commonjs_module = entry.metadata.module_type == .cjs,
+                    .tag = this.resolved_source.tag,
                 };
 
                 return;
@@ -614,6 +615,7 @@ pub const RuntimeTranspilerStore = struct {
                     .bytecode_cache = if (bytecode_slice.len > 0) bytecode_slice.ptr else null,
                     .bytecode_cache_size = bytecode_slice.len,
                     .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
+                    .tag = this.resolved_source.tag,
                 };
                 this.resolved_source.source_code.ensureHash();
                 return;
@@ -712,6 +714,7 @@ pub const RuntimeTranspilerStore = struct {
                 .source_code = source_code,
                 .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                 .hash = 0,
+                .tag = this.resolved_source.tag,
             };
         }
     };
@@ -1517,6 +1520,7 @@ pub const ModuleLoader = struct {
         input_specifier: String,
         path: Fs.Path,
         loader: options.Loader,
+        module_type: options.ModuleType,
         log: *logger.Log,
         virtual_source: ?*const logger.Source,
         promise_ptr: ?*?*JSC.JSInternalPromise,
@@ -1653,6 +1657,7 @@ pub const ModuleLoader = struct {
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
+                    .module_type = module_type,
                     .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests,
                     .keep_json_and_toml_as_one_statement = true,
                     .allow_bytecode_cache = true,
@@ -1719,6 +1724,7 @@ pub const ModuleLoader = struct {
                         input_specifier,
                         path,
                         .wasm,
+                        .unknown, // cjs/esm don't make sense for wasm
                         log,
                         &parse_result.source,
                         promise_ptr,
@@ -1953,6 +1959,9 @@ pub const ModuleLoader = struct {
                         if (actual_package_json.module_type == .esm) {
                             break :brk ResolvedSource.Tag.package_json_type_module;
                         }
+                        if (actual_package_json.module_type == .cjs) {
+                            break :brk ResolvedSource.Tag.package_json_type_commonjs;
+                        }
                     }
 
                     break :brk ResolvedSource.Tag.javascript;
@@ -2053,6 +2062,7 @@ pub const ModuleLoader = struct {
                     input_specifier,
                     path,
                     .file,
+                    .unknown, // cjs/esm don't make sense for wasm
                     log,
                     virtual_source,
                     promise_ptr,
@@ -2278,6 +2288,8 @@ pub const ModuleLoader = struct {
         };
         defer if (blob_to_deinit) |*blob| blob.deinit();
 
+        const is_cjs: bool = if (lr.package_json) |pkg| pkg.module_type == .cjs else false;
+
         // We only run the transpiler concurrently when we can.
         // Today, that's:
         //
@@ -2289,9 +2301,16 @@ pub const ModuleLoader = struct {
             if (blob_to_deinit == null and allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
-                jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
+                jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled and
+                // CJS modules must be loaded synchronously. Unfortunately this
+                // won't trigger if the module does not specify a "type", but
+                // instead uses CJS code. We won't know that until we start
+                // parsing/transpiling the module, which we (obviously) haven't
+                // done yet.
+                !is_cjs)
             {
                 if (!lr.is_main) {
+                    // TODO: check if the resolved source must be transpiled synchronously
                     return jsc_vm.transpiler_store.transpile(
                         jsc_vm,
                         globalObject,
@@ -2299,6 +2318,7 @@ pub const ModuleLoader = struct {
                         lr.path,
                         referrer.dupeRef(),
                         concurrent_loader,
+                        lr.package_json,
                     );
                 }
             }
@@ -2334,6 +2354,7 @@ pub const ModuleLoader = struct {
                 specifier_ptr.*,
                 lr.path,
                 synchronous_loader,
+                if (lr.package_json) |pkg| pkg.module_type else .unknown,
                 &log,
                 lr.virtual_source,
                 if (allow_promise) &promise else null,
@@ -2589,6 +2610,7 @@ pub const ModuleLoader = struct {
                 specifier_ptr.*,
                 path,
                 loader,
+                .unknown,
                 &log,
                 &virtual_source,
                 null,

@@ -27,6 +27,7 @@ const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
@@ -970,6 +971,8 @@ const LoaderResult = struct {
     path: Fs.Path,
     is_main: bool,
     specifier: string,
+    package_json: ?*const PackageJSON,
+    // module_type: ModuleType,
 };
 pub fn getLoaderAndVirtualSource(
     specifier_str: string,
@@ -1035,12 +1038,21 @@ pub fn getLoaderAndVirtualSource(
 
     const is_main = strings.eqlLong(specifier, jsc_vm.main, true);
 
+    // const module_type: ModuleType = if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info| blk: {
+    //     if (dir_info.package_json orelse dir_info.enclosing_package_json) |pkg| {
+    //         break :blk pkg.module_type;
+    //     }
+    //     break :blk .unknown;
+    // } else .unknown;
+    const package_json: ?*const PackageJSON = if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info| dir_info.package_json orelse dir_info.enclosing_package_json else null;
+
     return .{
         .loader = loader,
         .virtual_source = virtual_source,
         .path = path,
         .is_main = is_main,
         .specifier = specifier,
+        .package_json = package_json,
     };
 }
 

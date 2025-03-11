@@ -340,12 +340,25 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this.on("timeout", onNodeHTTPServerSocketTimeout);
   }
 
+  #closeHandle(handle, callback) {
+    this[kHandle] = undefined;
+    handle.onclose = this.#onCloseForDestroy.bind(this, callback);
+    handle.close();
+    // lets sync check and destroy the request if it's not complete
+    const message = this._httpMessage;
+    const req = message?.req;
+    if (req && !req.complete) {
+      // at this point the handle is not destroyed yet, lets destroy the request
+      req.destroy(new ConnResetException("aborted"));
+    }
+  }
   #onClose() {
-    const handle = this[kHandle];
     this[kHandle] = null;
     const message = this._httpMessage;
     const req = message?.req;
     if (req && !req.complete) {
+      // at this point the socket is already destroyed, lets avoid UAF
+      req[kHandle] = undefined;
       req.destroy(new ConnResetException("aborted"));
     }
   }
@@ -381,9 +394,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       $isCallable(callback) && callback(err);
       return;
     }
-    this[kHandle] = undefined;
-    handle.onclose = this.#onCloseForDestroy.bind(this, callback);
-    handle.close();
+    this.#closeHandle(handle, callback);
   }
 
   _final(callback) {
@@ -392,8 +403,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
       callback();
       return;
     }
-    handle.onclose = this.#onCloseForDestroy.bind(this, callback);
-    handle.close();
+    this.#closeHandle(handle, callback);
   }
 
   get localAddress() {

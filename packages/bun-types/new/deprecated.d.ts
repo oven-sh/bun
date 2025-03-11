@@ -1,5 +1,5 @@
 declare module "bun" {
-  interface MessageEvent<T> {
+  interface BunMessageEvent<T> {
     /**
      * @deprecated
      */

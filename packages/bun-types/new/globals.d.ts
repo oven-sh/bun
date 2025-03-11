@@ -1,7 +1,14 @@
 declare module "bun" {
   namespace __internal {
     type NodeWorkerThreadsWorker = import("worker_threads").Worker;
+    type LibWorkerOrNodeWorkerThreadsWorker = Bun.__internal.UseLibDomIfAvailable<"Worker", NodeWorkerThreadsWorker>;
+
     type NodePerfHooksPerformance = import("perf_hooks").Performance;
+    type LibPerformanceOrNodePerfHooksPerformance = Bun.__internal.UseLibDomIfAvailable<
+      "Performance",
+      NodePerfHooksPerformance
+    >;
+
     type NodeCryptoWebcryptoSubtleCrypto = import("crypto").webcrypto.SubtleCrypto;
     type NodeCryptoWebcryptoCryptoKey = import("crypto").webcrypto.CryptoKey;
     type NodeUtilTextEncoder = import("util").TextEncoder;
@@ -28,7 +35,7 @@ declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
-interface Worker extends Bun.__internal.NodeWorkerThreadsWorker {}
+interface Worker extends Bun.__internal.LibWorkerOrNodeWorkerThreadsWorker {}
 declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   "Worker",
   {
@@ -104,9 +111,6 @@ declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
     ): Bun.__internal.NodeUtilTextDecoder;
   }
 >;
-
-interface Performance extends Bun.__internal.NodePerfHooksPerformance {}
-declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
 
 // interface Event {
 //   /** This is not used in Node.js and is provided purely for completeness. */
@@ -1347,6 +1351,9 @@ declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
   "EventSource",
   { prototype: EventSource; new (): EventSource }
 >;
+
+interface Performance extends Bun.__internal.LibPerformanceOrNodePerfHooksPerformance {}
+declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
 
 interface PerformanceEntry {}
 declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<

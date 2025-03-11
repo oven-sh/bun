@@ -151,16 +151,21 @@ declare namespace WebAssembly {
   };
 
   interface Module extends Bun.WebAssembly.Module {}
-  var Module: {
-    prototype: Module;
-    new (bytes: Bun.BufferSource): Module;
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
-    customSections(moduleObject: Module, sectionName: string): ArrayBuffer[];
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/exports) */
-    exports(moduleObject: Module): ModuleExportDescriptor[];
-    /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/imports) */
-    imports(moduleObject: Module): ModuleImportDescriptor[];
-  };
+  var Module: Bun.__internal.UseLibDomIfAvailable<
+    "WebAssembly",
+    {
+      Module: {
+        prototype: Module;
+        new (bytes: Bun.BufferSource): Module;
+        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/customSections) */
+        customSections(moduleObject: Module, sectionName: string): ArrayBuffer[];
+        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/exports) */
+        exports(moduleObject: Module): ModuleExportDescriptor[];
+        /** [MDN Reference](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/WebAssembly/Module/imports) */
+        imports(moduleObject: Module): ModuleImportDescriptor[];
+      };
+    }
+  >["Module"];
 
   interface Table extends Bun.WebAssembly.Table {}
   var Table: {

@@ -26,7 +26,7 @@ declare module "bun" {
     | ReadableStreamDefaultReadDoneResult;
   type ReadableStreamReader<T> = ReadableStreamDefaultReader<T>;
   type Transferable = ArrayBuffer | import("worker_threads").MessagePort;
-  type MessageEventSource = undefined;
+  type MessageEventSource = Bun.__internal.UseLibDomIfAvailable<"MessageEventSource", undefined>;
   type Encoding = "utf-8" | "windows-1252" | "utf-16";
   type UncaughtExceptionOrigin = "uncaughtException" | "unhandledRejection";
   type MultipleResolveType = "resolve" | "reject";
@@ -131,7 +131,7 @@ declare module "bun" {
   }
 
   /** A message received by a target object. */
-  interface MessageEvent<T = any> extends Event {
+  interface BunMessageEvent<T = any> extends Event {
     /** Returns the data of the message. */
     readonly data: T;
     /** Returns the last event ID string, for server-sent events. */
@@ -142,6 +142,8 @@ declare module "bun" {
     readonly ports: readonly MessagePort[]; // ReadonlyArray<typeof import("worker_threads").MessagePort["prototype"]>;
     readonly source: Bun.MessageEventSource | null;
   }
+
+  type MessageEvent<T = any> = Bun.__internal.UseLibDomIfAvailable<"MessageEvent", BunMessageEvent<T>>;
 
   interface ReadableStreamDefaultReadManyResult<T> {
     done: boolean;

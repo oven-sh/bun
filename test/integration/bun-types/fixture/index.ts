@@ -250,11 +250,6 @@ const myAbortSignal: AbortSignal = new AbortSignal();
 
 import { serve } from "bun";
 
-new Worker("").on("message", (e: MessageEvent<string>) => {
-  e;
-  e.data satisfies string;
-});
-
 new Worker("", {
   type: "module",
   preload: ["preload.ts"],

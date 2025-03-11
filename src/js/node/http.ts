@@ -739,8 +739,7 @@ const ServerPrototype = {
   close(optionalCallback?) {
     const server = this[serverSymbol];
     if (!server) {
-      if (typeof optionalCallback === "function")
-        process.nextTick(optionalCallback, new Error("Server is not running"));
+      if (typeof optionalCallback === "function") process.nextTick(optionalCallback, $ERR_SERVER_NOT_RUNNING());
       return;
     }
     this[serverSymbol] = undefined;

@@ -283,7 +283,7 @@ describe("napi", () => {
       // remove all debug logs
       bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
       expect(bunResult).toBe(
-        `synchronously threw ReferenceError: message "Can't find variable: shouldNotExist", code undefined`,
+        `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
       );
     });
   });

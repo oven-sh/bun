@@ -27,9 +27,11 @@
     },
     "packages/bun-types": {
       "name": "bun-types",
+      "version": "1.2.5",
       "dependencies": {
         "@types/node": "*",
         "@types/ws": "~8.5.10",
+        "@typescript/lib-dom": "https://github.com/alii/lib-dom-bun-testing",
       },
       "devDependencies": {
         "@biomejs/biome": "^1.5.3",
@@ -182,6 +184,8 @@
     "@typescript-eslint/utils": ["@typescript-eslint/utils@7.16.1", "", { "dependencies": { "@eslint-community/eslint-utils": "^4.4.0", "@typescript-eslint/scope-manager": "7.16.1", "@typescript-eslint/types": "7.16.1", "@typescript-eslint/typescript-estree": "7.16.1" }, "peerDependencies": { "eslint": "^8.56.0" } }, "sha512-WrFM8nzCowV0he0RlkotGDujx78xudsxnGMBHI88l5J8wEhED6yBwaSLP99ygfrzAjsQvcYQ94quDwI0d7E1fA=="],
 
     "@typescript-eslint/visitor-keys": ["@typescript-eslint/visitor-keys@7.16.1", "", { "dependencies": { "@typescript-eslint/types": "7.16.1", "eslint-visitor-keys": "^3.4.3" } }, "sha512-Qlzzx4sE4u3FsHTPQAAQFJFNOuqtuY0LFrZHwQ8IHK705XxBiWOFkfKRWu6niB7hwfgnwIpO4jTC75ozW1PHWg=="],
+
+    "@typescript/lib-dom": ["@oven/typescript-bun-lib-dom@github:alii/lib-dom-bun-testing#9ed8ccd", {}, "alii-lib-dom-bun-testing-9ed8ccd"],
 
     "@ungap/structured-clone": ["@ungap/structured-clone@1.2.0", "", {}, "sha512-zuVdFrMJiuCDQUMCzQaD6KL28MjnqqN8XnAqiEq9PNm/hCPTSGfrXCOfwj1ow4LFb/tNymJPwsNbVePc1xFqrQ=="],
 

@@ -17,7 +17,8 @@
   "homepage": "https://bun.sh",
   "dependencies": {
     "@types/node": "*",
-    "@types/ws": "~8.5.10"
+    "@types/ws": "~8.5.10",
+    "@typescript/lib-dom": "https://github.com/alii/lib-dom-bun-testing"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.5.3",

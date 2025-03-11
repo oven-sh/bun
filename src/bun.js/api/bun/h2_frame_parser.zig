@@ -720,7 +720,7 @@ pub const H2FrameParser = struct {
         }
         pub fn next(this: *StreamResumableIterator) ?*Stream {
             var it = this.parser.streams.iterator();
-            if (it.index > it.hm.capacity()) return null;
+            if (it.index > it.hm.capacity() or this.index > it.hm.capacity()) return null;
             // resume the iterator from the same index if possible
             it.index = this.index;
             while (it.next()) |item| {

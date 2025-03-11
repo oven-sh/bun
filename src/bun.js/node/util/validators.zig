@@ -150,28 +150,28 @@ pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
 }
 
-pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, min: ?f64, max: ?f64) bun.JSError!f64 {
+pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, maybe_min: ?f64, maybe_max: ?f64) bun.JSError!f64 {
     if (!value.isNumber())
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
 
     const num: f64 = value.asNumber();
     var valid = true;
-    if (min) |min_val| {
-        if (num < min_val) valid = false;
+    if (maybe_min) |min| {
+        if (num < min) valid = false;
     }
-    if (max) |max_val| {
-        if (num > max_val) valid = false;
+    if (maybe_max) |max| {
+        if (num > max) valid = false;
     }
-    if ((min != null or max != null) and std.math.isNan(num)) {
+    if ((maybe_min != null or maybe_max != null) and std.math.isNan(num)) {
         valid = false;
     }
     if (!valid) {
-        if (min != null and max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {s}", name_args ++ .{ min, max, value });
-        } else if (min != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {s}", name_args ++ .{ max, value });
-        } else {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be <= {d}. Received {s}", name_args ++ .{ max, value });
+        if (maybe_min != null and maybe_max != null) {
+            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {d}", name_args ++ .{ maybe_min.?, maybe_max.?, num });
+        } else if (maybe_min != null) {
+            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {d}", name_args ++ .{ maybe_min.?, num });
+        } else if (maybe_max != null) {
+            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be <= {d}. Received {d}", name_args ++ .{ maybe_max.?, num });
         }
     }
     return num;

@@ -10649,6 +10649,7 @@ function randomBytes(size, callback) {
     return _randomBytes(size);
   }
 
+  // Crypto random promise job is guaranteed to resolve.
   _randomBytes(size, callback).then(buf => {
     callback(null, buf);
   });
@@ -10674,6 +10675,7 @@ function randomInt(min, max, callback) {
   }
 
   if (callback !== undefined) {
+    // Crypto random promise job is guaranteed to resolve.
     process.nextTick(callback, undefined, res);
   }
 
@@ -10696,6 +10698,7 @@ function randomFill(buf, offset, size, callback) {
     size = buf.length - offset;
   }
 
+  // Crypto random promise job is guaranteed to resolve.
   _randomFill(buf, offset, size, callback).then(() => {
     callback(null, buf);
   });

@@ -344,6 +344,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const message = this._httpMessage;
     const req = message?.req;
     if (req && !req.complete) {
+      // at this point the socket is already destroyed, lets avoid UAF
+      req[kHandle] = undefined;
       req.destroy(new ConnResetException("aborted"));
     }
   }
@@ -382,6 +384,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kHandle] = undefined;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback);
     handle.close();
+    // lets sync check and destroy the request if it's not complete
+    const message = this._httpMessage;
+    const req = message?.req;
+    if (req && !req.complete) {
+      // at this point the handle is not destroyed yet, lets destroy the request
+      req.destroy(new ConnResetException("aborted"));
+    }
   }
 
   _final(callback) {

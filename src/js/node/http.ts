@@ -1978,7 +1978,11 @@ const ServerResponsePrototype = {
       return this;
     }
     if (chunk && !this._hasBody) {
-      throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
+      if (this.req?.method === "HEAD") {
+        chunk = undefined;
+      } else {
+        throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
+      }
     }
 
     if (handle) {

@@ -470,7 +470,7 @@ writeIfNotChanged(
  * @param msg The error message
  * @param args Additional arguments
  */
-declare function $${code}(msg: string, ...args: any[]): ${name};
+declare function $${code}(msg: string, ...args: any[]): ${name ?? constructor.name};
 `;
 
       for (const con of other_constructors) {

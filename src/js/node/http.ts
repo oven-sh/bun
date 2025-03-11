@@ -966,6 +966,10 @@ const ServerPrototype = {
           }
           http_res.once("close", onClose);
           if (reachedRequestsLimit) {
+            server.emit("dropRequest", http_req, socket);
+            http_res.writeHead(503);
+            http_res.end();
+          } else {
             const upgrade = http_req.headers.upgrade;
             if (upgrade) {
               server.emit("upgrade", http_req, socket, kEmptyBuffer);

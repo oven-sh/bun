@@ -150,9 +150,10 @@ pub fn validateString(globalThis: *JSGlobalObject, value: JSValue, comptime name
         return throwErrInvalidArgType(globalThis, name_fmt, name_args, "string", value);
 }
 
-pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype, maybe_min: ?f64, maybe_max: ?f64) bun.JSError!f64 {
-    if (!value.isNumber())
-        return throwErrInvalidArgType(globalThis, name_fmt, name_args, "number", value);
+pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, name: string, maybe_min: ?f64, maybe_max: ?f64) bun.JSError!f64 {
+    if (!value.isNumber()) {
+        return globalThis.throwInvalidArgumentTypeValue(name, "number", value);
+    }
 
     const num: f64 = value.asNumber();
     var valid = true;
@@ -167,11 +168,11 @@ pub fn validateNumber(globalThis: *JSGlobalObject, value: JSValue, comptime name
     }
     if (!valid) {
         if (maybe_min != null and maybe_max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d} && <= {d}. Received {d}", name_args ++ .{ maybe_min.?, maybe_max.?, num });
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be >= {d} && <= {d}. Received {d}", .{ name, maybe_min.?, maybe_max.?, num });
         } else if (maybe_min != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be >= {d}. Received {d}", name_args ++ .{ maybe_min.?, num });
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be >= {d}. Received {d}", .{ name, maybe_min.?, num });
         } else if (maybe_max != null) {
-            return throwRangeError(globalThis, "The value of \"" ++ name_fmt ++ "\" is out of range. It must be <= {d}. Received {d}", name_args ++ .{ maybe_max.?, num });
+            return throwRangeError(globalThis, "The value of \"{s}\" is out of range. It must be <= {d}. Received {d}", .{ name, maybe_max.?, num });
         }
     }
     return num;

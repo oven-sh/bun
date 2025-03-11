@@ -102,7 +102,7 @@ const random = struct {
         return @intFromFloat(offset);
     }
     fn assertSize(global: *JSGlobalObject, size_value: JSValue, element_size: u8, offset: u32, length: usize) JSError!u32 {
-        var size = try validators.validateNumber(global, size_value, "size", .{}, null, null);
+        var size = try validators.validateNumber(global, size_value, "size", null, null);
         size *= @as(f32, @floatFromInt(element_size));
 
         if (std.math.isNan(size) or size > max_possible_length or size < 0) {

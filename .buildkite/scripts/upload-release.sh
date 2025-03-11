@@ -201,6 +201,8 @@ function create_release() {
   local artifacts=(
     bun-darwin-aarch64.zip
     bun-darwin-aarch64-profile.zip
+    bun-darwin-x64.zip
+    bun-darwin-x64-profile.zip
     bun-linux-aarch64.zip
     bun-linux-aarch64-profile.zip
     bun-linux-x64.zip

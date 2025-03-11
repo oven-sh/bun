@@ -9,6 +9,7 @@
   },
   "type": "module",
   "dependencies": {
+    "@oven/typescript-bun-lib-dom": "github:alii/lib-dom-bun-testing",
     "@types/bun": "types-bun-1.2.5.tgz"
   }
 }

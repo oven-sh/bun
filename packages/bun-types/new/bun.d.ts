@@ -14,32 +14,12 @@
  * This module aliases `globalThis.Bun`.
  */
 declare module "bun" {
-  /**
-   * Helper type for avoiding conflicts in types.
-   *
-   * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
-   *
-   * This is to avoid type conflicts between lib.dom.d.ts and @types/bun.
-   *
-   * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
-   * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
-   * to the type that lib.dom.d.ts provides.
-   *
-   * @internal
-   */
-  type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
-    // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
-    typeof globalThis extends { onabort: any }
-      ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
-        ? T
-        : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
-      : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
-
   type DistributedOmit<T, K extends PropertyKey> = T extends T ? Omit<T, K> : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView = NodeJS.TypedArray | DataView;
+  type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
   type StringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike;
-  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData;
+  type XMLHttpRequestBodyInit = Blob | BufferSource | string | FormData | Iterable<Uint8Array>;
   type ReadableStreamController<T> = ReadableStreamDefaultController<T>;
   type ReadableStreamDefaultReadResult<T> =
     | ReadableStreamDefaultReadValueResult<T>
@@ -60,10 +40,35 @@ declare module "bun" {
   type SignalsListener = (signal: NodeJS.Signals) => void;
   type BlobPart = string | Blob | BufferSource;
   type TimerHandler = (...args: any[]) => void;
-  type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
+
   type DOMHighResTimeStamp = number;
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+
+  namespace __internal {
+    type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
+
+    /**
+     * Helper type for avoiding conflicts in types.
+     *
+     * Uses the lib.dom.d.ts definition if it exists, otherwise defines it locally.
+     *
+     * This is to avoid type conflicts between lib.dom.d.ts and @types/bun.
+     *
+     * Unfortunately some symbols cannot be defined when both Bun types and lib.dom.d.ts types are loaded,
+     * and since we can't redeclare the symbol in a way that satisfies both, we need to fallback
+     * to the type that lib.dom.d.ts provides.
+     *
+     * @internal
+     */
+    type UseLibDomIfAvailable<GlobalThisKeyName extends PropertyKey, Otherwise> =
+      // `onabort` is defined in lib.dom.d.ts, so we can check to see if lib dom is loaded by checking if `onabort` is defined
+      typeof globalThis extends { onabort: any }
+        ? typeof globalThis extends { [K in GlobalThisKeyName]: infer T } // if it is loaded, infer it from `globalThis` and use that value
+          ? T
+          : Otherwise // Not defined in lib dom (or anywhere else), so no conflict. We can safely use our own definition
+        : Otherwise; // Lib dom not loaded anyway, so no conflict. We can safely use our own definition
+  }
 
   type Platform =
     | "aix"
@@ -146,7 +151,7 @@ declare module "bun" {
   }
 
   interface ResponseInit {
-    headers?: import("./fetch.d.ts").HeadersInit;
+    headers?: Bun.__internal.BunHeadersInit;
     /** @default 200 */
     status?: number;
 
@@ -4006,7 +4011,7 @@ declare module "bun" {
         /**
          * Send any additional headers while upgrading, like cookies
          */
-        headers?: import("./fetch.d.ts").HeadersInit;
+        headers?: Bun.__internal.BunHeadersInit;
         /**
          * This value is passed to the {@link ServerWebSocket.data} property
          */

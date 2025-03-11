@@ -211,14 +211,14 @@ Bun.fetch.preconnect;
 
 new Uint8Array().toBase64();
 
-type g = BodyInit;
-
 Bun.fetch("", {
   proxy: "",
   s3: {
     acl: "public-read",
   },
 });
+
+const myRequest: Request = new Request("");
 
 Bun.serve({
   fetch(req) {

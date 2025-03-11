@@ -10,7 +10,7 @@ declare module "bun" {
 }
 
 interface ReadableStream<R = any> {}
-declare var ReadableStream: Bun.UseLibDomIfAvailable<
+declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStream",
   {
     prototype: ReadableStream;
@@ -20,7 +20,7 @@ declare var ReadableStream: Bun.UseLibDomIfAvailable<
 >;
 
 interface WritableStream<W = any> {}
-declare var WritableStream: Bun.UseLibDomIfAvailable<
+declare var WritableStream: Bun.__internal.UseLibDomIfAvailable<
   "WritableStream",
   {
     prototype: WritableStream;
@@ -29,7 +29,7 @@ declare var WritableStream: Bun.UseLibDomIfAvailable<
 >;
 
 interface Worker extends Bun.__internal.NodeWorkerThreadsWorker {}
-declare var Worker: Bun.UseLibDomIfAvailable<
+declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   "Worker",
   {
     prototype: Worker;
@@ -43,7 +43,7 @@ declare var Worker: Bun.UseLibDomIfAvailable<
   }
 >;
 
-declare var WebSocket: Bun.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
+declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<"WebSocket", typeof import("ws").WebSocket>;
 
 interface Crypto {}
 declare var Crypto: {
@@ -78,7 +78,7 @@ interface TextEncoder extends Bun.__internal.NodeUtilTextEncoder {
    */
   encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
 }
-declare var TextEncoder: Bun.UseLibDomIfAvailable<
+declare var TextEncoder: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoder",
   {
     prototype: TextEncoder;
@@ -94,7 +94,7 @@ declare var TextEncoder: Bun.UseLibDomIfAvailable<
  * const decoder = new TextDecoder();
  * const uint8array = decoder.decode('this is some data');
  */
-declare var TextDecoder: Bun.UseLibDomIfAvailable<
+declare var TextDecoder: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoder",
   {
     prototype: Bun.__internal.NodeUtilTextDecoder;
@@ -106,7 +106,7 @@ declare var TextDecoder: Bun.UseLibDomIfAvailable<
 >;
 
 interface Performance extends Bun.__internal.NodePerfHooksPerformance {}
-declare var performance: Bun.UseLibDomIfAvailable<"performance", Performance>;
+declare var performance: Bun.__internal.UseLibDomIfAvailable<"performance", Performance>;
 
 // interface Event {
 //   /** This is not used in Node.js and is provided purely for completeness. */
@@ -395,7 +395,7 @@ declare var CloseEvent: {
 };
 
 interface MessageEvent<T = any> extends Bun.MessageEvent<T> {}
-declare var MessageEvent: Bun.UseLibDomIfAvailable<"MessageEvent", MessageEvent>;
+declare var MessageEvent: Bun.__internal.UseLibDomIfAvailable<"MessageEvent", MessageEvent>;
 
 interface CustomEvent<T = any> extends Event {
   /** Returns any custom data event was created with. Typically used for synthetic events. */
@@ -1252,7 +1252,7 @@ interface Blob {
   bytes(): Promise<Uint8Array>;
 }
 
-declare var Blob: Bun.UseLibDomIfAvailable<
+declare var Blob: Bun.__internal.UseLibDomIfAvailable<
   "Blob",
   {
     prototype: Blob;
@@ -1285,12 +1285,12 @@ interface Uint8ArrayConstructor {
 }
 
 interface BroadcastChannel {}
-declare var BroadcastChannel: Bun.UseLibDomIfAvailable<
+declare var BroadcastChannel: Bun.__internal.UseLibDomIfAvailable<
   "BroadcastChannel",
   import("node:worker_threads").BroadcastChannel
 >;
 
-declare var URL: Bun.UseLibDomIfAvailable<
+declare var URL: Bun.__internal.UseLibDomIfAvailable<
   "URL",
   {
     prototype: URL;
@@ -1317,7 +1317,7 @@ declare var URL: Bun.UseLibDomIfAvailable<
   }
 >;
 
-declare var AbortController: Bun.UseLibDomIfAvailable<
+declare var AbortController: Bun.__internal.UseLibDomIfAvailable<
   "AbortController",
   {
     prototype: AbortController;
@@ -1325,7 +1325,7 @@ declare var AbortController: Bun.UseLibDomIfAvailable<
   }
 >;
 
-declare var AbortSignal: Bun.UseLibDomIfAvailable<
+declare var AbortSignal: Bun.__internal.UseLibDomIfAvailable<
   "AbortSignal",
   {
     prototype: AbortSignal;
@@ -1334,94 +1334,100 @@ declare var AbortSignal: Bun.UseLibDomIfAvailable<
 >;
 
 interface DOMException {}
-declare var DOMException: Bun.UseLibDomIfAvailable<"DOMException", { prototype: DOMException; new (): DOMException }>;
+declare var DOMException: Bun.__internal.UseLibDomIfAvailable<
+  "DOMException",
+  { prototype: DOMException; new (): DOMException }
+>;
 
 interface FormData {}
-declare var FormData: Bun.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
+declare var FormData: Bun.__internal.UseLibDomIfAvailable<"FormData", { prototype: FormData; new (): FormData }>;
 
 interface EventSource {}
-declare var EventSource: Bun.UseLibDomIfAvailable<"EventSource", { prototype: EventSource; new (): EventSource }>;
+declare var EventSource: Bun.__internal.UseLibDomIfAvailable<
+  "EventSource",
+  { prototype: EventSource; new (): EventSource }
+>;
 
 interface PerformanceEntry {}
-declare var PerformanceEntry: Bun.UseLibDomIfAvailable<
+declare var PerformanceEntry: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceEntry",
   { prototype: PerformanceEntry; new (): PerformanceEntry }
 >;
 
 interface PerformanceMark {}
-declare var PerformanceMark: Bun.UseLibDomIfAvailable<
+declare var PerformanceMark: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceMark",
   { prototype: PerformanceMark; new (): PerformanceMark }
 >;
 
 interface PerformanceMeasure {}
-declare var PerformanceMeasure: Bun.UseLibDomIfAvailable<
+declare var PerformanceMeasure: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceMeasure",
   { prototype: PerformanceMeasure; new (): PerformanceMeasure }
 >;
 
 interface PerformanceObserver {}
-declare var PerformanceObserver: Bun.UseLibDomIfAvailable<
+declare var PerformanceObserver: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserver",
   { prototype: PerformanceObserver; new (): PerformanceObserver }
 >;
 
 interface PerformanceObserverEntryList {}
-declare var PerformanceObserverEntryList: Bun.UseLibDomIfAvailable<
+declare var PerformanceObserverEntryList: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceObserverEntryList",
   { prototype: PerformanceObserverEntryList; new (): PerformanceObserverEntryList }
 >;
 
 interface PerformanceResourceTiming {}
-declare var PerformanceResourceTiming: Bun.UseLibDomIfAvailable<
+declare var PerformanceResourceTiming: Bun.__internal.UseLibDomIfAvailable<
   "PerformanceResourceTiming",
   { prototype: PerformanceResourceTiming; new (): PerformanceResourceTiming }
 >;
 
 interface ReadableByteStreamController {}
-declare var ReadableByteStreamController: Bun.UseLibDomIfAvailable<
+declare var ReadableByteStreamController: Bun.__internal.UseLibDomIfAvailable<
   "ReadableByteStreamController",
   { prototype: ReadableByteStreamController; new (): ReadableByteStreamController }
 >;
 
 interface ReadableStreamBYOBReader {}
-declare var ReadableStreamBYOBReader: Bun.UseLibDomIfAvailable<
+declare var ReadableStreamBYOBReader: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBReader",
   { prototype: ReadableStreamBYOBReader; new (): ReadableStreamBYOBReader }
 >;
 
 interface ReadableStreamBYOBRequest {}
-declare var ReadableStreamBYOBRequest: Bun.UseLibDomIfAvailable<
+declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
   "ReadableStreamBYOBRequest",
   { prototype: ReadableStreamBYOBRequest; new (): ReadableStreamBYOBRequest }
 >;
 
 interface TextDecoderStream {}
-declare var TextDecoderStream: Bun.UseLibDomIfAvailable<
+declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
   { prototype: TextDecoderStream; new (): TextDecoderStream }
 >;
 
 interface TextEncoderStream {}
-declare var TextEncoderStream: Bun.UseLibDomIfAvailable<
+declare var TextEncoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextEncoderStream",
   { prototype: TextEncoderStream; new (): TextEncoderStream }
 >;
 
 interface URLSearchParams {}
-declare var URLSearchParams: Bun.UseLibDomIfAvailable<
+declare var URLSearchParams: Bun.__internal.UseLibDomIfAvailable<
   "URLSearchParams",
   { prototype: URLSearchParams; new (): URLSearchParams }
 >;
 
 interface MessageChannel {}
-declare var MessageChannel: Bun.UseLibDomIfAvailable<
+declare var MessageChannel: Bun.__internal.UseLibDomIfAvailable<
   "MessageChannel",
   { prototype: MessageChannel; new (): MessageChannel }
 >;
 
 interface MessagePort {}
-declare var MessagePort: Bun.UseLibDomIfAvailable<
+declare var MessagePort: Bun.__internal.UseLibDomIfAvailable<
   "MessagePort",
   {
     prototype: MessagePort;

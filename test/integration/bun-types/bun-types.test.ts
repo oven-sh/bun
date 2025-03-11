@@ -1,5 +1,5 @@
 import { fileURLToPath, $ as Shell } from "bun";
-import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { join } from "node:path";
 
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
@@ -12,7 +12,7 @@ const BUN_TYPES_TARBALL_NAME = `types-bun-${BUN_VERSION}.tgz`;
 
 const $ = Shell.cwd(BUN_REPO_ROOT).nothrow();
 
-beforeAll(async () => {
+beforeEach(async () => {
   try {
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
@@ -56,20 +56,20 @@ beforeAll(() => {
 });
 
 describe("@types/bun integration test", () => {
-  test("it typechecks successfully with DOM lib", async () => {
+  test("it typechecks successfully without DOM lib", async () => {
     const p = await $`
       cd ${FIXTURE_DIR}
+      # modify tsconfig.json to remove dom lib
+      sed -i 's/"lib": \["ESNext", "DOM"\]/"lib": \["ESNext"\]/' tsconfig.json
       bun run check
     `;
 
     expect(p.exitCode).toBe(0);
   });
 
-  test("it typechecks successfully without DOM lib", async () => {
+  test("it typechecks successfully with DOM lib", async () => {
     const p = await $`
       cd ${FIXTURE_DIR}
-      # modify tsconfig.json to remove dom lib
-      sed -i 's/"lib": \["ESNext", "DOM"\]/"lib": \["ESNext"\]/' tsconfig.json
       bun run check
     `;
 

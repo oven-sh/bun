@@ -1,7 +1,7 @@
 // This file is the entrypoint to the hot-module-reloading runtime.
 // On the server, communication is established with `server_exports`.
 import type { Bake } from "bun";
-import { loadModule, LoadModuleType, replaceModules, ssrManifest, serverManifest, HotModule } from "./hmr-module";
+import { loadExports, replaceModules, ssrManifest, serverManifest, HMRModule } from "./hmr-module";
 
 if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
   throw new Error("DCE is configured incorrectly");
@@ -35,12 +35,9 @@ server_exports = {
       });
     }
 
-    const mod = await loadModule<Bake.ServerEntryPoint>(routerTypeMain, LoadModuleType.AsyncAssertPresent);
-    // TODO: fix a loading bug in the hmr runtime
-    await new Promise(resolve => process.nextTick(resolve));
-    await new Promise(resolve => process.nextTick(resolve));
+    const exports = await loadExports<Bake.ServerEntryPoint>(routerTypeMain);
 
-    const serverRenderer = mod.exports.render;
+    const serverRenderer = exports.render;
 
     if (!serverRenderer) {
       throw new Error('Framework server entrypoint is missing a "render" export.');
@@ -49,10 +46,7 @@ server_exports = {
       throw new Error('Framework server entrypoint\'s "render" export is not a function.');
     }
 
-    const [pageModule, ...layouts] = await Promise.all(
-      routeModules.map(async id => (await loadModule(id, LoadModuleType.AsyncAssertPresent)).exports),
-    );
-
+    const [pageModule, ...layouts] = await Promise.all(routeModules.map(loadExports));
     const response = await serverRenderer(req, {
       styles: styles,
       modules: [clientEntryUrl],
@@ -74,12 +68,10 @@ server_exports = {
     if (componentManifestAdd) {
       for (const uid of componentManifestAdd) {
         try {
-          const mod = await (loadModule(uid, LoadModuleType.AsyncAssertPresent) as Promise<HotModule>);
-          const { exports, __esModule } = mod;
-          const exp = __esModule ? exports : (mod._ext_exports ??= { ...exports, default: exports });
+          const exports = await loadExports<{}>(uid);
 
           const client = {};
-          for (const exportName of Object.keys(exp)) {
+          for (const exportName of Object.keys(exports)) {
             serverManifest[uid + "#" + exportName] = {
               id: uid,
               name: exportName,

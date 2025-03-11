@@ -510,6 +510,8 @@ pub const B = union(Binding.Tag) {
         items: []ArrayBinding,
         has_spread: bool = false,
         is_single_line: bool = false,
+
+        pub const Item = ArrayBinding;
     };
 
     pub const Missing = struct {};
@@ -898,6 +900,15 @@ pub const G = struct {
     pub const FnBody = struct {
         loc: logger.Loc,
         stmts: StmtNodeList,
+
+        pub fn initReturnExpr(allocator: std.mem.Allocator, expr: Expr) !FnBody {
+            return .{
+                .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
+                    .value = expr,
+                }, expr.loc)}),
+                .loc = expr.loc,
+            };
+        }
     };
 
     pub const Fn = struct {
@@ -1226,6 +1237,9 @@ pub const Symbol = struct {
         /// Assigning to a "const" symbol will throw a TypeError at runtime
         constant,
 
+        // CSS identifiers that are renamed to be unique to the file they are in
+        local_css,
+
         /// This annotates all other symbols that don't have special behavior.
         other,
 
@@ -1372,6 +1386,11 @@ pub const Symbol = struct {
             return Map{ .symbols_for_source = symbols_for_source };
         }
 
+        pub fn initWithOneList(list: List) Map {
+            const baby_list = BabyList(List).init((&list)[0..1]);
+            return initList(baby_list);
+        }
+
         pub fn initList(list: NestedList) Map {
             return Map{ .symbols_for_source = list };
         }
@@ -1439,6 +1458,17 @@ pub const OptionalChain = enum(u1) {
 };
 
 pub const E = struct {
+    /// This represents an internal property name that can be mangled. The symbol
+    /// referenced by this expression should be a "SymbolMangledProp" symbol.
+    pub const NameOfSymbol = struct {
+        ref: Ref = Ref.None,
+
+        /// If true, a preceding comment contains "@__KEY__"
+        ///
+        /// Currently not used
+        has_property_key_comment: bool = false,
+    };
+
     pub const Array = struct {
         items: ExprNodeList = ExprNodeList{},
         comma_after_spread: ?logger.Loc = null,
@@ -1571,11 +1601,15 @@ pub const E = struct {
         /// emits `exports` or `module.exports` depending on `commonjs_named_exports_deoptimized`
         module_exports,
         /// `import.meta.hot`
-        hot,
-        /// `import.meta.hot.accept`
+        hot_enabled,
+        /// Acts as .e_undefined, but allows property accesses to the rest of the HMR API.
+        hot_disabled,
+        /// `import.meta.hot.data` when HMR is enabled. Not reachable when it is disabled.
+        hot_data,
+        /// `import.meta.hot.accept` when HMR is enabled. Truthy.
         hot_accept,
         /// Converted from `hot_accept` to this in js_parser.zig when it is
-        /// passed strings. Printed as `import.meta.hot.acceptSpecifiers`
+        /// passed strings. Printed as `hmr.hot.acceptSpecifiers`
         hot_accept_visited,
         /// Prints the resolved specifier string for an import record.
         resolved_specifier_string: ImportRecord.Index,
@@ -1649,6 +1683,14 @@ pub const E = struct {
         is_async: bool = false,
         has_rest_arg: bool = false,
         prefer_expr: bool = false, // Use shorthand if true and "Body" is a single return statement
+
+        pub const noop_return_undefined: Arrow = .{
+            .args = &.{},
+            .body = .{
+                .loc = .Empty,
+                .stmts = &.{},
+            },
+        };
     };
 
     pub const Function = struct { func: G.Fn };
@@ -4222,6 +4264,14 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
+            E.NameOfSymbol => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_name_of_symbol = Data.Store.append(E.NameOfSymbol, st),
+                    },
+                };
+            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4596,6 +4646,7 @@ pub const Expr = struct {
         e_require_main,
         e_special,
         e_inlined_enum,
+        e_name_of_symbol,
 
         // object, regex and array may have had side effects
         pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -5283,6 +5334,8 @@ pub const Expr = struct {
 
         e_inlined_enum: *E.InlinedEnum,
 
+        e_name_of_symbol: *E.NameOfSymbol,
+
         comptime {
             bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
         }
@@ -5621,6 +5674,10 @@ pub const Expr = struct {
         pub fn writeToHasher(this: Expr.Data, hasher: anytype, symbol_table: anytype) void {
             writeAnyToHasher(hasher, std.meta.activeTag(this));
             switch (this) {
+                .e_name_of_symbol => |e| {
+                    const symbol = e.ref.getSymbol(symbol_table);
+                    hasher.update(symbol.original_name);
+                },
                 .e_array => |e| {
                     writeAnyToHasher(hasher, .{
                         e.is_single_line,
@@ -6221,6 +6278,7 @@ pub const Expr = struct {
 
         pub const Store = struct {
             const StoreType = NewStore(&.{
+                E.NameOfSymbol,
                 E.Array,
                 E.Arrow,
                 E.Await,
@@ -6334,7 +6392,10 @@ pub const S = struct {
         value: []const u8,
     };
 
-    pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
+    pub const ExportClause = struct {
+        items: []ClauseItem,
+        is_single_line: bool,
+    };
 
     pub const Empty = struct {};
 
@@ -6872,6 +6933,9 @@ pub const Ast = struct {
     char_freq: ?CharFreq = null,
     exports_ref: Ref = Ref.None,
     module_ref: Ref = Ref.None,
+    /// When using format .bake_internal_dev, this is the HMR variable instead
+    /// of the wrapper. This is because that format does not store module
+    /// wrappers in a variable.
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 

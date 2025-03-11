@@ -57,6 +57,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForHandleScopeBuffer;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8Function;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodeHTTPServerSocket;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3Bucket;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
@@ -922,6 +923,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventEmitter;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSign;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSVerify;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHmac;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHash;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForServerRouteList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunRequest;
 };

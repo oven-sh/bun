@@ -445,6 +445,7 @@ pub const Options = struct {
     to_esm_ref: Ref = Ref.None,
     require_ref: ?Ref = null,
     import_meta_ref: Ref = Ref.None,
+    hmr_ref: Ref = Ref.None,
     indent: Indentation = .{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
@@ -485,6 +486,8 @@ pub const Options = struct {
     // If we're writing out a source map, this table of line start indices lets
     // us do binary search on to figure out what line a given AST node came from
     line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
+
+    mangled_props: ?*const bun.bundle_v2.MangledProps,
 
     // Default indentation is 2 spaces
     pub const Indentation = struct {
@@ -695,6 +698,8 @@ fn NewPrinter(
         temporary_bindings: std.ArrayListUnmanaged(B.Property) = .{},
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+
+        was_lazy_export: bool = false,
 
         const Printer = @This();
 
@@ -956,6 +961,15 @@ fn NewPrinter(
             }
         }
 
+        pub fn mangledPropName(p: *Printer, _ref: Ref) string {
+            const ref = p.symbols().follow(_ref);
+            // TODO: we don't support that
+            if (p.options.mangled_props != null) {
+                if (p.options.mangled_props.?.get(ref)) |name| return name;
+            }
+            return p.renamer.nameForSymbol(ref);
+        }
+
         pub inline fn printSpace(p: *Printer) void {
             if (!p.options.minify_whitespace)
                 p.print(" ");
@@ -1164,18 +1178,22 @@ fn NewPrinter(
         pub fn printBlock(p: *Printer, loc: logger.Loc, stmts: []const Stmt, close_brace_loc: ?logger.Loc) void {
             p.addSourceMapping(loc);
             p.print("{");
-            p.printNewline();
+            if (stmts.len > 0) {
+                @branchHint(.likely);
+                p.printNewline();
 
-            p.indent();
-            p.printBlockBody(stmts);
-            p.unindent();
-            p.needs_semicolon = false;
+                p.indent();
+                p.printBlockBody(stmts);
+                p.unindent();
 
-            p.printIndent();
+                p.printIndent();
+            }
             if (close_brace_loc != null and close_brace_loc.?.start > loc.start) {
                 p.addSourceMapping(close_brace_loc.?);
             }
             p.print("}");
+
+            p.needs_semicolon = false;
         }
 
         pub fn printTwoBlocksInOne(p: *Printer, loc: logger.Loc, stmts: []const Stmt, prepend: []const Stmt) void {
@@ -1349,6 +1367,13 @@ fn NewPrinter(
             if (comptime !generate_source_map) {
                 return;
             }
+            // TODO: esbuild does this to make the source map more accurate with E.NameOfSymbol
+            // if (printer.symbols().get(printer.symbols().follow(ref))) |original_symbol| {
+            //     if (!bun.strings.eql( original_symbol.original_name, name)) {
+            //         printer.source_map_builder.addSourceMapping(location, originalName);
+            //         return;
+            //     }
+            // }
             printer.addSourceMapping(location);
         }
 
@@ -1414,6 +1439,7 @@ fn NewPrinter(
             p.printSpace();
             p.printBlock(func.body.loc, func.body.stmts, null);
         }
+
         pub fn printClass(p: *Printer, class: G.Class) void {
             if (class.extends) |extends| {
                 p.print(" extends");
@@ -1740,12 +1766,10 @@ fn NewPrinter(
                 if (p.options.input_files_for_dev_server) |input_files| {
                     bun.assert(module_type == .internal_bake_dev);
                     p.printSpaceBeforeIdentifier();
-                    p.printSymbol(p.options.commonjs_module_ref);
+                    p.printSymbol(p.options.hmr_ref);
                     p.print(".require(");
-                    {
-                        const path = input_files[record.source_index.get()].path;
-                        p.printStringLiteralUTF8(path.pretty, false);
-                    }
+                    const path = input_files[record.source_index.get()].path;
+                    p.printStringLiteralUTF8(path.pretty, false);
                     p.print(")");
                 } else if (!meta.was_unwrapped_require) {
                     // Call the wrapper
@@ -1810,15 +1834,13 @@ fn NewPrinter(
 
                 if (module_type == .internal_bake_dev) {
                     p.printSpaceBeforeIdentifier();
-                    p.printSymbol(p.options.commonjs_module_ref);
+                    p.printSymbol(p.options.hmr_ref);
                     if (record.tag == .builtin)
-                        p.print(".importBuiltin(")
+                        p.print(".builtin(")
                     else
                         p.print(".require(");
-                    {
-                        const path = record.path;
-                        p.printStringLiteralUTF8(path.pretty, false);
-                    }
+                    const path = record.path;
+                    p.printStringLiteralUTF8(path.pretty, false);
                     p.print(")");
                     return;
                 } else if (wrap_with_to_esm) {
@@ -1861,7 +1883,7 @@ fn NewPrinter(
                 p.print("import(");
                 p.printImportRecordPath(record);
             } else {
-                p.printSymbol(p.options.commonjs_module_ref);
+                p.printSymbol(p.options.hmr_ref);
                 p.print(".dynamicImport(");
                 const path = record.path;
                 p.printStringLiteralUTF8(path.pretty, false);
@@ -2054,7 +2076,8 @@ fn NewPrinter(
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
                     if (p.options.module_type == .internal_bake_dev) {
-                        p.printSymbol(p.options.commonjs_module_ref);
+                        bun.assert(p.options.hmr_ref.isValid());
+                        p.printSymbol(p.options.hmr_ref);
                         p.print(".importMeta");
                     } else if (!p.options.import_meta_ref.isValid()) {
                         // Most of the time, leave it in there
@@ -2067,8 +2090,7 @@ fn NewPrinter(
                         // referencing import.meta
                         //
                         // TODO: This assertion trips when using `import.meta` with `--format=cjs`
-                        if (comptime Environment.isDebug)
-                            bun.assert(p.options.module_type == .cjs);
+                        bun.debugAssert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);
                     }
@@ -2086,7 +2108,7 @@ fn NewPrinter(
                         }
                         p.print("import.meta.main");
                     } else {
-                        bun.assert(p.options.module_type != .internal_bake_dev);
+                        bun.debugAssert(p.options.module_type != .internal_bake_dev);
 
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
@@ -2132,23 +2154,32 @@ fn NewPrinter(
                             p.printSymbol(p.options.commonjs_named_exports_ref);
                         }
                     },
-                    .hot => {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
-                        p.printSymbol(p.options.commonjs_module_ref);
-                        p.print(".hot");
+                    .hot_enabled => {
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".indirectHot");
+                    },
+                    .hot_data => {
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".data");
                     },
                     .hot_accept => {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
-                        p.printSymbol(p.options.commonjs_module_ref);
-                        p.print(".hot.accept");
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".accept");
                     },
                     .hot_accept_visited => {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
-                        p.printSymbol(p.options.commonjs_module_ref);
-                        p.print(".hot.acceptSpecifiers");
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".acceptSpecifiers");
+                    },
+                    .hot_disabled => {
+                        bun.debugAssert(p.options.module_type != .internal_bake_dev);
+                        p.printExpr(.{ .data = .e_undefined, .loc = expr.loc }, level, in_flags);
                     },
                     .resolved_specifier_string => |index| {
-                        bun.assert(p.options.module_type == .internal_bake_dev);
+                        bun.debugAssert(p.options.module_type == .internal_bake_dev);
                         p.printStringLiteralUTF8(p.importRecord(index.get()).path.pretty, true);
                     },
                 },
@@ -2298,7 +2329,7 @@ fn NewPrinter(
                         p.printSymbol(require_ref);
                         p.print(".main");
                     } else if (p.options.module_type == .internal_bake_dev) {
-                        p.print("false");
+                        p.print("false"); // there is no true main entry point
                     } else {
                         p.print("require.main");
                     }
@@ -2310,7 +2341,7 @@ fn NewPrinter(
                     if (p.options.require_ref) |require_ref| {
                         p.printSymbol(require_ref);
                     } else if (p.options.module_type == .internal_bake_dev) {
-                        p.printSymbol(p.options.commonjs_module_ref);
+                        p.printSymbol(p.options.hmr_ref);
                         p.print(".require");
                     } else {
                         p.print("require");
@@ -2324,8 +2355,8 @@ fn NewPrinter(
                         p.printSymbol(require_ref);
                         p.print(".resolve");
                     } else if (p.options.module_type == .internal_bake_dev) {
-                        p.printSymbol(p.options.commonjs_module_ref);
-                        p.print(".require.resolve");
+                        p.printSymbol(p.options.hmr_ref);
+                        p.print(".requireResolve");
                     } else {
                         p.print("require.resolve");
                     }
@@ -2376,7 +2407,7 @@ fn NewPrinter(
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         if (p.options.module_type == .internal_bake_dev) {
-                            p.printSymbol(p.options.commonjs_module_ref);
+                            p.printSymbol(p.options.hmr_ref);
                             p.print(".dynamicImport(");
                         } else {
                             p.print("import(");
@@ -2759,6 +2790,60 @@ fn NewPrinter(
                     p.printStringLiteralEString(e, true);
                 },
                 .e_template => |e| {
+                    if (e.tag == null and (p.options.minify_syntax or p.was_lazy_export)) {
+                        var replaced = std.ArrayList(E.TemplatePart).init(p.options.allocator);
+                        for (e.parts, 0..) |_part, i| {
+                            var part = _part;
+                            const inlined_value: ?js_ast.Expr = switch (part.value.data) {
+                                .e_name_of_symbol => |e2| Expr.init(
+                                    E.String,
+                                    E.String.init(p.mangledPropName(e2.ref)),
+                                    part.value.loc,
+                                ),
+                                .e_dot => brk: {
+                                    // TODO: handle inlining of dot properties
+                                    break :brk null;
+                                },
+                                else => null,
+                            };
+
+                            if (inlined_value) |value| {
+                                if (replaced.items.len == 0) {
+                                    replaced.appendSlice(e.parts[0..i]) catch bun.outOfMemory();
+                                }
+                                part.value = value;
+                                replaced.append(part) catch bun.outOfMemory();
+                            } else if (replaced.items.len > 0) {
+                                replaced.append(part) catch bun.outOfMemory();
+                            }
+                        }
+
+                        if (replaced.items.len > 0) {
+                            var copy = e.*;
+                            copy.parts = replaced.items;
+                            const e2 = copy.fold(p.options.allocator, expr.loc);
+                            switch (e2.data) {
+                                .e_string => {
+                                    p.print('"');
+                                    p.printStringCharactersUTF8(e2.data.e_string.data, '"');
+                                    p.print('"');
+                                    return;
+                                },
+                                .e_template => {
+                                    e.* = e2.data.e_template.*;
+                                },
+                                else => {},
+                            }
+                        }
+
+                        // Convert no-substitution template literals into strings if it's smaller
+                        if (e.parts.len == 0) {
+                            p.addSourceMapping(expr.loc);
+                            p.printStringCharactersEString(&e.head.cooked, '`');
+                            return;
+                        }
+                    }
+
                     if (e.tag) |tag| {
                         p.addSourceMapping(expr.loc);
                         // Optional chains are forbidden in template tags
@@ -3055,6 +3140,18 @@ fn NewPrinter(
                         p.print(e.comment);
                         p.print(" */");
                     }
+                },
+                .e_name_of_symbol => |e| {
+                    const name = p.mangledPropName(e.ref);
+                    p.addSourceMappingForName(expr.loc, name, e.ref);
+
+                    if (!p.options.minify_whitespace and e.has_property_key_comment) {
+                        p.print(" /* @__KEY__ */");
+                    }
+
+                    p.print('"');
+                    p.printStringCharactersUTF8(name, '"');
+                    p.print('"');
                 },
 
                 .e_jsx_element,
@@ -4279,6 +4376,7 @@ fn NewPrinter(
                 },
                 .s_import => |s| {
                     bun.assert(s.import_record_index < p.import_records.len);
+                    bun.debugAssert(p.options.module_type != .internal_bake_dev);
 
                     const record: *const ImportRecord = p.importRecord(s.import_record_index);
                     p.printIndent();
@@ -5171,6 +5269,141 @@ fn NewPrinter(
 
             return printer;
         }
+
+        fn printDevServerModule(
+            p: *Printer,
+            source: *const logger.Source,
+            ast: *const Ast,
+            part: *const js_ast.Part,
+        ) void {
+            p.indent();
+            p.printIndent();
+
+            p.printStringLiteralUTF8(source.path.pretty, false);
+
+            const func = part.stmts[0].data.s_expr.value.data.e_function.func;
+
+            // Special-case lazy-export AST
+            if (ast.has_lazy_export) {
+                @branchHint(.unlikely);
+                p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
+                p.printSpace();
+                p.print("{\n");
+                if (func.body.stmts[0].data.s_lazy_export.* != .e_undefined) {
+                    p.indent();
+                    p.printIndent();
+                    p.printSymbol(p.options.hmr_ref);
+                    p.print(".cjs.exports = ");
+                    p.printExpr(.{
+                        .data = func.body.stmts[0].data.s_lazy_export.*,
+                        .loc = func.body.stmts[0].loc,
+                    }, .comma, .{});
+                    p.print("; // bun .s_lazy_export\n");
+                    p.unindent();
+                }
+                p.printIndent();
+                p.print("},\n");
+                return;
+            }
+
+            // ESM is represented by an array tuple [ dependencies, exports, starImports, load, async ];
+            else if (ast.exports_kind == .esm) {
+                p.print(": [ [");
+                // Print the dependencies.
+                if (part.stmts.len > 1) {
+                    p.indent();
+                    p.print("\n");
+                    for (part.stmts[1..]) |stmt| {
+                        p.printIndent();
+                        const import = stmt.data.s_import;
+                        const record = p.importRecord(import.import_record_index);
+                        p.printStringLiteralUTF8(record.path.pretty, false);
+
+                        const item_count = @as(u32, @intFromBool(import.default_name != null)) +
+                            @as(u32, @intCast(import.items.len));
+                        p.fmt(", {d},", .{item_count}) catch {};
+                        if (item_count == 0) {
+                            // Add a comment explaining why the number could be zero
+                            p.print(if (import.star_name_loc != null) " // namespace import" else " // bare import");
+                        } else {
+                            if (import.default_name != null) {
+                                p.print(" \"default\",");
+                            }
+                            for (import.items) |item| {
+                                p.print(" ");
+                                p.printStringLiteralUTF8(item.alias, false);
+                                p.print(",");
+                            }
+                        }
+                        p.print("\n");
+                    }
+                    p.unindent();
+                    p.printIndent();
+                }
+                p.print("], [");
+
+                // Print the exports
+                if (ast.named_exports.count() > 0) {
+                    p.indent();
+                    var len: usize = std.math.maxInt(usize);
+                    for (ast.named_exports.keys()) |key| {
+                        if (len > 120) {
+                            p.printNewline();
+                            p.printIndent();
+                            len = 0;
+                        } else {
+                            p.print(" ");
+                        }
+                        len += key.len;
+                        p.printStringLiteralUTF8(key, false);
+                        p.print(",");
+                    }
+                    p.unindent();
+                    p.printNewline();
+                    p.printIndent();
+                }
+                p.print("], [");
+
+                // Print export stars
+                p.indent();
+                var had_any_stars = false;
+                for (ast.export_star_import_records) |star| {
+                    const record = p.importRecord(star);
+                    if (record.path.is_disabled) continue;
+                    had_any_stars = true;
+                    p.printNewline();
+                    p.printIndent();
+                    p.printStringLiteralUTF8(record.path.pretty, false);
+                    p.print(",");
+                }
+                p.unindent();
+                if (had_any_stars) {
+                    p.printNewline();
+                    p.printIndent();
+                }
+                p.print("], ");
+
+                // Print the code
+                if (!ast.top_level_await_keyword.isEmpty()) p.print("async");
+                p.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
+                p.print(" => {\n");
+                p.indent();
+                p.printBlockBody(func.body.stmts);
+                p.unindent();
+                p.printIndent();
+                p.print("}, ");
+
+                // Print isAsync
+                p.print(if (!ast.top_level_await_keyword.isEmpty()) "true" else "false");
+                p.print("],\n");
+            } else {
+                bun.assert(ast.exports_kind == .cjs);
+                p.printFunc(func);
+                p.print(",\n");
+            }
+
+            p.unindent();
+        }
     };
 }
 
@@ -5739,6 +5972,7 @@ pub fn printAst(
             printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
         }
     }
+    printer.was_lazy_export = tree.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -5931,6 +6165,7 @@ pub fn printWithWriterAndPlatform(
         renamer,
         getSourceMapBuilder(if (generate_source_maps) .eager else .disable, is_bun_platform, opts, source, &ast),
     );
+    printer.was_lazy_export = ast.has_lazy_export;
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -5942,37 +6177,7 @@ pub fn printWithWriterAndPlatform(
     }
 
     if (opts.module_type == .internal_bake_dev and !source.index.isRuntime()) {
-        printer.indent();
-        printer.printIndent();
-        if (!ast.top_level_await_keyword.isEmpty()) {
-            printer.print("async ");
-        }
-        printer.printStringLiteralUTF8(source.path.pretty, false);
-        const func = parts[0].stmts[0].data.s_expr.value.data.e_function.func;
-        if (!(func.body.stmts.len == 1 and func.body.stmts[0].data == .s_lazy_export)) {
-            printer.printFunc(func);
-        } else {
-            // Special-case lazy-export AST
-            @branchHint(.unlikely);
-            printer.printFnArgs(func.open_parens_loc, func.args, func.flags.contains(.has_rest_arg), false);
-            printer.printSpace();
-            printer.print("{\n");
-            if (func.body.stmts[0].data.s_lazy_export.* != .e_undefined) {
-                printer.indent();
-                printer.printIndent();
-                printer.printSymbol(printer.options.commonjs_module_ref);
-                printer.print(".exports = ");
-                printer.printExpr(.{
-                    .data = func.body.stmts[0].data.s_lazy_export.*,
-                    .loc = func.body.stmts[0].loc,
-                }, .comma, .{});
-                printer.print("; // bun .s_lazy_export\n");
-                printer.unindent();
-            }
-            printer.printIndent();
-            printer.print("}");
-        }
-        printer.print(",\n");
+        printer.printDevServerModule(source, &ast, &parts[0]);
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
         // trigger an indent.

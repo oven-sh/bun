@@ -505,24 +505,37 @@ describe("bundler", () => {
   itBundled("minify/ImportMetaHotTreeShaking", {
     files: {
       "/entry.ts": `
+        import { value } from "./other.ts";
         capture(import.meta.hot);
         if (import.meta.hot) {
-          console.log("This should be removed");
-          throw new Error("This should be removed");
+          throw new Error("FAIL");
         }
-        if (import.meta.hot != undefined) {
-          console.log("This should be removed");
-          throw new Error("This should be removed");
-        }
+        import.meta.hot.accept(() => {"FAIL";value});
+        import.meta.hot.dispose(() => {"FAIL";value});
+        import.meta.hot.on(() => {"FAIL";value});
+        import.meta.hot.off(() => {"FAIL";value});
+        import.meta.hot.send(() => {"FAIL";value});
+        import.meta.hot.invalidate(() => {"FAIL";value});
+        import.meta.hot.prune(() => {"FAIL";value});
+        capture(import.meta.hot.accept());
         capture("This should remain");
+        import.meta.hot.accept(async() => {
+          await import("crash");
+          require("crash");
+        });
+        capture(import.meta.hot.data);
+        capture(import.meta.hot.data.value ??= "hello");
+      `,
+      "other.ts": `
+        capture("hello");
+        export const value = "hello";
       `,
     },
     outfile: "/out.js",
-    capture: ["void 0", '"This should remain"'],
+    capture: ['"hello"', "void 0", "void 0", '"This should remain"', "{}", '"hello"'],
     minifySyntax: true,
     onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("console.log");
-      api.expectFile("/out.js").not.toContain("throw");
+      api.expectFile("/out.js").not.toContain("FAIL");
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });

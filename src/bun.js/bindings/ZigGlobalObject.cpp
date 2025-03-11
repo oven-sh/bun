@@ -162,6 +162,8 @@
 #include "JSX509Certificate.h"
 #include "JSSign.h"
 #include "JSVerify.h"
+#include "JSHmac.h"
+#include "JSHash.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -268,6 +270,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Options::useV8DateParser() = true;
         JSC::Options::evalMode() = evalMode;
         JSC::Options::useIteratorHelpers() = true;
+        JSC::Options::heapGrowthSteepnessFactor() = 1.0;
+        JSC::Options::heapGrowthMaxIncrease() = 2.0;
         JSC::dangerouslyOverrideJSCBytecodeCacheVersion(getWebKitBytecodeCacheVersion());
 
 #ifdef BUN_DEBUG
@@ -2829,6 +2833,10 @@ void GlobalObject::finishCreation(VM& vm)
     m_http2_commongStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
+    m_JSNodeHTTPServerSocketStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createNodeHTTPServerSocketStructure(init.vm, init.owner));
+        });
 
     m_JSDirentClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
@@ -2847,6 +2855,16 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSVerifyClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupJSVerifyClassStructure(init);
+        });
+
+    m_JSHmacClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSHmacClassStructure(init);
+        });
+
+    m_JSHashClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            setupJSHashClassStructure(init);
         });
 
     m_lazyStackCustomGetterSetter.initLater(
@@ -3971,6 +3989,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBufferClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSNodeHTTPServerSocketStructure.visit(visitor);
     thisObject->m_JSResizableOrGrowableSharedBufferSubclassStructure.visit(visitor);
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
@@ -4037,6 +4056,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
     thisObject->m_JSSignClassStructure.visit(visitor);
     thisObject->m_JSVerifyClassStructure.visit(visitor);
+    thisObject->m_JSHmacClassStructure.visit(visitor);
+    thisObject->m_JSHashClassStructure.visit(visitor);
     thisObject->m_statValues.visit(visitor);
     thisObject->m_bigintStatValues.visit(visitor);
     thisObject->m_statFsValues.visit(visitor);
@@ -4545,6 +4566,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
+    } else if (handler == Bun__NodeHTTPRequest__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onResolve;
+    } else if (handler == Bun__NodeHTTPRequest__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onReject;
     } else if (handler == Bun__FetchTasklet__onResolveRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
     } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {

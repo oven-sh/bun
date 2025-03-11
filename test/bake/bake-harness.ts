@@ -20,6 +20,7 @@ import { EventEmitter } from "node:events";
 import { dedent } from "../bundler/expectBundled.ts";
 import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
+import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
 const isDebugBuild = Bun.version.includes("debug");
 
@@ -49,14 +50,6 @@ function imageFixture(relative: string) {
   buf.sourcePath = relative;
   return buf;
 }
-
-/// Workaround to enable hot-module-reloading
-export const reactRefreshStub = {
-  "node_modules/react-refresh/runtime.js": `
-    export const performReactRefresh = () => {};
-    export const injectIntoGlobalHook = () => {};
-  `,
-};
 
 export function emptyHtmlFile({
   styles = [],
@@ -328,7 +321,7 @@ export class Dev extends EventEmitter {
   async waitForHotReload() {
     if (this.nodeEnv !== "development") return Promise.resolve();
     const err = this.output.waitForLine(/error/i).catch(() => {});
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, 100).catch(() => {});
+    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, isCI ? 1000 : 250).catch(() => {});
     const ctrl = new AbortController();
     await Promise.race([
       // On failure, give a little time in case a partial write caused a
@@ -355,6 +348,7 @@ export class Dev extends EventEmitter {
     const client = new Client(new URL(url, this.baseUrl).href, {
       storeHotChunks: options.storeHotChunks,
       hmr: this.nodeEnv === "development",
+      expectErrors: !!options.errors,
     });
     const onPanic = () => client.output.emit("panic");
     this.output.on("panic", onPanic);
@@ -388,9 +382,10 @@ export class Dev extends EventEmitter {
       throw new Error("DevServer panicked");
     }
     if (this.devProcess.exitCode !== 0) {
-      throw new Error(
-        `DevServer exited with code ${this.devProcess.exitCode ?? `Signal ${this.devProcess.signalCode}`}`,
-      );
+      const code =
+        " with " +
+        (this.devProcess.exitCode ? `code ${this.devProcess.exitCode}` : `signal ${this.devProcess.signalCode}`);
+      throw new Error(`DevServer exited${code}`);
     }
   }
 
@@ -551,14 +546,14 @@ export class Client extends EventEmitter {
   #proc: Subprocess;
   output: OutputLineStream;
   exited = false;
-  exitCode: string | null = null;
+  exitCode: string | number | null = null;
   messages: any[] = [];
   #hmrChunk: string | null = null;
   suppressInteractivePrompt: boolean = false;
   expectingReload = false;
   hmr = false;
 
-  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean }) {
+  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean }) {
     super();
     activeClient = this;
     const proc = Bun.spawn({
@@ -569,6 +564,7 @@ export class Client extends EventEmitter {
         path.join(import.meta.dir, "client-fixture.mjs"),
         url,
         options.storeHotChunks ? "--store-hot-chunks" : "",
+        options.expectErrors ? "--expect-errors" : "",
       ].filter(Boolean) as string[],
       env: bunEnv,
       serialization: "json",
@@ -578,9 +574,9 @@ export class Client extends EventEmitter {
       onExit: (subprocess, exitCode, signalCode, error) => {
         danglingProcesses.delete(subprocess);
         if (exitCode !== null) {
-          this.exitCode = exitCode.toString();
+          this.exitCode = exitCode;
         } else if (signalCode !== null) {
-          this.exitCode = `SIG${signalCode}`;
+          this.exitCode = `${signalCode}`;
         } else {
           this.exitCode = "unknown";
         }
@@ -639,7 +635,13 @@ export class Client extends EventEmitter {
     } catch (e) {}
     await this.#proc.exited;
     if (this.exitCode !== null && this.exitCode !== "0") {
-      throw new Error(`Client exited with code ${this.exitCode}`);
+      let code;
+      if (exitCodeMapStrings[this.exitCode]) {
+        code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);
+      } else {
+        code = " with " + (typeof this.exitCode === "number" ? `code ${this.exitCode}` : `signal ${this.exitCode}`);
+      }
+      throw new Error(`Client exited${code}`);
     }
     if (this.messages.length > 0) {
       throw new Error(`Client sent ${this.messages.length} unread messages: ${JSON.stringify(this.messages, null, 2)}`);
@@ -1149,6 +1151,7 @@ class OutputLineStream extends EventEmitter {
   disposed = false;
   closes = 0;
   panicked = false;
+  exitCode: number | string | null = null;
 
   constructor(name: string, readable1: ReadableStream, readable2: ReadableStream) {
     super();
@@ -1237,7 +1240,11 @@ class OutputLineStream extends EventEmitter {
       };
       const onClose = () => {
         reset();
-        reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
+        if (exitCodeMapStrings[this.exitCode]) {
+          reject(new Error(exitCodeMapStrings[this.exitCode]));
+        } else {
+          reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
+        }
       };
       let panicked = false;
       this.on("line", onLine);
@@ -1434,12 +1441,13 @@ function testImpl<T extends DevServerTest>(
         bunEnv,
         {
           FORCE_COLOR: "1",
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
-          BUN_DEBUG_DEVSERVER: isDebugBuild ? "1" : undefined,
-          BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild ? "1" : undefined,
-          BUN_DEBUG_WATCHER: isDebugBuild ? "1" : undefined,
+          BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
+          BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
+          BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1454,6 +1462,7 @@ function testImpl<T extends DevServerTest>(
     }
     // @ts-expect-error
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
+    devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     // @ts-expect-error
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);

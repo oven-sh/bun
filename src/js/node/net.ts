@@ -33,7 +33,7 @@ const { ExceptionWithHostPort } = require("internal/shared");
 import type { SocketListener } from "bun";
 import type { ServerOpts, Server as ServerType } from "node:net";
 const { getTimerDuration } = require("internal/timers");
-const { validateFunction, validateNumber } = require("internal/validators");
+const { validateFunction, validateNumber, validateAbortSignal } = require("internal/validators");
 
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
@@ -1007,6 +1007,11 @@ const Socket = (function (InternalSocket) {
       }
     }
 
+    _reset() {
+      this.resetAndClosing = true;
+      return this.destroy();
+    }
+
     get readyState() {
       if (this.connecting) return "opening";
       if (this.readable) {
@@ -1037,13 +1042,14 @@ const Socket = (function (InternalSocket) {
     resetAndDestroy() {
       if (this._handle) {
         if (this.connecting) {
-          this.once("connect", () => this._handle?.terminate());
+          this.once("connect", () => this._reset());
         } else {
-          this._handle.terminate();
+          this._reset();
         }
       } else {
-        this.destroy($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+        this.destroy($ERR_SOCKET_CLOSED());
       }
+      return this;
     }
 
     setKeepAlive(enable = false, initialDelayMsecs = 0) {
@@ -1155,7 +1161,7 @@ const Socket = (function (InternalSocket) {
         this._pendingData = chunk;
         this._pendingEncoding = encoding;
         function onClose() {
-          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION("ERR_SOCKET_CLOSED_BEFORE_CONNECTION"));
+          callback($ERR_SOCKET_CLOSED_BEFORE_CONNECTION());
         }
         this.once("connect", function connect() {
           this.off("close", onClose);
@@ -1168,7 +1174,7 @@ const Socket = (function (InternalSocket) {
       this.#writeCallback = null;
       const socket = this._handle;
       if (!socket) {
-        callback($ERR_SOCKET_CLOSED("Socket is closed"));
+        callback($ERR_SOCKET_CLOSED());
         return false;
       }
       const success = socket.$write(chunk, encoding);
@@ -1385,7 +1391,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       port = 0;
     } else if (typeof port === "object") {
       const options = port;
-      options.signal?.addEventListener("abort", () => this.close());
+      addServerAbortSignalOption(this, options);
 
       hostname = options.host;
       exclusive = options.exclusive;
@@ -1562,6 +1568,21 @@ function emitErrorAndCloseNextTick(self, error) {
   self.emit("error", error);
   self.emit("close");
 }
+
+function addServerAbortSignalOption(self, options) {
+  if (options?.signal === undefined) {
+    return;
+  }
+  validateAbortSignal(options.signal, "options.signal");
+  const { signal } = options;
+  const onAborted = () => self.close();
+  if (signal.aborted) {
+    process.nextTick(onAborted);
+  } else {
+    signal.addEventListener("abort", onAborted);
+  }
+}
+
 class ConnResetException extends Error {
   constructor(msg) {
     super(msg);

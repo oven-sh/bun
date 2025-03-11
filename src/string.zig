@@ -268,6 +268,10 @@ pub const String = extern struct {
     /// They're de-duplicated in a threadlocal hash table
     /// They cannot be used from other threads.
     pub fn createAtomIfPossible(bytes: []const u8) String {
+        if (bytes.len == 0) {
+            return String.empty;
+        }
+
         if (bytes.len < 64) {
             if (tryCreateAtom(bytes)) |atom| {
                 return atom;

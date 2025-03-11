@@ -20,33 +20,31 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-const common = require('../common');
-const assert = require('assert');
+require('../common');
+const Countdown = require('../common/countdown');
 const http = require('http');
-
-const invalidLocalAddress = '1.2.3.4';
-
-const server = http.createServer(function(req, res) {
-  console.log(`Connect from: ${req.connection.remoteAddress}`);
-
-  req.on('end', function() {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end(`You are from: ${req.connection.remoteAddress}`);
-  });
-  req.resume();
+const NUMBER_OF_EXCEPTIONS = 4;
+const countdown = new Countdown(NUMBER_OF_EXCEPTIONS, () => {
+  process.exit(0);
 });
 
-server.listen(0, '127.0.0.1', common.mustCall(function() {
-  http.request({
-    host: 'localhost',
-    port: this.address().port,
-    path: '/',
-    method: 'GET',
-    localAddress: invalidLocalAddress
-  }, function(res) {
-    assert.fail('unexpectedly got response from server');
-  }).on('error', common.mustCall(function(e) {
-    console.log(`client got error: ${e.message}`);
-    server.close();
-  })).end();
-}));
+const server = http.createServer(function(req, res) {
+  intentionally_not_defined(); // eslint-disable-line no-undef
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.write('Thank you, come again.');
+  res.end();
+});
+
+function onUncaughtException(err) {
+  console.log(`Caught an exception: ${err}`);
+  if (err.name === 'AssertionError') throw err;
+  countdown.dec();
+}
+
+process.on('uncaughtException', onUncaughtException);
+
+server.listen(0, function() {
+  for (let i = 0; i < NUMBER_OF_EXCEPTIONS; i += 1) {
+    http.get({ port: this.address().port, path: `/busy/${i}` });
+  }
+});

@@ -44,6 +44,7 @@ pub const BunObject = struct {
 
     // --- Getters ---
     pub const CryptoHasher = toJSGetter(Crypto.CryptoHasher.getter);
+    pub const CSRF = toJSGetter(Bun.getCSRFObject);
     pub const FFI = toJSGetter(Bun.FFIObject.getter);
     pub const FileSystemRouter = toJSGetter(Bun.getFileSystemRouter);
     pub const Glob = toJSGetter(Bun.getGlobConstructor);
@@ -101,6 +102,7 @@ pub const BunObject = struct {
 
         // --- Getters ---
         @export(&BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
+        @export(&BunObject.CSRF, .{ .name = getterName("CSRF") });
         @export(&BunObject.FFI, .{ .name = getterName("FFI") });
         @export(&BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
         @export(&BunObject.MD4, .{ .name = getterName("MD4") });
@@ -4422,6 +4424,30 @@ pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
 
 /// EnvironmentVariables is runtime defined.
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
+pub fn getCSRFObject(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return CSRFObject.create(globalObject);
+}
+
+const CSRFObject = struct {
+    pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const object = JSValue.createEmptyObject(globalThis, 2);
+
+        object.put(
+            globalThis,
+            ZigString.static("generate"),
+            JSC.createCallback(globalThis, ZigString.static("generate"), 1, @import("../../csrf.zig").csrf__generate),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("verify"),
+            JSC.createCallback(globalThis, ZigString.static("verify"), 1, @import("../../csrf.zig").csrf__verify),
+        );
+
+        return object;
+    }
+};
+
 // This is aliased to Bun.env
 pub const EnvironmentVariables = struct {
     pub export fn Bun__getEnvCount(globalObject: *JSC.JSGlobalObject, ptr: *[*][]const u8) usize {

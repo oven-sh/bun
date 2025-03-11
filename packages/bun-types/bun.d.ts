@@ -7487,4 +7487,68 @@ declare module "bun" {
     | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
     /** root */
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
+
+  interface CookieInit {
+    name: string;
+    value: string;
+    domain?: string;
+    path?: string;
+    expires?: number;
+    secure?: boolean;
+    sameSite?: CookieSameSite;
+  }
+
+  interface CookieStoreDeleteOptions {
+    name: string;
+    domain?: string | null;
+    path?: string;
+  }
+
+  interface CookieStoreGetOptions {
+    name?: string;
+    url?: string;
+  }
+
+  type CookieSameSite = "Strict" | "Lax" | "None";
+
+  class Cookie {
+    name: string;
+    value: string;
+    domain?: string;
+    path: string;
+    expires?: number;
+    secure: boolean;
+    sameSite: CookieSameSite;
+
+    toString(): string;
+    toJSON(): CookieInit;
+
+    static parse(cookieString: string): Cookie;
+    static from(name: string, value: string, options?: CookieInit): Cookie;
+  }
+
+  class CookieMap implements Iterable<Cookie> {
+    constructor(init?: string[][] | Record<string, string> | string);
+
+    get(name: string): Cookie | null;
+    get(options?: CookieStoreGetOptions): Cookie | null;
+
+    getAll(name: string): Cookie[];
+    getAll(options?: CookieStoreGetOptions): Cookie[];
+
+    has(name: string, value?: string): boolean;
+
+    set(name: string, value: string): void;
+    set(options: CookieInit): void;
+
+    delete(name: string): void;
+    delete(options: CookieStoreDeleteOptions): void;
+
+    toString(): string;
+
+    toJSON(): Record<string, ReturnType<Cookie["toJSON"]>>;
+    readonly size: number;
+
+    [Symbol.iterator](): IterableIterator<Cookie>;
+  }
 }

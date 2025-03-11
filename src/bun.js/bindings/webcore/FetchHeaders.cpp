@@ -66,13 +66,13 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
     return true;
 }
 template<typename StringType>
-static String percentEncodeCharacters(const StringType& input, bool (*shouldEncode)(UChar))
+static String handleInvalidHeaderValueCharacters(const StringType& input)
 {
-    auto encode = [shouldEncode](const StringType& input) {
+    auto encode = [](const StringType& input) {
         auto result = input.tryGetUTF8([&](std::span<const char8_t> span) -> String {
             StringBuilder builder;
             for (char c : span) {
-                if (shouldEncode(c))
+                if (isInvalidHeaderValueCharacter(c))
                     builder.append('%', upperNibbleToASCIIHexDigit(c), lowerNibbleToASCIIHexDigit(c));
                 else
                     builder.append(c);
@@ -84,7 +84,7 @@ static String percentEncodeCharacters(const StringType& input, bool (*shouldEnco
     };
 
     for (size_t i = 0; i < input.length(); ++i) {
-        if (UNLIKELY(shouldEncode(input[i])))
+        if (UNLIKELY(isInvalidHeaderValueCharacter(input[i])))
             return encode(input);
     }
     if constexpr (std::is_same_v<StringType, StringView>)
@@ -96,7 +96,7 @@ static String percentEncodeCharacters(const StringType& input, bool (*shouldEnco
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
     String normalizedValue = value.trim(isHTTPSpace);
-    normalizedValue = percentEncodeCharacters(normalizedValue, isInvalidHeaderValueCharacter);
+    normalizedValue = handleInvalidHeaderValueCharacters(normalizedValue);
     String combinedValue = normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {

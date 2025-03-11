@@ -65,38 +65,10 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
 }
-template<typename StringType>
-static String handleInvalidHeaderValueCharacters(const StringType& input)
-{
-    auto encode = [](const StringType& input) {
-        auto result = input.tryGetUTF8([&](std::span<const char8_t> span) -> String {
-            StringBuilder builder;
-            for (char c : span) {
-                if (isInvalidHeaderValueCharacter(c))
-                    builder.append('%', upperNibbleToASCIIHexDigit(c), lowerNibbleToASCIIHexDigit(c));
-                else
-                    builder.append(c);
-            }
-            return builder.toString();
-        });
-        RELEASE_ASSERT(result);
-        return result.value();
-    };
-
-    for (size_t i = 0; i < input.length(); ++i) {
-        if (UNLIKELY(isInvalidHeaderValueCharacter(input[i])))
-            return encode(input);
-    }
-    if constexpr (std::is_same_v<StringType, StringView>)
-        return input.toString();
-    else
-        return input;
-}
 
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
     String normalizedValue = value.trim(isHTTPSpace);
-    normalizedValue = handleInvalidHeaderValueCharacters(normalizedValue);
     String combinedValue = normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {

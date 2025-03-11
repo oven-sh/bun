@@ -2669,7 +2669,6 @@ function ClientRequest(input, options, cb) {
       decompress: false,
       keepalive,
     };
-
     let keepOpen = false;
 
     if (customBody === undefined) {

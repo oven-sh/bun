@@ -30,6 +30,9 @@ describe("Headers", async () => {
   it("Header values must be valid", async () => {
     expect(() => fetch(url, { headers: { "x-test": "\0" } })).toThrow("Header 'x-test' has invalid value: '\0'");
     expect(() => fetch(url, { headers: { "x-test": "❤️" } })).toThrow("Header 'x-test' has invalid value: '❤️'");
+    expect(() => fetch(url, { headers: { "x-test": "Düsseldorf" } })).toThrow(
+      "Header 'x-test' has invalid value: 'Düsseldorf'",
+    );
   });
 
   it("repro 1602", async () => {

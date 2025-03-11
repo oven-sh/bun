@@ -21,7 +21,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
-
+#include "HTTPParsers.h"
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 
 namespace Bun {
@@ -1281,6 +1281,33 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
 
     return JSValue::encode(jsUndefined());
 }
+template<typename StringType>
+static String handleInvalidHeaderValueCharacters(const StringType& input)
+{
+    auto encode = [](const StringType& input) {
+        auto result = input.tryGetUTF8([&](std::span<const char8_t> span) -> String {
+            StringBuilder builder;
+            for (char c : span) {
+                if (isInvalidHeaderValueCharacter(c))
+                    builder.append('%', upperNibbleToASCIIHexDigit(c), lowerNibbleToASCIIHexDigit(c));
+                else
+                    builder.append(c);
+            }
+            return builder.toString();
+        });
+        RELEASE_ASSERT(result);
+        return result.value();
+    };
+
+    for (size_t i = 0; i < input.length(); ++i) {
+        if (UNLIKELY(isInvalidHeaderValueCharacter(input[i])))
+            return encode(input);
+    }
+    if constexpr (std::is_same_v<StringType, StringView>)
+        return input.toString();
+    else
+        return input;
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -1309,6 +1336,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                         return JSValue::encode(jsUndefined());
 
                     auto value = item.toWTFString(globalObject);
+                    value = handleInvalidHeaderValueCharacters(value);
                     RETURN_IF_EXCEPTION(scope, {});
                     impl->set(name, value);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1318,6 +1346,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     if (UNLIKELY(scope.exception()))
                         return JSValue::encode(jsUndefined());
                     auto string = value.toWTFString(globalObject);
+                    string = handleInvalidHeaderValueCharacters(string);
                     RETURN_IF_EXCEPTION(scope, {});
                     impl->append(name, string);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1327,6 +1356,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             }
 
             auto value = valueValue.toWTFString(globalObject);
+            value = handleInvalidHeaderValueCharacters(value);
             RETURN_IF_EXCEPTION(scope, {});
             impl->set(name, value);
             RETURN_IF_EXCEPTION(scope, {});

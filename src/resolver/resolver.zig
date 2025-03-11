@@ -2455,7 +2455,7 @@ pub const Resolver = struct {
                     .diff_case = entry_query.diff_case,
                     .is_node_module = true,
                     .package_json = resolved_dir_info.package_json orelse package_json,
-                    .module_type = module_type, 
+                    .module_type = module_type,
                 };
             },
             .Inexact => {

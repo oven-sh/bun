@@ -73,7 +73,9 @@ const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors"
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
-const { validateFunction, checkIsHttpToken } = require("internal/validators");
+const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject } = require("internal/validators");
+const { isIPv6 } = require("node:net");
+const ObjectKeys = Object.keys;
 
 const {
   getHeader,
@@ -1878,12 +1880,52 @@ const ServerResponsePrototype = {
   // Unused but observable fields:
   _removedConnection: false,
   _removedContLen: false,
-
+  _hasBody: true,
   get headersSent() {
-    return this[headerStateSymbol] === NodeHTTPHeaderState.sent;
+    return (
+      this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
+    );
   },
   set headersSent(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
+  },
+  _writeRaw(chunk, encoding, callback) {
+    return this.socket.write(chunk, encoding, callback);
+  },
+
+  writeEarlyHints(hints, cb) {
+    let head = "HTTP/1.1 103 Early Hints\r\n";
+
+    validateObject(hints, "hints");
+
+    if (hints.link === null || hints.link === undefined) {
+      return;
+    }
+
+    const link = validateLinkHeaderValue(hints.link);
+
+    if (link.length === 0) {
+      return;
+    }
+
+    head += "Link: " + link + "\r\n";
+
+    for (const key of ObjectKeys(hints)) {
+      if (key !== "link") {
+        head += key + ": " + hints[key] + "\r\n";
+      }
+    }
+
+    head += "\r\n";
+
+    this._writeRaw(head, "ascii", cb);
+  },
+
+  writeProcessing(cb) {
+    this._writeRaw("HTTP/1.1 102 Processing\r\n\r\n", "ascii", cb);
+  },
+  writeContinue(cb) {
+    this._writeRaw("HTTP/1.1 100 Continue\r\n\r\n", "ascii", cb);
   },
 
   // This end method is actually on the OutgoingMessage prototype in Node.js
@@ -1905,6 +1947,9 @@ const ServerResponsePrototype = {
 
     if (hasServerResponseFinished(this, chunk, callback)) {
       return this;
+    }
+    if (chunk && !this._hasBody) {
+      throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
     }
 
     if (handle) {
@@ -1991,7 +2036,9 @@ const ServerResponsePrototype = {
     if (hasServerResponseFinished(this, chunk, callback)) {
       return false;
     }
-
+    if (chunk && !this._hasBody) {
+      throw $ERR_HTTP_BODY_NOT_ALLOWED("Adding content for this request method or response status is not allowed.");
+    }
     let result = 0;
 
     const headerState = this[headerStateSymbol];
@@ -2105,6 +2152,7 @@ const ServerResponsePrototype = {
   writeHead(statusCode, statusMessage, headers) {
     if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
       _writeHead(statusCode, statusMessage, headers, this);
+      updateHasBody(this, statusCode);
       this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
     }
 
@@ -2557,11 +2605,15 @@ function ClientRequest(input, options, cb) {
     let proxy: string | undefined;
     const protocol = this[kProtocol];
     const path = this[kPath];
+    let host = this[kHost];
+    if (isIPv6(host)) {
+      host = `[${host}]`;
+    }
     if (path.startsWith("http://") || path.startsWith("https://")) {
       url = path;
-      proxy = `${protocol}//${this[kHost]}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`;
+      proxy = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`;
     } else {
-      url = `${protocol}//${this[kHost]}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+      url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
       // support agent proxy url/string for http/https
       try {
         // getters can throw
@@ -3350,21 +3402,26 @@ function _writeHead(statusCode, reason, obj, response) {
     }
   }
 
-  if (statusCode === 204 || statusCode === 304 || (statusCode >= 100 && statusCode <= 199)) {
-    // RFC 2616, 10.2.5:
-    // The 204 response MUST NOT include a message-body, and thus is always
-    // terminated by the first empty line after the header fields.
-    // RFC 2616, 10.3.5:
-    // The 304 response MUST NOT contain a message-body, and thus is always
-    // terminated by the first empty line after the header fields.
-    // RFC 2616, 10.1 Informational 1xx:
-    // This class of status code indicates a provisional response,
-    // consisting only of the Status-Line and optional headers, and is
-    // terminated by an empty line.
-    response._hasBody = false;
-  }
+  updateHasBody(response, statusCode);
 }
 
+function updateHasBody(response, statusCode) {
+  // RFC 2616, 10.2.5:
+  // The 204 response MUST NOT include a message-body, and thus is always
+  // terminated by the first empty line after the header fields.
+  // RFC 2616, 10.3.5:
+  // The 304 response MUST NOT contain a message-body, and thus is always
+  // terminated by the first empty line after the header fields.
+  // RFC 2616, 10.1 Informational 1xx:
+  // This class of status code indicates a provisional response,
+  // consisting only of the Status-Line and optional headers, and is
+  // terminated by an empty line.
+  if (statusCode === 204 || statusCode === 304 || (statusCode >= 100 && statusCode <= 199)) {
+    response._hasBody = false;
+  } else {
+    response._hasBody = true;
+  }
+}
 function ServerResponse_writevDeprecated(chunks, callback) {
   if (chunks.length === 1 && !this.headersSent && this[firstWriteSymbol] === undefined) {
     this[firstWriteSymbol] = chunks[0].chunk;

@@ -32,6 +32,7 @@
 
 #include "HTTPParsers.h"
 #include "wtf/DebugHeap.h"
+#include "wtf/URL.h"
 
 namespace WebCore {
 
@@ -68,6 +69,7 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
 {
     String normalizedValue = value.trim(isHTTPSpace);
+    normalizedValue = WTF::encodeWithURLEscapeSequences(normalizedValue);
     String combinedValue = normalizedValue;
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName)) {

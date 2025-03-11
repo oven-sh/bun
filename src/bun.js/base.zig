@@ -264,7 +264,7 @@ pub const ArrayBuffer = extern struct {
 
     // require('buffer').kMaxLength.
     // keep in sync with Bun::Buffer::kMaxLength
-    pub const max_size = 4294967296;
+    pub const max_size = std.math.maxInt(c_uint);
 
     extern fn JSBuffer__fromMmap(*JSC.JSGlobalObject, addr: *anyopaque, len: usize) JSC.JSValue;
 

@@ -1649,6 +1649,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED, "Socket is closed"_s));
     case ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION, "Socket closed before the connection was established"_s));
+    case ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED, "TLS session renegotiation disabled for this socket"_s));
 
     default: {
         break;

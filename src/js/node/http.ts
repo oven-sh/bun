@@ -39,7 +39,7 @@ const runSymbol = Symbol("run");
 const deferredSymbol = Symbol("deferred");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
-const finishedSymbol = "finished";
+const finishedSymbol = Symbol("finished");
 const firstWriteSymbol = Symbol("firstWrite");
 const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
@@ -1850,6 +1850,7 @@ function ServerResponse(req, options) {
   this._sent100 = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kPendingCallbacks] = [];
+  this[finishedSymbol] = false;
 
   // this is matching node's behaviour
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
@@ -1884,6 +1885,13 @@ const ServerResponsePrototype = {
   },
   set headersSent(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
+  },
+
+  get finished() {
+    return this[finishedSymbol];
+  },
+  set finished(value) {
+    this[finishedSymbol] = value;
   },
 
   // This end method is actually on the OutgoingMessage prototype in Node.js
@@ -1936,7 +1944,7 @@ const ServerResponsePrototype = {
         req._dump();
       }
       this.detachSocket(socket);
-      this[finishedSymbol] = this.finished = true;
+      this.finished = true;
 
       this.emit("prefinish");
       this._callPendingCallbacks();

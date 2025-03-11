@@ -34,6 +34,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/WallTime.h>
 #include <wtf/text/StringHash.h>
+
 namespace WebCore {
 
 typedef HashSet<String, ASCIICaseInsensitiveHash> HTTPHeaderSet;
@@ -121,6 +122,7 @@ inline bool isHTTPSpace(UChar character)
 {
     return character <= ' ' && (character == ' ' || character == '\n' || character == '\t' || character == '\r');
 }
+
 // template<class HashType>
 // bool addToAccessControlAllowList(const String& string, unsigned start, unsigned end, HashSet<String, HashType>& set)
 // {

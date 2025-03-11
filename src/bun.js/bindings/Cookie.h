@@ -49,6 +49,7 @@ public:
 
     void appendTo(StringBuilder& builder) const;
     String toString() const;
+    JSC::JSValue toJSON(JSC::JSGlobalObject*) const;
     size_t memoryCost() const;
 
 private:

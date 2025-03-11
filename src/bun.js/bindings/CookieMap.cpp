@@ -2,6 +2,7 @@
 #include "JSCookieMap.h"
 #include "helpers.h"
 #include <wtf/text/ParsingUtilities.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
 
@@ -236,6 +237,34 @@ String CookieMap::toString() const
     return builder.toString();
 }
 
+JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    
+    // Create an array of cookie entries
+    auto* array = JSC::constructEmptyArray(globalObject, nullptr, m_cookies.size());
+    RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+    
+    unsigned index = 0;
+    for (const auto& cookie : m_cookies) {
+        // For each cookie, create a [name, cookie JSON] entry
+        auto* entryArray = JSC::constructEmptyArray(globalObject, nullptr, 2);
+        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+        
+        entryArray->putDirectIndex(globalObject, 0, JSC::jsString(vm, cookie->name()));
+        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+        
+        entryArray->putDirectIndex(globalObject, 1, cookie->toJSON(globalObject));
+        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+        
+        array->putDirectIndex(globalObject, index++, entryArray);
+        RETURN_IF_EXCEPTION(scope, JSC::jsNull());
+    }
+    
+    return array;
+}
+
 size_t CookieMap::memoryCost() const
 {
     size_t cost = sizeof(CookieMap);
@@ -252,7 +281,7 @@ std::optional<CookieMap::KeyValuePair> CookieMap::Iterator::next()
         return std::nullopt;
 
     auto& cookie = cookies[m_index++];
-    return KeyValuePair(cookie->name(), cookie->value());
+    return KeyValuePair(cookie->name(), cookie.ptr());
 }
 
 CookieMap::Iterator::Iterator(CookieMap& cookieMap)

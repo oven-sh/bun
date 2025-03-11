@@ -51,6 +51,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_has);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_set);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_delete);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toString);
+static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_entries);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_keys);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieMapPrototypeFunction_values);
@@ -207,6 +208,7 @@ static const HashTableValue JSCookieMapPrototypeTableValues[] = {
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_values, 0 } },
     { "forEach"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_forEach, 1 } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_toString, 0 } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookieMapPrototypeFunction_toJSON, 0 } },
     { "size"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookieMapPrototypeGetter_size, 0 } },
 };
 
@@ -645,6 +647,25 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_toStringBody(JSC:
 JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSCookieMap>::call<jsCookieMapPrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
+}
+
+// Implementation of the toJSON method
+static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSCookieMap>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+    
+    // Delegate to the C++ toJSON method
+    JSC::JSValue result = impl.toJSON(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSCookieMap>::call<jsCookieMapPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
 // Iterator implementation for CookieMap

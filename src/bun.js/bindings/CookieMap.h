@@ -43,19 +43,20 @@ public:
     void remove(const CookieStoreDeleteOptions& options);
 
     String toString() const;
+    JSC::JSValue toJSON(JSC::JSGlobalObject*) const;
     size_t size() const { return m_cookies.size(); }
     size_t memoryCost() const;
 
     // Define a simple struct to hold the key-value pair
     struct KeyValuePair {
-        KeyValuePair(const String& k, const String& v)
+        KeyValuePair(const String& k, RefPtr<Cookie> c)
             : key(k)
-            , value(v)
+            , cookie(c)
         {
         }
 
         String key;
-        String value;
+        RefPtr<Cookie> cookie;
     };
 
     class Iterator {

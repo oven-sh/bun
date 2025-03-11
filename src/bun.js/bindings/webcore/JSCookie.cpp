@@ -39,6 +39,7 @@ static Cookie* toCookieWrapped(JSGlobalObject* lexicalGlobalObject, JSC::ThrowSc
 }
 
 static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_toString);
+static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionParse);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionFrom);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_name);
@@ -227,6 +228,7 @@ static const HashTableValue JSCookiePrototypeTableValues[] = {
     { "secure"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_secure, jsCookiePrototypeSetter_secure } },
     { "sameSite"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_sameSite, jsCookiePrototypeSetter_sameSite } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_toString, 0 } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_toJSON, 0 } },
 };
 
 const ClassInfo JSCookiePrototype::s_info = { "Cookie"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCookiePrototype) };
@@ -296,6 +298,25 @@ static inline JSC::EncodedJSValue jsCookiePrototypeFunction_toStringBody(JSC::JS
 JSC_DEFINE_HOST_FUNCTION(jsCookiePrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSCookie>::call<jsCookiePrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
+}
+
+// Implementation of the toJSON method
+static inline JSC::EncodedJSValue jsCookiePrototypeFunction_toJSONBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSCookie>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+    
+    // Delegate to the C++ toJSON method
+    JSC::JSValue result = impl.toJSON(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsCookiePrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSCookie>::call<jsCookiePrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
 // Static function implementations

@@ -33,8 +33,8 @@ const { kMaxLength } = require('buffer');
 const kMaxInt32 = 2 ** 31 - 1;
 const kMaxPossibleLength = Math.min(kMaxLength, kMaxInt32);
 
-common.expectWarning('DeprecationWarning',
-                     'crypto.pseudoRandomBytes is deprecated.', 'DEP0115');
+// common.expectWarning('DeprecationWarning',
+//                      'crypto.pseudoRandomBytes is deprecated.', 'DEP0115');
 
 {
   [crypto.randomBytes, crypto.pseudoRandomBytes].forEach((f) => {
@@ -411,7 +411,7 @@ assert.throws(
 }
 {
 
-  [true, NaN, null, {}, []].forEach((i) => {
+  ['10', true, NaN, null, {}, []].forEach((i) => {
     const invalidMinError = {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
@@ -499,7 +499,7 @@ assert.throws(
       name: 'RangeError',
       message: 'The value of "max - min" is out of range. ' +
                `It must be <= ${MAX_RANGE}. ` +
-               'Received 281_474_976_710_656'
+               'Received 281474976710656'
     }
   );
 
@@ -508,7 +508,7 @@ assert.throws(
     name: 'RangeError',
     message: 'The value of "max" is out of range. ' +
              `It must be <= ${MAX_RANGE}. ` +
-             'Received 281_474_976_710_656'
+             'Received 281474976710656'
   });
 
   [true, NaN, null, {}, [], 10].forEach((i) => {

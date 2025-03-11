@@ -10665,8 +10665,13 @@ for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
 }
 
 function randomInt(min, max, callback) {
-  const res =
-    typeof max === "undefined" || typeof max === "function" ? _randomInt(0, min, max) : _randomInt(min, max, callback);
+  let res;
+  if (typeof max === "undefined" || typeof max === "function") {
+    callback = max;
+    res = _randomInt(min, callback);
+  } else {
+    res = _randomInt(min, max, callback);
+  }
 
   if (callback !== undefined) {
     process.nextTick(callback, undefined, res);

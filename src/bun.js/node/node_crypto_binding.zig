@@ -19,9 +19,18 @@ const UUID = bun.UUID;
 
 const random = struct {
     const max_possible_length = @min(JSC.ArrayBuffer.max_size, std.math.maxInt(i32));
+    const max_range = 0xffff_ffff_ffff;
 
     fn randomInt(global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        var min_value, var max_value, var callback = callFrame.argumentsAsArray(3);
+        const args = callFrame.arguments();
+
+        const min_value, const max_value, const callback, const min_specified = args: {
+            if (args.len == 2) {
+                break :args .{ JSC.jsNumber(0), args[0], args[1], false };
+            }
+
+            break :args .{ args[0], args[1], args[2], true };
+        };
 
         if (!callback.isUndefined()) {
             _ = try validators.validateFunction(global, "callback", callback);
@@ -42,6 +51,13 @@ const random = struct {
                 min,
                 max,
             }).throw();
+        }
+
+        if (max - min > max_range) {
+            if (min_specified) {
+                return global.ERR_OUT_OF_RANGE("The value of \"max - min\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
+            }
+            return global.ERR_OUT_OF_RANGE("The value of \"max\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
         }
 
         return JSC.jsNumber(std.crypto.random.intRangeLessThan(i64, min, max));

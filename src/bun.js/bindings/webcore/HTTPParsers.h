@@ -34,7 +34,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/WallTime.h>
 #include <wtf/text/StringHash.h>
-
+#include <wtf/URLParser.h>
 namespace WebCore {
 
 typedef HashSet<String, ASCIICaseInsensitiveHash> HTTPHeaderSet;
@@ -122,7 +122,13 @@ inline bool isHTTPSpace(UChar character)
 {
     return character <= ' ' && (character == ' ' || character == '\n' || character == '\t' || character == '\r');
 }
-
+inline bool isInvalidHeaderValueCharacter(UChar character)
+{
+    // used in cookie parsing
+    if (character == ';' || character == ',' || character == '=')
+        return false;
+    return WTF::URLParser::isInUserInfoEncodeSet(character);
+}
 // template<class HashType>
 // bool addToAccessControlAllowList(const String& string, unsigned start, unsigned end, HashSet<String, HashType>& set)
 // {

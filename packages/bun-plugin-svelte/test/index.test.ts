@@ -33,7 +33,7 @@ it("hello world component", async () => {
   expect(res.success).toBeTrue();
 });
 
-describe("when importing `.svelte.ts` files", () => {
+describe("when importing `.svelte.ts` files with ESM", () => {
   let res: BuildOutput;
 
   beforeAll(async () => {
@@ -46,6 +46,30 @@ describe("when importing `.svelte.ts` files", () => {
 
   it("builds successfully", () => {
     expect(res.success).toBeTrue();
+  });
+});
+
+describe("when importing `.svelte.ts` files with CJS", () => {
+  let res: BuildOutput;
+
+  beforeAll(async () => {
+    res = await Bun.build({
+      entrypoints: [fixturePath("with-cjs.svelte")],
+      outdir,
+      plugins: [SveltePlugin()],
+    });
+  });
+
+  it("builds successfully", () => {
+    expect(res.success).toBeTrue();
+  });
+
+  it("does not double-wrap the module with function(module, exports, __filename, __dirname)", async () => {
+    const ts = res.outputs.find(output => output.loader === "ts");
+    expect(ts).toBeDefined();
+    const code = await ts!.text();
+    expect(code).toContain("require_todo_cjs_svelte");
+    expect(code).toContain("var require_todo_cjs_svelte = __commonJS((exports, module) => {\n");
   });
 });
 

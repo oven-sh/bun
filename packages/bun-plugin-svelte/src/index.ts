@@ -38,6 +38,7 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
 
       const ts = new Bun.Transpiler({
         loader: "ts",
+        target: config.target,
       });
 
       builder

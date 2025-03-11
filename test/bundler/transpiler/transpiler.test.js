@@ -3242,6 +3242,18 @@ console.log(foo, array);
       expect(exports[1]).toBe("default");
       expect(exports).toHaveLength(3);
     });
+
+    it("#17961", async () => {
+      // Issue #17961: Transpiler encoding issue with UTF-8 characters
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        target: "node",
+      });
+
+      const input = `let list = ["•", "-", "◦", "▪", "▫"];`;
+      const result = await transpiler.transform(input);
+      expect(result).toBe(`let list = ["•", "-", "◦", "▪", "▫"];\n`);
+    });
   });
 
   describe("edge cases", () => {

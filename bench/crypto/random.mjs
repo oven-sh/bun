@@ -1,5 +1,5 @@
-import { bench, run } from "../runner.mjs";
 import crypto from "crypto";
+import { bench, run } from "../runner.mjs";
 
 bench("randomInt - sync", () => {
   crypto.randomInt(1000);

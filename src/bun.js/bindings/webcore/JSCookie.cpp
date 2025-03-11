@@ -306,11 +306,11 @@ static inline JSC::EncodedJSValue jsCookiePrototypeFunction_toJSONBody(JSC::JSGl
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
-    
+
     // Delegate to the C++ toJSON method
     JSC::JSValue result = impl.toJSON(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    
+
     return JSValue::encode(result);
 }
 
@@ -357,6 +357,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
     String path = "/"_s;
     double expires = 0;
     bool secure = false;
+    auto& builtinNames = Bun::builtinNames(vm);
+
     CookieSameSite sameSite = CookieSameSite::Strict;
 
     // Check for options object
@@ -364,7 +366,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         auto* options = callFrame->uncheckedArgument(2).getObject();
 
         // domain
-        auto domainValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "domain"_s)));
+        auto domainValue = options->get(lexicalGlobalObject, builtinNames.domainPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!domainValue.isUndefined() && !domainValue.isNull()) {
             domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
@@ -372,7 +374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // path
-        auto pathValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "path"_s)));
+        auto pathValue = options->get(lexicalGlobalObject, builtinNames.pathPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!pathValue.isUndefined() && !pathValue.isNull()) {
             path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
@@ -380,7 +382,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // expires
-        auto expiresValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "expires"_s)));
+        auto expiresValue = options->get(lexicalGlobalObject, builtinNames.expiresPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!expiresValue.isUndefined() && !expiresValue.isNull() && expiresValue.isNumber()) {
             expires = expiresValue.asNumber();
@@ -388,7 +390,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // secure
-        auto secureValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "secure"_s)));
+        auto secureValue = options->get(lexicalGlobalObject, builtinNames.securePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!secureValue.isUndefined()) {
             secure = secureValue.toBoolean(lexicalGlobalObject);
@@ -396,7 +398,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         }
 
         // sameSite
-        auto sameSiteValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "sameSite"_s)));
+        auto sameSiteValue = options->get(lexicalGlobalObject, builtinNames.sameSitePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
             String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
@@ -680,4 +682,22 @@ size_t JSCookie::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)
     return Base::estimatedSize(cell, vm) + wrapped.memoryCost();
 }
 
-} // namespace WebCore
+JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, CookieSameSite sameSite)
+{
+    auto& commonStrings = defaultGlobalObject(globalObject)->commonStrings();
+    switch (sameSite) {
+    case CookieSameSite::Strict:
+        return commonStrings.strictString(globalObject);
+    case CookieSameSite::Lax:
+        return commonStrings.laxString(globalObject);
+    case CookieSameSite::None:
+        return commonStrings.noneString(globalObject);
+    default: {
+        break;
+    }
+    }
+    __builtin_unreachable();
+    return {};
+}
+
+}

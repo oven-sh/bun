@@ -498,7 +498,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         CookieSameSite sameSite = CookieSameSite::Strict;
 
         // domain
-        auto domainValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "domain"_s)));
+        auto domainValue = options->get(lexicalGlobalObject, names.domainPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!domainValue.isUndefined() && !domainValue.isNull()) {
             domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
@@ -514,7 +514,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         }
 
         // expires
-        auto expiresValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "expires"_s)));
+        auto expiresValue = options->get(lexicalGlobalObject, names.expiresPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!expiresValue.isUndefined() && !expiresValue.isNull() && expiresValue.isNumber()) {
             expires = expiresValue.asNumber();
@@ -522,7 +522,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         }
 
         // secure
-        auto secureValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "secure"_s)));
+        auto secureValue = options->get(lexicalGlobalObject, names.securePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!secureValue.isUndefined()) {
             secure = secureValue.toBoolean(lexicalGlobalObject);
@@ -530,7 +530,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         }
 
         // sameSite
-        auto sameSiteValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "sameSite"_s)));
+        auto sameSiteValue = options->get(lexicalGlobalObject, names.sameSitePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
             String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
@@ -582,7 +582,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         return JSValue::encode(jsUndefined());
 
     JSValue arg0 = callFrame->uncheckedArgument(0);
-
+    auto& names = builtinNames(vm);
     if (arg0.isObject()) {
         // Handle as options object (CookieStoreDeleteOptions)
         auto* options = arg0.getObject();
@@ -601,7 +601,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         deleteOptions.name = name;
 
         // Extract optional domain
-        auto domainValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "domain"_s)));
+        auto domainValue = options->get(lexicalGlobalObject, names.domainPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!domainValue.isUndefined() && !domainValue.isNull()) {
             deleteOptions.domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
@@ -609,7 +609,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_deleteBody(JSC::J
         }
 
         // Extract optional path
-        auto pathValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "path"_s)));
+        auto pathValue = options->get(lexicalGlobalObject, names.pathPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!pathValue.isUndefined() && !pathValue.isNull()) {
             deleteOptions.path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
@@ -655,11 +655,11 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_toJSONBody(JSC::J
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
-    
+
     // Delegate to the C++ toJSON method
     JSC::JSValue result = impl.toJSON(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
-    
+
     return JSValue::encode(result);
 }
 
@@ -672,7 +672,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieMapPrototypeFunction_toJSON, (JSGlobalObject * 
 struct CookieMapIteratorTraits {
     static constexpr JSDOMIteratorType type = JSDOMIteratorType::Map;
     using KeyType = IDLUSVString;
-    using ValueType = IDLUSVString;
+    using ValueType = IDLInterface<Cookie>;
 };
 
 using CookieMapIteratorBase = JSDOMIteratorBase<JSCookieMap, CookieMapIteratorTraits>;

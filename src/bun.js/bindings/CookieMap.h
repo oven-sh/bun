@@ -51,12 +51,12 @@ public:
     struct KeyValuePair {
         KeyValuePair(const String& k, RefPtr<Cookie> c)
             : key(k)
-            , cookie(c)
+            , value(c)
         {
         }
 
         String key;
-        RefPtr<Cookie> cookie;
+        RefPtr<Cookie> value;
     };
 
     class Iterator {

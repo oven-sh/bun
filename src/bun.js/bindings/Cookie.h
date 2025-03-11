@@ -13,6 +13,8 @@ enum class CookieSameSite {
     None
 };
 
+JSC::JSValue toJS(JSC::JSGlobalObject*, CookieSameSite);
+
 class Cookie : public RefCounted<Cookie> {
 public:
     ~Cookie();

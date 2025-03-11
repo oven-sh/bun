@@ -70,38 +70,38 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
 {
     // Split the cookieString by semicolons
     Vector<String> parts = cookieString.split(';');
-    
+
     if (parts.isEmpty())
         return Exception { TypeError, "Invalid cookie string: empty string"_s };
-    
+
     // First part is the name-value pair
     String nameValueStr = parts[0].trim(isASCIIWhitespace<UChar>);
     size_t equalsPos = nameValueStr.find('=');
-    
+
     if (equalsPos == notFound)
         return Exception { TypeError, "Invalid cookie string: missing '=' in name-value pair"_s };
-    
+
     String name = nameValueStr.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
     String value = nameValueStr.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
-    
+
     if (name.isEmpty())
         return Exception { TypeError, "Invalid cookie string: name cannot be empty"_s };
-    
+
     // Default values
     String domain;
     String path = "/"_s;
     double expires = 0;
     bool secure = false;
     CookieSameSite sameSite = CookieSameSite::Strict;
-    
+
     // Parse attributes
     for (size_t i = 1; i < parts.size(); i++) {
         String part = parts[i].trim(isASCIIWhitespace<UChar>);
         size_t attrEqualsPos = part.find('=');
-        
+
         String attrName;
         String attrValue;
-        
+
         if (attrEqualsPos == notFound) {
             // Flag attribute like "Secure"
             attrName = part.convertToASCIILowercase();
@@ -110,7 +110,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
             attrName = part.substring(0, attrEqualsPos).trim(isASCIIWhitespace<UChar>).convertToASCIILowercase();
             attrValue = part.substring(attrEqualsPos + 1).trim(isASCIIWhitespace<UChar>);
         }
-        
+
         if (attrName == "domain"_s)
             domain = attrValue;
         else if (attrName == "path"_s)
@@ -130,14 +130,14 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
                     break;
                 }
             }
-            
+
             if (isValid && attrValue.length() > 0) {
                 // Simple numeric conversion
                 int maxAge = 0;
                 for (unsigned i = 0; i < attrValue.length(); i++) {
                     maxAge = maxAge * 10 + (attrValue[i] - '0');
                 }
-                
+
                 if (maxAge > 0)
                     expires = WTF::WallTime::now().secondsSinceEpoch().seconds() * 1000.0 + (maxAge * 1000.0); // Convert seconds to milliseconds
             }
@@ -153,7 +153,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
                 sameSite = CookieSameSite::None;
         }
     }
-    
+
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite));
 }
 
@@ -196,13 +196,13 @@ void Cookie::appendTo(StringBuilder& builder) const
     builder.append("; SameSite="_s);
     switch (m_sameSite) {
     case CookieSameSite::Strict:
-        builder.append("Strict"_s);
+        builder.append("strict"_s);
         break;
     case CookieSameSite::Lax:
-        builder.append("Lax"_s);
+        builder.append("lax"_s);
         break;
     case CookieSameSite::None:
-        builder.append("None"_s);
+        builder.append("none"_s);
         break;
     }
 }
@@ -211,39 +211,26 @@ JSC::JSValue Cookie::toJSON(JSC::JSGlobalObject* globalObject) const
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    
+
     auto* object = JSC::constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-    
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), JSC::jsString(vm, m_name));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "value"_s), JSC::jsString(vm, m_value));
-    
+
+    auto& builtinNames = Bun::builtinNames(vm);
+
+    object->putDirect(vm, vm.propertyNames->name, JSC::jsString(vm, m_name));
+    object->putDirect(vm, vm.propertyNames->value, JSC::jsString(vm, m_value));
+
     if (!m_domain.isEmpty())
-        object->putDirect(vm, JSC::Identifier::fromString(vm, "domain"_s), JSC::jsString(vm, m_domain));
-    
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "path"_s), JSC::jsString(vm, m_path));
-    
+        object->putDirect(vm, builtinNames.domainPublicName(), JSC::jsString(vm, m_domain));
+
+    object->putDirect(vm, builtinNames.pathPublicName(), JSC::jsString(vm, m_path));
+
     if (m_expires != 0)
-        object->putDirect(vm, JSC::Identifier::fromString(vm, "expires"_s), JSC::jsNumber(m_expires));
-    
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "secure"_s), JSC::jsBoolean(m_secure));
-    
-    String sameSiteValue;
-    switch (m_sameSite) {
-    case CookieSameSite::Strict:
-        sameSiteValue = "strict"_s;
-        break;
-    case CookieSameSite::Lax:
-        sameSiteValue = "lax"_s;
-        break;
-    case CookieSameSite::None:
-        sameSiteValue = "none"_s;
-        break;
-    default:
-        sameSiteValue = "strict"_s;
-    }
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "sameSite"_s), JSC::jsString(vm, sameSiteValue));
-    
+        object->putDirect(vm, builtinNames.expiresPublicName(), JSC::jsNumber(m_expires));
+
+    object->putDirect(vm, builtinNames.securePublicName(), JSC::jsBoolean(m_secure));
+    object->putDirect(vm, builtinNames.sameSitePublicName(), toJS(globalObject, m_sameSite));
+
     return object;
 }
 

@@ -97,6 +97,7 @@ using namespace JSC;
     macro(dirname) \
     macro(disturbed) \
     macro(document) \
+    macro(domain) \
     macro(encode) \
     macro(encoding) \
     macro(end) \
@@ -105,6 +106,7 @@ using namespace JSC;
     macro(evaluateCommonJSModule) \
     macro(evaluated) \
     macro(execArgv) \
+    macro(expires) \
     macro(exports) \
     macro(extname) \
     macro(failureKind) \
@@ -217,6 +219,8 @@ using namespace JSC;
     macro(requireNativeModule) \
     macro(resolveSync) \
     macro(resume) \
+    macro(sameSite) \
+    macro(secure) \
     macro(self) \
     macro(sep) \
     macro(setBody) \

@@ -7509,7 +7509,7 @@ declare module "bun" {
     url?: string;
   }
 
-  type CookieSameSite = "Strict" | "Lax" | "None";
+  type CookieSameSite = "strict" | "lax" | "None";
 
   class Cookie {
     name: string;

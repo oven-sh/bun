@@ -43,7 +43,7 @@ export class SveltePluginService {
 
   public async compileModule(source: string, filename: string, side?: "client" | "server"): Promise<CompileResult> {
     const generate = this.compileModuleOptions.generate ?? side;
-    if (filename.endsWith(".ts")) {
+    if (filename.endsWith("ts")) {
       source = await this.ts.transform(source);
     }
 

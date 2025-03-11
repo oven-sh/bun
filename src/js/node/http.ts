@@ -1623,11 +1623,20 @@ const OutgoingMessagePrototype = {
       chunk = undefined;
     } else if ($isCallable(encoding)) {
       callback = encoding;
+      encoding = undefined;
     } else if (!$isCallable(callback)) {
       callback = undefined;
+      encoding = undefined;
     }
     hasServerResponseFinished(this, chunk, callback);
-    return false;
+    if (chunk) {
+      const len = Buffer.byteLength(chunk, encoding || (typeof chunk === "string" ? "utf8" : "buffer"));
+      if (len > 0) {
+        this.outputSize += len;
+        this.outputData.push(chunk);
+      }
+    }
+    return this.writableHighWaterMark >= this.outputSize;
   },
 
   getHeaderNames() {
@@ -1673,7 +1682,14 @@ const OutgoingMessagePrototype = {
   get headers() {
     const headers = this[headersSymbol];
     if (!headers) return kEmptyObject;
-    return headers.toJSON();
+    const headersJSON = headers.toJSON();
+    for (let header in headersJSON) {
+      const value = headersJSON[header];
+      if (typeof value === "string") {
+        headersJSON[header] = decodeURIComponent(value);
+      }
+    }
+    return headersJSON;
   },
   set headers(value) {
     this[headersSymbol] = new Headers(value);
@@ -2162,7 +2178,7 @@ const ServerResponsePrototype = {
   },
 
   get closed() {
-    return this[closedSymbol];
+    return this[closedSymbol] || false;
   },
 
   _send(data, encoding, callback, byteLength) {

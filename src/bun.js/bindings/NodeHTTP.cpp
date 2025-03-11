@@ -1336,7 +1336,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                         return JSValue::encode(jsUndefined());
 
                     auto value = item.toWTFString(globalObject);
-                    value = handleInvalidHeaderValueCharacters(value);
                     RETURN_IF_EXCEPTION(scope, {});
                     impl->set(name, value);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1346,7 +1345,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
                     if (UNLIKELY(scope.exception()))
                         return JSValue::encode(jsUndefined());
                     auto string = value.toWTFString(globalObject);
-                    string = handleInvalidHeaderValueCharacters(string);
                     RETURN_IF_EXCEPTION(scope, {});
                     impl->append(name, string);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -1356,7 +1354,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
             }
 
             auto value = valueValue.toWTFString(globalObject);
-            value = handleInvalidHeaderValueCharacters(value);
             RETURN_IF_EXCEPTION(scope, {});
             impl->set(name, value);
             RETURN_IF_EXCEPTION(scope, {});

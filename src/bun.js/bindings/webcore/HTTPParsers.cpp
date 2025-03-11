@@ -130,9 +130,6 @@ bool isValidHTTPHeaderValue(const String& value)
         const LChar* begin = value.span8().data();
         const LChar* end = begin + value.length();
         for (const LChar* p = begin; p != end; ++p) {
-            if (!isASCII(*p)) {
-                return false;
-            }
             if (UNLIKELY(*p <= 13)) {
                 LChar c = *p;
                 if (c == 0x00 || c == 0x0A || c == 0x0D)
@@ -142,9 +139,6 @@ bool isValidHTTPHeaderValue(const String& value)
     } else {
         for (unsigned i = 0; i < value.length(); ++i) {
             c = value[i];
-            if (!isASCII(c)) {
-                return false;
-            }
             if (c == 0x00 || c == 0x0A || c == 0x0D || c > 0x7F)
                 return false;
         }

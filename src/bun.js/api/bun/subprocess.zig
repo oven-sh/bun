@@ -2228,13 +2228,16 @@ pub fn spawnMaybeSync(
         .err => |err| {
             spawn_options.deinit();
             switch (err.getErrno()) {
-                .ACCES, .NOENT, .PERM, .ISDIR, .NOTDIR => {
+                .ACCES, .NOENT, .PERM, .ISDIR, .NOTDIR => |errno| {
                     const display_path: [:0]const u8 = if (argv.items.len > 0 and argv.items[0] != null)
                         std.mem.sliceTo(argv.items[0].?, 0)
                     else
                         "";
-                    if (display_path.len > 0)
-                        return globalThis.throwValue(err.withPath(display_path).toJSC(globalThis));
+                    if (display_path.len > 0) {
+                        var systemerror = err.withPath(display_path).toSystemError();
+                        if (errno == .NOENT) systemerror.errno = -bun.C.UV_ENOENT;
+                        return globalThis.throwValue(systemerror.toErrorInstance(globalThis));
+                    }
                 },
                 else => {},
             }

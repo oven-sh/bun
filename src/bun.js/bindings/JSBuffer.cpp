@@ -1797,7 +1797,6 @@ JSC::EncodedJSValue jsBufferToString(JSC::VM& vm, JSC::JSGlobalObject* lexicalGl
         RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
 
-
     ASSERT(offset <= byteLength);
     ASSERT(length <= byteLength);
     ASSERT(offset + length <= byteLength);

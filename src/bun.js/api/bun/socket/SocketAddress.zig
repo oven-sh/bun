@@ -131,6 +131,7 @@ pub fn parse(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError
         if (!input_arg.isString()) return global.throwInvalidArgumentTypeValue("input", "string", input_arg);
         break :blk try bun.String.fromJS2(input_arg, global);
     };
+    defer input.deref();
 
     const prefix = "http://";
     const url_str = switch (input.is8Bit()) {

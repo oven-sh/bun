@@ -507,22 +507,22 @@ it("Database.deserialize should support strict mode", () => {
   const db1 = new Database(":memory:");
   db1.run("CREATE TABLE test (name TEXT)");
   db1.run("INSERT INTO test VALUES (:name)", { ":name": "test1" });
-  
+
   // Deserialize the database with strict mode
   const serialized = db1.serialize();
-  const db2 = Database.deserialize(serialized, { 
-    strict: true, 
-    readonly: false 
+  const db2 = Database.deserialize(serialized, {
+    strict: true,
+    readonly: false,
   });
-  
+
   // Use strict mode
   db2.run("CREATE TABLE test2 (name TEXT)");
   db2.run("INSERT INTO test2 VALUES ($name)", { name: "test2" });
-  
+
   // Verify the data was inserted correctly
   const result = db2.query("SELECT * FROM test2").all();
   expect(result).toEqual([{ name: "test2" }]);
-  
+
   // Also verify we can access the data from the original database
   const result1 = db2.query("SELECT * FROM test").all();
   expect(result1).toEqual([{ name: "test1" }]);
@@ -534,11 +534,11 @@ it("Database.deserialize should support readonly when passed as a flag or boolea
   const db1 = new Database(":memory:");
   db1.run("CREATE TABLE test (name TEXT)");
   db1.run("INSERT INTO test VALUES (:name)", { ":name": "test1" });
-  
+
   // Deserialize the database with readonly as flag
   const serialized = db1.serialize();
-  const db2 = Database.deserialize(serialized, { 
-    readonly: true
+  const db2 = Database.deserialize(serialized, {
+    readonly: true,
   });
   // Create another table
   // It should fail because it is readonly.
@@ -556,7 +556,6 @@ it("Database.deserialize should support readonly when passed as a flag or boolea
     expect(e.message).toContain("attempt to write a readonly database");
   }
 });
-
 
 it("db.query()", () => {
   const db = Database.open(":memory:");

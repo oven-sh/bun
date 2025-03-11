@@ -491,8 +491,6 @@ pub const JSValue = enum(i64) {
         return result;
     }
 
-    const max_safe_integer = 9007199254740991.0;
-
     // ECMA-262 20.1.2.5
     pub fn isSafeInteger(this: JSValue) bool {
         if (this.isInt32()) {
@@ -502,7 +500,7 @@ pub const JSValue = enum(i64) {
             return false;
         }
         const d = this.asDouble();
-        return @trunc(d) == d and @abs(d) <= max_safe_integer;
+        return @trunc(d) == d and @abs(d) <= JSC.MAX_SAFE_INTEGER;
     }
 
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {

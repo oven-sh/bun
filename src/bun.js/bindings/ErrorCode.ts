@@ -115,6 +115,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_TLS_CERT_ALTNAME_FORMAT", SyntaxError],
   ["ERR_TLS_CERT_ALTNAME_INVALID", Error],
   ["ERR_TLS_SNI_FROM_SERVER", Error],
+  ["ERR_TLS_RENEGOTIATION_DISABLED", Error],
 
   // NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error],

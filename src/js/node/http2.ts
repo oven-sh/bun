@@ -2012,10 +2012,10 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
-    if (headers[":status"] === undefined) {
-      headers[":status"] = 200;
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = (headers[":status"] |= 0);
+    const statusCode = headers[HTTP2_HEADER_STATUS];
     options = { ...options };
 
     // Payload/DATA frames are not permitted in these cases
@@ -2053,10 +2053,10 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
-    if (headers[":status"] === undefined) {
-      headers[":status"] = 200;
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = (headers[":status"] |= 0);
+    const statusCode = headers[HTTP2_HEADER_STATUS];
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -2103,7 +2103,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     for (const name in headers) {
-      if (name.startsWith(":") && name !== ":status") {
+      if (name.startsWith(":") && name !== HTTP2_HEADER_STATUS) {
         throw $ERR_HTTP2_INVALID_PSEUDOHEADER(`"${name}" is an invalid pseudoheader or is used incorrectly`);
       }
     }
@@ -2120,11 +2120,11 @@ class ServerHttp2Stream extends Http2Stream {
       }
     }
     let hasStatus = true;
-    if (headers[":status"] === undefined) {
-      headers[":status"] = 200;
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
       hasStatus = false;
     }
-    const statusCode = (headers[":status"] |= 0);
+    const statusCode = headers[HTTP2_HEADER_STATUS];
     if (hasStatus) {
       if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS)
         throw $ERR_HTTP2_STATUS_101("HTTP status code 101 (Switching Protocols) is forbidden in HTTP/2");
@@ -2904,7 +2904,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       const status = stream[bunHTTP2StreamStatus];
-      const header_status = headers[":status"];
+      const header_status = headers[HTTP2_HEADER_STATUS];
       if (header_status === HTTP_STATUS_CONTINUE) {
         stream.emit("continue");
       }

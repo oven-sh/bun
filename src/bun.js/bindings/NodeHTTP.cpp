@@ -1281,33 +1281,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPGetHeader, (JSGlobalObject * globalObject, CallFr
 
     return JSValue::encode(jsUndefined());
 }
-template<typename StringType>
-static String handleInvalidHeaderValueCharacters(const StringType& input)
-{
-    auto encode = [](const StringType& input) {
-        auto result = input.tryGetUTF8([&](std::span<const char8_t> span) -> String {
-            StringBuilder builder;
-            for (char c : span) {
-                if (isInvalidHeaderValueCharacter(c))
-                    builder.append('%', upperNibbleToASCIIHexDigit(c), lowerNibbleToASCIIHexDigit(c));
-                else
-                    builder.append(c);
-            }
-            return builder.toString();
-        });
-        RELEASE_ASSERT(result);
-        return result.value();
-    };
-
-    for (size_t i = 0; i < input.length(); ++i) {
-        if (UNLIKELY(isInvalidHeaderValueCharacter(input[i])))
-            return encode(input);
-    }
-    if constexpr (std::is_same_v<StringType, StringView>)
-        return input.toString();
-    else
-        return input;
-}
 
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {

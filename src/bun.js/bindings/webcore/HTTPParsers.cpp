@@ -125,7 +125,6 @@ bool isValidHTTPHeaderValue(const String& value)
     c = value[value.length() - 1];
     if (isTabOrSpace(c))
         return false;
-
     if (value.is8Bit()) {
         const LChar* begin = value.span8().data();
         const LChar* end = begin + value.length();

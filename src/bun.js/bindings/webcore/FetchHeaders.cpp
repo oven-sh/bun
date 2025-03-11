@@ -32,7 +32,6 @@
 
 #include "HTTPParsers.h"
 #include "wtf/DebugHeap.h"
-#include "wtf/URL.h"
 
 namespace WebCore {
 

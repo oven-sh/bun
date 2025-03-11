@@ -341,6 +341,7 @@ const SocketIPCData = struct {
     disconnected: bool = false,
     is_server: bool = false,
     keep_alive: bun.Async.KeepAlive = .{},
+    close_next_tick: ?JSC.Task = null,
 
     pub fn writeVersionPacket(this: *SocketIPCData, global: *JSC.JSGlobalObject) void {
         if (Environment.allow_assert) {
@@ -419,7 +420,9 @@ const SocketIPCData = struct {
         if (this.disconnected) return;
         this.disconnected = true;
         if (nextTick) {
-            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(SocketIPCData, closeTask).init(this));
+            if (this.close_next_tick != null) return;
+            this.close_next_tick = JSC.ManagedTask.New(SocketIPCData, closeTask).init(this);
+            JSC.VirtualMachine.get().enqueueTask(this.close_next_tick.?);
         } else {
             this.closeTask();
         }
@@ -427,9 +430,9 @@ const SocketIPCData = struct {
 
     pub fn closeTask(this: *SocketIPCData) void {
         log("SocketIPCData#closeTask", .{});
-        if (this.disconnected) {
-            this.socket.close(.normal);
-        }
+        this.close_next_tick = null;
+        bun.assert(this.disconnected);
+        this.socket.close(.normal);
     }
 };
 
@@ -701,6 +704,15 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             ipc.keep_alive.unref((this.getGlobalThis() orelse return).bunVM());
             // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
             log("NewSocketIPCHandler#onClose\n", .{});
+
+            if (ipc.close_next_tick) |close_next_tick_task| {
+                const managed: *bun.JSC.ManagedTask = close_next_tick_task.as(bun.JSC.ManagedTask);
+                managed.cancel();
+                ipc.close_next_tick = null;
+            }
+            // after onClose(), socketIPCData.close should never be called again because socketIPCData may be freed. just in case, set disconnected to true.
+            ipc.disconnected = true;
+
             this.handleIPCClose();
         }
 

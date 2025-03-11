@@ -12,18 +12,18 @@ extern "C" JSC::EncodedJSValue Cookie__create(JSDOMGlobalObject* globalObject, c
     String pathStr = Zig::toString(*path);
 
     CookieSameSite sameSiteEnum;
-    switch(sameSite) {
-        case 0:
-            sameSiteEnum = CookieSameSite::Strict;
-            break;
-        case 1:
-            sameSiteEnum = CookieSameSite::Lax;
-            break;
-        case 2:
-            sameSiteEnum = CookieSameSite::None;
-            break;
-        default:
-            sameSiteEnum = CookieSameSite::Strict;
+    switch (sameSite) {
+    case 0:
+        sameSiteEnum = CookieSameSite::Strict;
+        break;
+    case 1:
+        sameSiteEnum = CookieSameSite::Lax;
+        break;
+    case 2:
+        sameSiteEnum = CookieSameSite::None;
+        break;
+    default:
+        sameSiteEnum = CookieSameSite::Strict;
     }
 
     auto result = Cookie::create(nameStr, valueStr, domainStr, pathStr, expires, secure, sameSiteEnum);
@@ -38,8 +38,8 @@ extern "C" WebCore::Cookie* Cookie__fromJS(JSC::EncodedJSValue value)
 Cookie::~Cookie() = default;
 
 Cookie::Cookie(const String& name, const String& value,
-               const String& domain, const String& path,
-               double expires, bool secure, CookieSameSite sameSite)
+    const String& domain, const String& path,
+    double expires, bool secure, CookieSameSite sameSite)
     : m_name(name)
     , m_value(value)
     , m_domain(domain)
@@ -51,15 +51,15 @@ Cookie::Cookie(const String& name, const String& value,
 }
 
 Ref<Cookie> Cookie::create(const String& name, const String& value,
-                          const String& domain, const String& path,
-                          double expires, bool secure, CookieSameSite sameSite)
+    const String& domain, const String& path,
+    double expires, bool secure, CookieSameSite sameSite)
 {
     return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite));
 }
 
 Ref<Cookie> Cookie::from(const String& name, const String& value,
-                        const String& domain, const String& path,
-                        double expires, bool secure, CookieSameSite sameSite)
+    const String& domain, const String& path,
+    double expires, bool secure, CookieSameSite sameSite)
 {
     return create(name, value, domain, path, expires, secure, sameSite);
 }
@@ -68,7 +68,7 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
 {
     // TODO: Implement cookie string parsing logic
     // This is left as a TODO per instructions in CLAUDE.md
-    
+
     // For now, return a dummy cookie
     return adoptRef(*new Cookie("name"_s, "value"_s, String(), "/"_s, 0, false, CookieSameSite::Strict));
 }
@@ -76,33 +76,38 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
 String Cookie::toString() const
 {
     StringBuilder builder;
-    
+    appendTo(builder);
+    return builder.toString();
+}
+
+void Cookie::appendTo(StringBuilder& builder) const
+{
     // Name=Value is the basic format
     builder.append(m_name);
     builder.append('=');
     builder.append(m_value);
-    
+
     // Add domain if present
     if (!m_domain.isEmpty()) {
         builder.append("; Domain="_s);
         builder.append(m_domain);
     }
-    
+
     // Add path
     builder.append("; Path="_s);
     builder.append(m_path);
-    
+
     // Add expires if present (not 0)
     if (m_expires != 0) {
         builder.append("; Expires="_s);
         // Note: In a real implementation, this would convert the timestamp to a proper date string
         builder.append(String::number(m_expires));
     }
-    
+
     // Add secure flag if true
     if (m_secure)
         builder.append("; Secure"_s);
-    
+
     // Add SameSite directive
     builder.append("; SameSite="_s);
     switch (m_sameSite) {
@@ -116,8 +121,6 @@ String Cookie::toString() const
         builder.append("None"_s);
         break;
     }
-    
-    return builder.toString();
 }
 
 size_t Cookie::memoryCost() const

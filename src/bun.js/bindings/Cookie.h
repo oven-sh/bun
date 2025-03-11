@@ -9,7 +9,7 @@ namespace WebCore {
 
 enum class CookieSameSite {
     Strict,
-    Lax, 
+    Lax,
     None
 };
 
@@ -18,13 +18,13 @@ public:
     ~Cookie();
 
     static Ref<Cookie> create(const String& name, const String& value,
-                             const String& domain, const String& path,
-                             double expires, bool secure, CookieSameSite sameSite);
-    
+        const String& domain, const String& path,
+        double expires, bool secure, CookieSameSite sameSite);
+
     static ExceptionOr<Ref<Cookie>> parse(const String& cookieString);
     static Ref<Cookie> from(const String& name, const String& value,
-                           const String& domain, const String& path,
-                           double expires, bool secure, CookieSameSite sameSite);
+        const String& domain, const String& path,
+        double expires, bool secure, CookieSameSite sameSite);
 
     const String& name() const { return m_name; }
     void setName(const String& name) { m_name = name; }
@@ -47,13 +47,14 @@ public:
     CookieSameSite sameSite() const { return m_sameSite; }
     void setSameSite(CookieSameSite sameSite) { m_sameSite = sameSite; }
 
+    void appendTo(StringBuilder& builder) const;
     String toString() const;
     size_t memoryCost() const;
 
 private:
     Cookie(const String& name, const String& value,
-          const String& domain, const String& path,
-          double expires, bool secure, CookieSameSite sameSite);
+        const String& domain, const String& path,
+        double expires, bool secure, CookieSameSite sameSite);
 
     String m_name;
     String m_value;

@@ -287,6 +287,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_getBody(JSC::JSGl
         return JSValue::encode(jsNull());
 
     JSValue arg0 = callFrame->uncheckedArgument(0);
+    auto& names = builtinNames(vm);
 
     if (arg0.isObject()) {
         // Handle options object
@@ -467,7 +468,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
 
         // Handle as options object (CookieInit)
         auto* options = arg0.getObject();
-
+        auto& names = builtinNames(vm);
         // Extract required name and value
         auto nameValue = options->get(lexicalGlobalObject, PropertyName(vm.propertyNames->name));
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -503,7 +504,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         }
 
         // path
-        auto pathValue = options->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "path"_s)));
+        auto pathValue = options->get(lexicalGlobalObject, names.pathPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
         if (!pathValue.isUndefined() && !pathValue.isNull()) {
             path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);

@@ -39,7 +39,7 @@ CookieMap::CookieMap(const String& cookieString)
             String value = pair.substring(equalsPos + 1);
             if (!name.isEmpty()) {
                 auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict);
-                m_cookies.append(cookie.ptr());
+                m_cookies.append(WTFMove(cookie));
             }
         }
     }
@@ -49,7 +49,7 @@ CookieMap::CookieMap(const HashMap<String, String>& pairs)
 {
     for (auto& entry : pairs) {
         auto cookie = Cookie::create(entry.key, entry.value, String(), "/"_s, 0, false, CookieSameSite::Strict);
-        m_cookies.append(cookie.ptr());
+        m_cookies.append(WTFMove(cookie));
     }
 }
 
@@ -58,7 +58,7 @@ CookieMap::CookieMap(const Vector<Vector<String>>& pairs)
     for (const auto& pair : pairs) {
         if (pair.size() == 2) {
             auto cookie = Cookie::create(pair[0], pair[1], String(), "/"_s, 0, false, CookieSameSite::Strict);
-            m_cookies.append(cookie.ptr());
+            m_cookies.append(WTFMove(cookie));
         }
     }
 }
@@ -84,7 +84,7 @@ RefPtr<Cookie> CookieMap::get(const String& name) const
     // Return the first cookie with the matching name
     for (auto& cookie : m_cookies) {
         if (cookie->name() == name)
-            return cookie;
+            return RefPtr<Cookie>(cookie.ptr());
     }
     return nullptr;
 }
@@ -148,7 +148,7 @@ void CookieMap::set(const String& name, const String& value)
 
     // Add the new cookie
     auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict);
-    m_cookies.append(cookie.ptr());
+    m_cookies.append(cookie);
 }
 
 void CookieMap::set(RefPtr<Cookie> cookie)
@@ -160,7 +160,7 @@ void CookieMap::set(RefPtr<Cookie> cookie)
     remove(cookie->name());
 
     // Add the new cookie
-    m_cookies.append(cookie);
+    m_cookies.append(*cookie);
 }
 
 void CookieMap::remove(const String& name)
@@ -196,7 +196,8 @@ Vector<Ref<Cookie>> CookieMap::getCookiesMatchingDomain(const String& domain) co
 {
     Vector<Ref<Cookie>> result;
     for (auto& cookie : m_cookies) {
-        if (cookie->domain().isEmpty() || cookie->domain() == domain) {
+        const auto& cookieDomain = cookie->domain();
+        if (cookieDomain.isEmpty() || cookieDomain == domain) {
             result.append(cookie);
         }
     }
@@ -227,9 +228,7 @@ String CookieMap::toString() const
         if (!first)
             builder.append("; "_s);
 
-        builder.append(cookie->name());
-        builder.append('=');
-        builder.append(cookie->value());
+        cookie->appendTo(builder);
 
         first = false;
     }

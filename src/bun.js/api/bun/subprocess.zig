@@ -1512,6 +1512,12 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
     if (this.stdin == .buffer) {
         this.stdin.buffer.close();
     }
+    if (this.stdout == .pipe) {
+        this.stdout.pipe.close();
+    }
+    if (this.stderr == .pipe) {
+        this.stderr.pipe.close();
+    }
 
     if (existing_stdin_value != .zero) {
         JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_stdin_value, 0);

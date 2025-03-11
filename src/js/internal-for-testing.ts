@@ -173,8 +173,14 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
   1,
 );
 
+export const timerInternals = {
+  timerClockMs: $newZigFunction("Timer.zig", "internal_bindings.timerClockMs", 0),
+};
+
 export const decodeURIComponentSIMD = $newCppFunction(
   "decodeURIComponentSIMD.cpp",
   "jsFunctionDecodeURIComponentSIMD",
   1,
 );
+
+export const getDevServerDeinitCount = $bindgenFn("DevServer.bind.ts", "getDeinitCountForTesting");

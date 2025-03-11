@@ -605,6 +605,12 @@ declare function $ERR_STREAM_DESTROYED(method: string): Error;
 declare function $ERR_METHOD_NOT_IMPLEMENTED(method: string): Error;
 declare function $ERR_STREAM_ALREADY_FINISHED(method: string): Error;
 declare function $ERR_MISSING_ARGS(a1: string, a2?: string): TypeError;
+/**
+ * `The "foo" or "bar" or "baz" argument must be specified`
+ *
+ * Panics if `oneOf` is empty.
+ */
+declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
@@ -629,6 +635,9 @@ declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
 declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
 declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
 declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
+declare function $ERR_SERVER_ALREADY_LISTEN(): Error;
+declare function $ERR_SOCKET_CLOSED(): Error;
+declare function $ERR_SOCKET_CLOSED_BEFORE_CONNECTION(): Error;
 
 /**
  * Convert a function to a class-like object.

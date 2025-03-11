@@ -145,65 +145,6 @@ static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsi
     return sv.substring(start, end - start);
 }
 
-template<typename UWSResponse>
-static void writeResponseHeader(UWSResponse* res, const WTF::StringView& name, const WTF::StringView& value)
-{
-    WTF::CString nameStr;
-    WTF::CString valueStr;
-
-    std::string_view nameView;
-    std::string_view valueView;
-
-    if (name.is8Bit()) {
-        const auto nameSpan = name.span8();
-        nameView = std::string_view(reinterpret_cast<const char*>(nameSpan.data()), nameSpan.size());
-    } else {
-        nameStr = name.utf8();
-        nameView = std::string_view(nameStr.data(), nameStr.length());
-    }
-
-    if (value.is8Bit()) {
-        const auto valueSpan = value.span8();
-        valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
-    } else {
-        valueStr = value.utf8();
-        valueView = std::string_view(valueStr.data(), valueStr.length());
-    }
-
-    res->writeHeader(nameView, valueView);
-}
-
-template<typename UWSResponse>
-static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
-{
-    auto& internalHeaders = headers->internalHeaders();
-
-    for (auto& value : internalHeaders.getSetCookieHeaders()) {
-
-        if (value.is8Bit()) {
-            const auto valueSpan = value.span8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
-        } else {
-            WTF::CString valueStr = value.utf8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
-        }
-    }
-
-    for (const auto& header : internalHeaders.commonHeaders()) {
-        const auto& name = WebCore::httpHeaderNameString(header.key);
-        const auto& value = header.value;
-
-        writeResponseHeader<UWSResponse>(res, name, value);
-    }
-
-    for (auto& header : internalHeaders.uncommonHeaders()) {
-        const auto& name = header.key;
-        const auto& value = header.value;
-
-        writeResponseHeader<UWSResponse>(res, name, value);
-    }
-}
-
 using namespace JSC;
 
 using namespace WebCore;
@@ -1673,15 +1614,6 @@ bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0)
     return arg0->size() == 0;
 }
 
-void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_ssl, void* arg2)
-{
-    if (is_ssl) {
-        copyToUWS<uWS::HttpResponse<true>>(arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
-    } else {
-        copyToUWS<uWS::HttpResponse<false>>(arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
-    }
-}
-
 WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
 {
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
@@ -2507,19 +2439,6 @@ void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__
     } else if (JSC::JSInternalPromise* promise = JSC::jsDynamicCast<JSC::JSInternalPromise*>(cell)) {
         RELEASE_ASSERT(false);
     }
-}
-
-JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
-{
-    JSC::JSValue jsValue = JSC::JSValue::decode(JSValue0);
-
-    JSC::JSValue result = JSC::JSONParse(arg1, jsValue.toWTFString(arg1));
-
-    if (!result) {
-        result = JSC::JSValue(JSC::createSyntaxError(arg1->globalObject(), "Failed to parse JSON"_s));
-    }
-
-    return JSC::JSValue::encode(result);
 }
 
 JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* globalObject, const ZigString* arg1)
@@ -3789,7 +3708,7 @@ bool JSC__JSValue__isUndefinedOrNull(JSC__JSValue JSValue0)
 JSC__JSValue JSC__JSValue__jsBoolean(bool arg0)
 {
     return JSC::JSValue::encode(JSC::jsBoolean(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
@@ -3798,32 +3717,35 @@ JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 JSC__JSValue JSC__JSValue__jsEmptyString(JSC__JSGlobalObject* arg0)
 {
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
-};
-JSC__JSValue JSC__JSValue__jsNull() { return JSC::JSValue::encode(JSC::jsNull()); };
+}
+JSC__JSValue JSC__JSValue__jsNull()
+{
+    return JSC::JSValue::encode(JSC::jsNull());
+}
 JSC__JSValue JSC__JSValue__jsNumberFromChar(unsigned char arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromDouble(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromInt32(int32_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromU16(uint16_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 JSC__JSValue JSC__JSValue__jsNumberFromUint64(uint64_t arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
-};
+}
 
 int64_t JSC__JSValue__toInt64(JSC__JSValue val)
 {
@@ -5400,9 +5322,13 @@ enum class BuiltinNamesMap : uint8_t {
     error,
     defaultKeyword,
     encoding,
+    fatal,
+    ignoreBOM,
+    type,
+    signal,
 };
 
-static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char name)
+static inline const JSC::Identifier& builtinNameMap(JSC::VM& vm, unsigned char name)
 {
 
     auto clientData = WebCore::clientData(vm);
@@ -5435,7 +5361,7 @@ static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char na
         return clientData->builtinNames().redirectPublicName();
     }
     case BuiltinNamesMap::inspectCustom: {
-        return Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s));
+        return clientData->builtinNames().inspectCustomPublicName();
     }
     case BuiltinNamesMap::highWaterMark: {
         return clientData->builtinNames().highWaterMarkPublicName();
@@ -5464,9 +5390,21 @@ static inline const JSC::Identifier builtinNameMap(JSC::VM& vm, unsigned char na
     case BuiltinNamesMap::encoding: {
         return clientData->builtinNames().encodingPublicName();
     }
+    case BuiltinNamesMap::fatal: {
+        return clientData->builtinNames().fatalPublicName();
+    }
+    case BuiltinNamesMap::ignoreBOM: {
+        return clientData->builtinNames().ignoreBOMPublicName();
+    }
+    case BuiltinNamesMap::type: {
+        return vm.propertyNames->type;
+    }
+    case BuiltinNamesMap::signal: {
+        return clientData->builtinNames().signalPublicName();
+    }
     default: {
         ASSERT_NOT_REACHED();
-        return Identifier();
+        __builtin_unreachable();
     }
     }
 }
@@ -5488,8 +5426,8 @@ JSC__JSValue JSC__JSValue__fastGet(JSC__JSValue JSValue0, JSC__JSGlobalObject* g
     JSC::JSObject* object = value.getObject();
     ASSERT_WITH_MESSAGE(object, "fastGet() called on non-object. Check that the JSValue is an object before calling fastGet().");
     auto& vm = JSC::getVM(globalObject);
-    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
 
+    const auto property = JSC::PropertyName(builtinNameMap(vm, arg2));
     return JSC::JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, property));
 }
 
@@ -5500,6 +5438,7 @@ extern "C" JSC__JSValue JSC__JSValue__fastGetOwn(JSC__JSValue JSValue0, JSC__JSG
     PropertySlot slot = PropertySlot(value, PropertySlot::InternalMethodType::GetOwnProperty);
     const Identifier name = builtinNameMap(globalObject->vm(), arg2);
     auto* object = value.getObject();
+
     if (object->getOwnPropertySlot(object, globalObject, name, slot)) {
         return JSValue::encode(slot.getValue(globalObject, name));
     }

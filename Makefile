@@ -1154,7 +1154,7 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StubInfoSummary.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StubInfoSummary.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/CommonSlowPaths.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/CommonSlowPaths.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/DirectArguments.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DirectArguments.h
-	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArguments.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArguments.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArgumentsImpl.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArgumentsImpl.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SamplingProfiler.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SamplingProfiler.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/ScopedArguments.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ScopedArguments.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSLexicalEnvironment.h $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSLexicalEnvironment.h
@@ -1205,7 +1205,7 @@ jsc-copy-headers-debug:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StubInfoSummary.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StubInfoSummary.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/CommonSlowPaths.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/CommonSlowPaths.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/DirectArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DirectArguments.h
-	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArguments.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArgumentsImpl.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArgumentsImpl.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SamplingProfiler.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SamplingProfiler.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/ScopedArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ScopedArguments.h
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSLexicalEnvironment.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSLexicalEnvironment.h

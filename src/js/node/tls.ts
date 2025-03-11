@@ -1,10 +1,11 @@
 // Hardcoded module "node:tls"
 const { isArrayBufferView, isArrayBuffer, isTypedArray } = require("node:util/types");
-const { addServerName } = require("../internal/net");
 const net = require("node:net");
 const { Duplex } = require("node:stream");
+const { addServerName } = require("internal/net");
+const { throwNotImplemented } = require("internal/shared");
 
-const { Server: NetServer, [Symbol.for("::bunternal::")]: InternalTCPSocket } = net;
+const { Server: NetServer, Socket: NetSocket } = net;
 
 const { rootCertificates, canonicalizeIP } = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -305,7 +306,7 @@ const TLSSocket = (function (InternalTLSSocket) {
     },
   });
 })(
-  class TLSSocket extends InternalTCPSocket {
+  class TLSSocket extends NetSocket {
     #secureContext;
     ALPNProtocols;
     #checkServerIdentity;
@@ -313,14 +314,14 @@ const TLSSocket = (function (InternalTLSSocket) {
     alpnProtocol = null;
 
     constructor(socket, options) {
-      super(socket instanceof InternalTCPSocket || socket instanceof Duplex ? options : options || socket);
+      super(socket instanceof NetSocket || socket instanceof Duplex ? options : options || socket);
       options = options || socket || {};
       if (typeof options === "object") {
         const { ALPNProtocols } = options;
         if (ALPNProtocols) {
           convertALPNProtocols(ALPNProtocols, this);
         }
-        if (socket instanceof InternalTCPSocket || socket instanceof Duplex) {
+        if (socket instanceof NetSocket || socket instanceof Duplex) {
           this._handle = socket;
           // keep compatibility with http2-wrapper or other places that try to grab JSStreamSocket in node.js, with here is just the TLSSocket
           this._handle._parentWrap = this;
@@ -648,8 +649,7 @@ const DEFAULT_ECDH_CURVE = "auto",
 
 function normalizeConnectArgs(listArgs) {
   const args = net._normalizeArgs(listArgs);
-  const options = args[0];
-  const cb = args[1];
+  $assert($isObject(args[0]));
 
   // If args[0] was options, then normalize dealt with it.
   // If args[0] is port, or args[0], args[1] is host, port, we need to
@@ -657,27 +657,25 @@ function normalizeConnectArgs(listArgs) {
   // the host/port/path args that it knows about, not the tls options.
   // This means that options.host overrides a host arg.
   if (listArgs[1] !== null && typeof listArgs[1] === "object") {
-    ObjectAssign(options, listArgs[1]);
+    ObjectAssign(args[0], listArgs[1]);
   } else if (listArgs[2] !== null && typeof listArgs[2] === "object") {
-    ObjectAssign(options, listArgs[2]);
+    ObjectAssign(args[0], listArgs[2]);
   }
 
-  return cb ? [options, cb] : [options];
+  return args;
 }
 
 // tls.connect(options[, callback])
 // tls.connect(path[, options][, callback])
 // tls.connect(port[, host][, options][, callback])
 function connect(...args) {
-  if (typeof args[0] !== "object") {
-    return new TLSSocket().connect(...args);
-  }
-  let [options, callback] = normalizeConnectArgs(args);
+  let normal = normalizeConnectArgs(args);
+  const options = normal[0];
   const { ALPNProtocols } = options;
   if (ALPNProtocols) {
     convertALPNProtocols(ALPNProtocols, options);
   }
-  return new TLSSocket(options).connect(options, callback);
+  return new TLSSocket(options).connect(normal);
 }
 
 function getCiphers() {

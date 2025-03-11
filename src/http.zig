@@ -29,7 +29,7 @@ const posix = std.posix;
 const SOCK = posix.SOCK;
 const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
 const ZlibPool = @import("./http/zlib.zig");
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
 const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = @import("./bun.js/api/server.zig").ServerConfig.SSLConfig;
@@ -742,7 +742,13 @@ fn NewHTTPContext(comptime ssl: bool) type {
             ) void {
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    return client.onOpen(comptime ssl, socket);
+                    if (client.onOpen(comptime ssl, socket)) |_| {
+                        return;
+                    } else |_| {
+                        log("Unable to open socket", .{});
+                        terminateSocket(socket);
+                        return;
+                    }
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
@@ -1005,7 +1011,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
                     }
                     client.allow_retry = true;
-                    client.onOpen(comptime ssl, sock);
+                    try client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
                         client.firstCall(comptime ssl, sock);
                     }
@@ -1568,7 +1574,7 @@ pub fn checkServerIdentity(
                         }
                     }
 
-                    if (BoringSSL.checkX509ServerIdentity(x509, hostname)) {
+                    if (bun.BoringSSL.checkX509ServerIdentity(x509, hostname)) {
                         return true;
                     }
                 }
@@ -1604,7 +1610,7 @@ pub fn onOpen(
     client: *HTTPClient,
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
-) void {
+) !void {
     if (comptime Environment.allow_assert) {
         if (client.http_proxy) |proxy| {
             assert(is_ssl == proxy.isHTTPS());
@@ -1617,11 +1623,11 @@ pub fn onOpen(
 
     if (client.signals.get(.aborted)) {
         client.closeAndAbort(comptime is_ssl, socket);
-        return;
+        return error.ClientAborted;
     }
 
     if (comptime is_ssl) {
-        var ssl_ptr: *BoringSSL.SSL = @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle()));
+        var ssl_ptr: *BoringSSL.SSL = @ptrCast(socket.getNativeHandle());
         if (!ssl_ptr.isInitFinished()) {
             var _hostname = client.hostname orelse client.url.hostname;
             if (client.http_proxy) |proxy| {
@@ -3317,7 +3323,7 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
                         this.state.original_request_body == .sendfile or this.state.original_request_body == .stream,
                 );
 
-                // we sent everything, but there's some body leftover
+                // we sent everything, but there's some body left over
                 if (try_sending_more_data) {
                     this.onWritable(false, is_ssl, socket);
                 }

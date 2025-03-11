@@ -29,4 +29,3 @@ test('format invalid input', () => {
   assert.strictEqual(url.format(''), '');
   assert.strictEqual(url.format({}), '');
 });
-

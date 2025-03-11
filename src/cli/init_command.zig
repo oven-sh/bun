@@ -41,7 +41,7 @@ pub const InitCommand = struct {
         // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
         // deleting the entire line
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+            bun.win32.updateStdioModeFlags(0, .{ .unset = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT }) catch null;
 
         defer if (comptime Environment.isWindows) {
             if (original_mode) |mode| {
@@ -122,9 +122,6 @@ pub const InitCommand = struct {
             }
             initial_draw = false;
 
-            // Clear from cursor to end of screen
-            Output.clearToEnd();
-
             // Print options vertically
             inline for (choices, 0..) |option, i| {
                 if (i == @intFromEnum(selected)) {
@@ -134,14 +131,15 @@ pub const InitCommand = struct {
                         Output.pretty("<r><cyan>><r>   ", .{});
                     }
                     if (colors) {
-                        Output.print("\x1B[4m{s}\x1B[24m\n", .{option});
+                        Output.print("\x1B[4m{s}\x1B[24m\x1B[0K\n", .{option});
                     } else {
-                        Output.print("    {s}\n", .{option});
+                        Output.print("    {s}\x1B[0K\n", .{option});
                     }
                 } else {
-                    Output.print("    {s}\n", .{option});
+                    Output.print("    {s}\x1B[0K\n", .{option});
                 }
             }
+            Output.clearToEnd();
 
             Output.flush();
 
@@ -208,7 +206,12 @@ pub const InitCommand = struct {
 
         // Set raw mode to read single characters without echo
         const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
-            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null;
+            bun.win32.updateStdioModeFlags(0, .{
+                // virtual terminal input enables arrow keys, processed input lets ctrl+c kill the program
+                .set = bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT | bun.windows.ENABLE_PROCESSED_INPUT,
+                // disabling line input sends keys immediately, disabling echo input makes sure it doesn't print to the terminal
+                .unset = bun.windows.ENABLE_LINE_INPUT | bun.windows.ENABLE_ECHO_INPUT,
+            }) catch null;
 
         if (Environment.isPosix)
             _ = Bun__ttySetMode(0, 1);
@@ -363,19 +366,45 @@ pub const InitCommand = struct {
         private: bool = true,
     };
 
-    pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
-        const print_help = brk: {
-            for (argv) |arg| {
+    pub fn exec(alloc: std.mem.Allocator, init_args: [][:0]const u8) !void {
+        // --minimal is a special preset to create only empty package.json + tsconfig.json
+        var minimal = false;
+        var auto_yes = false;
+        var parse_flags = true;
+        var initialize_in_folder: ?[]const u8 = null;
+        for (init_args) |arg_| {
+            const arg = bun.span(arg_);
+            if (parse_flags and arg.len > 0 and arg[0] == '-') {
                 if (strings.eqlComptime(arg, "--help") or strings.eqlComptime(arg, "-h")) {
-                    break :brk true;
+                    CLI.Command.Tag.printHelp(.InitCommand, true);
+                    Global.exit(0);
+                } else if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
+                    minimal = true;
+                } else if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
+                    auto_yes = true;
+                } else if (strings.eqlComptime(arg, "--")) {
+                    parse_flags = false;
+                } else {
+                    // invalid flag; ignore
+                }
+            } else {
+                if (initialize_in_folder == null) {
+                    initialize_in_folder = arg;
+                } else {
+                    // invalid positional; ignore
                 }
             }
-            break :brk false;
-        };
+        }
 
-        if (print_help) {
-            CLI.Command.Tag.printHelp(.InitCommand, true);
-            Global.exit(0);
+        if (initialize_in_folder) |ifdir| {
+            std.fs.cwd().makePath(ifdir) catch |err| {
+                Output.prettyErrorln("Failed to create directory {s}: {s}", .{ ifdir, @errorName(err) });
+                Global.exit(1);
+            };
+            bun.sys.chdir("", ifdir).unwrap() catch |err| {
+                Output.prettyErrorln("Failed to change directory to {s}: {s}", .{ ifdir, @errorName(err) });
+                Global.exit(1);
+            };
         }
 
         var fs = try Fs.FileSystem.init(null);
@@ -461,17 +490,6 @@ pub const InitCommand = struct {
             }
         }
 
-        // --minimal is a special preset to create only empty package.json + tsconfig.json
-        const minimal = brk: {
-            for (argv) |arg_| {
-                const arg = bun.span(arg_);
-                if (strings.eqlComptime(arg, "-m") or strings.eqlComptime(arg, "--minimal")) {
-                    break :brk true;
-                }
-            }
-            break :brk false;
-        };
-
         if (fields.entry_point.len == 0 and !minimal) infer: {
             fields.entry_point = "index.ts";
 
@@ -522,16 +540,6 @@ pub const InitCommand = struct {
                 logger.Loc.Empty,
             ).data.e_object;
         }
-
-        const auto_yes = Output.stdout_descriptor_type != .terminal or minimal or brk: {
-            for (argv) |arg_| {
-                const arg = bun.span(arg_);
-                if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
-                    break :brk true;
-                }
-            }
-            break :brk false;
-        };
 
         var template: Template = .blank;
 
@@ -759,7 +767,7 @@ pub const InitCommand = struct {
                 package_json_writer,
                 js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
                 &logger.Source.initEmptyFile("package.json"),
-                .{},
+                .{ .mangled_props = null },
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 package_json_file = null;
@@ -819,14 +827,12 @@ pub const InitCommand = struct {
                 }
 
                 if (fields.entry_point.len > 0 and !did_load_package_json) {
-                    Output.pretty("\nTo get started, run:\n\n\t", .{});
-                    if (strings.containsAny(
-                        " \"'",
-                        fields.entry_point,
-                    )) {
-                        Output.prettyln("<cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                    Output.pretty("\nTo get started, run:\n\n    ", .{});
+
+                    if (strings.containsAny(" \"'", fields.entry_point)) {
+                        Output.pretty("<cyan>bun run {any}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
                     } else {
-                        Output.prettyln("<cyan>bun run {s}<r>", .{fields.entry_point});
+                        Output.pretty("<cyan>bun run {s}<r>\n\n", .{fields.entry_point});
                     }
                 }
 
@@ -1098,15 +1104,15 @@ const Template = enum {
             \\
             \\<b><cyan>Development<r><d> - full-stack dev server with hot reload<r>
             \\
-            \\      <cyan><b>bun dev<r>
+            \\    <cyan><b>bun dev<r>
             \\
             \\<b><yellow>Static Site<r><d> - build optimized assets to disk (no backend)<r>
             \\
-            \\      <yellow><b>bun run build<r>
+            \\    <yellow><b>bun run build<r>
             \\
             \\<b><green>Production<r><d> - serve a full-stack production build<r>
             \\
-            \\      <green><b>bun start<r>
+            \\    <green><b>bun start<r>
             \\
             \\<blue>Happy bunning! 🐇<r>
             \\

@@ -99,7 +99,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
     const TagType: type = result.tag_type;
 
-    return struct {
+    return packed struct {
         pub const Tag = TagType;
         pub const TagInt = TagSize;
         pub const type_map: TypeMap(Types) = result.ty_map;
@@ -144,6 +144,10 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
         pub inline fn tag(this: This) TagType {
             return @as(TagType, @enumFromInt(this.repr.data));
+        }
+
+        pub fn case(comptime Type: type) Tag {
+            return @field(Tag, bun.meta.typeBaseName(@typeName(Type)));
         }
 
         /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type

@@ -482,7 +482,7 @@ pub fn CssRuleList(comptime AtRule: type) type {
                 if (rule.* == .import) {
                     if (dest.remove_imports) {
                         const dep = if (dest.dependencies != null) Dependency{
-                            .import = dependencies.ImportDependency.new(dest.allocator, &rule.import, dest.filename()),
+                            .import = dependencies.ImportDependency.new(dest.allocator, &rule.import, dest.filename(), dest.local_names, dest.symbols),
                         } else null;
 
                         if (dest.dependencies) |*deps| {
@@ -523,6 +523,7 @@ pub const MinifyContext = struct {
     handler_context: css.PropertyHandlerContext,
     unused_symbols: *const std.StringArrayHashMapUnmanaged(void),
     custom_media: ?std.StringArrayHashMapUnmanaged(custom_media.CustomMediaRule),
+    extra: *const css.StylesheetExtra,
     css_modules: bool,
     err: ?css.MinifyError = null,
 };
@@ -612,6 +613,7 @@ fn mergeStyleRules(
     context: *MinifyContext,
 ) bool {
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
+    // Does not apply if css modules are enabled
     if (sty.selectors.eql(&last_style_rule.selectors) and
         sty.isCompatible(context.targets.*) and
         last_style_rule.isCompatible(context.targets.*) and

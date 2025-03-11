@@ -70,17 +70,20 @@ export function createInternalModuleRegistry(basedir: string) {
     const relativeMatch =
       resolveSyncOrNull(specifier, path.join(basedir, path.dirname(from))) ?? resolveSyncOrNull(specifier, basedir);
 
+    const suffix =
+      'Only files in "src/js" besides "src/js/builtins" can be imported here. Note that the "node:" or "bun:" prefix is required here.';
+
     if (relativeMatch) {
       const found = moduleList.indexOf(path.relative(basedir, relativeMatch).replaceAll("\\", "/"));
       if (found === -1) {
         throw new Error(
-          `Builtin Bundler: "${specifier}" cannot be imported from "${from}" because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here. Note that the 'node:' or 'bun:' prefix is required here. `,
+          `Builtin Bundler: "${specifier}" cannot be imported from "${from}" because it doesn't get a module ID. ${suffix}`,
         );
       }
       return codegenRequireId(`${found}/*${path.relative(basedir, relativeMatch)}*/`);
     }
 
-    throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in ${from}.`);
+    throw new Error(`Builtin Bundler: Could not resolve "${specifier}" in "${from}". ${suffix}`);
   };
 
   return {

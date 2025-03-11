@@ -80,7 +80,7 @@ async function fetchAndInjectHTML(url: string) {
           constructor(url) {
           }
         };
-      
+
         location.href = url;
         document.write(initial);
         window.happyDOM.waitUntilComplete().then(() => {

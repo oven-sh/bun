@@ -102,7 +102,20 @@ pub const JSOOM = OOM || JSError;
 
 pub const detectCI = @import("./ci_info.zig").detectCI;
 
+/// Adding to this namespace is considered deprecated.
+///
+/// If the declaration truly came from C, it should be perfectly possible to
+/// translate the definition and put it in `c-headers-for-zig.h`, and available
+/// via the lowercase `c` namespace. Wrappers around functions should go in a
+/// more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
+///
+/// By avoiding manual transcription of C headers into Zig, we avoid bugs due to
+/// different definitions between platforms, as well as very common mistakes
+/// that can be made when porting definitions. It also keeps code much cleaner.
 pub const C = @import("c.zig");
+/// Translated from `c-headers-for-zig.h` for the current platform.
+pub const c = @import("translated-c-headers");
+
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
@@ -136,6 +149,7 @@ pub const patch = @import("./patch.zig");
 pub const ini = @import("./ini.zig");
 pub const Bitflags = @import("./bitflags.zig").Bitflags;
 pub const css = @import("./css/css_parser.zig");
+pub const csrf = @import("./csrf.zig");
 pub const validators = @import("./bun.js/node/util/validators.zig");
 
 pub const shell = @import("./shell/shell.zig");
@@ -607,7 +621,7 @@ pub fn hash32(content: []const u8) u32 {
 pub const HiveArray = @import("./hive_array.zig").HiveArray;
 
 pub fn rand(bytes: []u8) void {
-    _ = BoringSSL.RAND_bytes(bytes.ptr, bytes.len);
+    _ = BoringSSL.c.RAND_bytes(bytes.ptr, bytes.len);
 }
 
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
@@ -753,7 +767,8 @@ pub fn isHeapMemory(memory: anytype) bool {
     return false;
 }
 
-pub const Mimalloc = @import("./allocators/mimalloc.zig");
+pub const Mimalloc = @import("allocators/mimalloc.zig");
+pub const AllocationScope = @import("allocators/AllocationScope.zig");
 
 pub const isSliceInBuffer = allocators.isSliceInBuffer;
 pub const isSliceInBufferT = allocators.isSliceInBufferT;
@@ -1585,7 +1600,14 @@ pub const ImportKind = @import("./import_record.zig").ImportKind;
 
 pub const Watcher = @import("./Watcher.zig");
 
-pub usingnamespace @import("./util.zig");
+pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
+    var remain = dest;
+    for (src) |group| {
+        bun.copy(T, remain[0..group.len], group);
+        remain = remain[group.len..];
+    }
+}
+
 pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
     Environment.isDebug;
@@ -1600,7 +1622,6 @@ pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 /// Attempt to coerce some value into a byte slice.
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
-        []const u8, []u8, [:0]const u8, [:0]u8 => buffer.ptr[0..buffer.len],
         [*:0]u8, [*:0]const u8 => buffer[0..len(buffer)],
         [*c]const u8, [*c]u8 => span(buffer),
 
@@ -1699,6 +1720,8 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
     }
 }
 
+extern "c" fn on_before_reload_process_linux() void;
+
 /// Reload Bun's process. This clones envp, argv, and gets the current
 /// executable path.
 ///
@@ -1786,13 +1809,13 @@ pub fn reloadProcess(
         attrs.resetSignals() catch {};
 
         attrs.set(
-            C.POSIX_SPAWN_CLOEXEC_DEFAULT |
+            C.translated.POSIX_SPAWN_CLOEXEC_DEFAULT |
                 // Apple Extension: If this bit is set, rather
                 // than returning to the caller, posix_spawn(2)
                 // and posix_spawnp(2) will behave as a more
                 // featureful execve(2).
-                C.POSIX_SPAWN_SETEXEC |
-                C.POSIX_SPAWN_SETSIGDEF | C.POSIX_SPAWN_SETSIGMASK,
+                C.translated.POSIX_SPAWN_SETEXEC |
+                C.translated.POSIX_SPAWN_SETSIGDEF | C.translated.POSIX_SPAWN_SETSIGMASK,
         ) catch unreachable;
         switch (PosixSpawn.spawnZ(exec_path, actions, attrs, @as([*:null]?[*:0]const u8, @ptrCast(newargv)), @as([*:null]?[*:0]const u8, @ptrCast(envp)))) {
             .err => |err| {
@@ -1811,10 +1834,6 @@ pub fn reloadProcess(
             },
         }
     } else if (comptime Environment.isPosix) {
-        const on_before_reload_process_linux = struct {
-            pub extern "c" fn on_before_reload_process_linux() void;
-        }.on_before_reload_process_linux;
-
         on_before_reload_process_linux();
         const err = std.posix.execveZ(
             exec_path,
@@ -2102,11 +2121,6 @@ pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
 
-pub inline fn assertComptime() void {
-    var x = 0; // if you hit an error on this line, you are not in a comptime context
-    _ = &x;
-}
-
 const TODO_LOG = Output.scoped(.TODO, false);
 pub inline fn todo(src: std.builtin.SourceLocation, value: anytype) @TypeOf(value) {
     if (comptime Environment.allow_assert) {
@@ -2355,25 +2369,12 @@ pub const win32 = struct {
     pub var STDERR_FD: FileDescriptor = undefined;
     pub var STDIN_FD: FileDescriptor = undefined;
 
-    /// Returns the original mode
-    pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
-        const fd = stdio(i);
-        var original_mode: w.DWORD = 0;
-        if (windows.kernel32.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.kernel32.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
-                return windows.getLastError();
-            }
-        } else return windows.getLastError();
-
-        return original_mode;
-    }
-
-    /// Returns the original mode
-    pub fn setStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
+    /// Returns the original mode, or null on failure
+    pub fn updateStdioModeFlags(i: anytype, opts: struct { set: w.DWORD = 0, unset: w.DWORD = 0 }) !w.DWORD {
         const fd = stdio(i);
         var original_mode: w.DWORD = 0;
         if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.SetConsoleMode(fd.cast(), original_mode | flags) == 0) {
+            if (windows.SetConsoleMode(fd.cast(), (original_mode | opts.set) & ~opts.unset) == 0) {
                 return windows.getLastError();
             }
         } else return windows.getLastError();
@@ -2732,8 +2733,8 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
     if (!Environment.isWindows) return @ptrCast(literal);
     return comptime {
         var buf: [literal.len:0]u8 = undefined;
-        for (literal, 0..) |c, i| {
-            buf[i] = if (c == '/') '\\' else c;
+        for (literal, 0..) |char, i| {
+            buf[i] = if (char == '/') '\\' else char;
             assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
@@ -2747,8 +2748,8 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
     if (!Environment.isWindows) return @ptrCast(literal);
     return comptime {
         var buf: [literal.len:0]OSPathChar = undefined;
-        for (literal, 0..) |c, i| {
-            buf[i] = if (c == '/') '\\' else c;
+        for (literal, 0..) |char, i| {
+            buf[i] = if (char == '/') '\\' else char;
             assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
@@ -3396,28 +3397,43 @@ pub const ArenaAllocator = std.heap.ArenaAllocator;
 pub const crash_handler = @import("crash_handler.zig");
 pub const handleErrorReturnTrace = crash_handler.handleErrorReturnTrace;
 
+const assertion_failure_msg = "Internal assertion failure";
 noinline fn assertionFailure() noreturn {
     if (@inComptime()) {
         @compileError("assertion failure");
     } else {
         @branchHint(.cold);
-        Output.panic("Internal assertion failure", .{});
+        Output.panic(assertion_failure_msg, .{});
     }
 }
 
-noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noreturn {
+noinline fn assertionFailureAtLocation(src: std.builtin.SourceLocation) noreturn {
     if (@inComptime()) {
-        @compileError("assertion failure");
+        @compileError(std.fmt.comptimePrint("assertion failure"));
     } else {
         @branchHint(.cold);
-        Output.panic("Internal assertion failure {s}:{d}:{d}", .{
-            src.file,
-            src.line,
-            src.column,
-        });
+        Output.panic(assertion_failure_msg ++ "at {s}:{d}:{d}", .{ src.file, src.line, src.column });
     }
 }
 
+noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) noreturn {
+    if (@inComptime()) {
+        @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
+    } else {
+        @branchHint(.cold);
+        Output.panic(assertion_failure_msg ++ ": " ++ msg, .args);
+    }
+}
+
+/// Like `assert`, but checks only run in debug builds.
+///
+/// Please wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.isDebug) {
+///   const expensive = doExpensiveCheck();
+///   bun.debugAssert(expensive);
+/// }
+/// ```
 pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
@@ -3428,14 +3444,69 @@ pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     }
 }
 
-pub fn assert(value: bool) callconv(callconv_inline) void {
+/// Asserts that some condition holds. Assertions are stripped in release builds.
+///
+/// Please use `assertf` in new code.
+///
+/// Be careful what expressions you pass to this function; if the compiler cannot
+/// determine that `ok` has no side effects, the argument expression may not be removed
+/// from the binary. This includes calls to extern functions.
+///
+/// Wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.allow_assert) {
+///   const expensive = doExpensiveCheck();
+///   bun.assert(expensive);
+/// }
+/// ```
+///
+/// Use `releaseAssert` for assertions that should not be stripped in release builds.
+pub fn assert(ok: bool) callconv(callconv_inline) void {
     if (comptime !Environment.allow_assert) {
         return;
     }
 
-    if (!value) {
+    if (!ok) {
         if (comptime Environment.isDebug) unreachable;
         assertionFailure();
+    }
+}
+
+/// Asserts that some condition holds. Assertions are stripped in release builds.
+///
+/// Please note that messages will be shown to users in crash reports.
+///
+/// Be careful what expressions you pass to this function; if the compiler cannot
+/// determine that `ok` has no side effects, the argument expression may not be removed
+/// from the binary. This includes calls to extern functions.
+///
+/// Wrap expensive checks in an `if` statement.
+/// ```zig
+/// if (comptime bun.Environment.allow_assert) {
+///   const expensive = doExpensiveCheck();
+///   bun.assert(expensive, "Something happened: {}", .{ expensive });
+/// }
+/// ```
+///
+/// Use `releaseAssert` for assertions that should not be stripped in release builds.
+pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!ok) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailureWithMsg(format, args);
+    }
+}
+
+/// Asserts that some condition holds. These assertions are not stripped
+/// in any build mode. Use `assert` to have assertions stripped in release
+/// builds.
+pub fn releaseAssert(ok: bool, comptime msg: []const u8, args: anytype) callconv(callconv_inline) void {
+    if (!ok) {
+        @branchHint(.cold);
+        Output.panic(assertion_failure_msg ++ ": " ++ msg, args);
     }
 }
 
@@ -3446,11 +3517,12 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 
     if (!value) {
         if (comptime Environment.isDebug) unreachable;
-        assertionFailureWithLocation(src);
+        assertionFailureAtLocation(src);
     }
 }
 
-/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+/// This has no effect on the real code but capturing 'a' and 'b' into
+/// parameters makes assertion failures much easier inspect in a debugger.
 pub inline fn assert_eql(a: anytype, b: anytype) void {
     if (@inComptime()) {
         if (a != b) {
@@ -3465,7 +3537,8 @@ pub inline fn assert_eql(a: anytype, b: anytype) void {
     }
 }
 
-/// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
+/// This has no effect on the real code but capturing 'a' and 'b' into
+/// parameters makes assertion failures much easier inspect in a debugger.
 pub fn assert_neql(a: anytype, b: anytype) callconv(callconv_inline) void {
     return assert(a != b);
 }
@@ -3581,12 +3654,13 @@ pub const timespec = extern struct {
 
     // TODO: this is wrong!
     pub fn duration(this: *const timespec, other: *const timespec) timespec {
-        var sec_diff = this.sec - other.sec;
-        var nsec_diff = this.nsec - other.nsec;
+        // Mimick C wrapping behavior.
+        var sec_diff = this.sec -% other.sec;
+        var nsec_diff = this.nsec -% other.nsec;
 
         if (nsec_diff < 0) {
-            sec_diff -= 1;
-            nsec_diff += std.time.ns_per_s;
+            sec_diff -%= 1;
+            nsec_diff +%= std.time.ns_per_s;
         }
 
         return timespec{
@@ -3614,11 +3688,11 @@ pub const timespec = extern struct {
         assert(this.nsec >= 0);
         const s_ns = std.math.mul(
             u64,
-            @as(u64, @intCast(this.sec)),
+            @as(u64, @intCast(@max(this.sec, 0))),
             std.time.ns_per_s,
         ) catch return std.math.maxInt(u64);
 
-        return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
+        return std.math.add(u64, s_ns, @as(u64, @intCast(@max(this.nsec, 0)))) catch
             return std.math.maxInt(i64);
     }
 
@@ -3656,12 +3730,12 @@ pub const timespec = extern struct {
 
         var new_timespec = this.*;
 
-        new_timespec.sec += sec_inc;
-        new_timespec.nsec += nsec_inc;
+        new_timespec.sec +%= sec_inc;
+        new_timespec.nsec +%= nsec_inc;
 
         if (new_timespec.nsec >= std.time.ns_per_s) {
-            new_timespec.sec += 1;
-            new_timespec.nsec -= std.time.ns_per_s;
+            new_timespec.sec +%= 1;
+            new_timespec.nsec -%= std.time.ns_per_s;
         }
 
         return new_timespec;
@@ -4270,6 +4344,9 @@ pub fn CowSlice(T: type) type {
         /// `data` is transferred into the returned string, and must be freed with
         /// `.deinit()` when the string and its borrows are done being used.
         pub fn initOwned(data: []const T, allocator: Allocator) @This() {
+            if (AllocationScope.downcast(allocator)) |scope|
+                scope.assertOwned(data);
+
             return .{
                 .ptr = data.ptr,
                 .flags = .{
@@ -4358,6 +4435,14 @@ pub fn CowSlice(T: type) type {
 
 const Allocator = std.mem.Allocator;
 
-pub const server = @import("./bun.js/api/server.zig");
+/// Memory is typically not decommitted immediately when freed.
+/// Sensitive information that's kept in memory can be read in various ways until the OS
+/// decommits it or the memory allocator reuses it for a new allocation.
+/// So if we're about to free something sensitive, we should zero it out first.
+pub fn freeSensitive(allocator: std.mem.Allocator, slice: anytype) void {
+    @memset(@constCast(slice), 0);
+    allocator.free(slice);
+}
 
-pub const AllocationScope = @import("AllocationScope.zig");
+pub const server = @import("./bun.js/api/server.zig");
+pub const macho = @import("./macho.zig");

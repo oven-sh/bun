@@ -10,6 +10,7 @@ const JSC = bun.JSC;
 const CallFrame = JSC.CallFrame;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
+const SocketAddress = JSC.API.SocketAddress;
 
 const log = Output.scoped(.UdpSocket, false);
 
@@ -20,7 +21,6 @@ extern fn htonl(hlong: u32) u32;
 extern fn htons(hshort: u16) u16;
 extern fn inet_ntop(af: c_int, src: ?*const anyopaque, dst: [*c]u8, size: c_int) ?[*:0]const u8;
 extern fn inet_pton(af: c_int, src: [*c]const u8, dst: ?*anyopaque) c_int;
-extern fn JSSocketAddress__create(global: *JSGlobalObject, address: JSValue, port: i32, v6: bool) JSValue;
 
 fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
     JSC.markBinding(@src());
@@ -96,12 +96,8 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         const span = std.mem.span(hostname.?);
         var hostname_string = if (scope_id) |id| blk: {
             if (comptime !bun.Environment.isWindows) {
-                const net_if = @cImport({
-                    @cInclude("net/if.h");
-                });
-
-                var buffer = std.mem.zeroes([net_if.IF_NAMESIZE:0]u8);
-                if (net_if.if_indextoname(id, &buffer) != null) {
+                var buffer = std.mem.zeroes([bun.c.IF_NAMESIZE:0]u8);
+                if (bun.c.if_indextoname(id, &buffer) != null) {
                     break :blk bun.String.createFormat("{s}%{s}", .{ span, std.mem.span(@as([*:0]u8, &buffer)) }) catch bun.outOfMemory();
                 }
             }
@@ -152,7 +148,7 @@ pub const UDPSocketConfig = struct {
                 if (!value.isString()) {
                     return globalThis.throwInvalidArguments("Expected \"hostname\" to be a string", .{});
                 }
-                const str = value.toBunString(globalThis);
+                const str = value.toBunString(globalThis) catch @panic("unreachable");
                 defer str.deref();
                 break :brk str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
             } else {
@@ -235,7 +231,7 @@ pub const UDPSocketConfig = struct {
             };
             const connect_port = connect_port_js.coerceToInt32(globalThis);
 
-            const str = connect_host_js.toBunString(globalThis);
+            const str = try connect_host_js.toBunString(globalThis);
             defer str.deref();
             const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
 
@@ -743,7 +739,7 @@ pub const UDPSocket = struct {
         const number = port_val.coerceToInt32(globalThis);
         const port: u16 = if (number < 1 or number > 0xffff) 0 else @intCast(number);
 
-        const str = address_val.toBunString(globalThis);
+        const str = address_val.toBunString(globalThis) catch @panic("unexpected exception");
         defer str.deref();
         const address_slice = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(address_slice);
@@ -855,16 +851,9 @@ pub const UDPSocket = struct {
         return JSValue.jsNumber(this.socket.boundPort());
     }
 
-    fn addressToString(globalThis: *JSGlobalObject, address_bytes: []const u8) JSValue {
-        var text_buf: [512]u8 = undefined;
-        const address: std.net.Address = switch (address_bytes.len) {
-            4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
-            16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),
-            else => return .undefined,
-        };
-
-        const slice = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return bun.String.createUTF8ForJS(globalThis, slice);
+    fn createSockAddr(globalThis: *JSGlobalObject, address_bytes: []const u8, port: u16) JSValue {
+        var sockaddr = SocketAddress.init(address_bytes, port) catch return .undefined;
+        return sockaddr.intoDTO(globalThis);
     }
 
     pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
@@ -875,12 +864,7 @@ pub const UDPSocket = struct {
 
         const address_bytes = buf[0..@as(usize, @intCast(length))];
         const port = this.socket.boundPort();
-        return JSSocketAddress__create(
-            globalThis,
-            addressToString(globalThis, address_bytes),
-            @intCast(port),
-            length == 16,
-        );
+        return createSockAddr(globalThis, address_bytes, @intCast(port));
     }
 
     pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -891,12 +875,7 @@ pub const UDPSocket = struct {
         this.socket.remoteIp(&buf, &length);
 
         const address_bytes = buf[0..@as(usize, @intCast(length))];
-        return JSSocketAddress__create(
-            globalThis,
-            addressToString(globalThis, address_bytes),
-            connect_info.port,
-            length == 16,
-        );
+        return createSockAddr(globalThis, address_bytes, connect_info.port);
     }
 
     pub fn getBinaryType(
@@ -944,7 +923,7 @@ pub const UDPSocket = struct {
             return globalThis.throwInvalidArguments("Expected 2 arguments", .{});
         }
 
-        const str = args.ptr[0].toBunString(globalThis);
+        const str = try args.ptr[0].toBunString(globalThis);
         defer str.deref();
         const connect_host = str.toOwnedSliceZ(default_allocator) catch bun.outOfMemory();
         defer default_allocator.free(connect_host);

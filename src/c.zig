@@ -1,3 +1,13 @@
+//! Adding to this namespace is considered deprecated.
+//!
+//! If the declaration truly came from C, it should be perfectly possible to
+//! translate the definition and put it in `c-headers-for-zig.h`, and available
+//! via the lowercase `c` namespace. Wrappers around functions should go in a
+//! more specific namespace, such as `bun.spawn`, `bun.strings` or `bun.sys`
+//!
+//! By avoiding manual transcription of C headers into Zig, we avoid bugs due to
+//! different definitions between platforms, as well as very common mistakes
+//! that can be made when porting definitions. It also keeps code much cleaner.
 const std = @import("std");
 const bun = @import("root").bun;
 const Environment = @import("./env.zig");
@@ -476,6 +486,15 @@ pub extern fn set_process_priority(pid: i32, priority: i32) i32;
 
 pub extern fn strncasecmp(s1: [*]const u8, s2: [*]const u8, n: usize) i32;
 pub extern fn memmove(dest: [*]u8, src: [*]const u8, n: usize) void;
+
+pub fn move(dest: []u8, src: []const u8) void {
+    if (comptime Environment.allow_assert) {
+        if (src.len != dest.len) {
+            bun.Output.panic("Move: src.len != dest.len, {d} != {d}", .{ src.len, dest.len });
+        }
+    }
+    memmove(dest.ptr, src.ptr, src.len);
+}
 
 // https://man7.org/linux/man-pages/man3/fmod.3.html
 pub extern fn fmod(f64, f64) f64;

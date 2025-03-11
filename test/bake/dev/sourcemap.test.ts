@@ -3,7 +3,7 @@
 // work because hmr-runtime is minified in release builds, which would affect
 // the generated line/column numbers across different build configurations.
 import { expect } from "bun:test";
-import { Dev, devTest, emptyHtmlFile, reactRefreshStub } from "../dev-server-harness";
+import { Dev, devTest, emptyHtmlFile } from "../bake-harness";
 import { BasicSourceMapConsumer, IndexedSourceMapConsumer, SourceMapConsumer } from "source-map";
 
 devTest("source map emitted for primary chunk", {
@@ -38,23 +38,23 @@ devTest("source map emitted for primary chunk", {
 });
 devTest("source map emitted for hmr chunk", {
   files: {
-    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
     "index.ts": `
-      import "react-refresh/runtime";
       import other from "./App";
       console.log("Hello, " + other + "!");
+      import.meta.hot.accept();
     `,
     "App.tsx": `
       console.log("some text here");
       export default "world";
+      import.meta.hot.accept();
     `,
   },
   async test(dev) {
     await using c = await dev.client("/", { storeHotChunks: true });
-    await dev.write("App.tsx", "// yay\nconsole.log('magic');");
+    await dev.write("App.tsx", "// yay\nconsole.log('magic');\nimport.meta.hot.accept();");
     const chunk = await c.getMostRecentHmrChunk();
     using sourceMap = await extractSourceMap(dev, chunk);
     expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)) //

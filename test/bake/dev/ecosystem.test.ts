@@ -3,7 +3,7 @@
 // discovered, but it easy and still a reasonable idea to just test the library
 // entirely.
 import { expect } from "bun:test";
-import { devTest } from "../dev-server-harness";
+import { devTest } from "../bake-harness";
 
 // Bugs discovered thanks to Svelte:
 // - Circular import situations
@@ -27,17 +27,16 @@ devTest("svelte component islands example", {
     await Bun.sleep(500); // TODO: de-flake event ordering.
     expect(await c.elemText("button")).toBe("Clicked 6 times");
 
-    // TODO: plugin watch
-    // await dev.patch("pages/index.svelte", {
-    //   find: "non-interactive",
-    //   replace: "awesome",
-    // });
+    await dev.patch("pages/index.svelte", {
+      find: "non-interactive",
+      replace: "awesome",
+    });
 
-    // const html2 = await dev.fetch("/").text();
-    // if (html2.includes("Bun__renderFallbackError")) throw new Error("failed");
+    const html2 = await dev.fetch("/").text();
+    if (html2.includes("Bun__renderFallbackError")) throw new Error("failed");
 
-    // // Expect SSR
-    // expect(html2).toContain(`<p>This is my svelte server component (awesome)</p> <p>Bun v${Bun.version}</p>`);
-    // expect(html2).toContain(`>This is a client component (interactive island)</p>`);
+    // Expect SSR
+    expect(html2).toContain(`<p>This is my svelte server component (awesome)</p> <p>Bun v${Bun.version}</p>`);
+    expect(html2).toContain(`>This is a client component (interactive island)</p>`);
   },
 });

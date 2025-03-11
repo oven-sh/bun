@@ -12,6 +12,8 @@
 }
 
 .root {
+  all: initial;
+  
   /* TODO: revive light theme error modal */
   /* color-scheme: light dark;
   --modal-bg: light-dark(#efefef, #202020);

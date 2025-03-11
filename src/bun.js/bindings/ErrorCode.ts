@@ -149,6 +149,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_INVALID_INFO_STATUS", RangeError],
   ["ERR_HTTP2_HEADERS_AFTER_RESPOND", Error],
   ["ERR_HTTP2_PUSH_DISABLED", Error],
+  ["ERR_HTTP2_MAX_PENDING_SETTINGS_ACK", Error],
   // AsyncHooks
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],

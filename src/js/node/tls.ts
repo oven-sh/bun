@@ -329,44 +329,44 @@ function TLSSocket(socket?, options?) {
 }
 $toClass(TLSSocket, "TLSSocket", NetSocket);
 
-TLSSocket.prototype._start = function () {
+TLSSocket.prototype._start = function _start() {
   // some frameworks uses this _start internal implementation is suposed to start TLS handshake/connect
   this.connect();
 };
 
-TLSSocket.prototype.getSession = function () {
+TLSSocket.prototype.getSession = function getSession() {
   return this._handle?.getSession?.();
 };
 
-TLSSocket.prototype.getEphemeralKeyInfo = function () {
+TLSSocket.prototype.getEphemeralKeyInfo = function getEphemeralKeyInfo() {
   return this._handle?.getEphemeralKeyInfo?.();
 };
 
-TLSSocket.prototype.getCipher = function () {
+TLSSocket.prototype.getCipher = function getCipher() {
   return this._handle?.getCipher?.();
 };
 
-TLSSocket.prototype.getSharedSigalgs = function () {
+TLSSocket.prototype.getSharedSigalgs = function getSharedSigalgs() {
   return this._handle?.getSharedSigalgs?.();
 };
 
-TLSSocket.prototype.getProtocol = function () {
+TLSSocket.prototype.getProtocol = function getProtocol() {
   return this._handle?.getTLSVersion?.();
 };
 
-TLSSocket.prototype.getFinished = function () {
+TLSSocket.prototype.getFinished = function getFinished() {
   return this._handle?.getTLSFinishedMessage?.() || undefined;
 };
 
-TLSSocket.prototype.getPeerFinished = function () {
+TLSSocket.prototype.getPeerFinished = function getPeerFinished() {
   return this._handle?.getTLSPeerFinishedMessage?.() || undefined;
 };
 
-TLSSocket.prototype.isSessionReused = function () {
+TLSSocket.prototype.isSessionReused = function isSessionReused() {
   return !!this[ksession];
 };
 
-TLSSocket.prototype.renegotiate = function (options, callback) {
+TLSSocket.prototype.renegotiate = function renegotiate(options, callback) {
   if (this[krenegotiationDisabled]) {
     // if renegotiation is disabled should emit error event in nextTick for nodejs compatibility
     const error = $ERR_TLS_RENEGOTIATION_DISABLED();
@@ -403,32 +403,32 @@ TLSSocket.prototype.renegotiate = function (options, callback) {
   }
 };
 
-TLSSocket.prototype.disableRenegotiation = function () {
+TLSSocket.prototype.disableRenegotiation = function disableRenegotiation() {
   this[krenegotiationDisabled] = true;
   // disable renegotiation on the socket
   return this._handle?.disableRenegotiation?.();
 };
 
-TLSSocket.prototype.getTLSTicket = function () {
+TLSSocket.prototype.getTLSTicket = function getTLSTicket() {
   return this._handle?.getTLSTicket?.();
 };
 
-TLSSocket.prototype.exportKeyingMaterial = function (length, label, context) {
+TLSSocket.prototype.exportKeyingMaterial = function exportKeyingMaterial(length, label, context) {
   if (context) {
     return this._handle?.exportKeyingMaterial?.(length, label, context);
   }
   return this._handle?.exportKeyingMaterial?.(length, label);
 };
 
-TLSSocket.prototype.setMaxSendFragment = function (size) {
+TLSSocket.prototype.setMaxSendFragment = function setMaxSendFragment(size) {
   return this._handle?.setMaxSendFragment?.(size) || false;
 };
 
-TLSSocket.prototype.enableTrace = function () {
+TLSSocket.prototype.enableTrace = function enableTrace() {
   // only for debug purposes so we just mock for now
 };
 
-TLSSocket.prototype.setServername = function (name) {
+TLSSocket.prototype.setServername = function setServername(name) {
   if (this.isServer) {
     throw $ERR_TLS_SNI_FROM_SERVER("Cannot issue SNI from a TLS server-side socket");
   }
@@ -437,13 +437,13 @@ TLSSocket.prototype.setServername = function (name) {
   this._handle?.setServername?.(name);
 };
 
-TLSSocket.prototype.setSession = function (session) {
+TLSSocket.prototype.setSession = function setSession(session) {
   this[ksession] = session;
   if (typeof session === "string") session = Buffer.from(session, "latin1");
   return this._handle?.setSession?.(session);
 };
 
-TLSSocket.prototype.getPeerCertificate = function (abbreviated) {
+TLSSocket.prototype.getPeerCertificate = function getPeerCertificate(abbreviated) {
   const cert =
     arguments.length < 1 ? this._handle?.getPeerCertificate?.() : this._handle?.getPeerCertificate?.(abbreviated);
   if (cert) {
@@ -451,7 +451,7 @@ TLSSocket.prototype.getPeerCertificate = function (abbreviated) {
   }
 };
 
-TLSSocket.prototype.getCertificate = function () {
+TLSSocket.prototype.getCertificate = function getCertificate() {
   // need to implement certificate on socket.zig
   const cert = this._handle?.getCertificate?.();
   if (cert) {
@@ -460,11 +460,11 @@ TLSSocket.prototype.getCertificate = function () {
   }
 };
 
-TLSSocket.prototype.getPeerX509Certificate = function () {
+TLSSocket.prototype.getPeerX509Certificate = function getPeerX509Certificate() {
   return this._handle?.getPeerX509Certificate?.();
 };
 
-TLSSocket.prototype.getX509Certificate = function () {
+TLSSocket.prototype.getX509Certificate = function getX509Certificate() {
   return this._handle?.getX509Certificate?.();
 };
 

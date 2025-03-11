@@ -22,6 +22,8 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSVerify* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject);
+    static void destroy(JSC::JSCell* cell);
+    ~JSVerify();
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     template<typename CellType, JSC::SubspaceAccess mode>

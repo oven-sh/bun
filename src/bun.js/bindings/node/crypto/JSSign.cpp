@@ -44,6 +44,17 @@ static const JSC::HashTableValue JSSignPrototypeTableValues[] = {
 
 // JSSign implementation
 const JSC::ClassInfo JSSign::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSign) };
+const JSC::ClassInfo JSSignPrototype::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignPrototype) };
+const JSC::ClassInfo JSSignConstructor::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignConstructor) };
+
+void JSSign::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSSign*>(cell)->~JSSign();
+}
+
+JSSign::~JSSign()
+{
+}
 
 JSSign::JSSign(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -81,7 +92,6 @@ JSC::GCClient::IsoSubspace* JSSign::subspaceFor(JSC::VM& vm)
 }
 
 // JSSignPrototype implementation
-const JSC::ClassInfo JSSignPrototype::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignPrototype) };
 
 JSSignPrototype::JSSignPrototype(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -110,7 +120,6 @@ JSC::Structure* JSSignPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObjec
 }
 
 // JSSignConstructor implementation
-const JSC::ClassInfo JSSignConstructor::s_info = { "Sign"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSignConstructor) };
 
 JSSignConstructor::JSSignConstructor(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure, callSign, constructSign)

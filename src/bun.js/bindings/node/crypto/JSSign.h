@@ -24,6 +24,9 @@ public:
     static JSSign* create(JSC::VM& vm, JSC::Structure* structure);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
+    static void destroy(JSC::JSCell* cell);
+    ~JSSign();
+
     template<typename CellType, JSC::SubspaceAccess mode>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
 

@@ -21,12 +21,17 @@ static const HashTableValue JSHmacPrototypeTableValues[] = {
 };
 
 const ClassInfo JSHmac::s_info = { "Hmac"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmac) };
-const ClassInfo JSHmacPrototype::s_info = { "HmacPrototype"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmacPrototype) };
-const ClassInfo JSHmacConstructor::s_info = { "HmacConstructor"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmacConstructor) };
+const ClassInfo JSHmacPrototype::s_info = { "Hmac"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmacPrototype) };
+const ClassInfo JSHmacConstructor::s_info = { "Hmac"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHmacConstructor) };
 
 JSHmac::JSHmac(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
 {
+}
+
+void JSHmac::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSHmac*>(cell)->~JSHmac();
 }
 
 JSHmac::~JSHmac()

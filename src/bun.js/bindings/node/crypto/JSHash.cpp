@@ -21,12 +21,17 @@ static const HashTableValue JSHashPrototypeTableValues[] = {
 };
 
 const ClassInfo JSHash::s_info = { "Hash"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHash) };
-const ClassInfo JSHashPrototype::s_info = { "HashPrototype"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHashPrototype) };
-const ClassInfo JSHashConstructor::s_info = { "HashConstructor"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHashConstructor) };
+const ClassInfo JSHashPrototype::s_info = { "Hash"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHashPrototype) };
+const ClassInfo JSHashConstructor::s_info = { "Hash"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSHashConstructor) };
 
 JSHash::JSHash(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
 {
+}
+
+void JSHash::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSHash*>(cell)->~JSHash();
 }
 
 JSHash::~JSHash()

@@ -23,6 +23,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     static JSHmac* create(JSC::VM& vm, JSC::Structure* structure);
+    static void destroy(JSC::JSCell* cell);
 
     DECLARE_INFO;
 

@@ -983,7 +983,7 @@ function cpSync(src, dest, options) {
     throw new TypeError("options must be an object");
   }
   if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    return require("../internal/fs/cp-sync")(src, dest, options);
+    return require("internal/fs/cp-sync")(src, dest, options);
   }
   return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
 }

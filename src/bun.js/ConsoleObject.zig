@@ -2610,7 +2610,7 @@ pub const Formatter = struct {
                     return try this.printAs(.Undefined, Writer, writer_, .undefined, .Cell, enable_ansi_colors);
                 } else if (value.as(JSC.API.Bun.Timer.TimeoutObject)) |timer| {
                     this.addForNewLine("Timeout(# ) ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
-                    if (timer.internals.kind == .setInterval) {
+                    if (timer.internals.flags.kind == .setInterval) {
                         this.addForNewLine("repeats ".len + bun.fmt.fastDigitCount(@as(u64, @intCast(@max(timer.internals.id, 0)))));
                         writer.print(comptime Output.prettyFmt("<r><blue>Timeout<r> <d>(#<yellow>{d}<r><d>, repeats)<r>", enable_ansi_colors), .{
                             timer.internals.id,

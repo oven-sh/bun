@@ -52,6 +52,17 @@ static const JSC::HashTableValue JSVerifyPrototypeTableValues[] = {
 
 // JSVerify implementation
 const JSC::ClassInfo JSVerify::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerify) };
+const JSC::ClassInfo JSVerifyPrototype::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerifyPrototype) };
+const JSC::ClassInfo JSVerifyConstructor::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerifyConstructor) };
+
+void JSVerify::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSVerify*>(cell)->~JSVerify();
+}
+
+JSVerify::~JSVerify()
+{
+}
 
 JSVerify::JSVerify(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -89,7 +100,6 @@ JSC::GCClient::IsoSubspace* JSVerify::subspaceFor(JSC::VM& vm)
 }
 
 // JSVerifyPrototype implementation
-const JSC::ClassInfo JSVerifyPrototype::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerifyPrototype) };
 
 JSVerifyPrototype::JSVerifyPrototype(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -116,7 +126,6 @@ JSC::Structure* JSVerifyPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObj
 }
 
 // JSVerifyConstructor implementation
-const JSC::ClassInfo JSVerifyConstructor::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerifyConstructor) };
 
 JSVerifyConstructor::JSVerifyConstructor(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure, callVerify, constructVerify)

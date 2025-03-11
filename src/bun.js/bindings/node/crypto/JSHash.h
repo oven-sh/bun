@@ -34,6 +34,8 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
+    static void destroy(JSC::JSCell* cell);
+
     JSHash(JSC::VM& vm, JSC::Structure* structure);
     ~JSHash();
 

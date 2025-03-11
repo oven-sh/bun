@@ -47,9 +47,10 @@ const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_U
 
 const {
   randomInt: _randomInt,
+  pbkdf2: _pbkdf2,
+  pbkdf2Sync: _pbkdf2Sync,
+  timingSafeEqual: _timingSafeEqual,
   randomUUID: _randomUUID,
-  pbkdf2: pbkdf2_,
-  pbkdf2Sync: pbkdf2Sync_,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { DiffieHellman: _DiffieHellman, DiffieHellmanGroup: _DiffieHellmanGroup } = $zig(
@@ -498,7 +499,7 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
     digest = undefined;
   }
 
-  const promise = pbkdf2_(password, salt, iterations, keylen, digest, callback);
+  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
     promise.then(
       result => callback(null, result),
@@ -511,7 +512,7 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 }
 
 function pbkdf2Sync(password, salt, iterations, keylen, digest) {
-  return pbkdf2Sync_(password, salt, iterations, keylen, digest);
+  return _pbkdf2Sync(password, salt, iterations, keylen, digest);
 }
 
 // node_modules/des.js/lib/des/utils.js
@@ -4051,6 +4052,465 @@ var require_brorand = __commonJS({
       var out = new Buffer(n);
       crypto.getRandomValues(out);
       return out;
+    };
+  },
+});
+
+// node_modules/miller-rabin/lib/mr.js
+var require_mr = __commonJS({
+  "node_modules/miller-rabin/lib/mr.js"(exports, module) {
+    var bn = require_bn2(),
+      brorand = require_brorand();
+    function MillerRabin(rand) {
+      this.rand = rand || new brorand.Rand();
+    }
+    module.exports = MillerRabin;
+    MillerRabin.create = function (rand) {
+      return new MillerRabin(rand);
+    };
+    MillerRabin.prototype = {};
+    MillerRabin.prototype._randbelow = function (n) {
+      var len = n.bitLength(),
+        min_bytes = Math.ceil(len / 8);
+      do var a = new bn(this.rand.generate(min_bytes));
+      while (a.cmp(n) >= 0);
+      return a;
+    };
+    MillerRabin.prototype._randrange = function (start, stop) {
+      var size = stop.sub(start);
+      return start.add(this._randbelow(size));
+    };
+    MillerRabin.prototype.test = function (n, k, cb) {
+      var len = n.bitLength(),
+        red = bn.mont(n),
+        rone = new bn(1).toRed(red);
+      k || (k = Math.max(1, (len / 48) | 0));
+      for (var n1 = n.subn(1), s = 0; !n1.testn(s); s++);
+      for (var d = n.shrn(s), rn1 = n1.toRed(red), prime = !0; k > 0; k--) {
+        var a = this._randrange(new bn(2), n1);
+        cb && cb(a);
+        var x = a.toRed(red).redPow(d);
+        if (!(x.cmp(rone) === 0 || x.cmp(rn1) === 0)) {
+          for (var i = 1; i < s; i++) {
+            if (((x = x.redSqr()), x.cmp(rone) === 0)) return !1;
+            if (x.cmp(rn1) === 0) break;
+          }
+          if (i === s) return !1;
+        }
+      }
+      return prime;
+    };
+    MillerRabin.prototype.getDivisor = function (n, k) {
+      var len = n.bitLength(),
+        red = bn.mont(n),
+        rone = new bn(1).toRed(red);
+      k || (k = Math.max(1, (len / 48) | 0));
+      for (var n1 = n.subn(1), s = 0; !n1.testn(s); s++);
+      for (var d = n.shrn(s), rn1 = n1.toRed(red); k > 0; k--) {
+        var a = this._randrange(new bn(2), n1),
+          g = n.gcd(a);
+        if (g.cmpn(1) !== 0) return g;
+        var x = a.toRed(red).redPow(d);
+        if (!(x.cmp(rone) === 0 || x.cmp(rn1) === 0)) {
+          for (var i = 1; i < s; i++) {
+            if (((x = x.redSqr()), x.cmp(rone) === 0)) return x.fromRed().subn(1).gcd(n);
+            if (x.cmp(rn1) === 0) break;
+          }
+          if (i === s) return (x = x.redSqr()), x.fromRed().subn(1).gcd(n);
+        }
+      }
+      return !1;
+    };
+  },
+});
+
+// node_modules/diffie-hellman/lib/generatePrime.js
+var require_generatePrime = __commonJS({
+  "node_modules/diffie-hellman/lib/generatePrime.js"(exports, module) {
+    var randomBytes = require_browser();
+    module.exports = findPrime;
+    findPrime.simpleSieve = simpleSieve;
+    findPrime.fermatTest = fermatTest;
+    var BN = require_bn(),
+      TWENTYFOUR = new BN(24),
+      MillerRabin = require_mr(),
+      millerRabin = new MillerRabin(),
+      ONE = new BN(1),
+      TWO = new BN(2),
+      FIVE = new BN(5),
+      SIXTEEN = new BN(16),
+      EIGHT = new BN(8),
+      TEN = new BN(10),
+      THREE = new BN(3),
+      SEVEN = new BN(7),
+      ELEVEN = new BN(11),
+      FOUR = new BN(4),
+      TWELVE = new BN(12),
+      primes = null;
+    function _getPrimes() {
+      if (primes !== null) return primes;
+      var limit = 1048576,
+        res = [];
+      res[0] = 2;
+      for (var i = 1, k = 3; k < limit; k += 2) {
+        for (var sqrt = Math.ceil(Math.sqrt(k)), j = 0; j < i && res[j] <= sqrt && k % res[j] !== 0; j++);
+        (i !== j && res[j] <= sqrt) || (res[i++] = k);
+      }
+      return (primes = res), res;
+    }
+    function simpleSieve(p) {
+      for (var primes2 = _getPrimes(), i = 0; i < primes2.length; i++)
+        if (p.modn(primes2[i]) === 0) return p.cmpn(primes2[i]) === 0;
+      return !0;
+    }
+    function fermatTest(p) {
+      var red = BN.mont(p);
+      return TWO.toRed(red).redPow(p.subn(1)).fromRed().cmpn(1) === 0;
+    }
+    function findPrime(bits, gen) {
+      if (bits < 16) return gen === 2 || gen === 5 ? new BN([140, 123]) : new BN([140, 39]);
+      gen = new BN(gen);
+      for (var num, n2; ; ) {
+        for (num = new BN(randomBytes(Math.ceil(bits / 8))); num.bitLength() > bits; ) num.ishrn(1);
+        if ((num.isEven() && num.iadd(ONE), num.testn(1) || num.iadd(TWO), gen.cmp(TWO))) {
+          if (!gen.cmp(FIVE)) for (; num.mod(TEN).cmp(THREE); ) num.iadd(FOUR);
+        } else for (; num.mod(TWENTYFOUR).cmp(ELEVEN); ) num.iadd(FOUR);
+        if (
+          ((n2 = num.shrn(1)),
+          simpleSieve(n2) &&
+            simpleSieve(num) &&
+            fermatTest(n2) &&
+            fermatTest(num) &&
+            millerRabin.test(n2) &&
+            millerRabin.test(num))
+        )
+          return num;
+      }
+    }
+  },
+});
+
+// node_modules/diffie-hellman/lib/primes.json
+var require_primes = __commonJS({
+  "node_modules/diffie-hellman/lib/primes.json"(exports, module) {
+    module.exports = {
+      modp1: {
+        gen: "02",
+        prime:
+          "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a63a3620ffffffffffffffff",
+      },
+      modp2: {
+        gen: "02",
+        prime:
+          "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece65381ffffffffffffffff",
+      },
+      modp5: {
+        gen: "02",
+        prime:
+          "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf0598da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb9ed529077096966d670c354e4abc9804f1746c08ca237327ffffffffffffffff",
+      },
+      modp14: {
+        gen: "02",
+        prime:
+          "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf0598da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3be39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf6955817183995497cea956ae515d2261898fa051015728e5a8aacaa68ffffffffffffffff",
+      },
+      modp15: {
+        gen: "02",
+        prime:
+          "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf0598da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3be39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf6955817183995497cea956ae515d2261898fa051015728e5a8aaac42dad33170d04507a33a85521abdf1cba64ecfb850458dbef0a8aea71575d060c7db3970f85a6e1e4c7abf5ae8cdb0933d71e8c94e04a25619dcee3d2261ad2ee6bf12ffa06d98a0864d87602733ec86a64521f2b18177b200cbbe117577a615d6c770988c0bad946e208e24fa074e5ab3143db5bfce0fd108e4b82d120a93ad2caffffffffffffffff",
+      },
+      modp16: {
+        gen: "02",
+        prime:
+          "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf0598da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3be39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf6955817183995497cea956ae515d2261898fa051015728e5a8aaac42dad33170d04507a33a85521abdf1cba64ecfb850458dbef0a8aea71575d060c7db3970f85a6e1e4c7abf5ae8cdb0933d71e8c94e04a25619dcee3d2261ad2ee6bf12ffa06d98a0864d87602733ec86a64521f2b18177b200cbbe117577a615d6c770988c0bad946e208e24fa074e5ab3143db5bfce0fd108e4b82d120a92108011a723c12a787e6d788719a10bdba5b2699c327186af4e23c1a946834b6150bda2583e9ca2ad44ce8dbbbc2db04de8ef92e8efc141fbecaa6287c59474e6bc05d99b2964fa090c3a2233ba186515be7ed1f612970cee2d7afb81bdd762170481cd0069127d5b05aa993b4ea988d8fddc186ffb7dc90a6c08f4df435c934063199ffffffffffffffff",
+      },
+      modp17: {
+        gen: "02",
+        prime:
+          "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf0598da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3be39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf6955817183995497cea956ae515d2261898fa051015728e5a8aaac42dad33170d04507a33a85521abdf1cba64ecfb850458dbef0a8aea71575d060c7db3970f85a6e1e4c7abf5ae8cdb0933d71e8c94e04a25619dcee3d2261ad2ee6bf12ffa06d98a0864d87602733ec86a64521f2b18177b200cbbe117577a615d6c770988c0bad946e208e24fa074e5ab3143db5bfce0fd108e4b82d120a92108011a723c12a787e6d788719a10bdba5b2699c327186af4e23c1a946834b6150bda2583e9ca2ad44ce8dbbbc2db04de8ef92e8efc141fbecaa6287c59474e6bc05d99b2964fa090c3a2233ba186515be7ed1f612970cee2d7afb81bdd762170481cd0069127d5b05aa993b4ea988d8fddc186ffb7dc90a6c08f4df435c93402849236c3fab4d27c7026c1d4dcb2602646dec9751e763dba37bdf8ff9406ad9e530ee5db382f413001aeb06a53ed9027d831179727b0865a8918da3edbebcf9b14ed44ce6cbaced4bb1bdb7f1447e6cc254b332051512bd7af426fb8f401378cd2bf5983ca01c64b92ecf032ea15d1721d03f482d7ce6e74fef6d55e702f46980c82b5a84031900b1c9e59e7c97fbec7e8f323a97a7e36cc88be0f1d45b7ff585ac54bd407b22b4154aacc8f6d7ebf48e1d814cc5ed20f8037e0a79715eef29be32806a1d58bb7c5da76f550aa3d8a1fbff0eb19ccb1a313d55cda56c9ec2ef29632387fe8d76e3c0468043e8f663f4860ee12bf2d5b0b7474d6e694f91e6dcc4024ffffffffffffffff",
+      },
+      modp18: {
+        gen: "02",
+        prime:
+          "ffffffffffffffffc90fdaa22168c234c4c6628b80dc1cd129024e088a67cc74020bbea63b139b22514a08798e3404ddef9519b3cd3a431b302b0a6df25f14374fe1356d6d51c245e485b576625e7ec6f44c42e9a637ed6b0bff5cb6f406b7edee386bfb5a899fa5ae9f24117c4b1fe649286651ece45b3dc2007cb8a163bf0598da48361c55d39a69163fa8fd24cf5f83655d23dca3ad961c62f356208552bb9ed529077096966d670c354e4abc9804f1746c08ca18217c32905e462e36ce3be39e772c180e86039b2783a2ec07a28fb5c55df06f4c52c9de2bcbf6955817183995497cea956ae515d2261898fa051015728e5a8aaac42dad33170d04507a33a85521abdf1cba64ecfb850458dbef0a8aea71575d060c7db3970f85a6e1e4c7abf5ae8cdb0933d71e8c94e04a25619dcee3d2261ad2ee6bf12ffa06d98a0864d87602733ec86a64521f2b18177b200cbbe117577a615d6c770988c0bad946e208e24fa074e5ab3143db5bfce0fd108e4b82d120a92108011a723c12a787e6d788719a10bdba5b2699c327186af4e23c1a946834b6150bda2583e9ca2ad44ce8dbbbc2db04de8ef92e8efc141fbecaa6287c59474e6bc05d99b2964fa090c3a2233ba186515be7ed1f612970cee2d7afb81bdd762170481cd0069127d5b05aa993b4ea988d8fddc186ffb7dc90a6c08f4df435c93402849236c3fab4d27c7026c1d4dcb2602646dec9751e763dba37bdf8ff9406ad9e530ee5db382f413001aeb06a53ed9027d831179727b0865a8918da3edbebcf9b14ed44ce6cbaced4bb1bdb7f1447e6cc254b332051512bd7af426fb8f401378cd2bf5983ca01c64b92ecf032ea15d1721d03f482d7ce6e74fef6d55e702f46980c82b5a84031900b1c9e59e7c97fbec7e8f323a97a7e36cc88be0f1d45b7ff585ac54bd407b22b4154aacc8f6d7ebf48e1d814cc5ed20f8037e0a79715eef29be32806a1d58bb7c5da76f550aa3d8a1fbff0eb19ccb1a313d55cda56c9ec2ef29632387fe8d76e3c0468043e8f663f4860ee12bf2d5b0b7474d6e694f91e6dbe115974a3926f12fee5e438777cb6a932df8cd8bec4d073b931ba3bc832b68d9dd300741fa7bf8afc47ed2576f6936ba424663aab639c5ae4f5683423b4742bf1c978238f16cbe39d652de3fdb8befc848ad922222e04a4037c0713eb57a81a23f0c73473fc646cea306b4bcbc8862f8385ddfa9d4b7fa2c087e879683303ed5bdd3a062b3cf5b3a278a66d2a13f83f44f82ddf310ee074ab6a364597e899a0255dc164f31cc50846851df9ab48195ded7ea1b1d510bd7ee74d73faf36bc31ecfa268359046f4eb879f924009438b481c6cd7889a002ed5ee382bc9190da6fc026e479558e4475677e9aa9e3050e2765694dfc81f56e880b96e7160c980dd98edd3dfffffffffffffffff",
+      },
+    };
+  },
+});
+
+// node_modules/diffie-hellman/lib/dh.js
+var require_dh = __commonJS({
+  "node_modules/diffie-hellman/lib/dh.js"(exports, module) {
+    var BN = require_bn(),
+      MillerRabin = require_mr(),
+      millerRabin = new MillerRabin(),
+      TWENTYFOUR = new BN(24),
+      ELEVEN = new BN(11),
+      TEN = new BN(10),
+      THREE = new BN(3),
+      SEVEN = new BN(7),
+      primes = require_generatePrime(),
+      randomBytes = require_browser();
+    module.exports = DH;
+    function setPublicKey(pub, enc) {
+      return (
+        (enc = enc || "utf8"), Buffer.isBuffer(pub) || (pub = new Buffer(pub, enc)), (this._pub = new BN(pub)), this
+      );
+    }
+    function setPrivateKey(priv, enc) {
+      return (
+        (enc = enc || "utf8"),
+        Buffer.isBuffer(priv) || (priv = new Buffer(priv, enc)),
+        (this._priv = new BN(priv)),
+        this
+      );
+    }
+    var primeCache = {};
+    function checkPrime(prime, generator) {
+      var gen = generator.toString("hex"),
+        hex = [gen, prime.toString(16)].join("_");
+      if (hex in primeCache) return primeCache[hex];
+      var error = 0;
+      if (prime.isEven() || !primes.simpleSieve || !primes.fermatTest(prime) || !millerRabin.test(prime))
+        return (
+          (error += 1), gen === "02" || gen === "05" ? (error += 8) : (error += 4), (primeCache[hex] = error), error
+        );
+      millerRabin.test(prime.shrn(1)) || (error += 2);
+      var rem;
+      switch (gen) {
+        case "02":
+          prime.mod(TWENTYFOUR).cmp(ELEVEN) && (error += 8);
+          break;
+        case "05":
+          (rem = prime.mod(TEN)), rem.cmp(THREE) && rem.cmp(SEVEN) && (error += 8);
+          break;
+        default:
+          error += 4;
+      }
+      return (primeCache[hex] = error), error;
+    }
+    function DH(prime, generator, malleable) {
+      this.setGenerator(generator),
+        (this.__prime = new BN(prime)),
+        (this._prime = BN.mont(this.__prime)),
+        (this._primeLen = prime.length),
+        (this._pub = void 0),
+        (this._priv = void 0),
+        (this._primeCode = void 0),
+        malleable ? ((this.setPublicKey = setPublicKey), (this.setPrivateKey = setPrivateKey)) : (this._primeCode = 8);
+    }
+    DH.prototype = {};
+    Object.defineProperty(DH.prototype, "verifyError", {
+      enumerable: !0,
+      get: function () {
+        return (
+          typeof this._primeCode != "number" && (this._primeCode = checkPrime(this.__prime, this.__gen)),
+          this._primeCode
+        );
+      },
+    });
+    DH.prototype.generateKeys = function () {
+      return (
+        this._priv || (this._priv = new BN(randomBytes(this._primeLen))),
+        (this._pub = this._gen.toRed(this._prime).redPow(this._priv).fromRed()),
+        this.getPublicKey()
+      );
+    };
+    DH.prototype.computeSecret = function (other) {
+      (other = new BN(other)), (other = other.toRed(this._prime));
+      var secret = other.redPow(this._priv).fromRed(),
+        out = new Buffer(secret.toArray()),
+        prime = this.getPrime();
+      if (out.length < prime.length) {
+        var front = new Buffer(prime.length - out.length);
+        front.fill(0), (out = Buffer.concat([front, out]));
+      }
+      return out;
+    };
+    DH.prototype.getPublicKey = function (enc) {
+      return formatReturnValue(this._pub, enc);
+    };
+    DH.prototype.getPrivateKey = function (enc) {
+      return formatReturnValue(this._priv, enc);
+    };
+    DH.prototype.getPrime = function (enc) {
+      return formatReturnValue(this.__prime, enc);
+    };
+    DH.prototype.getGenerator = function (enc) {
+      return formatReturnValue(this._gen, enc);
+    };
+    DH.prototype.setGenerator = function (gen, enc) {
+      return (
+        (enc = enc || "utf8"),
+        Buffer.isBuffer(gen) || (gen = new Buffer(gen, enc)),
+        (this.__gen = gen),
+        (this._gen = new BN(gen)),
+        this
+      );
+    };
+    function formatReturnValue(bn, enc) {
+      var buf = new Buffer(bn.toArray());
+      return enc ? buf.toString(enc) : buf;
+    }
+  },
+});
+
+// node_modules/diffie-hellman/browser.js
+var require_browser7 = __commonJS({
+  "node_modules/diffie-hellman/browser.js"(exports) {
+    var generatePrime = require_generatePrime(),
+      primes = require_primes(),
+      DH = require_dh();
+    function getDiffieHellman(mod) {
+      var prime = new Buffer(primes[mod].prime, "hex"),
+        gen = new Buffer(primes[mod].gen, "hex");
+      return new DH(prime, gen);
+    }
+    var ENCODINGS = {
+      binary: !0,
+      hex: !0,
+      base64: !0,
+    };
+    function createDiffieHellman(prime, enc, generator, genc) {
+      return Buffer.isBuffer(enc) || ENCODINGS[enc] === void 0
+        ? createDiffieHellman(prime, "binary", enc, generator)
+        : ((enc = enc || "binary"),
+          (genc = genc || "binary"),
+          (generator = generator || new Buffer([2])),
+          Buffer.isBuffer(generator) || (generator = new Buffer(generator, genc)),
+          typeof prime == "number"
+            ? new DH(generatePrime(prime, generator), generator, !0)
+            : (Buffer.isBuffer(prime) || (prime = new Buffer(prime, enc)), new DH(prime, generator, !0)));
+    }
+    exports.DiffieHellmanGroup = exports.createDiffieHellmanGroup = exports.getDiffieHellman = getDiffieHellman;
+    exports.createDiffieHellman = exports.DiffieHellman = createDiffieHellman;
+
+    // TODO: move entire function out of js in diffie-hellman pr
+    exports.diffieHellman = function diffieHellman(options) {
+      validateObject(options, "options");
+
+      const { privateKey, publicKey } = options;
+
+      if (!(privateKey instanceof KeyObject)) {
+        throw $ERR_INVALID_ARG_VALUE("options.privateKey", privateKey);
+      }
+
+      if (!(publicKey instanceof KeyObject)) {
+        throw $ERR_INVALID_ARG_VALUE("options.publicKey", publicKey);
+      }
+
+      if (privateKey.type !== "private") {
+        throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(privateKey.type, "private");
+      }
+
+      const publicKeyType = publicKey.type;
+      if (publicKeyType !== "public" && publicKeyType !== "private") {
+        throw $ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE(publicKeyType, "private or public");
+      }
+
+      const privateType = privateKey.asymmetricKeyType;
+      const publicType = publicKey.asymmetricKeyType;
+      if (privateType !== publicType || !["dh", "ec", "x448", "x25519"].includes(privateType)) {
+        throw $ERR_CRYPTO_INCOMPATIBLE_KEY(
+          `Incompatible key types for Diffie-Hellman: ${privateType} and ${publicType}`,
+        );
+      }
+
+      return statelessDH(privateKey.$bunNativePtr, publicKey.$bunNativePtr);
+    };
+  },
+});
+
+// node_modules/bn.js/lib/bn.js
+var require_bn3 = require_bn;
+
+// node_modules/browserify-rsa/index.js
+var require_browserify_rsa = __commonJS({
+  "node_modules/browserify-rsa/index.js"(exports, module) {
+    var BN = require_bn3(),
+      randomBytes = require_browser();
+    function blind(priv) {
+      var r = getr(priv),
+        blinder = r.toRed(BN.mont(priv.modulus)).redPow(new BN(priv.publicExponent)).fromRed();
+      return { blinder, unblinder: r.invm(priv.modulus) };
+    }
+    function getr(priv) {
+      var len = priv.modulus.byteLength(),
+        r;
+      do r = new BN(randomBytes(len));
+      while (r.cmp(priv.modulus) >= 0 || !r.umod(priv.prime1) || !r.umod(priv.prime2));
+      return r;
+    }
+    function crt(msg, priv) {
+      var blinds = blind(priv),
+        len = priv.modulus.byteLength(),
+        blinded = new BN(msg).mul(blinds.blinder).umod(priv.modulus),
+        c1 = blinded.toRed(BN.mont(priv.prime1)),
+        c2 = blinded.toRed(BN.mont(priv.prime2)),
+        qinv = priv.coefficient,
+        p = priv.prime1,
+        q = priv.prime2,
+        m1 = c1.redPow(priv.exponent1).fromRed(),
+        m2 = c2.redPow(priv.exponent2).fromRed(),
+        h = m1.isub(m2).imul(qinv).umod(p).imul(q);
+      return m2.iadd(h).imul(blinds.unblinder).umod(priv.modulus).toArrayLike(Buffer, "be", len);
+    }
+    crt.getr = getr;
+    module.exports = crt;
+  },
+});
+
+// node_modules/elliptic/package.json
+var require_package = __commonJS({
+  "node_modules/elliptic/package.json"(exports, module) {
+    module.exports = {
+      name: "elliptic",
+      version: "6.5.4",
+      description: "EC cryptography",
+      main: "lib/elliptic.js",
+      files: ["lib"],
+      scripts: {
+        lint: "eslint lib test",
+        "lint:fix": "npm run lint -- --fix",
+        unit: "istanbul test _mocha --reporter=spec test/index.js",
+        test: "npm run lint && npm run unit",
+        version: "grunt dist && git add dist/",
+      },
+      repository: {
+        type: "git",
+        url: "git@github.com:indutny/elliptic",
+      },
+      keywords: ["EC", "Elliptic", "curve", "Cryptography"],
+      author: "Fedor Indutny <fedor@indutny.com>",
+      license: "MIT",
+      bugs: {
+        url: "https://github.com/indutny/elliptic/issues",
+      },
+      homepage: "https://github.com/indutny/elliptic",
+      devDependencies: {
+        brfs: "^2.0.2",
+        coveralls: "^3.1.0",
+        eslint: "^7.6.0",
+        grunt: "^1.2.1",
+        "grunt-browserify": "^5.3.0",
+        "grunt-cli": "^1.3.2",
+        "grunt-contrib-connect": "^3.0.0",
+        "grunt-contrib-copy": "^1.0.0",
+        "grunt-contrib-uglify": "^5.0.0",
+        "grunt-mocha-istanbul": "^5.0.2",
+        "grunt-saucelabs": "^9.0.1",
+        istanbul: "^0.4.5",
+        mocha: "^8.0.1",
+      },
+      dependencies: {
+        "bn.js": "^4.11.9",
+        brorand: "^1.1.0",
+        "hash.js": "^1.0.0",
+        "hmac-drbg": "^1.0.1",
+        inherits: "^2.0.4",
+        "minimalistic-assert": "^1.0.1",
+        "minimalistic-crypto-utils": "^1.0.1",
+      },
     };
   },
 });
@@ -8146,17 +8606,6 @@ var crypto_exports = require_crypto_browserify2();
 
 var getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
-  timingSafeEqual =
-    "timingSafeEqual" in crypto
-      ? (a, b) => {
-          let { byteLength: byteLengthA } = a,
-            { byteLength: byteLengthB } = b;
-          if (typeof byteLengthA != "number" || typeof byteLengthB != "number")
-            throw new TypeError("Input must be an array buffer view");
-          if (byteLengthA !== byteLengthB) throw new RangeError("Input buffers must have the same length");
-          return crypto.timingSafeEqual(a, b);
-        }
-      : void 0,
   scryptSync =
     "scryptSync" in crypto
       ? (password, salt, keylen, options) => {
@@ -8181,16 +8630,14 @@ var getRandomValues = array => crypto.getRandomValues(array),
           }
         }
       : void 0;
-timingSafeEqual &&
-  (Object.defineProperty(timingSafeEqual, "name", {
-    value: "::bunternal::",
-  }),
+scrypt &&
   Object.defineProperty(scrypt, "name", {
     value: "::bunternal::",
   }),
-  Object.defineProperty(scryptSync, "name", {
-    value: "::bunternal::",
-  }));
+  scryptSync &&
+    Object.defineProperty(scryptSync, "name", {
+      value: "::bunternal::",
+    });
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it
@@ -8528,7 +8975,7 @@ crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
-crypto_exports.timingSafeEqual = timingSafeEqual;
+crypto_exports.timingSafeEqual = _timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;

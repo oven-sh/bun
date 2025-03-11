@@ -110,8 +110,6 @@ pub const ParseResult = struct {
     }
 };
 
-const cache_files = false;
-
 pub const PluginRunner = struct {
     global_object: *JSC.JSGlobalObject,
     allocator: std.mem.Allocator,
@@ -166,7 +164,7 @@ pub const PluginRunner = struct {
             return null;
         }
 
-        const file_path = path_value.toBunString(global);
+        const file_path = try path_value.toBunString(global);
         defer file_path.deref();
 
         if (file_path.length() == 0) {
@@ -198,7 +196,7 @@ pub const PluginRunner = struct {
                     return null;
                 }
 
-                const namespace_str = namespace_value.toBunString(global);
+                const namespace_str = try namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
                     namespace_str.deref();
                     break :brk bun.String.init("file");
@@ -262,7 +260,7 @@ pub const PluginRunner = struct {
             );
         }
 
-        const file_path = path_value.toBunString(global);
+        const file_path = try path_value.toBunString(global);
 
         if (file_path.length() == 0) {
             return JSC.ErrorableString.err(
@@ -291,7 +289,7 @@ pub const PluginRunner = struct {
                     );
                 }
 
-                const namespace_str = namespace_value.toBunString(global);
+                const namespace_str = try namespace_value.toBunString(global);
                 if (namespace_str.length() == 0) {
                     break :brk bun.String.static("file");
                 }
@@ -321,13 +319,10 @@ pub const PluginRunner = struct {
         defer user_namespace.deref();
 
         // Our super slow way of cloning the string into memory owned by JSC
-        const combined_string = std.fmt.allocPrint(
-            this.allocator,
-            "{any}:{any}",
-            .{ user_namespace, file_path },
-        ) catch unreachable;
+        const combined_string = std.fmt.allocPrint(this.allocator, "{any}:{any}", .{ user_namespace, file_path }) catch unreachable;
         var out_ = bun.String.init(combined_string);
-        const out = out_.toJS(this.global_object).toBunString(this.global_object);
+        const jsval = out_.toJS(this.global_object);
+        const out = jsval.toBunString(this.global_object) catch @panic("unreachable");
         this.allocator.free(combined_string);
         return JSC.ErrorableString.ok(out);
     }
@@ -360,7 +355,7 @@ pub const Transpiler = struct {
 
     macro_context: ?js_ast.Macro.MacroContext = null,
 
-    pub const isCacheEnabled = cache_files;
+    pub const isCacheEnabled = false;
 
     pub inline fn getPackageManager(this: *Transpiler) *PackageManager {
         return this.resolver.getPackageManager();
@@ -372,6 +367,7 @@ pub const Transpiler = struct {
         this.resolver.log = log;
     }
 
+    // TODO: remove this method. it does not make sense
     pub fn setAllocator(this: *Transpiler, allocator: std.mem.Allocator) void {
         this.allocator = allocator;
         this.linker.allocator = allocator;
@@ -670,7 +666,7 @@ pub const Transpiler = struct {
         };
 
         switch (loader) {
-            .jsx, .tsx, .js, .ts, .json, .toml, .text => {
+            .jsx, .tsx, .js, .ts, .json, .jsonc, .toml, .text => {
                 var result = transpiler.parse(
                     ParseOptions{
                         .allocator = transpiler.allocator,
@@ -749,21 +745,43 @@ pub const Transpiler = struct {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{s} reading \"{s}\"", .{ @errorName(err), file_path.pretty }) catch {};
                     return null;
                 };
-                var sheet = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(alloc, entry.contents, bun.css.ParserOptions.default(alloc, transpiler.log), null)) {
+                var opts = bun.css.ParserOptions.default(alloc, transpiler.log);
+                const css_module_suffix = ".module.css";
+                const enable_css_modules = file_path.text.len > css_module_suffix.len and
+                    strings.eqlComptime(file_path.text[file_path.text.len - css_module_suffix.len ..], css_module_suffix);
+                if (enable_css_modules) {
+                    opts.filename = bun.path.basename(file_path.text);
+                    opts.css_modules = bun.css.CssModuleConfig{};
+                }
+                var sheet, var extra = switch (bun.css.StyleSheet(bun.css.DefaultAtRule).parse(
+                    alloc,
+                    entry.contents,
+                    opts,
+                    null,
+                    // TODO: DO WE EVEN HAVE SOURCE INDEX IN THIS TRANSPILER.ZIG file??
+                    bun.bundle_v2.Index.invalid,
+                )) {
                     .result => |v| v,
                     .err => |e| {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} parsing", .{e}) catch unreachable;
                         return null;
                     },
                 };
-                if (sheet.minify(alloc, bun.css.MinifyOptions.default()).asErr()) |e| {
+                if (sheet.minify(alloc, bun.css.MinifyOptions.default(), &extra).asErr()) |e| {
                     transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while minifying", .{e.kind}) catch bun.outOfMemory();
                     return null;
                 }
-                const result = switch (sheet.toCss(alloc, bun.css.PrinterOptions{
-                    .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
-                    .minify = transpiler.options.minify_whitespace,
-                }, null)) {
+                const symbols = bun.JSAst.Symbol.Map{};
+                const result = switch (sheet.toCss(
+                    alloc,
+                    bun.css.PrinterOptions{
+                        .targets = bun.css.Targets.forBundlerTarget(transpiler.options.target),
+                        .minify = transpiler.options.minify_whitespace,
+                    },
+                    null,
+                    null,
+                    &symbols,
+                )) {
                     .result => |v| v,
                     .err => |e| {
                         transpiler.log.addErrorFmt(null, logger.Loc.Empty, transpiler.allocator, "{} while printing", .{e}) catch bun.outOfMemory();
@@ -829,6 +847,7 @@ pub const Transpiler = struct {
                     .transform_only = transpiler.options.transform_only,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                    .hmr_ref = ast.wrapper_ref,
                 },
                 enable_source_map,
             ),
@@ -853,6 +872,8 @@ pub const Transpiler = struct {
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
                     .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                    .hmr_ref = ast.wrapper_ref,
+                    .mangled_props = null,
                 },
                 enable_source_map,
             ),
@@ -887,6 +908,8 @@ pub const Transpiler = struct {
                         .runtime_transpiler_cache = runtime_transpiler_cache,
                         .target = transpiler.options.target,
                         .print_dce_annotations = transpiler.options.emit_dce_annotations,
+                        .hmr_ref = ast.wrapper_ref,
+                        .mangled_props = null,
                     },
                     enable_source_map,
                 ),
@@ -1188,14 +1211,13 @@ pub const Transpiler = struct {
                 };
             },
             // TODO: use lazy export AST
-            inline .toml, .json => |kind| {
-                var expr = if (kind == .json)
+            inline .toml, .json, .jsonc => |kind| {
+                var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-                    if (source.path.isJSONCFile())
-                        JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
-                    else
-                        JSON.parse(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
+                else if (kind == .json)
+                    JSON.parse(&source, transpiler.log, allocator, false) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, transpiler.log, allocator, false) catch return null
                 else
@@ -1272,6 +1294,7 @@ pub const Transpiler = struct {
                                 js_ast.S.ExportClause,
                                 js_ast.S.ExportClause{
                                     .items = export_clauses[0..count],
+                                    .is_single_line = false,
                                 },
                                 logger.Loc{
                                     .start = 0,

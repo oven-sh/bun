@@ -1,11 +1,12 @@
 // Hardcoded module "node:crypto"
-var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 const StreamModule = require("node:stream");
 const BufferModule = require("node:buffer");
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const StringPrototypeToLowerCase = String.prototype.toLowerCase;
+const LazyTransform = require("internal/streams/lazy_transform");
 const { CryptoHasher } = Bun;
+
 const {
   symmetricKeySize,
   asymmetricKeyDetails,
@@ -17,8 +18,6 @@ const {
   createPrivateKey,
   generateKeySync,
   generateKeyPairSync,
-  sign: nativeSign,
-  verify: nativeVerify,
   publicEncrypt,
   privateDecrypt,
   privateEncrypt,
@@ -35,6 +34,12 @@ const {
   certExportChallenge,
   getCiphers,
   _getCipherInfo,
+  Sign: _Sign,
+  sign,
+  Verify: _Verify,
+  verify,
+  Hmac: _Hmac,
+  Hash: _Hash,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
@@ -42,11 +47,15 @@ const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_U
 
 const {
   randomInt: _randomInt,
-  pbkdf2: pbkdf2_,
-  pbkdf2Sync: pbkdf2Sync_,
+  pbkdf2: _pbkdf2,
+  pbkdf2Sync: _pbkdf2Sync,
+  timingSafeEqual: _timingSafeEqual,
+  randomUUID: _randomUUID,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString, validateInt32 } = require("internal/validators");
+
+const kHandle = Symbol("kHandle");
 
 function verifySpkac(spkac, encoding) {
   return certVerifySpkac(getArrayBufferOrView(spkac, "spkac", encoding));
@@ -59,7 +68,7 @@ function exportChallenge(spkac, encoding) {
 }
 
 function Certificate(): void {
-  if (!(this instanceof Certificate)) {
+  if (!new.target) {
     return new Certificate();
   }
 
@@ -71,53 +80,6 @@ Certificate.prototype = {};
 Certificate.verifySpkac = verifySpkac;
 Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;
-
-let bunAlgorithmMap: Map<string, string>;
-function normalizeAlgorithmName(alg: string) {
-  if (!bunAlgorithmMap) {
-    // This list should be kept roughly in sync with the ComptimeStringMap used
-    // in Bun.CryptoHasher
-    bunAlgorithmMap = new Map([
-      ["blake2b256", "blake2b256"],
-      ["blake2b512", "blake2b512"],
-
-      // this JS code expects rmd160
-      // so we for now normalize to that instead.
-      ["ripemd160", "rmd160"],
-      ["rmd160", "rmd160"],
-      ["md4", "md4"],
-      ["md5", "md5"],
-      ["sha1", "sha1"],
-      ["sha128", "sha1"],
-      ["sha224", "sha224"],
-      ["sha256", "sha256"],
-      ["sha384", "sha384"],
-      ["sha512", "sha512"],
-      ["sha-1", "sha1"],
-      ["sha-224", "sha224"],
-      ["sha-256", "sha256"],
-      ["sha-384", "sha384"],
-      ["sha-512", "sha512"],
-      ["sha-512/224", "sha512-224"],
-      ["sha-512_224", "sha512-224"],
-      ["sha-512224", "sha512-224"],
-      ["sha512-224", "sha512-224"],
-      ["sha-512/256", "sha512-256"],
-      ["sha-512_256", "sha512-256"],
-      ["sha-512256", "sha512-256"],
-      ["sha512-256", "sha512-256"],
-      ["sha384", "sha384"],
-      ["sha3-224", "sha3-224"],
-      ["sha3-256", "sha3-256"],
-      ["sha3-384", "sha3-384"],
-      ["sha3-512", "sha3-512"],
-      ["shake128", "shake128"],
-      ["shake256", "shake256"],
-    ]);
-  }
-
-  return bunAlgorithmMap.get((alg = alg?.toLowerCase?.())) || alg;
-}
 
 function getCipherInfo(nameOrNid, options) {
   if (typeof nameOrNid !== "string" && typeof nameOrNid !== "number") {
@@ -165,22 +127,7 @@ function exportIfKeyObject(key) {
   }
   return key;
 }
-function getKeyFrom(key, type) {
-  if (key instanceof KeyObject) {
-    key = key.export();
-  } else if (key instanceof CryptoKey) {
-    key = KeyObject.from(key).export();
-  } else if (!Buffer.isBuffer(key) && typeof key === "object") {
-    if ((typeof key.format === "string" || typeof key.passphrase === "string") && typeof key.key !== "undefined") {
-      key = type === "public" ? _createPublicKey(key).export() : _createPrivateKey(key).export();
-    }
-  } else if (typeof key === "string" && type === "public") {
-    // make public key from non encrypted private PEM
-    key.indexOf("PRIVATE KEY-----") !== -1 && (key = _createPublicKey(key).export());
-  }
-  return key;
-}
-function getArrayBufferOrView(buffer, name, encoding) {
+function getArrayBufferOrView(buffer, name, encoding?) {
   if (buffer instanceof KeyObject) {
     if (buffer.type !== "secret") {
       const error = new TypeError(
@@ -214,9 +161,6 @@ var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
   function () {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
-var __export = (target, all) => {
-  for (var name in all) __defProp(target, name, { get: all[name], enumerable: !0 });
-};
 
 // node_modules/safe-buffer/index.js
 var require_safe_buffer = __commonJS({
@@ -304,928 +248,6 @@ var require_inherits_browser = __commonJS({
   },
 });
 
-// node_modules/hash-base/index.js
-var require_hash_base = __commonJS({
-  "node_modules/hash-base/index.js"(exports, module) {
-    "use strict";
-    var Buffer2 = require_safe_buffer().Buffer,
-      inherits = require_inherits_browser();
-    function throwIfNotStringOrBuffer(val, prefix) {
-      if (!Buffer2.isBuffer(val) && typeof val != "string")
-        throw new TypeError(prefix + " must be a string or a buffer");
-    }
-    function HashBase(blockSize) {
-      StreamModule.Transform.$call(this),
-        (this._block = Buffer2.allocUnsafe(blockSize)),
-        (this._blockSize = blockSize),
-        (this._blockOffset = 0),
-        (this._length = [0, 0, 0, 0]),
-        (this._finalized = !1);
-    }
-    inherits(HashBase, StreamModule.Transform);
-    HashBase.prototype._transform = function (chunk, encoding, callback) {
-      var error = null;
-      try {
-        this.update(chunk, encoding);
-      } catch (err) {
-        error = err;
-      }
-      callback(error);
-    };
-    HashBase.prototype._flush = function (callback) {
-      var error = null;
-      try {
-        this.push(this.digest());
-      } catch (err) {
-        error = err;
-      }
-      callback(error);
-    };
-    HashBase.prototype.update = function (data, encoding) {
-      if ((throwIfNotStringOrBuffer(data, "Data"), this._finalized)) throw new Error("Digest already called");
-      Buffer2.isBuffer(data) || (data = Buffer2.from(data, encoding));
-      for (var block = this._block, offset = 0; this._blockOffset + data.length - offset >= this._blockSize; ) {
-        for (var i = this._blockOffset; i < this._blockSize; ) block[i++] = data[offset++];
-        this._update(), (this._blockOffset = 0);
-      }
-      for (; offset < data.length; ) block[this._blockOffset++] = data[offset++];
-      for (var j = 0, carry = data.length * 8; carry > 0; ++j)
-        (this._length[j] += carry),
-          (carry = (this._length[j] / 4294967296) | 0),
-          carry > 0 && (this._length[j] -= 4294967296 * carry);
-      return this;
-    };
-    HashBase.prototype._update = function () {
-      throw new Error("_update is not implemented");
-    };
-    HashBase.prototype.digest = function (encoding) {
-      if (this._finalized) throw new Error("Digest already called");
-      this._finalized = !0;
-      var digest = this._digest();
-      encoding !== void 0 && (digest = digest.toString(encoding)), this._block.fill(0), (this._blockOffset = 0);
-      for (var i = 0; i < 4; ++i) this._length[i] = 0;
-      return digest;
-    };
-    HashBase.prototype._digest = function () {
-      throw new Error("_digest is not implemented");
-    };
-    module.exports = HashBase;
-  },
-});
-
-// node_modules/md5.js/index.js
-var require_md5 = __commonJS({
-  "node_modules/md5.js/index.js"(exports, module) {
-    "use strict";
-    var inherits = require_inherits_browser(),
-      HashBase = require_hash_base(),
-      Buffer2 = require_safe_buffer().Buffer,
-      ARRAY16 = new Array(16);
-    function MD5() {
-      HashBase.$call(this, 64),
-        (this._a = 1732584193),
-        (this._b = 4023233417),
-        (this._c = 2562383102),
-        (this._d = 271733878);
-    }
-    inherits(MD5, HashBase);
-    MD5.prototype._update = function () {
-      for (var M = ARRAY16, i = 0; i < 16; ++i) M[i] = this._block.readInt32LE(i * 4);
-      var a = this._a,
-        b = this._b,
-        c = this._c,
-        d = this._d;
-      (a = fnF(a, b, c, d, M[0], 3614090360, 7)),
-        (d = fnF(d, a, b, c, M[1], 3905402710, 12)),
-        (c = fnF(c, d, a, b, M[2], 606105819, 17)),
-        (b = fnF(b, c, d, a, M[3], 3250441966, 22)),
-        (a = fnF(a, b, c, d, M[4], 4118548399, 7)),
-        (d = fnF(d, a, b, c, M[5], 1200080426, 12)),
-        (c = fnF(c, d, a, b, M[6], 2821735955, 17)),
-        (b = fnF(b, c, d, a, M[7], 4249261313, 22)),
-        (a = fnF(a, b, c, d, M[8], 1770035416, 7)),
-        (d = fnF(d, a, b, c, M[9], 2336552879, 12)),
-        (c = fnF(c, d, a, b, M[10], 4294925233, 17)),
-        (b = fnF(b, c, d, a, M[11], 2304563134, 22)),
-        (a = fnF(a, b, c, d, M[12], 1804603682, 7)),
-        (d = fnF(d, a, b, c, M[13], 4254626195, 12)),
-        (c = fnF(c, d, a, b, M[14], 2792965006, 17)),
-        (b = fnF(b, c, d, a, M[15], 1236535329, 22)),
-        (a = fnG(a, b, c, d, M[1], 4129170786, 5)),
-        (d = fnG(d, a, b, c, M[6], 3225465664, 9)),
-        (c = fnG(c, d, a, b, M[11], 643717713, 14)),
-        (b = fnG(b, c, d, a, M[0], 3921069994, 20)),
-        (a = fnG(a, b, c, d, M[5], 3593408605, 5)),
-        (d = fnG(d, a, b, c, M[10], 38016083, 9)),
-        (c = fnG(c, d, a, b, M[15], 3634488961, 14)),
-        (b = fnG(b, c, d, a, M[4], 3889429448, 20)),
-        (a = fnG(a, b, c, d, M[9], 568446438, 5)),
-        (d = fnG(d, a, b, c, M[14], 3275163606, 9)),
-        (c = fnG(c, d, a, b, M[3], 4107603335, 14)),
-        (b = fnG(b, c, d, a, M[8], 1163531501, 20)),
-        (a = fnG(a, b, c, d, M[13], 2850285829, 5)),
-        (d = fnG(d, a, b, c, M[2], 4243563512, 9)),
-        (c = fnG(c, d, a, b, M[7], 1735328473, 14)),
-        (b = fnG(b, c, d, a, M[12], 2368359562, 20)),
-        (a = fnH(a, b, c, d, M[5], 4294588738, 4)),
-        (d = fnH(d, a, b, c, M[8], 2272392833, 11)),
-        (c = fnH(c, d, a, b, M[11], 1839030562, 16)),
-        (b = fnH(b, c, d, a, M[14], 4259657740, 23)),
-        (a = fnH(a, b, c, d, M[1], 2763975236, 4)),
-        (d = fnH(d, a, b, c, M[4], 1272893353, 11)),
-        (c = fnH(c, d, a, b, M[7], 4139469664, 16)),
-        (b = fnH(b, c, d, a, M[10], 3200236656, 23)),
-        (a = fnH(a, b, c, d, M[13], 681279174, 4)),
-        (d = fnH(d, a, b, c, M[0], 3936430074, 11)),
-        (c = fnH(c, d, a, b, M[3], 3572445317, 16)),
-        (b = fnH(b, c, d, a, M[6], 76029189, 23)),
-        (a = fnH(a, b, c, d, M[9], 3654602809, 4)),
-        (d = fnH(d, a, b, c, M[12], 3873151461, 11)),
-        (c = fnH(c, d, a, b, M[15], 530742520, 16)),
-        (b = fnH(b, c, d, a, M[2], 3299628645, 23)),
-        (a = fnI(a, b, c, d, M[0], 4096336452, 6)),
-        (d = fnI(d, a, b, c, M[7], 1126891415, 10)),
-        (c = fnI(c, d, a, b, M[14], 2878612391, 15)),
-        (b = fnI(b, c, d, a, M[5], 4237533241, 21)),
-        (a = fnI(a, b, c, d, M[12], 1700485571, 6)),
-        (d = fnI(d, a, b, c, M[3], 2399980690, 10)),
-        (c = fnI(c, d, a, b, M[10], 4293915773, 15)),
-        (b = fnI(b, c, d, a, M[1], 2240044497, 21)),
-        (a = fnI(a, b, c, d, M[8], 1873313359, 6)),
-        (d = fnI(d, a, b, c, M[15], 4264355552, 10)),
-        (c = fnI(c, d, a, b, M[6], 2734768916, 15)),
-        (b = fnI(b, c, d, a, M[13], 1309151649, 21)),
-        (a = fnI(a, b, c, d, M[4], 4149444226, 6)),
-        (d = fnI(d, a, b, c, M[11], 3174756917, 10)),
-        (c = fnI(c, d, a, b, M[2], 718787259, 15)),
-        (b = fnI(b, c, d, a, M[9], 3951481745, 21)),
-        (this._a = (this._a + a) | 0),
-        (this._b = (this._b + b) | 0),
-        (this._c = (this._c + c) | 0),
-        (this._d = (this._d + d) | 0);
-    };
-    MD5.prototype._digest = function () {
-      (this._block[this._blockOffset++] = 128),
-        this._blockOffset > 56 && (this._block.fill(0, this._blockOffset, 64), this._update(), (this._blockOffset = 0)),
-        this._block.fill(0, this._blockOffset, 56),
-        this._block.writeUInt32LE(this._length[0], 56),
-        this._block.writeUInt32LE(this._length[1], 60),
-        this._update();
-      var buffer = Buffer2.allocUnsafe(16);
-      return (
-        buffer.writeInt32LE(this._a, 0),
-        buffer.writeInt32LE(this._b, 4),
-        buffer.writeInt32LE(this._c, 8),
-        buffer.writeInt32LE(this._d, 12),
-        buffer
-      );
-    };
-    function rotl(x, n) {
-      return (x << n) | (x >>> (32 - n));
-    }
-    function fnF(a, b, c, d, m, k, s) {
-      return (rotl((a + ((b & c) | (~b & d)) + m + k) | 0, s) + b) | 0;
-    }
-    function fnG(a, b, c, d, m, k, s) {
-      return (rotl((a + ((b & d) | (c & ~d)) + m + k) | 0, s) + b) | 0;
-    }
-    function fnH(a, b, c, d, m, k, s) {
-      return (rotl((a + (b ^ c ^ d) + m + k) | 0, s) + b) | 0;
-    }
-    function fnI(a, b, c, d, m, k, s) {
-      return (rotl((a + (c ^ (b | ~d)) + m + k) | 0, s) + b) | 0;
-    }
-    module.exports = MD5;
-  },
-});
-
-// node_modules/ripemd160/index.js
-var require_ripemd160 = __commonJS({
-  "node_modules/ripemd160/index.js"(exports, module) {
-    "use strict";
-    var Buffer2 = Buffer,
-      inherits = require_inherits_browser(),
-      HashBase = require_hash_base(),
-      ARRAY16 = new Array(16),
-      zl = [
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 7, 4, 13, 1, 10, 6, 15, 3, 12, 0, 9, 5, 2, 14, 11, 8, 3,
-        10, 14, 4, 9, 15, 8, 1, 2, 7, 0, 6, 13, 11, 5, 12, 1, 9, 11, 10, 0, 8, 12, 4, 13, 3, 7, 15, 14, 5, 6, 2, 4, 0,
-        5, 9, 7, 12, 2, 10, 14, 1, 3, 8, 11, 6, 15, 13,
-      ],
-      zr = [
-        5, 14, 7, 0, 9, 2, 11, 4, 13, 6, 15, 8, 1, 10, 3, 12, 6, 11, 3, 7, 0, 13, 5, 10, 14, 15, 8, 12, 4, 9, 1, 2, 15,
-        5, 1, 3, 7, 14, 6, 9, 11, 8, 12, 2, 10, 0, 4, 13, 8, 6, 4, 1, 3, 11, 15, 0, 5, 12, 2, 13, 9, 7, 10, 14, 12, 15,
-        10, 4, 1, 5, 8, 7, 6, 2, 13, 14, 0, 3, 9, 11,
-      ],
-      sl = [
-        11, 14, 15, 12, 5, 8, 7, 9, 11, 13, 14, 15, 6, 7, 9, 8, 7, 6, 8, 13, 11, 9, 7, 15, 7, 12, 15, 9, 11, 7, 13, 12,
-        11, 13, 6, 7, 14, 9, 13, 15, 14, 8, 13, 6, 5, 12, 7, 5, 11, 12, 14, 15, 14, 15, 9, 8, 9, 14, 5, 6, 8, 6, 5, 12,
-        9, 15, 5, 11, 6, 8, 13, 12, 5, 12, 13, 14, 11, 8, 5, 6,
-      ],
-      sr = [
-        8, 9, 9, 11, 13, 15, 15, 5, 7, 7, 8, 11, 14, 14, 12, 6, 9, 13, 15, 7, 12, 8, 9, 11, 7, 7, 12, 7, 6, 15, 13, 11,
-        9, 7, 15, 11, 8, 6, 6, 14, 12, 13, 5, 14, 13, 13, 7, 5, 15, 5, 8, 11, 14, 14, 6, 14, 6, 9, 12, 9, 12, 5, 15, 8,
-        8, 5, 12, 9, 12, 5, 14, 6, 8, 13, 6, 5, 15, 13, 11, 11,
-      ],
-      hl = [0, 1518500249, 1859775393, 2400959708, 2840853838],
-      hr = [1352829926, 1548603684, 1836072691, 2053994217, 0];
-    function RIPEMD160() {
-      HashBase.$call(this, 64),
-        (this._a = 1732584193),
-        (this._b = 4023233417),
-        (this._c = 2562383102),
-        (this._d = 271733878),
-        (this._e = 3285377520);
-    }
-    inherits(RIPEMD160, HashBase);
-    RIPEMD160.prototype._update = function () {
-      for (var words = ARRAY16, j = 0; j < 16; ++j) words[j] = this._block.readInt32LE(j * 4);
-      for (
-        var al = this._a | 0,
-          bl = this._b | 0,
-          cl = this._c | 0,
-          dl = this._d | 0,
-          el = this._e | 0,
-          ar = this._a | 0,
-          br = this._b | 0,
-          cr = this._c | 0,
-          dr = this._d | 0,
-          er = this._e | 0,
-          i = 0;
-        i < 80;
-        i += 1
-      ) {
-        var tl, tr;
-        i < 16
-          ? ((tl = fn1(al, bl, cl, dl, el, words[zl[i]], hl[0], sl[i])),
-            (tr = fn5(ar, br, cr, dr, er, words[zr[i]], hr[0], sr[i])))
-          : i < 32
-            ? ((tl = fn2(al, bl, cl, dl, el, words[zl[i]], hl[1], sl[i])),
-              (tr = fn4(ar, br, cr, dr, er, words[zr[i]], hr[1], sr[i])))
-            : i < 48
-              ? ((tl = fn3(al, bl, cl, dl, el, words[zl[i]], hl[2], sl[i])),
-                (tr = fn3(ar, br, cr, dr, er, words[zr[i]], hr[2], sr[i])))
-              : i < 64
-                ? ((tl = fn4(al, bl, cl, dl, el, words[zl[i]], hl[3], sl[i])),
-                  (tr = fn2(ar, br, cr, dr, er, words[zr[i]], hr[3], sr[i])))
-                : ((tl = fn5(al, bl, cl, dl, el, words[zl[i]], hl[4], sl[i])),
-                  (tr = fn1(ar, br, cr, dr, er, words[zr[i]], hr[4], sr[i]))),
-          (al = el),
-          (el = dl),
-          (dl = rotl(cl, 10)),
-          (cl = bl),
-          (bl = tl),
-          (ar = er),
-          (er = dr),
-          (dr = rotl(cr, 10)),
-          (cr = br),
-          (br = tr);
-      }
-      var t = (this._b + cl + dr) | 0;
-      (this._b = (this._c + dl + er) | 0),
-        (this._c = (this._d + el + ar) | 0),
-        (this._d = (this._e + al + br) | 0),
-        (this._e = (this._a + bl + cr) | 0),
-        (this._a = t);
-    };
-    RIPEMD160.prototype._digest = function () {
-      (this._block[this._blockOffset++] = 128),
-        this._blockOffset > 56 && (this._block.fill(0, this._blockOffset, 64), this._update(), (this._blockOffset = 0)),
-        this._block.fill(0, this._blockOffset, 56),
-        this._block.writeUInt32LE(this._length[0], 56),
-        this._block.writeUInt32LE(this._length[1], 60),
-        this._update();
-      var buffer = Buffer2.alloc ? Buffer2.alloc(20) : new Buffer2(20);
-      return (
-        buffer.writeInt32LE(this._a, 0),
-        buffer.writeInt32LE(this._b, 4),
-        buffer.writeInt32LE(this._c, 8),
-        buffer.writeInt32LE(this._d, 12),
-        buffer.writeInt32LE(this._e, 16),
-        buffer
-      );
-    };
-    function rotl(x, n) {
-      return (x << n) | (x >>> (32 - n));
-    }
-    function fn1(a, b, c, d, e, m, k, s) {
-      return (rotl((a + (b ^ c ^ d) + m + k) | 0, s) + e) | 0;
-    }
-    function fn2(a, b, c, d, e, m, k, s) {
-      return (rotl((a + ((b & c) | (~b & d)) + m + k) | 0, s) + e) | 0;
-    }
-    function fn3(a, b, c, d, e, m, k, s) {
-      return (rotl((a + ((b | ~c) ^ d) + m + k) | 0, s) + e) | 0;
-    }
-    function fn4(a, b, c, d, e, m, k, s) {
-      return (rotl((a + ((b & d) | (c & ~d)) + m + k) | 0, s) + e) | 0;
-    }
-    function fn5(a, b, c, d, e, m, k, s) {
-      return (rotl((a + (b ^ (c | ~d)) + m + k) | 0, s) + e) | 0;
-    }
-    module.exports = RIPEMD160;
-  },
-});
-
-// node_modules/sha.js/hash.js
-var require_hash = __commonJS({
-  "node_modules/sha.js/hash.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer;
-    function Hash(blockSize, finalSize) {
-      (this._block = Buffer2.alloc(blockSize)),
-        (this._finalSize = finalSize),
-        (this._blockSize = blockSize),
-        (this._len = 0);
-    }
-    Hash.prototype = {};
-    Hash.prototype.update = function (data, enc) {
-      typeof data == "string" && ((enc = enc || "utf8"), (data = Buffer2.from(data, enc)));
-      for (
-        var block = this._block, blockSize = this._blockSize, length = data.length, accum = this._len, offset = 0;
-        offset < length;
-
-      ) {
-        for (
-          var assigned = accum % blockSize, remainder = Math.min(length - offset, blockSize - assigned), i = 0;
-          i < remainder;
-          i++
-        )
-          block[assigned + i] = data[offset + i];
-        (accum += remainder), (offset += remainder), accum % blockSize === 0 && this._update(block);
-      }
-      return (this._len += length), this;
-    };
-    Hash.prototype.digest = function (enc) {
-      var rem = this._len % this._blockSize;
-      (this._block[rem] = 128),
-        this._block.fill(0, rem + 1),
-        rem >= this._finalSize && (this._update(this._block), this._block.fill(0));
-      var bits = this._len * 8;
-      if (bits <= 4294967295) this._block.writeUInt32BE(bits, this._blockSize - 4);
-      else {
-        var lowBits = (bits & 4294967295) >>> 0,
-          highBits = (bits - lowBits) / 4294967296;
-        this._block.writeUInt32BE(highBits, this._blockSize - 8),
-          this._block.writeUInt32BE(lowBits, this._blockSize - 4);
-      }
-      this._update(this._block);
-      var hash = this._hash();
-      return enc ? hash.toString(enc) : hash;
-    };
-    Hash.prototype._update = function () {
-      throw new Error("_update must be implemented by subclass");
-    };
-    module.exports = Hash;
-  },
-});
-
-// node_modules/sha.js/sha.js
-var require_sha = __commonJS({
-  "node_modules/sha.js/sha.js"(exports, module) {
-    var inherits = require_inherits_browser(),
-      Hash = require_hash(),
-      Buffer2 = require_safe_buffer().Buffer,
-      K = [1518500249, 1859775393, -1894007588, -899497514],
-      W = new Array(80);
-    function Sha() {
-      this.init(), (this._w = W), Hash.$call(this, 64, 56);
-    }
-    inherits(Sha, Hash);
-    Sha.prototype.init = function () {
-      return (
-        (this._a = 1732584193),
-        (this._b = 4023233417),
-        (this._c = 2562383102),
-        (this._d = 271733878),
-        (this._e = 3285377520),
-        this
-      );
-    };
-    function rotl5(num) {
-      return (num << 5) | (num >>> 27);
-    }
-    function rotl30(num) {
-      return (num << 30) | (num >>> 2);
-    }
-    function ft(s, b, c, d) {
-      return s === 0 ? (b & c) | (~b & d) : s === 2 ? (b & c) | (b & d) | (c & d) : b ^ c ^ d;
-    }
-    Sha.prototype._update = function (M) {
-      for (
-        var W2 = this._w, a = this._a | 0, b = this._b | 0, c = this._c | 0, d = this._d | 0, e = this._e | 0, i = 0;
-        i < 16;
-        ++i
-      )
-        W2[i] = M.readInt32BE(i * 4);
-      for (; i < 80; ++i) W2[i] = W2[i - 3] ^ W2[i - 8] ^ W2[i - 14] ^ W2[i - 16];
-      for (var j = 0; j < 80; ++j) {
-        var s = ~~(j / 20),
-          t = (rotl5(a) + ft(s, b, c, d) + e + W2[j] + K[s]) | 0;
-        (e = d), (d = c), (c = rotl30(b)), (b = a), (a = t);
-      }
-      (this._a = (a + this._a) | 0),
-        (this._b = (b + this._b) | 0),
-        (this._c = (c + this._c) | 0),
-        (this._d = (d + this._d) | 0),
-        (this._e = (e + this._e) | 0);
-    };
-    Sha.prototype._hash = function () {
-      var H = Buffer2.allocUnsafe(20);
-      return (
-        H.writeInt32BE(this._a | 0, 0),
-        H.writeInt32BE(this._b | 0, 4),
-        H.writeInt32BE(this._c | 0, 8),
-        H.writeInt32BE(this._d | 0, 12),
-        H.writeInt32BE(this._e | 0, 16),
-        H
-      );
-    };
-    module.exports = Sha;
-  },
-});
-
-// node_modules/sha.js/sha1.js
-var require_sha1 = __commonJS({
-  "node_modules/sha.js/sha1.js"(exports, module) {
-    var inherits = require_inherits_browser(),
-      Hash = require_hash(),
-      Buffer2 = require_safe_buffer().Buffer,
-      K = [1518500249, 1859775393, -1894007588, -899497514],
-      W = new Array(80);
-    function Sha1() {
-      this.init(), (this._w = W), Hash.$call(this, 64, 56);
-    }
-    inherits(Sha1, Hash);
-    Sha1.prototype.init = function () {
-      return (
-        (this._a = 1732584193),
-        (this._b = 4023233417),
-        (this._c = 2562383102),
-        (this._d = 271733878),
-        (this._e = 3285377520),
-        this
-      );
-    };
-    function rotl1(num) {
-      return (num << 1) | (num >>> 31);
-    }
-    function rotl5(num) {
-      return (num << 5) | (num >>> 27);
-    }
-    function rotl30(num) {
-      return (num << 30) | (num >>> 2);
-    }
-    function ft(s, b, c, d) {
-      return s === 0 ? (b & c) | (~b & d) : s === 2 ? (b & c) | (b & d) | (c & d) : b ^ c ^ d;
-    }
-    Sha1.prototype._update = function (M) {
-      for (
-        var W2 = this._w, a = this._a | 0, b = this._b | 0, c = this._c | 0, d = this._d | 0, e = this._e | 0, i = 0;
-        i < 16;
-        ++i
-      )
-        W2[i] = M.readInt32BE(i * 4);
-      for (; i < 80; ++i) W2[i] = rotl1(W2[i - 3] ^ W2[i - 8] ^ W2[i - 14] ^ W2[i - 16]);
-      for (var j = 0; j < 80; ++j) {
-        var s = ~~(j / 20),
-          t = (rotl5(a) + ft(s, b, c, d) + e + W2[j] + K[s]) | 0;
-        (e = d), (d = c), (c = rotl30(b)), (b = a), (a = t);
-      }
-      (this._a = (a + this._a) | 0),
-        (this._b = (b + this._b) | 0),
-        (this._c = (c + this._c) | 0),
-        (this._d = (d + this._d) | 0),
-        (this._e = (e + this._e) | 0);
-    };
-    Sha1.prototype._hash = function () {
-      var H = Buffer2.allocUnsafe(20);
-      return (
-        H.writeInt32BE(this._a | 0, 0),
-        H.writeInt32BE(this._b | 0, 4),
-        H.writeInt32BE(this._c | 0, 8),
-        H.writeInt32BE(this._d | 0, 12),
-        H.writeInt32BE(this._e | 0, 16),
-        H
-      );
-    };
-    module.exports = Sha1;
-  },
-});
-
-// node_modules/sha.js/sha256.js
-var require_sha256 = __commonJS({
-  "node_modules/sha.js/sha256.js"(exports, module) {
-    var inherits = require_inherits_browser(),
-      Hash = require_hash(),
-      Buffer2 = require_safe_buffer().Buffer,
-      K = [
-        1116352408, 1899447441, 3049323471, 3921009573, 961987163, 1508970993, 2453635748, 2870763221, 3624381080,
-        310598401, 607225278, 1426881987, 1925078388, 2162078206, 2614888103, 3248222580, 3835390401, 4022224774,
-        264347078, 604807628, 770255983, 1249150122, 1555081692, 1996064986, 2554220882, 2821834349, 2952996808,
-        3210313671, 3336571891, 3584528711, 113926993, 338241895, 666307205, 773529912, 1294757372, 1396182291,
-        1695183700, 1986661051, 2177026350, 2456956037, 2730485921, 2820302411, 3259730800, 3345764771, 3516065817,
-        3600352804, 4094571909, 275423344, 430227734, 506948616, 659060556, 883997877, 958139571, 1322822218,
-        1537002063, 1747873779, 1955562222, 2024104815, 2227730452, 2361852424, 2428436474, 2756734187, 3204031479,
-        3329325298,
-      ],
-      W = new Array(64);
-    function Sha256() {
-      this.init(), (this._w = W), Hash.$call(this, 64, 56);
-    }
-    inherits(Sha256, Hash);
-    Sha256.prototype.init = function () {
-      return (
-        (this._a = 1779033703),
-        (this._b = 3144134277),
-        (this._c = 1013904242),
-        (this._d = 2773480762),
-        (this._e = 1359893119),
-        (this._f = 2600822924),
-        (this._g = 528734635),
-        (this._h = 1541459225),
-        this
-      );
-    };
-    function ch(x, y, z) {
-      return z ^ (x & (y ^ z));
-    }
-    function maj(x, y, z) {
-      return (x & y) | (z & (x | y));
-    }
-    function sigma0(x) {
-      return ((x >>> 2) | (x << 30)) ^ ((x >>> 13) | (x << 19)) ^ ((x >>> 22) | (x << 10));
-    }
-    function sigma1(x) {
-      return ((x >>> 6) | (x << 26)) ^ ((x >>> 11) | (x << 21)) ^ ((x >>> 25) | (x << 7));
-    }
-    function gamma0(x) {
-      return ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
-    }
-    function gamma1(x) {
-      return ((x >>> 17) | (x << 15)) ^ ((x >>> 19) | (x << 13)) ^ (x >>> 10);
-    }
-    Sha256.prototype._update = function (M) {
-      for (
-        var W2 = this._w,
-          a = this._a | 0,
-          b = this._b | 0,
-          c = this._c | 0,
-          d = this._d | 0,
-          e = this._e | 0,
-          f = this._f | 0,
-          g = this._g | 0,
-          h = this._h | 0,
-          i = 0;
-        i < 16;
-        ++i
-      )
-        W2[i] = M.readInt32BE(i * 4);
-      for (; i < 64; ++i) W2[i] = (gamma1(W2[i - 2]) + W2[i - 7] + gamma0(W2[i - 15]) + W2[i - 16]) | 0;
-      for (var j = 0; j < 64; ++j) {
-        var T1 = (h + sigma1(e) + ch(e, f, g) + K[j] + W2[j]) | 0,
-          T2 = (sigma0(a) + maj(a, b, c)) | 0;
-        (h = g), (g = f), (f = e), (e = (d + T1) | 0), (d = c), (c = b), (b = a), (a = (T1 + T2) | 0);
-      }
-      (this._a = (a + this._a) | 0),
-        (this._b = (b + this._b) | 0),
-        (this._c = (c + this._c) | 0),
-        (this._d = (d + this._d) | 0),
-        (this._e = (e + this._e) | 0),
-        (this._f = (f + this._f) | 0),
-        (this._g = (g + this._g) | 0),
-        (this._h = (h + this._h) | 0);
-    };
-    Sha256.prototype._hash = function () {
-      var H = Buffer2.allocUnsafe(32);
-      return (
-        H.writeInt32BE(this._a, 0),
-        H.writeInt32BE(this._b, 4),
-        H.writeInt32BE(this._c, 8),
-        H.writeInt32BE(this._d, 12),
-        H.writeInt32BE(this._e, 16),
-        H.writeInt32BE(this._f, 20),
-        H.writeInt32BE(this._g, 24),
-        H.writeInt32BE(this._h, 28),
-        H
-      );
-    };
-    module.exports = Sha256;
-  },
-});
-
-// node_modules/sha.js/sha224.js
-var require_sha224 = __commonJS({
-  "node_modules/sha.js/sha224.js"(exports, module) {
-    var inherits = require_inherits_browser(),
-      Sha256 = require_sha256(),
-      Hash = require_hash(),
-      Buffer2 = require_safe_buffer().Buffer,
-      W = new Array(64);
-    function Sha224() {
-      this.init(), (this._w = W), Hash.$call(this, 64, 56);
-    }
-    inherits(Sha224, Sha256);
-    Sha224.prototype.init = function () {
-      return (
-        (this._a = 3238371032),
-        (this._b = 914150663),
-        (this._c = 812702999),
-        (this._d = 4144912697),
-        (this._e = 4290775857),
-        (this._f = 1750603025),
-        (this._g = 1694076839),
-        (this._h = 3204075428),
-        this
-      );
-    };
-    Sha224.prototype._hash = function () {
-      var H = Buffer2.allocUnsafe(28);
-      return (
-        H.writeInt32BE(this._a, 0),
-        H.writeInt32BE(this._b, 4),
-        H.writeInt32BE(this._c, 8),
-        H.writeInt32BE(this._d, 12),
-        H.writeInt32BE(this._e, 16),
-        H.writeInt32BE(this._f, 20),
-        H.writeInt32BE(this._g, 24),
-        H
-      );
-    };
-    module.exports = Sha224;
-  },
-});
-
-// node_modules/sha.js/sha512.js
-var require_sha512 = __commonJS({
-  "node_modules/sha.js/sha512.js"(exports, module) {
-    var inherits = require_inherits_browser(),
-      Hash = require_hash(),
-      Buffer2 = require_safe_buffer().Buffer,
-      K = [
-        1116352408, 3609767458, 1899447441, 602891725, 3049323471, 3964484399, 3921009573, 2173295548, 961987163,
-        4081628472, 1508970993, 3053834265, 2453635748, 2937671579, 2870763221, 3664609560, 3624381080, 2734883394,
-        310598401, 1164996542, 607225278, 1323610764, 1426881987, 3590304994, 1925078388, 4068182383, 2162078206,
-        991336113, 2614888103, 633803317, 3248222580, 3479774868, 3835390401, 2666613458, 4022224774, 944711139,
-        264347078, 2341262773, 604807628, 2007800933, 770255983, 1495990901, 1249150122, 1856431235, 1555081692,
-        3175218132, 1996064986, 2198950837, 2554220882, 3999719339, 2821834349, 766784016, 2952996808, 2566594879,
-        3210313671, 3203337956, 3336571891, 1034457026, 3584528711, 2466948901, 113926993, 3758326383, 338241895,
-        168717936, 666307205, 1188179964, 773529912, 1546045734, 1294757372, 1522805485, 1396182291, 2643833823,
-        1695183700, 2343527390, 1986661051, 1014477480, 2177026350, 1206759142, 2456956037, 344077627, 2730485921,
-        1290863460, 2820302411, 3158454273, 3259730800, 3505952657, 3345764771, 106217008, 3516065817, 3606008344,
-        3600352804, 1432725776, 4094571909, 1467031594, 275423344, 851169720, 430227734, 3100823752, 506948616,
-        1363258195, 659060556, 3750685593, 883997877, 3785050280, 958139571, 3318307427, 1322822218, 3812723403,
-        1537002063, 2003034995, 1747873779, 3602036899, 1955562222, 1575990012, 2024104815, 1125592928, 2227730452,
-        2716904306, 2361852424, 442776044, 2428436474, 593698344, 2756734187, 3733110249, 3204031479, 2999351573,
-        3329325298, 3815920427, 3391569614, 3928383900, 3515267271, 566280711, 3940187606, 3454069534, 4118630271,
-        4000239992, 116418474, 1914138554, 174292421, 2731055270, 289380356, 3203993006, 460393269, 320620315,
-        685471733, 587496836, 852142971, 1086792851, 1017036298, 365543100, 1126000580, 2618297676, 1288033470,
-        3409855158, 1501505948, 4234509866, 1607167915, 987167468, 1816402316, 1246189591,
-      ],
-      W = new Array(160);
-    function Sha512() {
-      this.init(), (this._w = W), Hash.$call(this, 128, 112);
-    }
-    inherits(Sha512, Hash);
-    Sha512.prototype.init = function () {
-      return (
-        (this._ah = 1779033703),
-        (this._bh = 3144134277),
-        (this._ch = 1013904242),
-        (this._dh = 2773480762),
-        (this._eh = 1359893119),
-        (this._fh = 2600822924),
-        (this._gh = 528734635),
-        (this._hh = 1541459225),
-        (this._al = 4089235720),
-        (this._bl = 2227873595),
-        (this._cl = 4271175723),
-        (this._dl = 1595750129),
-        (this._el = 2917565137),
-        (this._fl = 725511199),
-        (this._gl = 4215389547),
-        (this._hl = 327033209),
-        this
-      );
-    };
-    function Ch(x, y, z) {
-      return z ^ (x & (y ^ z));
-    }
-    function maj(x, y, z) {
-      return (x & y) | (z & (x | y));
-    }
-    function sigma0(x, xl) {
-      return ((x >>> 28) | (xl << 4)) ^ ((xl >>> 2) | (x << 30)) ^ ((xl >>> 7) | (x << 25));
-    }
-    function sigma1(x, xl) {
-      return ((x >>> 14) | (xl << 18)) ^ ((x >>> 18) | (xl << 14)) ^ ((xl >>> 9) | (x << 23));
-    }
-    function Gamma0(x, xl) {
-      return ((x >>> 1) | (xl << 31)) ^ ((x >>> 8) | (xl << 24)) ^ (x >>> 7);
-    }
-    function Gamma0l(x, xl) {
-      return ((x >>> 1) | (xl << 31)) ^ ((x >>> 8) | (xl << 24)) ^ ((x >>> 7) | (xl << 25));
-    }
-    function Gamma1(x, xl) {
-      return ((x >>> 19) | (xl << 13)) ^ ((xl >>> 29) | (x << 3)) ^ (x >>> 6);
-    }
-    function Gamma1l(x, xl) {
-      return ((x >>> 19) | (xl << 13)) ^ ((xl >>> 29) | (x << 3)) ^ ((x >>> 6) | (xl << 26));
-    }
-    function getCarry(a, b) {
-      return a >>> 0 < b >>> 0 ? 1 : 0;
-    }
-    Sha512.prototype._update = function (M) {
-      for (
-        var W2 = this._w,
-          ah = this._ah | 0,
-          bh = this._bh | 0,
-          ch = this._ch | 0,
-          dh = this._dh | 0,
-          eh = this._eh | 0,
-          fh = this._fh | 0,
-          gh = this._gh | 0,
-          hh = this._hh | 0,
-          al = this._al | 0,
-          bl = this._bl | 0,
-          cl = this._cl | 0,
-          dl = this._dl | 0,
-          el = this._el | 0,
-          fl = this._fl | 0,
-          gl = this._gl | 0,
-          hl = this._hl | 0,
-          i = 0;
-        i < 32;
-        i += 2
-      )
-        (W2[i] = M.readInt32BE(i * 4)), (W2[i + 1] = M.readInt32BE(i * 4 + 4));
-      for (; i < 160; i += 2) {
-        var xh = W2[i - 30],
-          xl = W2[i - 15 * 2 + 1],
-          gamma0 = Gamma0(xh, xl),
-          gamma0l = Gamma0l(xl, xh);
-        (xh = W2[i - 2 * 2]), (xl = W2[i - 2 * 2 + 1]);
-        var gamma1 = Gamma1(xh, xl),
-          gamma1l = Gamma1l(xl, xh),
-          Wi7h = W2[i - 7 * 2],
-          Wi7l = W2[i - 7 * 2 + 1],
-          Wi16h = W2[i - 16 * 2],
-          Wi16l = W2[i - 16 * 2 + 1],
-          Wil = (gamma0l + Wi7l) | 0,
-          Wih = (gamma0 + Wi7h + getCarry(Wil, gamma0l)) | 0;
-        (Wil = (Wil + gamma1l) | 0),
-          (Wih = (Wih + gamma1 + getCarry(Wil, gamma1l)) | 0),
-          (Wil = (Wil + Wi16l) | 0),
-          (Wih = (Wih + Wi16h + getCarry(Wil, Wi16l)) | 0),
-          (W2[i] = Wih),
-          (W2[i + 1] = Wil);
-      }
-      for (var j = 0; j < 160; j += 2) {
-        (Wih = W2[j]), (Wil = W2[j + 1]);
-        var majh = maj(ah, bh, ch),
-          majl = maj(al, bl, cl),
-          sigma0h = sigma0(ah, al),
-          sigma0l = sigma0(al, ah),
-          sigma1h = sigma1(eh, el),
-          sigma1l = sigma1(el, eh),
-          Kih = K[j],
-          Kil = K[j + 1],
-          chh = Ch(eh, fh, gh),
-          chl = Ch(el, fl, gl),
-          t1l = (hl + sigma1l) | 0,
-          t1h = (hh + sigma1h + getCarry(t1l, hl)) | 0;
-        (t1l = (t1l + chl) | 0),
-          (t1h = (t1h + chh + getCarry(t1l, chl)) | 0),
-          (t1l = (t1l + Kil) | 0),
-          (t1h = (t1h + Kih + getCarry(t1l, Kil)) | 0),
-          (t1l = (t1l + Wil) | 0),
-          (t1h = (t1h + Wih + getCarry(t1l, Wil)) | 0);
-        var t2l = (sigma0l + majl) | 0,
-          t2h = (sigma0h + majh + getCarry(t2l, sigma0l)) | 0;
-        (hh = gh),
-          (hl = gl),
-          (gh = fh),
-          (gl = fl),
-          (fh = eh),
-          (fl = el),
-          (el = (dl + t1l) | 0),
-          (eh = (dh + t1h + getCarry(el, dl)) | 0),
-          (dh = ch),
-          (dl = cl),
-          (ch = bh),
-          (cl = bl),
-          (bh = ah),
-          (bl = al),
-          (al = (t1l + t2l) | 0),
-          (ah = (t1h + t2h + getCarry(al, t1l)) | 0);
-      }
-      (this._al = (this._al + al) | 0),
-        (this._bl = (this._bl + bl) | 0),
-        (this._cl = (this._cl + cl) | 0),
-        (this._dl = (this._dl + dl) | 0),
-        (this._el = (this._el + el) | 0),
-        (this._fl = (this._fl + fl) | 0),
-        (this._gl = (this._gl + gl) | 0),
-        (this._hl = (this._hl + hl) | 0),
-        (this._ah = (this._ah + ah + getCarry(this._al, al)) | 0),
-        (this._bh = (this._bh + bh + getCarry(this._bl, bl)) | 0),
-        (this._ch = (this._ch + ch + getCarry(this._cl, cl)) | 0),
-        (this._dh = (this._dh + dh + getCarry(this._dl, dl)) | 0),
-        (this._eh = (this._eh + eh + getCarry(this._el, el)) | 0),
-        (this._fh = (this._fh + fh + getCarry(this._fl, fl)) | 0),
-        (this._gh = (this._gh + gh + getCarry(this._gl, gl)) | 0),
-        (this._hh = (this._hh + hh + getCarry(this._hl, hl)) | 0);
-    };
-    Sha512.prototype._hash = function () {
-      var H = Buffer2.allocUnsafe(64);
-      function writeInt64BE(h, l, offset) {
-        H.writeInt32BE(h, offset), H.writeInt32BE(l, offset + 4);
-      }
-      return (
-        writeInt64BE(this._ah, this._al, 0),
-        writeInt64BE(this._bh, this._bl, 8),
-        writeInt64BE(this._ch, this._cl, 16),
-        writeInt64BE(this._dh, this._dl, 24),
-        writeInt64BE(this._eh, this._el, 32),
-        writeInt64BE(this._fh, this._fl, 40),
-        writeInt64BE(this._gh, this._gl, 48),
-        writeInt64BE(this._hh, this._hl, 56),
-        H
-      );
-    };
-    module.exports = Sha512;
-  },
-});
-
-// node_modules/sha.js/sha384.js
-var require_sha384 = __commonJS({
-  "node_modules/sha.js/sha384.js"(exports, module) {
-    var inherits = require_inherits_browser(),
-      SHA512 = require_sha512(),
-      Hash = require_hash(),
-      Buffer2 = require_safe_buffer().Buffer,
-      W = new Array(160);
-    function Sha384() {
-      this.init(), (this._w = W), Hash.$call(this, 128, 112);
-    }
-    inherits(Sha384, SHA512);
-    Sha384.prototype.init = function () {
-      return (
-        (this._ah = 3418070365),
-        (this._bh = 1654270250),
-        (this._ch = 2438529370),
-        (this._dh = 355462360),
-        (this._eh = 1731405415),
-        (this._fh = 2394180231),
-        (this._gh = 3675008525),
-        (this._hh = 1203062813),
-        (this._al = 3238371032),
-        (this._bl = 914150663),
-        (this._cl = 812702999),
-        (this._dl = 4144912697),
-        (this._el = 4290775857),
-        (this._fl = 1750603025),
-        (this._gl = 1694076839),
-        (this._hl = 3204075428),
-        this
-      );
-    };
-    Sha384.prototype._hash = function () {
-      var H = Buffer2.allocUnsafe(48);
-      function writeInt64BE(h, l, offset) {
-        H.writeInt32BE(h, offset), H.writeInt32BE(l, offset + 4);
-      }
-      return (
-        writeInt64BE(this._ah, this._al, 0),
-        writeInt64BE(this._bh, this._bl, 8),
-        writeInt64BE(this._ch, this._cl, 16),
-        writeInt64BE(this._dh, this._dl, 24),
-        writeInt64BE(this._eh, this._el, 32),
-        writeInt64BE(this._fh, this._fl, 40),
-        H
-      );
-    };
-    module.exports = Sha384;
-  },
-});
-
-// node_modules/sha.js/index.js
-var require_sha2 = __commonJS({
-  "node_modules/sha.js/index.js"(exports, module) {
-    var exports = (module.exports = function (algorithm) {
-      algorithm = algorithm.toLowerCase();
-      var Algorithm = exports[algorithm];
-      if (!Algorithm) throw new Error(algorithm + " is not supported (we accept pull requests)");
-      return new Algorithm();
-    });
-    exports.sha = require_sha();
-    exports.sha1 = require_sha1();
-    exports.sha224 = require_sha224();
-    exports.sha256 = require_sha256();
-    exports.sha384 = require_sha384();
-    exports.sha512 = require_sha512();
-  },
-});
-
 // node_modules/cipher-base/index.js
 var require_cipher_base = __commonJS({
   "node_modules/cipher-base/index.js"(exports, module) {
@@ -1294,270 +316,6 @@ var require_cipher_base = __commonJS({
       return fin && (out += this._decoder.end()), out;
     };
     module.exports = CipherBase;
-  },
-});
-
-// node_modules/create-hash/browser.js
-var require_browser2 = __commonJS({
-  "node_modules/create-hash/browser.js"(exports, module) {
-    "use strict";
-    // does not become a node stream unless you create it into one
-    const LazyHash = function Hash(algorithm, options) {
-      this._options = options;
-      this._hasher = new CryptoHasher(algorithm);
-      this._finalized = false;
-    };
-    LazyHash.prototype = Object.create(StreamModule.Transform.prototype);
-    LazyHash.prototype.update = function update(data, encoding) {
-      this._checkFinalized();
-      this._hasher.update(data, encoding);
-      return this;
-    };
-    LazyHash.prototype.digest = function digest(data, encoding) {
-      this._checkFinalized();
-      this._finalized = true;
-      return this._hasher.digest(data, encoding);
-    };
-    LazyHash.prototype._checkFinalized = function _checkFinalized() {
-      if (this._finalized) {
-        var err = new Error("Digest already called");
-        err.code = "ERR_CRYPTO_HASH_FINALIZED";
-        throw err;
-      }
-    };
-    LazyHash.prototype.copy = function copy() {
-      const copy = Object.create(LazyHash.prototype);
-      copy._options = this._options;
-      copy._hasher = this._hasher.copy();
-      copy._finalized = this._finalized;
-      return copy;
-    };
-
-    const lazyHashFullInitProto = {
-      __proto__: StreamModule.Transform.prototype,
-      ...LazyHash.prototype,
-      _transform(data, encoding, callback) {
-        this.update(data, encoding);
-        callback && callback();
-      },
-      _flush(callback) {
-        this.push(this.digest());
-        callback();
-      },
-    };
-
-    const triggerMethods = [
-      "_events",
-      "_eventsCount",
-      "_final",
-      "_maxListeners",
-      "_maxListeners",
-      "_read",
-      "_undestroy",
-      "_writableState",
-      "_write",
-      "_writev",
-      "addListener",
-      "asIndexedPairs",
-      "closed",
-      "compose",
-      "constructor",
-      "cork",
-      "destroy",
-      "destroyed",
-      "drop",
-      "emit",
-      "end",
-      "errored",
-      "eventNames",
-      "every",
-      "filter",
-      "find",
-      "flatMap",
-      "forEach",
-      "getMaxListeners",
-      "hasOwnProperty",
-      "isPaused",
-      "isPrototypeOf",
-      "iterator",
-      "listenerCount",
-      "listeners",
-      "map",
-      "off",
-      "on",
-      "once",
-      "pause",
-      "pipe",
-      "prependListener",
-      "prependOnceListener",
-      "propertyIsEnumerable",
-      "push",
-      "rawListeners",
-      "read",
-      "readable",
-      "readableAborted",
-      "readableBuffer",
-      "readableDidRead",
-      "readableEncoding",
-      "readableEnded",
-      "readableFlowing",
-      "readableHighWaterMark",
-      "readableLength",
-      "readableObjectMode",
-      "reduce",
-      "removeAllListeners",
-      "removeListener",
-      "resume",
-      "setDefaultEncoding",
-      "setEncoding",
-      "setMaxListeners",
-      "some",
-      "take",
-      "toArray",
-      "toLocaleString",
-      "toString",
-      "uncork",
-      "unpipe",
-      "unshift",
-      "valueOf",
-      "wrap",
-      "writable",
-      "writableBuffer",
-      "writableCorked",
-      "writableEnded",
-      "writableFinished",
-      "writableHighWaterMark",
-      "writableLength",
-      "writableNeedDrain",
-      "writableObjectMode",
-      "write",
-    ];
-    for (const method of triggerMethods) {
-      Object.defineProperty(LazyHash.prototype, method, {
-        get() {
-          Object.setPrototypeOf(this, lazyHashFullInitProto);
-          StreamModule.Transform.$call(this, this._options);
-          return this[method];
-        },
-        enumerable: false,
-        configurable: true,
-      });
-    }
-
-    module.exports = function createHash(algorithm, options) {
-      return new LazyHash(algorithm, options);
-    };
-
-    module.exports.createHash = module.exports;
-    module.exports.Hash = LazyHash;
-  },
-});
-
-// node_modules/create-hmac/legacy.js
-var require_legacy = __commonJS({
-  "node_modules/create-hmac/legacy.js"(exports, module) {
-    "use strict";
-    var inherits = require_inherits_browser(),
-      Buffer2 = require_safe_buffer().Buffer,
-      Base = require_cipher_base(),
-      ZEROS = Buffer2.alloc(128),
-      blocksize = 64;
-    function Hmac(alg, key) {
-      key = exportIfKeyObject(key);
-
-      Base.$call(this, "digest"),
-        typeof key == "string" && (key = Buffer2.from(key)),
-        (this._alg = alg),
-        (this._key = key),
-        key.length > blocksize
-          ? (key = alg(key))
-          : key.length < blocksize && (key = Buffer2.concat([key, ZEROS], blocksize));
-      for (
-        var ipad = (this._ipad = Buffer2.allocUnsafe(blocksize)),
-          opad = (this._opad = Buffer2.allocUnsafe(blocksize)),
-          i = 0;
-        i < blocksize;
-        i++
-      )
-        (ipad[i] = key[i] ^ 54), (opad[i] = key[i] ^ 92);
-      this._hash = [ipad];
-    }
-    Hmac.prototype = {};
-    inherits(Hmac, Base);
-    Hmac.prototype._update = function (data) {
-      this._hash.push(data);
-    };
-    Hmac.prototype._final = function () {
-      var h = this._alg(Buffer2.concat(this._hash));
-      return this._alg(Buffer2.concat([this._opad, h]));
-    };
-    module.exports = Hmac;
-  },
-});
-
-// node_modules/create-hash/md5.js
-var require_md52 = __commonJS({
-  "node_modules/create-hash/md5.js"(exports, module) {
-    var MD5 = require_md5();
-    module.exports = function (buffer) {
-      return new MD5().update(buffer).digest();
-    };
-  },
-});
-
-// node_modules/create-hmac/browser.js
-var require_browser3 = __commonJS({
-  "node_modules/create-hmac/browser.js"(exports, module) {
-    "use strict";
-    var inherits = require_inherits_browser();
-    var Legacy = require_legacy();
-    var Base = require_cipher_base();
-    var Buffer2 = require_safe_buffer().Buffer;
-    var md5 = require_md52();
-    var RIPEMD160 = require_ripemd160();
-    var sha = require_sha2();
-    var ZEROS = Buffer2.alloc(128);
-    function Hmac(alg, key) {
-      alg = normalizeAlgorithmName(alg);
-      key = exportIfKeyObject(key);
-
-      Base.$call(this, "digest"), typeof key == "string" && (key = Buffer2.from(key));
-      var blocksize = alg === "sha512" || alg === "sha384" ? 128 : 64;
-      if (((this._alg = alg), (this._key = key), key.length > blocksize)) {
-        var hash = alg === "rmd160" ? new RIPEMD160() : sha(alg);
-        key = hash.update(key).digest();
-      } else key.length < blocksize && (key = Buffer2.concat([key, ZEROS], blocksize));
-      for (
-        var ipad = (this._ipad = Buffer2.allocUnsafe(blocksize)),
-          opad = (this._opad = Buffer2.allocUnsafe(blocksize)),
-          i = 0;
-        i < blocksize;
-        i++
-      )
-        (ipad[i] = key[i] ^ 54), (opad[i] = key[i] ^ 92);
-      (this._hash = alg === "rmd160" ? new RIPEMD160() : sha(alg)), this._hash.update(ipad);
-    }
-    inherits(Hmac, Base);
-    Hmac.prototype._update = function (data) {
-      this._hash.update(data);
-    };
-    Hmac.prototype._final = function () {
-      var h = this._hash.digest(),
-        hash = this._alg === "rmd160" ? new RIPEMD160() : sha(this._alg);
-
-      return hash.update(this._opad).update(h).digest();
-    };
-    module.exports = function (alg, key) {
-      key = exportIfKeyObject(key);
-      return (
-        (alg = alg.toLowerCase()),
-        alg === "rmd160" || alg === "ripemd160"
-          ? new Hmac("rmd160", key)
-          : alg === "md5"
-            ? new Legacy(md5, key)
-            : new Hmac(alg, key)
-      );
-    };
   },
 });
 
@@ -1736,7 +494,7 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
     digest = undefined;
   }
 
-  const promise = pbkdf2_(password, salt, iterations, keylen, digest, callback);
+  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
     promise.then(
       result => callback(null, result),
@@ -1749,7 +507,7 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 }
 
 function pbkdf2Sync(password, salt, iterations, keylen, digest) {
-  return pbkdf2Sync_(password, salt, iterations, keylen, digest);
+  return _pbkdf2Sync(password, salt, iterations, keylen, digest);
 }
 
 // node_modules/des.js/lib/des/utils.js
@@ -2975,8 +1733,7 @@ var require_streamCipher = __commonJS({
 // node_modules/evp_bytestokey/index.js
 var require_evp_bytestokey = __commonJS({
   "node_modules/evp_bytestokey/index.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer,
-      MD5 = require_md5();
+    var Buffer2 = require_safe_buffer().Buffer;
     function EVP_BytesToKey(password, salt, keyBits, ivLen) {
       if (
         (Buffer2.isBuffer(password) || (password = Buffer2.from(password, "binary")),
@@ -2988,7 +1745,7 @@ var require_evp_bytestokey = __commonJS({
         keyLen > 0 || ivLen > 0;
 
       ) {
-        var hash = new MD5();
+        var hash = new Hash("md5");
         hash.update(tmp), hash.update(password), salt && hash.update(salt), (tmp = hash.digest());
         var used = 0;
         if (keyLen > 0) {
@@ -5624,8 +4381,9 @@ var require_browser7 = __commonJS({
     exports.DiffieHellmanGroup = exports.createDiffieHellmanGroup = exports.getDiffieHellman = getDiffieHellman;
     exports.createDiffieHellman = exports.DiffieHellman = createDiffieHellman;
 
+    // TODO: move entire function out of js in diffie-hellman pr
     exports.diffieHellman = function diffieHellman(options) {
-      validateObject(options);
+      validateObject(options, "options");
 
       const { privateKey, publicKey } = options;
 
@@ -11220,274 +9978,6 @@ var require_curves2 = __commonJS({
   },
 });
 
-// node_modules/browserify-sign/browser/sign.js
-var require_sign = __commonJS({
-  "node_modules/browserify-sign/browser/sign.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer,
-      createHmac = require_browser3(),
-      crt = require_browserify_rsa(),
-      EC = require_elliptic().ec,
-      BN = require_bn3(),
-      parseKeys = require_parse_asn1(),
-      curves = require_curves2();
-    function sign(hash, key, hashType, signType, tag) {
-      var priv = parseKeys(getKeyFrom(key, "private"));
-      if (priv.curve) {
-        if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
-        return ecSign(hash, priv);
-      } else if (priv.type === "dsa") {
-        if (signType !== "dsa") throw new Error("wrong private key type");
-        return dsaSign(hash, priv, hashType);
-      } else if (signType !== "rsa" && signType !== "ecdsa/rsa") throw new Error("wrong private key type");
-      hash = Buffer2.concat([tag, hash]);
-      for (var len = priv.modulus.byteLength(), pad = [0, 1]; hash.length + pad.length + 1 < len; ) pad.push(255);
-      pad.push(0);
-      for (var i = -1; ++i < hash.length; ) pad.push(hash[i]);
-      var out = crt(pad, priv);
-      return out;
-    }
-    function ecSign(hash, priv) {
-      var curveId = curves[priv.curve.join(".")];
-      if (!curveId) throw new Error("unknown curve " + priv.curve.join("."));
-      var curve = new EC(curveId),
-        key = curve.keyFromPrivate(priv.privateKey),
-        out = key.sign(hash);
-      return Buffer2.from(out.toDER());
-    }
-    function dsaSign(hash, priv, algo) {
-      for (
-        var x = priv.params.priv_key,
-          p = priv.params.p,
-          q = priv.params.q,
-          g = priv.params.g,
-          r = new BN(0),
-          k,
-          H = bits2int(hash, q).mod(q),
-          s = !1,
-          kv = getKey(x, q, hash, algo);
-        s === !1;
-
-      )
-        (k = makeKey(q, kv, algo)),
-          (r = makeR(g, k, p, q)),
-          (s = k
-            .invm(q)
-            .imul(H.add(x.mul(r)))
-            .mod(q)),
-          s.cmpn(0) === 0 && ((s = !1), (r = new BN(0)));
-      return toDER(r, s);
-    }
-    function toDER(r, s) {
-      (r = r.toArray()), (s = s.toArray()), r[0] & 128 && (r = [0].concat(r)), s[0] & 128 && (s = [0].concat(s));
-      var total = r.length + s.length + 4,
-        res = [48, total, 2, r.length];
-      return (res = res.concat(r, [2, s.length], s)), Buffer2.from(res);
-    }
-    function getKey(x, q, hash, algo) {
-      if (((x = Buffer2.from(x.toArray())), x.length < q.byteLength())) {
-        var zeros = Buffer2.alloc(q.byteLength() - x.length);
-        x = Buffer2.concat([zeros, x]);
-      }
-      var hlen = hash.length,
-        hbits = bits2octets(hash, q),
-        v = Buffer2.alloc(hlen);
-      v.fill(1);
-      var k = Buffer2.alloc(hlen);
-      return (
-        (k = createHmac(algo, k)
-          .update(v)
-          .update(Buffer2.from([0]))
-          .update(x)
-          .update(hbits)
-          .digest()),
-        (v = createHmac(algo, k).update(v).digest()),
-        (k = createHmac(algo, k)
-          .update(v)
-          .update(Buffer2.from([1]))
-          .update(x)
-          .update(hbits)
-          .digest()),
-        (v = createHmac(algo, k).update(v).digest()),
-        { k, v }
-      );
-    }
-    function bits2int(obits, q) {
-      var bits = new BN(obits),
-        shift = (obits.length << 3) - q.bitLength();
-      return shift > 0 && bits.ishrn(shift), bits;
-    }
-    function bits2octets(bits, q) {
-      (bits = bits2int(bits, q)), (bits = bits.mod(q));
-      var out = Buffer2.from(bits.toArray());
-      if (out.length < q.byteLength()) {
-        var zeros = Buffer2.alloc(q.byteLength() - out.length);
-        out = Buffer2.concat([zeros, out]);
-      }
-      return out;
-    }
-    function makeKey(q, kv, algo) {
-      var t, k;
-      do {
-        for (t = Buffer2.alloc(0); t.length * 8 < q.bitLength(); )
-          (kv.v = createHmac(algo, kv.k).update(kv.v).digest()), (t = Buffer2.concat([t, kv.v]));
-        (k = bits2int(t, q)),
-          (kv.k = createHmac(algo, kv.k)
-            .update(kv.v)
-            .update(Buffer2.from([0]))
-            .digest()),
-          (kv.v = createHmac(algo, kv.k).update(kv.v).digest());
-      } while (k.cmp(q) !== -1);
-      return k;
-    }
-    function makeR(g, k, p, q) {
-      return g.toRed(BN.mont(p)).redPow(k).fromRed().mod(q);
-    }
-    module.exports = sign;
-    module.exports.getKey = getKey;
-    module.exports.makeKey = makeKey;
-  },
-});
-
-// node_modules/browserify-sign/browser/verify.js
-var require_verify = __commonJS({
-  "node_modules/browserify-sign/browser/verify.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer,
-      BN = require_bn3(),
-      EC = require_elliptic().ec,
-      parseKeys = require_parse_asn1(),
-      curves = require_curves2();
-    function verify(sig, hash, key, signType, tag) {
-      var pub = parseKeys(getKeyFrom(key, "public"));
-      if (pub.type === "ec") {
-        if (signType !== "ecdsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
-        return ecVerify(sig, hash, pub);
-      } else if (pub.type === "dsa") {
-        if (signType !== "dsa") throw new Error("wrong public key type");
-        return dsaVerify(sig, hash, pub);
-      } else if (signType !== "rsa" && signType !== "ecdsa/rsa") throw new Error("wrong public key type");
-      hash = Buffer2.concat([tag, hash]);
-      for (var len = pub.modulus.byteLength(), pad = [1], padNum = 0; hash.length + pad.length + 2 < len; )
-        pad.push(255), padNum++;
-      pad.push(0);
-      for (var i = -1; ++i < hash.length; ) pad.push(hash[i]);
-      pad = Buffer2.from(pad);
-      var red = BN.mont(pub.modulus);
-      (sig = new BN(sig).toRed(red)),
-        (sig = sig.redPow(new BN(pub.publicExponent))),
-        (sig = Buffer2.from(sig.fromRed().toArray()));
-      var out = padNum < 8 ? 1 : 0;
-      for (len = Math.min(sig.length, pad.length), sig.length !== pad.length && (out = 1), i = -1; ++i < len; )
-        out |= sig[i] ^ pad[i];
-      return out === 0;
-    }
-    function ecVerify(sig, hash, pub) {
-      var curveId = curves[pub.data.algorithm.curve.join(".")];
-      if (!curveId) throw new Error("unknown curve " + pub.data.algorithm.curve.join("."));
-      var curve = new EC(curveId),
-        pubkey = pub.data.subjectPrivateKey.data;
-      return curve.verify(hash, sig, pubkey);
-    }
-    function dsaVerify(sig, hash, pub) {
-      var p = pub.data.p,
-        q = pub.data.q,
-        g = pub.data.g,
-        y = pub.data.pub_key,
-        unpacked = parseKeys.signature.decode(sig, "der"),
-        s = unpacked.s,
-        r = unpacked.r;
-      checkValue(s, q), checkValue(r, q);
-      var montp = BN.mont(p),
-        w = s.invm(q),
-        v = g
-          .toRed(montp)
-          .redPow(new BN(hash).mul(w).mod(q))
-          .fromRed()
-          .mul(y.toRed(montp).redPow(r.mul(w).mod(q)).fromRed())
-          .mod(p)
-          .mod(q);
-      return v.cmp(r) === 0;
-    }
-    function checkValue(b, q) {
-      if (b.cmpn(0) <= 0) throw new Error("invalid sig");
-      if (b.cmp(q) >= q) throw new Error("invalid sig");
-    }
-    module.exports = verify;
-  },
-});
-
-// node_modules/browserify-sign/browser/index.js
-var require_browser8 = __commonJS({
-  "node_modules/browserify-sign/browser/index.js"(exports, module) {
-    var Buffer2 = require_safe_buffer().Buffer;
-    var createHash = require_browser2();
-    var inherits = require_inherits_browser();
-    var sign = require_sign();
-    var verify = require_verify();
-    var algorithms = require_algorithms();
-    Object.keys(algorithms).forEach(function (key) {
-      (algorithms[key].id = Buffer2.from(algorithms[key].id, "hex")), (algorithms[key.toLowerCase()] = algorithms[key]);
-    });
-    function Sign(algorithm) {
-      if (typeof algorithm === "string") {
-        algorithm = algorithm.toLowerCase();
-      }
-      StreamModule.Writable.$call(this);
-      var data = algorithms[algorithm];
-      if (!data) throw new Error("Unknown message digest");
-      (this._hashType = data.hash),
-        (this._hash = createHash(data.hash)),
-        (this._tag = data.id),
-        (this._signType = data.sign);
-    }
-    inherits(Sign, StreamModule.Writable);
-    Sign.prototype._write = function (data, _, done) {
-      this._hash.update(data), done();
-    };
-    Sign.prototype.update = function (data, enc) {
-      return typeof data == "string" && (data = Buffer2.from(data, enc)), this._hash.update(data), this;
-    };
-    Sign.prototype.sign = function (key, enc) {
-      this.end();
-      var hash = this._hash.digest(),
-        sig = sign(hash, key, this._hashType, this._signType, this._tag);
-      return enc ? sig.toString(enc) : sig;
-    };
-    function Verify(algorithm) {
-      StreamModule.Writable.$call(this);
-      if (typeof algorithm === "string") {
-        algorithm = algorithm.toLowerCase();
-      }
-      var data = algorithms[algorithm];
-      if (!data) throw new Error("Unknown message digest");
-      (this._hash = createHash(data.hash)), (this._tag = data.id), (this._signType = data.sign);
-    }
-    inherits(Verify, StreamModule.Writable);
-    Verify.prototype._write = function (data, _, done) {
-      this._hash.update(data), done();
-    };
-    Verify.prototype.update = function (data, enc) {
-      return typeof data == "string" && (data = Buffer2.from(data, enc)), this._hash.update(data), this;
-    };
-    Verify.prototype.verify = function (key, sig, enc) {
-      typeof sig == "string" && (sig = Buffer2.from(sig, enc)), this.end();
-      var hash = this._hash.digest();
-      return verify(sig, hash, key, this._signType, this._tag);
-    };
-    function createSign(algorithm) {
-      return new Sign(algorithm);
-    }
-    function createVerify(algorithm) {
-      return new Verify(algorithm);
-    }
-    module.exports = {
-      Sign: createSign,
-      Verify: createVerify,
-      createSign,
-      createVerify,
-    };
-  },
-});
-
 // node_modules/create-ecdh/node_modules/bn.js/lib/bn.js
 var require_bn6 = require_bn;
 
@@ -11664,9 +10154,6 @@ var require_crypto_browserify2 = __commonJS({
   "node_modules/crypto-browserify/index.js"(exports) {
     "use strict";
     exports.randomBytes = exports.rng = exports.pseudoRandomBytes = exports.prng = require_browser();
-    exports.createHash = require_browser2();
-    exports.Hash = exports.createHash.Hash;
-    exports.createHmac = exports.Hmac = require_browser3();
     var algos = require_algos(),
       algoKeys = Object.keys(algos),
       hashes = ["sha1", "sha224", "sha256", "sha384", "sha512", "md5", "rmd160"].concat(algoKeys);
@@ -11693,11 +10180,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.createDiffieHellman = dh.createDiffieHellman;
     exports.DiffieHellman = dh.DiffieHellman;
     exports.diffieHellman = dh.diffieHellman;
-    var sign = require_browser8();
-    exports.createSign = sign.createSign;
-    exports.Sign = sign.Sign;
-    exports.createVerify = sign.createVerify;
-    exports.Verify = sign.Verify;
     const ecdh = require_browser9();
     exports.ECDH = ecdh.ECDH;
     exports.createECDH = ecdh.createECDH;
@@ -11705,16 +10187,6 @@ var require_crypto_browserify2 = __commonJS({
     var rf = require_browser11();
     exports.randomFill = rf.randomFill;
     exports.randomFillSync = rf.randomFillSync;
-    exports.createCredentials = function () {
-      throw new Error(
-        [
-          "sorry, createCredentials is not implemented yet",
-          "we accept pull requests",
-          "https://github.com/crypto-browserify/crypto-browserify",
-        ].join(`
-`),
-      );
-    };
     exports.constants = $processBindingConstants.crypto;
   },
 });
@@ -11724,17 +10196,6 @@ var crypto_exports = require_crypto_browserify2();
 
 var getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
-  timingSafeEqual =
-    "timingSafeEqual" in crypto
-      ? (a, b) => {
-          let { byteLength: byteLengthA } = a,
-            { byteLength: byteLengthB } = b;
-          if (typeof byteLengthA != "number" || typeof byteLengthB != "number")
-            throw new TypeError("Input must be an array buffer view");
-          if (byteLengthA !== byteLengthB) throw new RangeError("Input buffers must have the same length");
-          return crypto.timingSafeEqual(a, b);
-        }
-      : void 0,
   scryptSync =
     "scryptSync" in crypto
       ? (password, salt, keylen, options) => {
@@ -11759,16 +10220,14 @@ var getRandomValues = array => crypto.getRandomValues(array),
           }
         }
       : void 0;
-timingSafeEqual &&
-  (Object.defineProperty(timingSafeEqual, "name", {
-    value: "::bunternal::",
-  }),
+scrypt &&
   Object.defineProperty(scrypt, "name", {
     value: "::bunternal::",
   }),
-  Object.defineProperty(scryptSync, "name", {
-    value: "::bunternal::",
-  }));
+  scryptSync &&
+    Object.defineProperty(scryptSync, "name", {
+      value: "::bunternal::",
+    });
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it
@@ -12030,92 +10489,6 @@ crypto_exports.createPublicKey = _createPublicKey;
 crypto_exports.KeyObject = KeyObject;
 var webcrypto = crypto;
 var _subtle = webcrypto.subtle;
-const _createSign = crypto_exports.createSign;
-
-crypto_exports.sign = function (algorithm, data, key, callback) {
-  // TODO: move this to native
-  var dsaEncoding, padding, saltLength;
-  // key must be a KeyObject
-  if (!(key instanceof KeyObject)) {
-    if ($isObject(key) && key.key) {
-      padding = key.padding;
-      saltLength = key.saltLength;
-      dsaEncoding = key.dsaEncoding;
-    }
-    if (key.key instanceof KeyObject) {
-      key = key.key;
-    } else {
-      key = _createPrivateKey(key);
-    }
-  }
-  if (typeof callback === "function") {
-    try {
-      let result;
-      if (key.asymmetricKeyType === "rsa") {
-        // RSA-PSS is supported by native but other RSA algorithms are not
-        result = _createSign(algorithm || "sha256")
-          .update(data)
-          .sign(key);
-      } else {
-        result = nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
-      }
-      callback(null, result);
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    if (key.asymmetricKeyType === "rsa") {
-      return _createSign(algorithm || "sha256")
-        .update(data)
-        .sign(key);
-    } else {
-      return nativeSign(key.$bunNativePtr, data, algorithm, dsaEncoding, padding, saltLength);
-    }
-  }
-};
-const _createVerify = crypto_exports.createVerify;
-
-crypto_exports.verify = function (algorithm, data, key, signature, callback) {
-  // TODO: move this to native
-  var dsaEncoding, padding, saltLength;
-  // key must be a KeyObject
-  if (!(key instanceof KeyObject)) {
-    if ($isObject(key) && key.key) {
-      padding = key.padding;
-      saltLength = key.saltLength;
-      dsaEncoding = key.dsaEncoding;
-    }
-    if (key.key instanceof KeyObject && key.key.type === "public") {
-      key = key.key;
-    } else {
-      key = _createPublicKey(key);
-    }
-  }
-  if (typeof callback === "function") {
-    try {
-      let result;
-      if (key.asymmetricKeyType === "rsa") {
-        // RSA-PSS is supported by native but other RSA algorithms are not
-        result = _createVerify(algorithm || "sha256")
-          .update(data)
-          .verify(key, signature);
-      } else {
-        result = nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
-      }
-      callback(null, result);
-    } catch (err) {
-      callback(err);
-    }
-  } else {
-    if (key.asymmetricKeyType === "rsa") {
-      return _createVerify(algorithm || "sha256")
-        .update(data)
-        .verify(key, signature);
-    } else {
-      return nativeVerify(key.$bunNativePtr, data, signature, algorithm, dsaEncoding, padding, saltLength);
-    }
-  }
-};
 
 // We are not allowed to call createPublicKey/createPrivateKey when we're already working with a
 // KeyObject/CryptoKey of the same type (public/private).
@@ -12186,16 +10559,158 @@ crypto_exports.getFips = function getFips() {
 };
 
 crypto_exports.getRandomValues = getRandomValues;
-crypto_exports.randomUUID = randomUUID;
+crypto_exports.randomUUID = _randomUUID;
 crypto_exports.randomInt = randomInt;
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
-crypto_exports.timingSafeEqual = timingSafeEqual;
+crypto_exports.timingSafeEqual = _timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
 crypto_exports.Certificate = Certificate;
+
+function Sign(algorithm, options): void {
+  if (!(this instanceof Sign)) {
+    return new Sign(algorithm, options);
+  }
+
+  validateString(algorithm, "algorithm");
+  this[kHandle] = new _Sign();
+  this[kHandle].init(algorithm);
+
+  StreamModule.Writable.$apply(this, [options]);
+}
+$toClass(Sign, "Sign", StreamModule.Writable);
+
+Sign.prototype._write = function _write(chunk, encoding, callback) {
+  this.update(chunk, encoding);
+  callback();
+};
+
+Sign.prototype.update = function update(data, encoding) {
+  return this[kHandle].update(this, data, encoding);
+};
+
+Sign.prototype.sign = function sign(options, encoding) {
+  return this[kHandle].sign(options, encoding);
+};
+
+crypto_exports.Sign = Sign;
+crypto_exports.sign = sign;
+
+function createSign(algorithm, options?) {
+  return new Sign(algorithm, options);
+}
+
+crypto_exports.createSign = createSign;
+
+function Verify(algorithm, options): void {
+  if (!(this instanceof Verify)) {
+    return new Verify(algorithm, options);
+  }
+
+  validateString(algorithm, "algorithm");
+  this[kHandle] = new _Verify();
+  this[kHandle].init(algorithm);
+
+  StreamModule.Writable.$apply(this, [options]);
+}
+$toClass(Verify, "Verify", StreamModule.Writable);
+
+Verify.prototype._write = Sign.prototype._write;
+Verify.prototype.update = Sign.prototype.update;
+
+Verify.prototype.verify = function verify(options, signature, sigEncoding) {
+  return this[kHandle].verify(options, signature, sigEncoding);
+};
+
+crypto_exports.Verify = Verify;
+crypto_exports.verify = verify;
+
+function createVerify(algorithm, options?) {
+  return new Verify(algorithm, options);
+}
+
+crypto_exports.createVerify = createVerify;
+
+{
+  function Hash(algorithm, options?): void {
+    if (!new.target) {
+      return new Hash(algorithm, options);
+    }
+
+    const handle = new _Hash(algorithm, options);
+    this[kHandle] = handle;
+
+    LazyTransform.$apply(this, [options]);
+  }
+  $toClass(Hash, "Hash", LazyTransform);
+
+  Hash.prototype.copy = function copy(options) {
+    return new Hash(this[kHandle], options);
+  };
+
+  Hash.prototype._transform = function _transform(chunk, encoding, callback) {
+    this[kHandle].update(this, chunk, encoding);
+    callback();
+  };
+
+  Hash.prototype._flush = function _flush(callback) {
+    this.push(this[kHandle].digest(null, false));
+    callback();
+  };
+
+  Hash.prototype.update = function update(data, encoding) {
+    return this[kHandle].update(this, data, encoding);
+  };
+
+  Hash.prototype.digest = function digest(outputEncoding) {
+    return this[kHandle].digest(outputEncoding);
+  };
+
+  crypto_exports.Hash = Hash;
+  crypto_exports.createHash = function createHash(algorithm, options) {
+    return new Hash(algorithm, options);
+  };
+}
+
+{
+  function Hmac(hmac, key, options?): void {
+    if (!new.target) {
+      return new Hmac(hmac, key, options);
+    }
+
+    const handle = new _Hmac(hmac, key, options);
+    this[kHandle] = handle;
+
+    LazyTransform.$apply(this, [options]);
+  }
+  $toClass(Hmac, "Hmac", LazyTransform);
+
+  Hmac.prototype.update = function update(data, encoding) {
+    return this[kHandle].update(this, data, encoding);
+  };
+
+  Hmac.prototype.digest = function digest(outputEncoding) {
+    return this[kHandle].digest(outputEncoding);
+  };
+
+  Hmac.prototype._transform = function _transform(chunk, encoding, callback) {
+    this[kHandle].update(this, chunk, encoding);
+    callback();
+  };
+  Hmac.prototype._flush = function _flush(callback) {
+    this.push(this[kHandle].digest());
+    callback();
+  };
+
+  crypto_exports.Hmac = Hmac;
+  crypto_exports.createHmac = function createHmac(hmac, key, options) {
+    return new Hmac(hmac, key, options);
+  };
+}
+
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

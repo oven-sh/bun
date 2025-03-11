@@ -3,16 +3,18 @@
 // - https://github.com/oven-sh/bun/issues/6044
 import { Window } from "happy-dom";
 import util from "node:util";
+import { exitCodeMap } from "./exit-code-map.mjs";
 
 const args = process.argv.slice(2);
 let url = args.find(arg => !arg.startsWith("-"));
 if (!url) {
   console.error("Usage: node client-fixture.mjs <url> [...]");
-  process.exit(1);
+  process.exit(exitCodeMap.usage);
 }
 url = new URL(url, "http://localhost:3000");
 
 const storeHotChunks = args.includes("--store-hot-chunks");
+const expectErrors = args.includes("--expect-errors");
 
 // Create a new window instance
 let window;
@@ -38,6 +40,7 @@ function reset() {
       error: () => {},
       warn: () => {},
       info: () => {},
+      assert: () => {},
     };
   }
 }
@@ -51,7 +54,12 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
-  window.fetch = fetch;
+  window.fetch = async function (url, options) {
+    if (typeof url === "string") {
+      url = new URL(url, windowUrl).href;
+    }
+    return fetch(url, options);
+  };
 
   // Provide WebSocket
   window.WebSocket = class extends WebSocket {
@@ -61,8 +69,30 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         if (!allowWebSocketMessages) {
-          console.error("[E] WebSocket message received while messages are not allowed");
-          process.exit(2);
+          const data = new Uint8Array(event.data);
+          console.error(
+            "[E] WebSocket message received while messages are not allowed. Event type",
+            JSON.stringify(String.fromCharCode(data[0])),
+          );
+          let hexDump = "";
+          for (let i = 0; i < data.length; i += 16) {
+            // Print offset
+            hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
+            // Print hex values
+            const chunk = data.slice(i, i + 16);
+            const hexValues = Array.from(chunk)
+              .map(b => b.toString(16).padStart(2, "0"))
+              .join(" ");
+            hexDump += hexValues.padEnd(48, " ");
+            // Print ASCII
+            hexDump += "\x1b[2m| \x1b[0m";
+            for (const byte of chunk) {
+              hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
+            }
+            hexDump += "\n";
+          }
+          console.error(hexDump);
+          process.exit(exitCodeMap.websocketMessagesAreBanned);
         }
       });
     }
@@ -71,9 +101,6 @@ function createWindow(windowUrl) {
       webSockets = webSockets.filter(ws => ws !== this);
     }
   };
-
-  // Add fetch support
-  window.fetch = fetch;
 
   // Intercept console messages
   const originalConsole = window.console;
@@ -84,6 +111,9 @@ function createWindow(windowUrl) {
     error: (...args) => {
       console.error("[E]", ...args);
       originalConsole.error(...args);
+      if (!expectErrors) {
+        process.exit(exitCodeMap.consoleError);
+      }
     },
     warn: (...args) => {
       console.warn("[W]", ...args);
@@ -94,6 +124,11 @@ function createWindow(windowUrl) {
       if (args[0]?.startsWith("Updated modules:")) return;
       console.info("[I]", ...args);
       originalConsole.info(...args);
+    },
+    assert: (value, ...args) => {
+      if (value) return;
+      console.trace(...args);
+      process.exit(exitCodeMap.assertionFailed);
     },
   };
 
@@ -108,9 +143,9 @@ function createWindow(windowUrl) {
       if (pendingReloadTimer) clearTimeout(pendingReloadTimer);
       pendingReloadTimer = setTimeout(() => {
         // If we get here, permission never came
-        console.error("[E] location.reload() called but permission never arrived");
-        process.exit(2);
-      }, 1000);
+        console.error("[E] location.reload() called unexpectedly");
+        process.exit(exitCodeMap.unexpectedReload);
+      }, 500);
     }
   };
 
@@ -153,7 +188,7 @@ async function handleReload() {
     await loadPage(window);
   } catch (error) {
     console.error("Failed to reload page:", error);
-    process.exit(1);
+    process.exit(exitCodeMap.reloadFailed);
   }
 }
 
@@ -162,16 +197,16 @@ async function loadPage() {
   const response = await fetch(url);
   if (response.status >= 400 && response.status <= 499) {
     console.error("Failed to load page:", response.statusText);
-    process.exit(1);
+    process.exit(exitCodeMap.reloadFailed);
   }
   if (!response.headers.get("content-type").match(/^text\/html;?/)) {
     console.error("Invalid content type:", response.headers.get("content-type"));
-    process.exit(1);
+    process.exit(exitCodeMap.reloadFailed);
   }
   const html = await response.text();
   if (!html.includes("<script")) {
     console.error("missing <script>");
-    process.exit(1);
+    process.exit(exitCodeMap.reloadFailed);
   }
   window.document.write(html);
 }
@@ -293,26 +328,30 @@ process.on("message", async message => {
       }
 
       const errors = [];
-      const messages = overlay.shadowRoot.querySelectorAll(".message");
-
-      for (const message of messages) {
-        const fileName = message.closest(".message-group").querySelector(".file-name").textContent;
+      const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
+      for (const message of buildErrors) {
+        const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
         const label = message.querySelector(".log-label").textContent;
         const text = message.querySelector(".log-text").textContent;
 
-        const lineNumElem = message.querySelector(".line-num");
+        const lineNumElem = message.querySelector(".gutter");
         const spaceElem = message.querySelector(".highlight-wrap > .space");
 
         let formatted;
         if (lineNumElem && spaceElem) {
           const line = lineNumElem.textContent;
-          const col = spaceElem.textContent.length;
+          const col = spaceElem.textContent.length + 1;
           formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
         } else {
           formatted = `${fileName}: ${label}: ${text}`;
         }
 
         errors.push(formatted);
+      }
+      const runtimeError = overlay.shadowRoot.querySelector(".r-error");
+      if (runtimeError) {
+        // TODO: line and column of this error
+        errors.push(runtimeError.querySelector(".message-desc").textContent);
       }
 
       process.send({
@@ -332,9 +371,20 @@ process.on("disconnect", () => {
   process.exit(0);
 });
 process.on("exit", () => {
-  if (expectingReload) {
+  if (window) {
+    const message = window.sessionStorage.getItem("bun:hmr:message");
+    if (message) {
+      const decoded = JSON.parse(message);
+      if (decoded.kind === "warn") {
+        console.error(decoded.message);
+      } else {
+        console.error(decoded.message);
+      }
+    }
+  }
+  if (process.exitCode === 0 && expectingReload) {
     console.error("[E] location.reload() was not called");
-    process.exit(2);
+    process.exit(exitCodeMap.reloadNotCalled);
   }
 });
 

@@ -327,7 +327,7 @@ it("process.binding", () => {
   expect(() => process.binding("contextify")).toThrow();
   expect(() => process.binding("crypto")).toThrow();
   expect(() => process.binding("crypto/x509")).not.toThrow();
-  expect(() => process.binding("fs")).toThrow();
+  expect(() => process.binding("fs")).not.toThrow();
   expect(() => process.binding("fs_event_wrap")).toThrow();
   expect(() => process.binding("http_parser")).toThrow();
   expect(() => process.binding("icu")).toThrow();
@@ -374,7 +374,7 @@ it("process.argv in testing", () => {
 describe("process.exitCode", () => {
   it("validates int", () => {
     expect(() => (process.exitCode = "potato")).toThrow(
-      `The "code" argument must be of type number. Received type string ('potato')`,
+      `The "code" argument must be of type number. Received type string ("potato")`,
     );
     expect(() => (process.exitCode = 1.2)).toThrow(
       `The value of \"code\" is out of range. It must be an integer. Received 1.2`,

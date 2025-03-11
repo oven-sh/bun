@@ -357,6 +357,10 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
       value: ShellPromise,
       enumerable: true,
     },
+    ShellError: {
+      value: ShellError,
+      enumerable: true,
+    },
   });
 
   return BunShell;

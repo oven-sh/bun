@@ -25,8 +25,10 @@ pub const ImportKind = enum(u8) {
     at_conditional = 7,
     /// A CSS "url(...)" token
     url = 8,
+    /// A CSS "composes" property
+    composes = 9,
 
-    internal = 9,
+    internal = 10,
 
     pub const Label = std.EnumArray(ImportKind, []const u8);
     pub const all_labels: Label = brk: {
@@ -42,6 +44,7 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.require_resolve, "require-resolve");
         labels.set(ImportKind.at, "import-rule");
         labels.set(ImportKind.url, "url-token");
+        labels.set(ImportKind.composes, "composes");
         labels.set(ImportKind.internal, "internal");
         break :brk labels;
     };
@@ -57,6 +60,7 @@ pub const ImportKind = enum(u8) {
         labels.set(ImportKind.at, "@import");
         labels.set(ImportKind.url, "url()");
         labels.set(ImportKind.internal, "<bun internal>");
+        labels.set(ImportKind.composes, "composes");
         break :brk labels;
     };
 
@@ -80,7 +84,7 @@ pub const ImportKind = enum(u8) {
     }
 
     pub fn isFromCSS(k: ImportKind) bool {
-        return k == .at_conditional or k == .at or k == .url;
+        return k == .at_conditional or k == .at or k == .url or k == .composes;
     }
 
     pub fn toAPI(k: ImportKind) Api.ImportKind {
@@ -98,14 +102,15 @@ pub const ImportKind = enum(u8) {
 };
 
 pub const ImportRecord = struct {
+    pub const Index = bun.GenericIndex(u32, ImportRecord);
+
     range: logger.Range,
     path: fs.Path,
     kind: ImportKind,
     tag: Tag = .none,
+    loader: ?bun.options.Loader = null,
 
-    source_index: Index = Index.invalid,
-
-    print_mode: PrintMode = .normal,
+    source_index: bun.JSAst.Index = .invalid,
 
     /// True for the following cases:
     ///
@@ -167,10 +172,6 @@ pub const ImportRecord = struct {
 
     pub const List = bun.BabyList(ImportRecord);
 
-    pub fn loader(this: *const ImportRecord) ?bun.options.Loader {
-        return this.tag.loader();
-    }
-
     pub const Tag = enum {
         /// A normal import to a user's source file
         none,
@@ -189,40 +190,7 @@ pub const ImportRecord = struct {
         /// crossover to the SSR graph. See bake.Framework.ServerComponents.separate_ssr_graph
         bake_resolve_to_ssr_graph,
 
-        with_type_sqlite,
-        with_type_sqlite_embedded,
-        with_type_text,
-        with_type_json,
-        with_type_toml,
-        with_type_file,
-
-        pub fn loader(this: Tag) ?bun.options.Loader {
-            return switch (this) {
-                .with_type_sqlite => .sqlite,
-                .with_type_sqlite_embedded => .sqlite_embedded,
-                .with_type_text => .text,
-                .with_type_json => .json,
-                .with_type_toml => .toml,
-                .with_type_file => .file,
-                else => null,
-            };
-        }
-
-        pub fn onlySupportsDefaultImports(this: Tag) bool {
-            return switch (this) {
-                .with_type_file, .with_type_text => true,
-                else => false,
-            };
-        }
-
-        pub fn isSQLite(this: Tag) bool {
-            return switch (this) {
-                .with_type_sqlite,
-                .with_type_sqlite_embedded,
-                => true,
-                else => false,
-            };
-        }
+        tailwind,
 
         pub inline fn isRuntime(this: Tag) bool {
             return this == .runtime;

@@ -1,6 +1,6 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, imageFixtures, reactRefreshStub } from "../dev-server-harness";
+import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 import assert from "node:assert";
 
 devTest("css file with syntax error does not kill old styles", {
@@ -16,8 +16,8 @@ devTest("css file with syntax error does not kill old styles", {
     }),
   },
   async test(dev) {
-    await using client = await dev.client("/");
-    await client.style("body").color.expect.toBe("red");
+    await using c = await dev.client("/");
+    await c.style("body").color.expect.toBe("red");
     await dev.write(
       "styles.css",
       `
@@ -30,7 +30,7 @@ devTest("css file with syntax error does not kill old styles", {
         errors: ["styles.css:4:1: error: Unexpected end of input"],
       },
     );
-    await client.style("body").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("red");
     await dev.write(
       "styles.css",
       `
@@ -40,9 +40,9 @@ devTest("css file with syntax error does not kill old styles", {
         }
       `,
     );
-    await client.style("body").backgroundColor.expect.toBe("#00f");
+    await c.style("body").backgroundColor.expect.toBe("#00f");
     await dev.write("styles.css", ` `, { dedent: false });
-    await client.style("body").notFound();
+    await c.style("body").notFound();
   },
 });
 devTest("css file with initial syntax error gets recovered", {
@@ -58,11 +58,11 @@ devTest("css file with initial syntax error gets recovered", {
     `,
   },
   async test(dev) {
-    await using client = await dev.client("/", {
+    await using c = await dev.client("/", {
       errors: ["styles.css:3:3: error: Unexpected end of input"],
     });
     // hard reload to dismiss the error overlay
-    await client.expectReload(async () => {
+    await c.expectReload(async () => {
       await dev.write(
         "styles.css",
         `
@@ -72,7 +72,7 @@ devTest("css file with initial syntax error gets recovered", {
         `,
       );
     });
-    await client.style("body").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("red");
     await dev.write(
       "styles.css",
       `
@@ -81,7 +81,7 @@ devTest("css file with initial syntax error gets recovered", {
         }
       `,
     );
-    await client.style("body").color.expect.toBe("#00f");
+    await c.style("body").color.expect.toBe("#00f");
     await dev.write(
       "styles.css",
       `
@@ -97,9 +97,8 @@ devTest("css file with initial syntax error gets recovered", {
 });
 devTest("add new css import later", {
   files: {
-    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.ts"],
       body: `hello world`,
     }),
     "index.ts": `
@@ -107,6 +106,7 @@ devTest("add new css import later", {
       export default function () {
         return "hello world";
       }
+      import.meta.hot.accept();
     `,
     "styles.css": `
       body {
@@ -115,12 +115,12 @@ devTest("add new css import later", {
     `,
   },
   async test(dev) {
-    await using client = await dev.client("/");
-    await client.style("body").notFound();
+    await using c = await dev.client("/");
+    await c.style("body").notFound();
     await dev.patch("index.ts", { find: "// import", replace: "import" });
-    await client.style("body").color.expect.toBe("red");
+    await c.style("body").color.expect.toBe("red");
     await dev.patch("index.ts", { find: "import", replace: "// import" });
-    await client.style("body").notFound();
+    await c.style("body").notFound();
   },
 });
 devTest("css import another css file", {
@@ -177,12 +177,12 @@ devTest("asset referenced in css", {
     "bun.png": imageFixtures.bun,
   },
   async test(dev) {
-    await using client = await dev.client("/");
-    let backgroundImage = await client.style("body").backgroundImage;
+    await using c = await dev.client("/");
+    let backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.write("bun.png", imageFixtures.bun2);
-    backgroundImage = await client.style("body").backgroundImage;
+    backgroundImage = await c.style("body").backgroundImage;
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun2);
   },
@@ -302,8 +302,8 @@ devTest("removing and re-adding css import", {
     `,
   },
   async test(dev) {
-    await using client = await dev.client("/");
-    await client.style(".colored").color.expect.toBe("#00f");
+    await using c = await dev.client("/");
+    await c.style(".colored").color.expect.toBe("#00f");
 
     // Remove the import
     await dev.write(
@@ -313,10 +313,10 @@ devTest("removing and re-adding css import", {
         .main { background: white; }
       `,
     );
-    await client.style(".colored").notFound();
+    await c.style(".colored").notFound();
 
     // A change to 'colors.css' should not trigger a rebuild of 'main.css', nor notify any clients.
-    await client.expectNoWebSocketActivity(async () => {
+    await c.expectNoWebSocketActivity(async () => {
       await dev.write(
         "colors.css",
         `
@@ -330,7 +330,7 @@ devTest("removing and re-adding css import", {
         `,
       );
     });
-    await client.style(".colored").notFound();
+    await c.style(".colored").notFound();
 
     // Re-add the import
     await dev.write(
@@ -340,8 +340,167 @@ devTest("removing and re-adding css import", {
         .main { background: white; }
       `,
     );
-    await client.style(".colored").color.expect.toBe("#00f");
-    await client.style(".main").backgroundColor.expect.toBe("#fff");
+    await c.style(".colored").color.expect.toBe("#00f");
+    await c.style(".main").backgroundColor.expect.toBe("#fff");
+  },
+});
+devTest("changing html file with link tag works", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+    }),
+    "styles.css": `
+      .test {
+        color: blue;
+        font-size: 24px;
+      }
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".test").color.expect.toBe("#00f");
+    await c.style(".test").fontSize.expect.toBe("24px");
+
+    await c.expectReload(async () => {
+      await dev.writeNoChanges("index.html");
+    });
+    await c.style(".test").color.expect.toBe("#00f");
+    await c.style(".test").fontSize.expect.toBe("24px");
+
+    await c.hardReload();
+    await c.style(".test").color.expect.toBe("#00f");
+    await c.style(".test").fontSize.expect.toBe("24px");
+
+    await dev.write(
+      "index.html",
+      emptyHtmlFile({
+        styles: ["other.css"],
+      }),
+      {
+        errors: ['index.html: error: Could not resolve: "other.css". Maybe you need to "bun install"?'],
+      },
+    );
+    await c.expectReload(async () => {
+      await dev.write(
+        "other.css",
+        `
+          .other {
+            color: red;
+          }
+        `,
+      );
+    });
+    await c.style(".other").color.expect.toBe("red");
+    await c.style(".test").notFound();
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.html",
+        emptyHtmlFile({
+          styles: ["styles.css"],
+        }),
+      );
+    });
+    await c.style(".test").color.expect.toBe("#00f");
+    await c.style(".test").fontSize.expect.toBe("24px");
+    await c.style(".other").notFound();
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.html",
+        emptyHtmlFile({
+          styles: ["other.css", "styles.css"],
+        }),
+      );
+    });
+    await c.style(".other").color.expect.toBe("red");
+    await c.style(".test").color.expect.toBe("#00f");
+    await c.style(".test").fontSize.expect.toBe("24px");
+  },
+});
+devTest("css import before create", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `
+        <div>HELLO</div>
+      `,
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ['index.html: error: Could not resolve: "styles.css". Maybe you need to "bun install"?'],
+    });
+    await dev.fetch("/").expect.not.toContain("HELLO");
+    await dev.write(
+      "styles.css",
+      `
+        body {
+          background-image: url(bun.png);
+        }
+      `,
+      {
+        errors: ['styles.css:2:21: error: Could not resolve: "bun.png". Maybe you need to "bun install"?'],
+      },
+    );
+    await c.expectReload(async () => {
+      await dev.write("bun.png", imageFixtures.bun);
+    });
+    const backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+devTest("css import before create project relative", {
+  files: {
+    "html/index.html": emptyHtmlFile({
+      styles: ["/style/styles.css"],
+      body: `
+        <div>HELLO</div>
+      `,
+    }),
+  },
+  async test(dev) {
+    dev.mkdir("style"); // (See DevServer.zig "BUN-10968")
+    await using c = await dev.client("/", {
+      errors: ['html/index.html: error: Could not resolve: "/style/styles.css"'],
+    });
+    await dev.fetch("/").expect.not.toContain("HELLO");
+    await dev.write(
+      "style/styles.css",
+      `
+        body {
+          background-image: url(/assets/bun.png);
+        }
+      `,
+      {
+        errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
+      },
+    );
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("assets/bun.png", imageFixtures.bun, {
+        errors: ['style/styles.css:2:21: error: Could not resolve: "/assets/bun.png"'],
+      });
+      await dev.delete("assets/bun.png", { wait: false });
+    });
+    await dev.fetch("/").expect.not.toContain("HELLO");
+    await dev.write(
+      "style/styles.css",
+      `
+        body {
+          background-image: url(../assets/bun.png);
+        }
+      `,
+      {
+        errors: ['style/styles.css:2:21: error: Could not resolve: "../assets/bun.png"'],
+      },
+    );
+    await c.expectReload(async () => {
+      await dev.write("assets/bun.png", imageFixtures.bun);
+    });
+    const backgroundImage = await c.style("body").backgroundImage;
+    assert(backgroundImage);
+    await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
+    await dev.fetch("/").expect.toContain("HELLO");
   },
 });
 

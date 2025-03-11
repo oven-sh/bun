@@ -408,7 +408,7 @@ static int bsd_socket_set_membership6(LIBUS_SOCKET_DESCRIPTOR fd, const struct s
         mreq.ipv6mr_interface = iface->sin6_scope_id;
     }
     int option = drop ? IPV6_LEAVE_GROUP : IPV6_JOIN_GROUP;
-    return setsockopt(fd, IPPROTO_IP, option, &mreq, sizeof(mreq));
+    return setsockopt(fd, IPPROTO_IPV6, option, &mreq, sizeof(mreq));
 }
 
 int bsd_socket_set_membership(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr_storage *addr, const struct sockaddr_storage *iface, int drop) {

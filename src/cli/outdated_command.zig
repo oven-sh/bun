@@ -150,9 +150,10 @@ pub const OutdatedCommand = struct {
             try workspace_pkg_ids.append(allocator, @intCast(pkg_id));
         }
 
+        var path_buf: bun.PathBuffer = undefined;
+
         const converted_filters = converted_filters: {
             const buf = try allocator.alloc(WorkspaceFilter, filters.len);
-            var path_buf: bun.PathBuffer = undefined;
             for (filters, buf) |filter, *converted| {
                 converted.* = try WorkspaceFilter.init(allocator, filter, original_cwd, &path_buf);
             }
@@ -183,7 +184,7 @@ pub const OutdatedCommand = struct {
                                 else => unreachable,
                             };
 
-                            const abs_res_path = path.joinAbsString(FileSystem.instance.top_level_dir, &[_]string{res_path}, .posix);
+                            const abs_res_path = path.joinAbsStringBuf(FileSystem.instance.top_level_dir, &path_buf, &[_]string{res_path}, .posix);
 
                             if (!glob.walk.matchImpl(allocator, pattern, strings.withoutTrailingSlash(abs_res_path)).matches()) {
                                 break :matched false;

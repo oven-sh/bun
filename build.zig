@@ -25,9 +25,10 @@ comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
         @compileError(
             "" ++
-                "Bun requires Zig version " ++ recommended_zig_version ++ ". This is" ++
-                "automatically configured via Bun's CMake setup. You likely meant to run" ++
-                "`bun setup`. If you are trying to upgrade the Zig compiler," ++
+                "Bun requires Zig version " ++ recommended_zig_version ++ " (found " ++
+                builtin.zig_version_string ++ "). This is " ++
+                "automatically configured via Bun's CMake setup. You likely meant to run " ++
+                "`bun setup`. If you are trying to upgrade the Zig compiler, " ++
                 "run `./scripts/download-zig.sh master` or comment this message out.",
         );
     }

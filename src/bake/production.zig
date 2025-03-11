@@ -237,7 +237,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
                 (try entry_points.getOrPutEntryPoint(client, .client)).toOptional()
             else
                 .none,
-            .server_file_string = .{},
+            .server_file_string = .empty,
         });
     }
 
@@ -286,7 +286,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
             file.dest_path,
             file.entry_point_index,
         });
-        if (file.loader == .css) {
+        if (file.loader.isCSS()) {
             if (css_chunks_count == 0) css_chunks_first = i;
             css_chunks_count += 1;
         }
@@ -417,7 +417,7 @@ pub fn buildWithVm(ctx: bun.CLI.Command.Context, cwd: []const u8, vm: *VirtualMa
     const css_chunk_js_strings = try allocator.alloc(JSValue, css_chunks_count);
     for (bundled_outputs[css_chunks_first..][0..css_chunks_count], css_chunk_js_strings) |output_file, *str| {
         bun.assert(output_file.dest_path[0] != '.');
-        bun.assert(output_file.loader == .css);
+        bun.assert(output_file.loader.isCSS());
         str.* = (try bun.String.createFormat("{s}{s}", .{ public_path, output_file.dest_path })).toJS(global);
     }
 

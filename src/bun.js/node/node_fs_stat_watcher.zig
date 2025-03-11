@@ -216,7 +216,7 @@ pub const StatWatcher = struct {
             this.poll_ref.unref(this.ctx);
         }
         this.closed = true;
-        this.last_jsvalue.clear();
+        this.last_jsvalue.deinit();
 
         bun.default_allocator.free(this.path);
         bun.default_allocator.destroy(this);
@@ -311,15 +311,13 @@ pub const StatWatcher = struct {
     }
 
     /// Stops file watching but does not free the instance.
-    pub fn close(
-        this: *StatWatcher,
-    ) void {
+    pub fn close(this: *StatWatcher) void {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
         this.closed = true;
-        this.last_jsvalue.clear();
+        this.last_jsvalue.clearWithoutDeallocation();
     }
 
     pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
@@ -486,7 +484,7 @@ pub const StatWatcher = struct {
             .last_check = std.time.Instant.now() catch unreachable,
             // InitStatTask is responsible for setting this
             .last_stat = std.mem.zeroes(bun.Stat),
-            .last_jsvalue = JSC.Strong.init(),
+            .last_jsvalue = .empty,
         };
         errdefer this.deinit();
 

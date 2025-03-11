@@ -1403,12 +1403,13 @@ pub const PackCommand = struct {
             printArchivedFilesAndPackages(ctx, root_dir, true, &pack_queue, 0);
 
             if (comptime !for_publish) {
-                if (manager.options.pack_destination.len == 0) {
+                if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
                     Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
                 } else {
                     var dest_buf: PathBuffer = undefined;
-                    const abs_tarball_dest, _ = absTarballDestination(
+                    const abs_tarball_dest, _ = tarballDestination(
                         ctx.manager.options.pack_destination,
+                        ctx.manager.options.pack_filename,
                         abs_workspace_path,
                         package_name,
                         package_version,
@@ -1444,8 +1445,9 @@ pub const PackCommand = struct {
 
             if (comptime for_publish) {
                 var dest_buf: bun.PathBuffer = undefined;
-                const abs_tarball_dest, _ = absTarballDestination(
+                const abs_tarball_dest, _ = tarballDestination(
                     ctx.manager.options.pack_destination,
+                    ctx.manager.options.pack_filename,
                     abs_workspace_path,
                     package_name,
                     package_version,
@@ -1526,8 +1528,9 @@ pub const PackCommand = struct {
         }
 
         var dest_buf: PathBuffer = undefined;
-        const abs_tarball_dest, const abs_tarball_dest_dir_end = absTarballDestination(
+        const abs_tarball_dest, const abs_tarball_dest_dir_end = tarballDestination(
             ctx.manager.options.pack_destination,
+            ctx.manager.options.pack_filename,
             abs_workspace_path,
             package_name,
             package_version,
@@ -1739,7 +1742,7 @@ pub const PackCommand = struct {
         );
 
         if (comptime !for_publish) {
-            if (manager.options.pack_destination.len == 0) {
+            if (manager.options.pack_destination.len == 0 and manager.options.pack_filename.len == 0) {
                 Output.pretty("\n{}\n", .{fmtTarballFilename(package_name, package_version, .normalize)});
             } else {
                 Output.pretty("\n{s}\n", .{abs_tarball_dest});
@@ -1795,34 +1798,58 @@ pub const PackCommand = struct {
         }
     }
 
-    fn absTarballDestination(
+    fn tarballDestination(
         pack_destination: string,
+        pack_filename: string,
         abs_workspace_path: string,
         package_name: string,
         package_version: string,
         dest_buf: []u8,
     ) struct { stringZ, usize } {
-        const tarball_destination_dir = bun.path.joinAbsStringBuf(
-            abs_workspace_path,
-            dest_buf,
-            &.{pack_destination},
-            .auto,
-        );
-
-        const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
-            fmtTarballFilename(package_name, package_version, .normalize),
-        }) catch {
-            Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
-                strings.withoutTrailingSlash(tarball_destination_dir),
-                fmtTarballFilename(package_name, package_version, .normalize),
+        if (pack_filename.len > 0 and pack_destination.len > 0) {
+            Output.errGeneric("cannot use both filename and destination at the same time with tarball: filename \"{s}\" and destination \"{s}\"", .{
+                strings.withoutTrailingSlash(pack_filename),
+                strings.withoutTrailingSlash(pack_destination),
             });
             Global.crash();
-        };
+        }
+        if (pack_filename.len > 0) {
+            const tarball_name = std.fmt.bufPrint(dest_buf[0..], "{s}\x00", .{
+                pack_filename,
+            }) catch {
+                Output.errGeneric("archive filename too long: \"{s}\"", .{
+                    pack_filename,
+                });
+                Global.crash();
+            };
 
-        return .{
-            dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0],
-            tarball_destination_dir.len,
-        };
+            return .{
+                dest_buf[0 .. tarball_name.len - 1 :0],
+                0,
+            };
+        } else {
+            const tarball_destination_dir = bun.path.joinAbsStringBuf(
+                abs_workspace_path,
+                dest_buf,
+                &.{pack_destination},
+                .auto,
+            );
+
+            const tarball_name = std.fmt.bufPrint(dest_buf[strings.withoutTrailingSlash(tarball_destination_dir).len..], "/{}\x00", .{
+                fmtTarballFilename(package_name, package_version, .normalize),
+            }) catch {
+                Output.errGeneric("archive destination name too long: \"{s}/{}\"", .{
+                    strings.withoutTrailingSlash(tarball_destination_dir),
+                    fmtTarballFilename(package_name, package_version, .normalize),
+                });
+                Global.crash();
+            };
+
+            return .{
+                dest_buf[0 .. strings.withoutTrailingSlash(tarball_destination_dir).len + tarball_name.len - 1 :0],
+                tarball_destination_dir.len,
+            };
+        }
     }
 
     pub fn fmtTarballFilename(package_name: string, package_version: string, style: TarballNameFormatter.Style) TarballNameFormatter {
@@ -2083,6 +2110,7 @@ pub const PackCommand = struct {
             &json.source,
             .{
                 .indent = json.indentation,
+                .mangled_props = null,
             },
         ) catch |err| {
             return switch (err) {
@@ -2381,7 +2409,7 @@ pub const bindings = struct {
             return global.throw("expected tarball path string argument", .{});
         }
 
-        const tarball_path_str = args[0].toBunString(global);
+        const tarball_path_str = try args[0].toBunString(global);
         defer tarball_path_str.deref();
 
         const tarball_path = tarball_path_str.toUTF8(bun.default_allocator);

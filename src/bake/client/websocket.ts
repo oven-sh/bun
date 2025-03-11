@@ -36,6 +36,8 @@ let wait =
         })
     : () => new Promise<void>(done => setTimeout(done, 2_500));
 
+let mainWebSocket: WebSocketWrapper | null = null;
+
 interface WebSocketWrapper {
   /** When re-connected, this is re-assigned */
   wrapped: WebSocket | null;
@@ -44,9 +46,13 @@ interface WebSocketWrapper {
   [Symbol.dispose](): void;
 }
 
+export function getMainWebSocket(): WebSocketWrapper | null {
+  return mainWebSocket;
+}
+
 export function initWebSocket(
   handlers: Record<number, (dv: DataView<ArrayBuffer>, ws: WebSocket) => void>,
-  { url = "/_bun/hmr", displayMessage = "Live-reloading socket" }: { url?: string; displayMessage?: string } = {},
+  { url = "/_bun/hmr", onStatusChange }: { url?: string; onStatusChange?: (connected: boolean) => void } = {},
 ): WebSocketWrapper {
   let firstConnection = true;
   let closed = false;
@@ -62,17 +68,22 @@ export function initWebSocket(
     close() {
       closed = true;
       this.wrapped?.close();
+      if (mainWebSocket === this) {
+        mainWebSocket = null;
+      }
     },
     [Symbol.dispose]() {
       this.close();
     },
   };
 
-  function onOpen() {
-    if (firstConnection) {
-      firstConnection = false;
-      console.info(`[Bun] ${displayMessage} connected, waiting for changes...`);
-    }
+  if (mainWebSocket === null) {
+    mainWebSocket = wsProxy;
+  }
+
+  function onFirstOpen() {
+    console.info("[Bun] Hot-module-reloading socket connected, waiting for changes...");
+    onStatusChange?.(true);
   }
 
   function onMessage(ev: MessageEvent<string | ArrayBuffer>) {
@@ -87,15 +98,20 @@ export function initWebSocket(
   }
 
   function onError(ev: Event) {
-    console.error(ev);
+    if (ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      // Auto-reconnection already logged a warning.
+      ev.preventDefault();
+    }
   }
 
   async function onClose() {
+    onStatusChange?.(false);
     console.warn("[Bun] Hot-module-reloading socket disconnected, reconnecting...");
+
+    await new Promise(done => setTimeout(done, 1000));
 
     while (true) {
       if (closed) return;
-      await wait();
 
       // Note: Cannot use Promise.withResolvers due to lacking support on iOS
       let done;
@@ -106,24 +122,25 @@ export function initWebSocket(
       ws.onopen = () => {
         console.info("[Bun] Reconnected");
         done(true);
-        onOpen();
+        onStatusChange?.(true);
         ws.onerror = onError;
       };
       ws.onmessage = onMessage;
       ws.onerror = ev => {
-        onError(ev);
+        ev.preventDefault();
         done(false);
       };
 
       if (await promise) {
         break;
       }
+      await wait();
     }
   }
 
   let ws = (wsProxy.wrapped = new WebSocket(url));
   ws.binaryType = "arraybuffer";
-  ws.onopen = onOpen;
+  ws.onopen = onFirstOpen;
   ws.onmessage = onMessage;
   ws.onclose = onClose;
   ws.onerror = onError;

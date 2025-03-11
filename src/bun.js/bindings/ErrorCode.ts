@@ -30,6 +30,13 @@ const errors: ErrorCodeMapping = [
   ["ERR_CRYPTO_JWK_UNSUPPORTED_CURVE", Error],
   ["ERR_CRYPTO_OPERATION_FAILED", Error],
   ["ERR_CRYPTO_SCRYPT_INVALID_PARAMETER", Error],
+  ["ERR_CRYPTO_SIGN_KEY_REQUIRED", Error],
+  ["ERR_CRYPTO_INVALID_JWK", TypeError],
+  ["ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS", Error],
+  ["ERR_CRYPTO_HASH_FINALIZED", Error],
+  ["ERR_CRYPTO_HASH_UPDATE_FAILED", Error],
+  ["ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH", RangeError],
+  ["ERR_MISSING_PASSPHRASE", TypeError],
   ["ERR_DLOPEN_FAILED", Error],
   ["ERR_ENCODING_INVALID_ENCODED_DATA", TypeError],
   ["ERR_ILLEGAL_CONSTRUCTOR", TypeError],
@@ -83,6 +90,11 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["ERR_INVALID_CHAR", TypeError],
   ["MODULE_NOT_FOUND", Error],
+  ["ERR_HTTP_HEADERS_SENT", Error],
+  ["ERR_HTTP_BODY_NOT_ALLOWED", Error],
+  ["ERR_HTTP_INVALID_STATUS_CODE", RangeError],
+  ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
+  ["ERR_SERVER_ALREADY_LISTEN", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -91,7 +103,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_BORINGSSL", Error],
 
   // Console
-  ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
+  ["ERR_CONSOLE_WRITABLE_STREAM", TypeError],
 
   // FS
   ["ERR_DIR_CLOSED", Error],
@@ -183,6 +195,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_POSTGRES_QUERY_CANCELLED", Error, "PostgresError"],
   ["ERR_POSTGRES_UNSAFE_TRANSACTION", Error, "PostgresError"],
   ["ERR_POSTGRES_NOT_TAGGED_CALL", Error, "PostgresError"],
+  ["ERR_POSTGRES_UNKNOWN_FORMAT_CODE", Error, "PostgresError"],
   // S3
   ["ERR_S3_MISSING_CREDENTIALS", Error],
   ["ERR_S3_INVALID_METHOD", Error],

@@ -3,7 +3,7 @@
 // work because hmr-runtime is minified in release builds, which would affect
 // the generated line/column numbers across different build configurations.
 import { expect } from "bun:test";
-import { Dev, devTest, emptyHtmlFile, reactRefreshStub } from "../dev-server-harness";
+import { Dev, devTest, emptyHtmlFile } from "../bake-harness";
 import { BasicSourceMapConsumer, IndexedSourceMapConsumer, SourceMapConsumer } from "source-map";
 
 devTest("source map emitted for primary chunk", {
@@ -23,13 +23,13 @@ devTest("source map emitted for primary chunk", {
   async test(dev) {
     const html = await dev.fetch("/").text();
     using sourceMap = await extractSourceMapHtml(dev, html);
-    expect(sourceMap.sources.map(Bun.fileURLToPath)) //
-      .toEqual([dev.join("index.ts"), dev.join("❤️.ts")]);
+    expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)) //
+      .toEqual([dev.join("index.html"), dev.join("index.ts"), dev.join("❤️.ts")]);
 
     const generated = indexOfLineColumn(sourceMap.script, "♠️");
     const original = sourceMap.originalPositionFor(generated);
     expect(original).toEqual({
-      source: sourceMap.sources[1],
+      source: sourceMap.sources[3],
       name: null,
       line: 2,
       column: "export default ".length,
@@ -38,31 +38,31 @@ devTest("source map emitted for primary chunk", {
 });
 devTest("source map emitted for hmr chunk", {
   files: {
-    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
     "index.ts": `
-      import "react-refresh/runtime";
       import other from "./App";
       console.log("Hello, " + other + "!");
+      import.meta.hot.accept();
     `,
     "App.tsx": `
       console.log("some text here");
       export default "world";
+      import.meta.hot.accept();
     `,
   },
   async test(dev) {
     await using c = await dev.client("/", { storeHotChunks: true });
-    await dev.write("App.tsx", "// yay\nconsole.log('magic');");
+    await dev.write("App.tsx", "// yay\nconsole.log('magic');\nimport.meta.hot.accept();");
     const chunk = await c.getMostRecentHmrChunk();
     using sourceMap = await extractSourceMap(dev, chunk);
-    expect(sourceMap.sources.map(Bun.fileURLToPath)) //
+    expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)) //
       .toEqual([dev.join("App.tsx")]);
     const generated = indexOfLineColumn(sourceMap.script, "magic");
     const original = sourceMap.originalPositionFor(generated);
     expect(original).toEqual({
-      source: sourceMap.sources[0],
+      source: sourceMap.sources[1],
       name: null,
       line: 2,
       column: "console.log(".length,

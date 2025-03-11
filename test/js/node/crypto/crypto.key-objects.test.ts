@@ -1716,19 +1716,19 @@ test("ECDSA should work", async () => {
   expect(() => {
     //@ts-ignore
     sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "kjshdakjshd" });
-  }).toThrow(/invalid dsaEncoding/);
+  }).toThrow(/The property 'options.dsaEncoding' is invalid. Received 'kjshdakjshd'/);
 
   expect(() => {
     const signature = sign("sha256", Buffer.from("foo"), privateKey);
     //@ts-ignore
     verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "ieee-p136" }, signature);
-  }).toThrow(/invalid dsaEncoding/);
+  }).toThrow(/The property 'options.dsaEncoding' is invalid. Received 'ieee-p136'/);
 
   expect(() => {
     //@ts-ignore
     const signature = sign("sha256", Buffer.from("foo"), { key: privateKey, dsaEncoding: "ieee-p136" });
     verify("sha256", Buffer.from("foo"), { key: publicKey, dsaEncoding: "der" }, signature);
-  }).toThrow(/invalid dsaEncoding/);
+  }).toThrow(/The property 'options.dsaEncoding' is invalid. Received 'ieee-p136'/);
 });
 
 function randomProp() {

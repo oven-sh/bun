@@ -602,6 +602,7 @@ const Server = function Server(options, callback) {
 
   this.listening = false;
   this._unref = false;
+  this.maxRequestsPerSocket = 0;
   this[kInternalSocketData] = undefined;
 
   if (typeof options === "function") {
@@ -873,6 +874,7 @@ const ServerPrototype = {
       if (tls) {
         this.serverName = tls.serverName || host || "localhost";
       }
+
       this[serverSymbol] = Bun.serve<any>({
         idleTimeout: 0, // nodejs dont have a idleTimeout by default
         tls,
@@ -942,8 +944,16 @@ const ServerPrototype = {
           let didFinish = false;
 
           handle.onabort = onServerRequestEvent.bind(socket);
+          const isRequestsLimitSet = typeof server.maxRequestsPerSocket === "number" && server.maxRequestsPerSocket > 0;
+          let reachedRequestsLimit = false;
+          if (isRequestsLimitSet) {
+            const requestCount = (socket._requestCount || 0) + 1;
+            if (server.maxRequestsPerSocket < requestCount) {
+              reachedRequestsLimit = true;
+            }
+          }
 
-          if (isSocketNew) {
+          if (isSocketNew && !reachedRequestsLimit) {
             server.emit("connection", socket);
           }
 
@@ -955,11 +965,13 @@ const ServerPrototype = {
             resolveFunction && resolveFunction();
           }
           http_res.once("close", onClose);
-          const upgrade = http_req.headers.upgrade;
-          if (upgrade) {
-            server.emit("upgrade", http_req, socket, kEmptyBuffer);
-          } else {
-            server.emit("request", http_req, http_res);
+          if (reachedRequestsLimit) {
+            const upgrade = http_req.headers.upgrade;
+            if (upgrade) {
+              server.emit("upgrade", http_req, socket, kEmptyBuffer);
+            } else {
+              server.emit("request", http_req, http_res);
+            }
           }
 
           socket.cork();
@@ -2165,6 +2177,7 @@ const ServerResponsePrototype = {
       throw ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
+    socket._requestCount = (socket._requestCount || 0) + 1;
     socket.once("close", onServerResponseClose);
     this.socket = socket;
     this.emit("socket", socket);
@@ -2198,6 +2211,9 @@ const ServerResponsePrototype = {
     if (this.destroyed) return this;
     const handle = this[kHandle];
     this.destroyed = true;
+    if (this.socket) {
+      this.socket._requestCount--;
+    }
     if (handle) {
       handle.abort();
     }

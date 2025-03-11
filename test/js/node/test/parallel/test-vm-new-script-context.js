@@ -103,14 +103,5 @@ const Script = require('vm').Script;
   const script = new Script('');
   assert.throws(() => {
     script.runInNewContext.call('\'hello\';');
-  // Original code from node:
-  // }, /^TypeError: this\.runInContext is not a function$/);
-  //
-  // We are invoking `.call()`, the first argument of `.call` should be the 
-  // `this` value. So this test is checking that when `runInContext` is called
-  // with an incorrect `this` value via `.call()`, it properly throws a TypeError
-  // indicating that the method is not available on the provided object.
-  //
-  // Our message in Bun is better, so we are keeping it instead:
-  }, /^TypeError: Script\.prototype\.runInNewContext can only be called on a Script object$/);
+  }, /^TypeError: this\.runInContext is not a function$/);
 }

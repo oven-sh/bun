@@ -98,6 +98,7 @@ const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
 const kended = Symbol("ended");
 const kwriteCallback = Symbol("writeCallback");
+const kSocketClass = Symbol("kSocketClass");
 
 function endNT(socket, callback, err) {
   socket.$end();
@@ -352,8 +353,8 @@ const ServerHandlers: SocketHandler = {
     const self = this.data;
     socket[kServerSocket] = self._handle;
     const options = self[bunSocketServerOptions];
-    const { pauseOnConnect, connectionListener, InternalSocketClass, requestCert, rejectUnauthorized } = options;
-    const _socket = new InternalSocketClass({});
+    const { pauseOnConnect, connectionListener, [kSocketClass]: SClass, requestCert, rejectUnauthorized } = options;
+    const _socket = new SClass({});
     _socket.isServer = true;
     _socket.server = self;
     _socket._requestCert = requestCert;
@@ -1448,13 +1449,13 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     if (typeof bunTLS === "function") {
       [tls, TLSSocketClass] = bunTLS.$call(this, port, hostname, false);
       options.servername = tls.serverName;
-      options.InternalSocketClass = TLSSocketClass;
+      options[kSocketClass] = TLSSocketClass;
       contexts = tls.contexts;
       if (!tls.requestCert) {
         tls.rejectUnauthorized = false;
       }
     } else {
-      options.InternalSocketClass = Socket;
+      options[kSocketClass] = Socket;
     }
 
     listenInCluster(
@@ -1710,7 +1711,6 @@ export default {
   isIPv4,
   isIPv6,
   Socket,
-  [Symbol.for("::bunternal::")]: Socket,
   _normalizeArgs: normalizeArgs,
 
   getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),

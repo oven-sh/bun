@@ -477,6 +477,8 @@ const ServerHandlers: SocketHandler = {
 };
 
 function Socket(options?) {
+  if (!(this instanceof Socket)) return new Socket(options);
+
   const {
     socket,
     signal,
@@ -1093,10 +1095,10 @@ Socket.prototype._unrefTimer = function _unrefTimer() {
 Socket.prototype.unref = function unref() {
   const socket = this._handle;
   if (!socket) {
-    this.once("connect", this.ref);
+    this.once("connect", this.unref);
     return this;
   }
-  socket.ref();
+  socket.unref();
   return this;
 };
 
@@ -1281,7 +1283,7 @@ Server.prototype.close = function close(callback) {
   return this;
 };
 
-Server.prototype[Symbol.asyncDispose] = function asyncDispose() {
+Server.prototype[Symbol.asyncDispose] = function () {
   const { resolve, reject, promise } = Promise.withResolvers();
   this.close(function (err, ...args) {
     if (err) reject(err);
@@ -1480,7 +1482,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   return this;
 };
 
-Server.prototype[kRealListen] = function realListen(
+Server.prototype[kRealListen] = function (
   path,
   port,
   hostname,

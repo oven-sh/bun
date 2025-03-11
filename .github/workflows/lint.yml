@@ -20,3 +20,11 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Lint
         run: bunx oxlint --config oxlint.json --quiet --format github
+
+  lint-zig:
+    name: "ZLint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ZLint
+        uses: DonIsaac/zlint-action@main

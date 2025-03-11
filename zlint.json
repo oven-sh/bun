@@ -1,0 +1,8 @@
+{
+  "$schema": "https://raw.githubusercontent.com/DonIsaac/zlint/refs/tags/v0.7.1/zlint.schema.json",
+  "ignore": ["zig-out", "vendor", "test", "build", "packages"],
+  "rules": {
+    "no-unresolved": "error",
+    "homeless-try": "warn"
+  }
+}

@@ -669,19 +669,6 @@ pub const AST = struct {
 
         pub const Tag = enum { cmd, assigns };
 
-        pub fn to_pipeline_item(this: CmdOrAssigns, alloc: Allocator) PipelineItem {
-            switch (this) {
-                .cmd => |cmd| {
-                    const cmd_ptr = try alloc.create(Cmd);
-                    cmd_ptr.* = cmd;
-                    return .{ .cmd = cmd_ptr };
-                },
-                .assigns => |assigns| {
-                    return .{ .assign = assigns };
-                },
-            }
-        }
-
         pub fn to_expr(this: CmdOrAssigns, alloc: Allocator) !Expr {
             switch (this) {
                 .cmd => |cmd| {

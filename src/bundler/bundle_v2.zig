@@ -17740,9 +17740,9 @@ pub const AstBuilder = struct {
     }
 
     pub fn pushScope(p: *AstBuilder, kind: Scope.Kind) *js_ast.Scope {
-        try p.scopes.ensureUnusedCapacity(p.allocator, 1);
-        try p.current_scope.children.ensureUnusedCapacity(p.allocator, 1);
-        const scope = try p.allocator.create(Scope);
+        p.scopes.ensureUnusedCapacity(p.allocator, 1) orelse bun.outOfMemory();
+        p.current_scope.children.ensureUnusedCapacity(p.allocator, 1) orelse bun.outOfMemory();
+        const scope = p.allocator.create(Scope) orelse bun.outOfMemory();
         scope.* = .{
             .kind = kind,
             .label_ref = null,

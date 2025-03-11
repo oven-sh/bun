@@ -1,6 +1,14 @@
 {
   "name": "bun-plugin-svelte",
   "version": "0.0.1",
+  "description": "Official Svelte plugin for Bun",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oven-sh/bun",
+    "directory": "packages/bun-plugin-svelte"
+  },
+  "homepage": "https://bun.sh",
+  "license": "MIT",
   "type": "module",
   "module": "src/index.ts",
   "index": "src/index.ts",
@@ -17,7 +25,6 @@
     "svelte": "^5.20.4"
   },
   "peerDependencies": {
-    "typescript": "^5",
     "svelte": "^5"
   },
   "files": [

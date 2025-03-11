@@ -2309,10 +2309,68 @@ declare module "bun" {
    */
   interface SavepointSQL extends SQL {}
 
+  type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
+  interface CSRFGenerateOptions {
+    /**
+     * The number of milliseconds until the token expires. 0 means the token never expires.
+     * @default 24 * 60 * 60 * 1000 (24 hours)
+     */
+    expiresIn?: number;
+    /**
+     * The encoding of the token.
+     * @default "base64url"
+     */
+    encoding?: "base64" | "base64url" | "hex";
+    /**
+     * The algorithm to use for the token.
+     * @default "sha256"
+     */
+    algorithm?: CSRFAlgorithm;
+  }
+
+  interface CSRFVerifyOptions {
+    /**
+     * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     */
+    secret?: string;
+    /**
+     * The encoding of the token.
+     * @default "base64url"
+     */
+    encoding?: "base64" | "base64url" | "hex";
+    /**
+     * The algorithm to use for the token.
+     * @default "sha256"
+     */
+    algorithm?: CSRFAlgorithm;
+    /**
+     * The number of milliseconds until the token expires. 0 means the token never expires.
+     * @default 24 * 60 * 60 * 1000 (24 hours)
+     */
+    maxAge?: number;
+  }
+  interface CSRF {
+    /**
+     * Generate a CSRF token.
+     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * @param options The options for the token.
+     * @returns The generated token.
+     */
+    generate(secret?: string, options?: CSRFGenerateOptions): string;
+    /**
+     * Verify a CSRF token.
+     * @param token The token to verify.
+     * @param options The options for the token.
+     * @returns True if the token is valid, false otherwise.
+     */
+    verify(token: string, options?: CSRFVerifyOptions): boolean;
+  }
+
   var sql: SQL;
   var postgres: SQL;
   var SQL: SQL;
 
+  var CSRF: CSRF;
   /**
    *   This lets you use macros as regular imports
    *   @example
@@ -2657,7 +2715,7 @@ declare module "bun" {
     loader?: { [k in string]: Loader };
     /**
      * Specifies if and how to generate source maps.
-     * 
+     *
      * - `"none"` - No source maps are generated
      * - `"linked"` - A separate `*.ext.map` file is generated alongside each
      *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
@@ -2665,11 +2723,11 @@ declare module "bun" {
      * - `"inline"` - an inline source map is appended to the output file.
      * - `"external"` - Generate a separate source map file for each input file.
      *   No `//# sourceMappingURL` comment is added to the output file.
-     * 
+     *
      * `true` and `false` are aliasees for `"inline"` and `"none"`, respectively.
-     * 
+     *
      * @default "none"
-     * 
+     *
      * @see {@link outdir} required for `"linked"` maps
      * @see {@link publicPath} to customize the base url of linked source maps
      */
@@ -2704,10 +2762,10 @@ declare module "bun" {
     env?: "inline" | "disable" | `${string}*`;
     /**
      * Whether to enable minification.
-     * 
+     *
      * Use `true`/`false` to enable/disable all minification options. Alternatively,
      * you can pass an object for granular control over certain minifications.
-     * 
+     *
      * @default false
      */
     minify?:
@@ -6239,7 +6297,7 @@ declare module "bun" {
      * @param socket
      */
     open?(socket: Socket<Data>): void | Promise<void>;
-    close?(socket: Socket<Data>): void | Promise<void>;
+    close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;

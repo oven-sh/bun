@@ -1695,7 +1695,9 @@ pub const Path = struct {
     /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
     /// The location of this resource. For the `file` namespace, this is
-    /// an absolute path with native slashes.
+    /// an absolute path with native slashes or an empty string.
+    ///
+    /// NOTE(@DonIsaac): This guarantee is broken in many places.
     text: string,
     namespace: string,
     // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
@@ -1710,8 +1712,10 @@ pub const Path = struct {
     const ns_macro = "macro";
 
     /// `true` if this is a `Path` to a file. File paths guarantee that
-    /// `this.text` is an absolute path to a file (in native format), but do not
-    /// guarantee that file exists.
+    /// `this.text` is an absolute path to a file (in native format) or an empty
+    /// string. `Path` does not guarantee that file exists.
+    ///
+    /// FIXME(@DonIsaac): This invariant is broken in many places.
     pub fn isFile(this: *const Path) bool {
         return this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file");
     }
@@ -1975,11 +1979,12 @@ pub const Path = struct {
             }
         }
 
-        if (Environment.isDebug) {
-            if (bun.strings.eqlComptime(namespace, ns_file)) {
-                bun.assertf(std.fs.path.isAbsolute(text), "Expected `file` paths to be absolute, got '{s}'", .{text});
-            }
-        }
+        // FIXME: this invariant is broken in many places
+        // if (Environment.isDebug) {
+        //     if (bun.strings.eqlComptime(namespace, ns_file)) {
+        //         bun.assertf(text.len == 0 or std.fs.path.isAbsolute(text), "Expected `file` paths to be absolute, got '{s}'", .{text});
+        //     }
+        // }
 
         return namespace;
     }

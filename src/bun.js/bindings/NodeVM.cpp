@@ -1,4 +1,3 @@
-
 #include "root.h"
 
 #include "JavaScriptCore/PropertySlot.h"
@@ -327,6 +326,27 @@ public:
                     opts.columnOffset = OrdinalNumber::fromZeroBasedInt(columnOffsetOpt.asAnyInt());
                     any = true;
                 }
+            }
+
+            // Validate contextName and contextOrigin are strings
+            if (JSValue contextNameOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextName"_s))) {
+                if (!contextNameOpt.isUndefined() && !contextNameOpt.isString()) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextName"_s, "string"_s, contextNameOpt);
+                    failed = true;
+                    return std::nullopt;
+                }
+                any = true;
+            }
+
+            if (JSValue contextOriginOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextOrigin"_s))) {
+                if (!contextOriginOpt.isUndefined() && !contextOriginOpt.isString()) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextOrigin"_s, "string"_s, contextOriginOpt);
+                    failed = true;
+                    return std::nullopt;
+                }
+                any = true;
             }
 
             // TODO: cachedData
@@ -697,6 +717,34 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     if (!contextArg.isObject()) {
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
+    }
+
+    JSValue optionsArg = callFrame->argument(1);
+
+    // Validate options argument
+    if (!optionsArg.isUndefined() && !optionsArg.isObject()) {
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
+    }
+
+    // If options is provided, validate name and origin properties
+    if (optionsArg.isObject()) {
+        JSObject* options = asObject(optionsArg);
+
+        // Check name property
+        if (JSValue nameValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "name"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!nameValue.isUndefined() && !nameValue.isString()) {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.name"_s, "string"_s, nameValue);
+            }
+        }
+
+        // Check origin property
+        if (JSValue originValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "origin"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!originValue.isUndefined() && !originValue.isString()) {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.origin"_s, "string"_s, originValue);
+            }
+        }
     }
 
     JSObject* sandbox = asObject(contextArg);

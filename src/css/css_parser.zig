@@ -7151,7 +7151,7 @@ pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) !struct { [
     // We need to print a valid finite number otherwise browsers like Safari will
     // render certain things wrong (see https://github.com/oven-sh/bun/issues/18064)
     //
-    // We'll use 3.40282e38 which is the largest finite number in 32-bit IEEE754 floating point
+    // We'll use 3.40282e38 which is approximately the largest finite number in 32-bit IEEE754 floating point
     if (std.math.isPositiveInf(value)) {
         buf[0.."3.40282e38".len].* = "3.40282e38".*;
         return .{ buf[0.."3.40282e38".len], null };

@@ -128,7 +128,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
 
         auto* keyView = keyEncoding.has_value()
             ? getArrayBufferOrView(globalObject, scope, sizeOrKey, "sizeOrKey"_s, keyEncoding.value())
-            : getArrayBufferOrView(globalObject, scope, sizeOrKey, "sizeOrKey"_s, keyEncodingValue);
+            : getArrayBufferOrView(globalObject, scope, sizeOrKey, "sizeOrKey"_s, keyEncodingValue, true);
 
         RETURN_IF_EXCEPTION(scope, {});
 

@@ -411,6 +411,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         auto dataView = dataString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
+        encoding = encoding == BufferEncodingType::buffer ? BufferEncodingType::utf8 : encoding;
         JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -431,16 +432,23 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
     return getArrayBufferOrView(globalObject, scope, value, argName, jsUndefined());
 }
 
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue)
+JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding)
 {
     if (value.isString()) {
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto encoding = WebCore::validateBufferEncoding<true>(*globalObject, encodingValue);
+        auto maybeEncoding = WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue);
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (encoding == WebCore::BufferEncodingType::hex && dataString->length() % 2 != 0) {
+        if (!maybeEncoding && !defaultBufferEncoding) {
+            throwError(globalObject, scope, Bun::ErrorCode::ERR_UNKNOWN_ENCODING, "Invalid encoding"_s);
+            return {};
+        }
+
+        auto encoding = maybeEncoding.has_value() ? maybeEncoding.value() : BufferEncodingType::buffer;
+
+        if (encoding == BufferEncodingType::hex && dataString->length() % 2 != 0) {
             Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
             return {};
         }
@@ -448,7 +456,8 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         auto dataView = dataString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, *encoding));
+        encoding = encoding == BufferEncodingType::buffer ? BufferEncodingType::utf8 : encoding;
+        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);

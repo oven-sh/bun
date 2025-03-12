@@ -144,7 +144,7 @@ describe("cookie attributes", () => {
     expect(data.value).toBe("value");
     expect(data.path).toBe("/");
     expect(data.secure).toBe(false);
-    expect(data.sameSite).toBe("strict");
+    expect(data.sameSite).toBe("lax");
   });
 });
 

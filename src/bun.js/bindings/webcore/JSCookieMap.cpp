@@ -460,7 +460,6 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         return JSValue::encode(jsUndefined());
 
     JSValue arg0 = callFrame->uncheckedArgument(0);
-    JSValue arg1 = callFrame->argument(1);
     JSValue arg2 = callFrame->argument(2);
     String name;
     String value;
@@ -478,6 +477,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
     double maxAge = 0;
 
     auto& names = builtinNames(vm);
+
     const auto fromObject = [&](JSObject* obj, bool checkNameAndValue = false) -> void {
         if (checkNameAndValue) {
             auto nameValue = obj->get(lexicalGlobalObject, PropertyName(vm.propertyNames->name));
@@ -598,12 +598,15 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
         }
     };
 
-    if (arg0.isObject()) {
+    // Check if we're setting with a Cookie object directly
+    if (arg0.isObject() && JSCookie::toWrapped(vm, arg0)) {
+        auto* cookieImpl = JSCookie::toWrapped(vm, arg0);
+        if (cookieImpl)
+            impl.set(Ref<Cookie>(*cookieImpl));
+        return JSValue::encode(jsUndefined());
+    } else if (arg0.isObject()) {
         auto* obj = arg0.getObject();
         fromObject(obj, true);
-    } else if (arg1.isString()) {
-        name = convert<IDLUSVString>(*lexicalGlobalObject, arg0);
-        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
         // Handle name/value pair
         if (callFrame->argumentCount() < 2)

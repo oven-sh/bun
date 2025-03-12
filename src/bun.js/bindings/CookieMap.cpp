@@ -31,9 +31,19 @@ CookieMap::CookieMap(const String& cookieString)
 
     Vector<String> pairs = cookieString.split(';');
     for (auto& pair : pairs) {
-        auto cookie = Cookie::parse(pair);
-        ASSERT(!cookie.hasException());
-        m_cookies.append(cookie.releaseReturnValue());
+        pair = pair.trim(isASCIIWhitespace<UChar>);
+        if (pair.isEmpty())
+            continue;
+            
+        size_t equalsPos = pair.find('=');
+        if (equalsPos == notFound)
+            continue;
+            
+        String name = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
+        String value = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
+        
+        auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Lax, false, 0, false);
+        m_cookies.append(WTFMove(cookie));
     }
 }
 
@@ -50,9 +60,8 @@ CookieMap::CookieMap(const Vector<Vector<String>>& pairs)
 {
     for (const auto& pair : pairs) {
         if (pair.size() == 2) {
-            auto cookie = Cookie::parse();
-            ASSERT(!cookie.hasException());
-            m_cookies.append(cookie.releaseReturnValue());
+            auto cookie = Cookie::create(pair[0], pair[1], String(), "/"_s, 0, false, CookieSameSite::Lax, false, 0, false);
+            m_cookies.append(WTFMove(cookie));
         }
     }
 }
@@ -140,16 +149,21 @@ void CookieMap::set(const String& name, const String& value, bool httpOnly, bool
     // Remove any existing cookies with the same name
     remove(name);
 
-    // Add the new cookie
+    // Add the new cookie with proper settings
     auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict,
         httpOnly, maxAge, partitioned);
-    m_cookies.append(cookie);
+    m_cookies.append(WTFMove(cookie));
 }
 
 // Maintain backward compatibility with code that uses the old signature
 void CookieMap::set(const String& name, const String& value)
 {
-    set(name, value, false, false, 0);
+    // Remove any existing cookies with the same name
+    remove(name);
+
+    // Add the new cookie
+    auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict, false, 0, false);
+    m_cookies.append(WTFMove(cookie));
 }
 
 void CookieMap::set(Ref<Cookie> cookie)

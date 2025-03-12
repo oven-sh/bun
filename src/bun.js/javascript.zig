@@ -418,7 +418,7 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
-extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, JSValue, JSValue) void;
 
 comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
@@ -464,7 +464,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
     if (message.isUndefined()) {
         return globalObject.throwMissingArgumentsValue(&.{"message"});
     }
-    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
         return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
     }
 
@@ -472,7 +472,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
 
     if (good) {
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(zigGlobal, callback, .zero);
+            Bun__Process__queueNextTick1(zigGlobal, callback, .null);
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
@@ -726,7 +726,7 @@ const AutoKiller = struct {
         while (this.processes.popOrNull()) |process| {
             if (!process.key.hasExited()) {
                 log("process.kill {d}", .{process.key.pid});
-                count += @as(u32, @intFromBool(process.key.kill(bun.SignalCode.default) == .result));
+                count += @as(u32, @intFromBool(process.key.kill(@intFromEnum(bun.SignalCode.default)) == .result));
             }
         }
         return count;
@@ -899,6 +899,15 @@ pub const VirtualMachine = struct {
     body_value_hive_allocator: BodyValueHiveAllocator = undefined,
 
     is_inside_deferred_task_queue: bool = false,
+
+    // defaults off. .on("message") will set it to true unles overridden
+    // process.channel.unref() will set it to false and mark it overridden
+    // on disconnect it will be disabled
+    channel_ref: bun.Async.KeepAlive = .{},
+    // if process.channel.ref() or unref() has been called, this is set to true
+    channel_ref_overridden: bool = false,
+    // if one disconnect event listener should be ignored
+    channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -4369,7 +4378,7 @@ pub const VirtualMachine = struct {
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
-    extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
+    pub extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 
     pub const IPCInstanceUnion = union(enum) {
         /// IPC is put in this "enabled but not started" state when IPC is detected
@@ -4393,6 +4402,9 @@ pub const VirtualMachine = struct {
 
         pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
             return &this.data;
+        }
+        pub fn getGlobalThis(this: *IPCInstance) ?*JSGlobalObject {
+            return this.globalThis;
         }
 
         pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
@@ -4433,19 +4445,13 @@ pub const VirtualMachine = struct {
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
+            vm.channel_ref.disable();
             this.destroy();
         }
 
-        extern fn Bun__setChannelRef(*JSGlobalObject, bool) void;
-
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
-            if (global.bunVM().ipc) |*current_ipc| {
-                switch (current_ipc.*) {
-                    .initialized => |instance| {
-                        instance.data.close(true);
-                    },
-                    .waiting => {},
-                }
+            if (global.bunVM().getIPCInstance()) |current_ipc| {
+                current_ipc.data.close(true);
             }
         }
 
@@ -4512,7 +4518,7 @@ pub const VirtualMachine = struct {
             },
         };
 
-        instance.data.writeVersionPacket();
+        instance.data.writeVersionPacket(this.global);
 
         return instance;
     }

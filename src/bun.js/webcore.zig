@@ -604,7 +604,7 @@ pub const Crypto = struct {
                 bun.copy(u8, slice, globalThis.bunVM().rareData().entropySlice(slice.len));
             },
             else => {
-                bun.rand(slice);
+                bun.csprng(slice);
             },
         }
     }

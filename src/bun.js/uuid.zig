@@ -13,7 +13,7 @@ bytes: [16]u8,
 pub fn init() UUID {
     var uuid = UUID{ .bytes = undefined };
 
-    bun.rand(&uuid.bytes);
+    bun.csprng(&uuid.bytes);
     // Version 4
     uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
     // Variant 1

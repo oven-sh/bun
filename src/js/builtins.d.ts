@@ -612,6 +612,7 @@ declare function $ERR_MISSING_ARGS(a1: string, a2?: string): TypeError;
  */
 declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
+declare function $ERR_HTTP2_UNSUPPORTED_PROTOCOL(protocol: string): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;

@@ -2224,7 +2224,10 @@ function connectWithProtocol(protocol: string, options: Http2ConnectOptions | st
   if (protocol === "http:") {
     return net.connect(options, listener);
   }
-  return tls.connect(options, listener);
+  if (protocol === "https:") {
+    return tls.connect(options, listener);
+  }
+  throw $ERR_HTTP2_UNSUPPORTED_PROTOCOL(protocol);
 }
 
 function emitConnectNT(self, socket) {

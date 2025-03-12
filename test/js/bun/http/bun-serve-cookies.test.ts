@@ -340,7 +340,7 @@ describe("CookieMap iterator", () => {
           const cookies = req.cookies;
 
           // Test for...of iteration (should iterate over entries)
-          const collected = [];
+          const collected: { name: string; value: string }[] = [];
           for (const entry of cookies) {
             // Check that we get [name, cookie] entries
             expect(entry.length).toBe(2);
@@ -393,7 +393,7 @@ describe("CookieMap iterator", () => {
           const cookies = req.cookies;
 
           // Test forEach method
-          const collected = [];
+          const collected: { key: string; value: string }[] = [];
           cookies.forEach((cookie, key) => {
             expect(cookie).toBeTypeOf("object");
             expect(cookie.constructor).toBe(Bun.Cookie);

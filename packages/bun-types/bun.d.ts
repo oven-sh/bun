@@ -7490,13 +7490,16 @@ declare module "bun" {
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
 
   interface CookieInit {
-    name: string;
-    value: string;
+    name?: string;
+    value?: string;
     domain?: string;
     path?: string;
-    expires?: number;
+    expires?: number | Date;
     secure?: boolean;
     sameSite?: CookieSameSite;
+    httpOnly?: boolean;
+    partitioned?: boolean;
+    maxAge?: number;
   }
 
   interface CookieStoreDeleteOptions {
@@ -7513,6 +7516,10 @@ declare module "bun" {
   type CookieSameSite = "strict" | "lax" | "none";
 
   class Cookie {
+    constructor(name: string, value: string, options?: CookieInit);
+    constructor(cookieString: string);
+    constructor(cookieObject?: CookieInit);
+
     name: string;
     value: string;
     domain?: string;
@@ -7534,7 +7541,7 @@ declare module "bun" {
     static serialize(cookies: Cookie[]): string;
   }
 
-  class CookieMap implements Iterable<Cookie> {
+  class CookieMap implements Iterable<[string, Cookie]> {
     constructor(init?: string[][] | Record<string, string> | string);
 
     get(name: string): Cookie | null;
@@ -7556,6 +7563,11 @@ declare module "bun" {
     toJSON(): Record<string, ReturnType<Cookie["toJSON"]>>;
     readonly size: number;
 
-    [Symbol.iterator](): IterableIterator<Cookie>;
+    entries(): IterableIterator<[string, Cookie]>;
+    keys(): IterableIterator<string>;
+    values(): IterableIterator<Cookie>;
+    forEach(callback: (value: Cookie, key: string, map: CookieMap) => void, thisArg?: any): void;
+
+    [Symbol.iterator](): IterableIterator<[string, Cookie]>;
   }
 }

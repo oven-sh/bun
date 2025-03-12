@@ -190,6 +190,7 @@ const Handlers = struct {
                 const listen_socket: *Listener = @fieldParentPtr("handlers", this);
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if (listen_socket.listener == .none) {
+                    listen_socket.poll_ref.unref(this.vm);
                     listen_socket.strong_self.deinit();
                 }
             } else {
@@ -957,9 +958,10 @@ pub const Listener = struct {
         const listener = this.listener;
         this.listener = .none;
 
-        this.poll_ref.unref(this.handlers.vm);
         // if we already have no active connections, we can deinit the context now
         if (this.handlers.active_connections == 0) {
+            this.poll_ref.unref(this.handlers.vm);
+
             this.handlers.unprotect();
             // deiniting the context will also close the listener
             if (this.socket_context) |ctx| {

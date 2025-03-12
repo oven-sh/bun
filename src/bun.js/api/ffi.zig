@@ -1009,10 +1009,7 @@ pub const FFI = struct {
     pub fn open(global: *JSGlobalObject, name_str: ZigString, object: JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         const vm = VirtualMachine.get();
-        var scope = bun.AllocationScope.init(bun.default_allocator);
-        defer scope.deinit();
-        const allocator = scope.allocator();
-        var name_slice = name_str.toSlice(allocator);
+        var name_slice = name_str.toSlice(bun.default_allocator);
         defer name_slice.deinit();
 
         if (object.isEmptyOrUndefinedOrNull() or !object.isObject()) {
@@ -1044,12 +1041,12 @@ pub const FFI = struct {
         }
 
         var symbols = bun.StringArrayHashMapUnmanaged(Function){};
-        if (generateSymbols(global, allocator, &symbols, object) catch JSC.JSValue.zero) |val| {
+        if (generateSymbols(global, bun.default_allocator, &symbols, object) catch JSC.JSValue.zero) |val| {
             // an error while validating symbols
             for (symbols.keys()) |key| {
-                allocator.free(@constCast(key));
+                bun.default_allocator.free(@constCast(key));
             }
-            symbols.clearAndFree(allocator);
+            symbols.clearAndFree(bun.default_allocator);
             return val;
         }
         if (symbols.count() == 0) {
@@ -1091,10 +1088,10 @@ pub const FFI = struct {
                 const resolved_symbol = dylib.lookup(*anyopaque, function_name) orelse {
                     const ret = JSC.toInvalidArguments("Symbol \"{s}\" not found in \"{s}\"", .{ bun.asByteSlice(function_name), name }, global);
                     for (symbols.values()) |*value| {
-                        allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
-                        value.arg_types.clearAndFree(allocator);
+                        bun.default_allocator.free(@constCast(bun.asByteSlice(value.base_name.?)));
+                        value.arg_types.clearAndFree(bun.default_allocator);
                     }
-                    symbols.clearAndFree(allocator);
+                    symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return ret;
                 };
@@ -1111,7 +1108,7 @@ pub const FFI = struct {
                 for (symbols.values()) |*value| {
                     value.deinit(global);
                 }
-                symbols.clearAndFree(allocator);
+                symbols.clearAndFree(bun.default_allocator);
                 dylib.close();
                 return ret;
             };
@@ -1122,7 +1119,7 @@ pub const FFI = struct {
                     };
 
                     const res = ZigString.init(err.msg).toErrorInstance(global);
-                    symbols.clearAndFree(allocator);
+                    symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return res;
                 },
@@ -1130,7 +1127,7 @@ pub const FFI = struct {
                     for (symbols.values()) |*other_function| {
                         other_function.deinit(global);
                     }
-                    symbols.clearAndFree(allocator);
+                    symbols.clearAndFree(bun.default_allocator);
                     dylib.close();
                     return ZigString.init("Failed to compile (nothing happend!)").toErrorInstance(global);
                 },
@@ -1151,11 +1148,10 @@ pub const FFI = struct {
             }
         }
 
-        var lib = allocator.create(FFI) catch unreachable;
-        lib.* = .{
+        const lib = bun.new(FFI, .{
             .dylib = dylib,
             .functions = symbols,
-        };
+        });
 
         const js_object = lib.toJS(global);
         JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);

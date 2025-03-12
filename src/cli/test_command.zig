@@ -842,7 +842,7 @@ pub const CommandLineReporter = struct {
             // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
             var base64_bytes: [8]u8 = undefined;
             var shortname_buf: [512]u8 = undefined;
-            bun.rand(&base64_bytes);
+            bun.csprng(&base64_bytes);
             const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
             const path = bun.path.joinAbsStringBufZ(relative_dir, &lcov_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
             const file = bun.sys.File.openat(

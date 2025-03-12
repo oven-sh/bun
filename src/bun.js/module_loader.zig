@@ -1614,6 +1614,12 @@ pub const ModuleLoader = struct {
                 //
                 var should_close_input_file_fd = fd == null;
 
+                // We don't want cjs wrappers around non-js files
+                const module_type_ = switch (loader) {
+                    .js, .jsx, .ts, .tsx => module_type,
+                    else => .unknown,
+                };
+
                 var input_file_fd: StoredFileDescriptorType = bun.invalid_fd;
                 var parse_options = Transpiler.ParseOptions{
                     .allocator = allocator,
@@ -1629,7 +1635,7 @@ pub const ModuleLoader = struct {
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
-                    .module_type = module_type,
+                    .module_type = module_type_,
                     .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests,
                     .keep_json_and_toml_as_one_statement = true,
                     .allow_bytecode_cache = true,

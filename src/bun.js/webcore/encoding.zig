@@ -961,31 +961,13 @@ pub const Encoder = struct {
             else => unreachable,
         } catch 0;
     }
-    export fn Bun__encoding__byteLengthLatin1(input: [*]const u8, len: usize, encoding: u8) usize {
-        return switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .utf8 => byteLengthU8(input, len, .utf8),
-            .latin1 => byteLengthU8(input, len, .ascii),
-            .ascii => byteLengthU8(input, len, .ascii),
-            .ucs2 => byteLengthU8(input, len, .utf16le),
-            .utf16le => byteLengthU8(input, len, .utf16le),
-            .base64 => byteLengthU8(input, len, .base64),
-            .base64url => byteLengthU8(input, len, .base64url),
-            .hex => byteLengthU8(input, len, .hex),
-            else => unreachable,
-        };
+    // TODO(@190n) handle unpaired surrogates
+    export fn Bun__encoding__byteLengthLatin1AsUTF8(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .utf8);
     }
-    export fn Bun__encoding__byteLengthUTF16(input: [*]const u16, len: usize, encoding: u8) usize {
-        return switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .utf8 => byteLengthU16(input, len, .utf8),
-            .latin1 => byteLengthU16(input, len, .ascii),
-            .ascii => byteLengthU16(input, len, .ascii),
-            .ucs2 => byteLengthU16(input, len, .utf16le),
-            .utf16le => byteLengthU16(input, len, .utf16le),
-            .base64 => byteLengthU16(input, len, .base64),
-            .base64url => byteLengthU16(input, len, .base64url),
-            .hex => byteLengthU16(input, len, .hex),
-            else => unreachable,
-        };
+    // TODO(@190n) handle unpaired surrogates
+    export fn Bun__encoding__byteLengthUTF16AsUTF8(input: [*]const u16, len: usize) usize {
+        return byteLengthU16(input, len, .utf8);
     }
     export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
@@ -1472,8 +1454,8 @@ pub const Encoder = struct {
         _ = Bun__encoding__writeLatin1;
         _ = Bun__encoding__writeUTF16;
 
-        _ = Bun__encoding__byteLengthLatin1;
-        _ = Bun__encoding__byteLengthUTF16;
+        _ = Bun__encoding__byteLengthLatin1AsUTF8;
+        _ = Bun__encoding__byteLengthUTF16AsUTF8;
 
         _ = Bun__encoding__toString;
         _ = Bun__encoding__toStringUTF8;

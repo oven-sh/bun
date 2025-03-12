@@ -254,7 +254,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
             RELEASE_AND_RETURN(scope, JSValue::encode({}));
         }
         val = url.fileSystemPath();
-    } 
+    }
 
     bool trailingSlash = val.endsWith('/');
 #if OS(WINDOWS)

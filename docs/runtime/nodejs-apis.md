@@ -128,9 +128,9 @@ Some methods are not optimized yet.
 
 🟡 Missing `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
 
-### [`node:`](https://nodejs.org/api/.html)
+### [`node:process`](https://nodejs.org/api/process.html)
 
-🟡 See [``](#process) Global.
+🟡 See [`process`](#process) Global.
 
 ### [`node:sys`](https://nodejs.org/api/util.html)
 

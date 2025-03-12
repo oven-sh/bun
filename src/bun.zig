@@ -3495,7 +3495,7 @@ pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(ca
     }
 
     if (!ok) {
-        if (comptime Environment.isDebug) unreachable;
+        if (comptime Environment.isDebug) std.debug.panic(format, args);
         assertionFailureWithMsg(format, args);
     }
 }

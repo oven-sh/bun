@@ -1703,6 +1703,15 @@ pub const Path = struct {
     is_disabled: bool = false,
     is_symlink: bool = false,
 
+    const ns_blob = "blob";
+    const ns_bun = "bun";
+    const ns_dataurl = "dataurl";
+    const ns_file = "file";
+    const ns_macro = "macro";
+
+    /// `true` if this is a `Path` to a file. File paths guarantee that
+    /// `this.text` is an absolute path to a file (in native format), but do not
+    /// guarantee that file exists.
     pub fn isFile(this: *const Path) bool {
         return this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file");
     }
@@ -1768,15 +1777,15 @@ pub const Path = struct {
     }
 
     pub fn isDataURL(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "dataurl");
+        return strings.eqlComptime(this.namespace, ns_dataurl);
     }
 
     pub fn isBun(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "bun");
+        return strings.eqlComptime(this.namespace, ns_bun);
     }
 
     pub fn isMacro(this: *const Path) bool {
-        return strings.eqlComptime(this.namespace, "macro");
+        return strings.eqlComptime(this.namespace, ns_macro);
     }
 
     pub const PackageRelative = struct {
@@ -1907,7 +1916,7 @@ pub const Path = struct {
         return Path{
             .pretty = text,
             .text = text,
-            .namespace = "file",
+            .namespace = determineNamespace(text),
             .name = PathName.init(text),
         };
     }
@@ -1916,7 +1925,7 @@ pub const Path = struct {
         return Path{
             .pretty = pretty,
             .text = text,
-            .namespace = "file",
+            .namespace = determineNamespace(text),
             .name = PathName.init(text),
         };
     }
@@ -1948,6 +1957,31 @@ pub const Path = struct {
             .namespace = namespace,
             .name = PathName.init(package),
         };
+    }
+
+    fn determineNamespace(text: string) string {
+        const eql = bun.strings.eqlComptime;
+        var namespace: string = ns_file;
+        // `data:`, `blob:`, etc. we only check common ones. We'll need to
+        // update this if we want to handle namespaces longer than 4 characters.
+        const url_namespace_prefix_len = "data:".len;
+
+        if (text.len > url_namespace_prefix_len and text[url_namespace_prefix_len] == ':') {
+            const maybe_namespace = text[0..url_namespace_prefix_len];
+            if (eql(maybe_namespace, "data:")) {
+                namespace = ns_dataurl;
+            } else if (eql(maybe_namespace, "blob:")) {
+                namespace = ns_blob;
+            }
+        }
+
+        if (Environment.isDebug) {
+            if (bun.strings.eqlComptime(namespace, ns_file)) {
+                bun.assertf(std.fs.path.isAbsolute(text), "Expected `file` paths to be absolute, got '{s}'", .{text});
+            }
+        }
+
+        return namespace;
     }
 
     pub fn isBefore(a: *Path, b: Path) bool {

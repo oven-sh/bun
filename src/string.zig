@@ -433,6 +433,7 @@ pub const String = extern struct {
         callback: ?*const ExternalStringImplFreeFunction(Ctx),
     ) String {
         comptime if (@typeInfo(Ctx) != .pointer) @compileError("context must be a pointer");
+        bun.assert(bytes.len > 0);
         JSC.markBinding(@src());
         if (bytes.len > max_length()) {
             if (callback) |cb| {

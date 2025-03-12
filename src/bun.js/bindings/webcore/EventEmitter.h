@@ -94,8 +94,6 @@ public:
         }
     }
 
-    bool m_hasIPCRef { false };
-
 private:
     EventEmitter(ScriptExecutionContext& context)
         : ContextDestructionObserver(&context)

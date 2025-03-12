@@ -46,10 +46,14 @@ const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_U
   $processBindingConstants.crypto;
 
 const {
+  pbkdf2: _pbkdf2,
+  pbkdf2Sync: _pbkdf2Sync,
+  timingSafeEqual: _timingSafeEqual,
   randomInt: _randomInt,
   randomUUID: _randomUUID,
-  pbkdf2: pbkdf2_,
-  pbkdf2Sync: pbkdf2Sync_,
+  randomBytes: _randomBytes,
+  randomFillSync,
+  randomFill: _randomFill,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 const { validateObject, validateString, validateInt32 } = require("internal/validators");
@@ -99,18 +103,6 @@ function getCipherInfo(nameOrNid, options) {
     ret.type &&= StringPrototypeToLowerCase.$call(ret.type);
   }
   return ret;
-}
-
-function randomInt(min, max, callback) {
-  if (max == null) {
-    max = min;
-    min = 0;
-  }
-  if (callback != null) {
-    process.nextTick(() => callback(null, _randomInt(min, max)));
-    return;
-  }
-  return _randomInt(min, max);
 }
 
 const MAX_STRING_LENGTH = 536870888;
@@ -493,7 +485,7 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
     digest = undefined;
   }
 
-  const promise = pbkdf2_(password, salt, iterations, keylen, digest, callback);
+  const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
     promise.then(
       result => callback(null, result),
@@ -506,7 +498,7 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 }
 
 function pbkdf2Sync(password, salt, iterations, keylen, digest) {
-  return pbkdf2Sync_(password, salt, iterations, keylen, digest);
+  return _pbkdf2Sync(password, salt, iterations, keylen, digest);
 }
 
 // node_modules/des.js/lib/des/utils.js
@@ -4380,8 +4372,9 @@ var require_browser7 = __commonJS({
     exports.DiffieHellmanGroup = exports.createDiffieHellmanGroup = exports.getDiffieHellman = getDiffieHellman;
     exports.createDiffieHellman = exports.DiffieHellman = createDiffieHellman;
 
+    // TODO: move entire function out of js in diffie-hellman pr
     exports.diffieHellman = function diffieHellman(options) {
-      validateObject(options);
+      validateObject(options, "options");
 
       const { privateKey, publicKey } = options;
 
@@ -10092,61 +10085,6 @@ var require_browser9 = __commonJS({
   },
 });
 
-// node_modules/randomfill/browser.js
-var require_browser11 = __commonJS({
-  "node_modules/randomfill/browser.js"(exports) {
-    "use strict";
-    var safeBuffer = require_safe_buffer(),
-      randombytes = require_browser(),
-      Buffer2 = safeBuffer.Buffer,
-      kBufferMaxLength = safeBuffer.kMaxLength,
-      kMaxUint32 = Math.pow(2, 32) - 1;
-    function assertOffset(offset, length) {
-      if (typeof offset != "number" || offset !== offset) throw new TypeError("offset must be a number");
-      if (offset > kMaxUint32 || offset < 0) throw new TypeError("offset must be a uint32");
-      if (offset > kBufferMaxLength || offset > length) throw new RangeError("offset out of range");
-    }
-    function assertSize(size, offset, length) {
-      if (typeof size != "number" || size !== size) throw new TypeError("size must be a number");
-      if (size > kMaxUint32 || size < 0) throw new TypeError("size must be a uint32");
-      if (size + offset > length || size > kBufferMaxLength) throw new RangeError("buffer too small");
-    }
-
-    exports.randomFill = randomFill;
-    exports.randomFillSync = randomFillSync;
-
-    function randomFill(buf, offset, size, cb) {
-      if (!Buffer2.isBuffer(buf) && !(buf instanceof global.Uint8Array))
-        throw new TypeError('"buf" argument must be a Buffer or Uint8Array');
-      if (typeof offset == "function") (cb = offset), (offset = 0), (size = buf.length);
-      else if (typeof size == "function") (cb = size), (size = buf.length - offset);
-      else if (typeof cb != "function") throw new TypeError('"cb" argument must be a function');
-      return assertOffset(offset, buf.length), assertSize(size, offset, buf.length), actualFill(buf, offset, size, cb);
-    }
-    function actualFill(buf, offset, size, cb) {
-      if (cb) {
-        randombytes(size, function (err, bytes2) {
-          if (err) return cb(err);
-          bytes2.copy(buf, offset), cb(null, buf);
-        });
-        return;
-      }
-      var bytes = randombytes(size);
-      return bytes.copy(buf, offset), buf;
-    }
-    function randomFillSync(buf, offset, size) {
-      if ((typeof offset > "u" && (offset = 0), !Buffer2.isBuffer(buf) && !(buf instanceof global.Uint8Array)))
-        throw new TypeError('"buf" argument must be a Buffer or Uint8Array');
-      return (
-        assertOffset(offset, buf.length),
-        size === void 0 && (size = buf.length - offset),
-        assertSize(size, offset, buf.length),
-        actualFill(buf, offset, size)
-      );
-    }
-  },
-});
-
 // node_modules/crypto-browserify/index.js
 var require_crypto_browserify2 = __commonJS({
   "node_modules/crypto-browserify/index.js"(exports) {
@@ -10182,9 +10120,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.ECDH = ecdh.ECDH;
     exports.createECDH = ecdh.createECDH;
     exports.getRandomValues = values => crypto.getRandomValues(values);
-    var rf = require_browser11();
-    exports.randomFill = rf.randomFill;
-    exports.randomFillSync = rf.randomFillSync;
     exports.constants = $processBindingConstants.crypto;
   },
 });
@@ -10194,17 +10129,6 @@ var crypto_exports = require_crypto_browserify2();
 
 var getRandomValues = array => crypto.getRandomValues(array),
   randomUUID = () => crypto.randomUUID(),
-  timingSafeEqual =
-    "timingSafeEqual" in crypto
-      ? (a, b) => {
-          let { byteLength: byteLengthA } = a,
-            { byteLength: byteLengthB } = b;
-          if (typeof byteLengthA != "number" || typeof byteLengthB != "number")
-            throw new TypeError("Input must be an array buffer view");
-          if (byteLengthA !== byteLengthB) throw new RangeError("Input buffers must have the same length");
-          return crypto.timingSafeEqual(a, b);
-        }
-      : void 0,
   scryptSync =
     "scryptSync" in crypto
       ? (password, salt, keylen, options) => {
@@ -10229,16 +10153,14 @@ var getRandomValues = array => crypto.getRandomValues(array),
           }
         }
       : void 0;
-timingSafeEqual &&
-  (Object.defineProperty(timingSafeEqual, "name", {
-    value: "::bunternal::",
-  }),
+scrypt &&
   Object.defineProperty(scrypt, "name", {
     value: "::bunternal::",
   }),
-  Object.defineProperty(scryptSync, "name", {
-    value: "::bunternal::",
-  }));
+  scryptSync &&
+    Object.defineProperty(scryptSync, "name", {
+      value: "::bunternal::",
+    });
 
 class KeyObject {
   // we use $bunNativePtr so that util.types.isKeyObject can detect it
@@ -10571,12 +10493,11 @@ crypto_exports.getFips = function getFips() {
 
 crypto_exports.getRandomValues = getRandomValues;
 crypto_exports.randomUUID = _randomUUID;
-crypto_exports.randomInt = randomInt;
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
-crypto_exports.timingSafeEqual = timingSafeEqual;
+crypto_exports.timingSafeEqual = _timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;
@@ -10722,6 +10643,69 @@ crypto_exports.createVerify = createVerify;
     return new Hmac(hmac, key, options);
   };
 }
+
+function randomBytes(size, callback) {
+  if (callback === undefined) {
+    return _randomBytes(size);
+  }
+
+  // Crypto random promise job is guaranteed to resolve.
+  _randomBytes(size, callback).then(buf => {
+    callback(null, buf);
+  });
+}
+
+crypto_exports.randomBytes = randomBytes;
+
+for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
+  Object.defineProperty(crypto_exports, rng, {
+    value: randomBytes,
+    enumerable: false,
+    configurable: true,
+  });
+}
+
+function randomInt(min, max, callback) {
+  let res;
+  if (typeof max === "undefined" || typeof max === "function") {
+    callback = max;
+    res = _randomInt(min, callback);
+  } else {
+    res = _randomInt(min, max, callback);
+  }
+
+  if (callback !== undefined) {
+    // Crypto random promise job is guaranteed to resolve.
+    process.nextTick(callback, undefined, res);
+  }
+
+  return res;
+}
+
+crypto_exports.randomInt = randomInt;
+
+function randomFill(buf, offset, size, callback) {
+  if (!isAnyArrayBuffer(buf) && !isArrayBufferView(buf)) {
+    throw $ERR_INVALID_ARG_TYPE("buf", ["ArrayBuffer", "ArrayBufferView"], buf);
+  }
+
+  if (typeof offset === "function") {
+    callback = offset;
+    offset = 0;
+    size = buf.length;
+  } else if (typeof size === "function") {
+    callback = size;
+    size = buf.length - offset;
+  }
+
+  // Crypto random promise job is guaranteed to resolve.
+  _randomFill(buf, offset, size, callback).then(() => {
+    callback(null, buf);
+  });
+}
+
+crypto_exports.randomFill = randomFill;
+crypto_exports.randomFillSync = randomFillSync;
 
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */

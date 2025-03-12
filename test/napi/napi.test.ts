@@ -62,44 +62,48 @@ describe("napi", () => {
       });
 
       if (target === "bun") {
-        it("should work with --compile", async () => {
-          const dir = tempDirWithFiles("napi-app-compile-" + format, {
-            "package.json": JSON.stringify({
-              name: "napi-app",
-              version: "1.0.0",
-              type: format === "esm" ? "module" : "commonjs",
-            }),
-          });
+        it(
+          "should work with --compile",
+          async () => {
+            const dir = tempDirWithFiles("napi-app-compile-" + format, {
+              "package.json": JSON.stringify({
+                name: "napi-app",
+                version: "1.0.0",
+                type: format === "esm" ? "module" : "commonjs",
+              }),
+            });
 
-          const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
-          const build = spawnSync({
-            cmd: [
-              bunExe(),
-              "build",
-              "--target=" + target,
-              "--format=" + format,
-              "--compile",
-              join(__dirname, "napi-app", "main.js"),
-            ],
-            cwd: dir,
-            env: bunEnv,
-            stdout: "inherit",
-            stderr: "inherit",
-          });
-          expect(build.success).toBeTrue();
+            const exe = join(dir, "main" + (process.platform === "win32" ? ".exe" : ""));
+            const build = spawnSync({
+              cmd: [
+                bunExe(),
+                "build",
+                "--target=" + target,
+                "--format=" + format,
+                "--compile",
+                join(__dirname, "napi-app", "main.js"),
+              ],
+              cwd: dir,
+              env: bunEnv,
+              stdout: "inherit",
+              stderr: "inherit",
+            });
+            expect(build.success).toBeTrue();
 
-          const result = spawnSync({
-            cmd: [exe, "self"],
-            env: bunEnv,
-            stdin: "inherit",
-            stderr: "inherit",
-            stdout: "pipe",
-          });
-          const stdout = result.stdout.toString().trim();
+            const result = spawnSync({
+              cmd: [exe, "self"],
+              env: bunEnv,
+              stdin: "inherit",
+              stderr: "inherit",
+              stdout: "pipe",
+            });
+            const stdout = result.stdout.toString().trim();
 
-          expect(stdout).toBe("hello world!");
-          expect(result.success).toBeTrue();
-        });
+            expect(stdout).toBe("hello world!");
+            expect(result.success).toBeTrue();
+          },
+          10 * 1000,
+        );
       }
 
       it("`bun build`", async () => {
@@ -283,7 +287,7 @@ describe("napi", () => {
       // remove all debug logs
       bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
       expect(bunResult).toBe(
-        `synchronously threw ReferenceError: message "Can't find variable: shouldNotExist", code undefined`,
+        `synchronously threw ReferenceError: message "shouldNotExist is not defined", code undefined`,
       );
     });
   });

@@ -31,7 +31,7 @@ public:
 
     JSObject* params() const;
     void setParams(JSObject* params);
-    
+
     JSObject* cookies() const;
     void setCookies(JSObject* cookies);
 

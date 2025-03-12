@@ -34,14 +34,14 @@ CookieMap::CookieMap(const String& cookieString)
         pair = pair.trim(isASCIIWhitespace<UChar>);
         if (pair.isEmpty())
             continue;
-            
+
         size_t equalsPos = pair.find('=');
         if (equalsPos == notFound)
             continue;
-            
+
         String name = pair.substring(0, equalsPos).trim(isASCIIWhitespace<UChar>);
         String value = pair.substring(equalsPos + 1).trim(isASCIIWhitespace<UChar>);
-        
+
         auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Lax, false, 0, false);
         m_cookies.append(WTFMove(cookie));
     }

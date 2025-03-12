@@ -4,7 +4,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
-const { throwNotImplemented, warnNotImplementedOnce } = require("../internal/shared");
+const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 
 const { MessageChannel, BroadcastChannel, Worker: WebWorker } = globalThis;
 const SHARE_ENV = Symbol("nodejs.worker_threads.SHARE_ENV");

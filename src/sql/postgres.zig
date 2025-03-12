@@ -1387,7 +1387,7 @@ pub const PostgresSQLConnection = struct {
         pub fn nonce(this: *SASL) []const u8 {
             if (this.nonce_len == 0) {
                 var bytes: [nonce_byte_len]u8 = .{0} ** nonce_byte_len;
-                bun.rand(&bytes);
+                bun.csprng(&bytes);
                 this.nonce_len = @intCast(bun.base64.encode(&this.nonce_base64_bytes, &bytes));
             }
             return this.nonce_base64_bytes[0..this.nonce_len];

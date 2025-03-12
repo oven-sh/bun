@@ -145,65 +145,6 @@ static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsi
     return sv.substring(start, end - start);
 }
 
-template<typename UWSResponse>
-static void writeResponseHeader(UWSResponse* res, const WTF::StringView& name, const WTF::StringView& value)
-{
-    WTF::CString nameStr;
-    WTF::CString valueStr;
-
-    std::string_view nameView;
-    std::string_view valueView;
-
-    if (name.is8Bit()) {
-        const auto nameSpan = name.span8();
-        nameView = std::string_view(reinterpret_cast<const char*>(nameSpan.data()), nameSpan.size());
-    } else {
-        nameStr = name.utf8();
-        nameView = std::string_view(nameStr.data(), nameStr.length());
-    }
-
-    if (value.is8Bit()) {
-        const auto valueSpan = value.span8();
-        valueView = std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size());
-    } else {
-        valueStr = value.utf8();
-        valueView = std::string_view(valueStr.data(), valueStr.length());
-    }
-
-    res->writeHeader(nameView, valueView);
-}
-
-template<typename UWSResponse>
-static void copyToUWS(WebCore::FetchHeaders* headers, UWSResponse* res)
-{
-    auto& internalHeaders = headers->internalHeaders();
-
-    for (auto& value : internalHeaders.getSetCookieHeaders()) {
-
-        if (value.is8Bit()) {
-            const auto valueSpan = value.span8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
-        } else {
-            WTF::CString valueStr = value.utf8();
-            res->writeHeader(std::string_view("set-cookie", 10), std::string_view(valueStr.data(), valueStr.length()));
-        }
-    }
-
-    for (const auto& header : internalHeaders.commonHeaders()) {
-        const auto& name = WebCore::httpHeaderNameString(header.key);
-        const auto& value = header.value;
-
-        writeResponseHeader<UWSResponse>(res, name, value);
-    }
-
-    for (auto& header : internalHeaders.uncommonHeaders()) {
-        const auto& name = header.key;
-        const auto& value = header.value;
-
-        writeResponseHeader<UWSResponse>(res, name, value);
-    }
-}
-
 using namespace JSC;
 
 using namespace WebCore;
@@ -1671,15 +1612,6 @@ extern "C" {
 bool WebCore__FetchHeaders__isEmpty(WebCore__FetchHeaders* arg0)
 {
     return arg0->size() == 0;
-}
-
-void WebCore__FetchHeaders__toUWSResponse(WebCore__FetchHeaders* arg0, bool is_ssl, void* arg2)
-{
-    if (is_ssl) {
-        copyToUWS<uWS::HttpResponse<true>>(arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
-    } else {
-        copyToUWS<uWS::HttpResponse<false>>(arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
-    }
 }
 
 WebCore__FetchHeaders* WebCore__FetchHeaders__createEmpty()
@@ -6511,3 +6443,10 @@ CPP_DECL bool Bun__util__isInsideNodeModules(JSC::JSGlobalObject* globalObject, 
 
     return inNodeModules;
 }
+
+#if BUN_DEBUG
+CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
+{
+    return callFrame->describeFrame();
+}
+#endif

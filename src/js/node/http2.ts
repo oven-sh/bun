@@ -6,6 +6,8 @@ const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
+const { $data } = require("node:fs/promises");
+const FileHandle = $data.FileHandle;
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
@@ -291,7 +293,7 @@ class Http2ServerRequest extends Readable {
     stream.on("error", onStreamError);
     stream.on("aborted", onStreamAbortedRequest);
     stream.on("close", onStreamCloseRequest);
-    stream.on("timeout", onStreamTimeout);
+    stream.on("timeout", onStreamTimeout.bind(this));
     this.on("pause", onRequestPause);
     this.on("resume", onRequestResume);
   }
@@ -406,7 +408,7 @@ class Http2ServerResponse extends Stream {
     stream.on("aborted", onStreamAbortedResponse);
     stream.on("close", onStreamCloseResponse);
     stream.on("wantTrailers", onStreamTrailersReady);
-    stream.on("timeout", onStreamTimeout);
+    stream.on("timeout", onStreamTimeout.bind(this));
   }
 
   // User land modules such as finalhandler just check truthiness of this
@@ -521,7 +523,7 @@ class Http2ServerResponse extends Stream {
 
   removeHeader(name) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
 
     name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
 
@@ -536,7 +538,7 @@ class Http2ServerResponse extends Stream {
 
   setHeader(name, value) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
 
     this[kSetHeader](name, value);
   }
@@ -558,7 +560,7 @@ class Http2ServerResponse extends Stream {
 
   appendHeader(name, value) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
 
     this[kAppendHeader](name, value);
   }
@@ -614,7 +616,7 @@ class Http2ServerResponse extends Stream {
     const state = this[kState];
 
     if (state.closed || this.stream.destroyed) return this;
-    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
 
     if (typeof statusMessage === "string") statusMessageWarn();
 
@@ -1506,10 +1508,16 @@ class Http2Session extends EventEmitter {
 }
 
 function streamErrorFromCode(code: number) {
+  if (code === 0xe) {
+    return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK("Maximum number of pending settings acknowledgements");
+  }
   return $ERR_HTTP2_STREAM_ERROR(`Stream closed with error code ${nameForErrorCode[code] || code}`);
 }
 hideFromStack(streamErrorFromCode);
 function sessionErrorFromCode(code: number) {
+  if (code === 0xe) {
+    return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK("Maximum number of pending settings acknowledgements");
+  }
   return $ERR_HTTP2_SESSION_ERROR(`Session closed with error code ${nameForErrorCode[code] || code}`);
 }
 hideFromStack(sessionErrorFromCode);
@@ -1568,6 +1576,7 @@ class Http2Stream extends Duplex {
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
+      autoDestroy: false,
     });
     this.#id = streamId;
     this[bunHTTP2Session] = session;
@@ -1608,15 +1617,6 @@ class Http2Stream extends Duplex {
   }
   get headRequest() {
     return !!this[kHeadRequest];
-  }
-
-  static #rstStream() {
-    const session = this[bunHTTP2Session];
-    assertSession(session);
-    markStreamClosed(this);
-
-    session[bunHTTP2Native]?.rstStream(this.#id, this.rstCode);
-    this[bunHTTP2Session] = null;
   }
 
   sendTrailers(headers) {
@@ -1728,6 +1728,7 @@ class Http2Stream extends Duplex {
   }
   _destroy(err, callback) {
     const { ending } = this._writableState;
+    this.push(null);
 
     if (!ending) {
       // If the writable side of the Http2Stream is still open, emit the
@@ -1738,7 +1739,7 @@ class Http2Stream extends Duplex {
       }
       // at this state destroyed will be true but we need to close the writable side
       this._writableState.destroyed = false;
-      this.end();
+      this.end(); // why this is needed?
       // we now restore the destroyed flag
       this._writableState.destroyed = true;
     }
@@ -1760,15 +1761,9 @@ class Http2Stream extends Duplex {
       }
     }
 
-    if (this.writableFinished) {
-      markStreamClosed(this);
-
-      session[bunHTTP2Native]?.rstStream(this.#id, rstCode);
-      this[bunHTTP2Session] = null;
-    } else {
-      this.once("finish", Http2Stream.#rstStream);
-    }
-
+    markStreamClosed(this);
+    session[bunHTTP2Native]?.rstStream(this.#id, rstCode);
+    this[bunHTTP2Session] = null;
     callback(err);
   }
 
@@ -1789,6 +1784,15 @@ class Http2Stream extends Duplex {
 
   end(chunk, encoding, callback) {
     const status = this[bunHTTP2StreamStatus];
+    if (typeof callback === "undefined") {
+      if (typeof chunk === "function") {
+        callback = chunk;
+        chunk = undefined;
+      } else if (typeof encoding === "function") {
+        callback = encoding;
+        encoding = undefined;
+      }
+    }
 
     if ((status & StreamState.EndedCalled) !== 0) {
       typeof callback == "function" && callback();
@@ -1872,10 +1876,15 @@ function tryClose(fd) {
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   if (err) {
-    tryClose(fd);
+    if (err.code !== "EBADF") {
+      tryClose(fd);
+    }
 
     if (onError) onError(err);
-    else this.destroy(err);
+    else {
+      this.respond(headers, options);
+      this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
+    }
     return;
   }
 
@@ -1893,17 +1902,21 @@ function doSendFileFD(options, fd, headers, err, stat) {
         : $ERR_HTTP2_SEND_FILE_NOSEEK("Offset or length can only be specified for regular files");
       tryClose(fd);
       if (onError) onError(err);
-      else this.destroy(err);
+      else {
+        this.respond(headers, options);
+        this.destroy(err);
+      }
       return;
     }
 
-    options.offset = -1;
+    options.offset = 0;
     options.length = -1;
   }
 
   if (this.destroyed || this.closed) {
     tryClose(fd);
     const error = $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+    this.respond(headers, options);
     this.destroy(error);
     return;
   }
@@ -1912,14 +1925,23 @@ function doSendFileFD(options, fd, headers, err, stat) {
     offset: options.offset !== undefined ? options.offset : 0,
     length: options.length !== undefined ? options.length : -1,
   };
-
+  if (statOptions.offset <= 0) {
+    statOptions.offset = 0;
+  }
+  if (statOptions.length <= 0) {
+    if (stat.isFile()) {
+      statOptions.length = stat.size;
+    } else {
+      statOptions.length = undefined;
+    }
+  }
   // options.statCheck is a user-provided function that can be used to
   // verify stat values, override or set headers, or even cancel the
   // response operation. If statCheck explicitly returns false, the
   // response is canceled. The user code may also send a separate type
   // of response so check again for the HEADERS_SENT flag
   if (
-    (typeof options.statCheck === "function" && options.statCheck.$call(this, [stat, headers]) === false) ||
+    (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
     this.headersSent
   ) {
     tryClose(fd);
@@ -1938,9 +1960,9 @@ function doSendFileFD(options, fd, headers, err, stat) {
     this.respond(headers, options);
     fs.createReadStream(null, {
       fd: fd,
-      autoClose: true,
-      start: statOptions.offset,
-      end: statOptions.length,
+      autoClose: false,
+      start: statOptions.offset ? statOptions.offset : undefined,
+      end: typeof statOptions.length === "number" ? statOptions.length + (statOptions.offset || 0) - 1 : undefined,
       emitClose: false,
     }).pipe(this);
   } catch (err) {
@@ -1973,10 +1995,15 @@ class ServerHttp2Stream extends Http2Stream {
     super(streamId, session, headers);
   }
   pushStream() {
-    throwNotImplemented("ServerHttp2Stream.prototype.pushStream()");
+    throw $ERR_HTTP2_PUSH_DISABLED("HTTP/2 client has disabled push streams");
   }
 
   respondWithFile(path, headers, options) {
+    if (this.destroyed || this.closed) {
+      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+    }
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
@@ -1985,10 +2012,11 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
-    if (headers[":status"] === undefined) {
-      headers[":status"] = 200;
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = (headers[":status"] |= 0);
+    const statusCode = headers[HTTP2_HEADER_STATUS];
+    options = { ...options };
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -2000,11 +2028,23 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
     }
 
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
+    }
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers, options) {
-    // TODO: optimize this
-    let { statCheck, offset, length } = options || {};
+    if (this.destroyed || this.closed) {
+      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+    }
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
@@ -2013,10 +2053,10 @@ class ServerHttp2Stream extends Http2Stream {
       headers = { ...headers };
     }
 
-    if (headers[":status"] === undefined) {
-      headers[":status"] = 200;
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
     }
-    const statusCode = (headers[":status"] |= 0);
+    const statusCode = headers[HTTP2_HEADER_STATUS];
 
     // Payload/DATA frames are not permitted in these cases
     if (
@@ -2027,7 +2067,21 @@ class ServerHttp2Stream extends Http2Stream {
     ) {
       throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
     }
-    fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+    options = { ...options };
+    if (options.offset !== undefined && typeof options.offset !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.offset", options.offset);
+    }
+    if (options.length !== undefined && typeof options.length !== "number") {
+      throw $ERR_INVALID_ARG_VALUE("options.length", options.length);
+    }
+    if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
+      throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
+    }
+    if (fd instanceof FileHandle) {
+      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
+    } else {
+      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
+    }
   }
   additionalHeaders(headers) {
     if (this.destroyed || this.closed) {
@@ -2049,7 +2103,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     for (const name in headers) {
-      if (name.startsWith(":") && name !== ":status") {
+      if (name.startsWith(":") && name !== HTTP2_HEADER_STATUS) {
         throw $ERR_HTTP2_INVALID_PSEUDOHEADER(`"${name}" is an invalid pseudoheader or is used incorrectly`);
       }
     }
@@ -2066,11 +2120,11 @@ class ServerHttp2Stream extends Http2Stream {
       }
     }
     let hasStatus = true;
-    if (headers[":status"] === undefined) {
-      headers[":status"] = 200;
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
       hasStatus = false;
     }
-    const statusCode = (headers[":status"] |= 0);
+    const statusCode = headers[HTTP2_HEADER_STATUS];
     if (hasStatus) {
       if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS)
         throw $ERR_HTTP2_STATUS_101("HTTP status code 101 (Switching Protocols) is forbidden in HTTP/2");
@@ -2105,7 +2159,7 @@ class ServerHttp2Stream extends Http2Stream {
 
     const session = this[bunHTTP2Session];
     assertSession(session);
-    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated");
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
     }
@@ -2129,8 +2183,20 @@ class ServerHttp2Stream extends Http2Stream {
         sensitiveNames[sensitives[i]] = true;
       }
     }
-    if (headers[":status"] === undefined) {
-      headers[":status"] = 200;
+    if (headers[HTTP2_HEADER_STATUS] === undefined) {
+      headers[HTTP2_HEADER_STATUS] = 200;
+    }
+    const statusCode = headers[HTTP2_HEADER_STATUS];
+    let endStream = !!options?.endStream;
+    if (
+      endStream ||
+      statusCode === HTTP_STATUS_NO_CONTENT ||
+      statusCode === HTTP_STATUS_RESET_CONTENT ||
+      statusCode === HTTP_STATUS_NOT_MODIFIED ||
+      this.headRequest === true
+    ) {
+      options = { ...options, endStream: true };
+      endStream = true;
     }
 
     if (typeof options === "undefined") {
@@ -2146,6 +2212,9 @@ class ServerHttp2Stream extends Http2Stream {
     }
     this.headersSent = true;
     this[bunHTTP2Headers] = headers;
+    if (endStream) {
+      this.end();
+    }
 
     return;
   }
@@ -2482,7 +2551,6 @@ class ServerHttp2Session extends Http2Session {
       }
     }
     this.emit("timeout");
-    this.destroy();
   }
 
   #onDrain() {
@@ -2689,7 +2757,7 @@ class ServerHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
-    return this.#parser?.setLocalWindowSize(windowSize);
+    return this.#parser?.setLocalWindowSize?.(windowSize);
   }
 
   settings(settings: Settings, callback) {
@@ -2707,8 +2775,9 @@ class ServerHttp2Session extends Http2Session {
   // If specified, the callback function is registered as a handler for the 'close' event.
   close(callback: Function) {
     this.#closed = true;
+
     if (typeof callback === "function") {
-      this.once("close", callback);
+      this.on("close", callback);
     }
     if (this.#connections === 0) {
       this.destroy();
@@ -2735,7 +2804,6 @@ class ServerHttp2Session extends Http2Session {
     if (error) {
       this.emit("error", error);
     }
-
     this.emit("close");
   }
 }
@@ -2836,7 +2904,7 @@ class ClientHttp2Session extends Http2Session {
       if (!self || typeof stream !== "object") return;
       const headers = toHeaderObject(rawheaders, sensitiveHeadersValue || []);
       const status = stream[bunHTTP2StreamStatus];
-      const header_status = headers[":status"];
+      const header_status = headers[HTTP2_HEADER_STATUS];
       if (header_status === HTTP_STATUS_CONTINUE) {
         stream.emit("continue");
       }
@@ -3006,7 +3074,6 @@ class ClientHttp2Session extends Http2Session {
       }
     }
     this.emit("timeout");
-    this.destroy();
   }
   #onDrain() {
     const parser = this.#parser;
@@ -3095,11 +3162,10 @@ class ClientHttp2Session extends Http2Session {
   }
 
   setLocalWindowSize(windowSize) {
-    return this.#parser?.setLocalWindowSize(windowSize);
+    return this.#parser?.setLocalWindowSize?.(windowSize);
   }
   get socket() {
     if (this.#socket_proxy) return this.#socket_proxy;
-
     const socket = this[bunHTTP2Socket];
     if (!socket) return null;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
@@ -3140,7 +3206,7 @@ class ClientHttp2Session extends Http2Session {
 
     function onConnect() {
       this.#onConnect(arguments);
-      listener?.$apply(this, arguments);
+      listener?.$call(this, this);
     }
 
     // h2 with ALPNProtocols
@@ -3204,6 +3270,9 @@ class ClientHttp2Session extends Http2Session {
 
   destroy(error?: Error, code?: number) {
     const socket = this[bunHTTP2Socket];
+    if (this.#closed && !this.#connected && !this.#parser) {
+      return;
+    }
     this.#closed = true;
     this.#connected = false;
     if (socket) {
@@ -3221,7 +3290,6 @@ class ClientHttp2Session extends Http2Session {
     if (error) {
       this.emit("error", error);
     }
-
     this.emit("close");
   }
 
@@ -3259,7 +3327,9 @@ class ClientHttp2Session extends Http2Session {
       let authority = headers[":authority"];
       if (!authority) {
         authority = url.host;
-        headers[":authority"] = authority;
+        if (!headers["host"]) {
+          headers[":authority"] = authority;
+        }
       }
       let method = headers[":method"];
       if (!method) {
@@ -3383,8 +3453,10 @@ function connectionListener(socket: Socket) {
           "listener for the `unknownProtocol` event.\n",
       );
     }
+    return;
   }
 
+  // setup session
   const session = new ServerHttp2Session(socket, options, this);
   session.on("error", sessionOnError);
   const timeout = this.timeout;

@@ -8,7 +8,6 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
-const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const C = bun.C;
@@ -25,7 +24,6 @@ const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Transpiler = bun.Transpiler;
 const PluginRunner = bun.transpiler.PluginRunner;
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -41,16 +39,12 @@ const PackageJSON = @import("../resolver/package_json.zig").PackageJSON;
 const MacroRemap = @import("../resolver/package_json.zig").MacroMap;
 const js = bun.JSC.C;
 const JSC = bun.JSC;
-const JSError = @import("./base.zig").JSError;
-const d = @import("./base.zig").d;
 const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
-const NewClass = @import("./base.zig").NewClass;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const ExceptionValueRef = bun.JSC.ExceptionValueRef;
-const JSPrivateDataPtr = bun.JSC.JSPrivateDataPtr;
 const ConsoleObject = bun.JSC.ConsoleObject;
 const ZigException = bun.JSC.ZigException;
 const ZigStackTrace = bun.JSC.ZigStackTrace;
@@ -362,28 +356,6 @@ pub const RuntimeTranspilerStore = struct {
                 resolved_source.source_url = out.createIfDifferent(this.path.text);
                 resolved_source.specifier = out.dupeRef();
                 break :brk out;
-            };
-
-            resolved_source.tag = brk: {
-                const actual_package_json: *PackageJSON = brk2: {
-                    // this should already be cached virtually always so it's fine to do this
-                    const dir_info = (vm.transpiler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
-                        break :brk .javascript;
-
-                    break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
-                } orelse break :brk .javascript;
-                if (resolved_source.is_commonjs_module) {
-                    if (actual_package_json.module_type == .esm) {
-                        break :brk ResolvedSource.Tag.package_json_type_module;
-                    }
-                } else {
-                    if (actual_package_json.module_type == .cjs) {
-                        resolved_source.is_commonjs_module = true;
-                        break :brk ResolvedSource.Tag.package_json_type_commonjs;
-                    }
-                }
-
-                break :brk ResolvedSource.Tag.javascript;
             };
 
             const parse_error = this.parse_error;
@@ -1947,21 +1919,16 @@ pub const ModuleLoader = struct {
 
                 // Pass along package.json type "module" if set.
                 const tag = brk: {
-                    if (parse_result.ast.exports_kind == .cjs and parse_result.source.path.isFile()) {
-                        const actual_package_json: *PackageJSON = package_json orelse brk2: {
-                            // this should already be cached virtually always so it's fine to do this
-                            const dir_info = (jsc_vm.transpiler.resolver.readDirInfo(parse_result.source.path.name.dirOrDot()) catch null) orelse
-                                break :brk .javascript;
+                    if (parse_result.source.path.isFile()) {
+                        const module_type_ = if (package_json) |pkg| pkg.module_type else module_type;
 
-                            break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;
-                        } orelse break :brk .javascript;
-
-                        if (actual_package_json.module_type == .esm) {
-                            break :brk ResolvedSource.Tag.package_json_type_module;
-                        }
-                        if (actual_package_json.module_type == .cjs) {
-                            break :brk ResolvedSource.Tag.package_json_type_commonjs;
-                        }
+                        break :brk switch (module_type_) {
+                            .esm => ResolvedSource.Tag.package_json_type_module,
+                            .cjs => ResolvedSource.Tag.package_json_type_commonjs,
+                            else => ResolvedSource.Tag.javascript,
+                        };
+                    } else {
+                        break :brk ResolvedSource.Tag.javascript;
                     }
 
                     break :brk ResolvedSource.Tag.javascript;

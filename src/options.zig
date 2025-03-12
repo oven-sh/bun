@@ -1038,13 +1038,10 @@ pub fn getLoaderAndVirtualSource(
 
     const is_main = strings.eqlLong(specifier, jsc_vm.main, true);
 
-    // const module_type: ModuleType = if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info| blk: {
-    //     if (dir_info.package_json orelse dir_info.enclosing_package_json) |pkg| {
-    //         break :blk pkg.module_type;
-    //     }
-    //     break :blk .unknown;
-    // } else .unknown;
-    const package_json: ?*const PackageJSON = if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info| dir_info.package_json orelse dir_info.enclosing_package_json else null;
+    const package_json: ?*const PackageJSON = if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info|
+        dir_info.package_json orelse dir_info.enclosing_package_json
+    else
+        null;
 
     return .{
         .loader = loader,

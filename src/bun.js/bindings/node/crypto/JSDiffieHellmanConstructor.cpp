@@ -125,7 +125,11 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
             return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ARG_VALUE, "Invalid DH parameters"_s));
         }
     } else {
-        auto* keyView = getArrayBufferOrView(globalObject, scope, sizeOrKey, "sizeOrKey"_s, keyEncodingValue);
+
+        auto* keyView = keyEncoding.has_value()
+            ? getArrayBufferOrView(globalObject, scope, sizeOrKey, "sizeOrKey"_s, keyEncoding.value())
+            : getArrayBufferOrView(globalObject, scope, sizeOrKey, "sizeOrKey"_s, keyEncodingValue);
+
         RETURN_IF_EXCEPTION(scope, {});
 
         if (keyView->byteLength() > INT32_MAX) {

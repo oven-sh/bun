@@ -27,14 +27,6 @@ pub const KeepAlive = struct {
         this.status = .done;
     }
 
-    pub fn disableConcurrently(this: *KeepAlive) void {
-        if (this.status == .active) {
-            this.unrefConcurrently(JSC.VirtualMachine.get());
-        }
-
-        this.status = .done;
-    }
-
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *KeepAlive, loop: *Loop) void {
         if (this.status != .active)

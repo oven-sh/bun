@@ -4445,7 +4445,7 @@ pub const VirtualMachine = struct {
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
-            vm.channel_ref.disableConcurrently();
+            vm.channel_ref.disable();
             this.destroy();
         }
 

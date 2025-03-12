@@ -26,12 +26,6 @@ pub const KeepAlive = struct {
         this.status = .done;
     }
 
-    /// Make calling ref() on this poll into a no-op.
-    pub fn disableConcurrently(this: *KeepAlive) void {
-        this.unrefConcurrently(JSC.VirtualMachine.get());
-        this.status = .done;
-    }
-
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *KeepAlive, loop: *Loop) void {
         if (this.status != .active)

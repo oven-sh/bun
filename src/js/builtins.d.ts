@@ -636,6 +636,9 @@ declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
 declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
 declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
 declare function $ERR_SERVER_ALREADY_LISTEN(): Error;
+declare function $ERR_SOCKET_CLOSED(): Error;
+declare function $ERR_SOCKET_CLOSED_BEFORE_CONNECTION(): Error;
+declare function $ERR_TLS_RENEGOTIATION_DISABLED(): Error;
 
 /**
  * Convert a function to a class-like object.

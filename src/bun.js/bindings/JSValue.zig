@@ -491,6 +491,18 @@ pub const JSValue = enum(i64) {
         return result;
     }
 
+    // https://tc39.es/ecma262/#sec-number.issafeinteger
+    pub fn isSafeInteger(this: JSValue) bool {
+        if (this.isInt32()) {
+            return true;
+        }
+        if (!this.isDouble()) {
+            return false;
+        }
+        const d = this.asDouble();
+        return @trunc(d) == d and @abs(d) <= JSC.MAX_SAFE_INTEGER;
+    }
+
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             bool => this.toBoolean(),
@@ -1571,6 +1583,10 @@ pub const JSValue = enum(i64) {
         @"error",
         default,
         encoding,
+        fatal,
+        ignoreBOM,
+        type,
+        signal,
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);

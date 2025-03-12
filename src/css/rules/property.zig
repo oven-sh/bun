@@ -45,7 +45,7 @@ pub const PropertyRule = struct {
         const initial_value = switch (syntax) {
             .universal => if (parser.initial_value) |val| brk: {
                 var i = css.ParserInput.new(input.allocator(), val);
-                var p2 = css.Parser.new(&i, null);
+                var p2 = css.Parser.new(&i, null, .{}, null);
 
                 if (p2.isExhausted()) {
                     break :brk ParsedComponent{
@@ -62,7 +62,7 @@ pub const PropertyRule = struct {
             else => brk: {
                 const val = parser.initial_value orelse return .{ .err = input.newCustomError(css.ParserError.at_rule_body_invalid) };
                 var i = css.ParserInput.new(input.allocator(), val);
-                var p2 = css.Parser.new(&i, null);
+                var p2 = css.Parser.new(&i, null, .{}, null);
                 break :brk switch (syntax.parseValue(&p2)) {
                     .result => |vv| vv,
                     .err => |e| return .{ .err = e },

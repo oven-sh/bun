@@ -40,7 +40,7 @@ pub const Url = struct {
             .result => |vv| vv,
             .err => |e| return .{ .err = e },
         };
-        const import_record_idx = switch (input.addImportRecordForUrl(url, start_pos)) {
+        const import_record_idx = switch (input.addImportRecord(url, start_pos, .url)) {
             .result => |idx| idx,
             .err => |e| return .{ .err = e },
         };

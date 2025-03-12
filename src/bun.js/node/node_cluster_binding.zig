@@ -260,8 +260,6 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
 //
 //
 
-extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
-
 pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).ptr;
 
@@ -273,6 +271,34 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
     }
 
     const enabled = arguments[0].toBoolean();
-    Bun__setChannelRef(globalObject, enabled);
+    const vm = globalObject.bunVM();
+    vm.channel_ref_overridden = true;
+    if (enabled) {
+        vm.channel_ref.ref(vm);
+    } else {
+        vm.channel_ref.unref(vm);
+    }
     return .undefined;
+}
+
+export fn Bun__refChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {
+    const vm = globalObject.bunVM();
+    if (!vm.channel_ref_overridden) {
+        vm.channel_ref.ref(vm);
+    }
+}
+export fn Bun__unrefChannelUnlessOverridden(globalObject: *JSC.JSGlobalObject) void {
+    const vm = globalObject.bunVM();
+    if (!vm.channel_ref_overridden) {
+        vm.channel_ref.unref(vm);
+    }
+}
+pub fn channelIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const vm = globalObject.bunVM();
+    vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
+    return .false;
+}
+export fn Bun__shouldIgnoreOneDisconnectEventListener(globalObject: *JSC.JSGlobalObject) bool {
+    const vm = globalObject.bunVM();
+    return vm.channel_ref_should_ignore_one_disconnect_event_listener;
 }

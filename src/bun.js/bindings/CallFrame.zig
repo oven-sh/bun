@@ -190,4 +190,9 @@ pub const CallFrame = opaque {
             .column = column,
         };
     }
+
+    extern fn Bun__CallFrame__describeFrame(*const CallFrame) [*:0]const u8;
+    pub fn describeFrame(self: *const CallFrame) [:0]const u8 {
+        return std.mem.span(Bun__CallFrame__describeFrame(self));
+    }
 };

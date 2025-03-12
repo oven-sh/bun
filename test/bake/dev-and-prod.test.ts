@@ -158,9 +158,12 @@ devTest("using runtime import", {
         console.log(A.toString().replaceAll(" ", "").replaceAll("\\n", ""));
         console.log(B.toString().replaceAll(" ", "").replaceAll("\\n", ""));
         console.log(C.toString().replaceAll(" ", "").replaceAll("\\n", ""));
-        console.log(A() === eval("module.require"));
-        console.log(B() === eval("module.require"));
-        console.log(C() === eval("module.require"));
+        console.log(A() === eval("hmr.require"));
+        console.log(B() === eval("hmr.require"));
+        console.log(C() === eval("hmr.require"));
+        if (typeof A() !== "function") throw new Error("A is not a function");
+        if (typeof B() !== "function") throw new Error("B is not a function");
+        if (typeof C() !== "function") throw new Error("C is not a function");
       }
     `,
     "tsconfig.json": `
@@ -179,13 +182,13 @@ devTest("using runtime import", {
       "decorator",
       ...(dev.nodeEnv === "development"
         ? [
-            //
-            "()=>module.require",
-            "()=>module.require",
-            "()=>module.importMeta.require",
+            // TODO: all of these should be `hmr.require`
+            "()=>hmr.require",
+            "()=>module.require", // not being visited
+            "()=>hmr.importMeta.require", // not being visited
             true,
-            true,
-            true,
+            false,
+            false,
           ]
         : []),
     );

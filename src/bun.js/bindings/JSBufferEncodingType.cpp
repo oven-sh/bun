@@ -63,10 +63,15 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
         return std::nullopt;
     }
     const auto& view = str->view(&lexicalGlobalObject);
-    return parseEnumeration2(lexicalGlobalObject, view);
+    return parseEnumerationFromView<BufferEncodingType>(view);
 }
 
-std::optional<BufferEncodingType> parseEnumeration2(JSGlobalObject& lexicalGlobalObject, const WTF::StringView encoding)
+template<> std::optional<BufferEncodingType> parseEnumerationFromString<BufferEncodingType>(const String& encoding)
+{
+    return parseEnumerationFromView<BufferEncodingType>(encoding);
+}
+
+template<> std::optional<BufferEncodingType> parseEnumerationFromView<BufferEncodingType>(const StringView& encoding)
 {
     // caller must check if value is a string
     switch (encoding.length()) {

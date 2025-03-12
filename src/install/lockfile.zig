@@ -2547,7 +2547,7 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;
-    bun.rand(&base64_bytes);
+    bun.csprng(&base64_bytes);
     const tmpname = if (save_format == .text)
         std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
     else

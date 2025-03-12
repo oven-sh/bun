@@ -307,9 +307,10 @@ pub const ImageSetOption = struct {
         const start_position = input.input.tokenizer.getPosition();
         const loc = input.currentSourceLocation();
         const image = if (input.tryParse(css.Parser.expectUrlOrString, .{}).asValue()) |url| brk: {
-            const record_idx = switch (input.addImportRecordForUrl(
+            const record_idx = switch (input.addImportRecord(
                 url,
                 start_position,
+                .url,
             )) {
                 .result => |idx| idx,
                 .err => |e| return .{ .err = e },

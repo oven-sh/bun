@@ -63,8 +63,9 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     JSValue generatorValue = callFrame->argument(2);
     JSValue genEncodingValue = callFrame->argument(3);
 
+    std::optional<BufferEncodingType> keyEncoding = std::nullopt;
+
     if (keyEncodingValue.pureToBoolean() != TriState::False) {
-        std::optional<BufferEncodingType> keyEncoding = std::nullopt;
         if (keyEncodingValue.isString()) {
             WTF::String keyEncodingString = keyEncodingValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
@@ -80,6 +81,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
             genEncodingValue = generatorValue;
             generatorValue = keyEncodingValue;
             keyEncodingValue = jsBoolean(false);
+            keyEncoding = std::nullopt;
         }
     }
 

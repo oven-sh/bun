@@ -402,6 +402,35 @@ NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValu
     return {};
 }
 
+JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding)
+{
+    if (value.isString()) {
+        JSString* dataString = value.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto dataView = dataString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, encoding));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
+        if (!view) {
+            Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, value);
+            return {};
+        }
+
+        if (view->isDetached()) {
+            throwTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+
+        return view;
+    }
+
+    return getArrayBufferOrView(globalObject, scope, value, argName, jsUndefined());
+}
+
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue)
 {
     if (value.isString()) {

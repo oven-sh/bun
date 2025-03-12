@@ -79,7 +79,7 @@ pub fn generate(
 ) ![]u8 {
     // Generate nonce from entropy
     var nonce: [16]u8 = undefined;
-    bun.rand(&nonce);
+    bun.csprng(&nonce);
 
     // Current timestamp in milliseconds
     const timestamp = std.time.milliTimestamp();

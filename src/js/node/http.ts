@@ -1682,14 +1682,7 @@ const OutgoingMessagePrototype = {
   get headers() {
     const headers = this[headersSymbol];
     if (!headers) return kEmptyObject;
-    const headersJSON = headers.toJSON();
-    for (let header in headersJSON) {
-      const value = headersJSON[header];
-      if (typeof value === "string") {
-        headersJSON[header] = decodeURIComponent(value);
-      }
-    }
-    return headersJSON;
+    return headers.toJSON();
   },
   set headers(value) {
     this[headersSymbol] = new Headers(value);

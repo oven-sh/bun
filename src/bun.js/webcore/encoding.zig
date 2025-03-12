@@ -967,7 +967,7 @@ pub const Encoder = struct {
     }
     // TODO(@190n) handle unpaired surrogates
     export fn Bun__encoding__byteLengthUTF16AsUTF8(input: [*]const u16, len: usize) usize {
-        return byteLengthU16(input, len, .utf8);
+        return strings.elementLengthUTF16IntoUTF8([]const u16, input[0..len]);
     }
     export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
@@ -1326,32 +1326,6 @@ pub const Encoder = struct {
                 const transcoded = strings.toUTF8Alloc(bun.default_allocator, input[0..len]) catch return 0;
                 defer bun.default_allocator.free(transcoded);
                 return writeU8(transcoded.ptr, transcoded.len, to, to_len, encoding);
-            },
-            // else => return &[_]u8{};
-        }
-    }
-
-    /// Node returns imprecise byte length here
-    /// Should be fast enough for us to return precise length
-    pub fn byteLengthU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) usize {
-        if (len == 0)
-            return 0;
-
-        switch (comptime encoding) {
-            // these should be the same size
-            .ascii, .latin1, .utf8 => {
-                return strings.elementLengthUTF16IntoUTF8([]const u16, input[0..len]);
-            },
-            .ucs2, .buffer, .utf16le => {
-                return len * 2;
-            },
-
-            .hex => {
-                return len / 2;
-            },
-
-            .base64, .base64url => {
-                return bun.base64.decodeLenUpperBound(len);
             },
             // else => return &[_]u8{};
         }

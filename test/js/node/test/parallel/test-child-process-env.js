@@ -59,7 +59,6 @@ child.stdout.setEncoding('utf8');
 child.stdout.on('data', mustCallAtLeast((chunk) => {
   debug(`stdout: ${chunk}`);
   response += chunk;
-  Bun.CSRF.generate()
 }));
 
 child.stdout.on('end', mustCall(() => {

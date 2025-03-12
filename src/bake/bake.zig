@@ -235,7 +235,7 @@ pub const Framework = struct {
         }
 
         if (resolveOrNull(resolver, "react-refresh/runtime")) |rfr| {
-            fw.react_fast_refresh = .{ .import_source = rfr };
+            fw.react_fast_refresh = .{ .import_source = try arena.dupe(u8, rfr) };
         } else if (resolveOrNull(resolver, "react")) |_| {
             fw.react_fast_refresh = .{ .import_source = "react-refresh/runtime/index.js" };
             try fw.built_in_modules.put(

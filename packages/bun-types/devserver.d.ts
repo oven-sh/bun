@@ -1,6 +1,20 @@
 export {};
 
 declare global {
+  namespace Bun {
+    type HMREventNames =
+      | "beforeUpdate"
+      | "afterUpdate"
+      | "beforeFullReload"
+      | "beforePrune"
+      | "invalidate"
+      | "error"
+      | "ws:disconnect"
+      | "ws:connect";
+
+    type HMREvent = `bun:${HMREventNames}` | `vite:${HMREventNames}`;
+  }
+
   interface ImportMeta {
     /**
      * Hot module replacement APIs. This value is `undefined` in production and
@@ -128,6 +142,49 @@ declare global {
        * @deprecated
        */
       decline(): void;
+
+      // NOTE TO CONTRIBUTORS ////////////////////////////////////////
+      //     Callback is currently never called for `.prune()`      //
+      //     so the types are commented out until we support it.    //
+      ////////////////////////////////////////////////////////////////
+      // /**
+      //  * Attach a callback that is called when the module is removed from the module graph.
+      //  *
+      //  * This can be used to clean up resources that were created when the module was loaded.
+      //  * Unlike `import.meta.hot.dispose()`, this pairs much better with `accept` and `data` to manage stateful resources.
+      //  *
+      //  * @example
+      //  * ```ts
+      //  * export const ws = (import.meta.hot.data.ws ??= new WebSocket(location.origin));
+      //  *
+      //  * import.meta.hot.prune(() => {
+      //  *   ws.close();
+      //  * });
+      //  * ```
+      //  */
+      // prune(callback: () => void): void;
+
+      /**
+       * Listen for an event from the dev server
+       *
+       * For compatibility with Vite, event names are also available via vite:* prefix instead of bun:*.
+       *
+       * https://bun.sh/docs/bundler/hmr#import-meta-hot-on-and-off
+       * @param event The event to listen to
+       * @param callback The callback to call when the event is emitted
+       */
+      on(event: Bun.HMREvent, callback: () => void): void;
+
+      /**
+       * Stop listening for an event from the dev server
+       *
+       * For compatibility with Vite, event names are also available via vite:* prefix instead of bun:*.
+       *
+       * https://bun.sh/docs/bundler/hmr#import-meta-hot-on-and-off
+       * @param event The event to stop listening to
+       * @param callback The callback to stop listening to
+       */
+      off(event: Bun.HMREvent, callback: () => void): void;
     };
   }
 }

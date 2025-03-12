@@ -17764,7 +17764,6 @@ pub const AstBuilder = struct {
         try p.symbols.append(p.allocator, .{
             .kind = kind,
             .original_name = identifier,
-            .debug_mode_source_index = if (Environment.allow_assert) @intCast(p.source_index) else 0,
         });
         const ref: Ref = .{
             .inner_index = inner_index,

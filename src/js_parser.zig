@@ -9289,7 +9289,6 @@ fn NewParser_(
             try p.symbols.append(Symbol{
                 .kind = kind,
                 .original_name = identifier,
-                .debug_mode_source_index = if (comptime Environment.allow_assert) p.source.index.get() else 0,
             });
 
             if (is_typescript_enabled) {
@@ -16232,6 +16231,8 @@ fn NewParser_(
                             // `module.exports` -> `exports` optimization.
                             p.commonjs_module_exports_assigned_deoptimized = true;
                         }
+
+                        p.symbols.items[result.ref.innerIndex()].has_been_assigned_to = true;
                     }
 
                     var original_name: ?string = null;
@@ -18341,7 +18342,7 @@ fn NewParser_(
         }
 
         fn selectLocalKind(p: *P, kind: S.Local.Kind) S.Local.Kind {
-            // When using Kit's HMR implementation, we need to preserve the local kind
+            // When using Bake's HMR implementation, we need to preserve the local kind
             // if possible, as more efficient code can be generated if something is known
             // not to be an ESM live binding.
             if (p.options.features.hot_module_reloading) {
@@ -24322,7 +24323,6 @@ pub const ConvertESMExportsForHmr = struct {
     export_star_props: std.ArrayListUnmanaged(G.Property) = .{},
     export_props: std.ArrayListUnmanaged(G.Property) = .{},
     stmts: std.ArrayListUnmanaged(Stmt) = .{},
-    can_implicitly_accept: bool = true,
 
     const ImportRef = struct {
         /// Index into ConvertESMExportsForHmr.stmts
@@ -24332,19 +24332,16 @@ pub const ConvertESMExportsForHmr = struct {
     fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void {
         const new_stmt = switch (stmt.data) {
             else => brk: {
-                ctx.can_implicitly_accept = false;
                 break :brk stmt;
             },
             .s_local => |st| stmt: {
                 if (!st.is_export) {
-                    ctx.can_implicitly_accept = false;
                     break :stmt stmt;
                 }
 
                 st.is_export = false;
 
                 if (st.kind.isReassignable()) {
-                    ctx.can_implicitly_accept = false;
                     for (st.decls.slice()) |decl| {
                         try ctx.visitBindingToExport(p, decl.binding, true);
                     }
@@ -24359,11 +24356,6 @@ pub const ConvertESMExportsForHmr = struct {
 
                             .b_identifier => |id| {
                                 const symbol = p.symbols.items[id.ref.inner_index];
-
-                                if (ctx.can_implicitly_accept) switch (decl.value.?.data) {
-                                    .e_function, .e_arrow => {},
-                                    else => ctx.can_implicitly_accept = false,
-                                };
 
                                 // if the symbol is not used, we don't need to preserve
                                 // a binding in this scope. we can move it to the exports object.
@@ -24380,7 +24372,6 @@ pub const ConvertESMExportsForHmr = struct {
                             },
 
                             else => {
-                                ctx.can_implicitly_accept = false;
                                 st.decls.mut(new_len).* = decl;
                                 new_len += 1;
                                 try ctx.visitBindingToExport(p, decl.binding, false);
@@ -24414,11 +24405,6 @@ pub const ConvertESMExportsForHmr = struct {
                     }
                     // All other functions can be properly moved.
                 }
-
-                if (ctx.can_implicitly_accept and
-                    !((st.value == .stmt and st.value.stmt.data == .s_function) or
-                    (st.value == .expr and st.value.expr.data == .e_arrow)))
-                    ctx.can_implicitly_accept = false;
 
                 // Try to move the export default expression to the end.
                 const can_be_moved_to_inner_scope = switch (st.value) {
@@ -24484,7 +24470,6 @@ pub const ConvertESMExportsForHmr = struct {
                 }
             },
             .s_class => |st| stmt: {
-                ctx.can_implicitly_accept = false;
 
                 // Strip the "export" keyword
                 if (!st.is_export) {
@@ -24509,13 +24494,13 @@ pub const ConvertESMExportsForHmr = struct {
 
                 st.func.flags.remove(.is_export);
 
-                // Export as CommonJS
-                try ctx.export_props.append(p.allocator, .{
-                    .key = Expr.init(E.String, .{
-                        .data = p.symbols.items[st.func.name.?.ref.?.inner_index].original_name,
-                    }, stmt.loc),
-                    .value = Expr.initIdentifier(st.func.name.?.ref.?, stmt.loc),
-                });
+                try ctx.visitRefToExport(
+                    p,
+                    st.func.name.?.ref.?,
+                    null,
+                    stmt.loc,
+                    false,
+                );
 
                 break :stmt stmt;
             },
@@ -24523,21 +24508,11 @@ pub const ConvertESMExportsForHmr = struct {
                 for (st.items) |item| {
                     const ref = item.name.ref.?;
                     try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, false);
-
-                    if (ctx.can_implicitly_accept) {
-                        const symbol: *Symbol = &p.symbols.items[ref.inner_index];
-                        switch (symbol.kind) {
-                            .hoisted_function, .generator_or_async_function => {},
-                            else => ctx.can_implicitly_accept = false,
-                        }
-                    }
                 }
 
                 return; // do not emit a statement here
             },
             .s_export_from => |st| {
-                ctx.can_implicitly_accept = false;
-
                 const namespace_ref = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,
@@ -24577,8 +24552,6 @@ pub const ConvertESMExportsForHmr = struct {
                 return;
             },
             .s_export_star => |st| {
-                ctx.can_implicitly_accept = false;
-
                 const namespace_ref = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,
@@ -24725,9 +24698,7 @@ pub const ConvertESMExportsForHmr = struct {
             Expr.init(E.ImportIdentifier, .{ .ref = ref }, loc)
         else
             Expr.initIdentifier(ref, loc);
-        if (is_live_binding_source or (symbol.kind == .import and !ctx.is_in_node_modules)) {
-            ctx.can_implicitly_accept = false;
-
+        if (is_live_binding_source or (symbol.kind == .import and !ctx.is_in_node_modules) or symbol.has_been_assigned_to) {
             // TODO (2024-11-24) instead of requiring getters for live-bindings,
             // a callback propagation system should be considered.  mostly
             // because here, these might not even be live bindings, and
@@ -24749,7 +24720,6 @@ pub const ConvertESMExportsForHmr = struct {
             try ctx.last_part.symbol_uses.putNoClobber(p.allocator, arg1, .{ .count_estimate = 1 });
             try p.current_scope.generated.push(p.allocator, arg1);
 
-            // Live bindings need to update the value internally and externally.
             // 'get abc() { return abc }'
             try ctx.export_props.append(p.allocator, .{
                 .kind = .get,
@@ -24794,38 +24764,24 @@ pub const ConvertESMExportsForHmr = struct {
                 .properties = G.Property.List.fromList(ctx.export_props),
             }, logger.Loc.Empty);
 
-            if (ctx.can_implicitly_accept) {
-                // `hmr.implicitlyAccept(...)`
-                try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
-                    .value = Expr.init(E.Call, .{
-                        .target = Expr.init(E.Dot, .{
-                            .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
-                            .name = "implicitlyAccept",
-                            .name_loc = logger.Loc.Empty,
-                        }, logger.Loc.Empty),
-                        .args = try .fromSlice(p.allocator, &.{obj}),
+            // `hmr.exports = ...`
+            try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+                .value = Expr.assign(
+                    Expr.init(E.Dot, .{
+                        .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
+                        .name = "exports",
+                        .name_loc = logger.Loc.Empty,
                     }, logger.Loc.Empty),
-                }, logger.Loc.Empty));
-            } else {
-                // `hmr.exports = ...`
-                try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
-                    .value = Expr.assign(
-                        Expr.init(E.Dot, .{
-                            .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
-                            .name = "exports",
-                            .name_loc = logger.Loc.Empty,
-                        }, logger.Loc.Empty),
-                        obj,
-                    ),
-                }, logger.Loc.Empty));
-            }
+                    obj,
+                ),
+            }, logger.Loc.Empty));
 
             // mark a dependency on module_ref so it is renamed
             try ctx.last_part.symbol_uses.put(p.allocator, p.module_ref, .{ .count_estimate = 1 });
             try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
         }
 
-        if (p.options.features.react_fast_refresh and p.react_refresh.register_used and !ctx.can_implicitly_accept) {
+        if (p.options.features.react_fast_refresh and p.react_refresh.register_used) {
             try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
                 .value = Expr.init(E.Call, .{
                     .target = Expr.init(E.Dot, .{

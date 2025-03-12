@@ -969,7 +969,7 @@ pub const Symbol = struct {
     /// This is the name that came from the parser. Printed names may be renamed
     /// during minification or to avoid name collisions. Do not use the original
     /// name during printing.
-    original_name: string,
+    original_name: []const u8,
 
     /// This is used for symbols that represent items in the import clause of an
     /// ES6 import statement. These should always be referenced by EImportIdentifier
@@ -1103,15 +1103,13 @@ pub const Symbol = struct {
 
     remove_overwritten_function_declaration: bool = false,
 
-    /// In debug mode, sometimes its helpful to know what source file
-    /// A symbol came from. This is used for that.
-    ///
-    /// We don't want this in non-debug mode because it increases the size of
-    /// the symbol table.
-    debug_mode_source_index: if (Environment.allow_assert)
-        Index.Int
-    else
-        u0 = 0,
+    /// Used in HMR to decide when live binding code is needed.
+    has_been_assigned_to: bool = false,
+
+    comptime {
+        bun.assert_eql(@sizeOf(Symbol), 88);
+        bun.assert_eql(@alignOf(Symbol), @alignOf([]const u8));
+    }
 
     const invalid_chunk_index = std.math.maxInt(u32);
     pub const invalid_nested_scope_slot = std.math.maxInt(u32);

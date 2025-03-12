@@ -166,6 +166,9 @@ deferred_request_pool: bun.HiveArray(DeferredRequest.Node, DeferredRequest.max_p
 /// UWS can handle closing the websocket connections themselves
 active_websocket_connections: std.AutoHashMapUnmanaged(*HmrSocket, void),
 
+relative_path_buf_lock: bun.DebugThreadLock,
+relative_path_buf: bun.PathBuffer,
+
 // Debugging
 
 dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
@@ -410,6 +413,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
                 true
         else
             bun.getRuntimeFeatureFlag("BUN_ASSUME_PERFECT_INCREMENTAL"),
+        .relative_path_buf_lock = .unlocked,
 
         .server_transpiler = undefined,
         .client_transpiler = undefined,
@@ -420,6 +424,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .watcher_atomics = undefined,
         .log = undefined,
         .deferred_request_pool = undefined,
+        .relative_path_buf = undefined,
     });
     errdefer bun.destroy(dev);
     const allocator = dev.allocation_scope.allocator();
@@ -646,6 +651,8 @@ pub fn deinit(dev: *DevServer) void {
         .framework = {},
         .bundler_options = {},
         .assume_perfect_incremental_bundling = {},
+        .relative_path_buf = {},
+        .relative_path_buf_lock = {},
 
         .graph_safety_lock = dev.graph_safety_lock.lock(),
         .bun_watcher = dev.bun_watcher.deinit(true),
@@ -776,6 +783,8 @@ pub fn memoryCost(dev: *DevServer) usize {
         .server_register_update_callback = {},
         .deferred_request_pool = {},
         .assume_perfect_incremental_bundling = {},
+        .relative_path_buf = {},
+        .relative_path_buf_lock = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -1360,6 +1369,7 @@ fn onFrameworkRequestWithBundle(
             router_type.server_file_string.get() orelse str: {
                 const name = dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, router_type.server_file).get()];
                 const str = bun.String.createUTF8ForJS(dev.vm.global, dev.relativePath(name));
+                dev.releaseRelativePathBuf();
                 router_type.server_file_string = JSC.Strong.create(str, dev.vm.global);
                 break :str str;
             },
@@ -1377,10 +1387,12 @@ fn onFrameworkRequestWithBundle(
                 route = dev.router.routePtr(bundle.route_index);
                 var route_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, route.file_page.unwrap().?).get()]));
                 arr.putIndex(global, 0, route_name.transferToJS(global));
+                dev.releaseRelativePathBuf();
                 n = 1;
                 while (true) {
                     if (route.file_layout.unwrap()) |layout| {
                         var layout_name = bun.String.createUTF8(dev.relativePath(keys[fromOpaqueFileId(.server, layout).get()]));
+                        defer dev.releaseRelativePathBuf();
                         arr.putIndex(global, @intCast(n), layout_name.transferToJS(global));
                         n += 1;
                     }
@@ -1861,7 +1873,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
             break :brk;
         if (!dev.client_graph.stale_files.isSet(rfr_index.get())) {
             try dev.client_graph.traceImports(rfr_index, &gts, .find_client_modules);
-            react_fast_refresh_id = dev.relativePath(rfr.import_source);
+            react_fast_refresh_id = rfr.import_source;
         }
     }
 
@@ -1884,7 +1896,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     const client_bundle = dev.client_graph.takeJSBundle(.{
         .kind = .initial_response,
         .initial_response_entry_point = if (client_file) |index|
-            dev.relativePath(dev.client_graph.bundled_files.keys()[index.get()])
+            dev.client_graph.bundled_files.keys()[index.get()]
         else
             "",
         .react_refresh_entry_point = react_fast_refresh_id,
@@ -1964,6 +1976,7 @@ fn makeArrayForServerComponentsPatch(dev: *DevServer, global: *JSC.JSGlobalObjec
     const names = dev.server_graph.bundled_files.keys();
     for (items, 0..) |item, i| {
         const str = bun.String.createUTF8(dev.relativePath(names[item.get()]));
+        defer dev.releaseRelativePathBuf();
         defer str.deref();
         arr.putIndex(global, @intCast(i), str.toJS(global));
     }
@@ -2578,6 +2591,7 @@ pub fn finalizeBundle(
                 break :file_name dev.relativePath(abs_path);
             },
         };
+        defer dev.releaseRelativePathBuf();
         const total_count = bv2.graph.entry_points.items.len;
         if (file_name) |name| {
             Output.prettyError("<d>:<r> {s}", .{name});
@@ -4338,6 +4352,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 dev.relativePath(gop.key_ptr.*),
                 log.msgs.items,
             );
+            defer dev.releaseRelativePathBuf();
             const fail_gop = try dev.bundling_failures.getOrPut(dev.allocator, failure);
             try dev.incremental_result.failures_added.append(dev.allocator, failure);
             if (fail_gop.found_existing) {
@@ -4556,6 +4571,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 w,
                                 .utf8,
                             );
+                            g.owner().releaseRelativePathBuf();
                         } else {
                             try w.writeAll("null");
                         }
@@ -4571,6 +4587,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 w,
                                 .utf8,
                             );
+                            g.owner().releaseRelativePathBuf();
                         }
                         try w.writeAll("\n");
                     },
@@ -6514,6 +6531,8 @@ pub fn onRouterCollisionError(dev: *DevServer, rel_path: []const u8, other_id: O
         dev.relativePath(dev.server_graph.bundled_files.keys()[fromOpaqueFileId(.server, other_id).get()]),
     });
     Output.flush();
+
+    dev.releaseRelativePathBuf();
 }
 
 fn toOpaqueFileId(comptime side: bake.Side, index: IncrementalGraph(side).FileIndex) OpaqueFileId {
@@ -6537,7 +6556,9 @@ fn fromOpaqueFileId(comptime side: bake.Side, id: OpaqueFileId) IncrementalGraph
 }
 
 /// Returns posix style path, suitible for URLs and reproducible hashes.
-fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
+/// To avoid overwriting memory, this has a lock for the buffer.
+fn relativePath(dev: *DevServer, path: []const u8) []const u8 {
+    dev.relative_path_buf_lock.lock();
     bun.assert(dev.root[dev.root.len - 1] != '/');
 
     if (!std.fs.path.isAbsolute(path)) {
@@ -6550,13 +6571,18 @@ fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
     {
         return path[dev.root.len + 1 ..];
     }
-    const relative_path_buf = &struct {
-        threadlocal var buf: bun.PathBuffer = undefined;
-    }.buf;
-    const rel = bun.path.relativePlatformBuf(relative_path_buf, dev.root, path, .auto, true);
+
+    const rel = bun.path.relativePlatformBuf(&dev.relative_path_buf, dev.root, path, .auto, true);
     // @constCast: `rel` is owned by a mutable threadlocal buffer above
     bun.path.platformToPosixInPlace(u8, @constCast(rel));
     return rel;
+}
+
+fn releaseRelativePathBuf(dev: *DevServer) void {
+    dev.relative_path_buf_lock.unlock();
+    if (bun.Environment.isDebug) {
+        dev.relative_path_buf = undefined;
+    }
 }
 
 fn dumpStateDueToCrash(dev: *DevServer) !void {
@@ -7190,6 +7216,7 @@ const ErrorReportRequest = struct {
                     const abs_path = result.file_paths[@intCast(index - 1)];
                     frame.source_url = .init(abs_path);
                     const rel_path = ctx.dev.relativePath(abs_path);
+                    defer ctx.dev.releaseRelativePathBuf();
                     if (bun.strings.eql(frame.function_name.value.ZigString.slice(), rel_path)) {
                         frame.function_name = .empty;
                     }
@@ -7279,6 +7306,7 @@ const ErrorReportRequest = struct {
             const src_to_write = frame.source_url.value.ZigString.slice();
             if (bun.strings.hasPrefixComptime(src_to_write, "/")) {
                 const file = ctx.dev.relativePath(src_to_write);
+                defer ctx.dev.releaseRelativePathBuf();
                 try w.writeInt(u32, @intCast(file.len), .little);
                 try w.writeAll(file);
             } else {

@@ -7,7 +7,7 @@
 
 namespace WebCore {
 
-enum class CookieSameSite {
+enum class CookieSameSite : uint8_t {
     Strict,
     Lax,
     None
@@ -21,12 +21,16 @@ public:
 
     static Ref<Cookie> create(const String& name, const String& value,
         const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite);
+        double expires, bool secure, CookieSameSite sameSite,
+        bool httpOnly, double maxAge, bool partitioned);
 
     static ExceptionOr<Ref<Cookie>> parse(const String& cookieString);
     static Ref<Cookie> from(const String& name, const String& value,
         const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite);
+        double expires, bool secure, CookieSameSite sameSite,
+        bool httpOnly, double maxAge, bool partitioned);
+
+    static String serialize(JSC::VM& vm, const Vector<Ref<Cookie>>& cookies);
 
     const String& name() const { return m_name; }
     void setName(const String& name) { m_name = name; }
@@ -49,15 +53,27 @@ public:
     CookieSameSite sameSite() const { return m_sameSite; }
     void setSameSite(CookieSameSite sameSite) { m_sameSite = sameSite; }
 
-    void appendTo(StringBuilder& builder) const;
-    String toString() const;
-    JSC::JSValue toJSON(JSC::JSGlobalObject*) const;
+    bool httpOnly() const { return m_httpOnly; }
+    void setHttpOnly(bool httpOnly) { m_httpOnly = httpOnly; }
+
+    double maxAge() const { return m_maxAge; }
+    void setMaxAge(double maxAge) { m_maxAge = maxAge; }
+
+    bool partitioned() const { return m_partitioned; }
+    void setPartitioned(bool partitioned) { m_partitioned = partitioned; }
+
+    bool isExpired() const;
+
+    void appendTo(JSC::VM& vm, StringBuilder& builder) const;
+    String toString(JSC::VM& vm) const;
+    JSC::JSValue toJSON(JSC::VM& vm, JSC::JSGlobalObject*) const;
     size_t memoryCost() const;
 
 private:
     Cookie(const String& name, const String& value,
         const String& domain, const String& path,
-        double expires, bool secure, CookieSameSite sameSite);
+        double expires, bool secure, CookieSameSite sameSite,
+        bool httpOnly, double maxAge, bool partitioned);
 
     String m_name;
     String m_value;
@@ -66,6 +82,9 @@ private:
     double m_expires;
     bool m_secure;
     CookieSameSite m_sameSite;
+    bool m_httpOnly;
+    double m_maxAge;
+    bool m_partitioned;
 };
 
 } // namespace WebCore

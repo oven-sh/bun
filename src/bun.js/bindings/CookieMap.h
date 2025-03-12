@@ -36,13 +36,14 @@ public:
 
     bool has(const String& name, const String& value = String()) const;
 
+    void set(const String& name, const String& value, bool httpOnly, bool partitioned, double maxAge);
     void set(const String& name, const String& value);
-    void set(RefPtr<Cookie>);
+    void set(Ref<Cookie>);
 
     void remove(const String& name);
     void remove(const CookieStoreDeleteOptions& options);
 
-    String toString() const;
+    String toString(JSC::VM& vm) const;
     JSC::JSValue toJSON(JSC::JSGlobalObject*) const;
     size_t size() const { return m_cookies.size(); }
     size_t memoryCost() const;

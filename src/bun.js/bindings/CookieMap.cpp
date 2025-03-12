@@ -39,7 +39,8 @@ CookieMap::CookieMap(const String& cookieString)
             String name = pair.substring(0, equalsPos);
             String value = pair.substring(equalsPos + 1);
             if (!name.isEmpty()) {
-                auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict);
+                auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict,
+                    false, 0, false);
                 m_cookies.append(WTFMove(cookie));
             }
         }
@@ -49,7 +50,8 @@ CookieMap::CookieMap(const String& cookieString)
 CookieMap::CookieMap(const HashMap<String, String>& pairs)
 {
     for (auto& entry : pairs) {
-        auto cookie = Cookie::create(entry.key, entry.value, String(), "/"_s, 0, false, CookieSameSite::Strict);
+        auto cookie = Cookie::create(entry.key, entry.value, String(), "/"_s, 0, false, CookieSameSite::Strict,
+            false, 0, false);
         m_cookies.append(WTFMove(cookie));
     }
 }
@@ -58,7 +60,8 @@ CookieMap::CookieMap(const Vector<Vector<String>>& pairs)
 {
     for (const auto& pair : pairs) {
         if (pair.size() == 2) {
-            auto cookie = Cookie::create(pair[0], pair[1], String(), "/"_s, 0, false, CookieSameSite::Strict);
+            auto cookie = Cookie::create(pair[0], pair[1], String(), "/"_s, 0, false, CookieSameSite::Strict,
+                false, 0, false);
             m_cookies.append(WTFMove(cookie));
         }
     }
@@ -142,26 +145,30 @@ bool CookieMap::has(const String& name, const String& value) const
     return false;
 }
 
-void CookieMap::set(const String& name, const String& value)
+void CookieMap::set(const String& name, const String& value, bool httpOnly, bool partitioned, double maxAge)
 {
     // Remove any existing cookies with the same name
     remove(name);
 
     // Add the new cookie
-    auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict);
+    auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict,
+        httpOnly, maxAge, partitioned);
     m_cookies.append(cookie);
 }
 
-void CookieMap::set(RefPtr<Cookie> cookie)
+// Maintain backward compatibility with code that uses the old signature
+void CookieMap::set(const String& name, const String& value)
 {
-    if (!cookie)
-        return;
+    set(name, value, false, false, 0);
+}
 
+void CookieMap::set(Ref<Cookie> cookie)
+{
     // Remove any existing cookies with the same name
     remove(cookie->name());
 
     // Add the new cookie
-    m_cookies.append(*cookie);
+    m_cookies.append(WTFMove(cookie));
 }
 
 void CookieMap::remove(const String& name)
@@ -217,7 +224,7 @@ Vector<Ref<Cookie>> CookieMap::getCookiesMatchingPath(const String& path) const
     return result;
 }
 
-String CookieMap::toString() const
+String CookieMap::toString(JSC::VM& vm) const
 {
     if (m_cookies.isEmpty())
         return emptyString();
@@ -229,7 +236,7 @@ String CookieMap::toString() const
         if (!first)
             builder.append("; "_s);
 
-        cookie->appendTo(builder);
+        cookie->appendTo(vm, builder);
 
         first = false;
     }
@@ -241,27 +248,27 @@ JSC::JSValue CookieMap::toJSON(JSC::JSGlobalObject* globalObject) const
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    
+
     // Create an array of cookie entries
     auto* array = JSC::constructEmptyArray(globalObject, nullptr, m_cookies.size());
     RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-    
+
     unsigned index = 0;
     for (const auto& cookie : m_cookies) {
         // For each cookie, create a [name, cookie JSON] entry
         auto* entryArray = JSC::constructEmptyArray(globalObject, nullptr, 2);
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-        
+
         entryArray->putDirectIndex(globalObject, 0, JSC::jsString(vm, cookie->name()));
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-        
-        entryArray->putDirectIndex(globalObject, 1, cookie->toJSON(globalObject));
+
+        entryArray->putDirectIndex(globalObject, 1, cookie->toJSON(vm, globalObject));
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
-        
+
         array->putDirectIndex(globalObject, index++, entryArray);
         RETURN_IF_EXCEPTION(scope, JSC::jsNull());
     }
-    
+
     return array;
 }
 

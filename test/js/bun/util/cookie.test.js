@@ -35,14 +35,14 @@ describe("Bun.Cookie", () => {
       domain: "example.com",
       path: "/foo",
       secure: true,
-      sameSite: "lax",
+      sameSite: "Lax",
     });
 
-    expect(cookie.toString()).toBe("name=value; Domain=example.com; Path=/foo; Secure; SameSite=Lax");
+    expect(cookie.toString()).toBe("name=value; Domain=example.com; Path=/foo; Secure; SameSite=lax");
   });
 
   test.todo("parse a cookie string", () => {
-    const cookie = Bun.Cookie.parse("name=value; Domain=example.com; Path=/foo; Secure; SameSite=Lax");
+    const cookie = Bun.Cookie.parse("name=value; Domain=example.com; Path=/foo; Secure; SameSite=lax");
 
     expect(cookie.name).toBe("name");
     expect(cookie.value).toBe("value");
@@ -196,20 +196,33 @@ describe("Bun.CookieMap", () => {
     const cookieMap = new Bun.CookieMap("name=value; foo=bar");
 
     const entries = Array.from(cookieMap.entries());
-    expect(entries.length).toBe(2);
-    expect(entries).toContainEqual(["name", "value"]);
-    expect(entries).toContainEqual(["foo", "bar"]);
-
-    const keys = Array.from(cookieMap.keys());
-    expect(keys).toEqual(["name", "foo"]);
-
-    const values = Array.from(cookieMap.values());
-    expect(values).toEqual(["value", "bar"]);
-
-    let sum = "";
-    for (const [key, value] of cookieMap) {
-      sum += `${key}:${value};`;
-    }
-    expect(sum).toBe("name:value;foo:bar;");
+    expect(entries).toMatchInlineSnapshot(`
+      [
+        [
+          "name",
+          {
+        "name": "name",
+        "value": "value",
+        "path": "/",
+        "secure": false,
+        "sameSite": "strict",
+        "httpOnly": false,
+        "partitioned": false
+      },
+        ],
+        [
+          "foo",
+          {
+        "name": "foo",
+        "value": "bar",
+        "path": "/",
+        "secure": false,
+        "sameSite": "strict",
+        "httpOnly": false,
+        "partitioned": false
+      },
+        ],
+      ]
+    `);
   });
 });

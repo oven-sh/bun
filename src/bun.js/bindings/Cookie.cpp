@@ -3,10 +3,10 @@
 #include "helpers.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/WallTime.h>
-
+#include <wtf/text/StringToIntegerConversion.h>
 namespace WebCore {
 
-extern "C" JSC::EncodedJSValue Cookie__create(JSDOMGlobalObject* globalObject, const ZigString* name, const ZigString* value, const ZigString* domain, const ZigString* path, double expires, bool secure, int32_t sameSite)
+extern "C" JSC::EncodedJSValue Cookie__create(JSDOMGlobalObject* globalObject, const ZigString* name, const ZigString* value, const ZigString* domain, const ZigString* path, double expires, bool secure, int32_t sameSite, bool httpOnly, double maxAge, bool partitioned)
 {
     String nameStr = Zig::toString(*name);
     String valueStr = Zig::toString(*value);
@@ -28,7 +28,7 @@ extern "C" JSC::EncodedJSValue Cookie__create(JSDOMGlobalObject* globalObject, c
         sameSiteEnum = CookieSameSite::Strict;
     }
 
-    auto result = Cookie::create(nameStr, valueStr, domainStr, pathStr, expires, secure, sameSiteEnum);
+    auto result = Cookie::create(nameStr, valueStr, domainStr, pathStr, expires, secure, sameSiteEnum, httpOnly, maxAge, partitioned);
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTFMove(result)));
 }
 
@@ -41,7 +41,8 @@ Cookie::~Cookie() = default;
 
 Cookie::Cookie(const String& name, const String& value,
     const String& domain, const String& path,
-    double expires, bool secure, CookieSameSite sameSite)
+    double expires, bool secure, CookieSameSite sameSite,
+    bool httpOnly, double maxAge, bool partitioned)
     : m_name(name)
     , m_value(value)
     , m_domain(domain)
@@ -49,21 +50,45 @@ Cookie::Cookie(const String& name, const String& value,
     , m_expires(expires)
     , m_secure(secure)
     , m_sameSite(sameSite)
+    , m_httpOnly(httpOnly)
+    , m_maxAge(maxAge)
+    , m_partitioned(partitioned)
 {
 }
 
 Ref<Cookie> Cookie::create(const String& name, const String& value,
     const String& domain, const String& path,
-    double expires, bool secure, CookieSameSite sameSite)
+    double expires, bool secure, CookieSameSite sameSite,
+    bool httpOnly, double maxAge, bool partitioned)
 {
-    return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite));
+    return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
 Ref<Cookie> Cookie::from(const String& name, const String& value,
     const String& domain, const String& path,
-    double expires, bool secure, CookieSameSite sameSite)
+    double expires, bool secure, CookieSameSite sameSite,
+    bool httpOnly, double maxAge, bool partitioned)
 {
-    return create(name, value, domain, path, expires, secure, sameSite);
+    return create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
+}
+
+String Cookie::serialize(JSC::VM& vm, const Vector<Ref<Cookie>>& cookies)
+{
+    if (cookies.isEmpty())
+        return emptyString();
+
+    StringBuilder builder;
+    bool first = true;
+
+    for (const auto& cookie : cookies) {
+        if (!first)
+            builder.append("; "_s);
+
+        cookie->appendTo(vm, builder);
+        first = false;
+    }
+
+    return builder.toString();
 }
 
 ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
@@ -91,8 +116,11 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
     String domain;
     String path = "/"_s;
     double expires = 0;
+    double maxAge = 0;
     bool secure = false;
-    CookieSameSite sameSite = CookieSameSite::Strict;
+    bool httpOnly = false;
+    bool partitioned = false;
+    CookieSameSite sameSite = CookieSameSite::Lax;
 
     // Parse attributes
     for (size_t i = 1; i < parts.size(); i++) {
@@ -116,55 +144,68 @@ ExceptionOr<Ref<Cookie>> Cookie::parse(const String& cookieString)
         else if (attrName == "path"_s)
             path = attrValue;
         else if (attrName == "expires"_s) {
-            // Simple expires handling
-            // In a real implementation, this would parse the date format
-            // For now, we'll just use current time + 1 day as a placeholder
-            expires = WTF::WallTime::now().secondsSinceEpoch().seconds() * 1000.0 + 86400000; // 24 hours in milliseconds
-        } else if (attrName == "max-age"_s) {
-            // Simple parsing for max-age - just take the numeric value
-            // In a real implementation, this would handle negative values and errors
-            bool isValid = true;
-            for (unsigned i = 0; i < attrValue.length(); i++) {
-                if (attrValue[i] < '0' || attrValue[i] > '9') {
-                    isValid = false;
-                    break;
+            if (!attrValue.containsOnlyLatin1())
+                return Exception { TypeError, "Invalid cookie string: expires is not a valid date"_s };
+
+            if (UNLIKELY(!attrValue.is8Bit())) {
+                auto asLatin1 = attrValue.latin1();
+                if (auto parsed = WTF::parseDate({ reinterpret_cast<const LChar*>(asLatin1.data()), asLatin1.length() })) {
+                    expires = parsed;
+                } else {
+                    return Exception { TypeError, "Invalid cookie string: expires is not a valid date"_s };
+                }
+            } else {
+                if (auto parsed = WTF::parseDate(attrValue.span<LChar>())) {
+                    expires = parsed;
+                } else {
+                    return Exception { TypeError, "Invalid cookie string: expires is not a valid date"_s };
                 }
             }
-
-            if (isValid && attrValue.length() > 0) {
-                // Simple numeric conversion
-                int maxAge = 0;
-                for (unsigned i = 0; i < attrValue.length(); i++) {
-                    maxAge = maxAge * 10 + (attrValue[i] - '0');
-                }
-
-                if (maxAge > 0)
-                    expires = WTF::WallTime::now().secondsSinceEpoch().seconds() * 1000.0 + (maxAge * 1000.0); // Convert seconds to milliseconds
+        } else if (attrName == "max-age"_s) {
+            if (auto parsed = WTF::parseIntegerAllowingTrailingJunk<int64_t>(attrValue); parsed.has_value()) {
+                maxAge = static_cast<double>(parsed.value());
+            } else {
+                return Exception { TypeError, "Invalid cookie string: max-age is not a number"_s };
             }
         } else if (attrName == "secure"_s)
-            secure = true;
+            secure
+                = true;
+        else if (attrName == "httponly"_s)
+            httpOnly
+                = true;
+        else if (attrName == "partitioned"_s)
+            partitioned
+                = true;
         else if (attrName == "samesite"_s) {
-            String sameSiteValue = attrValue.convertToASCIILowercase();
-            if (sameSiteValue == "strict"_s)
+            if (WTF::equalIgnoringASCIICase(attrValue, "strict"_s))
                 sameSite = CookieSameSite::Strict;
-            else if (sameSiteValue == "lax"_s)
+            else if (WTF::equalIgnoringASCIICase(attrValue, "lax"_s))
                 sameSite = CookieSameSite::Lax;
-            else if (sameSiteValue == "none"_s)
+            else if (WTF::equalIgnoringASCIICase(attrValue, "none"_s))
                 sameSite = CookieSameSite::None;
         }
     }
 
-    return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite));
+    return adoptRef(*new Cookie(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned));
 }
 
-String Cookie::toString() const
+bool Cookie::isExpired() const
+{
+    if (m_expires == 0)
+        return false; // Session cookie
+
+    auto currentTime = WTF::WallTime::now().secondsSinceEpoch().seconds() * 1000.0;
+    return currentTime > m_expires;
+}
+
+String Cookie::toString(JSC::VM& vm) const
 {
     StringBuilder builder;
-    appendTo(builder);
+    appendTo(vm, builder);
     return builder.toString();
 }
 
-void Cookie::appendTo(StringBuilder& builder) const
+void Cookie::appendTo(JSC::VM& vm, StringBuilder& builder) const
 {
     // Name=Value is the basic format
     builder.append(m_name);
@@ -177,39 +218,56 @@ void Cookie::appendTo(StringBuilder& builder) const
         builder.append(m_domain);
     }
 
-    // Add path
-    builder.append("; Path="_s);
-    builder.append(m_path);
+    if (!m_path.isEmpty() && m_path != "/"_s) {
+        builder.append("; Path="_s);
+        builder.append(m_path);
+    }
 
     // Add expires if present (not 0)
     if (m_expires != 0) {
         builder.append("; Expires="_s);
-        // Note: In a real implementation, this would convert the timestamp to a proper date string
-        builder.append(String::number(m_expires));
+        // In a real implementation, this would convert the timestamp to a proper date string
+        // For now, just use a numeric timestamp
+        WTF::GregorianDateTime dateTime;
+        vm.dateCache.msToGregorianDateTime(m_expires * 1000, WTF::TimeType::UTCTime, dateTime);
+        builder.append(WTF::makeRFC2822DateString(dateTime.weekDay(), dateTime.monthDay(), dateTime.month(), dateTime.year(), dateTime.hour(), dateTime.minute(), dateTime.second(), dateTime.utcOffsetInMinute()));
+    }
+
+    // Add Max-Age if present
+    if (m_maxAge != 0) {
+        builder.append("; Max-Age="_s);
+        builder.append(String::number(m_maxAge));
     }
 
     // Add secure flag if true
     if (m_secure)
         builder.append("; Secure"_s);
 
+    // Add HttpOnly flag if true
+    if (m_httpOnly)
+        builder.append("; HttpOnly"_s);
+
+    // Add Partitioned flag if true
+    if (m_partitioned)
+        builder.append("; Partitioned"_s);
+
     // Add SameSite directive
-    builder.append("; SameSite="_s);
+
     switch (m_sameSite) {
     case CookieSameSite::Strict:
-        builder.append("strict"_s);
+        builder.append("; SameSite=strict"_s);
         break;
     case CookieSameSite::Lax:
-        builder.append("lax"_s);
+        // lax is the default.
         break;
     case CookieSameSite::None:
-        builder.append("none"_s);
+        builder.append("; SameSite=none"_s);
         break;
     }
 }
 
-JSC::JSValue Cookie::toJSON(JSC::JSGlobalObject* globalObject) const
+JSC::JSValue Cookie::toJSON(JSC::VM& vm, JSC::JSGlobalObject* globalObject) const
 {
-    auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* object = JSC::constructEmptyObject(globalObject);
@@ -228,8 +286,13 @@ JSC::JSValue Cookie::toJSON(JSC::JSGlobalObject* globalObject) const
     if (m_expires != 0)
         object->putDirect(vm, builtinNames.expiresPublicName(), JSC::jsNumber(m_expires));
 
+    if (m_maxAge != 0)
+        object->putDirect(vm, builtinNames.maxAgePublicName(), JSC::jsNumber(m_maxAge));
+
     object->putDirect(vm, builtinNames.securePublicName(), JSC::jsBoolean(m_secure));
     object->putDirect(vm, builtinNames.sameSitePublicName(), toJS(globalObject, m_sameSite));
+    object->putDirect(vm, builtinNames.httpOnlyPublicName(), JSC::jsBoolean(m_httpOnly));
+    object->putDirect(vm, builtinNames.partitionedPublicName(), JSC::jsBoolean(m_partitioned));
 
     return object;
 }

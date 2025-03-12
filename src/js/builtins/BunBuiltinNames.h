@@ -132,6 +132,7 @@ using namespace JSC;
     macro(host) \
     macro(hostname) \
     macro(href) \
+    macro(httpOnly) \
     macro(ignoreBOM) \
     macro(importer) \
     macro(inFlightCloseRequest) \
@@ -159,6 +160,7 @@ using namespace JSC;
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
+    macro(maxAge) \
     macro(method) \
     macro(mockedFunction) \
     macro(mode) \
@@ -176,6 +178,7 @@ using namespace JSC;
     macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
+    macro(partitioned) \
     macro(password) \
     macro(patch) \
     macro(path) \

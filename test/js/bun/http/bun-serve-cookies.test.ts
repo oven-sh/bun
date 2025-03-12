@@ -465,7 +465,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     // Domain may be null in the implementation
     expect(cookie.domain == null || cookie.domain === "").toBe(true);
     expect(cookie.secure).toBe(false);
-    expect(cookie.sameSite).toBe("strict");
+    expect(cookie.sameSite).toBe("lax");
   });
 
   it("can create a Cookie with options", () => {
@@ -556,6 +556,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(cookieMap.size).toBe(2);
 
     const nameCookie = cookieMap.get("name");
+    console.log(nameCookie);
     expect(nameCookie).toBeDefined();
     expect(nameCookie?.value).toBe("value");
 
@@ -607,7 +608,7 @@ describe("Direct usage of Bun.Cookie and Bun.CookieMap", () => {
     expect(cookieStr).toInclude("Domain=example.com");
     expect(cookieStr).toInclude("Path=/path");
     expect(cookieStr).toInclude("Secure");
-    expect(cookieStr).toInclude("SameSite=Lax");
+    expect(cookieStr).not.toInclude("SameSite");
   });
 
   it("correctly handles toJSON methods", () => {

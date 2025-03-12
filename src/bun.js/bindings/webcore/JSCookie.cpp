@@ -23,6 +23,7 @@
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
+#include <JavaScriptCore/DateInstance.h>
 
 namespace WebCore {
 
@@ -42,6 +43,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionParse);
 static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionFrom);
+static JSC_DECLARE_HOST_FUNCTION(jsCookieStaticFunctionSerialize);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_name);
 static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_name);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_value);
@@ -56,6 +58,13 @@ static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_secure);
 static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_secure);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_sameSite);
 static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_sameSite);
+static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_httpOnly);
+static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_httpOnly);
+static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_maxAge);
+static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_maxAge);
+static JSC_DECLARE_CUSTOM_GETTER(jsCookiePrototypeGetter_partitioned);
+static JSC_DECLARE_CUSTOM_SETTER(jsCookiePrototypeSetter_partitioned);
+static JSC_DECLARE_HOST_FUNCTION(jsCookiePrototypeFunction_isExpired);
 static JSC_DECLARE_CUSTOM_GETTER(jsCookieConstructor);
 
 class JSCookiePrototype final : public JSC::JSNonFinalObject {
@@ -90,6 +99,11 @@ private:
 };
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCookiePrototype, JSCookiePrototype::Base);
+
+JSValue getInternalProperties(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSCookie* castedThis)
+{
+    return castedThis->wrapped().toJSON(vm, lexicalGlobalObject);
+}
 
 using JSCookieDOMConstructor = JSDOMConstructor<JSCookie>;
 
@@ -127,8 +141,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
         String domain;
         String path = "/"_s;
         double expires = 0;
+        double maxAge = 0;
         bool secure = false;
-        CookieSameSite sameSite = CookieSameSite::Strict;
+        bool httpOnly = false;
+        bool partitioned = false;
+        CookieSameSite sameSite = CookieSameSite::Lax;
+        auto& names = builtinNames(vm);
 
         // Optional options parameter (third argument)
         if (callFrame->argumentCount() > 2 && !callFrame->argument(2).isUndefinedOrNull()) {
@@ -140,35 +158,62 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             auto* optionsObj = options.getObject();
 
             // domain
-            if (auto domainValue = optionsObj->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "domain"_s)));
+            if (auto domainValue = optionsObj->get(lexicalGlobalObject, names.domainPublicName());
                 !domainValue.isUndefined() && !domainValue.isNull()) {
                 domain = convert<IDLUSVString>(*lexicalGlobalObject, domainValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
 
             // path
-            if (auto pathValue = optionsObj->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "path"_s)));
+            if (auto pathValue = optionsObj->get(lexicalGlobalObject, names.pathPublicName());
                 !pathValue.isUndefined() && !pathValue.isNull()) {
                 path = convert<IDLUSVString>(*lexicalGlobalObject, pathValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
 
             // expires
-            if (auto expiresValue = optionsObj->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "expires"_s)));
-                !expiresValue.isUndefined() && !expiresValue.isNull() && expiresValue.isNumber()) {
-                expires = expiresValue.asNumber();
+            if (auto expiresValue = optionsObj->get(lexicalGlobalObject, names.expiresPublicName());
+                !expiresValue.isUndefined() && !expiresValue.isNull()) {
+                // Handle both Date objects and numeric timestamps
+                if (expiresValue.inherits<JSC::DateInstance>()) {
+                    JSC::DateInstance* dateInstance = JSC::jsCast<JSC::DateInstance*>(expiresValue.asCell());
+                    expires = dateInstance->internalNumber();
+                } else if (expiresValue.isNumber()) {
+                    expires = expiresValue.asNumber();
+                }
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
+
+            // maxAge
+            if (auto maxAgeValue = optionsObj->get(lexicalGlobalObject, names.maxAgePublicName());
+                !maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
+                maxAge = maxAgeValue.asNumber();
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
 
             // secure
-            if (auto secureValue = optionsObj->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "secure"_s)));
+            if (auto secureValue = optionsObj->get(lexicalGlobalObject, names.securePublicName());
                 !secureValue.isUndefined()) {
                 secure = secureValue.toBoolean(lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
 
+            // httpOnly
+            if (auto httpOnlyValue = optionsObj->get(lexicalGlobalObject, names.httpOnlyPublicName());
+                !httpOnlyValue.isUndefined()) {
+                httpOnly = httpOnlyValue.toBoolean(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
+
+            // partitioned
+            if (auto partitionedValue = optionsObj->get(lexicalGlobalObject, names.partitionedPublicName());
+                !partitionedValue.isUndefined()) {
+                partitioned = partitionedValue.toBoolean(lexicalGlobalObject);
+                RETURN_IF_EXCEPTION(throwScope, {});
+            }
+
             // sameSite
-            if (auto sameSiteValue = optionsObj->get(lexicalGlobalObject, PropertyName(Identifier::fromString(vm, "sameSite"_s)));
+            if (auto sameSiteValue = optionsObj->get(lexicalGlobalObject, names.sameSitePublicName());
                 !sameSiteValue.isUndefined() && !sameSiteValue.isNull()) {
                 String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
                 RETURN_IF_EXCEPTION(throwScope, {});
@@ -184,7 +229,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             }
         }
 
-        auto cookie = Cookie::create(name, value, domain, path, expires, secure, sameSite);
+        auto cookie = Cookie::create(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
         auto* globalObject = castedThis->globalObject();
         RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTFMove(cookie))));
     }
@@ -216,6 +261,9 @@ template<> void JSCookieDOMConstructor::initializeProperties(VM& vm, JSDOMGlobal
 
     JSC::JSFunction* fromFunction = JSC::JSFunction::create(vm, &globalObject, 3, "from"_s, jsCookieStaticFunctionFrom, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic);
     putDirect(vm, Identifier::fromString(vm, "from"_s), fromFunction, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete));
+
+    JSC::JSFunction* serializeFunction = JSC::JSFunction::create(vm, &globalObject, 1, "serialize"_s, jsCookieStaticFunctionSerialize, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic);
+    putDirect(vm, Identifier::fromString(vm, "serialize"_s), serializeFunction, static_cast<unsigned>(JSC::PropertyAttribute::DontDelete));
 }
 
 static const HashTableValue JSCookiePrototypeTableValues[] = {
@@ -225,8 +273,12 @@ static const HashTableValue JSCookiePrototypeTableValues[] = {
     { "domain"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_domain, jsCookiePrototypeSetter_domain } },
     { "path"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_path, jsCookiePrototypeSetter_path } },
     { "expires"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_expires, jsCookiePrototypeSetter_expires } },
+    { "maxAge"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_maxAge, jsCookiePrototypeSetter_maxAge } },
     { "secure"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_secure, jsCookiePrototypeSetter_secure } },
+    { "httpOnly"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_httpOnly, jsCookiePrototypeSetter_httpOnly } },
     { "sameSite"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_sameSite, jsCookiePrototypeSetter_sameSite } },
+    { "partitioned"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsCookiePrototypeGetter_partitioned, jsCookiePrototypeSetter_partitioned } },
+    { "isExpired"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_isExpired, 0 } },
     { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_toString, 0 } },
     { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsCookiePrototypeFunction_toJSON, 0 } },
 };
@@ -292,7 +344,7 @@ static inline JSC::EncodedJSValue jsCookiePrototypeFunction_toStringBody(JSC::JS
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.toString())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.toString(vm))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsCookiePrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -308,7 +360,7 @@ static inline JSC::EncodedJSValue jsCookiePrototypeFunction_toJSONBody(JSC::JSGl
     auto& impl = castedThis->wrapped();
 
     // Delegate to the C++ toJSON method
-    JSC::JSValue result = impl.toJSON(lexicalGlobalObject);
+    JSC::JSValue result = impl.toJSON(vm, lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(result);
@@ -356,10 +408,13 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
     String domain;
     String path = "/"_s;
     double expires = 0;
+    double maxAge = 0;
     bool secure = false;
+    bool httpOnly = false;
+    bool partitioned = false;
     auto& builtinNames = Bun::builtinNames(vm);
 
-    CookieSameSite sameSite = CookieSameSite::Strict;
+    CookieSameSite sameSite = CookieSameSite::Lax;
 
     // Check for options object
     if (callFrame->argumentCount() > 2 && !callFrame->uncheckedArgument(2).isUndefinedOrNull() && callFrame->uncheckedArgument(2).isObject()) {
@@ -384,8 +439,20 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
         // expires
         auto expiresValue = options->get(lexicalGlobalObject, builtinNames.expiresPublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (!expiresValue.isUndefined() && !expiresValue.isNull() && expiresValue.isNumber()) {
-            expires = expiresValue.asNumber();
+        if (!expiresValue.isUndefined() && !expiresValue.isNull()) {
+            if (auto* dateInstance = jsDynamicCast<JSC::DateInstance*>(expiresValue)) {
+                expires = dateInstance->internalNumber();
+            } else if (expiresValue.isNumber()) {
+                expires = expiresValue.asNumber();
+            }
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+
+        // maxAge
+        auto maxAgeValue = options->get(lexicalGlobalObject, builtinNames.maxAgePublicName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!maxAgeValue.isUndefined() && !maxAgeValue.isNull() && maxAgeValue.isNumber()) {
+            maxAge = maxAgeValue.asNumber();
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
@@ -397,6 +464,22 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
+        // httpOnly
+        auto httpOnlyValue = options->get(lexicalGlobalObject, builtinNames.httpOnlyPublicName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!httpOnlyValue.isUndefined()) {
+            httpOnly = httpOnlyValue.toBoolean(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+
+        // partitioned
+        auto partitionedValue = options->get(lexicalGlobalObject, builtinNames.partitionedPublicName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!partitionedValue.isUndefined()) {
+            partitioned = partitionedValue.toBoolean(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+
         // sameSite
         auto sameSiteValue = options->get(lexicalGlobalObject, builtinNames.sameSitePublicName());
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -404,11 +487,11 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
             String sameSiteStr = convert<IDLUSVString>(*lexicalGlobalObject, sameSiteValue);
             RETURN_IF_EXCEPTION(throwScope, {});
 
-            if (sameSiteStr == "strict"_s)
+            if (WTF::equalIgnoringASCIICase(sameSiteStr, "strict"_s))
                 sameSite = CookieSameSite::Strict;
-            else if (sameSiteStr == "lax"_s)
+            else if (WTF::equalIgnoringASCIICase(sameSiteStr, "lax"_s))
                 sameSite = CookieSameSite::Lax;
-            else if (sameSiteStr == "none"_s)
+            else if (WTF::equalIgnoringASCIICase(sameSiteStr, "none"_s))
                 sameSite = CookieSameSite::None;
             else
                 return throwVMTypeError(lexicalGlobalObject, throwScope, "Invalid sameSite value. Must be 'strict', 'lax', or 'none'"_s);
@@ -416,10 +499,35 @@ JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionFrom, (JSGlobalObject * lexicalGl
     }
 
     // Create the cookie
-    auto cookie = Cookie::from(name, value, domain, path, expires, secure, sameSite);
+    auto cookie = Cookie::from(name, value, domain, path, expires, secure, sameSite, httpOnly, maxAge, partitioned);
 
     auto* globalObject = jsCast<JSDOMGlobalObject*>(lexicalGlobalObject);
     return JSValue::encode(toJSNewlyCreated(lexicalGlobalObject, globalObject, WTFMove(cookie)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsCookieStaticFunctionSerialize, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 1)
+        return JSValue::encode(jsEmptyString(vm));
+
+    Vector<Ref<Cookie>> cookies;
+
+    // Process each cookie argument
+    for (unsigned i = 0; i < callFrame->argumentCount(); i++) {
+        auto* cookieImpl = toCookieWrapped(lexicalGlobalObject, throwScope, callFrame->uncheckedArgument(i));
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        if (cookieImpl)
+            cookies.append(*cookieImpl);
+    }
+
+    // Let the C++ Cookie::serialize handle the work
+    String result = Cookie::serialize(vm, cookies);
+
+    return JSValue::encode(jsString(vm, result));
 }
 
 // Property getters/setters
@@ -582,20 +690,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_sameSite, (JSGlobalObject * lex
         return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "sameSite"_s);
     auto& impl = thisObject->wrapped();
 
-    String sameSiteStr;
-    switch (impl.sameSite()) {
-    case CookieSameSite::Strict:
-        sameSiteStr = "strict"_s;
-        break;
-    case CookieSameSite::Lax:
-        sameSiteStr = "lax"_s;
-        break;
-    case CookieSameSite::None:
-        sameSiteStr = "none"_s;
-        break;
-    }
-
-    return JSValue::encode(jsString(vm, sameSiteStr));
+    return JSValue::encode(toJS(lexicalGlobalObject, impl.sameSite()));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_sameSite, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
@@ -611,11 +706,11 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_sameSite, (JSGlobalObject * lex
     RETURN_IF_EXCEPTION(throwScope, false);
 
     CookieSameSite sameSite;
-    if (sameSiteStr == "strict"_s)
+    if (WTF::equalIgnoringASCIICase(sameSiteStr, "strict"_s))
         sameSite = CookieSameSite::Strict;
-    else if (sameSiteStr == "lax"_s)
+    else if (WTF::equalIgnoringASCIICase(sameSiteStr, "lax"_s))
         sameSite = CookieSameSite::Lax;
-    else if (sameSiteStr == "none"_s)
+    else if (WTF::equalIgnoringASCIICase(sameSiteStr, "none"_s))
         sameSite = CookieSameSite::None;
     else {
         throwTypeError(lexicalGlobalObject, throwScope, "Invalid sameSite value. Must be 'strict', 'lax', or 'none'"_s);
@@ -624,6 +719,101 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_sameSite, (JSGlobalObject * lex
 
     impl.setSameSite(sameSite);
     return true;
+}
+
+// HttpOnly property
+JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_httpOnly, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "httpOnly"_s);
+    auto& impl = thisObject->wrapped();
+    return JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.httpOnly()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_httpOnly, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "httpOnly"_s);
+    auto& impl = thisObject->wrapped();
+    auto value = convert<IDLBoolean>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    RETURN_IF_EXCEPTION(throwScope, false);
+    impl.setHttpOnly(value);
+    return true;
+}
+
+// MaxAge property
+JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_maxAge, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "maxAge"_s);
+    auto& impl = thisObject->wrapped();
+    return JSValue::encode(toJS<IDLNullable<IDLDouble>>(*lexicalGlobalObject, throwScope, impl.maxAge()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_maxAge, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "maxAge"_s);
+    auto& impl = thisObject->wrapped();
+    auto value = convert<IDLDouble>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    RETURN_IF_EXCEPTION(throwScope, false);
+    impl.setMaxAge(value);
+
+    return true;
+}
+
+// Partitioned property
+JSC_DEFINE_CUSTOM_GETTER(jsCookiePrototypeGetter_partitioned, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "partitioned"_s);
+    auto& impl = thisObject->wrapped();
+    return JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.partitioned()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_partitioned, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = jsDynamicCast<JSCookie*>(JSValue::decode(thisValue));
+    if (UNLIKELY(!thisObject))
+        return throwThisTypeError(*lexicalGlobalObject, throwScope, "Cookie"_s, "partitioned"_s);
+    auto& impl = thisObject->wrapped();
+    auto value = convert<IDLBoolean>(*lexicalGlobalObject, JSValue::decode(encodedValue));
+    RETURN_IF_EXCEPTION(throwScope, false);
+    impl.setPartitioned(value);
+    return true;
+}
+
+// isExpired method
+static inline JSC::EncodedJSValue jsCookiePrototypeFunction_isExpiredBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSCookie>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+
+    bool expired = impl.isExpired();
+    return JSValue::encode(JSC::jsBoolean(expired));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsCookiePrototypeFunction_isExpired, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSCookie>::call<jsCookiePrototypeFunction_isExpiredBody>(*lexicalGlobalObject, *callFrame, "isExpired");
 }
 
 GCClient::IsoSubspace* JSCookie::subspaceForImpl(VM& vm)

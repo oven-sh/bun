@@ -7519,12 +7519,18 @@ declare module "bun" {
     expires?: number;
     secure: boolean;
     sameSite: CookieSameSite;
+    partitioned: boolean;
+    maxAge?: number;
+    httpOnly: boolean;
+
+    isExpired(): boolean;
 
     toString(): string;
     toJSON(): CookieInit;
 
     static parse(cookieString: string): Cookie;
     static from(name: string, value: string, options?: CookieInit): Cookie;
+    static serialize(cookies: Cookie[]): string;
   }
 
   class CookieMap implements Iterable<Cookie> {

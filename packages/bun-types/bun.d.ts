@@ -92,7 +92,6 @@ declare module "bun" {
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
 
   type DistributedOmit<T, K extends keyof T> = T extends T ? Omit<T, K> : never;
-  type DistributedExclude<T, U> = T extends T ? (T extends U ? never : T) : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
 
   interface Env {
@@ -4653,11 +4652,11 @@ declare module "bun" {
   ): Server;
 
   type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }> =
-    | (DistributedOmit<DistributedExclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
         routes: R;
         fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })
-    | (DistributedOmit<DistributedExclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
         routes?: never;
         fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
       })

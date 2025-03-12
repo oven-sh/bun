@@ -1601,6 +1601,7 @@ const OutgoingMessagePrototype = {
   _removedContLen: false,
   _removedConnection: false,
   usesChunkedEncodingByDefault: true,
+  _closed: false,
 
   appendHeader(name, value) {
     var headers = (this[headersSymbol] ??= new Headers());
@@ -1825,7 +1826,6 @@ function emitCloseNT(self) {
   if (!self._closed) {
     self.destroyed = true;
     self._closed = true;
-
     self.emit("close");
   }
 }
@@ -1971,7 +1971,6 @@ const ServerResponsePrototype = {
   end(chunk, encoding, callback) {
     const handle = this[kHandle];
     const isFinished = this.finished || handle?.finished;
-
     if ($isCallable(chunk)) {
       callback = chunk;
       chunk = undefined;
@@ -2024,7 +2023,6 @@ const ServerResponsePrototype = {
       }
       this.detachSocket(socket);
       this[finishedSymbol] = this.finished = true;
-
       this.emit("prefinish");
       this._callPendingCallbacks();
 
@@ -2034,7 +2032,6 @@ const ServerResponsePrototype = {
             // In Node.js, the "finish" event triggers the "close" event.
             // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
             self.emit("finish");
-
             try {
               callback();
             } catch (err) {
@@ -2171,7 +2168,7 @@ const ServerResponsePrototype = {
   },
 
   get closed() {
-    return this[closedSymbol] || false;
+    return this._closed;
   },
 
   _send(data, encoding, callback, byteLength) {

@@ -1038,8 +1038,11 @@ pub fn getLoaderAndVirtualSource(
 
     const is_main = strings.eqlLong(specifier, jsc_vm.main, true);
 
-    const package_json: ?*const PackageJSON = if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info|
-        dir_info.package_json orelse dir_info.enclosing_package_json
+    const package_json: ?*const PackageJSON = if (path.name.dir.len > 0)
+        if (jsc_vm.transpiler.resolver.readDirInfo(path.name.dir) catch null) |dir_info|
+            dir_info.package_json orelse dir_info.enclosing_package_json
+        else
+            null
     else
         null;
 

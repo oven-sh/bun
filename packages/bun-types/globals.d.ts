@@ -1,4 +1,4 @@
-export { };
+export {};
 
 type _Event = {
   /** This is not used in Node.js and is provided purely for completeness. */
@@ -1772,10 +1772,7 @@ declare global {
      * Convert the Uint8Array to a base64 encoded string
      * @returns The base64 encoded string representation of the Uint8Array
      */
-    toBase64(options?: {
-      alphabet?: 'base64' | 'base64url';
-      omitPadding?: boolean;
-    }): string;
+    toBase64(options?: { alphabet?: "base64" | "base64url"; omitPadding?: boolean }): string;
 
     /**
      * Set the contents of the Uint8Array from a base64 encoded string

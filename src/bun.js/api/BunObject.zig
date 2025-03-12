@@ -4823,6 +4823,7 @@ const InternalTestingAPIs = struct {
 
 comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+    _ = @import("../../btjs.zig").dumpBtjsTrace;
     BunObject.exportAll();
 }
 

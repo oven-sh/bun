@@ -213,9 +213,18 @@ $ make jsc-debug
 $ bun run build:local
 ```
 
+Using `bun run build:local` will build Bun in the `./build/debug-local` directory (instead of `./build/debug`), you'll have to change a couple of places to use this new directory:
+
+- The first line in [`src/js/builtins.d.ts`](/src/js/builtins.d.ts)
+- The `CompilationDatabase` line in [`.clangd` config](/.clangd) should be `CompilationDatabase: build/debug-local`
+- In [`build.zig`](/build.zig), the `codegen_path` option should be `build/debug-local/codegen` (instead of `build/debug/codegen`)
+- In [`.vscode/launch.json`](/.vscode/launch.json), many configurations use `./build/debug/`, change them as you see fit
+
 Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
+
+Note that if you change make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
 
 ## Troubleshooting
 

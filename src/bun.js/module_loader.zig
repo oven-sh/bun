@@ -2460,6 +2460,7 @@ pub const ModuleLoader = struct {
                 .@"node:_stream_transform" => return jsSyntheticModule(.@"node:_stream_transform", specifier),
                 .@"node:_stream_wrap" => return jsSyntheticModule(.@"node:_stream_wrap", specifier),
                 .@"node:_stream_writable" => return jsSyntheticModule(.@"node:_stream_writable", specifier),
+                .@"node:_tls_common" => return jsSyntheticModule(.@"node:_tls_common", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2677,6 +2678,7 @@ pub const HardcodedModule = enum {
     @"node:_stream_transform",
     @"node:_stream_wrap",
     @"node:_stream_writable",
+    @"node:_tls_common",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2758,6 +2760,7 @@ pub const HardcodedModule = enum {
             .{ "_stream_transform", .@"node:_stream_transform" },
             .{ "_stream_wrap", .@"node:_stream_wrap" },
             .{ "_stream_writable", .@"node:_stream_writable" },
+            .{ "_tls_common", .@"node:_tls_common" },
 
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2843,7 +2846,7 @@ pub const HardcodedModule = enum {
             .{ "node:_stream_wrap", .{ .path = "_stream_wrap" } },
             .{ "node:_stream_writable", .{ .path = "_stream_writable" } },
             .{ "node:_tls_wrap", .{ .path = "tls" } },
-            .{ "node:_tls_common", .{ .path = "tls" } },
+            .{ "node:_tls_common", .{ .path = "_tls_common" } },
 
             .{ "assert", .{ .path = "assert" } },
             .{ "assert/strict", .{ .path = "assert/strict" } },
@@ -2918,7 +2921,7 @@ pub const HardcodedModule = enum {
             .{ "_stream_wrap", .{ .path = "_stream_wrap" } },
             .{ "_stream_writable", .{ .path = "_stream_writable" } },
             .{ "_tls_wrap", .{ .path = "tls" } },
-            .{ "_tls_common", .{ .path = "tls" } },
+            .{ "_tls_common", .{ .path = "_tls_common" } },
 
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },

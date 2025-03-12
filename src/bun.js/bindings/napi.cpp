@@ -2207,7 +2207,7 @@ napi_status napi_get_value_string_any_encoding(napi_env env, napi_value napiValu
         if constexpr (EncodeTo == NapiStringEncoding::utf16le) {
             // pass subslice to work around Bun__encoding__writeLatin1 asserting that the output has room
             written = Bun__encoding__writeLatin1(view.span8().data(),
-                std::min(static_cast<unsigned long>(view.span8().size()), bufsize),
+                std::min(static_cast<size_t>(view.span8().size()), bufsize),
                 writable_byte_slice.data(),
                 writable_byte_slice.size(),
                 static_cast<uint8_t>(EncodeTo));

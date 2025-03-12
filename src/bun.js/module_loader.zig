@@ -2224,6 +2224,8 @@ pub const ModuleLoader = struct {
         }
     }
 
+    const always_sync_modules = .{"reflect-metadata"};
+
     pub export fn Bun__transpileFile(
         jsc_vm: *VirtualMachine,
         globalObject: *JSGlobalObject,
@@ -2255,7 +2257,11 @@ pub const ModuleLoader = struct {
         };
         defer if (blob_to_deinit) |*blob| blob.deinit();
 
-        const is_cjs: bool = if (lr.package_json) |pkg| pkg.module_type == .cjs else false;
+        const module_type: options.ModuleType = if (lr.package_json) |pkg| pkg.module_type else .unknown;
+        const pkg_name: ?[]const u8 = if (lr.package_json) |pkg|
+            if (pkg.name.len > 0) pkg.name else null
+        else
+            null;
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -2263,20 +2269,47 @@ pub const ModuleLoader = struct {
         //   Import Statements (import 'foo')
         //   Import Expressions (import('foo'))
         //
-        if (comptime bun.FeatureFlags.concurrent_transpiler) {
-            const concurrent_loader = lr.loader orelse .file;
-            if (blob_to_deinit == null and allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
-                // Plugins make this complicated,
-                // TODO: allow running concurrently when no onLoad handlers match a plugin.
-                jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled and
-                // CJS modules must be loaded synchronously. Unfortunately this
-                // won't trigger if the module does not specify a "type", but
-                // instead uses CJS code. We won't know that until we start
-                // parsing/transpiling the module, which we (obviously) haven't
-                // done yet.
-                !is_cjs)
-            {
-                if (!lr.is_main) {
+        transpile_async: {
+            if (comptime bun.FeatureFlags.concurrent_transpiler) {
+                const concurrent_loader = lr.loader orelse .file;
+                if (blob_to_deinit == null and
+                    allow_promise and
+                    (jsc_vm.has_loaded or jsc_vm.is_in_preload) and
+                    concurrent_loader.isJavaScriptLike() and
+                    !lr.is_main and
+                    // Plugins make this complicated,
+                    // TODO: allow running concurrently when no onLoad handlers match a plugin.
+                    jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
+                {
+                    // This absolutely disgusting hack is a workaround in cases
+                    // where an async import is made to a CJS file with side
+                    // effects that other modules depend on, without incurring
+                    // the cost of transpiling/loading CJS modules synchronously.
+                    //
+                    // The cause of this comes from the fact that we immediately
+                    // and synchronously evaluate CJS modules after they've been
+                    // transpiled, but transpiling (which, for async imports,
+                    // happens in a thread pool), can resolve in whatever order.
+                    // This messes up module execution order.
+                    //
+                    // This is only _really_ important for
+                    // import("some-polyfill") cases, the most impactful of
+                    // which is `reflect-metadata`. People could also use
+                    // require or just preload their polyfills, but they aren't
+                    // doing this. This hack makes important polyfills work without
+                    // incurring the cost of transpiling/loading CJS modules
+                    // synchronously. The proper fix is to evaluate CJS modules
+                    // at the same time as ES modules. This is blocked by the
+                    // fact that we need exports from CJS modules and our parser
+                    // doesn't record them.
+                    if (pkg_name) |pkg_name_| {
+                        inline for (always_sync_modules) |always_sync_specifier| {
+                            if (bun.strings.eqlComptime(pkg_name_, always_sync_specifier)) {
+                                break :transpile_async;
+                            }
+                        }
+                    }
+
                     // TODO: check if the resolved source must be transpiled synchronously
                     return jsc_vm.transpiler_store.transpile(
                         jsc_vm,
@@ -2321,7 +2354,7 @@ pub const ModuleLoader = struct {
                 specifier_ptr.*,
                 lr.path,
                 synchronous_loader,
-                if (lr.package_json) |pkg| pkg.module_type else .unknown,
+                module_type,
                 &log,
                 lr.virtual_source,
                 if (allow_promise) &promise else null,

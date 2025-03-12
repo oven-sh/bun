@@ -16,8 +16,8 @@ describe("randomInt args validation", async () => {
   });
 
   it("max/min should not be greater than Number.MAX_SAFE_INTEGER or less than Number.MIN_SAFE_INTEGER", () => {
-    expect(() => randomInt(Number.MAX_SAFE_INTEGER + 1)).toThrow(RangeError);
-    expect(() => randomInt(-Number.MAX_SAFE_INTEGER - 1, -Number.MAX_SAFE_INTEGER + 1)).toThrow(RangeError);
+    expect(() => randomInt(Number.MAX_SAFE_INTEGER + 1)).toThrow(TypeError);
+    expect(() => randomInt(-Number.MAX_SAFE_INTEGER - 1, -Number.MAX_SAFE_INTEGER + 1)).toThrow(TypeError);
   });
 
   it("max - min should be <= 281474976710655", () => {

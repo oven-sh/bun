@@ -204,6 +204,12 @@ pub const ManagedTask = struct {
         bun.default_allocator.destroy(this);
     }
 
+    pub fn cancel(this: *ManagedTask) void {
+        this.callback = &struct {
+            fn f(_: *anyopaque) void {}
+        }.f;
+    }
+
     pub fn New(comptime Type: type, comptime Callback: anytype) type {
         return struct {
             pub fn init(ctx: *Type) Task {
@@ -1005,6 +1011,7 @@ pub const EventLoop = struct {
         }
 
         while (@field(this, queue_name).readItem()) |task| {
+            log("run {s}", .{@tagName(task.tag())});
             defer counter += 1;
             switch (task.tag()) {
                 @field(Task.Tag, @typeName(ShellAsync)) => {

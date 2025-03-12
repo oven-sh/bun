@@ -28,6 +28,7 @@ pub const Jest = @import("./bun.js/test/jest.zig");
 pub const Expect = @import("./bun.js/test/expect.zig");
 pub const Snapshot = @import("./bun.js/test/snapshot.zig");
 pub const API = struct {
+    pub const NodeHTTPResponse = @import("./bun.js/api/server.zig").NodeHTTPResponse;
     pub const Glob = @import("./bun.js/api/glob.zig");
     pub const Shell = @import("./shell/shell.zig");
     pub const JSBundler = @import("./bun.js/api/JSBundler.zig").JSBundler;

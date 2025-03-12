@@ -1034,17 +1034,10 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     }
 }
 
-extern "C" void Bun__setChannelRef(GlobalObject* globalObject, bool enabled)
-{
-    auto process = jsCast<Process*>(globalObject->processObject());
-    process->wrapped().m_hasIPCRef = enabled;
+extern "C" void Bun__refChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
+extern "C" void Bun__unrefChannelUnlessOverridden(JSC::JSGlobalObject* globalObject);
+extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject* globalObject);
 
-    if (enabled) {
-        process->scriptExecutionContext()->refEventLoop();
-    } else {
-        process->scriptExecutionContext()->unrefEventLoop();
-    }
-}
 extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
@@ -1054,15 +1047,23 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         // IPC handlers
         if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
             auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
+            auto& vm = JSC::getVM(global);
+            auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
+            auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(vm, "disconnect"_s));
+            if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
+                disconnectListenerCount--;
+            }
+            auto totalListenerCount = messageListenerCount + disconnectListenerCount;
             if (isAdded) {
                 if (Bun__GlobalObject__hasIPC(global)
-                    && eventEmitter.listenerCount(eventName) == 1) {
+                    && totalListenerCount == 1) {
                     Bun__ensureProcessIPCInitialized(global);
-                    Bun__setChannelRef(global, true);
+                    Bun__refChannelUnlessOverridden(global);
                 }
             } else {
-                if (eventEmitter.listenerCount(eventName) == 0) {
-                    Bun__setChannelRef(global, false);
+                if (Bun__GlobalObject__hasIPC(global)
+                    && totalListenerCount == 0) {
+                    Bun__unrefChannelUnlessOverridden(global);
                 }
             }
             return;
@@ -1958,7 +1959,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
                 stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
             });
 
-            javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "stack"_s), stackArray, 0);
+            javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
         }
 
         JSC::JSObject* errorProperties = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);

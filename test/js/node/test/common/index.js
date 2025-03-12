@@ -857,6 +857,13 @@ function invalidArgTypeHelper(input) {
     }
     return ` Received ${inspect(input, { depth: -1 })}`;
   }
+  if (typeof input === 'string') {
+    input.length > 28 && (input = `${input.slice(0, 25)}...`);
+    if (input.indexOf("'") === -1) {
+      return ` Received type string ('${input}')`;
+    }
+    return ` Received type string (${JSON.stringify(input)})`;
+  }
 
   let inspected = inspect(input, { colors: false });
   if (inspected.length > 28) { inspected = `${inspected.slice(inspected, 0, 25)}...`; }

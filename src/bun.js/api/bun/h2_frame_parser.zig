@@ -90,6 +90,7 @@ const ErrorCode = enum(u32) {
     ENHANCE_YOUR_CALM = 0xb,
     INADEQUATE_SECURITY = 0xc,
     HTTP_1_1_REQUIRED = 0xd,
+    MAX_PENDING_SETTINGS_ACK = 0xe,
     _, // we can have unsupported extension/custom error codes types
 };
 
@@ -685,6 +686,8 @@ pub const H2FrameParser = struct {
     usedWindowSize: u32 = 0,
     maxHeaderListPairs: u32 = 128,
     maxRejectedStreams: u32 = 100,
+    maxOutstandingSettings: u32 = 10,
+    outstandingSettings: u32 = 0,
     rejectedStreams: u32 = 0,
     maxSessionMemory: u32 = 10, //this limit is in MB
     queuedDataSize: u64 = 0, // this is in bytes
@@ -717,7 +720,7 @@ pub const H2FrameParser = struct {
         }
         pub fn next(this: *StreamResumableIterator) ?*Stream {
             var it = this.parser.streams.iterator();
-            if (it.index > it.hm.capacity()) return null;
+            if (it.index > it.hm.capacity() or this.index > it.hm.capacity()) return null;
             // resume the iterator from the same index if possible
             it.index = this.index;
             while (it.next()) |item| {
@@ -1168,8 +1171,13 @@ pub const H2FrameParser = struct {
         return true;
     }
 
-    pub fn setSettings(this: *H2FrameParser, settings: FullSettingsPayload) void {
+    pub fn setSettings(this: *H2FrameParser, settings: FullSettingsPayload) bool {
         log("HTTP_FRAME_SETTINGS ack false", .{});
+
+        if (this.outstandingSettings >= this.maxOutstandingSettings) {
+            this.sendGoAway(0, .MAX_PENDING_SETTINGS_ACK, "Maximum number of pending settings acknowledgements", this.lastStreamID, true);
+            return false;
+        }
 
         var buffer: [FrameHeader.byteSize + FullSettingsPayload.byteSize]u8 = undefined;
         @memset(&buffer, 0);
@@ -1182,10 +1190,14 @@ pub const H2FrameParser = struct {
             .length = 36,
         };
         _ = settingsHeader.write(@TypeOf(writer), writer);
+
+        this.outstandingSettings += 1;
+
         this.localSettings = settings;
         _ = this.localSettings.write(@TypeOf(writer), writer);
         _ = this.write(&buffer);
         _ = this.ajustWindowSize(null, @intCast(buffer.len));
+        return true;
     }
 
     pub fn abortStream(this: *H2FrameParser, stream: *Stream, abortReason: JSC.JSValue) void {
@@ -1344,6 +1356,7 @@ pub const H2FrameParser = struct {
             .streamIdentifier = 0,
             .length = 36,
         };
+        this.outstandingSettings += 1;
         _ = settingsHeader.write(@TypeOf(writer), writer);
         _ = this.localSettings.write(@TypeOf(writer), writer);
         _ = this.write(&preface_buffer);
@@ -2255,6 +2268,9 @@ pub const H2FrameParser = struct {
 
                 // we can now write any request
                 this.remoteSettings = this.localSettings;
+                if (this.outstandingSettings > 0) {
+                    this.outstandingSettings -= 1;
+                }
                 this.dispatch(.onLocalSettings, this.localSettings.toJS(this.handlers.globalObject));
             }
 
@@ -2557,7 +2573,27 @@ pub const H2FrameParser = struct {
         const options = args_list.ptr[0];
 
         try this.loadSettingsFromJSValue(globalObject, options);
-        this.setSettings(this.localSettings);
+
+        return JSValue.jsBoolean(this.setSettings(this.localSettings));
+    }
+
+    pub fn setLocalWindowSize(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSValue {
+        JSC.markBinding(@src());
+        const args_list = callframe.arguments_old(1);
+        if (args_list.len < 1) {
+            return globalObject.throwInvalidArguments("Expected windowSize argument", .{});
+        }
+        const windowSize = args_list.ptr[0];
+        if (!windowSize.isNumber()) {
+            return globalObject.throwInvalidArguments("Expected windowSize to be a number", .{});
+        }
+        const windowSizeValue: u32 = windowSize.to(u32);
+        if (windowSizeValue > MAX_WINDOW_SIZE or windowSizeValue < 0) {
+            return globalObject.throw("Expected windowSize to be a number between 0 and 2^32-1", .{});
+        }
+        if (windowSizeValue > this.windowSize) {
+            this.windowSize = windowSizeValue;
+        }
         return .undefined;
     }
 
@@ -2571,7 +2607,7 @@ pub const H2FrameParser = struct {
 
         const settings = this.remoteSettings orelse this.localSettings;
         result.put(globalObject, JSC.ZigString.static("remoteWindowSize"), JSC.JSValue.jsNumber(settings.initialWindowSize));
-        result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.localSettings.initialWindowSize));
+        result.put(globalObject, JSC.ZigString.static("localWindowSize"), JSC.JSValue.jsNumber(this.windowSize));
         result.put(globalObject, JSC.ZigString.static("deflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
         result.put(globalObject, JSC.ZigString.static("inflateDynamicTableSize"), JSC.JSValue.jsNumber(settings.headerTableSize));
         result.put(globalObject, JSC.ZigString.static("outboundQueueSize"), JSC.JSValue.jsNumber(this.outboundQueueSize));
@@ -3784,7 +3820,7 @@ pub const H2FrameParser = struct {
                     if (end_stream_js.asBoolean()) {
                         end_stream = true;
                         // will end the stream after trailers
-                        if (!waitForTrailers) {
+                        if (!waitForTrailers or this.isServer) {
                             flags |= @intFromEnum(HeadersFrameFlags.END_STREAM);
                         }
                     }
@@ -4120,6 +4156,11 @@ pub const H2FrameParser = struct {
                         this.maxRejectedStreams = @truncate(max_rejected_streams.to(u64));
                     }
                 }
+                if (try settings_js.get(globalObject, "maxOutstandingSettings")) |max_outstanding_settings| {
+                    if (max_outstanding_settings.isNumber()) {
+                        this.maxOutstandingSettings = @max(1, @as(u32, @truncate(max_outstanding_settings.to(u64))));
+                    }
+                }
             }
         }
         var is_server = false;
@@ -4133,7 +4174,7 @@ pub const H2FrameParser = struct {
         this.hpack = lshpack.HPACK.init(this.localSettings.headerTableSize);
 
         if (is_server) {
-            this.setSettings(this.localSettings);
+            _ = this.setSettings(this.localSettings);
         } else {
             // consider that we need to queue until the first flush
             this.has_nonnative_backpressure = true;

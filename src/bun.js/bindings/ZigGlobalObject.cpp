@@ -1892,6 +1892,24 @@ extern "C" JSC__JSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalO
     return JSValue::encode(array);
 }
 
+extern "C" JSC__JSValue Bun__allocArrayBufferForCopy(JSC::JSGlobalObject* lexicalGlobalObject, size_t len, void** ptr)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto buf = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, len);
+
+    if (UNLIKELY(!buf)) {
+        return {};
+    }
+
+    *ptr = buf->vector();
+
+    return JSValue::encode(buf);
+}
+
 extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, bool isBuffer)
 {
     VM& vm = globalObject->vm();

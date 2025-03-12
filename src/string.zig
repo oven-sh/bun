@@ -141,11 +141,11 @@ pub const String = extern struct {
         };
     }
 
-    const WTFStringEncoding = enum {
+    pub const WTFEncoding = enum {
         latin1,
         utf16,
 
-        pub fn Byte(comptime this: WTFStringEncoding) type {
+        pub fn Byte(comptime this: WTFEncoding) type {
             return switch (this) {
                 .latin1 => u8,
                 .utf16 => u16,
@@ -161,7 +161,7 @@ pub const String = extern struct {
     ///
     /// If the length is too large, this will return a dead string.
     pub fn createUninitialized(
-        comptime kind: WTFStringEncoding,
+        comptime kind: WTFEncoding,
         len: usize,
     ) struct { String, [](kind.Byte()) } {
         bun.assert(len > 0);
@@ -426,7 +426,7 @@ pub const String = extern struct {
     }
 
     /// If the allocation fails, this will free the bytes and return a dead string.
-    pub fn createExternalGloballyAllocated(comptime kind: WTFStringEncoding, bytes: []kind.Byte()) String {
+    pub fn createExternalGloballyAllocated(comptime kind: WTFEncoding, bytes: []kind.Byte()) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
 
@@ -1049,47 +1049,6 @@ pub const String = extern struct {
     extern fn JSC__createError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
     extern fn JSC__createTypeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
     extern fn JSC__createRangeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
-
-    fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) std.mem.Allocator.Error!String {
-        var num_16bit: usize = 0;
-        inline for (strings) |str| {
-            if (!str.is8Bit()) num_16bit += 1;
-        }
-
-        if (num_16bit == n) {
-            // all are 16bit
-            var slices: [n][]const u16 = undefined;
-            for (strings, 0..) |str, i| {
-                slices[i] = switch (str.tag) {
-                    .WTFStringImpl => str.value.WTFStringImpl.utf16Slice(),
-                    .ZigString, .StaticZigString => str.value.ZigString.utf16SliceAligned(),
-                    else => &[_]u16{},
-                };
-            }
-            const result = try std.mem.concat(allocator, u16, &slices);
-            return init(ZigString.from16Slice(result));
-        } else {
-            // either all 8bit, or mixed 8bit and 16bit
-            var slices_holded: [n]SliceWithUnderlyingString = undefined;
-            var slices: [n][]const u8 = undefined;
-            inline for (strings, 0..) |str, i| {
-                slices_holded[i] = str.toSlice(allocator);
-                slices[i] = slices_holded[i].slice();
-            }
-            const result = try std.mem.concat(allocator, u8, &slices);
-            inline for (0..n) |i| {
-                slices_holded[i].deinit();
-            }
-            return createUTF8(result);
-        }
-    }
-
-    /// Creates a new String from a given tuple (of comptime-known size) of String.
-    ///
-    /// Note: the callee owns the resulting string and must call `.deref()` on it once done
-    pub inline fn createFromConcat(allocator: std.mem.Allocator, strings: anytype) std.mem.Allocator.Error!String {
-        return try concat(strings.len, allocator, strings);
-    }
 
     pub fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const args = callFrame.arguments_old(1).slice();

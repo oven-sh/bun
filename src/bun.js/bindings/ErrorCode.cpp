@@ -399,7 +399,11 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         StringView view = str;
 
         const bool needsEllipsis = jsString->length() > 28;
-        const bool needsEscape = str->contains('"');
+        // node checks for the presence of a single quote.
+        // - if it does not exist, use single quotes.
+        // - if it exists, json stringify (use double quotes).
+        // https://github.com/nodejs/node/blob/c3ed292d17c34578fd7806cb42da82bbe0cca103/lib/internal/errors.js#L1030
+        const bool needsEscape = str->contains('\'');
         if (needsEllipsis) {
             view = str->substring(0, 25);
         }
@@ -426,13 +430,17 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                 }
             }
         } else {
-            builder.append('"');
+            builder.append('\'');
             builder.append(view);
         }
         if (needsEllipsis) {
             builder.append("..."_s);
         }
-        builder.append('"');
+        if (UNLIKELY(needsEscape)) {
+            builder.append('"');
+        } else {
+            builder.append('\'');
+        }
         builder.append(')');
         return;
     }

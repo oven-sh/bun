@@ -39,7 +39,6 @@ const runSymbol = Symbol("run");
 const deferredSymbol = Symbol("deferred");
 const eofInProgress = Symbol("eofInProgress");
 const fakeSocketSymbol = Symbol("fakeSocket");
-const finishedSymbol = "finished";
 const firstWriteSymbol = Symbol("firstWrite");
 const headersSymbol = Symbol("headers");
 const isTlsSymbol = Symbol("is_tls");
@@ -344,6 +343,8 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     const message = this._httpMessage;
     const req = message?.req;
     if (req && !req.complete) {
+      // at this point the socket is already destroyed, lets avoid UAF
+      req[kHandle] = undefined;
       req.destroy(new ConnResetException("aborted"));
     }
   }
@@ -382,6 +383,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this[kHandle] = undefined;
     handle.onclose = this.#onCloseForDestroy.bind(this, callback);
     handle.close();
+    // lets sync check and destroy the request if it's not complete
+    const message = this._httpMessage;
+    const req = message?.req;
+    if (req && !req.complete) {
+      // at this point the handle is not destroyed yet, lets destroy the request
+      req.destroy(new ConnResetException("aborted"));
+    }
   }
 
   _final(callback) {
@@ -677,14 +685,14 @@ Object.defineProperty(Server, "name", { value: "Server" });
 function onRequestEvent(event) {
   const [server, http_res, req] = this.socket[kInternalSocketData];
 
-  if (!http_res[finishedSymbol]) {
+  if (!http_res.finished) {
     switch (event) {
       case NodeHTTPResponseAbortEvent.timeout:
         this.emit("timeout");
         server.emit("timeout", req.socket);
         break;
       case NodeHTTPResponseAbortEvent.abort:
-        http_res[finishedSymbol] = true;
+        http_res.finished = true;
         this.destroy();
         break;
     }
@@ -1542,7 +1550,7 @@ function OutgoingMessage(options) {
   Stream.$call(this, options);
 
   this.sendDate = true;
-  this[finishedSymbol] = false;
+  this.finished = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kAbortController] = null;
 
@@ -1714,15 +1722,15 @@ const OutgoingMessagePrototype = {
   },
 
   get writableNeedDrain() {
-    return !this.destroyed && !this[finishedSymbol] && this[kBodyChunks] && this[kBodyChunks].length > 0;
+    return !this.destroyed && !this.finished && this[kBodyChunks] && this[kBodyChunks].length > 0;
   },
 
   get writableEnded() {
-    return this[finishedSymbol];
+    return this.finished;
   },
 
   get writableFinished() {
-    return this[finishedSymbol] && !!(this[kEmitState] & (1 << ClientRequestEmitState.finish));
+    return this.finished && !!(this[kEmitState] & (1 << ClientRequestEmitState.finish));
   },
 
   _send(data, encoding, callback, byteLength) {
@@ -1850,6 +1858,7 @@ function ServerResponse(req, options) {
   this._sent100 = false;
   this[headerStateSymbol] = NodeHTTPHeaderState.none;
   this[kPendingCallbacks] = [];
+  this.finished = false;
 
   // this is matching node's behaviour
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
@@ -1936,7 +1945,7 @@ const ServerResponsePrototype = {
         req._dump();
       }
       this.detachSocket(socket);
-      this[finishedSymbol] = this.finished = true;
+      this.finished = true;
 
       this.emit("prefinish");
       this._callPendingCallbacks();
@@ -2066,11 +2075,11 @@ const ServerResponsePrototype = {
   },
 
   get writableNeedDrain() {
-    return !this.destroyed && !this[finishedSymbol] && (this[kHandle]?.bufferedAmount ?? 1) !== 0;
+    return !this.destroyed && !this.finished && (this[kHandle]?.bufferedAmount ?? 1) !== 0;
   },
 
   get writableFinished() {
-    return !!(this[finishedSymbol] && (!this[kHandle] || this[kHandle].finished));
+    return !!(this.finished && (!this[kHandle] || this[kHandle].finished));
   },
 
   get writableLength() {
@@ -2219,7 +2228,7 @@ function ensureReadableStreamController(run) {
           for (let run of this[runSymbol]) {
             run(controller);
           }
-          if (!this[finishedSymbol]) {
+          if (!this.finished) {
             const { promise, resolve } = $newPromiseCapability(GlobalPromise);
             this[deferredSymbol] = resolve;
             return promise;
@@ -2272,7 +2281,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
     chunk = Buffer.from(chunk, encoding);
   }
   const req = this.req;
-  const shouldEmitClose = req && req.emit && !this[finishedSymbol];
+  const shouldEmitClose = req && req.emit && !this.finished;
   if (!this.headersSent) {
     let data = this[firstWriteSymbol];
     if (chunk) {
@@ -2292,7 +2301,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
     }
 
     this[firstWriteSymbol] = undefined;
-    this[finishedSymbol] = true;
+    this.finished = true;
     this.headersSent = true; // https://github.com/oven-sh/bun/issues/3458
     drainHeadersIfObservable.$call(this);
     this[kDeprecatedReplySymbol](
@@ -2310,7 +2319,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
     return;
   }
 
-  this[finishedSymbol] = true;
+  this.finished = true;
   ensureReadableStreamController.$call(this, controller => {
     if (chunk && encoding) {
       chunk = Buffer.from(chunk, encoding);
@@ -2456,13 +2465,13 @@ function ClientRequest(input, options, cb) {
     }
 
     if (chunk) {
-      if (this[finishedSymbol]) {
+      if (this.finished) {
         emitErrorNextTickIfErrorListenerNT(this, $ERR_STREAM_WRITE_AFTER_END("Cannot write after end"), callback);
         return this;
       }
 
       write_(chunk, encoding, null);
-    } else if (this[finishedSymbol]) {
+    } else if (this.finished) {
       if (callback) {
         if (!this.writableFinished) {
           this.on("finish", callback);
@@ -2476,7 +2485,7 @@ function ClientRequest(input, options, cb) {
       this.once("finish", callback);
     }
 
-    if (!this[finishedSymbol]) {
+    if (!this.finished) {
       send();
       resolveNextChunk?.(true);
     }
@@ -2495,7 +2504,7 @@ function ClientRequest(input, options, cb) {
       res._dump();
     }
 
-    this[finishedSymbol] = true;
+    this.finished = true;
 
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
@@ -2606,7 +2615,7 @@ function ClientRequest(input, options, cb) {
             self.emit("drain");
           }
 
-          while (!self[finishedSymbol]) {
+          while (!self.finished) {
             yield await new Promise(resolve => {
               resolveNextChunk = end => {
                 resolveNextChunk = undefined;
@@ -2717,7 +2726,7 @@ function ClientRequest(input, options, cb) {
   let handleResponse = () => {};
 
   const send = () => {
-    this[finishedSymbol] = true;
+    this.finished = true;
     const controller = new AbortController();
     this[kAbortController] = controller;
     controller.signal.addEventListener("abort", onAbort, { once: true });
@@ -2970,7 +2979,7 @@ function ClientRequest(input, options, cb) {
   //   this.useChunkedEncodingByDefault = true;
   // }
 
-  this[finishedSymbol] = false;
+  this.finished = false;
   this[kRes] = null;
   this[kUpgradeOrConnect] = false;
   this[kParser] = null;
@@ -3140,7 +3149,7 @@ const ClientRequestPrototype = {
   },
 
   get writable() {
-    return !this[finishedSymbol];
+    return !this.finished;
   },
 };
 

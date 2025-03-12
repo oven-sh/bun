@@ -1,3 +1,7 @@
+/*
+Skipped test
+https://github.com/electron/electron/blob/2de8fd7d9307f3ebde45f5458434e516b0c23aea/script/node-disabled-tests.json#L17
+
 'use strict';
 const common = require('../common');
 if (!common.hasCrypto)
@@ -244,3 +248,5 @@ assert.throws(() => {
   code: 'ERR_CRYPTO_INCOMPATIBLE_KEY',
   message: 'Incompatible key types for Diffie-Hellman: x448 and x25519'
 });
+
+*/

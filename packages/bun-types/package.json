@@ -16,6 +16,7 @@
   ],
   "homepage": "https://bun.sh",
   "dependencies": {
+    "@oven/typescript-bun-lib-dom": "https://github.com/alii/lib-dom-bun-testing",
     "@types/node": "*",
     "@types/ws": "*",
     "@typescript/lib-dom": "github:alii/lib-dom-bun-testing"

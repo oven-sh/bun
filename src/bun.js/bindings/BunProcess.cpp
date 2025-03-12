@@ -1047,8 +1047,9 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         // IPC handlers
         if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
             auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
-            auto messageListenerCount = eventEmitter.listenerCount(Identifier::fromString(JSC::getVM(global), "message"_s));
-            auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(JSC::getVM(global), "disconnect"_s));
+            auto& vm = JSC::getVM(global);
+            auto messageListenerCount = eventEmitter.listenerCount(vm.propertyNames->message);
+            auto disconnectListenerCount = eventEmitter.listenerCount(Identifier::fromString(vm, "disconnect"_s));
             if (disconnectListenerCount >= 1 && Bun__shouldIgnoreOneDisconnectEventListener(global)) {
                 disconnectListenerCount--;
             }

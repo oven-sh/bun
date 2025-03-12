@@ -382,6 +382,36 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     return JSValue::encode(JSValue(script));
 }
 
+static bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<Exception> exception, ThrowScope& throwScope)
+{
+    if (auto* errorInstance = jsDynamicCast<ErrorInstance*>(exception->value())) {
+        errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        JSValue stack_jsval = errorInstance->get(globalObject, vm.propertyNames->stack);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!stack_jsval.isString()) {
+            return false;
+        }
+        String stack = stack_jsval.toWTFString(globalObject);
+
+        auto& e_stack = exception->stack();
+        size_t stack_size = e_stack.size();
+        if (stack_size == 0) {
+            return false;
+        }
+        auto& stack_frame = e_stack[0];
+        auto source_url = stack_frame.sourceURL(vm);
+        auto line_and_column = stack_frame.computeLineAndColumn();
+
+        String prepend = makeString(source_url, ":"_s, line_and_column.line, "\n"_s, stack);
+        errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
+
+        JSC::throwException(globalObject, throwScope, exception.get());
+        return true;
+    }
+    return false;
+}
+
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -392,7 +422,11 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
 
     NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+
     if (UNLIKELY(exception)) {
+        if (handleException(globalObject, vm, exception, throwScope)) {
+            return {};
+        }
         JSC::throwException(globalObject, throwScope, exception.get());
         return {};
     }
@@ -482,8 +516,13 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     NakedPtr<Exception> exception;
     JSValue result = JSC::evaluateWithScopeExtension(globalObject, script->source(), JSC::JSWithScope::create(vm, globalObject, globalObject->globalScope(), context), exception);
 
-    if (exception)
+    if (UNLIKELY(exception)) {
+        if (handleException(globalObject, vm, exception, throwScope)) {
+            return {};
+        }
         JSC::throwException(globalObject, throwScope, exception.get());
+        return {};
+    }
 
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(result);
@@ -553,8 +592,12 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(context, sourceCode, context, exception);
 
-    if (exception) {
-        throwException(globalObject, scope, exception);
+    if (UNLIKELY(exception)) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        if (handleException(globalObject, vm, exception, throwScope)) {
+            return {};
+        }
+        JSC::throwException(globalObject, throwScope, exception.get());
         return {};
     }
 
@@ -591,8 +634,13 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     WTF::NakedPtr<Exception> exception;
     JSValue result = JSC::evaluate(globalObject, source, globalObject, exception);
 
-    if (exception)
-        throwException(globalObject, throwScope, exception);
+    if (UNLIKELY(exception)) {
+        if (handleException(globalObject, vm, exception, throwScope)) {
+            return {};
+        }
+        JSC::throwException(globalObject, throwScope, exception.get());
+        return {};
+    }
 
     return JSValue::encode(result);
 }

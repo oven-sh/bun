@@ -70,7 +70,6 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "console"_s,
     "constants"_s,
     "crypto"_s,
-    "detect-libc"_s,
     "dgram"_s,
     "diagnostics_channel"_s,
     "dns"_s,

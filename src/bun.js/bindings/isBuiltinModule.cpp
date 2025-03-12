@@ -53,7 +53,6 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "_http_agent"_s,
     "_tls_common"_s,
     "async_hooks"_s,
-    "detect-libc"_s,
     "fs/promises"_s,
     "querystring"_s,
     "_http_client"_s,

@@ -63,7 +63,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     JSValue generatorValue = callFrame->argument(2);
     JSValue genEncodingValue = callFrame->argument(3);
 
-    if (!keyEncodingValue.isUndefinedOrNull() && !keyEncodingValue.isFalse()) {
+    if (keyEncodingValue.pureToBoolean() != TriState::False) {
         std::optional<BufferEncodingType> keyEncoding = std::nullopt;
         if (keyEncodingValue.isString()) {
             WTF::String keyEncodingString = keyEncodingValue.toWTFString(globalObject);

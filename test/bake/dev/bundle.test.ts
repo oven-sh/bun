@@ -195,6 +195,18 @@ devTest("default export same-scope handling", {
     await dev.writeNoChanges("fixture7.ts");
     const chunk = await c.getMostRecentHmrChunk();
     expect(chunk).toMatch(/default:\s*function/);
+
+    // Since fixture7.ts is not marked as accepting, it will bubble the update
+    // to `index.ts`, re-evaluate it and some of the dependencies.
+    c.expectMessage(
+      "TWO",
+      "FOUR",
+      "FIVE",
+      "SEVEN",
+      "EIGHT",
+      "NINE",
+      "ELEVEN",
+    );
   },
 });
 devTest("directory cache bust case #17576", {
@@ -310,6 +322,34 @@ devTest("import.meta.main", {
     "index.ts": `
       console.log(import.meta.main);
       import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(false); // import.meta.main is always false because there is no single entry point
+
+    await dev.write(
+      "index.ts",
+      `
+        require;
+        console.log(import.meta.main);
+      `,
+    );
+    await c.expectMessage(false);
+  },
+});
+devTest("commonjs forms", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import cjs from "./cjs.js";
+      console.log(cjs);
+    `,
+    "cjs.js": `
+      module.exports.field = {};
     `,
   },
   async test(dev) {

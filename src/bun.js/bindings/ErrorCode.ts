@@ -90,7 +90,12 @@ const errors: ErrorCodeMapping = [
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["ERR_INVALID_CHAR", TypeError],
   ["MODULE_NOT_FOUND", Error],
+  ["ERR_HTTP_HEADERS_SENT", Error],
+  ["ERR_HTTP_BODY_NOT_ALLOWED", Error],
+  ["ERR_HTTP_INVALID_STATUS_CODE", RangeError],
+  ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
   ["ERR_SERVER_ALREADY_LISTEN", Error],
+  ["ERR_CHILD_PROCESS_IPC_REQUIRED", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -99,7 +104,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_BORINGSSL", Error],
 
   // Console
-  ["ERR_CONSOLE_WRITABLE_STREAM", TypeError, "TypeError"],
+  ["ERR_CONSOLE_WRITABLE_STREAM", TypeError],
 
   // FS
   ["ERR_DIR_CLOSED", Error],
@@ -111,6 +116,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_TLS_CERT_ALTNAME_FORMAT", SyntaxError],
   ["ERR_TLS_CERT_ALTNAME_INVALID", Error],
   ["ERR_TLS_SNI_FROM_SERVER", Error],
+  ["ERR_TLS_RENEGOTIATION_DISABLED", Error],
 
   // NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error],
@@ -148,6 +154,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_STATUS_101", Error],
   ["ERR_HTTP2_INVALID_INFO_STATUS", RangeError],
   ["ERR_HTTP2_HEADERS_AFTER_RESPOND", Error],
+  ["ERR_HTTP2_PUSH_DISABLED", Error],
+  ["ERR_HTTP2_MAX_PENDING_SETTINGS_ACK", Error],
   // AsyncHooks
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],

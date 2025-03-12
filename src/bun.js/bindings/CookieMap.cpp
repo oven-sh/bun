@@ -29,28 +29,18 @@ CookieMap::CookieMap(const String& cookieString)
     if (cookieString.isEmpty())
         return;
 
-    // Parse cookie string and add each cookie to the map
-    // For now, this is a simple implementation that splits on semicolons
     Vector<String> pairs = cookieString.split(';');
     for (auto& pair : pairs) {
-        pair = pair.trim(isASCIIWhitespace<UChar>);
-        size_t equalsPos = pair.find('=');
-        if (equalsPos != notFound) {
-            String name = pair.substring(0, equalsPos);
-            String value = pair.substring(equalsPos + 1);
-            if (!name.isEmpty()) {
-                auto cookie = Cookie::create(name, value, String(), "/"_s, 0, false, CookieSameSite::Strict,
-                    false, 0, false);
-                m_cookies.append(WTFMove(cookie));
-            }
-        }
+        auto cookie = Cookie::parse(pair);
+        ASSERT(!cookie.hasException());
+        m_cookies.append(cookie.releaseReturnValue());
     }
 }
 
 CookieMap::CookieMap(const HashMap<String, String>& pairs)
 {
     for (auto& entry : pairs) {
-        auto cookie = Cookie::create(entry.key, entry.value, String(), "/"_s, 0, false, CookieSameSite::Strict,
+        auto cookie = Cookie::create(entry.key, entry.value, String(), "/"_s, 0, false, CookieSameSite::Lax,
             false, 0, false);
         m_cookies.append(WTFMove(cookie));
     }
@@ -60,9 +50,9 @@ CookieMap::CookieMap(const Vector<Vector<String>>& pairs)
 {
     for (const auto& pair : pairs) {
         if (pair.size() == 2) {
-            auto cookie = Cookie::create(pair[0], pair[1], String(), "/"_s, 0, false, CookieSameSite::Strict,
-                false, 0, false);
-            m_cookies.append(WTFMove(cookie));
+            auto cookie = Cookie::parse();
+            ASSERT(!cookie.hasException());
+            m_cookies.append(cookie.releaseReturnValue());
         }
     }
 }

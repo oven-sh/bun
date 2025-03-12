@@ -1615,7 +1615,7 @@ pub const ModuleLoader = struct {
                 var should_close_input_file_fd = fd == null;
 
                 // We don't want cjs wrappers around non-js files
-                const module_type_ = switch (loader) {
+                const module_type_only_for_wrappables = switch (loader) {
                     .js, .jsx, .ts, .tsx => module_type,
                     else => .unknown,
                 };
@@ -1635,7 +1635,7 @@ pub const ModuleLoader = struct {
                     .virtual_source = virtual_source,
                     .dont_bundle_twice = true,
                     .allow_commonjs = true,
-                    .module_type = module_type_,
+                    .module_type = module_type_only_for_wrappables,
                     .inject_jest_globals = jsc_vm.transpiler.options.rewrite_jest_for_tests,
                     .keep_json_and_toml_as_one_statement = true,
                     .allow_bytecode_cache = true,
@@ -1924,20 +1924,18 @@ pub const ModuleLoader = struct {
                 }
 
                 // Pass along package.json type "module" if set.
-                const tag = brk: {
-                    if (parse_result.source.path.isFile()) {
+                const tag: ResolvedSource.Tag = switch (loader) {
+                    .json, .jsonc => .json_for_object_loader,
+                    .js, .jsx, .ts, .tsx => if (parse_result.source.path.isFile()) brk: {
                         const module_type_ = if (package_json) |pkg| pkg.module_type else module_type;
 
                         break :brk switch (module_type_) {
-                            .esm => ResolvedSource.Tag.package_json_type_module,
-                            .cjs => ResolvedSource.Tag.package_json_type_commonjs,
-                            else => ResolvedSource.Tag.javascript,
+                            .esm => .package_json_type_module,
+                            .cjs => .package_json_type_commonjs,
+                            else => .javascript,
                         };
-                    } else {
-                        break :brk ResolvedSource.Tag.javascript;
-                    }
-
-                    break :brk ResolvedSource.Tag.javascript;
+                    } else .javascript,
+                    else => .javascript,
                 };
 
                 return .{

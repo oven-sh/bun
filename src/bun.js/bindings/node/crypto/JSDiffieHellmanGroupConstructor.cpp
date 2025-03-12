@@ -11,14 +11,18 @@ namespace Bun {
 
 const JSC::ClassInfo JSDiffieHellmanGroupConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDiffieHellmanGroupConstructor) };
 
-JSC_DEFINE_HOST_FUNCTION(callDiffieHellmanGroup, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(callDiffieHellmanGroup, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    JSC::VM& vm = globalObject->vm();
+    JSC::VM& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // DiffieHellmanGroup must be constructed with 'new'
-    throwError(globalObject, scope, ErrorCode::ERR_INVALID_THIS, "Class constructor DiffieHellmanGroup cannot be invoked without 'new'"_s);
-    return {};
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* constructor = globalObject->m_JSDiffieHellmanGroupClassStructure.constructor(globalObject);
+
+    ArgList args = ArgList(callFrame);
+    auto callData = JSC::getConstructData(constructor);
+    JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
+    return JSC::JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

@@ -28,24 +28,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGenerateKeysTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    // Handle optional encoding parameter
-    BufferEncodingType encodingType = BufferEncodingType::buffer;
-    if (callFrame->argumentCount() > 0 && !callFrame->argument(0).isUndefined()) {
-        JSC::JSValue encodingValue = callFrame->argument(0);
-        if (encodingValue.isString()) {
-            auto* string = encodingValue.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto stringView = string->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
-            if (!encoding) {
-                return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
-            }
-            encodingType = *encoding;
-        }
-    }
-
     auto& dh = thisObject->getImpl();
     auto keys = dh.generateKeys();
     if (!keys) {
@@ -53,7 +35,10 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGenerateKeysTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    return WebCore::constructFromEncoding(globalObject, keys.span(), encodingType);
+    auto encodingType = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return StringBytes::encode(globalObject, scope, keys.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -77,13 +62,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
     JSC::JSValue keyArg = callFrame->argument(0);
     JSC::JSValue inputEncodingArg = callFrame->argument(1);
     JSC::JSValue outputEncodingArg = callFrame->argument(2);
-    BufferEncodingType outputEncodingType = BufferEncodingType::buffer;
-
-    if (!outputEncodingArg.isUndefined()) {
-        auto encoding = WebCore::validateBufferEncoding<true>(*globalObject, outputEncodingArg);
-        RETURN_IF_EXCEPTION(scope, {});
-        outputEncodingType = *encoding;
-    }
 
     // Process the public key input
     auto* keyBuffer = Bun::getArrayBufferOrView(globalObject, scope, keyArg, "key"_s, inputEncodingArg);
@@ -139,8 +117,11 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
         return {};
     }
 
+    BufferEncodingType outputEncodingType = getEncodingDefaultBuffer(globalObject, scope, outputEncodingArg);
+    RETURN_IF_EXCEPTION(scope, {});
+
     // If output encoding is specified and not "buffer", return a string
-    return WebCore::constructFromEncoding(globalObject, secret.span(), outputEncodingType);
+    return StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -155,24 +136,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrimeTemplate(JSC::JSGlobalObject
         return {};
     }
 
-    // Handle optional encoding parameter
-    BufferEncodingType encodingType = BufferEncodingType::buffer;
-    if (callFrame->argumentCount() > 0 && !callFrame->argument(0).isUndefined()) {
-        JSC::JSValue encodingValue = callFrame->argument(0);
-        if (encodingValue.isString()) {
-            auto* string = encodingValue.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto stringView = string->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
-            if (!encoding) {
-                return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
-            }
-            encodingType = *encoding;
-        }
-    }
-
     auto& dh = thisObject->getImpl();
     auto prime = dh.getPrime();
     if (!prime) {
@@ -180,7 +143,11 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrimeTemplate(JSC::JSGlobalObject
         return {};
     }
 
-    return WebCore::constructFromEncoding(globalObject, prime.span(), encodingType);
+    // Handle optional encoding parameter
+    BufferEncodingType encodingType = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return StringBytes::encode(globalObject, scope, prime.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -195,24 +162,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetGeneratorTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    // Handle optional encoding parameter
-    BufferEncodingType encodingType = BufferEncodingType::buffer;
-    if (callFrame->argumentCount() > 0 && !callFrame->argument(0).isUndefined()) {
-        JSC::JSValue encodingValue = callFrame->argument(0);
-        if (encodingValue.isString()) {
-            auto* string = encodingValue.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto stringView = string->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
-            if (!encoding) {
-                return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
-            }
-            encodingType = *encoding;
-        }
-    }
-
     auto& dh = thisObject->getImpl();
     auto gen = dh.getGenerator();
     if (!gen) {
@@ -220,7 +169,11 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetGeneratorTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    return WebCore::constructFromEncoding(globalObject, gen.span(), encodingType);
+    // Handle optional encoding parameter
+    BufferEncodingType encodingType = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return StringBytes::encode(globalObject, scope, gen.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -235,24 +188,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPublicKeyTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    // Handle optional encoding parameter
-    BufferEncodingType encodingType = BufferEncodingType::buffer;
-    if (callFrame->argumentCount() > 0 && !callFrame->argument(0).isUndefined()) {
-        JSC::JSValue encodingValue = callFrame->argument(0);
-        if (encodingValue.isString()) {
-            auto* string = encodingValue.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto stringView = string->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
-            if (!encoding) {
-                return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
-            }
-            encodingType = *encoding;
-        }
-    }
-
     auto& dh = thisObject->getImpl();
     auto key = dh.getPublicKey();
     if (!key) {
@@ -260,7 +195,11 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPublicKeyTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    return WebCore::constructFromEncoding(globalObject, key.span(), encodingType);
+    // Handle optional encoding parameter
+    BufferEncodingType encodingType = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return StringBytes::encode(globalObject, scope, key.span(), encodingType);
 }
 
 template<typename DiffieHellmanType>
@@ -275,24 +214,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrivateKeyTemplate(JSC::JSGlobalO
         return {};
     }
 
-    // Handle optional encoding parameter
-    BufferEncodingType encodingType = BufferEncodingType::buffer;
-    if (callFrame->argumentCount() > 0 && !callFrame->argument(0).isUndefined()) {
-        JSC::JSValue encodingValue = callFrame->argument(0);
-        if (encodingValue.isString()) {
-            auto* string = encodingValue.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto stringView = string->view(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            auto encoding = WebCore::parseEnumerationFromView<BufferEncodingType>(stringView);
-            if (!encoding) {
-                return Bun::ERR::UNKNOWN_ENCODING(scope, globalObject, stringView);
-            }
-            encodingType = *encoding;
-        }
-    }
-
     auto& dh = thisObject->getImpl();
     auto key = dh.getPrivateKey();
     if (!key) {
@@ -300,7 +221,10 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncGetPrivateKeyTemplate(JSC::JSGlobalO
         return {};
     }
 
-    return WebCore::constructFromEncoding(globalObject, key.span(), encodingType);
+    auto encoding = getEncodingDefaultBuffer(globalObject, scope, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return StringBytes::encode(globalObject, scope, key.span(), encoding);
 }
 
 template<typename DiffieHellmanType>

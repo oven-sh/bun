@@ -92,6 +92,24 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
 
 }
 
+WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
+{
+    BufferEncodingType res = BufferEncodingType::buffer;
+    if (encodingValue.isUndefinedOrNull() || !encodingValue.isString()) {
+        return res;
+    }
+
+    WTF::String encodingString = encodingValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, res);
+
+    if (encodingString == "buffer"_s) {
+        return res;
+    }
+
+    res = parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
+    return res;
+}
+
 std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue)
 {
     ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;

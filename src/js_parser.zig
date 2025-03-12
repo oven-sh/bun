@@ -24420,7 +24420,7 @@ pub const ConvertESMExportsForHmr = struct {
 
                 if (ctx.can_implicitly_accept and
                     !((st.value == .stmt and st.value.stmt.data == .s_function) or
-                    (st.value == .expr and st.value.expr.data == .e_arrow)))
+                        (st.value == .expr and st.value.expr.data == .e_arrow)))
                     ctx.can_implicitly_accept = false;
 
                 // Try to move the export default expression to the end.

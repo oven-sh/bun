@@ -1047,6 +1047,7 @@ pub const String = extern struct {
     extern fn JSC__createRangeError(*JSC.JSGlobalObject, str: *const String) JSC.JSValue;
 
     fn concat(comptime n: usize, allocator: std.mem.Allocator, strings: *const [n]String) std.mem.Allocator.Error!String {
+        // TODO: this function leaks memory
         var num_16bit: usize = 0;
         inline for (strings) |str| {
             if (!str.is8Bit()) num_16bit += 1;

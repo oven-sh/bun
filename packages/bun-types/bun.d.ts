@@ -92,6 +92,7 @@ declare module "bun" {
   import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
 
   type DistributedOmit<T, K extends keyof T> = T extends T ? Omit<T, K> : never;
+  type DistributedExclude<T, U> = T extends T ? (T extends U ? never : T) : never;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
 
   interface Env {
@@ -2657,7 +2658,7 @@ declare module "bun" {
     loader?: { [k in string]: Loader };
     /**
      * Specifies if and how to generate source maps.
-     * 
+     *
      * - `"none"` - No source maps are generated
      * - `"linked"` - A separate `*.ext.map` file is generated alongside each
      *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
@@ -2665,11 +2666,11 @@ declare module "bun" {
      * - `"inline"` - an inline source map is appended to the output file.
      * - `"external"` - Generate a separate source map file for each input file.
      *   No `//# sourceMappingURL` comment is added to the output file.
-     * 
+     *
      * `true` and `false` are aliasees for `"inline"` and `"none"`, respectively.
-     * 
+     *
      * @default "none"
-     * 
+     *
      * @see {@link outdir} required for `"linked"` maps
      * @see {@link publicPath} to customize the base url of linked source maps
      */
@@ -2704,10 +2705,10 @@ declare module "bun" {
     env?: "inline" | "disable" | `${string}*`;
     /**
      * Whether to enable minification.
-     * 
+     *
      * Use `true`/`false` to enable/disable all minification options. Alternatively,
      * you can pass an object for granular control over certain minifications.
-     * 
+     *
      * @default false
      */
     minify?:
@@ -4265,17 +4266,7 @@ declare module "bun" {
      * Passing other options such as `port` or `hostname` won't do anything.
      */
     reload<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-      options: (
-        | (Omit<ServeOptions, "fetch"> & {
-            routes: R;
-            fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-          })
-        | (Omit<ServeOptions, "routes"> & {
-            routes?: never;
-            fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-          })
-        | WebSocketServeOptions<T>
-      ) & {
+      options: ServeFunctionOptions<T, R> & {
         /**
          * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
          */
@@ -4653,23 +4644,39 @@ declare module "bun" {
     @param options.routes - Route definitions mapping paths to handlers
     */
   function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-    options: (
-      | (DistributedOmit<Serve, "fetch"> & {
-          routes: R;
-          fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-        })
-      | (DistributedOmit<Serve, "routes"> & {
-          routes?: never;
-          fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-        })
-      | WebSocketServeOptions<T>
-    ) & {
+    options: ServeFunctionOptions<T, R> & {
       /**
        * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
        */
       static?: R;
     },
   ): Server;
+
+  type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }> =
+    | (DistributedOmit<DistributedExclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+        routes: R;
+        fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (DistributedOmit<DistributedExclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+        routes?: never;
+        fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (WebSocketServeOptions<T> & {
+        routes: R;
+        fetch?: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      })
+    | (WebSocketServeOptions<T> & {
+        routes?: never;
+        fetch: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      });
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.

@@ -86,8 +86,15 @@ namespace Bun {
 bool isBuiltinModule(const String& namePossiblyWithNodePrefix)
 {
     String name = namePossiblyWithNodePrefix;
-    if (name.startsWith("node:"_s))
+    if (name.startsWith("node:"_s)) {
         name = name.substringSharingImpl(5);
+
+        // bun doesn't have `node:test` as of writing, but this makes sure that
+        // `node:module` is compatible (`test/parallel/test-module-isBuiltin.js`)
+        if (name == "test"_s) {
+            return true;
+        }
+    }
 
     for (auto& builtinModule : builtinModuleNamesSortedLength) {
         if (name == builtinModule)

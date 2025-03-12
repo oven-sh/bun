@@ -3,16 +3,19 @@ export {};
 declare global {
   namespace Bun {
     type HMREventNames =
-      | "beforeUpdate"
-      | "afterUpdate"
-      | "beforeFullReload"
-      | "beforePrune"
-      | "invalidate"
-      | "error"
-      | "ws:disconnect"
-      | "ws:connect";
+      | "bun:beforeUpdate"
+      | "bun:afterUpdate"
+      | "bun:beforeFullReload"
+      | "bun:beforePrune"
+      | "bun:invalidate"
+      | "bun:error"
+      | "bun:ws:disconnect"
+      | "bun:ws:connect";
 
-    type HMREvent = `bun:${HMREventNames}` | `vite:${HMREventNames}`;
+    /**
+     * The event names for the dev server
+     */
+    type HMREvent = `bun:${HMREventNames}` | (string & {});
   }
 
   interface ImportMeta {

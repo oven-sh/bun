@@ -44,6 +44,10 @@ Bun.serve({
   },
 });
 
+import.meta.hot.on("bun:bun:beforeFullReloadBut also allows anything", () => {
+  //
+});
+
 Bun.serve({
   routes: {
     "/:test": req => {

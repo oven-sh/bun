@@ -7,6 +7,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include "util.h"
 #include "openssl/dh.h"
+#include "openssl/bn.h"
 #include "openssl/err.h"
 #include "ncrypto.h"
 namespace Bun {
@@ -63,17 +64,26 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
     JSValue genEncodingValue = callFrame->argument(3);
 
     if (!keyEncodingValue.isUndefinedOrNull() && !keyEncodingValue.isFalse()) {
-        auto encoding = WebCore::parseEnumeration<BufferEncodingType>(*globalObject, keyEncodingValue);
-        RETURN_IF_EXCEPTION(scope, {});
+        std::optional<BufferEncodingType> keyEncoding = std::nullopt;
+        if (keyEncodingValue.isString()) {
+            WTF::String keyEncodingString = keyEncodingValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
 
-        if (!encoding.has_value()) {
+            keyEncoding = WebCore::parseEnumerationFromView<BufferEncodingType>(keyEncodingString);
+
+            if (!keyEncoding.has_value() && keyEncodingString == "buffer"_s) {
+                keyEncoding = BufferEncodingType::buffer;
+            }
+        }
+
+        if (!keyEncoding.has_value()) {
             genEncodingValue = generatorValue;
             generatorValue = keyEncodingValue;
             keyEncodingValue = jsBoolean(false);
         }
     }
 
-    if (generatorValue.isUndefinedOrNull() || generatorValue.isFalse()) {
+    if (generatorValue.pureToBoolean() == TriState::False) {
         generatorValue = jsNumber(2);
     } else if (generatorValue.isNumber()) {
         Bun::V::validateInt32(scope, globalObject, generatorValue, "generator"_s, jsUndefined(), jsUndefined());
@@ -89,7 +99,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         RETURN_IF_EXCEPTION(scope, {});
 
         if (bits < 2) {
-            ERR_put_error(ERR_LIB_DH, 0, BN_R_BITS_TOO_SMALL, __FILE__, __LINE__);
+            ERR_put_error(ERR_LIB_DH, 0, DH_R_MODULUS_TOO_LARGE, __FILE__, __LINE__);
             throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid prime length"_s);
             return JSValue::encode({});
         }
@@ -103,7 +113,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         RETURN_IF_EXCEPTION(scope, {});
 
         if (generator < 2) {
-            // TODO: find good error code for generator < 2
+            ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
             throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
             return JSValue::encode({});
         }
@@ -129,13 +139,13 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         if (generatorValue.isNumber()) {
             int32_t generator = generatorValue.asInt32();
             if (generator < 2) {
-                // TODO: find better error code for generator < 2
+                ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
                 throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
                 return JSValue::encode({});
             }
             bn_g = ncrypto::BignumPointer::New();
             if (!bn_g.setWord(generator)) {
-                // TODO: find better error code for bad generator
+                ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
                 throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
             }
         } else {
@@ -152,7 +162,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
             }
 
             if (bn_g.getWord() < 2) {
-                // TODO: find better error code for bad generator
+                ERR_put_error(ERR_LIB_DH, 0, DH_R_BAD_GENERATOR, __FILE__, __LINE__);
                 throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid generator"_s);
                 return JSValue::encode({});
             }

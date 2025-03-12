@@ -269,7 +269,7 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
     RETURN_IF_EXCEPTION(scope, void());
 
     // Create error object with the message
-    JSC::JSObject* errorObject = createTypeError(globalObject);
+    JSC::JSObject* errorObject = createError(globalObject, errorMessage);
     RETURN_IF_EXCEPTION(scope, void());
 
     PutPropertySlot messageSlot(errorObject, false);

@@ -9125,8 +9125,8 @@ crypto_exports.createVerify = createVerify;
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
 
-function createDiffieHellman(prime, enc, generator, genc) {
-  return new _DiffieHellman(prime, enc, generator, genc);
+function createDiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding) {
+  return new _DiffieHellman(sizeOrKey, keyEncoding, generator, genEncoding);
 }
 crypto_exports.DiffieHellmanGroup = _DiffieHellmanGroup;
 crypto_exports.getDiffieHellman = crypto_exports.createDiffieHellmanGroup = _DiffieHellmanGroup;

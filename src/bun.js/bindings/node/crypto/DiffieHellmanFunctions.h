@@ -261,7 +261,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPublicKeyTemplate(JSC::JSGlobalOb
 
     auto& dh = thisObject->getImpl();
 
-    if (!dh.setPublicKey(std::move(key))) {
+    if (!dh.setPublicKey(WTFMove(key))) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to set public key"_s);
         return {};
     }
@@ -301,7 +301,7 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPrivateKeyTemplate(JSC::JSGlobalO
 
     auto& dh = thisObject->getImpl();
 
-    if (!dh.setPrivateKey(std::move(key))) {
+    if (!dh.setPrivateKey(WTFMove(key))) {
         throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Failed to set private key"_s);
         return {};
     }

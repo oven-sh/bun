@@ -491,7 +491,7 @@ pub const JSValue = enum(i64) {
         return result;
     }
 
-    // ECMA-262 20.1.2.5
+    // https://tc39.es/ecma262/#sec-number.issafeinteger
     pub fn isSafeInteger(this: JSValue) bool {
         if (this.isInt32()) {
             return true;

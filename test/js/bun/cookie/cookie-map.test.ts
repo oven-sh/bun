@@ -110,8 +110,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
 
     const cookieStr = Bun.Cookie.serialize(cookie1, cookie2);
 
-    expect(cookieStr).toInclude("foo=bar");
-    expect(cookieStr).toInclude("baz=qux");
+    expect(cookieStr).toMatchInlineSnapshot(`"foo=bar; baz=qux"`);
   });
 
   // Basic CookieMap tests
@@ -134,6 +133,8 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(cookie2).toBeDefined();
     expect(cookie2?.name).toBe("foo");
     expect(cookie2?.value).toBe("bar");
+
+    expect(map.toString()).toMatchInlineSnapshot(`"name=value; foo=bar"`);
   });
 
   test("can create CookieMap from object", () => {
@@ -179,6 +180,7 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.get("foo")?.secure).toBe(true);
     expect(map.get("foo")?.httpOnly).toBe(true);
     expect(map.get("foo")?.partitioned).toBe(true);
+    expect(map.toString()).toMatchInlineSnapshot(`"name=value; foo=bar; Secure; HttpOnly; Partitioned"`);
 
     // Delete a cookie
     map.delete("name");
@@ -237,9 +239,10 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
 
     const cookie = map.get("session");
     expect(cookie).toBeDefined();
-    expect(cookie?.httpOnly).toBe(false); // Modified to match implementation behavior
-    expect(cookie?.secure).toBe(false); // Modified to match implementation behavior
-    expect(cookie?.partitioned).toBe(false); // Modified to match implementation behavior
-    expect(cookie?.maxAge).toBe(0); // Modified to match implementation behavior
+    expect(cookie?.httpOnly).toBe(true);
+    expect(cookie?.secure).toBe(true);
+    expect(cookie?.partitioned).toBe(true);
+    expect(cookie?.maxAge).toBe(3600);
+    expect(cookie?.value).toBe("abc123");
   });
 });

@@ -534,9 +534,7 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
             } else if (expiresValue.isString()) {
                 auto expiresStr = convert<IDLUSVString>(*lexicalGlobalObject, expiresValue);
                 RETURN_IF_EXCEPTION(throwScope, void());
-                if (expiresStr == "session"_s) {
-                    expires = 0;
-                } else if (auto parsed = WTF::parseDate(expiresStr.span<LChar>())) {
+                if (auto parsed = WTF::parseDate(expiresStr.span<LChar>())) {
                     expires = parsed;
                     RETURN_IF_EXCEPTION(throwScope, void());
                 } else {

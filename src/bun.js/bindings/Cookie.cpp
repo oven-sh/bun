@@ -270,7 +270,7 @@ JSC::JSValue Cookie::toJSON(JSC::VM& vm, JSC::JSGlobalObject* globalObject) cons
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* object = JSC::constructEmptyObject(globalObject);
+    auto* object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     RETURN_IF_EXCEPTION(scope, JSC::jsNull());
 
     auto& builtinNames = Bun::builtinNames(vm);

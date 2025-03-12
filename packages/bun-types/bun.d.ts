@@ -7538,7 +7538,7 @@ declare module "bun" {
 
     static parse(cookieString: string): Cookie;
     static from(name: string, value: string, options?: CookieInit): Cookie;
-    static serialize(cookies: Cookie[]): string;
+    static serialize(...cookies: Cookie[]): string;
   }
 
   class CookieMap implements Iterable<[string, Cookie]> {

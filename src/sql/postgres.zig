@@ -995,11 +995,15 @@ pub const PostgresRequest = struct {
                     try writer.write("{");
                     var arr_iter = value.arrayIterator(globalObject);
                     while (arr_iter.next()) |item| {
-                        var str = String.fromJS2(item, globalObject) catch return error.OutOfMemory;
-                        defer str.deref();
-                        const slice = str.toUTF8WithoutRef(bun.default_allocator);
-                        defer slice.deinit();
-                        try writer.write(slice.slice());
+                        if (item.isEmptyOrUndefinedOrNull()) {
+                            try writer.write("NULL");
+                        } else {
+                            var str = String.fromJS2(item, globalObject) catch return error.OutOfMemory;
+                            defer str.deref();
+                            const slice = str.toUTF8WithoutRef(bun.default_allocator);
+                            defer slice.deinit();
+                            try writer.write(slice.slice());
+                        }
                         if (arr_iter.i < arr_iter.len) {
                             try writer.write(",");
                         }

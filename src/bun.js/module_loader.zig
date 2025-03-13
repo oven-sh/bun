@@ -2418,7 +2418,6 @@ pub const ModuleLoader = struct {
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
 
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
-                .@"detect-libc" => return jsSyntheticModule(if (!Environment.isLinux) .@"detect-libc" else if (!Environment.isMusl) .@"detect-libc/linux" else .@"detect-libc/musl", specifier),
                 .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
                 .@"node:assert/strict" => return jsSyntheticModule(.@"node:assert/strict", specifier),
                 .@"node:async_hooks" => return jsSyntheticModule(.@"node:async_hooks", specifier),
@@ -2626,7 +2625,6 @@ pub const HardcodedModule = enum {
     @"bun:main",
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
     @"bun:sqlite",
-    @"detect-libc",
     @"node:assert",
     @"node:assert/strict",
     @"node:async_hooks",
@@ -2712,7 +2710,6 @@ pub const HardcodedModule = enum {
             .{ "bun:test", HardcodedModule.@"bun:test" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "bun:internal-for-testing", HardcodedModule.@"bun:internal-for-testing" },
-            .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
 
@@ -2958,8 +2955,6 @@ pub const HardcodedModule = enum {
 
             // Thirdparty packages we override
             .{ "@vercel/fetch", .{ .path = "@vercel/fetch" } },
-            .{ "detect-libc", .{ .path = "detect-libc" } },
-            .{ "detect-libc/lib/detect-libc.js", .{ .path = "detect-libc" } },
             .{ "isomorphic-fetch", .{ .path = "isomorphic-fetch" } },
             .{ "node-fetch", .{ .path = "node-fetch" } },
             .{ "undici", .{ .path = "undici" } },

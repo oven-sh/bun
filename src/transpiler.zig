@@ -995,7 +995,7 @@ pub const Transpiler = struct {
         /// `"type"` from `package.json`. Used to make sure the parser defaults
         /// to CommonJS or ESM based on what the package.json says, when it
         /// doesn't otherwise know from reading the source code.
-        /// 
+        ///
         /// See: https://nodejs.org/api/packages.html#type
         module_type: options.ModuleType = .unknown,
 

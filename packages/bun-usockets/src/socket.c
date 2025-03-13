@@ -22,7 +22,6 @@
 #include <string.h>
 #include <stdint.h>
 #include <errno.h>
-#include <stdio.h>
 #ifndef WIN32
 #include <fcntl.h>
 #endif

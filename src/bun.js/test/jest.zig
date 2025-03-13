@@ -1940,7 +1940,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
 
     while (idx < label.len) {
         const char = label[idx];
-        
+
         // Handle % format specifiers
         if (char == '%' and (idx + 1 < label.len) and !(args_idx >= function_args.len)) {
             const current_arg = function_args[args_idx];
@@ -1996,10 +1996,10 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
         // Handle $variable interpolation syntax for objects
         else if (char == '$' and idx + 1 < label.len and !(function_args.len == 0)) {
             const firstArg = function_args[0];
-            
+
             // Skip $ character
             idx += 1;
-            
+
             // Check for $# (special case for test index)
             if (label[idx] == '#') {
                 const test_index_str = std.fmt.allocPrint(allocator, "{d}", .{test_idx}) catch bun.outOfMemory();
@@ -2008,71 +2008,74 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 idx += 1;
                 continue;
             }
-            
+
             // Extract variable name and possible path
             const nameStart = idx;
             var nameEnd = idx;
             var path = std.ArrayList([]const u8).init(allocator);
             defer path.deinit();
-            
+
             // Extract variable name - it can be alphanumeric or underscore
-            while (nameEnd < label.len and 
-                  ((label[nameEnd] >= 'a' and label[nameEnd] <= 'z') or
-                   (label[nameEnd] >= 'A' and label[nameEnd] <= 'Z') or
-                   (label[nameEnd] >= '0' and label[nameEnd] <= '9') or
-                   label[nameEnd] == '_')) {
+            while (nameEnd < label.len and
+                ((label[nameEnd] >= 'a' and label[nameEnd] <= 'z') or
+                (label[nameEnd] >= 'A' and label[nameEnd] <= 'Z') or
+                (label[nameEnd] >= '0' and label[nameEnd] <= '9') or
+                label[nameEnd] == '_'))
+            {
                 nameEnd += 1;
             }
-            
+
             // Extract the property name
             const propName = label[nameStart..nameEnd];
             try path.append(propName);
-            
+
             // Handle property path with dots (object.property.subproperty) and array indexing (array[0])
             var currentPos = nameEnd;
             while (currentPos < label.len and (label[currentPos] == '.' or (currentPos < label.len - 1 and label[currentPos] == '[' and label[currentPos + 1] != ']'))) {
                 if (label[currentPos] == '.') {
                     currentPos += 1; // Skip the dot
                     const pathStart = currentPos;
-                    
+
                     // Extract path segment
-                    while (currentPos < label.len and 
-                          ((label[currentPos] >= 'a' and label[currentPos] <= 'z') or
-                           (label[currentPos] >= 'A' and label[currentPos] <= 'Z') or
-                           (label[currentPos] >= '0' and label[currentPos] <= '9') or
-                           label[currentPos] == '_')) {
+                    while (currentPos < label.len and
+                        ((label[currentPos] >= 'a' and label[currentPos] <= 'z') or
+                        (label[currentPos] >= 'A' and label[currentPos] <= 'Z') or
+                        (label[currentPos] >= '0' and label[currentPos] <= '9') or
+                        label[currentPos] == '_'))
+                    {
                         currentPos += 1;
                     }
-                    
+
                     if (pathStart != currentPos) {
                         try path.append(label[pathStart..currentPos]);
                     }
                 } else if (label[currentPos] == '[') {
                     currentPos += 1; // Skip the opening bracket
                     const indexStart = currentPos;
-                    
+
                     // Check if this is a variable inside brackets like $array[$index]
                     if (currentPos < label.len and label[currentPos] == '$') {
                         // This is a nested variable reference
                         currentPos += 1; // Skip the $ character
                         const nestedVarStart = currentPos;
-                        
+
                         // Extract the nested variable name
                         while (currentPos < label.len and label[currentPos] != ']' and
-                              ((label[currentPos] >= 'a' and label[currentPos] <= 'z') or
-                               (label[currentPos] >= 'A' and label[currentPos] <= 'Z') or
-                               (label[currentPos] >= '0' and label[currentPos] <= '9') or
-                               label[currentPos] == '_')) {
+                            ((label[currentPos] >= 'a' and label[currentPos] <= 'z') or
+                            (label[currentPos] >= 'A' and label[currentPos] <= 'Z') or
+                            (label[currentPos] >= '0' and label[currentPos] <= '9') or
+                            label[currentPos] == '_'))
+                        {
                             currentPos += 1;
                         }
-                        
+
                         if (nestedVarStart != currentPos) {
                             const nestedVarName = label[nestedVarStart..currentPos];
-                            
+
                             // Get the value of the nested variable
                             if (firstArg.isObject()) {
                                 const nestedValue = (try firstArg.get(globalThis, nestedVarName)) orelse JSValue.jsUndefined();
-                                
+
                                 if (nestedValue.isNumber()) {
                                     // Convert to a number and use as property
                                     var int_val = nestedValue.toInt32();
@@ -2095,7 +2098,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                         while (currentPos < label.len and label[currentPos] != ']') {
                             currentPos += 1;
                         }
-                        
+
                         if (indexStart != currentPos) {
                             const indexOrProp = label[indexStart..currentPos];
                             // Handle numeric indices
@@ -2106,7 +2109,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                                     break;
                                 }
                             }
-                            
+
                             if (is_numeric) {
                                 // For numeric indices, convert to a number and use as property
                                 const indexNum = std.fmt.parseInt(usize, indexOrProp, 10) catch 0;
@@ -2118,22 +2121,22 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                             }
                         }
                     }
-                    
+
                     // Skip the closing bracket if present
                     if (currentPos < label.len and label[currentPos] == ']') {
                         currentPos += 1;
                     }
                 }
             }
-            
+
             // Get the property value
             if (firstArg.isObject() and path.items.len > 0) {
                 var currentValue = firstArg;
-                
+
                 for (path.items) |pathSegment| {
                     // Skip empty segments
                     if (pathSegment.len == 0) continue;
-                    
+
                     if (currentValue.isObject()) {
                         // Check if this is a numeric index and the object is an array
                         var is_numeric = true;
@@ -2143,7 +2146,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                                 break;
                             }
                         }
-                        
+
                         if (is_numeric and currentValue.jsType().isArray()) {
                             // For array indices, use array index access instead of property access
                             const index = std.fmt.parseInt(u32, pathSegment, 10) catch 0;
@@ -2161,7 +2164,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                         break;
                     }
                 }
-                
+
                 // Format and append the property value
                 if (!currentValue.isUndefined()) {
                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = false };
@@ -2179,7 +2182,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                 list.append(allocator, '$') catch bun.outOfMemory();
                 list.appendSlice(allocator, propName) catch bun.outOfMemory();
             }
-            
+
             idx = currentPos;
         } else {
             list.append(allocator, char) catch bun.outOfMemory();

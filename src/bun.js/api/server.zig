@@ -9205,7 +9205,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // - DevServer
             // - HTML Bundle
             var needs_plugins = dev_server != null;
-            var has_html_catch_all = false;
 
             if (this.config.user_routes_to_build.items.len > 0) {
                 var user_routes_to_build = this.config.user_routes_to_build.moveToUnmanaged();
@@ -9310,9 +9309,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                         },
                         .framework_router => {},
                     }
-                    if (!has_html_catch_all and strings.eqlComptime(entry.path, "/*")) {
-                        has_html_catch_all = true;
-                    }
                 }
             }
 
@@ -9324,6 +9320,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     this.plugins = ServePlugins.init(serve_plugins);
                 }
             };
+
+            const @"has /*" = for (this.config.static_routes.items) |route| {
+                if (strings.eqlComptime(route.path, "/*")) break true;
+            } else for (this.user_routes.items) |route| {
+                if (strings.eqlComptime(route.route.path, "/*")) break true;
+            } else false;
 
             // Setup user websocket fallback route aka fetch function if fetch is not provided will respond with 403.
             if (!has_any_ws) {
@@ -9339,7 +9341,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.config.onNodeHTTPRequest != .zero) {
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
                 NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), app);
-            } else if (this.config.onRequest != .zero and !has_html_catch_all) {
+            } else if (this.config.onRequest != .zero and !@"has /*") {
                 app.any("/*", *ThisServer, this, onRequest);
             }
 
@@ -9356,16 +9358,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // DevServer adds a catch-all handler to use FrameworkRouter (full stack apps)
                 has_dev_catch_all = dev.setRoutes(this) catch bun.outOfMemory();
             }
-
-            const @"has /*" = brk: {
-                for (this.config.static_routes.items) |route| {
-                    if (strings.eqlComptime(route.path, "/*")) {
-                        break :brk true;
-                    }
-                }
-
-                break :brk false;
-            };
 
             // "/*" routes are added backwards, so if they have a static route, it will never be matched
             // so we need to check for that first
@@ -9384,7 +9376,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             } else if (!has_dev_catch_all and this.config.onRequest != .zero) {
                 // "/*" routes are added backwards, so if they have a static route,
                 // it will never be matched so we need to check for that first
-                if (!has_html_catch_all) {
+                if (!@"has /*") {
                     app.any("/*", *ThisServer, this, onRequest);
                 } else {
                     // The HTML catch-all receives GET, HEAD.
@@ -9396,7 +9388,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.trace("/*", *ThisServer, this, onRequest);
                     app.connect("/*", *ThisServer, this, onRequest);
                 }
-            } else if (!has_dev_catch_all and this.config.onRequest == .zero and !has_html_catch_all) {
+            } else if (!has_dev_catch_all and this.config.onRequest == .zero and !@"has /*") {
                 app.any("/*", *ThisServer, this, on404);
             } else if (!has_dev_catch_all and this.config.onRequest == .zero) {
                 app.post("/*", *ThisServer, this, on404);

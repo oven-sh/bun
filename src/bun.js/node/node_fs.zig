@@ -5685,8 +5685,7 @@ pub const NodeFS = struct {
             bun.handleErrorReturnTrace(err1, @errorReturnTrace());
             // empircally, it seems to return AccessDenied when the
             // file is actually a directory on macOS.
-            if (args.recursive and
-                (err1 == error.IsDir or err1 == error.NotDir or err1 == error.AccessDenied))
+            if (err1 == error.IsDir or err1 == error.NotDir or err1 == error.AccessDenied)
             {
                 std.posix.rmdirZ(dest) catch |err2| {
                     bun.handleErrorReturnTrace(err2, @errorReturnTrace());

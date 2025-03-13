@@ -399,7 +399,11 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         StringView view = str;
 
         const bool needsEllipsis = jsString->length() > 28;
-        const bool needsEscape = str->contains('"');
+        // node checks for the presence of a single quote.
+        // - if it does not exist, use single quotes.
+        // - if it exists, json stringify (use double quotes).
+        // https://github.com/nodejs/node/blob/c3ed292d17c34578fd7806cb42da82bbe0cca103/lib/internal/errors.js#L1030
+        const bool needsEscape = str->contains('\'');
         if (needsEllipsis) {
             view = str->substring(0, 25);
         }
@@ -426,13 +430,17 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                 }
             }
         } else {
-            builder.append('"');
+            builder.append('\'');
             builder.append(view);
         }
         if (needsEllipsis) {
             builder.append("..."_s);
         }
-        builder.append('"');
+        if (UNLIKELY(needsEscape)) {
+            builder.append('"');
+        } else {
+            builder.append('\'');
+        }
         builder.append(')');
         return;
     }
@@ -1599,6 +1607,28 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
     }
 
+    case Bun::ErrorCode::ERR_TLS_INVALID_PROTOCOL_VERSION: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " is not a valid "_s, str1, " TLS protocol version"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_INVALID_PROTOCOL_VERSION, message));
+    }
+
+    case Bun::ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("TLS protocol version "_s, str0, " conflicts with secureProtocol "_s, str1);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT, message));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -1649,6 +1679,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED, "Socket is closed"_s));
     case ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION, "Socket closed before the connection was established"_s));
+    case ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED, "TLS session renegotiation disabled for this socket"_s));
 
     default: {
         break;

@@ -366,8 +366,8 @@ pub const All = struct {
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         // TODO: this is wrong as it clears exceptions (e.g `setTimeout(()=>{}, { [Symbol.toPrimitive]() { throw 'oops'; } })`)
-        const countdown_double = countdown.coerceToDouble(globalThis);
 
+        const countdown_double = countdown.coerceToDouble(globalThis);
         const countdown_int: u31 = switch (overflow_behavior) {
             .clamp => std.math.lossyCast(u31, countdown_double),
             .one_ms => if (!(countdown_double >= 1 and countdown_double <= std.math.maxInt(u31))) one: {
@@ -376,7 +376,7 @@ pub const All = struct {
                 } else if (countdown_double < 0 and !this.warned_negative_number) {
                     this.warned_negative_number = true;
                     warnInvalidCountdown(globalThis, countdown_double, .TimeoutNegativeWarning);
-                } else if (std.math.isNan(countdown_double) and !this.warned_not_number) {
+                } else if (!countdown.isUndefined() and countdown.isNumber() and std.math.isNan(countdown_double) and !this.warned_not_number) {
                     this.warned_not_number = true;
                     warnInvalidCountdown(globalThis, countdown_double, .TimeoutNaNWarning);
                 }
@@ -1191,6 +1191,7 @@ pub const EventLoopTimer = struct {
         WTFTimer,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
+        SubprocessTimeout,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -1205,6 +1206,7 @@ pub const EventLoopTimer = struct {
                 .WTFTimer => WTFTimer,
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
+                .SubprocessTimeout => JSC.Subprocess,
             };
         }
     } else enum {
@@ -1218,6 +1220,7 @@ pub const EventLoopTimer = struct {
         DNSResolver,
         PostgresSQLConnectionTimeout,
         PostgresSQLConnectionMaxLifetime,
+        SubprocessTimeout,
 
         pub fn Type(comptime T: Tag) type {
             return switch (T) {
@@ -1231,6 +1234,7 @@ pub const EventLoopTimer = struct {
                 .DNSResolver => DNSResolver,
                 .PostgresSQLConnectionTimeout => JSC.Postgres.PostgresSQLConnection,
                 .PostgresSQLConnectionMaxLifetime => JSC.Postgres.PostgresSQLConnection,
+                .SubprocessTimeout => JSC.Subprocess,
             };
         }
     };
@@ -1320,6 +1324,10 @@ pub const EventLoopTimer = struct {
 
                 if (comptime t.Type() == DNSResolver) {
                     return container.checkTimeouts(now, vm);
+                }
+
+                if (comptime t.Type() == JSC.Subprocess) {
+                    return container.timeoutCallback();
                 }
 
                 return container.callback(container);

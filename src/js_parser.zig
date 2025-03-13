@@ -24337,7 +24337,12 @@ pub const ConvertESMExportsForHmr = struct {
                 var new_len: usize = 0;
                 for (st.decls.slice()) |*decl_ptr| {
                     const decl = decl_ptr.*; // explicit copy to avoid aliasinng
-                    bun.assert(decl.value != null); // const must be initialized
+                    const value = decl.value orelse {
+                        st.decls.mut(new_len).* = decl;
+                        new_len += 1;
+                        try ctx.visitBindingToExport(p, decl.binding);
+                        continue;
+                    };
 
                     switch (decl.binding.data) {
                         .b_missing => {},
@@ -24347,10 +24352,10 @@ pub const ConvertESMExportsForHmr = struct {
 
                             // if the symbol is not used, we don't need to preserve
                             // a binding in this scope. we can move it to the exports object.
-                            if (symbol.use_count_estimate == 0 and decl.value.?.canBeMoved()) {
+                            if (symbol.use_count_estimate == 0 and value.canBeMoved()) {
                                 try ctx.export_props.append(p.allocator, .{
                                     .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
-                                    .value = decl.value,
+                                    .value = value,
                                 });
                             } else {
                                 st.decls.mut(new_len).* = decl;

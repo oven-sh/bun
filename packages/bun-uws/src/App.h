@@ -189,6 +189,10 @@ public:
      * This function should probably be optimized a lot in future releases,
      * it could be O(1) with a hash map of fullnames and their counts. */
     unsigned int numSubscribers(std::string_view topic) {
+        if (!topicTree) {
+            return 0;
+        }
+
         Topic *t = topicTree->lookupTopic(topic);
         if (t) {
             return (unsigned int) t->size();
@@ -604,6 +608,10 @@ public:
     TemplatedApp &&listen(MoveOnlyFunction<void(us_listen_socket_t *)> &&handler, std::string_view path, int options) {
         handler(httpContext ? httpContext->listen_unix(path.data(), path.length(), options) : nullptr);
         return std::move(*this);
+    }
+
+    void setOnClose(HttpContextData<SSL>::OnSocketClosedCallback onClose) {
+        httpContext->getSocketContextData()->onSocketClosed = onClose;
     }
 
     TemplatedApp &&run() {

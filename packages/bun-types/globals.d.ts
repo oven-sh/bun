@@ -1788,6 +1788,12 @@ declare global {
      * @param base64 The base64 encoded string to convert to a Uint8Array
      * @returns A new Uint8Array containing the decoded data
      */
-    fromBase64(base64: string): Uint8Array;
+    fromBase64(
+      base64: string,
+      options?: {
+        alphabet?: "base64" | "base64url";
+        lastChunkHandling?: "loose" | "strict" | "stop-before-partial"
+      }
+    ): Uint8Array;
   }
 }

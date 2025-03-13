@@ -539,7 +539,7 @@ pub const S3Credentials = struct {
             }
         }
         if (strings.endsWith(path, "/")) {
-            path = path[0..path.len];
+            path = path[0 .. path.len - 1];
         } else if (strings.endsWith(path, "\\")) {
             path = path[0 .. path.len - 1];
         }

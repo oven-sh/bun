@@ -52,6 +52,17 @@ static const JSC::HashTableValue JSVerifyPrototypeTableValues[] = {
 
 // JSVerify implementation
 const JSC::ClassInfo JSVerify::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerify) };
+const JSC::ClassInfo JSVerifyPrototype::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerifyPrototype) };
+const JSC::ClassInfo JSVerifyConstructor::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerifyConstructor) };
+
+void JSVerify::destroy(JSC::JSCell* cell)
+{
+    static_cast<JSVerify*>(cell)->~JSVerify();
+}
+
+JSVerify::~JSVerify()
+{
+}
 
 JSVerify::JSVerify(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -80,7 +91,7 @@ JSC::GCClient::IsoSubspace* JSVerify::subspaceFor(JSC::VM& vm)
 {
     if constexpr (mode == JSC::SubspaceAccess::Concurrently)
         return nullptr;
-    return WebCore::subspaceForImpl<CellType, WebCore::UseCustomHeapCellType::No>(
+    return WebCore::subspaceForImpl<JSVerify, WebCore::UseCustomHeapCellType::No>(
         vm,
         [](auto& spaces) { return spaces.m_clientSubspaceForJSVerify.get(); },
         [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSVerify = std::forward<decltype(space)>(space); },
@@ -89,7 +100,6 @@ JSC::GCClient::IsoSubspace* JSVerify::subspaceFor(JSC::VM& vm)
 }
 
 // JSVerifyPrototype implementation
-const JSC::ClassInfo JSVerifyPrototype::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerifyPrototype) };
 
 JSVerifyPrototype::JSVerifyPrototype(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure)
@@ -116,7 +126,6 @@ JSC::Structure* JSVerifyPrototype::createStructure(JSC::VM& vm, JSC::JSGlobalObj
 }
 
 // JSVerifyConstructor implementation
-const JSC::ClassInfo JSVerifyConstructor::s_info = { "Verify"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSVerifyConstructor) };
 
 JSVerifyConstructor::JSVerifyConstructor(JSC::VM& vm, JSC::Structure* structure)
     : Base(vm, structure, callVerify, constructVerify)
@@ -208,21 +217,23 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
         return JSValue::encode({});
     }
 
+    JSValue wrappedVerify = callFrame->argument(0);
+
     // Check that we have at least 1 argument (the data)
-    if (callFrame->argumentCount() < 1) {
+    if (callFrame->argumentCount() < 2) {
         throwVMError(globalObject, scope, "Verify.prototype.update requires at least 1 argument"_s);
         return JSValue::encode({});
     }
 
     // Get the data argument
-    JSC::JSValue data = callFrame->argument(0);
+    JSC::JSValue data = callFrame->argument(1);
 
     // if it's a string, using encoding for decode. if it's a buffer, just use the buffer
     if (data.isString()) {
         JSString* dataString = data.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, JSValue::encode({}));
 
-        JSValue encodingValue = callFrame->argument(1);
+        JSValue encodingValue = callFrame->argument(2);
         auto encoding = parseEnumeration<BufferEncodingType>(*globalObject, encodingValue).value_or(BufferEncodingType::utf8);
         RETURN_IF_EXCEPTION(scope, {});
 
@@ -257,7 +268,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             return JSValue::encode({});
         }
 
-        return JSValue::encode(callFrame->thisValue());
+        return JSValue::encode(wrappedVerify);
     }
 
     if (!data.isCell() || !JSC::isTypedArrayTypeIncludingDataView(data.asCell()->type())) {
@@ -287,7 +298,7 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncUpdate, (JSGlobalObject * globalObject
             return JSValue::encode({});
         }
 
-        return JSValue::encode(callFrame->thisValue());
+        return JSValue::encode(wrappedVerify);
     }
 
     return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "data"_s, "string or an instance of Buffer, TypedArray, or DataView"_s, data);

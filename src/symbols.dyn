@@ -224,4 +224,5 @@
     __ZN2v812api_internal17FromJustIsNothingEv;
     _uv_os_getpid;
     _uv_os_getppid;
+    _dumpBtjsTrace;
 };

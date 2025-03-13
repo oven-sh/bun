@@ -320,15 +320,15 @@ pub const Json = struct {
             break :handler null;
         };
     }
-    pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
+    pub fn parseJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, mode: enum { json, jsonc }, comptime force_utf8: bool) anyerror!?js_ast.Expr {
         // tsconfig.* and jsconfig.* files are JSON files, but they are not valid JSON files.
         // They are JSON files with comments and trailing commas.
         // Sometimes tooling expects this to work.
-        if (source.path.isJSONCFile()) {
-            return try parse(cache, log, source, allocator, json_parser.parseTSConfig, true);
+        if (mode == .jsonc) {
+            return try parse(cache, log, source, allocator, json_parser.parseTSConfig, force_utf8);
         }
 
-        return try parse(cache, log, source, allocator, json_parser.parse, false);
+        return try parse(cache, log, source, allocator, json_parser.parse, force_utf8);
     }
 
     pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator, comptime force_utf8: bool) anyerror!?js_ast.Expr {

@@ -262,7 +262,7 @@ async function runTests() {
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [subcommand, "--config=./bunfig.node-test.toml", absoluteTestPath],
+            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
             timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",
@@ -878,11 +878,20 @@ function isNodeParallelTest(testPath) {
 }
 
 /**
+ * @param {string} testPath
+ * @returns {boolean}
+ */
+function isNodeSequentialTest(testPath) {
+  return testPath.replaceAll(sep, "/").includes("js/node/test/sequential/");
+}
+
+/**
  * @param {string} path
  * @returns {boolean}
  */
 function isTest(path) {
   if (isNodeParallelTest(path) && targetDoesRunNodeTests()) return true;
+  if (isNodeSequentialTest(path) && targetDoesRunNodeTests()) return true;
   if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }

@@ -767,7 +767,7 @@ pub const InitCommand = struct {
                 package_json_writer,
                 js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
                 &logger.Source.initEmptyFile("package.json"),
-                .{},
+                .{ .mangled_props = null },
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 package_json_file = null;
@@ -827,14 +827,12 @@ pub const InitCommand = struct {
                 }
 
                 if (fields.entry_point.len > 0 and !did_load_package_json) {
-                    Output.pretty("\nTo get started, run:\n\n\t", .{});
-                    if (strings.containsAny(
-                        " \"'",
-                        fields.entry_point,
-                    )) {
-                        Output.prettyln("<cyan>bun run {any}<r>", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
+                    Output.pretty("\nTo get started, run:\n\n    ", .{});
+
+                    if (strings.containsAny(" \"'", fields.entry_point)) {
+                        Output.pretty("<cyan>bun run {any}<r>\n\n", .{bun.fmt.formatJSONStringLatin1(fields.entry_point)});
                     } else {
-                        Output.prettyln("<cyan>bun run {s}<r>", .{fields.entry_point});
+                        Output.pretty("<cyan>bun run {s}<r>\n\n", .{fields.entry_point});
                     }
                 }
 
@@ -1106,15 +1104,15 @@ const Template = enum {
             \\
             \\<b><cyan>Development<r><d> - full-stack dev server with hot reload<r>
             \\
-            \\      <cyan><b>bun dev<r>
+            \\    <cyan><b>bun dev<r>
             \\
             \\<b><yellow>Static Site<r><d> - build optimized assets to disk (no backend)<r>
             \\
-            \\      <yellow><b>bun run build<r>
+            \\    <yellow><b>bun run build<r>
             \\
             \\<b><green>Production<r><d> - serve a full-stack production build<r>
             \\
-            \\      <green><b>bun start<r>
+            \\    <green><b>bun start<r>
             \\
             \\<blue>Happy bunning! 🐇<r>
             \\

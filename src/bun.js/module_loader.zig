@@ -1944,7 +1944,7 @@ pub const ModuleLoader = struct {
                 // Pass along package.json type "module" if set.
                 const tag: ResolvedSource.Tag = switch (loader) {
                     .json, .jsonc => .json_for_object_loader,
-                    .js, .jsx, .ts, .tsx => if (parse_result.source.path.isFile()) brk: {
+                    .js, .jsx, .ts, .tsx => brk: {
                         const module_type_ = if (package_json) |pkg| pkg.module_type else module_type;
 
                         break :brk switch (module_type_) {
@@ -1952,7 +1952,7 @@ pub const ModuleLoader = struct {
                             .cjs => .package_json_type_commonjs,
                             else => .javascript,
                         };
-                    } else .javascript,
+                    },
                     else => .javascript,
                 };
 

@@ -199,7 +199,7 @@ pub const TransformTask = struct {
         if (printed > 0) {
             buffer_writer = printer.ctx;
             buffer_writer.buffer.list.items = buffer_writer.written;
-            this.output_code = bun.String.createLatin1(buffer_writer.written);
+            this.output_code = bun.String.createUTF8(buffer_writer.written);
         } else {
             this.output_code = bun.String.empty;
         }
@@ -490,6 +490,8 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 &transpiler.log,
                 source,
                 allocator,
+                .json,
+                false,
             ) catch null) orelse break :macros;
             transpiler.macro_map = PackageJSON.parseMacrosJSON(allocator, json, &transpiler.log, &source);
         }

@@ -316,7 +316,7 @@ pub fn createCallback(
     comptime functionPointer: anytype,
 ) JSValue {
     if (@TypeOf(functionPointer) == JSC.JSHostFunctionType) {
-        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
+        return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false, null);
     }
     return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false, null);
 }

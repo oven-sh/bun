@@ -871,6 +871,11 @@ pub const DynamicBitSetUnmanaged = struct {
         return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
     }
 
+    pub fn isSetAllowOutOfBound(self: Self, index: usize, out_of_bounds: bool) bool {
+        if (index >= self.bit_length) return out_of_bounds;
+        return (self.masks[maskIndex(index)] & maskBit(index)) != 0;
+    }
+
     pub fn bytes(self: Self) []const u8 {
         return std.mem.sliceAsBytes(self.masks[0 .. numMasks(self.bit_length) + 1]);
     }

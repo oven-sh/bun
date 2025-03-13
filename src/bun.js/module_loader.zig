@@ -243,6 +243,7 @@ pub const RuntimeTranspilerStore = struct {
         input_specifier: bun.String,
         path: Fs.Path,
         referrer: bun.String,
+        loader: bun.options.Loader,
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
         const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
@@ -254,7 +255,7 @@ pub const RuntimeTranspilerStore = struct {
             .non_threadsafe_referrer = referrer,
             .vm = vm,
             .log = logger.Log.init(bun.default_allocator),
-            .loader = vm.transpiler.options.loader(owned_path.name.ext),
+            .loader = loader,
             .promise = JSC.Strong.create(JSValue.fromCell(promise), globalObject),
             .poll_ref = .{},
             .fetcher = TranspilerJob.Fetcher{
@@ -1497,7 +1498,7 @@ pub const ModuleLoader = struct {
         const disable_transpilying = comptime flags.disableTranspiling();
 
         if (comptime disable_transpilying) {
-            if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json)) {
+            if (!(loader.isJavaScriptLike() or loader == .toml or loader == .text or loader == .json or loader == .jsonc)) {
                 // Don't print "export default <file path>"
                 return ResolvedSource{
                     .allocator = null,
@@ -1510,7 +1511,7 @@ pub const ModuleLoader = struct {
         }
 
         switch (loader) {
-            .js, .jsx, .ts, .tsx, .json, .toml, .text => {
+            .js, .jsx, .ts, .tsx, .json, .jsonc, .toml, .text => {
                 jsc_vm.transpiled_count += 1;
                 jsc_vm.transpiler.resetStore();
                 const hash = bun.Watcher.getHash(path.text);
@@ -1649,7 +1650,7 @@ pub const ModuleLoader = struct {
                 }
 
                 var parse_result: ParseResult = switch (disable_transpilying or
-                    (loader == .json and !path.isJSONCFile())) {
+                    (loader == .json)) {
                     inline else => |return_file_only| brk: {
                         break :brk jsc_vm.transpiler.parseMaybeReturnFileOnly(
                             parse_options,
@@ -1722,7 +1723,7 @@ pub const ModuleLoader = struct {
                     return error.ParseError;
                 }
 
-                if (loader == .json and !path.isJSONCFile()) {
+                if (loader == .json) {
                     return ResolvedSource{
                         .allocator = null,
                         .source_code = bun.String.createUTF8(parse_result.source.contents),
@@ -1748,7 +1749,7 @@ pub const ModuleLoader = struct {
                     };
                 }
 
-                if (loader == .json or loader == .toml) {
+                if (loader == .json or loader == .jsonc or loader == .toml) {
                     if (parse_result.empty) {
                         return ResolvedSource{
                             .allocator = null,
@@ -1783,6 +1784,24 @@ pub const ModuleLoader = struct {
                         .bytecode_cache_size = if (bytecode_slice.len > 0) bytecode_slice.len else 0,
                         .is_commonjs_module = parse_result.already_bundled.isCommonJS(),
                     };
+                }
+
+                if (parse_result.empty) {
+                    const was_cjs = (loader == .js or loader == .ts) and brk: {
+                        const ext = std.fs.path.extension(parse_result.source.path.text);
+                        break :brk strings.eqlComptime(ext, ".cjs") or strings.eqlComptime(ext, ".cts");
+                    };
+                    if (was_cjs) {
+                        return .{
+                            .allocator = null,
+                            .source_code = bun.String.static("(function(){})"),
+                            .specifier = input_specifier,
+                            .source_url = input_specifier.createIfDifferent(path.text),
+                            .is_commonjs_module = true,
+                            .hash = 0,
+                            .tag = .javascript,
+                        };
+                    }
                 }
 
                 if (cache.entry) |*entry| {
@@ -2188,32 +2207,6 @@ pub const ModuleLoader = struct {
         }
     }
 
-    pub fn normalizeSpecifier(
-        jsc_vm: *VirtualMachine,
-        slice_: string,
-    ) struct { string, string } {
-        var slice = slice_;
-        if (slice.len == 0) return .{ slice, slice };
-
-        if (strings.hasPrefix(slice, jsc_vm.origin.host)) {
-            slice = slice[jsc_vm.origin.host.len..];
-        }
-
-        if (jsc_vm.origin.path.len > 1) {
-            if (strings.hasPrefix(slice, jsc_vm.origin.path)) {
-                slice = slice[jsc_vm.origin.path.len..];
-            }
-        }
-
-        const specifier = slice;
-
-        if (strings.indexOfChar(slice, '?')) |i| {
-            slice = slice[0..i];
-        }
-
-        return .{ slice, specifier };
-    }
-
     pub export fn Bun__fetchBuiltinModule(
         jsc_vm: *VirtualMachine,
         globalObject: *JSGlobalObject,
@@ -2260,98 +2253,19 @@ pub const ModuleLoader = struct {
         var referrer_slice = referrer.toUTF8(jsc_vm.allocator);
         defer _specifier.deinit();
         defer referrer_slice.deinit();
-        const normalized_file_path_from_specifier, const specifier = normalizeSpecifier(
-            jsc_vm,
-            _specifier.slice(),
-        );
-        var path = Fs.Path.init(normalized_file_path_from_specifier);
 
-        var virtual_source: ?*logger.Source = null;
+        var type_attribute_str: ?string = null;
+        if (type_attribute) |attribute| if (attribute.asUTF8()) |attr_utf8| {
+            type_attribute_str = attr_utf8;
+        };
+
         var virtual_source_to_use: ?logger.Source = null;
         var blob_to_deinit: ?JSC.WebCore.Blob = null;
-        defer {
-            if (blob_to_deinit != null) {
-                blob_to_deinit.?.deinit();
-            }
-        }
-
-        // Deliberately optional.
-        // The concurrent one only handles javascript-like loaders right now.
-        var loader: ?options.Loader = jsc_vm.transpiler.options.loaders.get(path.name.ext);
-
-        if (jsc_vm.module_loader.eval_source) |eval_source| {
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                virtual_source = eval_source;
-                loader = .tsx;
-            }
-            if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                virtual_source = eval_source;
-                loader = .tsx;
-            }
-        }
-
-        if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
-            if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
-                blob_to_deinit = blob;
-
-                // "file:" loader makes no sense for blobs
-                // so let's default to tsx.
-                if (blob.getFileName()) |filename| {
-                    const current_path = Fs.Path.init(filename);
-
-                    // Only treat it as a file if is a Bun.file()
-                    if (blob.needsToReadFile()) {
-                        path = current_path;
-                    }
-
-                    loader = jsc_vm.transpiler.options.loaders.get(current_path.name.ext) orelse .tsx;
-                } else {
-                    loader = .tsx;
-                }
-
-                if (!blob.needsToReadFile()) {
-                    virtual_source_to_use = logger.Source{
-                        .path = path,
-                        .contents = blob.sharedView(),
-                    };
-                    virtual_source = &virtual_source_to_use.?;
-                }
-            } else {
-                ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
-                return null;
-            }
-        }
-
-        if (type_attribute) |attribute| {
-            if (attribute.eqlComptime("sqlite")) {
-                loader = .sqlite;
-            } else if (attribute.eqlComptime("text")) {
-                loader = .text;
-            } else if (attribute.eqlComptime("json")) {
-                loader = .json;
-            } else if (attribute.eqlComptime("toml")) {
-                loader = .toml;
-            } else if (attribute.eqlComptime("file")) {
-                loader = .file;
-            } else if (attribute.eqlComptime("js")) {
-                loader = .js;
-            } else if (attribute.eqlComptime("jsx")) {
-                loader = .jsx;
-            } else if (attribute.eqlComptime("ts")) {
-                loader = .ts;
-            } else if (attribute.eqlComptime("tsx")) {
-                loader = .tsx;
-            } else if (attribute.eqlComptime("html")) {
-                loader = .html;
-            }
-        }
-
-        // If we were going to choose file loader, see if it's a bun.lock
-        if (loader == null) {
-            if (strings.eqlComptime(path.name.filename, "bun.lock")) {
-                loader = .json;
-            }
-        }
+        const lr = options.getLoaderAndVirtualSource(_specifier.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, type_attribute_str) catch {
+            ret.* = JSC.ErrorableResolvedSource.err(error.JSErrorObject, globalObject.MODULE_NOT_FOUND("Blob not found", .{}).toJS().asVoid());
+            return null;
+        };
+        defer if (blob_to_deinit) |*blob| blob.deinit();
 
         // We only run the transpiler concurrently when we can.
         // Today, that's:
@@ -2360,28 +2274,29 @@ pub const ModuleLoader = struct {
         //   Import Expressions (import('foo'))
         //
         if (comptime bun.FeatureFlags.concurrent_transpiler) {
-            const concurrent_loader = loader orelse .file;
+            const concurrent_loader = lr.loader orelse .file;
             if (blob_to_deinit == null and allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
                 jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
             {
-                if (!strings.eqlLong(specifier, jsc_vm.main, true)) {
+                if (!lr.is_main) {
                     return jsc_vm.transpiler_store.transpile(
                         jsc_vm,
                         globalObject,
                         specifier_ptr.dupeRef(),
-                        path,
+                        lr.path,
                         referrer.dupeRef(),
+                        concurrent_loader,
                     );
                 }
             }
         }
 
-        const synchronous_loader = loader orelse loader: {
+        const synchronous_loader = lr.loader orelse loader: {
             if (jsc_vm.has_loaded or jsc_vm.is_in_preload) {
                 // Extensionless files in this context are treated as the JS loader
-                if (path.name.ext.len == 0) {
+                if (lr.path.name.ext.len == 0) {
                     break :loader options.Loader.tsx;
                 }
 
@@ -2395,7 +2310,7 @@ pub const ModuleLoader = struct {
         };
 
         if (comptime Environment.allow_assert)
-            debug("transpile({s}, {s}, sync)", .{ specifier, @tagName(synchronous_loader) });
+            debug("transpile({s}, {s}, sync)", .{ lr.specifier, @tagName(synchronous_loader) });
 
         defer jsc_vm.module_loader.resetArena(jsc_vm);
 
@@ -2403,13 +2318,13 @@ pub const ModuleLoader = struct {
         ret.* = JSC.ErrorableResolvedSource.ok(
             ModuleLoader.transpileSourceCode(
                 jsc_vm,
-                specifier,
+                lr.specifier,
                 referrer_slice.slice(),
                 specifier_ptr.*,
-                path,
+                lr.path,
                 synchronous_loader,
                 &log,
-                virtual_source,
+                lr.virtual_source,
                 if (allow_promise) &promise else null,
                 VirtualMachine.source_code_printer.?,
                 globalObject,
@@ -2563,6 +2478,7 @@ pub const ModuleLoader = struct {
                 .@"node:_stream_transform" => return jsSyntheticModule(.@"node:_stream_transform", specifier),
                 .@"node:_stream_wrap" => return jsSyntheticModule(.@"node:_stream_wrap", specifier),
                 .@"node:_stream_writable" => return jsSyntheticModule(.@"node:_stream_writable", specifier),
+                .@"node:_tls_common" => return jsSyntheticModule(.@"node:_tls_common", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2780,6 +2696,7 @@ pub const HardcodedModule = enum {
     @"node:_stream_transform",
     @"node:_stream_wrap",
     @"node:_stream_writable",
+    @"node:_tls_common",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2861,6 +2778,7 @@ pub const HardcodedModule = enum {
             .{ "_stream_transform", .@"node:_stream_transform" },
             .{ "_stream_wrap", .@"node:_stream_wrap" },
             .{ "_stream_writable", .@"node:_stream_writable" },
+            .{ "_tls_common", .@"node:_tls_common" },
 
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2946,7 +2864,7 @@ pub const HardcodedModule = enum {
             .{ "node:_stream_wrap", .{ .path = "_stream_wrap" } },
             .{ "node:_stream_writable", .{ .path = "_stream_writable" } },
             .{ "node:_tls_wrap", .{ .path = "tls" } },
-            .{ "node:_tls_common", .{ .path = "tls" } },
+            .{ "node:_tls_common", .{ .path = "_tls_common" } },
 
             .{ "assert", .{ .path = "assert" } },
             .{ "assert/strict", .{ .path = "assert/strict" } },
@@ -3021,7 +2939,7 @@ pub const HardcodedModule = enum {
             .{ "_stream_wrap", .{ .path = "_stream_wrap" } },
             .{ "_stream_writable", .{ .path = "_stream_writable" } },
             .{ "_tls_wrap", .{ .path = "tls" } },
-            .{ "_tls_common", .{ .path = "tls" } },
+            .{ "_tls_common", .{ .path = "_tls_common" } },
 
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },

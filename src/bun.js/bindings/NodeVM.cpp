@@ -607,7 +607,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!script) {
-        throwTypeError(globalObject, scope, "Script.prototype.runInNewContext can only be called on a Script object"_s);
+        throwTypeError(globalObject, scope, "this.runInContext is not a function"_s);
         return {};
     }
 

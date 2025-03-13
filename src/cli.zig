@@ -636,7 +636,12 @@ pub const Arguments = struct {
 
         opts.drop = args.options("--drop");
 
-        const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
+        // Node added a `--loader` flag (that's kinda like `--register`). It's
+        // completely different from ours.
+        const loader_tuple = if (cmd != .RunAsNodeCommand)
+            try LoaderColonList.resolve(allocator, args.options("--loader"))
+        else
+            .{ .keys = &[_]u8{}, .values = &[_]Api.Loader{} };
 
         if (loader_tuple.keys.len > 0) {
             opts.loaders = .{

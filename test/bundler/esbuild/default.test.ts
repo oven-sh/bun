@@ -1835,7 +1835,7 @@ describe("bundler", () => {
       assert(!api.readFile("/out.js").includes("var bar"), 'bundle shouldnt include "var bar"');
     },
     run: {
-      error: "ReferenceError: Can't find variable: bar",
+      error: "ReferenceError: bar is not defined",
     },
   });
   itBundled("default/ArgumentDefaultValueScopeNoBundle", {

@@ -23,6 +23,66 @@ new Promise(resolve => {
   resolve(1);
 });
 
+Bun.serve({
+  routes: {
+    "/:test": req => {
+      return new Response(req.params.test);
+    },
+  },
+
+  fetch: (req, server) => {
+    if (!server.upgrade(req)) {
+      return new Response("not upgraded");
+    }
+  },
+
+  websocket: {
+    message: ws => {
+      ws.data;
+      ws.send(" ");
+    },
+  },
+});
+
+import.meta.hot.on("bun:bun:beforeFullReloadBut also allows anything", () => {
+  //
+});
+
+Bun.serve({
+  routes: {
+    "/:test": req => {
+      return new Response(req.params.test);
+    },
+  },
+
+  fetch: (req, server) => {
+    return new Response("upgraded");
+  },
+});
+
+Bun.serve({
+  fetch: (req, server) => {
+    return new Response("upgraded");
+  },
+});
+
+Bun.serve({
+  routes: {
+    "/:test": req => {
+      return new Response(req.params.test);
+    },
+  },
+});
+
+Bun.serve({
+  fetch: () => new Response("ok"),
+  websocket: {
+    message: ws => {
+      //
+    },
+  },
+});
+
 new Map();
 new Set();
 new WeakMap();
@@ -47,6 +107,8 @@ await fetch("", {
 r.method;
 r.body;
 r.headers.get("content-type");
+
+new Bun.$.ShellError() instanceof Bun.$.ShellError;
 
 await r.json();
 await r.text();

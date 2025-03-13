@@ -11018,6 +11018,7 @@ pub const PackageManager = struct {
             &current_package_json.source,
             .{
                 .indent = current_package_json_indent,
+                .mangled_props = null,
             },
         ) catch |err| {
             Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -11094,6 +11095,7 @@ pub const PackageManager = struct {
                     &root_package_json.source,
                     .{
                         .indent = root_package_json.indentation,
+                        .mangled_props = null,
                     },
                 ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -11157,6 +11159,7 @@ pub const PackageManager = struct {
                 &source,
                 .{
                     .indent = current_package_json_indent,
+                    .mangled_props = null,
                 },
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});

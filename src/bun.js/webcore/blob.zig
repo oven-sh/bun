@@ -4750,6 +4750,18 @@ pub const Blob = struct {
         return null;
     }
 
+    pub fn getLoader(blob: *const Blob, jsc_vm: *VirtualMachine) ?bun.options.Loader {
+        if (blob.getFileName()) |filename| {
+            const current_path = bun.fs.Path.init(filename);
+            return current_path.loader(&jsc_vm.transpiler.options.loaders) orelse .tsx;
+        } else if (blob.getMimeTypeOrContentType()) |mime_type| {
+            return .fromMimeType(mime_type);
+        } else {
+            // Be maximally permissive.
+            return .tsx;
+        }
+    }
+
     // TODO: Move this to a separate `File` object or BunFile
     pub fn getLastModified(
         this: *Blob,
@@ -5290,7 +5302,7 @@ pub const Blob = struct {
         return toStringWithBytes(this, global, view_, lifetime);
     }
 
-    pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
+    pub fn toJSON(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) bun.JSError!JSValue {
         if (this.needsToReadFile()) {
             return this.doReadFile(toJSONWithBytes, global);
         }
@@ -5303,7 +5315,7 @@ pub const Blob = struct {
         return toJSONWithBytes(this, global, view_, lifetime);
     }
 
-    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) JSValue {
+    pub fn toJSONWithBytes(this: *Blob, global: *JSGlobalObject, raw_bytes: []const u8, comptime lifetime: Lifetime) bun.JSError!JSValue {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
         if (buf.len == 0) return global.createSyntaxErrorInstance("Unexpected end of JSON input", .{});
 
@@ -5901,7 +5913,7 @@ pub const AnyBlob = union(enum) {
         promise.wrap(globalThis, toActionValue, .{ this, globalThis, action });
     }
 
-    pub fn toJSON(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {
+    pub fn toJSON(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) bun.JSError!JSValue {
         switch (this.*) {
             .Blob => return this.Blob.toJSON(global, lifetime),
             // .InlineBlob => {
@@ -5941,7 +5953,7 @@ pub const AnyBlob = union(enum) {
         }
     }
 
-    pub fn toJSONShare(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+    pub fn toJSONShare(this: *AnyBlob, global: *JSGlobalObject) bun.JSError!JSValue {
         return this.toJSON(global, .share);
     }
 

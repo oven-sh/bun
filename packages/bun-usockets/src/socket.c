@@ -225,7 +225,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
         s->next = s->context->loop->data.closed_head;
         s->context->loop->data.closed_head = s;
 
-
+        /* preserve the return value from on_close if its called */
         return res;
         
     }

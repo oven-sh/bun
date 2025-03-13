@@ -1151,11 +1151,10 @@ pub const FFI = struct {
             }
         }
 
-        var lib = allocator.create(FFI) catch unreachable;
-        lib.* = .{
+        const lib = bun.new(FFI, .{
             .dylib = dylib,
             .functions = symbols,
-        };
+        });
 
         const js_object = lib.toJS(global);
         JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);
@@ -1257,11 +1256,10 @@ pub const FFI = struct {
             }
         }
 
-        var lib = allocator.create(FFI) catch unreachable;
-        lib.* = .{
+        const lib = bun.new(FFI, .{
             .dylib = null,
             .functions = symbols,
-        };
+        });
 
         const js_object = lib.toJS(global);
         JSC.Codegen.JSFFI.symbolsValueSetCached(js_object, global, obj);

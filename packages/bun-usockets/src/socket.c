@@ -217,12 +217,13 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
         if (!(us_internal_poll_type(&s->p) & POLL_TYPE_SEMI_SOCKET)) {
             res = s->context->on_close(s, code, reason);
         }
-        /* unref the context after the callback ends */
-        us_socket_context_unref(ssl, s->context);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = s->context->loop->data.closed_head;
         s->context->loop->data.closed_head = s;
+
+        /* unref the context after the callback ends */
+        us_socket_context_unref(ssl, s->context);
 
         /* preserve the return value from on_close if its called */
         return res;

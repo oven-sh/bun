@@ -13,6 +13,7 @@
 #include "wtf/text/ExternalStringImpl.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/FunctionConstructor.h"
 #include "JavaScriptCore/HeapAnalyzer.h"
 
 #include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
@@ -665,6 +666,120 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     return JSValue::encode(result);
 }
 
+JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Step 1: Argument validation
+    // Get code argument (required)
+    JSValue codeArg = callFrame->argument(0);
+    if (!codeArg || !codeArg.isString())
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "code"_s, "string"_s, codeArg);
+
+    // Get params argument (optional array of strings)
+    MarkedArgumentBuffer parameters;
+    JSValue paramsArg = callFrame->argument(1);
+    if (paramsArg && !paramsArg.isUndefined()) {
+        if (!paramsArg.isObject() || !isArray(globalObject, paramsArg))
+            return ERR::INVALID_ARG_TYPE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
+
+        auto* paramsArray = jsCast<JSArray*>(paramsArg);
+        unsigned length = paramsArray->length();
+        for (unsigned i = 0; i < length; i++) {
+            JSValue param = paramsArray->getIndexQuickly(i);
+            if (!param.isString())
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "params"_s, "Array<string>"_s, paramsArg);
+            parameters.append(param);
+        }
+    }
+
+    // Get options argument
+    JSValue optionsArg = callFrame->argument(2);
+    ScriptOptions options;
+    bool didThrow = false;
+    NodeVMGlobalObject* parsingContext = nullptr;
+
+    if (!optionsArg.isUndefined()) {
+        if (!optionsArg.isObject())
+            return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
+
+        if (auto scriptOptions = ScriptOptions::fromJS(globalObject, optionsArg, didThrow)) {
+            options = scriptOptions.value();
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // Handle parsingContext option
+        JSObject* optionsObject = asObject(optionsArg);
+        JSValue parsingContextValue = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (!parsingContextValue.isUndefined()) {
+            if (!parsingContextValue.isObject())
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.parsingContext"_s, "object"_s, parsingContextValue);
+
+            JSObject* context = asObject(parsingContextValue);
+            auto* zigGlobalObject = defaultGlobalObject(globalObject);
+            JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
+
+            if (scopeValue.isUndefined())
+                return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.parsingContext"_s, context, "must be a contextified object"_s);
+
+            parsingContext = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
+            if (!parsingContext)
+                return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.parsingContext"_s, context, "must be a contextified object"_s);
+        }
+
+        // TODO: Handle additional options not in ScriptOptions:
+        // - contextExtensions (array of objects)
+        // - cachedData (Buffer)
+        // - produceCachedData (boolean)
+        // - importModuleDynamically (function)
+    }
+
+    // Step 2: Create a new NodeVMGlobalObject context or use the one passed in options.parsingContext
+    if (!parsingContext) {
+        parsingContext = NodeVMGlobalObject::create(vm, defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure());
+    }
+
+    // Step 3: Create a new function
+    // Prepare the function code by combining the parameters and body
+    String sourceString = codeArg.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Create an ArgList with the parameters and function body for constructFunction
+    MarkedArgumentBuffer constructFunctionArgs;
+
+    // Add all parameters
+    for (unsigned i = 0; i < parameters.size(); i++) {
+        constructFunctionArgs.append(parameters.at(i));
+    }
+
+    // Add the function body
+    constructFunctionArgs.append(jsString(vm, sourceString));
+
+    // Create the source origin
+    SourceOrigin sourceOrigin = JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename));
+
+    // Create the function using constructFunction
+    JSObject* function = JSC::constructFunction(parsingContext,
+        ArgList(constructFunctionArgs),
+        vm.propertyNames->anonymous,
+        sourceOrigin,
+        options.filename,
+        JSC::SourceTaintedOrigin::Untainted,
+        TextPosition(options.lineOffset, options.columnOffset));
+
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (!function)
+        return throwVMError(globalObject, scope, "Failed to compile function"_s);
+
+    JSFunction* jsFunction = jsCast<JSFunction*>(function);
+
+    return JSValue::encode(jsFunction);
+}
+
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -926,6 +1041,9 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInThisContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "runInThisContext"_s, vmModuleRunInThisContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "compileFunction"_s)),
+        JSC::JSFunction::create(vm, globalObject, 0, "compileFunction"_s, vmModuleCompileFunction, ImplementationVisibility::Public), 0);
     return obj;
 }
 

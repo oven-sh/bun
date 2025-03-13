@@ -14,7 +14,7 @@ const Test = @import("./test/jest.zig");
 const Router = @import("./api/filesystem_router.zig");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const uws = bun.uws;
-const TaggedPointerTypes = @import("../tagged_pointer.zig");
+const TaggedPointerTypes = @import("../ptr.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
 const JSError = bun.JSError;
 

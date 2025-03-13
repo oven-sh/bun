@@ -329,7 +329,6 @@ pub const StringTypes = @import("string_types.zig");
 pub const stringZ = StringTypes.stringZ;
 pub const string = StringTypes.string;
 pub const CodePoint = StringTypes.CodePoint;
-pub const RefCount = @import("./ref_count.zig").RefCount;
 
 pub const MAX_PATH_BYTES: usize = if (Environment.isWasm) 1024 else std.fs.max_path_bytes;
 pub const PathBuffer = [MAX_PATH_BYTES]u8;
@@ -410,22 +409,22 @@ fn Span(comptime T: type) type {
     }
 }
 
-pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
-    if (@typeInfo(@TypeOf(ptr)) == .optional) {
-        if (ptr) |non_null| {
+pub fn span(pointer: anytype) Span(@TypeOf(pointer)) {
+    if (@typeInfo(@TypeOf(pointer)) == .optional) {
+        if (pointer) |non_null| {
             return span(non_null);
         } else {
             return null;
         }
     }
-    const Result = Span(@TypeOf(ptr));
-    const l = len(ptr);
+    const Result = Span(@TypeOf(pointer));
+    const l = len(pointer);
     const ptr_info = @typeInfo(Result).pointer;
     if (ptr_info.sentinel_ptr) |s_ptr| {
         const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
-        return ptr[0..l :s];
+        return pointer[0..l :s];
     } else {
-        return ptr[0..l];
+        return pointer[0..l];
     }
 }
 
@@ -734,11 +733,8 @@ pub const http = @import("./http.zig");
 
 pub const Analytics = @import("./analytics/analytics_thread.zig");
 
-const tagged_pointer = @import("./tagged_pointer.zig");
-pub const TagTypeEnumWithTypeMap = tagged_pointer.TagTypeEnumWithTypeMap;
-pub const TaggedPointer = tagged_pointer.TaggedPointer;
-pub const TaggedPointerUnion = tagged_pointer.TaggedPointerUnion;
-pub const TypeMap = tagged_pointer.TypeMap;
+pub const TaggedPointer = ptr.TaggedPointer;
+pub const TaggedPointerUnion = ptr.TaggedPointerUnion;
 
 pub fn onceUnsafe(comptime function: anytype, comptime ReturnType: type) ReturnType {
     const Result = struct {
@@ -942,8 +938,8 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
         return getenvZAnyCase(key);
     }
 
-    const ptr = std.c.getenv(key.ptr) orelse return null;
-    return sliceTo(ptr, 0);
+    const pointer = std.c.getenv(key.ptr) orelse return null;
+    return sliceTo(pointer, 0);
 }
 
 pub fn getenvTruthy(key: [:0]const u8) bool {
@@ -1474,18 +1470,18 @@ pub fn getFdPathW(fd_: anytype, buf: *WPathBuffer) ![]u16 {
     @panic("TODO unsupported platform for getFdPathW");
 }
 
-fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
-    switch (@typeInfo(@TypeOf(ptr))) {
+fn lenSliceTo(pointer: anytype, comptime end: std.meta.Elem(@TypeOf(pointer))) usize {
+    switch (@typeInfo(@TypeOf(pointer))) {
         .pointer => |ptr_info| switch (ptr_info.size) {
             .one => switch (@typeInfo(ptr_info.child)) {
                 .array => |array_info| {
                     if (array_info.sentinel_ptr) |sentinel_ptr| {
                         const sentinel = @as(*align(1) const array_info.child, @ptrCast(sentinel_ptr)).*;
                         if (sentinel == end) {
-                            return std.mem.indexOfSentinel(array_info.child, end, ptr);
+                            return std.mem.indexOfSentinel(array_info.child, end, pointer);
                         }
                     }
-                    return std.mem.indexOfScalar(array_info.child, ptr, end) orelse array_info.len;
+                    return std.mem.indexOfScalar(array_info.child, pointer, end) orelse array_info.len;
                 },
                 else => {},
             },
@@ -1495,26 +1491,26 @@ fn lenSliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) usize {
                 // but iterating past the sentinel would be a bug so we need
                 // to check for both.
                 var i: usize = 0;
-                while (ptr[i] != end and ptr[i] != sentinel) i += 1;
+                while (pointer[i] != end and pointer[i] != sentinel) i += 1;
                 return i;
             },
             .c => {
-                assert(ptr != null);
-                return std.mem.indexOfSentinel(ptr_info.child, end, ptr);
+                assert(pointer != null);
+                return std.mem.indexOfSentinel(ptr_info.child, end, pointer);
             },
             .slice => {
                 if (ptr_info.sentinel_ptr) |sentinel_ptr| {
                     const sentinel = @as(*align(1) const ptr_info.child, @ptrCast(sentinel_ptr)).*;
                     if (sentinel == end) {
-                        return std.mem.indexOfSentinel(ptr_info.child, sentinel, ptr);
+                        return std.mem.indexOfSentinel(ptr_info.child, sentinel, pointer);
                     }
                 }
-                return std.mem.indexOfScalar(ptr_info.child, ptr, end) orelse ptr.len;
+                return std.mem.indexOfScalar(ptr_info.child, pointer, end) orelse pointer.len;
             },
         },
         else => {},
     }
-    @compileError("invalid type given to std.mem.sliceTo: " ++ @typeName(@TypeOf(ptr)));
+    @compileError("invalid type given to std.mem.sliceTo: " ++ @typeName(@TypeOf(pointer)));
 }
 
 /// Helper for the return type of sliceTo()
@@ -1578,19 +1574,19 @@ fn SliceTo(comptime T: type, comptime end: std.meta.Elem(T)) type {
 /// resulting slice is also sentinel terminated.
 /// Pointer properties such as mutability and alignment are preserved.
 /// C pointers are assumed to be non-null.
-pub fn sliceTo(ptr: anytype, comptime end: std.meta.Elem(@TypeOf(ptr))) SliceTo(@TypeOf(ptr), end) {
-    if (@typeInfo(@TypeOf(ptr)) == .optional) {
-        const non_null = ptr orelse return null;
+pub fn sliceTo(pointer: anytype, comptime end: std.meta.Elem(@TypeOf(pointer))) SliceTo(@TypeOf(pointer), end) {
+    if (@typeInfo(@TypeOf(pointer)) == .optional) {
+        const non_null = pointer orelse return null;
         return sliceTo(non_null, end);
     }
-    const Result = SliceTo(@TypeOf(ptr), end);
-    const length = lenSliceTo(ptr, end);
+    const Result = SliceTo(@TypeOf(pointer), end);
+    const length = lenSliceTo(pointer, end);
     const ptr_info = @typeInfo(Result).pointer;
     if (ptr_info.sentinel_ptr) |s_ptr| {
         const s = @as(*align(1) const ptr_info.child, @ptrCast(s_ptr)).*;
-        return ptr[0..length :s];
+        return pointer[0..length :s];
     } else {
-        return ptr[0..length];
+        return pointer[0..length];
     }
 }
 
@@ -1984,7 +1980,6 @@ pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
 pub const BundleV2 = bundle_v2.BundleV2;
 pub const ParseTask = bundle_v2.ParseTask;
 
-pub const Lock = @compileError("Use bun.Mutex instead");
 pub const Mutex = @import("./Mutex.zig");
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
 
@@ -2498,20 +2493,20 @@ pub const win32 = struct {
         }
 
         var size: usize = 0;
-        if (kernelenv) |ptr| {
+        if (kernelenv) |pointer| {
             // check that env is non-empty
-            if (ptr[0] != 0 or ptr[1] != 0) {
+            if (pointer[0] != 0 or pointer[1] != 0) {
                 // array is terminated by two nulls
-                while (ptr[size] != 0 or ptr[size + 1] != 0) size += 1;
+                while (pointer[size] != 0 or pointer[size + 1] != 0) size += 1;
                 size += 1;
             }
         }
-        // now ptr[size] is the first null
+        // now pointer[size] is the first null
 
         const envbuf = try allocator.alloc(u16, size + watcherChildEnv.len + 4);
         defer allocator.free(envbuf);
-        if (kernelenv) |ptr| {
-            @memcpy(envbuf[0..size], ptr);
+        if (kernelenv) |pointer| {
+            @memcpy(envbuf[0..size], pointer);
         }
         @memcpy(envbuf[size .. size + watcherChildEnv.len], watcherChildEnv);
         envbuf[size + watcherChildEnv.len] = '=';
@@ -2540,7 +2535,7 @@ pub const win32 = struct {
                 .hStdOutput = std.io.getStdOut().handle,
                 .hStdError = std.io.getStdErr().handle,
             },
-            .lpAttributeList = p.ptr,
+            .lpAttributeList = p.pointer,
         };
         @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(
@@ -3044,9 +3039,9 @@ pub fn todoPanic(src: std.builtin.SourceLocation, comptime format: string, args:
 /// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
 /// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    const ptr = allocator.create(T) catch outOfMemory();
-    ptr.* = t;
-    return ptr;
+    const pointer = allocator.create(T) catch outOfMemory();
+    pointer.* = t;
+    return pointer;
 }
 
 pub const heap_breakdown = @import("./heap_breakdown.zig");
@@ -3064,12 +3059,12 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
-    const ptr = if (heap_breakdown.enabled)
+    const pointer = if (heap_breakdown.enabled)
         heap_breakdown.getZoneT(T).create(T, init)
-    else ptr: {
-        const ptr = default_allocator.create(T) catch outOfMemory();
-        ptr.* = init;
-        break :ptr ptr;
+    else pointer: {
+        const pointer = default_allocator.create(T) catch outOfMemory();
+        pointer.* = init;
+        break :pointer pointer;
     };
 
     // TODO::
@@ -3078,23 +3073,23 @@ pub inline fn new(comptime T: type, init: T) *T {
     //     logAlloc("new({s}) = {*}", .{ meta.typeName(T), ptr });
     // }
 
-    return ptr;
+    return pointer;
 }
 
 /// Free a globally-allocated a value from `bun.new()`. Using this with
 /// pointers allocated from other means may cause crashes.
-pub inline fn destroy(ptr: anytype) void {
-    const T = std.meta.Child(@TypeOf(ptr));
+pub inline fn destroy(pointer: anytype) void {
+    const T = std.meta.Child(@TypeOf(pointer));
 
     if (Environment.allow_assert) {
         const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-        logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
+        logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), pointer });
     }
 
     if (comptime heap_breakdown.enabled) {
-        heap_breakdown.getZoneT(T).destroy(T, ptr);
+        heap_breakdown.getZoneT(T).destroy(T, pointer);
     } else {
-        default_allocator.destroy(ptr);
+        default_allocator.destroy(pointer);
     }
 }
 
@@ -3116,8 +3111,8 @@ pub fn New(comptime T: type) type {
     };
 }
 
-pub const NewRefCounted = @import("ref_count.zig").NewRefCounted;
-pub const NewThreadSafeRefCounted = @import("ref_count.zig").NewThreadSafeRefCounted;
+pub const NewRefCounted = ptr.NewRefCounted;
+pub const NewThreadSafeRefCounted = ptr.NewThreadSafeRefCounted;
 
 pub fn exitThread() noreturn {
     const exiter = struct {
@@ -3421,7 +3416,7 @@ noinline fn assertionFailureWithMsg(comptime msg: []const u8, args: anytype) nor
         @compileError(std.fmt.comptimePrint("assertion failure: " ++ msg, args));
     } else {
         @branchHint(.cold);
-        Output.panic(assertion_failure_msg ++ ": " ++ msg, .args);
+        Output.panic(assertion_failure_msg ++ ": " ++ msg, args);
     }
 }
 
@@ -3495,7 +3490,8 @@ pub fn assertf(ok: bool, comptime format: []const u8, args: anytype) callconv(ca
     }
 
     if (!ok) {
-        if (comptime Environment.isDebug) unreachable;
+        // crash handler has runtime-only code.
+        if (@inComptime()) @compileError(std.fmt.comptimePrint(format, args));
         assertionFailureWithMsg(format, args);
     }
 }
@@ -4151,80 +4147,6 @@ pub inline fn itemOrNull(comptime T: type, slice: []const T, index: usize) ?T {
 
 pub const Maybe = bun.JSC.Node.Maybe;
 
-/// Type which could be borrowed or owned
-/// The name is from the Rust std's `Cow` type
-/// Can't think of a better name
-pub fn Cow(comptime T: type, comptime VTable: type) type {
-    const Handler = struct {
-        fn copy(this: *const T, allocator: std.mem.Allocator) T {
-            if (!@hasDecl(VTable, "copy")) @compileError(@typeName(VTable) ++ " needs `copy()` function");
-            return VTable.copy(this, allocator);
-        }
-
-        fn deinit(this: *T, allocator: std.mem.Allocator) void {
-            if (!@hasDecl(VTable, "deinit")) @compileError(@typeName(VTable) ++ " needs `deinit()` function");
-            return VTable.deinit(this, allocator);
-        }
-    };
-
-    return union(enum) {
-        borrowed: *const T,
-        owned: T,
-
-        pub fn borrow(val: *const T) @This() {
-            return .{
-                .borrowed = val,
-            };
-        }
-
-        pub fn own(val: T) @This() {
-            return .{
-                .owned = val,
-            };
-        }
-
-        pub fn replace(this: *@This(), allocator: std.mem.Allocator, newval: T) void {
-            if (this.* == .owned) {
-                this.deinit(allocator);
-            }
-            this.* = .{ .owned = newval };
-        }
-
-        /// Get the underlying value.
-        pub inline fn inner(this: *const @This()) *const T {
-            return switch (this.*) {
-                .borrowed => this.borrowed,
-                .owned => &this.owned,
-            };
-        }
-
-        pub inline fn innerMut(this: *@This()) ?*T {
-            return switch (this.*) {
-                .borrowed => null,
-                .owned => &this.owned,
-            };
-        }
-
-        pub fn toOwned(this: *@This(), allocator: std.mem.Allocator) *T {
-            switch (this.*) {
-                .borrowed => {
-                    this.* = .{
-                        .owned = Handler.copy(this.borrowed, allocator),
-                    };
-                },
-                .owned => {},
-            }
-            return &this.owned;
-        }
-
-        pub fn deinit(this: *@This(), allocator: std.mem.Allocator) void {
-            if (this.* == .owned) {
-                Handler.deinit(&this.owned, allocator);
-            }
-        }
-    };
-}
-
 /// To handle stack overflows:
 /// 1. StackCheck.init()
 /// 2. .isSafeToRecurse()
@@ -4304,134 +4226,8 @@ pub const WPathBufferPool = if (Environment.isWindows) PathBufferPoolT(bun.WPath
 pub const OSPathBufferPool = if (Environment.isWindows) WPathBufferPool else PathBufferPool;
 
 pub const S3 = @import("./s3/client.zig");
+pub const ptr = @import("./ptr.zig");
 
-pub const CowString = CowSlice(u8);
-
-/// "Copy on write" slice. There are many instances when it is desired to re-use
-/// a slice, but doing so would make it unknown if that slice should be freed.
-/// This structure, in release builds, is the same size as `[]const T`, but
-/// stores one bit for if deinitialziation should free the underlying memory.
-///
-///     const str = CowSlice(u8).initOwned(try alloc.dupe(u8, "hello!"), alloc);
-///     const borrow = str.borrow();
-///     assert(borrow.slice().ptr == str.slice().ptr)
-///     borrow.deinit(alloc); // knows it is borrowed, no free
-///     str.deinit(alloc); // calls free
-///
-/// In a debug build, there are aggressive assertions to ensure unintentional
-/// frees do not happen. But in a release build, the developer is expected to
-/// keep slice owners alive beyond the lifetimes of the borrowed instances.
-///
-/// CowSlice does not support slices longer than 2^(@bitSizeOf(usize)-1).
-pub fn CowSlice(T: type) type {
-    const cow_str_assertions = Environment.isDebug;
-    const DebugData = if (cow_str_assertions) struct {
-        mutex: std.Thread.Mutex,
-        allocator: Allocator,
-        borrows: usize,
-    };
-    return struct {
-        ptr: [*]const T,
-        flags: packed struct(usize) {
-            len: @Type(.{ .int = .{
-                .bits = @bitSizeOf(usize) - 1,
-                .signedness = .unsigned,
-            } }),
-            is_owned: bool,
-        },
-        debug: if (cow_str_assertions) ?*DebugData else void,
-
-        /// `data` is transferred into the returned string, and must be freed with
-        /// `.deinit()` when the string and its borrows are done being used.
-        pub fn initOwned(data: []const T, allocator: Allocator) @This() {
-            if (AllocationScope.downcast(allocator)) |scope|
-                scope.assertOwned(data);
-
-            return .{
-                .ptr = data.ptr,
-                .flags = .{
-                    .is_owned = true,
-                    .len = @intCast(data.len),
-                },
-                .debug = if (cow_str_assertions)
-                    bun.new(DebugData, .{
-                        .mutex = .{},
-                        .allocator = allocator,
-                        .borrows = 0,
-                    }),
-            };
-        }
-
-        pub fn initDupe(data: []const T, allocator: Allocator) !@This() {
-            return initOwned(try allocator.dupe(T, data), allocator);
-        }
-
-        /// `.deinit` will not free memory from this slice.
-        pub fn initNeverFree(data: []const T) @This() {
-            return .{
-                .ptr = data.ptr,
-                .flags = .{
-                    .is_owned = false,
-                    .len = @intCast(data.len),
-                },
-                .debug = if (cow_str_assertions) null,
-            };
-        }
-
-        pub fn slice(str: @This()) []const T {
-            return str.ptr[0..str.flags.len];
-        }
-
-        /// Returns a new string. The borrowed string should be deinitialized
-        /// so that debug assertions that perform.
-        pub fn borrow(str: @This()) @This() {
-            if (cow_str_assertions) if (str.debug) |debug| {
-                debug.mutex.lock();
-                defer debug.mutex.unlock();
-                debug.borrows += 1;
-            };
-            return .{
-                .ptr = str.ptr,
-                .flags = .{
-                    .is_owned = false,
-                    .len = str.flags.len,
-                },
-                .debug = str.debug,
-            };
-        }
-
-        pub fn deinit(str: @This(), allocator: Allocator) void {
-            if (cow_str_assertions) if (str.debug) |debug| {
-                debug.mutex.lock();
-                bun.assert(
-                    debug.allocator.ptr == allocator.ptr and
-                        debug.allocator.vtable == allocator.vtable,
-                );
-                if (str.flags.is_owned) {
-                    bun.assert(debug.borrows == 0); // active borrows become invalid data
-                } else {
-                    debug.borrows -= 1; // double deinit of a borrowed string
-                }
-                bun.destroy(debug);
-            };
-            if (str.flags.is_owned) {
-                allocator.free(str.slice());
-            }
-        }
-
-        /// Does not include debug safety checks.
-        pub fn initUnchecked(data: []const T, is_owned: bool) @This() {
-            return .{
-                .ptr = data.ptr,
-                .flags = .{
-                    .is_owned = is_owned,
-                    .len = @intCast(data.len),
-                },
-                .debug = if (cow_str_assertions) null,
-            };
-        }
-    };
-}
 
 const Allocator = std.mem.Allocator;
 

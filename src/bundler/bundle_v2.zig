@@ -17345,7 +17345,7 @@ pub const Chunk = struct {
             source_index: Index,
         },
 
-        const Layers = bun.Cow(bun.BabyList(bun.css.LayerName), struct {
+        const Layers = bun.ptr.Cow(bun.BabyList(bun.css.LayerName), struct {
             const Self = bun.BabyList(bun.css.LayerName);
             pub fn copy(self: *const Self, allocator: std.mem.Allocator) Self {
                 return self.deepClone2(allocator);

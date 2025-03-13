@@ -1786,6 +1786,24 @@ pub const ModuleLoader = struct {
                     };
                 }
 
+                if (parse_result.empty) {
+                    const was_cjs = (loader == .js or loader == .ts) and brk: {
+                        const ext = std.fs.path.extension(parse_result.source.path.text);
+                        break :brk strings.eqlComptime(ext, ".cjs") or strings.eqlComptime(ext, ".cts");
+                    };
+                    if (was_cjs) {
+                        return .{
+                            .allocator = null,
+                            .source_code = bun.String.static("(function(){})"),
+                            .specifier = input_specifier,
+                            .source_url = input_specifier.createIfDifferent(path.text),
+                            .is_commonjs_module = true,
+                            .hash = 0,
+                            .tag = .javascript,
+                        };
+                    }
+                }
+
                 if (cache.entry) |*entry| {
                     jsc_vm.source_mappings.putMappings(parse_result.source, .{
                         .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },
@@ -2460,6 +2478,7 @@ pub const ModuleLoader = struct {
                 .@"node:_stream_transform" => return jsSyntheticModule(.@"node:_stream_transform", specifier),
                 .@"node:_stream_wrap" => return jsSyntheticModule(.@"node:_stream_wrap", specifier),
                 .@"node:_stream_writable" => return jsSyntheticModule(.@"node:_stream_writable", specifier),
+                .@"node:_tls_common" => return jsSyntheticModule(.@"node:_tls_common", specifier),
             }
         } else if (specifier.hasPrefixComptime(js_ast.Macro.namespaceWithColon)) {
             const spec = specifier.toUTF8(bun.default_allocator);
@@ -2677,6 +2696,7 @@ pub const HardcodedModule = enum {
     @"node:_stream_transform",
     @"node:_stream_wrap",
     @"node:_stream_writable",
+    @"node:_tls_common",
 
     /// Already resolved modules go in here.
     /// This does not remap the module name, it is just a hash table.
@@ -2758,6 +2778,7 @@ pub const HardcodedModule = enum {
             .{ "_stream_transform", .@"node:_stream_transform" },
             .{ "_stream_wrap", .@"node:_stream_wrap" },
             .{ "_stream_writable", .@"node:_stream_writable" },
+            .{ "_tls_common", .@"node:_tls_common" },
 
             .{ "undici", HardcodedModule.undici },
             .{ "ws", HardcodedModule.ws },
@@ -2843,7 +2864,7 @@ pub const HardcodedModule = enum {
             .{ "node:_stream_wrap", .{ .path = "_stream_wrap" } },
             .{ "node:_stream_writable", .{ .path = "_stream_writable" } },
             .{ "node:_tls_wrap", .{ .path = "tls" } },
-            .{ "node:_tls_common", .{ .path = "tls" } },
+            .{ "node:_tls_common", .{ .path = "_tls_common" } },
 
             .{ "assert", .{ .path = "assert" } },
             .{ "assert/strict", .{ .path = "assert/strict" } },
@@ -2918,7 +2939,7 @@ pub const HardcodedModule = enum {
             .{ "_stream_wrap", .{ .path = "_stream_wrap" } },
             .{ "_stream_writable", .{ .path = "_stream_writable" } },
             .{ "_tls_wrap", .{ .path = "tls" } },
-            .{ "_tls_common", .{ .path = "tls" } },
+            .{ "_tls_common", .{ .path = "_tls_common" } },
 
             .{ "next/dist/compiled/ws", .{ .path = "ws" } },
             .{ "next/dist/compiled/node-fetch", .{ .path = "node-fetch" } },

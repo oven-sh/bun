@@ -5,10 +5,10 @@ const dgram = require('dgram');
 const dns = require('dns');
 
 if (typeof Bun !== 'undefined') {
-  if (process.platform === 'win32' && require('harness').isCI) {
+  if (process.platform === 'win32' && require('../../../../harness').isCI) {
     // TODO(@heimskr): This test mysteriously takes forever in Windows in CI
     // possibly due to UDP keeping the event loop alive longer than it should.
-    process.exit(0);
+    common.skip('Windows CI is flaky');
   }
 }
 

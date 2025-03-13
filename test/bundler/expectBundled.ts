@@ -344,7 +344,7 @@ export interface BundlerTestRunOptions {
   stderr?: string;
   /** partial match stdout (toContain()) */
   partialStdout?: string;
-  /** match exact error message, example "ReferenceError: Can't find variable: bar" */
+  /** match exact error message, example "ReferenceError: bar is not defined" */
   error?: string;
   /**
    * for extra confidence the error is correctly tested for, a regex for the line it was

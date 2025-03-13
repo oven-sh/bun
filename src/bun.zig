@@ -587,7 +587,7 @@ pub fn fastRandom() u64 {
                             return value;
                         }
                     }
-                    rand(std.mem.asBytes(&value));
+                    csprng(std.mem.asBytes(&value));
                     seed_value.store(value, .monotonic);
                 }
 
@@ -620,7 +620,7 @@ pub fn hash32(content: []const u8) u32 {
 
 pub const HiveArray = @import("./hive_array.zig").HiveArray;
 
-pub fn rand(bytes: []u8) void {
+pub fn csprng(bytes: []u8) void {
     _ = BoringSSL.c.RAND_bytes(bytes.ptr, bytes.len);
 }
 
@@ -1226,7 +1226,7 @@ pub const SignalCode = enum(u8) {
 
     // The `subprocess.kill()` method sends a signal to the child process. If no
     // argument is given, the process will be sent the 'SIGTERM' signal.
-    pub const default = @intFromEnum(SignalCode.SIGTERM);
+    pub const default = SignalCode.SIGTERM;
     pub const Map = ComptimeEnumMap(SignalCode);
     pub fn name(value: SignalCode) ?[]const u8 {
         if (@intFromEnum(value) <= @intFromEnum(SignalCode.SIGSYS)) {

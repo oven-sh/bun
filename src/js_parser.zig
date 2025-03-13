@@ -17319,7 +17319,7 @@ fn NewParser_(
                             p.method_call_must_be_replaced_with_undefined = false;
                             switch (e_.target.data) {
                                 // If we're removing this call, don't count any arguments as symbol uses
-                                .e_index, .e_dot => {
+                                .e_index, .e_dot, .e_identifier => {
                                     p.is_control_flow_dead = true;
                                 },
                                 // Special case from `import.meta.hot.*` functions.

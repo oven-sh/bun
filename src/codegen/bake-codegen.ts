@@ -59,7 +59,7 @@ async function run() {
           syntax: !debug,
         },
         target: side === "server" ? "bun" : "browser",
-        drop: debug ? [] : ["ASSERT"],
+        drop: debug ? [] : ["DEBUG"],
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");
@@ -91,6 +91,7 @@ async function run() {
       result = await Bun.build({
         entrypoints: [generated_entrypoint],
         minify: !debug,
+        drop: debug ? [] : ["DEBUG"],
       });
       if (!result.success) throw new AggregateError(result.logs);
       assert(result.outputs.length === 1, "must bundle to a single file");

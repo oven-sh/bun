@@ -24,6 +24,8 @@ import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
 const isDebugBuild = Bun.version.includes("debug");
 
+const verboseSynchronization = (arg: string) => {};
+
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {
   fileSystemRouterTypes: [
@@ -207,7 +209,7 @@ export class Dev extends EventEmitter {
         connected.resolve();
       }
       if (data[0] === "r".charCodeAt(0)) {
-        // console.log("watch_synchronization", WatchSynchronization[data[1]]);
+        verboseSynchronization("watch_synchronization: " + WatchSynchronization[data[1]]);
         this.emit("watch_synchronization", data[1]);
       }
       this.emit("hmr", data);
@@ -401,6 +403,7 @@ export class Dev extends EventEmitter {
       let clientWaits = 0;
       let seenMainEvent = false;
       function cleanupAndResolve() {
+        verboseSynchronization("Cleaning up and resolving");
         timer !== null && clearTimeout(timer);
         dev.off("watch_synchronization", onEvent);
         for (const dispose of disposes) {
@@ -411,6 +414,7 @@ export class Dev extends EventEmitter {
       const disposes = new Set<() => void>();
       for (const client of dev.connectedClients) {
         const socketEventHandler = () => {
+          verboseSynchronization("Client received event");
           clientWaits++;
           if (seenMainEvent && clientWaits === dev.connectedClients.size) {
             client.off("received-hmr-event", socketEventHandler);
@@ -427,6 +431,7 @@ export class Dev extends EventEmitter {
         if (kind === WatchSynchronization.AnyBuildFinished) {
           cleanupAndResolve();
         } else if (kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets) {
+          verboseSynchronization("Need to wait for (" + clientWaits + "/" + dev.connectedClients.size + ") clients");
           seenMainEvent = true;
           if (clientWaits === dev.connectedClients.size) {
             cleanupAndResolve();

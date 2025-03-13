@@ -26,11 +26,13 @@ interface Config {
   roots: FileIndex[];
 }
 
-/** 
- * Set globally in debug builds.
- * Removed using --drop=ASSERT in releases.
- */
-declare function ASSERT(condition: any, message?: string): asserts condition;
+declare namespace DEBUG {
+  /** 
+   * Set globally in debug builds.
+   * Removed using --drop=DEBUG.ASSERT in releases.
+   */
+  declare function ASSERT(condition: any, message?: string): asserts condition;
+}
 
 /** All modules for the initial bundle. */
 declare const unloadedModuleRegistry: Record<string, UnloadedModule>;

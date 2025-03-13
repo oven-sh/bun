@@ -154,8 +154,12 @@ const handlers = {
           onRuntimeError(e, true, false);
           return;
         }
+        emitEvent("bun:error", e);
         throw e;
       }
+    } else {
+      // Needed for testing.
+      emitEvent("bun:afterUpdate", null);
     }
   },
   [MessageId.set_url_response](view) {

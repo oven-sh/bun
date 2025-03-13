@@ -24,13 +24,9 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
-let isUpdating = null;
+let updatingTimer = null;
 
 function reset() {
-  if (isUpdating !== null) {
-    clearImmediate(isUpdating);
-    isUpdating = null;
-  }
   for (const ws of webSockets) {
     ws.onclose = () => {};
     ws.onerror = () => {};
@@ -54,12 +50,24 @@ function reset() {
 
 let allowWebSocketMessages = true;
 
+function onHMRReady() {
+  process.nextTick(() => {
+    process.send({ type: "received-hmr-event", args: [] });
+  });
+}
+
 function createWindow(windowUrl) {
   window = new Window({
     url: windowUrl,
     width: 1024,
     height: 768,
   });
+
+  window['bun do not use this outside of internal testing or else i\'ll cry'] = ({ onEvent }) => {
+    onEvent("bun:afterUpdate", () => {
+      process.send({ type: "received-hmr-event", args: [] });
+    });
+  };
 
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
@@ -76,11 +84,14 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === "u".charCodeAt(0) || data[0] === "e".charCodeAt(0)) {
-          isUpdating = setImmediate(() => {
+        if (data[0] === "e".charCodeAt(0) ) {
+          if (updatingTimer) {
+            clearTimeout(updatingTimer);
+          }
+          updatingTimer = setTimeout(() => {
             process.send({ type: "received-hmr-event", args: [] });
-            isUpdating = null;
-          });
+            updatingTimer = null;
+          }, 250);
         }
         if (!allowWebSocketMessages) {
           const allowedTypes = ["n", "r"];
@@ -119,7 +130,8 @@ function createWindow(windowUrl) {
     },
     info: (...args) => {
       if (args[0]?.startsWith("[Bun] Hot-module-reloading socket connected")) {
-        process.send({ type: "received-hmr-event", args: [] });
+        // Wait for all CSS assets to be fully loaded before emitting the event
+        onHMRReady();
       }
       if (args[0]?.startsWith("[WS] receive message")) return;
       if (args[0]?.startsWith("Updated modules:")) return;
@@ -135,6 +147,10 @@ function createWindow(windowUrl) {
   };
 
   window.location.reload = async () => {
+    if (updatingTimer) {
+      clearTimeout(updatingTimer);
+    }
+    console.info("[I] location.reload()");
     reset();
     if (expectingReload) {
       // Permission already granted, proceed with reload

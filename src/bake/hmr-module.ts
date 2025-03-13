@@ -293,11 +293,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     // ESM
     if (IS_BUN_DEVELOPMENT) {
       try {
-        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.imports]));
-        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.exports]));
-        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.stars]));
-        ASSERT(typeof loadOrEsmModule[ESMProps.load] === "function");
-        ASSERT(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
+        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.imports]));
+        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.exports]));
+        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[ESMProps.stars]));
+        DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.load] === "function");
+        DEBUG.ASSERT(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
@@ -383,11 +383,11 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     // ESM
     if (IS_BUN_DEVELOPMENT) {
       try {
-        ASSERT(Array.isArray(loadOrEsmModule[0]));
-        ASSERT(Array.isArray(loadOrEsmModule[1]));
-        ASSERT(Array.isArray(loadOrEsmModule[2]));
-        ASSERT(typeof loadOrEsmModule[3] === "function");
-        ASSERT(typeof loadOrEsmModule[4] === "boolean");
+        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[0]));
+        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[1]));
+        DEBUG.ASSERT(Array.isArray(loadOrEsmModule[2]));
+        DEBUG.ASSERT(typeof loadOrEsmModule[3] === "function");
+        DEBUG.ASSERT(typeof loadOrEsmModule[4] === "boolean");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
@@ -404,7 +404,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     }
 
     const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
-      ASSERT(isAsync ? list.some(x => x instanceof Promise): list.every(x => x instanceof HMRModule));
+      DEBUG.ASSERT(isAsync ? list.some(x => x instanceof Promise): list.every(x => x instanceof HMRModule));
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
@@ -466,9 +466,9 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   const { length } = deps;
   while (i < length) {
     const dep = deps[i] as string;
-    ASSERT(typeof dep === "string");
+    DEBUG.ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
-    ASSERT(typeof deps[i + 1] === "number");
+    DEBUG.ASSERT(typeof deps[i + 1] === "number");
     list.push(enqueueModuleLoad(dep, false, mod));
 
     const unloadedModule = unloadedModuleRegistry[dep];
@@ -480,7 +480,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       i += 2;
       while (i < expectedExportKeyEnd) {
         const key = deps[i] as string;
-        ASSERT(typeof key === "string");
+        DEBUG.ASSERT(typeof key === "string");
         if (!availableExportKeys.includes(key)) {
           if (!hasExportStar(unloadedModule[ESMProps.stars], key)) {
             throw new SyntaxError(`Module "${dep}" does not export key "${key}"`);
@@ -490,7 +490,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       }
       isAsync ||= unloadedModule[ESMProps.isAsync];
     } else {
-      ASSERT(!registry.get(dep)?.esm);
+      DEBUG.ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
     }
   }
@@ -506,7 +506,7 @@ function hasExportStar(starImports: Id[], key: string) {
     if (visited.has(starImport)) continue;
     visited.add(starImport);
     const mod = unloadedModuleRegistry[starImport];
-    ASSERT(mod, `Module "${starImport}" not found`);
+    DEBUG.ASSERT(mod, `Module "${starImport}" not found`);
     if (typeof mod === "function") {
       return true;
     }
@@ -626,9 +626,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
     for (const boundary of failures) {
       const path: Id[] = [];
       let current = registry.get(boundary)!;
-        ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
-        ASSERT(current);
-        ASSERT(current.selfAccept === null);
+        DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
+        DEBUG.ASSERT(current);
+        DEBUG.ASSERT(current.selfAccept === null);
       if (current.importers.size === 0) {
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
@@ -641,11 +641,11 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
           current = importer;
           continue outer;
         }
-        ASSERT(false);
+        DEBUG.ASSERT(false);
         break;
       }
       path.push(current.id);
-      ASSERT(path.length > 0);
+      DEBUG.ASSERT(path.length > 0);
       message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
       for (let i = 2, len = path.length; i < len; i++) {
         const isLast = i === len - 1;
@@ -699,7 +699,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
         selfAccept(getEsmExports(mod));
       }
     } else {
-      ASSERT(modOrPromise instanceof Promise);
+      DEBUG.ASSERT(modOrPromise instanceof Promise);
       promises.push(
         (modOrPromise as Promise<HMRModule>).then(mod => {
           if (selfAccept) {
@@ -747,7 +747,7 @@ function createAcceptArray(modules: string[], key: Id) {
   const arr = new Array(modules.length);
   arr.fill(undefined);
   const i = modules.indexOf(key);
-  ASSERT(i !== -1);
+  DEBUG.ASSERT(i !== -1);
   arr[i] = getEsmExports(registry.get(key)!);
   return arr;
 }
@@ -897,3 +897,13 @@ if (side === "client") {
     onServerSideReload: cb => (onServerSideReload = cb),
   });
 }
+
+// The following API may be altered at any point.
+// Thankfully, you can just call `import.meta.hot.on`
+let testingHook = globalThis['bun do not use this outside of internal testing or else i\'ll cry'];
+testingHook && testingHook({
+  onEvent(event: HMREvent, cb) {
+    eventHandlers[event] ??= [];
+    eventHandlers[event]!.push(cb);
+  },
+});

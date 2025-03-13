@@ -417,6 +417,11 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "ECDH"_s)),
         globalObject->m_JSECDHClassStructure.constructor(globalObject));
 
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "DiffieHellman"_s)),
+        globalObject->m_JSDiffieHellmanClassStructure.constructor(globalObject));
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "DiffieHellmanGroup"_s)),
+        globalObject->m_JSDiffieHellmanGroupClassStructure.constructor(globalObject));
+
     return obj;
 }
 

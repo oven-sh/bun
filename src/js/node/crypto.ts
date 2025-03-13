@@ -40,6 +40,8 @@ const {
   Hmac: _Hmac,
   Hash: _Hash,
   ECDH,
+  DiffieHellman: _DiffieHellman,
+  DiffieHellmanGroup: _DiffieHellmanGroup,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const {
@@ -52,11 +54,6 @@ const {
   randomFillSync,
   randomFill: _randomFill,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
-
-const { DiffieHellman: _DiffieHellman, DiffieHellmanGroup: _DiffieHellmanGroup } = $zig(
-  "node_crypto_dh.zig",
-  "createNodeCryptoDHBinding",
-);
 
 const { validateObject, validateString, validateInt32 } = require("internal/validators");
 

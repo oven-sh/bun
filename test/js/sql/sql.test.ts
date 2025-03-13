@@ -606,6 +606,66 @@ if (isDockerEnabled()) {
     }
   });
 
+  test("#17798: it should handle inserting values of type text[] using array of values", async () => {
+    try {
+      await sql`
+    CREATE TEMPORARY TABLE test (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      arr TEXT[]
+    )
+  `;
+
+      // Test data
+      const item = {
+        id: 1,
+        name: "test",
+        arr: ["a", "b"],
+      };
+
+      // Insert
+      await sql`INSERT INTO test ${sql(item)}`;
+
+      // Retrieve and verify
+      const result = await sql`SELECT * FROM test WHERE id = ${item.id}`;
+      expect(result[0]).toEqual(item);
+    } finally {
+      await sql`DROP TABLE test`;
+    }
+  });
+
+  test("#17798: it should handle updating values of type text[] using array of values", async () => {
+    try {
+      await sql`
+    CREATE TEMPORARY TABLE test (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      arr TEXT[]
+    )
+  `;
+
+      // Test data
+      const item = {
+        id: 1,
+        name: "test",
+        arr: ["a", "b"],
+      };
+
+      // Insert
+      await sql`INSERT INTO test ${sql(item)}`;
+
+      // Update
+      const update = { arr: ["c", "d"] };
+      await sql`UPDATE test SET ${sql(update)} WHERE id = ${item.id}`;
+
+      // Retrieve and verify
+      const result = await sql`SELECT * FROM test WHERE id = ${item.id}`;
+      expect(result[0]).toEqual({ ...item, ...update });
+    } finally {
+      await sql`DROP TABLE test`;
+    }
+  });
+
   test("Transaction throws on uncaught savepoint", async () => {
     await sql`create table test (a int)`;
     try {

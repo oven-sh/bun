@@ -2535,7 +2535,7 @@ pub const win32 = struct {
                 .hStdOutput = std.io.getStdOut().handle,
                 .hStdError = std.io.getStdErr().handle,
             },
-            .lpAttributeList = p.pointer,
+            .lpAttributeList = p.ptr,
         };
         @memset(std.mem.asBytes(procinfo), 0);
         const rc = w.kernel32.CreateProcessW(

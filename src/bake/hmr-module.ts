@@ -136,14 +136,14 @@ export class HMRModule {
    * work".
    */
   implicitlyAccept(exports) {
-    if (IS_BUN_DEVELOPMENT) assert(this.esm);
+    ASSERT(this.esm);
     this.selfAccept ??= implicitAcceptFunction;
     const current = ((this.selfAccept as any).current ??= {});
-    if (IS_BUN_DEVELOPMENT) assert(typeof exports === "object");
+    ASSERT(typeof exports === "object");
     const moduleExports = (this.exports = {});
     for (const exportName in exports) {
       const source = (current[exportName] = exports[exportName]);
-      if (IS_BUN_DEVELOPMENT) assert(typeof source === "function");
+      ASSERT(typeof source === "function");
       const proxied = (moduleExports[exportName] ??= proxyFn(current, exportName));
       Object.defineProperty(proxied, "name", { value: source.name });
       Object.defineProperty(proxied, "length", { value: source.length });
@@ -313,11 +313,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     // ESM
     if (IS_BUN_DEVELOPMENT) {
       try {
-        assert(Array.isArray(loadOrEsmModule[ESMProps.imports]));
-        assert(Array.isArray(loadOrEsmModule[ESMProps.exports]));
-        assert(Array.isArray(loadOrEsmModule[ESMProps.stars]));
-        assert(typeof loadOrEsmModule[ESMProps.load] === "function");
-        assert(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
+        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.imports]));
+        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.exports]));
+        ASSERT(Array.isArray(loadOrEsmModule[ESMProps.stars]));
+        ASSERT(typeof loadOrEsmModule[ESMProps.load] === "function");
+        ASSERT(typeof loadOrEsmModule[ESMProps.isAsync] === "boolean");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
@@ -402,11 +402,11 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     // ESM
     if (IS_BUN_DEVELOPMENT) {
       try {
-        assert(Array.isArray(loadOrEsmModule[0]));
-        assert(Array.isArray(loadOrEsmModule[1]));
-        assert(Array.isArray(loadOrEsmModule[2]));
-        assert(typeof loadOrEsmModule[3] === "function");
-        assert(typeof loadOrEsmModule[4] === "boolean");
+        ASSERT(Array.isArray(loadOrEsmModule[0]));
+        ASSERT(Array.isArray(loadOrEsmModule[1]));
+        ASSERT(Array.isArray(loadOrEsmModule[2]));
+        ASSERT(typeof loadOrEsmModule[3] === "function");
+        ASSERT(typeof loadOrEsmModule[4] === "boolean");
       } catch (e) {
         console.warn(id, loadOrEsmModule);
         throw e;
@@ -423,13 +423,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     }
 
     const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
-    if (IS_BUN_DEVELOPMENT) {
-      if (isAsync) {
-        assert(list.some(x => x instanceof Promise));
-      } else {
-        assert(list.every(x => x instanceof HMRModule));
-      }
-    }
+      ASSERT(isAsync ? list.some(x => x instanceof Promise): list.every(x => x instanceof HMRModule));
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
@@ -491,9 +485,9 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   const { length } = deps;
   while (i < length) {
     const dep = deps[i] as string;
-    if (IS_BUN_DEVELOPMENT) assert(typeof dep === "string");
+    ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
-    if (IS_BUN_DEVELOPMENT) assert(typeof deps[i + 1] === "number");
+    ASSERT(typeof deps[i + 1] === "number");
     list.push(enqueueModuleLoad(dep, false, mod));
 
     const unloadedModule = unloadedModuleRegistry[dep];
@@ -505,7 +499,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       i += 2;
       while (i < expectedExportKeyEnd) {
         const key = deps[i] as string;
-        if (IS_BUN_DEVELOPMENT) assert(typeof key === "string");
+        ASSERT(typeof key === "string");
         if (!availableExportKeys.includes(key)) {
           if (!hasExportStar(unloadedModule[ESMProps.stars], key)) {
             throw new SyntaxError(`Module "${dep}" does not export key "${key}"`);
@@ -515,7 +509,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       }
       isAsync ||= unloadedModule[ESMProps.isAsync];
     } else {
-      if (IS_BUN_DEVELOPMENT) assert(!registry.get(dep)?.esm);
+      ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
     }
   }
@@ -531,7 +525,7 @@ function hasExportStar(starImports: Id[], key: string) {
     if (visited.has(starImport)) continue;
     visited.add(starImport);
     const mod = unloadedModuleRegistry[starImport];
-    if (IS_BUN_DEVELOPMENT) assert(mod, `Module "${starImport}" not found`);
+    ASSERT(mod, `Module "${starImport}" not found`);
     if (typeof mod === "function") {
       return true;
     }
@@ -648,11 +642,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
     for (const boundary of failures) {
       const path: Id[] = [];
       let current = registry.get(boundary)!;
-      if (IS_BUN_DEVELOPMENT) {
-        assert(!boundary.endsWith(".html")); // caller should have already reloaded
-        assert(current);
-        assert(current.selfAccept === null);
-      }
+        ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
+        ASSERT(current);
+        ASSERT(current.selfAccept === null);
       if (current.importers.size === 0) {
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
@@ -665,13 +657,11 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
           current = importer;
           continue outer;
         }
-        if (IS_BUN_DEVELOPMENT) assert(false);
+        ASSERT(false);
         break;
       }
       path.push(current.id);
-      if (IS_BUN_DEVELOPMENT) {
-        assert(path.length > 0);
-      }
+      ASSERT(path.length > 0);
       message += `Module "${boundary}" is not accepted by ${path[1]}${path.length > 1 ? "," : "."}\n`;
       for (let i = 2, len = path.length; i < len; i++) {
         const isLast = i === len - 1;
@@ -725,7 +715,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>) {
         selfAccept(getEsmExports(mod));
       }
     } else {
-      if (IS_BUN_DEVELOPMENT) assert(modOrPromise instanceof Promise);
+      ASSERT(modOrPromise instanceof Promise);
       promises.push(
         (modOrPromise as Promise<HMRModule>).then(mod => {
           if (selfAccept) {
@@ -773,7 +763,7 @@ function createAcceptArray(modules: string[], key: Id) {
   const arr = new Array(modules.length);
   arr.fill(undefined);
   const i = modules.indexOf(key);
-  if (IS_BUN_DEVELOPMENT) assert(i !== -1);
+  ASSERT(i !== -1);
   arr[i] = getEsmExports(registry.get(key)!);
   return arr;
 }
@@ -847,12 +837,6 @@ function registerSynthetic(id: Id, esmExports) {
   const module = new HMRModule(id, false);
   module.exports = esmExports;
   registry.set(id, module);
-}
-
-function assert(condition: any, message?: string): asserts condition {
-  if (!condition) {
-    console.assert(false, "ASSERTION FAILED" + (message ? `: ${message}` : ""));
-  }
 }
 
 export function setRefreshRuntime(runtime: HMRModule) {

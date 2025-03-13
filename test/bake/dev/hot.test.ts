@@ -160,9 +160,7 @@ devTest("import.meta.hot.accept specifier", {
       // Module evaluation order is guaranteed since there are no top-level
       // await. `hmr-module.ts` does not use promises for synchronous ESM.
       await c.expectMessage("D", "B", "C", "A", "end");
-      console.log("ADS");
       await c.expectReload(async () => {
-      console.log("GSFD");
         // D -> C -> A causes a page reload.
         await dev.write(
           "d.ts",
@@ -171,7 +169,6 @@ devTest("import.meta.hot.accept specifier", {
             export default "hey2!";
           `,
         );
-      console.log("ASFGSSSSSS");
       });
       await c.expectMessage("D2", "B", "C", "A");
     }

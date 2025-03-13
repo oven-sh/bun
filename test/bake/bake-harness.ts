@@ -276,6 +276,10 @@ export class Dev extends EventEmitter {
       [Symbol.asyncDispose]: async() => {
         if (wantsHmrEvent && interactive) {
           await seenFiles.promise;
+          if (isCI) {
+            // Wait an extra delay to avoid double-triggering events.
+            await Bun.sleep(450);
+          }
         } else if (wantsHmrEvent) {
           await Promise.race([
             seenFiles.promise,

@@ -1,5 +1,6 @@
 // This file is the entrypoint to the hot-module-reloading runtime
 // In the browser, this uses a WebSocket to communicate with the bundler.
+import './debug';
 import {
   loadModuleAsync,
   replaceModules,

@@ -54,6 +54,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
 std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSValue maybeKey, std::optional<WebCore::CryptoAlgorithmIdentifier> algorithmIdentifier);
 JSValue getStringOption(JSGlobalObject* globalObject, JSValue options, const WTF::ASCIILiteral& name);
 void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<uint8_t>& out, JSValue key, JSValue encoding, bool bufferOnly = false);
+bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 
 // Modified version of ByteSource from node
 //

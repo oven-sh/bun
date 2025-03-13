@@ -27,10 +27,9 @@ const p1 = dh1.getPrime('buffer');
                                             'called without `new`');
 }
 
-// TODO(dylan-conway): !!!!!!!!!!!
-// {
-//   const ECDH = crypto.ECDH;
-//   const ecdh = ECDH('prime256v1');
-//   assert(ecdh instanceof ECDH, 'ECDH is expected to return a new instance ' +
-//                               'when called without `new`');
-// }
+{
+  const ECDH = crypto.ECDH;
+  const ecdh = ECDH('prime256v1');
+  assert(ecdh instanceof ECDH, 'ECDH is expected to return a new instance ' +
+                              'when called without `new`');
+}

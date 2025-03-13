@@ -1022,6 +1022,20 @@ JSC::EncodedJSValue CRYPTO_OPERATION_FAILED(JSC::ThrowScope& throwScope, JSC::JS
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_INVALID_KEYPAIR(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Invalid key pair"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYPAIR, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_ECDH_INVALID_PUBLIC_KEY(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Public key is not valid for specified curve"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY, message));
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& curve)
 {
     WTF::StringBuilder builder;

@@ -77,16 +77,15 @@ for (const g of [Buffer.from([]),
   );
 });
 
-// TODO(dylan-conway): !!!!!!!!!!!!!
 // Invalid test: curve argument is undefined
-// assert.throws(
-//   () => crypto.createECDH(),
-//   {
-//     code: 'ERR_INVALID_ARG_TYPE',
-//     name: 'TypeError',
-//     message: 'The "curve" argument must be of type string. ' +
-//             'Received undefined'
-//   });
+assert.throws(
+  () => crypto.createECDH(),
+  {
+    code: 'ERR_INVALID_ARG_TYPE',
+    name: 'TypeError',
+    message: 'The "curve" argument must be of type string. ' +
+            'Received undefined'
+  });
 
 assert.throws(
   function() {

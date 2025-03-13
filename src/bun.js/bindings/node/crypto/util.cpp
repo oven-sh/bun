@@ -758,6 +758,26 @@ bool isArrayBufferOrView(JSValue value)
     return false;
 }
 
+bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey)
+{
+    if (!group || !privateKey)
+        return false;
+
+    // Private keys must be in the range [1, n-1]
+    // where n is the order of the curve
+    if (privateKey < ncrypto::BignumPointer::One())
+        return false;
+
+    auto order = ncrypto::BignumPointer::New();
+    if (!order)
+        return false;
+
+    if (!EC_GROUP_get_order(group, order.get(), nullptr))
+        return false;
+
+    return privateKey < order;
+}
+
 // takes a key value and encoding value
 // - if key is string, returns the key as a vector of bytes, using encoding if !isUndefined
 // - if key is isAnyArrayBuffer, return the bytes

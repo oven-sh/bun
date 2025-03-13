@@ -43,6 +43,9 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSECDH = std::forward<decltype(space)>(space); });
     }
 
+    const ncrypto::ECKeyPointer& key() const { return m_key; }
+    void setKey(ncrypto::ECKeyPointer&& key) { m_key = WTFMove(key); }
+
 private:
     JSECDH(JSC::VM& vm, JSC::Structure* structure, ncrypto::ECKeyPointer&& key)
         : Base(vm, structure)

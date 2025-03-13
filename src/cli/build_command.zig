@@ -358,7 +358,7 @@ pub const BuildCommand = struct {
         dump: {
             defer Output.flush();
             var writer = Output.writer();
-            var output_dir = this_transpiler.options.output_dir;
+            var outdir = this_transpiler.options.output_dir;
 
             const will_be_one_file =
                 // --outdir is not supported with --compile
@@ -368,21 +368,44 @@ pub const BuildCommand = struct {
                 ctx.bundler_options.compile or
                 (output_files.len == 1 and output_files[0].value == .buffer);
 
-            if (output_dir.len == 0 and outfile.len > 0 and will_be_one_file) {
-                output_dir = std.fs.path.dirname(outfile) orelse ".";
+            if (outdir.len == 0 and outfile.len > 0 and will_be_one_file) {
+                outdir = std.fs.path.dirname(outfile) orelse ".";
                 output_files[0].dest_path = std.fs.path.basename(outfile);
             }
 
             if (!ctx.bundler_options.compile) {
                 if (outfile.len == 0 and output_files.len == 1 and ctx.bundler_options.outdir.len == 0) {
-                    // if --no-bundle is passed, it won't have an output dir
+                    // if --no-bundle is passed with no outdir, print to stdout
                     if (output_files[0].value == .buffer)
                         try writer.writeAll(output_files[0].value.buffer.bytes);
                     break :dump;
                 }
+
+                // Fix for --no-bundle with --outdir
+                // Ensure each output file has a proper dest_path based on the basename
+                // without preserving the source directory structure
+                if (ctx.bundler_options.transform_only and ctx.bundler_options.outdir.len > 0) {
+                    for (output_files) |*output_file| {
+                        if (output_file.src_path.text.len > 0) {
+                            // Extract just the basename without any directory structure
+                            const basename = std.fs.path.basename(output_file.src_path.text);
+                            const ext = output_file.src_path.name.ext;
+                            const name_without_ext = if (ext.len > 0)
+                                basename[0 .. basename.len - ext.len]
+                            else
+                                basename;
+
+                            // Set dest_path to just the filename without any directory structure
+                            output_file.dest_path = try std.fmt.allocPrint(allocator, "{s}.js", .{name_without_ext});
+
+                            // Also clear the source path to prevent directory structure preservation
+                            output_file.src_path.text = basename;
+                        }
+                    }
+                }
             }
 
-            var root_path = output_dir;
+            var root_path = outdir;
             if (root_path.len == 0 and ctx.args.entry_points.len == 1)
                 root_path = std.fs.path.dirname(ctx.args.entry_points[0]) orelse ".";
 
@@ -496,7 +519,15 @@ pub const BuildCommand = struct {
             }
 
             for (output_files) |f| {
-                f.writeToDisk(root_dir, from_path) catch |err| {
+                // When using --no-bundle with --outdir, we want to place files directly in the output directory
+                // without recreating the source directory structure
+                var write_from_path = from_path;
+                if (this_transpiler.options.transform_only and outdir.len > 0) {
+                    // Use the output directory as the from_path to avoid recreating the source directory structure
+                    write_from_path = outdir;
+                }
+
+                f.writeToDisk(root_dir, write_from_path) catch |err| {
                     Output.err(err, "failed to write file '{}'", .{bun.fmt.quote(f.dest_path)});
                     had_err = true;
                     continue;

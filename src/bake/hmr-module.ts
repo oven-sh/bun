@@ -129,27 +129,6 @@ export class HMRModule {
       : import(id);
   }
 
-  /**
-   * Files which only export functions (and have no other statements) are
-   * implicitly `import.meta.hot.accept`ed, however it is done in a special way
-   * where functions are proxied. This is special behavior to make stuff "just
-   * work".
-   */
-  implicitlyAccept(exports) {
-    ASSERT(this.esm);
-    this.selfAccept ??= implicitAcceptFunction;
-    const current = ((this.selfAccept as any).current ??= {});
-    ASSERT(typeof exports === "object");
-    const moduleExports = (this.exports = {});
-    for (const exportName in exports) {
-      const source = (current[exportName] = exports[exportName]);
-      ASSERT(typeof source === "function");
-      const proxied = (moduleExports[exportName] ??= proxyFn(current, exportName));
-      Object.defineProperty(proxied, "name", { value: source.name });
-      Object.defineProperty(proxied, "length", { value: source.length });
-    }
-  }
-
   reactRefreshAccept() {
     if (isReactRefreshBoundary(this.exports)) {
       this.accept();
@@ -302,10 +281,11 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.importers.add(importer);
     }
     try {
-      loadOrEsmModule(mod, mod.cjs);
+      const cjs = mod.cjs;
+      loadOrEsmModule(mod, cjs, cjs.exports);
     } catch (e) {
-      mod.state = State.Error;
-      mod.failure = e;
+      mod.state = State.Stale;
+      mod.cjs.exports = {};
       throw e;
     }
     mod.state = State.Loaded;
@@ -389,10 +369,11 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.importers.add(importer);
     }
     try {
-      loadOrEsmModule(mod, mod.cjs);
+      const cjs = mod.cjs;
+      loadOrEsmModule(mod, cjs, cjs.exports);
     } catch (e) {
-      mod.state = State.Error;
-      mod.failure = e;
+      mod.state = State.Stale;
+      mod.cjs.exports = {};
       throw e;
     }
     mod.state = State.Loaded;
@@ -882,14 +863,6 @@ function isReactRefreshBoundary(esmExports): boolean {
 }
 
 function implicitAcceptFunction() {}
-
-const apply = Function.prototype.apply;
-function proxyFn(target: any, key: string) {
-  const f = function () {
-    return apply.call(target[key], this, arguments);
-  };
-  return f;
-}
 
 declare global {
   interface Error {

@@ -46,6 +46,7 @@ declare type EncodedDependencyArray = (string | number)[];
 declare type UnloadedCommonJS = (
   hmr: import("./hmr-module").HMRModule,
   module: import("./hmr-module").HMRModule["cjs"],
+  exports: any,
 ) => any;
 declare type CommonJSModule = {
   id: Id;

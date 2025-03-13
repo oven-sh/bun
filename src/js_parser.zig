@@ -18342,13 +18342,6 @@ fn NewParser_(
         }
 
         fn selectLocalKind(p: *P, kind: S.Local.Kind) S.Local.Kind {
-            // When using Bake's HMR implementation, we need to preserve the local kind
-            // if possible, as more efficient code can be generated if something is known
-            // not to be an ESM live binding.
-            if (p.options.features.hot_module_reloading) {
-                return kind;
-            }
-
             // Use "var" instead of "let" and "const" if the variable declaration may
             // need to be separated from the initializer. This allows us to safely move
             // this declaration into a nested scope.
@@ -24341,48 +24334,42 @@ pub const ConvertESMExportsForHmr = struct {
 
                 st.is_export = false;
 
-                if (st.kind.isReassignable()) {
-                    for (st.decls.slice()) |decl| {
-                        try ctx.visitBindingToExport(p, decl.binding, true);
-                    }
-                } else {
-                    var new_len: usize = 0;
-                    for (st.decls.slice()) |*decl_ptr| {
-                        const decl = decl_ptr.*; // explicit copy to avoid aliasinng
-                        bun.assert(decl.value != null); // const must be initialized
+                var new_len: usize = 0;
+                for (st.decls.slice()) |*decl_ptr| {
+                    const decl = decl_ptr.*; // explicit copy to avoid aliasinng
+                    bun.assert(decl.value != null); // const must be initialized
 
-                        switch (decl.binding.data) {
-                            .b_missing => {},
+                    switch (decl.binding.data) {
+                        .b_missing => {},
 
-                            .b_identifier => |id| {
-                                const symbol = p.symbols.items[id.ref.inner_index];
+                        .b_identifier => |id| {
+                            const symbol = p.symbols.items[id.ref.inner_index];
 
-                                // if the symbol is not used, we don't need to preserve
-                                // a binding in this scope. we can move it to the exports object.
-                                if (symbol.use_count_estimate == 0 and decl.value.?.canBeMoved()) {
-                                    try ctx.export_props.append(p.allocator, .{
-                                        .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
-                                        .value = decl.value,
-                                    });
-                                } else {
-                                    st.decls.mut(new_len).* = decl;
-                                    new_len += 1;
-                                    try ctx.visitBindingToExport(p, decl.binding, false);
-                                }
-                            },
-
-                            else => {
+                            // if the symbol is not used, we don't need to preserve
+                            // a binding in this scope. we can move it to the exports object.
+                            if (symbol.use_count_estimate == 0 and decl.value.?.canBeMoved()) {
+                                try ctx.export_props.append(p.allocator, .{
+                                    .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
+                                    .value = decl.value,
+                                });
+                            } else {
                                 st.decls.mut(new_len).* = decl;
                                 new_len += 1;
-                                try ctx.visitBindingToExport(p, decl.binding, false);
-                            },
-                        }
+                                try ctx.visitBindingToExport(p, decl.binding);
+                            }
+                        },
+
+                        else => {
+                            st.decls.mut(new_len).* = decl;
+                            new_len += 1;
+                            try ctx.visitBindingToExport(p, decl.binding);
+                        },
                     }
-                    if (new_len == 0) {
-                        return;
-                    }
-                    st.decls.len = @intCast(new_len);
                 }
+                if (new_len == 0) {
+                    return;
+                }
+                st.decls.len = @intCast(new_len);
 
                 break :stmt stmt;
             },
@@ -24661,25 +24648,20 @@ pub const ConvertESMExportsForHmr = struct {
         return namespace_ref;
     }
 
-    fn visitBindingToExport(
-        ctx: *ConvertESMExportsForHmr,
-        p: anytype,
-        binding: Binding,
-        is_live_binding: bool,
-    ) !void {
+    fn visitBindingToExport(ctx: *ConvertESMExportsForHmr, p: anytype, binding: Binding) !void {
         switch (binding.data) {
             .b_missing => {},
             .b_identifier => |id| {
-                try ctx.visitRefToExport(p, id.ref, null, binding.loc, is_live_binding);
+                try ctx.visitRefToExport(p, id.ref, null, binding.loc, false);
             },
             .b_array => |array| {
                 for (array.items) |item| {
-                    try ctx.visitBindingToExport(p, item.binding, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.binding);
                 }
             },
             .b_object => |object| {
                 for (object.properties) |item| {
-                    try ctx.visitBindingToExport(p, item.value, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.value);
                 }
             },
         }

@@ -13790,33 +13790,18 @@ pub const LinkerContext = struct {
             }) catch unreachable; // is within bounds
 
             if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
+                clousure_args.appendSliceAssumeCapacity(&.{
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{
                             .ref = ast.module_ref,
                         }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(hmr_api_ref, Logger.Loc.Empty),
-                            .name = "cjs",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
                     },
-                );
-            }
-
-            if (ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{
                             .ref = ast.exports_ref,
                         }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                            .name = "exports",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
                     },
-                );
+                });
             }
 
             stmts.all_stmts.appendAssumeCapacity(Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{

@@ -354,15 +354,34 @@ devTest("commonjs forms", {
   },
   async test(dev) {
     await using c = await dev.client("/");
-    await c.expectMessage(false); // import.meta.main is always false because there is no single entry point
-
-    await dev.write(
-      "index.ts",
-      `
-        require;
-        console.log(import.meta.main);
-      `,
-    );
-    await c.expectMessage(false);
+    await c.expectMessage({ field: {} });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `exports.field = "1";`);
+    });
+    await c.expectMessage({ field: "1" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theExports = exports; theExports.field = "2";`);
+    });
+    await c.expectMessage({ field: "2" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theModule = module; theModule.exports.field = "3";`);
+    });
+    await c.expectMessage({ field: "3" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let { exports } = module; exports.field = "4";`);
+    });
+    await c.expectMessage({ field: "4" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `var { exports } = module; exports.field = "4.5";`);
+    });
+    await c.expectMessage({ field: "4.5" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theExports = module.exports; theExports.field = "5";`);
+    });
+    await c.expectMessage({ field: "5" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `require; eval("module.exports.field = '6'");`);
+    });
+    await c.expectMessage({ field: "6" });
   },
 });

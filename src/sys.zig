@@ -3367,7 +3367,7 @@ pub fn existsAtType(fd: bun.FileDescriptor, subpath: anytype) Maybe(ExistsAtType
     if (std.meta.sentinel(@TypeOf(subpath)) == null) {
         const path_buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(path_buf);
-        @memcpy(path_buf, subpath);
+        @memcpy(path_buf[0..subpath.len], subpath);
         path_buf[subpath.len] = 0;
         const slice: [:0]const u8 = @ptrCast(path_buf);
         return existsAtType(fd, slice);

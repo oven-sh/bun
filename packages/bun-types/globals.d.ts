@@ -1283,9 +1283,16 @@ interface Uint8ArrayConstructor {
   /**
    * Create a new Uint8Array from a base64 encoded string
    * @param base64 The base64 encoded string to convert to a Uint8Array
+   * @param options Optional options for decoding the base64 string
    * @returns A new Uint8Array containing the decoded data
    */
-  fromBase64(base64: string): Uint8Array;
+  fromBase64(
+    base64: string,
+    options?: {
+      alphabet?: "base64" | "base64url";
+      lastChunkHandling?: "loose" | "strict" | "stop-before-partial";
+    },
+  ): Uint8Array;
 }
 
 interface BroadcastChannel {}

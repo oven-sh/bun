@@ -6022,7 +6022,7 @@ const HmrSocket = struct {
                         return;
                     }
 
-                    s.dev.startAsyncBundle(event.entry_points, true, event.timer) catch bun.outOfMemory();
+                    s.dev.startAsyncBundle(event.entry_points, true, event.validatedTimer()) catch bun.outOfMemory();
 
                     event.entry_points.deinit(s.dev.allocator);
                 },

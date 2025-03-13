@@ -24,7 +24,8 @@
   },
   "devDependencies": {
     "bun-types": "canary",
-    "svelte": "^5.20.4"
+    "svelte": "^5.20.4",
+    "@threlte/core": "8.0.1"
   },
   "peerDependencies": {
     "svelte": "^5"

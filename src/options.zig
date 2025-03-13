@@ -972,8 +972,8 @@ const LoaderResult = struct {
     is_main: bool,
     specifier: string,
     package_json: ?*const PackageJSON,
-    // module_type: ModuleType,
 };
+
 pub fn getLoaderAndVirtualSource(
     specifier_str: string,
     jsc_vm: *JSC.VirtualMachine,

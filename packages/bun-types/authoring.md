@@ -1,8 +1,10 @@
 # Authoring @types/bun
 
-### Module Declaration
+These declarations define the `'bun'` module, the `Bun` global variable, and lots of other global declarations like extending the `fetch` interface.
 
-The `Bun` global variable and the `'bun'` module are now declared in one place. It supports declaring types/interfaces and also runtime values.
+## The `'bun'` Module
+
+The `Bun` global variable and the `'bun'` module types are defined with one syntax. It supports declaring both types/interfaces and runtime values:
 
 ```typescript
 declare module "bun" {
@@ -17,32 +19,38 @@ declare module "bun" {
 }
 ```
 
-The above can now be used like this
+You can use these declarations in two ways:
 
-```ts
+1. Importing it from `'bun'`:
+
+```typescript
 import { type MyInterface, type MyType, myFunction } from "bun";
+
 const myInterface: MyInterface = {};
 const myType: MyType = "cool";
 myFunction();
-// OR
+```
+
+2. Using the global `Bun` object:
+
+```typescript
 const myInterface: Bun.MyInterface = {};
 const myType: Bun.MyType = "cool";
 Bun.myFunction();
 ```
 
-### File structure
+## File Structure
 
 Types are organized across multiple `.d.ts` files in the `packages/bun-types` directory:
 
+- `index.d.ts` - The main entry point that references all other type files
 - `bun.d.ts` - Core Bun APIs and types
 - `globals.d.ts` - Global type declarations
 - `test.d.ts` - Testing-related types
 - `sqlite.d.ts` - SQLite-related types
-- etc.
+- ...etc. You can make more files
 
-All these files are referenced in `index.d.ts` using `/// <reference path="./file.d.ts" />`.
-
-Make sure to leave the `bun.ns.d.ts` reference last.
+Note: The order of references in `index.d.ts` is important - `bun.ns.d.ts` must be referenced last to ensure the `Bun` global gets defined properly.
 
 ### Best Practices
 
@@ -54,7 +62,7 @@ Make sure to leave the `bun.ns.d.ts` reference last.
 
 2. **Compatibility**
 
-   - Use `Bun.__internal.UseLibDomIfAvailable` for types that might conflict with lib.dom.d.ts
+   - Use `Bun.__internal.UseLibDomIfAvailable<LibDomName extends string, OurType>` for types that might conflict with lib.dom.d.ts (see [`./fetch.d.ts`](./fetch.d.ts) for a real example)
    - `@types/node` often expects variables to always be defined (this was the biggest cause of most of the conflicts in the past!), so we use the `UseLibDomIfAvailable` type to make sure we don't overwrite `lib.dom.d.ts` but still provide Bun types while simultaneously declaring the variable exists (for Node to work) in the cases that we can.
 
 3. **Documentation**
@@ -80,9 +88,16 @@ The internal namespace is mostly used for declaring things that shouldn't be glo
 
 ## Testing Types
 
-There is a `fixture/index.ts` file which doesn't actually ever get ran, but does get type-checked in two environments - with lib.dom.d.ts, and without.
+We test our type definitions using a special test file at `fixture/index.ts`. This file contains TypeScript code that exercises our type definitions, but is never actually executed - it's only used to verify that the types work correctly.
 
-Your types should pass in both environments!
+The test file is type-checked in two different environments:
+
+1. With `lib.dom.d.ts` included - This simulates usage in a browser environment where DOM types are available
+2. Without `lib.dom.d.ts` - This simulates usage in a Node.js-like environment without DOM types
+
+Your type definitions must work properly in both environments. This ensures that Bun's types are compatible regardless of whether DOM types are present or not.
+
+For example, if you're adding types for a new API, you should just add code to `fixture/index.ts` that uses your new API. Doesn't need to work at runtime (e.g. you can fake api keys for example), it's just checking that the types are correct.
 
 ## Questions
 

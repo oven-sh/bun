@@ -813,6 +813,7 @@ pub const DescribeScope = struct {
     value: JSValue = .zero,
     done: bool = false,
     skip_count: u32 = 0,
+    ref_count: u32 = 1,
     tag: Tag = .pass,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
@@ -1138,7 +1139,7 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
-                this.deinit(globalObject);
+                this.deref(globalObject);
                 return;
             }
             if (end == 0) {
@@ -1197,10 +1198,25 @@ pub const DescribeScope = struct {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
-        this.deinit(globalThis);
+        this.deref(globalThis);
     }
 
-    pub fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
+    pub fn ref(this: *DescribeScope) void {
+        bun.debugAssert(this.ref_count > 0 and this.ref_count != std.math.maxInt(u32));
+        this.ref_count += 1;
+    }
+
+    pub fn deref(this: *DescribeScope, globalThis: *JSGlobalObject) void {
+        bun.assert(this.ref_count > 0);
+        bun.debugAssert(this.ref_count != std.math.maxInt(u32));
+        this.ref_count -= 1;
+        if (this.ref_count == 0) {
+            this.deinit(globalThis);
+            this.* = undefined;
+        }
+    }
+
+    fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
         const allocator = getAllocator(globalThis);
 
         if (this.label.len > 0) {
@@ -1378,6 +1394,8 @@ pub const TestRunnerTask = struct {
         if (this.needs_before_each) {
             this.needs_before_each = false;
             const label = test_.label;
+            this.describe.ref();
+            defer this.describe.deref(globalThis);
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);

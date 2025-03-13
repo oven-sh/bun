@@ -93,7 +93,7 @@ We test our type definitions using a special test file at `fixture/index.ts`. Th
 The test file is type-checked in two different environments:
 
 1. With `lib.dom.d.ts` included - This simulates usage in a browser environment where DOM types are available
-2. Without `lib.dom.d.ts` - This simulates usage in a Node.js-like environment without DOM types
+2. Without `lib.dom.d.ts` - This simulates usage in a server-like environment without DOM types
 
 Your type definitions must work properly in both environments. This ensures that Bun's types are compatible regardless of whether DOM types are present or not.
 

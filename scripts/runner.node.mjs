@@ -262,7 +262,7 @@ async function runTests() {
         await runTest(title, async () => {
           const { ok, error, stdout } = await spawnBun(execPath, {
             cwd: cwd,
-            args: [subcommand, "--config=./bunfig.node-test.toml", absoluteTestPath],
+            args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
             timeout: getNodeParallelTestTimeout(title),
             env: {
               FORCE_COLOR: "0",

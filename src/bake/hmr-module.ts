@@ -7,12 +7,12 @@
 // `require` on a module with transitive top-level await, or a missing export.
 // This was done to make incremental updates as isolated as possible.
 import {
-  __name,
+  __callDispose,
   __legacyDecorateClassTS,
   __legacyDecorateParamTS,
   __legacyMetadataTS,
+  __name,
   __using,
-  __callDispose,
 } from "../runtime.bun";
 
 /** List of loaded modules. Every `Id` gets one HMRModule, mutated across updates. */
@@ -533,7 +533,10 @@ type HotAcceptFunction = (esmExports?: any | void) => void;
 type HotArrayAcceptFunction = (esmExports: (any | void)[]) => void;
 type HotDisposeFunction = (data: any) => void | Promise<void>;
 type HotEventHandler = (data: any) => void;
-type HMREvent =
+
+// If updating this, make sure the `devserver.d.ts` types are
+// kept in sync.
+type HMREvent = 
   | "bun:beforeUpdate"
   | "bun:afterUpdate"
   | "bun:beforeFullReload"

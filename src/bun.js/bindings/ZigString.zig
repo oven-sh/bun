@@ -252,7 +252,7 @@ pub const ZigString = extern struct {
         }
 
         if (this.is16Bit()) {
-            return JSC.WebCore.Encoder.byteLengthU16(this.utf16SliceAligned().ptr, this.utf16Slice().len, .utf8);
+            return strings.elementLengthUTF16IntoUTF8([]const u16, this.utf16SliceAligned());
         }
 
         return JSC.WebCore.Encoder.byteLengthU8(this.slice().ptr, this.slice().len, .utf8);

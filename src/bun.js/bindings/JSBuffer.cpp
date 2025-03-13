@@ -203,10 +203,10 @@ std::optional<double> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 
         if (view->is8Bit()) {
             const auto span = view->span8();
-            return Bun__encoding__byteLengthLatin1(span.data(), span.size(), static_cast<uint8_t>(encoding));
+            return Bun__encoding__byteLengthLatin1AsUTF8(span.data(), span.size());
         } else {
             const auto span = view->span16();
-            return Bun__encoding__byteLengthUTF16(span.data(), span.size(), static_cast<uint8_t>(encoding));
+            return Bun__encoding__byteLengthUTF16AsUTF8(span.data(), span.size());
         }
     }
     default: {

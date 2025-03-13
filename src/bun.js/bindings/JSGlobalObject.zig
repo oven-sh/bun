@@ -137,6 +137,18 @@ pub const JSGlobalObject = opaque {
         return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
     }
 
+    /// "The <argname> argument must be one of type <typename>. Received <value>"
+    pub fn throwInvalidArgumentTypeValueOneOf(
+        this: *JSGlobalObject,
+        argname: []const u8,
+        typename: []const u8,
+        value: JSValue,
+    ) bun.JSError {
+        const actual_string_value = try determineSpecificType(this, value);
+        defer actual_string_value.deref();
+        return this.ERR_INVALID_ARG_TYPE("The \"{s}\" argument must be one of type {s}. Received {}", .{ argname, typename, actual_string_value }).throw();
+    }
+
     pub fn throwInvalidArgumentRangeValue(
         this: *JSGlobalObject,
         argname: []const u8,

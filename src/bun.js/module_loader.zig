@@ -1786,6 +1786,24 @@ pub const ModuleLoader = struct {
                     };
                 }
 
+                if (parse_result.empty) {
+                    const was_cjs = (loader == .js or loader == .ts) and brk: {
+                        const ext = std.fs.path.extension(parse_result.source.path.text);
+                        break :brk strings.eqlComptime(ext, ".cjs") or strings.eqlComptime(ext, ".cts");
+                    };
+                    if (was_cjs) {
+                        return .{
+                            .allocator = null,
+                            .source_code = bun.String.static("(function(){})"),
+                            .specifier = input_specifier,
+                            .source_url = input_specifier.createIfDifferent(path.text),
+                            .is_commonjs_module = true,
+                            .hash = 0,
+                            .tag = .javascript,
+                        };
+                    }
+                }
+
                 if (cache.entry) |*entry| {
                     jsc_vm.source_mappings.putMappings(parse_result.source, .{
                         .list = .{ .items = @constCast(entry.sourcemap), .capacity = entry.sourcemap.len },

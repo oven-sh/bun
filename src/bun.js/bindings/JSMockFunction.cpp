@@ -1100,7 +1100,24 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionMockRestore, (JSC::JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_IS_MOCK_FUNCTION(thisValue);
 
+    // First clear any function spies
     thisObject->clearSpy();
+    
+    // Then reset module mocks
+    // Get the GlobalObject as Zig::GlobalObject for access to our module mockery
+    if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
+        // Clear the virtual modules map - removes module mocks
+        zigGlobalObject->onLoadPlugins.clearModuleMocks();
+        
+        // Call the reload method which will:
+        // 1. Clear the ESM registry
+        // 2. Clear the CommonJS require cache
+        // 3. Run GC to clean up old references
+        zigGlobalObject->reload();
+        // Reset the internal reload count to ensure GC always runs on next reload
+        // which helps modules get reloaded properly
+        zigGlobalObject->reloadCount = 0;
+    }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject));
 }
@@ -1451,7 +1468,24 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSetSystemTime, (JSC::JSGlobalObject * globalO
 
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsRestoreAllMocks, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    JSMock__resetSpies(jsCast<Zig::GlobalObject*>(globalObject));
+    if (auto* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
+        // Reset all spies
+        JSMock__resetSpies(zigGlobalObject);
+        
+        // Clear module mocks
+        zigGlobalObject->onLoadPlugins.clearModuleMocks();
+        
+        // Call the reload method which will:
+        // 1. Clear the ESM registry
+        // 2. Clear the CommonJS require cache
+        // 3. Run GC to clean up old references
+        zigGlobalObject->reload();
+        
+        // Reset the internal reload count to ensure GC always runs on next reload
+        // which helps modules get reloaded properly
+        zigGlobalObject->reloadCount = 0;
+    }
+    
     return JSValue::encode(jsUndefined());
 }
 

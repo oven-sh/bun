@@ -394,6 +394,15 @@ void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSOb
     virtualModules->set(path, JSC::Strong<JSC::JSObject> { vm, mockObject });
 }
 
+void BunPlugin::OnLoad::clearModuleMocks()
+{
+    if (virtualModules) {
+        // Clear the virtual modules map
+        // When code tries to import the module again, the original will be loaded
+        virtualModules->clear();
+    }
+}
+
 class JSModuleMock final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

@@ -75,7 +75,7 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === 'u'.charCodeAt(0) || data[0] === 'e'.charCodeAt(0)) {
+        if (data[0] === "u".charCodeAt(0) || data[0] === "e".charCodeAt(0)) {
           isUpdating = setImmediate(() => {
             process.send({ type: "received-hmr-event", args: [] });
             isUpdating = null;
@@ -86,11 +86,10 @@ function createWindow(windowUrl) {
           if (allowedTypes.includes(String.fromCharCode(data[0]))) {
             return;
           }
-          dumpWebSocketMessage('[E] WebSocket message received while messages are not allowed', data);
+          dumpWebSocketMessage("[E] WebSocket message received while messages are not allowed", data);
           process.exit(exitCodeMap.websocketMessagesAreBanned);
         } else {
-          verboseWebSockets &&
-          dumpWebSocketMessage('[I] WebSocket', data);
+          verboseWebSockets && dumpWebSocketMessage("[I] WebSocket", data);
         }
       });
     }
@@ -168,10 +167,7 @@ function createWindow(windowUrl) {
 }
 
 function dumpWebSocketMessage(message, data) {
-  console.error(
-    `${message}. Event type`,
-    JSON.stringify(String.fromCharCode(data[0])),
-  );
+  console.error(`${message}. Event type`, JSON.stringify(String.fromCharCode(data[0])));
   let hexDump = "";
   for (let i = 0; i < data.length; i += 16) {
     // Print offset

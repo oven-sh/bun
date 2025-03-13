@@ -190,6 +190,7 @@ r.body;
 r.headers.get("content-type");
 
 new Request("", {});
+new Bun.$.ShellError() instanceof Bun.$.ShellError;
 
 await r.json();
 await r.text();

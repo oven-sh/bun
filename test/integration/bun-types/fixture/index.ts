@@ -194,6 +194,9 @@ URL.canParse;
 URL.createObjectURL;
 URL.revokeObjectURL;
 
+declare const myBodyInit: BodyInit;
+declare const myHeadersInit: HeadersInit;
+
 new MessagePort();
 
 new File(["code"], "name.ts");

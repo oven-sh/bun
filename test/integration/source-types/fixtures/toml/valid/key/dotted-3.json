@@ -1,0 +1,22 @@
+{
+    "a": {
+        "few": {
+            "dots": {
+                "polka": {
+                    "dance-with": {"type": "string", "value": "Dot"},
+                    "dot":        {"type": "string", "value": "again?"}
+                }
+            }
+        }
+    },
+    "tbl": {
+        "a": {
+            "b": {
+                "c": {"type": "float", "value": "42.666"}
+            }
+        }
+    },
+    "top": {
+        "key": {"type": "integer", "value": "1"}
+    }
+}

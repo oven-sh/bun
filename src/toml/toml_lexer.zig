@@ -66,8 +66,9 @@ pub const Lexer = struct {
     string_literal_is_ascii: bool = true,
     line_number: u32 = 0,
     token: T = T.t_end_of_file,
-    allow_double_bracket: bool = true,
 
+    allow_double_bracket: bool = true,
+    wants_key: bool = false,
     has_newline_before: bool = false,
 
     should_redact_logs: bool,
@@ -530,6 +531,11 @@ pub const Lexer = struct {
         while (true) {
             lexer.start = lexer.end;
             lexer.token = T.t_end_of_file;
+            // clear state from prev token. Not required for correctness, but
+            // helps us find bugs.
+            if (Environment.isDebug) {
+                lexer.identifier = "";
+            }
 
             switch (lexer.code_point) {
                 -1 => {
@@ -575,8 +581,17 @@ pub const Lexer = struct {
                     lexer.token = T.t_plus;
                 },
                 '-' => {
+                    if (lexer.wants_key) {
+                        try lexer.lexIdentifier();
+                    }
                     lexer.step();
-                    lexer.token = T.t_minus;
+                    switch (lexer.code_point) {
+                        'a'...'z', 'A'...'Z', '-', '_' => {
+                            @branchHint(.unlikely);
+                            try lexer.lexIdentifier();
+                        },
+                        else => lexer.token = T.t_minus,
+                    }
                 },
 
                 '{' => {
@@ -801,27 +816,38 @@ pub const Lexer = struct {
                     lexer.token = T.t_string_literal;
                 },
 
-                '.', '0'...'9' => {
+                '.' => {
                     try lexer.parseNumericLiteralOrDot();
+                },
+                '0'...'9' => {
+                    try if (lexer.wants_key)
+                        lexer.lexIdentifier()
+                    else
+                        lexer.parseNumericLiteralOrDot();
                 },
 
                 '@', 'a'...'z', 'A'...'Z', '$', '_' => {
-                    lexer.step();
-                    while (isIdentifierPart(lexer.code_point)) {
-                        lexer.step();
-                    }
-                    lexer.identifier = lexer.raw();
-                    lexer.token = switch (lexer.identifier.len) {
-                        4 => if (strings.eqlComptimeIgnoreLen(lexer.identifier, "true")) T.t_true else T.t_identifier,
-                        5 => if (strings.eqlComptimeIgnoreLen(lexer.identifier, "false")) T.t_false else T.t_identifier,
-                        else => T.t_identifier,
-                    };
+                    try lexer.lexIdentifier();
                 },
 
                 else => try lexer.unexpected(),
             }
             return;
         }
+    }
+
+    fn lexIdentifier(lexer: *Lexer) !void {
+        // caller cannot have stepped yet
+        bun.debugAssert(isIdentifierPart(lexer.code_point));
+        while (isIdentifierPart(lexer.code_point)) {
+            lexer.step();
+        }
+        lexer.identifier = lexer.raw();
+        lexer.token = switch (lexer.identifier.len) {
+            4 => if (strings.eqlComptimeIgnoreLen(lexer.identifier, "true")) T.t_true else T.t_identifier,
+            5 => if (strings.eqlComptimeIgnoreLen(lexer.identifier, "false")) T.t_false else T.t_identifier,
+            else => T.t_identifier,
+        };
     }
 
     pub fn decodeEscapeSequences(lexer: *Lexer, start: usize, text: string, comptime allow_multiline: bool, comptime BufType: type, buf_: *BufType) !void {

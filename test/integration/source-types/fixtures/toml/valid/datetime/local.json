@@ -1,0 +1,5 @@
+{
+    "local": {"type": "datetime-local", "value": "1987-07-05T17:45:00"},
+    "milli": {"type": "datetime-local", "value": "1977-12-21T10:32:00.555"},
+    "space": {"type": "datetime-local", "value": "1987-07-05T17:45:00"}
+}

@@ -92,6 +92,10 @@ else()
   optionx(ENABLE_ASAN BOOL "If ASAN support should be enabled" DEFAULT OFF)
 endif()
 
+# enabling ASAN roughly doubles `zig build` times so we disable it by default, even in debug builds.
+# It may optionally be enabled this way.
+optionx(ENABLE_ZIG_ASAN BOOL "If ASAN support should be enabled when compiling Zig code" DEFAULT OFF)
+
 optionx(ENABLE_PRETTIER BOOL "If prettier should be ran" DEFAULT OFF)
 
 if(USE_VALGRIND AND NOT USE_BASELINE)

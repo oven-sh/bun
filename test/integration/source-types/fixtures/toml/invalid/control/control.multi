@@ -1,0 +1,38 @@
+# "\x.." sequences are replaced with literal control characters.
+
+comment-null = "null"   # \x00
+comment-ff   = "0x7f"   # \x0c
+comment-lf   = "ctrl-P" # \x10
+comment-cr   = "CR"     # \x0d
+comment-us   = "ctrl-_" # \x1f
+comment-del  = "0x7f"   # \x7f
+comment-cr   = "Carriage return in comment" # \x0da=1
+
+string-null = "null\x00"
+string-lf   = "null\x10"
+string-cr   = "null\x0d"
+string-us   = "null\x1f"
+string-del  = "null\x7f"
+string-bs   = "backspace\x08"
+
+rawstring-null = 'null\x00'
+rawstring-lf   = 'null\x10'
+rawstring-cr   = 'null\x0d'
+rawstring-us   = 'null\x1f'
+rawstring-del  = 'null\x7f'
+
+multi-null = """null\x00"""
+multi-lf   = """null\x10"""
+multi-cr   = """null\x0d"""
+multi-us   = """null\x1f"""
+multi-del  = """null\x7f"""
+
+rawmulti-null = '''null\x00'''
+rawmulti-lf   = '''null\x10'''
+rawmulti-cd   = '''null\x0d'''
+rawmulti-us   = '''null\x1f'''
+rawmulti-del  = '''null\x7f'''
+
+bare-null         = "some value" \x00
+bare-formfeed     = \x0c
+bare-vertical-tab = \x0b

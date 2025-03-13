@@ -1,0 +1,9 @@
+# infinity
+sf1 = inf  # positive infinity
+sf2 = +inf # positive infinity
+sf3 = -inf # negative infinity
+
+# not a number
+sf4 = nan  # actual sNaN/qNaN encoding is implementation-specific
+sf5 = +nan # same as `nan`
+sf6 = -nan # valid, actual encoding is implementation-specific

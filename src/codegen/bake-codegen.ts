@@ -131,7 +131,7 @@ async function run() {
             : `${code};return ${outName("server_exports")};`;
 
           const params = `${outName("$separateSSRGraph")},${outName("$importMeta")}`;
-          code = code.replaceAll("import.meta", outName("$importMeta"));
+          code = code.replaceAll("import.meta", outName("$importMeta")).replaceAll(outName("$importMeta") + ".hot", "import.meta.hot");
           code = `let ${outName("unloadedModuleRegistry")}={},${outName("config")}={separateSSRGraph:${outName("$separateSSRGraph")}},${outName("server_exports")};${code}`;
 
           code = debug ? `((${params}) => {${code}})\n` : `((${params})=>{${code}})\n`;

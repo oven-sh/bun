@@ -207,7 +207,7 @@ export class Dev extends EventEmitter {
         connected.resolve();
       }
       if (data[0] === "r".charCodeAt(0)) {
-        console.log("watch_synchronization", WatchSynchronization[data[1]]);
+        // console.log("watch_synchronization", WatchSynchronization[data[1]]);
         this.emit("watch_synchronization", data[1]);
       }
       this.emit("hmr", data);
@@ -254,8 +254,6 @@ export class Dev extends EventEmitter {
     this.socket!.send("H");
     await initWait;
 
-    console.log("initWait done");
-
     const seenFiles = Promise.withResolvers<void>();
     function onSeenFiles(ev: WatchSynchronization) {
       if (ev === WatchSynchronization.SeenFiles) {
@@ -276,7 +274,6 @@ export class Dev extends EventEmitter {
     const wait = this.waitForHotReload(wantsHmrEvent);
     return {
       [Symbol.asyncDispose]: async() => {
-        console.log("dispose", wantsHmrEvent, interactive);
         if (wantsHmrEvent && interactive) {
           await seenFiles.promise;
         } else if (wantsHmrEvent) {
@@ -284,6 +281,8 @@ export class Dev extends EventEmitter {
             seenFiles.promise,
             Bun.sleep(1000),
           ]);
+        } else {
+          await Bun.sleep(450);
         }
 
         dev.off("watch_synchronization", onSeenFiles);
@@ -339,7 +338,7 @@ export class Dev extends EventEmitter {
    * @param options Options for handling errors after deletion
    * @returns Promise that resolves when the file is deleted and hot reload is complete (if applicable)
    */
-  delete(file: string, options: { errors?: null | ErrorSpec[]; wait?: boolean } = {}) {
+  delete(file: string, options: { errors?: null | ErrorSpec[] } = {}) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
@@ -408,7 +407,6 @@ export class Dev extends EventEmitter {
       const disposes = new Set<() => void>();
       for (const client of dev.connectedClients) {
         const socketEventHandler = () => {
-          console.log("received-hmr-event");
           clientWaits++;
           if (seenMainEvent && clientWaits === dev.connectedClients.size) {
             client.off("received-hmr-event", socketEventHandler);

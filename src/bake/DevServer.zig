@@ -6674,7 +6674,7 @@ fn relativePath(dev: *DevServer, path: []const u8) []const u8 {
     }
 
     const rel = bun.path.relativePlatformBuf(&dev.relative_path_buf, dev.root, path, .auto, true);
-    // @constCast: `rel` is owned by a mutable threadlocal buffer above
+    // @constCast: `rel` is owned by a buffer on `dev`, which is mutable
     bun.path.platformToPosixInPlace(u8, @constCast(rel));
     return rel;
 }
@@ -7544,17 +7544,24 @@ fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
 
 const TestingBatch = struct {
     entry_points: EntryPointList,
-    timer: std.time.Timer,
+    /// Memory is only valid when entry_points is not empty. Otherwise, there is
+    /// no sensible initial value to give this.
+    potentially_valid_timer: std.time.Timer,
 
     const empty: @This() = .{
         .entry_points = .empty,
-        .timer = undefined,
+        .potentially_valid_timer = undefined,
     };
+
+    pub fn validatedTimer(self: @This()) std.time.Timer {
+        assert(self.entry_points.set.count() > 0);
+        return self.potentially_valid_timer;
+    }
 
     pub fn append(self: *@This(), dev: *DevServer, entry_points: EntryPointList, timer: std.time.Timer) !void {
         assert(entry_points.set.count() > 0);
         if (self.entry_points.set.count() == 0) {
-            self.timer = timer;
+            self.potentially_valid_timer = timer;
         }
         for (entry_points.set.keys(), entry_points.set.values()) |k, v| {
             try self.entry_points.append(dev.allocator, k, v);

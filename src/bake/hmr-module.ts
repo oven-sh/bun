@@ -58,6 +58,12 @@ interface HotAccept {
   single: boolean;
 }
 
+interface CJSModule {
+  id: Id;
+  exports: unknown;
+  require: (id: Id) => unknown;
+}
+
 /** Implementation details must remain in sync with js_parser.zig and bundle_v2.zig */
 export class HMRModule {
   /** Key in `registry` */
@@ -69,10 +75,10 @@ export class HMRModule {
   exports: any = null;
   /** For ESM, this is the converted CJS exports.
    *  For CJS, this is the `module` object. */
-  cjs: any;
+  cjs: CJSModule | any | null;
   /** When a module fails to load, trying to load it again
    *  should throw the same error */
-  failure: any = null;
+  failure: unknown = null;
   /** Two purposes:
    * 1. HMRModule[] - List of parsed imports. indexOf is used to go from HMRModule -> updater function
    * 2. any[] - List of module namespace objects. Read by the ESM module's load function.
@@ -901,7 +907,7 @@ if (side === "client") {
 // The following API may be altered at any point.
 // Thankfully, you can just call `import.meta.hot.on`
 let testingHook = globalThis['bun do not use this outside of internal testing or else i\'ll cry'];
-testingHook && testingHook({
+testingHook?.({
   onEvent(event: HMREvent, cb) {
     eventHandlers[event] ??= [];
     eventHandlers[event]!.push(cb);

@@ -48,12 +48,12 @@ declare type EncodedDependencyArray = (string | number)[];
 declare type UnloadedCommonJS = (
   hmr: import("./hmr-module").HMRModule,
   module: import("./hmr-module").HMRModule["cjs"],
-  exports: any,
-) => any;
+  exports: unknown,
+) => unknown;
 declare type CommonJSModule = {
   id: Id;
   exports: any;
-  require: (id: Id) => any;
+  require: (id: Id) => unknown;
 };
 
 declare const config: Config;

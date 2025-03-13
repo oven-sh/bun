@@ -1,8 +1,16 @@
 const bun = @import("root").bun;
+const uws = bun.uws;
+const BoringSSL = bun.BoringSSL;
+const strings = bun.strings;
 const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const getHttpContext = @import("./thread.zig").getContext;
 const http_thread = @import("./http/client/thread.zig").getHttpThread();
-
+const NewHTTPContext = @import("./thread.zig").NewHTTPContext;
+const HTTPClient = @import("../../http.zig").HTTPClient;
+const SSLConfig = bun.server.ServerConfig.SSLConfig;
+const HTTPCertError = @import("./errors.zig").HTTPCertError;
+const log = bun.Output.scoped(.fetch, false);
+const getTempHostname = @import("../../http.zig").getTempHostname;
 const ProxyTunnel = struct {
     wrapper: ?ProxyTunnelWrapper = null,
     shutdown_err: anyerror = error.ConnectionClosed,
@@ -31,6 +39,7 @@ const ProxyTunnel = struct {
 
                 var hostname: [:0]const u8 = "";
                 var hostname_needs_free = false;
+                const temp_hostname = getTempHostname();
                 if (!strings.isIPAddress(_hostname)) {
                     if (_hostname.len < temp_hostname.len) {
                         @memcpy(temp_hostname[0.._hostname.len], _hostname);
@@ -217,7 +226,7 @@ const ProxyTunnel = struct {
         }
     }
 
-    fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: JSC.API.ServerConfig.SSLConfig) void {
+    fn start(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket, ssl_options: SSLConfig) void {
         const proxy_tunnel = ProxyTunnel.new(.{});
 
         var custom_options = ssl_options;

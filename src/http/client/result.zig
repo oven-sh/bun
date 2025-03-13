@@ -1,7 +1,9 @@
 const bun = @import("root").bun;
-
+const JSC = bun.JSC;
 const MutableString = bun.MutableString;
 const HTTPResponseMetadata = @import("./metadata.zig").HTTPResponseMetadata;
+const CertificateInfo = @import("./certificate_info.zig").CertificateInfo;
+const AsyncHTTP = @import("./async_http.zig").AsyncHTTP;
 pub const HTTPClientResult = struct {
     body: ?*MutableString = null,
     has_more: bool = false,

@@ -21,7 +21,6 @@ const assert = bun.assert;
 const strings = bun.strings;
 const Batch = bun.ThreadPool.Batch;
 
-const HTTPAllocator = @import("./http_allocator.zig");
 pub var http_thread: HTTPThread = undefined;
 
 var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
@@ -686,7 +685,6 @@ pub const HTTPThread = struct {
 
     pub fn onStart(opts: InitOpts) void {
         Output.Source.configureNamedThread("HTTP Client");
-        HTTPAllocator.init();
 
         const loop = bun.JSC.MiniEventLoop.initGlobal(null);
 

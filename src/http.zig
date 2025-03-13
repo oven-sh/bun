@@ -13,20 +13,12 @@ const Environment = bun.Environment;
 const strings = bun.strings;
 const MutableString = bun.MutableString;
 const FeatureFlags = bun.FeatureFlags;
-// const stringZ = bun.stringZ;
-// const C = bun.C;
-// const Loc = bun.logger.Loc;
-// const Log = bun.logger.Log;
-// const DotEnv = @import("./env_loader.zig");
 const std = @import("std");
 const posix = std.posix;
 const SOCK = posix.SOCK;
 pub const MimeType = @import("./http/mime_type.zig");
 
-// const URL = @import("./url.zig").URL;
 pub const Method = @import("./http/method.zig").Method;
-// const Api = @import("./api/schema.zig").Api;
-// const Lock = bun.Mutex;
 
 const Zlib = @import("./zlib.zig");
 const Brotli = bun.brotli;
@@ -47,27 +39,27 @@ const HTTPVerboseLevel = @import("./http/client/async_http.zig").HTTPVerboseLeve
 const HTTPClientResult = @import("./http/client/result.zig").HTTPClientResult;
 const ProxyTunnel = @import("./http/client/proxy_tunnel.zig").ProxyTunnel;
 const Signals = @import("./http/client/signals.zig").Signals;
-// const Arena = @import("./allocators/mimalloc_arena.zig").Arena;
-// const ZlibPool = @import("./http/zlib.zig");
-// const BoringSSL = bun.BoringSSL.c;
 const Progress = bun.Progress;
-// const X509 = @import("./bun.js/api/bun/x509.zig");
 const SSLConfig = bun.server.ServerConfig.SSLConfig;
-// const SSLWrapper = @import("./bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const NewHTTPContext = @import("./http/client/thread.zig").NewHTTPContext;
+const FetchRedirect = @import("./http/client/async_http.zig").FetchRedirect;
 const http_thread = @import("./http/client/thread.zig").getHttpThread();
 const URLBufferPool = ObjectPool([8192]u8, null, false, 10);
 
 pub const HTTPResponseMetadata = @import("./http/client/result.zig").HTTPResponseMetadata;
-// This becomes Arena.allocator
 const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
 pub const end_of_chunked_http1_1_encoding_response_body = @import("./http/client/async_http.zig").end_of_chunked_http1_1_encoding_response_body;
 
 //TODO: this needs to be freed when Worker Threads are implemented
-var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 const MAX_REDIRECT_URL_LENGTH = 128 * 1024;
 
 pub var max_http_header_size: usize = 16 * 1024;
+var temp_hostname: [8192]u8 = undefined;
+
+pub fn getTempHostname() *[8192]u8 {
+    return &temp_hostname;
+}
+
 comptime {
     @export(&max_http_header_size, .{ .name = "BUN_DEFAULT_MAX_HTTP_HEADER_SIZE" });
 }
@@ -88,21 +80,7 @@ var shared_response_headers_buf: [256]picohttp.Header = undefined;
 // never finishing sending the body
 const preallocate_max = 1024 * 1024 * 256;
 
-pub const FetchRedirect = enum(u8) {
-    follow,
-    manual,
-    @"error",
-
-    pub const Map = bun.ComptimeStringMap(FetchRedirect, .{
-        .{ "follow", .follow },
-        .{ "manual", .manual },
-        .{ "error", .@"error" },
-    });
-};
-
 const log = Output.scoped(.fetch, false);
-
-var temp_hostname: [8192]u8 = undefined;
 
 pub fn checkServerIdentity(
     client: *HTTPClient,
@@ -920,28 +898,6 @@ pub fn headerStr(this: *const HTTPClient, ptr: Api.StringPointer) string {
 }
 
 pub const HeaderBuilder = @import("./http/header_builder.zig");
-
-const HTTPCallbackPair = .{ *AsyncHTTP, HTTPClientResult };
-pub const HTTPChannel = @import("./sync.zig").Channel(HTTPCallbackPair, .{ .Static = 1000 });
-// 32 pointers much cheaper than 1000 pointers
-const SingleHTTPChannel = struct {
-    const SingleHTTPCHannel_ = @import("./sync.zig").Channel(HTTPClientResult, .{ .Static = 8 });
-    channel: SingleHTTPCHannel_,
-    pub fn reset(_: *@This()) void {}
-    pub fn init() SingleHTTPChannel {
-        return SingleHTTPChannel{ .channel = SingleHTTPCHannel_.init() };
-    }
-};
-
-pub const HTTPChannelContext = struct {
-    http: AsyncHTTP = undefined,
-    channel: *HTTPChannel,
-
-    pub fn callback(data: HTTPCallbackPair) void {
-        var this: *HTTPChannelContext = @fieldParentPtr("http", data.@"0");
-        this.channel.writeItem(data) catch unreachable;
-    }
-};
 
 pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     var header_count: usize = 0;

@@ -1,9 +1,17 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const string = bun.string;
+const Environment = bun.Environment;
 const SSLConfig = bun.server.ServerConfig.SSLConfig;
 const picohttp = bun.picohttp;
 const JSC = bun.JSC;
+const assert = bun.assert;
+const Log = bun.logger.Log;
+const DotEnv = bun.DotEnv;
+const Task = bun.ThreadPool.Task;
+const Loc = bun.logger.Loc;
+const Batch = bun.ThreadPool.Batch;
+const FeatureFlags = bun.FeatureFlags;
 const MutableString = bun.MutableString;
 const Headers = JSC.WebCore.Headers;
 pub const UnboundedQueue = bun.UnboundedQueue;
@@ -18,9 +26,35 @@ const uws = bun.uws;
 const PercentEncoding = @import("../../url.zig").PercentEncoding;
 const http_thread = @import("./thread.zig").getHttpThread();
 const Signals = @import("./signals.zig").Signals;
+const HTTPClient = @import("../../http.zig").HTTPClient;
 var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
+const default_allocator = bun.default_allocator;
+var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(default_allocator);
+const log = bun.Output.scoped(.fetch, false);
 
-var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
+const HTTPCallbackPair = .{ *AsyncHTTP, HTTPClientResult };
+pub const HTTPChannel = @import("../../sync.zig").Channel(HTTPCallbackPair, .{ .Static = 1000 });
+const HTTPThread = @import("./thread.zig").HTTPThread;
+// 32 pointers much cheaper than 1000 pointers
+const SingleHTTPChannel = struct {
+    const SingleHTTPCHannel_ = @import("../../sync.zig").Channel(HTTPClientResult, .{ .Static = 8 });
+    channel: SingleHTTPCHannel_,
+    pub fn reset(_: *@This()) void {}
+    pub fn init() SingleHTTPChannel {
+        return SingleHTTPChannel{ .channel = SingleHTTPCHannel_.init() };
+    }
+};
+
+pub const HTTPChannelContext = struct {
+    http: AsyncHTTP = undefined,
+    channel: *HTTPChannel,
+
+    pub fn callback(data: HTTPCallbackPair) void {
+        var this: *HTTPChannelContext = @fieldParentPtr("http", data.@"0");
+        this.channel.writeItem(data) catch unreachable;
+    }
+};
+
 pub const HTTPVerboseLevel = enum {
     none,
     headers,
@@ -70,6 +104,17 @@ pub const Encoding = enum {
             else => false,
         };
     }
+};
+pub const FetchRedirect = enum(u8) {
+    follow,
+    manual,
+    @"error",
+
+    pub const Map = bun.ComptimeStringMap(FetchRedirect, .{
+        .{ "follow", .follow },
+        .{ "manual", .manual },
+        .{ "error", .@"error" },
+    });
 };
 
 pub const AsyncHTTP = struct {
@@ -190,7 +235,7 @@ pub const AsyncHTTP = struct {
             this.async_http.clearData();
             this.async_http.client.deinit();
             if (this.is_url_owned) {
-                bun.default_allocator.free(this.url.href);
+                default_allocator.free(this.url.href);
             }
 
             this.destroy();
@@ -203,7 +248,7 @@ pub const AsyncHTTP = struct {
     ) void {
         if (!FeatureFlags.is_fetch_preconnect_supported) {
             if (is_url_owned) {
-                bun.default_allocator.free(url.href);
+                default_allocator.free(url.href);
             }
 
             return;
@@ -216,7 +261,7 @@ pub const AsyncHTTP = struct {
             .is_url_owned = is_url_owned,
         });
 
-        this.async_http = AsyncHTTP.init(bun.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
+        this.async_http = AsyncHTTP.init(default_allocator, .GET, url, .{}, "", &this.response_buffer, "", HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
         this.async_http.client.flags.is_preconnect_only = true;
 
         http_thread.schedule(Batch.from(&this.async_http.task));
@@ -451,7 +496,7 @@ pub const AsyncHTTP = struct {
     pub fn sendSync(this: *AsyncHTTP) anyerror!picohttp.Response {
         HTTPThread.init(&.{});
 
-        var ctx = try bun.default_allocator.create(SingleHTTPChannel);
+        var ctx = try default_allocator.create(SingleHTTPChannel);
         ctx.* = SingleHTTPChannel.init();
         this.result_callback = HTTPClientResult.Callback.New(
             *SingleHTTPChannel,
@@ -459,7 +504,7 @@ pub const AsyncHTTP = struct {
         ).init(ctx);
 
         var batch = bun.ThreadPool.Batch{};
-        this.schedule(bun.default_allocator, &batch);
+        this.schedule(default_allocator, &batch);
         http_thread.schedule(batch);
 
         const result = ctx.channel.readItem() catch unreachable;

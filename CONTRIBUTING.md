@@ -205,17 +205,29 @@ WebKit is not cloned by default (to save time and disk space). To clone and buil
 # Clone WebKit into ./vendor/WebKit
 $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 
+# Check out the commit hash specified in `set(WEBKIT_VERSION <commit_hash>)` in cmake/tools/SetupWebKit.cmake
+$ git -C vendor/WebKit checkout <commit_hash>
+
 # Make a debug build of JSC. This will output build artifacts in ./vendor/WebKit/WebKitBuild/Debug
 # Optionally, you can use `make jsc` for a release build
-$ make jsc-debug
+$ make jsc-debug && rm vendor/WebKit/WebKitBuild/Debug/JavaScriptCore/DerivedSources/inspector/InspectorProtocolObjects.h
 
 # Build bun with the local JSC build
 $ bun run build:local
 ```
 
+Using `bun run build:local` will build Bun in the `./build/debug-local` directory (instead of `./build/debug`), you'll have to change a couple of places to use this new directory:
+
+- The first line in [`src/js/builtins.d.ts`](/src/js/builtins.d.ts)
+- The `CompilationDatabase` line in [`.clangd` config](/.clangd) should be `CompilationDatabase: build/debug-local`
+- In [`build.zig`](/build.zig), the `codegen_path` option should be `build/debug-local/codegen` (instead of `build/debug/codegen`)
+- In [`.vscode/launch.json`](/.vscode/launch.json), many configurations use `./build/debug/`, change them as you see fit
+
 Note that the WebKit folder, including build artifacts, is 8GB+ in size.
 
 If you are using a JSC debug build and using VScode, make sure to run the `C/C++: Select a Configuration` command to configure intellisense to find the debug headers.
+
+Note that if you change make changes to our [WebKit fork](https://github.com/oven-sh/WebKit), you will also have to change [`SetupWebKit.cmake`](/cmake/tools/SetupWebKit.cmake) to point to the commit hash.
 
 ## Troubleshooting
 

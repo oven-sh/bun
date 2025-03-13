@@ -1080,12 +1080,12 @@ Socket.prototype.setTimeout = function setTimeout(timeout, callback) {
   timeout = getTimerDuration(timeout, "msecs");
   // internally or timeouts are in seconds
   // we use Math.ceil because 0 would disable the timeout and less than 1 second but greater than 1ms would be 1 second (the minimum)
-  this._handle?.timeout(Math.ceil(timeout / 1000));
-  this.timeout = timeout;
   if (callback !== undefined) {
     validateFunction(callback, "callback");
     this.once("timeout", callback);
   }
+  this._handle?.timeout(Math.ceil(timeout / 1000));
+  this.timeout = timeout;
   return this;
 };
 
@@ -1109,6 +1109,7 @@ Socket.prototype.destroySoon = function destroySoon() {
   if (this.writableFinished) this.destroy();
   else this.once("finish", this.destroy);
 };
+
 
 //TODO: migrate to native
 Socket.prototype._writev = function _writev(data, callback) {

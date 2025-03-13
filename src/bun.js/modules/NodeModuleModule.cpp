@@ -1,23 +1,21 @@
 #include "root.h"
+#include "headers-handwritten.h"
+#include "NodeModuleModule.h"
 
 #include <JavaScriptCore/JSCInlines.h>
-
 #include <JavaScriptCore/VM.h>
-
 #include <JavaScriptCore/JSString.h>
-
-#include "headers-handwritten.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
-#include <JavaScriptCore/FunctionPrototype.h>
-
-#include "NodeModuleModule.h"
-
 #include "ErrorCode.h"
-#include <JavaScriptCore/LazyPropertyInlines.h>
-#include <JavaScriptCore/VMTrapsInlines.h>
+
+#include "GeneratedNodeModuleModule.h"
+
 namespace Bun {
 
 using namespace JSC;
@@ -237,20 +235,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
             "createRequire() requires at least one argument"_s);
     }
 
-    auto val = callFrame->uncheckedArgument(0).toWTFString(globalObject);
+    auto argument = callFrame->uncheckedArgument(0);
+    auto val = argument.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (val.startsWith("file://"_s)) {
+    if (!isAbsolutePath(val)) {
         WTF::URL url(val);
         if (!url.isValid()) {
-            throwTypeError(globalObject, scope,
-                makeString("createRequire() was given an invalid URL '"_s,
-                    url.string(), "'"_s));
+            ERR::INVALID_ARG_VALUE(scope, globalObject,
+                "filename"_s, argument,
+                "must be a file URL object, file URL string, or absolute path string"_s);
             RELEASE_AND_RETURN(scope, JSValue::encode({}));
         }
         if (!url.protocolIsFile()) {
-            throwTypeError(globalObject, scope,
-                "createRequire() does not support non-file URLs"_s);
+            ERR::INVALID_ARG_VALUE(scope, globalObject,
+                "filename"_s, argument,
+                "must be a file URL object, file URL string, or absolute path string"_s);
             RELEASE_AND_RETURN(scope, JSValue::encode({}));
         }
         val = url.fileSystemPath();
@@ -708,6 +708,7 @@ _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
 _resolveFilename        nodeModuleResolveFilename         CustomAccessor
 _resolveLookupPaths     jsFunctionResolveLookupPaths      Function 2
+_stat                   &Generated::NodeModuleModule::js_stat Function 1
 builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1

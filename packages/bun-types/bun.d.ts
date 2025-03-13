@@ -4206,17 +4206,7 @@ declare module "bun" {
      * Passing other options such as `port` or `hostname` won't do anything.
      */
     reload<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-      options: (
-        | (Omit<ServeOptions, "fetch"> & {
-            routes: R;
-            fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-          })
-        | (Omit<ServeOptions, "routes"> & {
-            routes?: never;
-            fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-          })
-        | WebSocketServeOptions<T>
-      ) & {
+      options: ServeFunctionOptions<T, R> & {
         /**
          * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
          */
@@ -4594,23 +4584,39 @@ declare module "bun" {
     @param options.routes - Route definitions mapping paths to handlers
     */
   function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-    options: (
-      | (DistributedOmit<Serve, "fetch"> & {
-          routes: R;
-          fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-        })
-      | (DistributedOmit<Serve, "routes"> & {
-          routes?: never;
-          fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-        })
-      | WebSocketServeOptions<T>
-    ) & {
+    options: ServeFunctionOptions<T, R> & {
       /**
        * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
        */
       static?: R;
     },
   ): Server;
+
+  type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }> =
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+        routes: R;
+        fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+        routes?: never;
+        fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (WebSocketServeOptions<T> & {
+        routes: R;
+        fetch?: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      })
+    | (WebSocketServeOptions<T> & {
+        routes?: never;
+        fetch: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      });
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -6843,6 +6849,8 @@ declare module "bun" {
     resourceUsage: ResourceUsage;
 
     signalCode?: string;
+    exitedDueToTimeout?: true;
+    pid: number;
   }
 
   /**

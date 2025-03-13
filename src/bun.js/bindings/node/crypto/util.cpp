@@ -438,7 +438,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto maybeEncoding = WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue);
+        auto maybeEncoding = encodingValue.pureToBoolean() == TriState::True ? WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue) : std::optional<BufferEncodingType> { BufferEncodingType::utf8 };
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!maybeEncoding && !defaultBufferEncoding) {
@@ -741,6 +741,21 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
 
     Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "key"_s, "ArrayBuffer, Buffer, TypedArray, DataView, string, KeyObject, or CryptoKey"_s, maybeKey);
     return std::nullopt;
+}
+
+bool isArrayBufferOrView(JSValue value)
+{
+    if (value.isCell()) {
+        auto type = value.asCell()->type();
+        if (type >= Int8ArrayType && type <= DataViewType) {
+            return true;
+        }
+        if (type == ArrayBufferType) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // takes a key value and encoding value

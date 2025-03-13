@@ -12,7 +12,7 @@
 #include "ncrypto.h"
 namespace Bun {
 
-const JSC::ClassInfo JSDiffieHellmanConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDiffieHellmanConstructor) };
+const JSC::ClassInfo JSDiffieHellmanConstructor::s_info = { "DiffieHellman"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDiffieHellmanConstructor) };
 
 JSC_DEFINE_HOST_FUNCTION(callDiffieHellman, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -26,21 +26,6 @@ JSC_DEFINE_HOST_FUNCTION(callDiffieHellman, (JSC::JSGlobalObject * lexicalGlobal
     auto callData = JSC::getConstructData(constructor);
     JSC::JSValue result = JSC::construct(globalObject, constructor, callData, args);
     return JSValue::encode(result);
-}
-
-bool isArrayBufferOrView(JSValue value)
-{
-    if (value.isCell()) {
-        auto type = value.asCell()->type();
-        if (type >= Int8ArrayType && type <= DataViewType) {
-            return true;
-        }
-        if (type == ArrayBufferType) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

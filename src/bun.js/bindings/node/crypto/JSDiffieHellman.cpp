@@ -1,6 +1,6 @@
 #include "JSDiffieHellman.h"
-#include "../../webcore/DOMIsoSubspaces.h"
-#include "../../ZigGlobalObject.h"
+#include "DOMIsoSubspaces.h"
+#include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 

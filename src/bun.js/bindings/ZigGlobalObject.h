@@ -541,6 +541,7 @@ public:
     LazyClassStructure m_JSDiffieHellmanGroupClassStructure;
     LazyClassStructure m_JSHmacClassStructure;
     LazyClassStructure m_JSHashClassStructure;
+    LazyClassStructure m_JSECDHClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

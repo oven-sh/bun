@@ -50,6 +50,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSDiffieHellman;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSDiffieHellmanGroup;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSECDH;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTTYWrapObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiHandleScopeImpl;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiTypeTag;

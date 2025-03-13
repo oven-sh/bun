@@ -164,6 +164,7 @@
 #include "JSVerify.h"
 #include "JSHmac.h"
 #include "JSHash.h"
+#include "JSECDH.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2885,6 +2886,11 @@ void GlobalObject::finishCreation(VM& vm)
             Bun::setupDiffieHellmanGroupClassStructure(init);
         });
 
+    m_JSECDHClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupECDHClassStructure(init);
+        });
+
     m_JSHmacClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupJSHmacClassStructure(init);
@@ -4086,6 +4092,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSVerifyClassStructure.visit(visitor);
     thisObject->m_JSDiffieHellmanClassStructure.visit(visitor);
     thisObject->m_JSDiffieHellmanGroupClassStructure.visit(visitor);
+    thisObject->m_JSECDHClassStructure.visit(visitor);
     thisObject->m_JSHmacClassStructure.visit(visitor);
     thisObject->m_JSHashClassStructure.visit(visitor);
     thisObject->m_statValues.visit(visitor);

@@ -6234,14 +6234,14 @@ pub const NodeHTTPResponse = struct {
         done = 2,
     };
 
-    extern "C" fn Bun__getNodeHTTPResponseThisValue(c_int, *anyopaque) JSC.JSValue;
+    extern "C" fn Bun__getNodeHTTPResponseThisValue(bool, *anyopaque) JSC.JSValue;
     fn getThisValue(this: *NodeHTTPResponse) JSC.JSValue {
-        return Bun__getNodeHTTPResponseThisValue(@intFromBool(this.response == .SSL), this.response.socket());
+        return Bun__getNodeHTTPResponseThisValue(this.response == .SSL, this.response.socket());
     }
 
-    extern "C" fn Bun__getNodeHTTPServerSocketThisValue(c_int, *anyopaque) JSC.JSValue;
+    extern "C" fn Bun__getNodeHTTPServerSocketThisValue(bool, *anyopaque) JSC.JSValue;
     fn getServerSocketValue(this: *NodeHTTPResponse) JSC.JSValue {
-        return Bun__getNodeHTTPServerSocketThisValue(@intFromBool(this.response == .SSL), this.response.socket());
+        return Bun__getNodeHTTPServerSocketThisValue(this.response == .SSL, this.response.socket());
     }
 
     extern "C" fn Bun__setNodeHTTPServerSocketUsSocketValue(JSC.JSValue, *anyopaque) void;
@@ -8826,6 +8826,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         else
             NodeHTTPServer__onRequest_http;
 
+        pub fn setUsingCustomExpectHandler(this: *ThisServer, value: bool) void {
+            NodeHTTP_setUsingCustomExpectHandler(ssl_enabled, this.app.?, value);
+        }
+
         var did_send_idletimeout_warning_once = false;
         fn onTimeoutForIdleWarn(_: *anyopaque, _: *App.Response) void {
             if (debug_mode and !did_send_idletimeout_warning_once) {
@@ -9338,7 +9342,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
             if (this.config.onNodeHTTPRequest != .zero) {
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
-                NodeHTTP_assignOnCloseFunction(@intFromBool(ssl_enabled), app);
+                NodeHTTP_assignOnCloseFunction(ssl_enabled, app);
             } else if (this.config.onRequest != .zero and !has_html_catch_all) {
                 app.any("/*", *ThisServer, this, onRequest);
             }
@@ -9517,6 +9521,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.app = app;
 
                 route_list_value = this.setRoutes();
+            }
+
+            if (this.config.onNodeHTTPRequest != .zero) {
+                this.setUsingCustomExpectHandler(true);
             }
 
             switch (this.config.address) {
@@ -9891,7 +9899,9 @@ extern fn NodeHTTPServer__onRequest_https(
     node_response_ptr: *?*NodeHTTPResponse,
 ) JSC.JSValue;
 
-extern fn NodeHTTP_assignOnCloseFunction(c_int, *anyopaque) void;
+extern fn NodeHTTP_assignOnCloseFunction(bool, *anyopaque) void;
+
+extern fn NodeHTTP_setUsingCustomExpectHandler(bool, *anyopaque, bool) void;
 
 fn throwSSLErrorIfNecessary(globalThis: *JSC.JSGlobalObject) bool {
     const err_code = BoringSSL.ERR_get_error();

@@ -53,7 +53,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
-    bool callOnWritable( uWS::HttpResponse<SSL>* response, uint64_t offset) {
+    bool callOnWritable(uWS::HttpResponse<SSL>* response, uint64_t offset) {
         /* Borrow real onWritable */
         auto* borrowedOnWritable = std::move(onWritable);
 

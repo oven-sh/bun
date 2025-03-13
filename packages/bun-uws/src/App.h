@@ -619,6 +619,11 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&setUsingCustomExpectHandler(bool value) {
+        httpContext->getSocketContextData()->usingCustomExpectHandler = value;
+        return std::move(*this);
+    }
+
 };
 
 typedef TemplatedApp<false> App;

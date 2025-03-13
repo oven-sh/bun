@@ -43,10 +43,10 @@ private:
     HttpContext() = delete;
 
     /* Maximum delay allowed until an HTTP connection is terminated due to outstanding request or rejected data (slow loris protection) */
-    static const int HTTP_IDLE_TIMEOUT_S = 10;
+    static constexpr int HTTP_IDLE_TIMEOUT_S = 10;
 
     /* Minimum allowed receive throughput per second (clients uploading less than 16kB/sec get dropped) */
-    static const int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
+    static constexpr int HTTP_RECEIVE_THROUGHPUT_BYTES = 16 * 1024;
 
     us_socket_context_t *getSocketContext() {
         return (us_socket_context_t *) this;
@@ -495,16 +495,20 @@ public:
             }
         }
 
-        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets)](auto *r) mutable {
+        const bool &customContinue = httpContextData->usingCustomExpectHandler;
+
+        httpContextData->currentRouter->add(methods, pattern, [handler = std::move(handler), parameterOffsets = std::move(parameterOffsets), &customContinue](auto *r) mutable {
             auto user = r->getUserData();
             user.httpRequest->setYield(false);
             user.httpRequest->setParameters(r->getParameters());
             user.httpRequest->setParameterOffsets(&parameterOffsets);
 
-            /* Middleware? Automatically respond to expectations */
-            std::string_view expect = user.httpRequest->getHeader("expect");
-            if (expect.length() && expect == "100-continue") {
-                user.httpResponse->writeContinue();
+            if (!customContinue) {
+                /* Middleware? Automatically respond to expectations */
+                std::string_view expect = user.httpRequest->getHeader("expect");
+                if (expect.length() && expect == "100-continue") {
+                    user.httpResponse->writeContinue();
+                }
             }
 
             handler(user.httpResponse, user.httpRequest);

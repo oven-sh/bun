@@ -974,6 +974,7 @@ const ServerPrototype = {
             didFinish = true;
             resolveFunction && resolveFunction();
           }
+
           http_res.once("close", onClose);
           if (reachedRequestsLimit) {
             server.emit("dropRequest", http_req, socket);
@@ -986,6 +987,14 @@ const ServerPrototype = {
               server.emit("upgrade", http_req, socket, kEmptyBuffer);
             } else {
               server.emit("request", http_req, http_res);
+            }
+          }
+
+          if (http_req.headers.expect === "100-continue") {
+            if (server.listenerCount("checkContinue") > 0) {
+              server.emit("checkContinue", http_req, http_res);
+            } else {
+              http_res.writeContinue();
             }
           }
 

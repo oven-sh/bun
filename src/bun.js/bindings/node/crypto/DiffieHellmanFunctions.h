@@ -8,7 +8,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include "JSBufferEncodingType.h"
 #include "ncrypto.h"
-#include "./util.h"
+#include "CryptoUtil.h"
 #include "JSBuffer.h"
 
 namespace Bun {

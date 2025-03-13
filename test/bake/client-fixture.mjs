@@ -63,7 +63,7 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
-  window['bun do not use this outside of internal testing or else i\'ll cry'] = ({ onEvent }) => {
+  window["bun do not use this outside of internal testing or else i'll cry"] = ({ onEvent }) => {
     onEvent("bun:afterUpdate", () => {
       process.send({ type: "received-hmr-event", args: [] });
     });
@@ -84,7 +84,7 @@ function createWindow(windowUrl) {
       webSockets.push(this);
       this.addEventListener("message", event => {
         const data = new Uint8Array(event.data);
-        if (data[0] === "e".charCodeAt(0) ) {
+        if (data[0] === "e".charCodeAt(0)) {
           if (updatingTimer) {
             clearTimeout(updatingTimer);
           }

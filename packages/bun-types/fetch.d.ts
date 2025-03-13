@@ -1,56 +1,98 @@
-interface Headers {
-  /**
-   * Convert {@link Headers} to a plain JavaScript object.
-   *
-   * About 10x faster than `Object.fromEntries(headers.entries())`
-   *
-   * Called when you run `JSON.stringify(headers)`
-   *
-   * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
-   */
-  toJSON(): Record<string, string>;
-  /**
-   * Get the total number of headers
-   */
-  readonly count: number;
-  /**
-   * Get all headers matching the name
-   *
-   * Only supports `"Set-Cookie"`. All other headers are empty arrays.
-   *
-   * @param name - The header name to get
-   *
-   * @returns An array of header values
-   *
-   * @example
-   * ```ts
-   * const headers = new Headers();
-   * headers.append("Set-Cookie", "foo=bar");
-   * headers.append("Set-Cookie", "baz=qux");
-   * headers.getAll("Set-Cookie"); // ["foo=bar", "baz=qux"]
-   * ```
-   */
-  getAll(name: "set-cookie" | "Set-Cookie"): string[];
+declare module "bun" {
+  namespace __internal {
+    type BunBodyInit = ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;
+
+    type BunHeadersInit =
+      | Headers
+      | Record<string, string>
+      | Array<[string, string]>
+      | IterableIterator<[string, string]>;
+
+    /**
+     * @internal
+     */
+    type LibOrUndiciHeaders = LibDomIsLoaded extends true ? typeof globalThis.Headers : import("undici-types").Headers;
+
+    /**
+     * @internal
+     */
+    type LibOrUndiciRequest = LibDomIsLoaded extends true ? {} : import("undici-types").Request;
+
+    /**
+     * @internal
+     */
+    type LibOrUndiciResponse = LibDomIsLoaded extends true ? {} : import("undici-types").Response;
+
+    interface BunHeadersOverride extends LibOrUndiciHeaders {
+      /**
+       * Convert {@link Headers} to a plain JavaScript object.
+       *
+       * About 10x faster than `Object.fromEntries(headers.entries())`
+       *
+       * Called when you run `JSON.stringify(headers)`
+       *
+       * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
+       */
+      toJSON(): Record<string, string>;
+      /**
+       * Get the total number of headers
+       */
+      readonly count: number;
+      /**
+       * Get all headers matching the name
+       *
+       * Only supports `"Set-Cookie"`. All other headers are empty arrays.
+       *
+       * @param name - The header name to get
+       *
+       * @returns An array of header values
+       *
+       * @example
+       * ```ts
+       * const headers = new Headers();
+       * headers.append("Set-Cookie", "foo=bar");
+       * headers.append("Set-Cookie", "baz=qux");
+       * headers.getAll("Set-Cookie"); // ["foo=bar", "baz=qux"]
+       * ```
+       */
+      getAll(name: "set-cookie" | "Set-Cookie"): string[];
+    }
+
+    interface BunResponseOverride extends LibOrUndiciResponse {
+      headers: BunHeadersOverride;
+    }
+
+    interface BunRequestOverride extends LibOrUndiciRequest {
+      headers: BunHeadersOverride;
+    }
+  }
 }
 
-var Headers: {
-  prototype: Headers;
-  new (init?: Bun.HeadersInit): Headers;
-};
+interface Headers extends Bun.__internal.BunHeadersOverride {}
+declare var Headers: Bun.__internal.UseLibDomIfAvailable<
+  "Headers",
+  {
+    prototype: Headers;
+    new (init?: Bun.__internal.BunHeadersInit): Headers;
+  }
+>;
 
-interface Request {
-  headers: Headers;
-}
+interface Request extends Bun.__internal.BunRequestOverride {}
 
-var Request: {
-  prototype: Request;
-  new (requestInfo: string, requestInit?: RequestInit): Request;
-  new (requestInfo: RequestInit & { url: string }): Request;
-  new (requestInfo: Request, requestInit?: RequestInit): Request;
-};
+declare var Request: Bun.__internal.UseLibDomIfAvailable<
+  "Request",
+  {
+    prototype: Request;
+    new (requestInfo: string, init?: RequestInit): Request;
+    new (requestInfo: RequestInit & { url: string }): Request;
+    new (requestInfo: Request, init?: RequestInit): Request;
+  }
+>;
 
-var Response: {
-  new (body?: Bun.BodyInit | null | undefined, init?: Bun.ResponseInit | undefined): Response;
+interface Response extends Bun.__internal.BunResponseOverride {}
+
+interface ResponseConstructor {
+  new (body?: Bun.__internal.BunBodyInit | null | undefined, init?: ResponseInit | undefined): Response;
   /**
    * Create a new {@link Response} with a JSON body
    *
@@ -74,7 +116,7 @@ var Response: {
    * ```
    * @link https://github.com/whatwg/fetch/issues/1389
    */
-  json(body?: any, options?: Bun.ResponseInit | number): Response;
+  json(body?: any, options?: ResponseInit | number): Response;
 
   /**
    * Create a new {@link Response} that redirects to url
@@ -82,7 +124,6 @@ var Response: {
    * @param url - the URL to redirect to
    * @param status - the HTTP status code to use for the redirect
    */
-  // tslint:disable-next-line:unified-signatures
   redirect(url: string, status?: number): Response;
 
   /**
@@ -91,17 +132,17 @@ var Response: {
    * @param url - the URL to redirect to
    * @param options - options to pass to the response
    */
-  // tslint:disable-next-line:unified-signatures
   redirect(url: string, options?: Bun.ResponseInit): Response;
 
   /**
    * Create a new {@link Response} that has a network error
    */
   error(): Response;
-};
+}
 
-type _BunTLSOptions = import("bun").TLSOptions;
-interface BunFetchRequestInitTLS extends _BunTLSOptions {
+declare var Response: ResponseConstructor;
+
+interface BunFetchRequestInitTLS extends Bun.TLSOptions {
   /**
    * Custom function to check the server identity
    * @param hostname - The hostname of the server
@@ -123,39 +164,65 @@ interface BunFetchRequestInit extends RequestInit {
    * Override the default TLS options
    */
   tls?: BunFetchRequestInitTLS;
+
+  /**
+   * Log the raw HTTP request & response to stdout. This API may be
+   * removed in a future version of Bun without notice.
+   * This is a custom property that is not part of the Fetch API specification.
+   * It exists mostly as a debugging tool
+   */
+  verbose?: boolean;
+
+  /**
+   * Override http_proxy or HTTPS_PROXY
+   * This is a custom property that is not part of the Fetch API specification.
+   */
+  proxy?: string;
+
+  /**
+   * Override the default S3 options
+   */
+  s3?: Bun.S3Options;
 }
 
-var fetch: {
-  /**
-   * Send a HTTP(s) request
-   *
-   * @param request Request object
-   * @param init A structured value that contains settings for the fetch() request.
-   *
-   * @returns A promise that resolves to {@link Response} object.
-   */
-  (request: Request, init?: BunFetchRequestInit): Promise<Response>;
+/**
+ * Send a HTTP(s) request
+ *
+ * @param request Request object
+ * @param init A structured value that contains settings for the fetch() request.
+ *
+ * @returns A promise that resolves to {@link Response} object.
+ */
+declare function fetch(request: Request, init?: BunFetchRequestInit): Promise<Response>;
 
-  /**
-   * Send a HTTP(s) request
-   *
-   * @param url URL string
-   * @param init A structured value that contains settings for the fetch() request.
-   *
-   * @returns A promise that resolves to {@link Response} object.
-   */
-  (url: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
+/**
+ * Send a HTTP(s) request
+ *
+ * @param url URL string
+ * @param init A structured value that contains settings for the fetch() request.
+ *
+ * @returns A promise that resolves to {@link Response} object.
+ */
+declare function fetch(url: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
-  (input: string | URL | globalThis.Request, init?: BunFetchRequestInit): Promise<Response>;
+/**
+ * Send a HTTP(s) request
+ *
+ * @param input URL string or Request object
+ * @param init A structured value that contains settings for the fetch() request.
+ *
+ * @returns A promise that resolves to {@link Response} object.
+ */
+declare function fetch(input: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
-  /**
-   * Start the DNS resolution, TCP connection, and TLS handshake for a request
-   * before the request is actually sent.
-   *
-   * This can reduce the latency of a request when you know there's some
-   * long-running task that will delay the request starting.
-   *
-   * This is a bun-specific API and is not part of the Fetch API specification.
-   */
-  preconnect(url: string | URL): void;
-};
+declare namespace fetch {
+  export function preconnect(
+    url: string | URL,
+    options?: {
+      dns?: boolean;
+      tcp?: boolean;
+      http?: boolean;
+      https?: boolean;
+    },
+  ): void;
+}

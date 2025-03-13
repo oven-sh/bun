@@ -2,7 +2,7 @@
   "version": "1.2.5",
   "name": "bun-types",
   "license": "MIT",
-  "types": "./new/index.d.ts",
+  "types": "./index.d.ts",
   "description": "Type definitions and documentation for Bun, an incredibly fast JavaScript runtime",
   "repository": {
     "type": "git",
@@ -10,7 +10,7 @@
     "directory": "packages/bun-types"
   },
   "files": [
-    "new/**/*.d.ts",
+    "./*.d.ts",
     "docs/**/*.md",
     "docs/*.md"
   ],

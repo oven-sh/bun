@@ -1,18 +1,33 @@
 export {};
 
-import type { BunFile, Env, PathLike } from "bun";
-
 declare global {
   namespace NodeJS {
+    interface Process {
+      readonly version: string;
+      browser: boolean;
+
+      /**
+       * Whether you are using Bun
+       */
+      isBun: true;
+
+      /**
+       * The current git sha of Bun
+       */
+      revision: string;
+
+      reallyExit(code?: number): never;
+      dlopen(module: { exports: any }, filename: string, flags?: number): void;
+    }
+
     interface ProcessVersions extends Dict<string> {
       bun: string;
     }
-    interface ProcessEnv extends Env {}
   }
 }
 
 declare module "fs/promises" {
-  function exists(path: PathLike): Promise<boolean>;
+  function exists(path: Bun.PathLike): Promise<boolean>;
 }
 
 declare module "tls" {
@@ -22,7 +37,7 @@ declare module "tls" {
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
      */
-    ca?: string | Buffer | NodeJS.TypedArray | BunFile | Array<string | Buffer | BunFile> | undefined;
+    ca?: string | Buffer | NodeJS.TypedArray | Bun.BunFile | Array<string | Buffer | Bun.BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -38,8 +53,8 @@ declare module "tls" {
       | string
       | Buffer
       | NodeJS.TypedArray
-      | BunFile
-      | Array<string | Buffer | NodeJS.TypedArray | BunFile>
+      | Bun.BunFile
+      | Array<string | Buffer | NodeJS.TypedArray | Bun.BunFile>
       | undefined;
     /**
      * Private keys in PEM format. PEM allows the option of private keys
@@ -54,9 +69,9 @@ declare module "tls" {
     key?:
       | string
       | Buffer
-      | BunFile
+      | Bun.BunFile
       | NodeJS.TypedArray
-      | Array<string | Buffer | BunFile | NodeJS.TypedArray | KeyObject>
+      | Array<string | Buffer | Bun.BunFile | NodeJS.TypedArray | KeyObject>
       | undefined;
   }
 

@@ -76,6 +76,7 @@ public:
         bool hasVirtualModules() const { return virtualModules != nullptr; }
 
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+        void clearModuleMocks();
 
         std::optional<String> resolveVirtualModule(const String& path, const String& from);
 

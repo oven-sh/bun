@@ -1,5 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
+
+const Global = bun.Global;
 const picohttp = bun.picohttp;
 const BoringSSL = bun.BoringSSL;
 const JSC = bun.JSC;
@@ -19,6 +21,7 @@ const assert = bun.assert;
 const strings = bun.strings;
 const Batch = bun.ThreadPool.Batch;
 
+const HTTPAllocator = @import("./http_allocator.zig");
 pub var http_thread: HTTPThread = undefined;
 
 var custom_ssl_context_map = std.AutoArrayHashMap(*SSLConfig, *NewHTTPContext(true)).init(bun.default_allocator);
@@ -27,6 +30,18 @@ const HTTPCertError = @import("./errors.zig").HTTPCertError;
 const Queue = @import("./async_http.zig").Queue;
 const ThreadlocalAsyncHTTP = @import("./async_http.zig").ThreadlocalAsyncHTTP;
 const ProxyTunnel = @import("./proxy_tunnel.zig").ProxyTunnel;
+const AsyncHTTP = @import("./async_http.zig").AsyncHTTP;
+const socket_async_http_abort_tracker = AsyncHTTP.getSocketAsyncHTTPAbortTracker();
+const log = Output.scoped(.fetch, false);
+const HTTPClient = @import("../../http.zig").HTTPClient;
+pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
+
+pub fn getContext(comptime ssl: bool) *NewHTTPContext(ssl) {
+    return if (ssl) &http_thread.https_context else &http_thread.http_context;
+}
+pub fn getHttpThread() *HTTPThread {
+    return &http_thread;
+}
 
 pub fn NewHTTPContext(comptime ssl: bool) type {
     return struct {
@@ -74,11 +89,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
         pub const HTTPSocket = uws.NewSocketHandler(ssl);
 
         pub fn context() *@This() {
-            if (comptime ssl) {
-                return &http_thread.https_context;
-            } else {
-                return &http_thread.http_context;
-            }
+            return getContext(ssl);
         }
 
         const ActiveSocket = TaggedPointerUnion(.{
@@ -351,7 +362,7 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
                     return client.onData(
                         comptime ssl,
                         buf,
-                        if (comptime ssl) &http_thread.https_context else &http_thread.http_context,
+                        getContext(ssl),
                         socket,
                     );
                 } else if (tagged.is(PooledSocket)) {
@@ -675,8 +686,7 @@ pub const HTTPThread = struct {
 
     pub fn onStart(opts: InitOpts) void {
         Output.Source.configureNamedThread("HTTP Client");
-        default_arena = Arena.init() catch unreachable;
-        default_allocator = default_arena.allocator();
+        HTTPAllocator.init();
 
         const loop = bun.JSC.MiniEventLoop.initGlobal(null);
 

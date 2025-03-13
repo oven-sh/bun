@@ -1,7 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 const string = bun.string;
-
+const SSLConfig = bun.server.ServerConfig.SSLConfig;
 const picohttp = bun.picohttp;
 const JSC = bun.JSC;
 const MutableString = bun.MutableString;
@@ -14,11 +14,62 @@ const HTTPRequestBody = @import("./request_body.zig").HTTPRequestBody;
 const Method = @import("../method.zig").Method;
 const URL = bun.URL;
 const ThreadPool = bun.ThreadPool;
+const uws = bun.uws;
+const PercentEncoding = @import("../../url.zig").PercentEncoding;
+const http_thread = @import("./thread.zig").getHttpThread();
+const Signals = @import("./signals.zig").Signals;
+var async_http_id_monotonic: std.atomic.Value(u32) = std.atomic.Value(u32).init(0);
 
+var socket_async_http_abort_tracker = std.AutoArrayHashMap(u32, uws.InternalSocket).init(bun.default_allocator);
+pub const HTTPVerboseLevel = enum {
+    none,
+    headers,
+    curl,
+};
+
+pub fn registerAbortTracker(
+    async_http_id: u32,
+    socket: uws.InternalSocket,
+) void {
+    socket_async_http_abort_tracker.put(async_http_id, socket) catch unreachable;
+}
+
+pub fn unregisterAbortTracker(
+    async_http_id: u32,
+) void {
+    _ = socket_async_http_abort_tracker.swapRemove(async_http_id);
+}
+
+const HTTPClientResult = @import("./result.zig").HTTPClientResult;
+pub fn getSocketAsyncHTTPAbortTracker() *std.AutoArrayHashMap(u32, uws.InternalSocket) {
+    return &socket_async_http_abort_tracker;
+}
 // Exists for heap stats reasons.
 pub const ThreadlocalAsyncHTTP = struct {
     async_http: AsyncHTTP,
     pub usingnamespace bun.New(@This());
+};
+
+pub const Encoding = enum {
+    identity,
+    gzip,
+    deflate,
+    brotli,
+    chunked,
+
+    pub fn canUseLibDeflate(this: Encoding) bool {
+        return switch (this) {
+            .gzip, .deflate => true,
+            else => false,
+        };
+    }
+
+    pub fn isCompressed(this: Encoding) bool {
+        return switch (this) {
+            .brotli, .gzip, .deflate => true,
+            else => false,
+        };
+    }
 };
 
 pub const AsyncHTTP = struct {

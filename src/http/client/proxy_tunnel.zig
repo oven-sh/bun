@@ -1,5 +1,7 @@
 const bun = @import("root").bun;
 const SSLWrapper = @import("../../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
+const getHttpContext = @import("./thread.zig").getContext;
+const http_thread = @import("./http/client/thread.zig").getHttpThread();
 
 const ProxyTunnel = struct {
     wrapper: ?ProxyTunnelWrapper = null,
@@ -64,10 +66,10 @@ const ProxyTunnel = struct {
                     if (report_progress) {
                         switch (proxy.socket) {
                             .ssl => |socket| {
-                                this.progressUpdate(true, &http_thread.https_context, socket);
+                                this.progressUpdate(true, getHttpContext(true), socket);
                             },
                             .tcp => |socket| {
-                                this.progressUpdate(false, &http_thread.http_context, socket);
+                                this.progressUpdate(false, getHttpContext(false), socket);
                             },
                             .none => {},
                         }
@@ -84,10 +86,10 @@ const ProxyTunnel = struct {
                     if (report_progress) {
                         switch (proxy.socket) {
                             .ssl => |socket| {
-                                this.progressUpdate(true, &http_thread.https_context, socket);
+                                this.progressUpdate(true, getHttpContext(true), socket);
                             },
                             .tcp => |socket| {
-                                this.progressUpdate(false, &http_thread.http_context, socket);
+                                this.progressUpdate(false, getHttpContext(false), socket);
                             },
                             .none => {},
                         }
@@ -97,10 +99,10 @@ const ProxyTunnel = struct {
                 .proxy_headers => {
                     switch (proxy.socket) {
                         .ssl => |socket| {
-                            this.handleOnDataHeaders(true, decoded_data, &http_thread.https_context, socket);
+                            this.handleOnDataHeaders(true, decoded_data, getHttpContext(true), socket);
                         },
                         .tcp => |socket| {
-                            this.handleOnDataHeaders(false, decoded_data, &http_thread.http_context, socket);
+                            this.handleOnDataHeaders(false, decoded_data, getHttpContext(false), socket);
                         },
                         .none => {},
                     }

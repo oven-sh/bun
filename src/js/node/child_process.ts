@@ -366,7 +366,7 @@ function execFile(file, args, options, callback) {
               combined = StringPrototypeSlice.$call(combined, 0, maxBuffer);
               array.length = 1;
               array[0] = combined;
-              ex = ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+              ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind + " maxBuffer length exceeded");
               kill();
             } else {
               const val = ArrayPrototypeJoin.$call(array, "") + chunk;
@@ -384,7 +384,7 @@ function execFile(file, args, options, callback) {
             const truncatedLen = maxBuffer - (total - chunk.length);
             $arrayPush(array, chunk.slice(0, truncatedLen));
 
-            ex = ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind);
+            ex = $ERR_CHILD_PROCESS_STDIO_MAXBUFFER(kind + " maxBuffer length exceeded");
             kill();
           } else {
             $arrayPush(array, chunk);
@@ -1881,12 +1881,6 @@ function genericNodeError(message, errorProperties) {
 //   },
 //   TypeError
 // );
-
-function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
-  const err = Error(`${stdio} maxBuffer length exceeded`);
-  err.code = "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-  return err;
-}
 
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);

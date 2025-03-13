@@ -96,6 +96,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
   ["ERR_SERVER_ALREADY_LISTEN", Error],
   ["ERR_CHILD_PROCESS_IPC_REQUIRED", Error],
+  ["ERR_CHILD_PROCESS_STDIO_MAXBUFFER", RangeError],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],

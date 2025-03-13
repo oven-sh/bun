@@ -5,6 +5,7 @@ const Source = @import("./source.zig").Source;
 
 const ReadState = @import("./pipes.zig").ReadState;
 const FileType = @import("./pipes.zig").FileType;
+const MaxBuf = @import("../bun.js/MaxBuf.zig");
 
 const PollOrFd = @import("./pipes.zig").PollOrFd;
 
@@ -92,6 +93,8 @@ const PosixBufferedReader = struct {
     _offset: usize = 0,
     vtable: BufferedReaderVTable,
     flags: Flags = .{},
+    count: usize = 0,
+    maxbuf: ?*MaxBuf = null,
 
     const Flags = packed struct {
         is_done: bool = false,
@@ -134,11 +137,13 @@ const PosixBufferedReader = struct {
                 .fns = to.vtable.fns,
                 .parent = parent_,
             },
+            .maxbuf = other.maxbuf,
         };
         other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         other.flags.is_done = true;
         other.handle = .{ .closed = {} };
         other._offset = 0;
+        other.maxbuf = null;
         to.handle.setOwner(to);
 
         // note: the caller is supposed to drain the buffer themselves
@@ -188,6 +193,7 @@ const PosixBufferedReader = struct {
         if (hasMore == .eof) {
             this.flags.received_eof = true;
         }
+        this.count += chunk.len;
 
         return this.vtable.onReadChunk(chunk, hasMore);
     }
@@ -210,6 +216,9 @@ const PosixBufferedReader = struct {
 
     pub fn buffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
         return &this._buffer;
+    }
+    pub fn getLimit(this: *PosixBufferedReader) ?*MaxBuf {
+        return this.maxbuf;
     }
 
     pub fn finalBuffer(this: *PosixBufferedReader) *std.ArrayList(u8) {
@@ -266,6 +275,7 @@ const PosixBufferedReader = struct {
     }
 
     pub fn deinit(this: *PosixBufferedReader) void {
+        MaxBuf.removeFromPipereader(&this.maxbuf);
         this.buffer().clearAndFree();
         this.closeWithoutReporting();
     }
@@ -450,6 +460,7 @@ const PosixBufferedReader = struct {
 
     fn readWithFn(parent: *PosixBufferedReader, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
         _ = size_hint; // autofix
+        const limit = parent.getLimit();
         const streaming = parent.vtable.isStreamingEnabled();
 
         var received_hup = received_hup_;
@@ -468,6 +479,7 @@ const PosixBufferedReader = struct {
                         parent._offset,
                     )) {
                         .result => |bytes_read| {
+                            if (limit) |l| l.onReadBytes(bytes_read);
                             parent._offset += bytes_read;
                             buf = stack_buffer_head[0..bytes_read];
                             stack_buffer_head = stack_buffer_head[bytes_read..];
@@ -560,6 +572,7 @@ const PosixBufferedReader = struct {
 
             switch (sys_fn(fd, buf, parent._offset)) {
                 .result => |bytes_read| {
+                    if (limit) |l| l.onReadBytes(bytes_read);
                     parent._offset += bytes_read;
                     buf = buf[0..bytes_read];
                     resizable_buffer.items.len += bytes_read;
@@ -801,14 +814,14 @@ pub const WindowsBufferedReader = struct {
         return this.flags.has_inflight_read;
     }
 
-    fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: ReadState) bool {
+    fn _onReadChunk(this: *WindowsOutputReader, buf: []u8, hasMore: ReadState) void {
         this.flags.has_inflight_read = false;
         if (hasMore == .eof) {
             this.flags.received_eof = true;
         }
 
-        const onReadChunkFn = this.vtable.onReadChunk orelse return true;
-        return onReadChunkFn(this.parent, buf, hasMore);
+        const onReadChunkFn = this.vtable.onReadChunk orelse return;
+        _ = onReadChunkFn(this.parent, buf, hasMore);
     }
 
     fn finish(this: *WindowsOutputReader) void {

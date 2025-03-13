@@ -4702,6 +4702,10 @@ pub const FileReader = struct {
         return this.reader.memoryCost() + this.buffered.capacity;
     }
 
+    pub fn getLimit(_: *const FileReader) ?*i64 {
+        return null;
+    }
+
     pub const Source = ReadableStreamSource(
         @This(),
         "File",

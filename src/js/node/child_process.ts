@@ -576,6 +576,7 @@ function spawnSync(file, args, options) {
       argv0: options.args[0],
       timeout: options.timeout,
       killSignal: options.killSignal,
+      maxBuffer: options.maxBuffer,
     });
   } catch (err) {
     error = err;

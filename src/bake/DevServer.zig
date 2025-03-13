@@ -100,6 +100,11 @@ server_register_update_callback: JSC.Strong,
 bun_watcher: *bun.Watcher,
 directory_watchers: DirectoryWatchStore,
 watcher_atomics: WatcherAtomics,
+testing_batch_events: union(enum) {
+    disabled,
+    enable_after_bundle,
+    enabled: TestingBatch,
+},
 
 /// Number of bundles that have been executed. This is currently not read, but
 /// will be used later to determine when to invoke graph garbage collection.
@@ -414,6 +419,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         else
             bun.getRuntimeFeatureFlag("BUN_ASSUME_PERFECT_INCREMENTAL"),
         .relative_path_buf_lock = .unlocked,
+        .testing_batch_events = .disabled,
 
         .server_transpiler = undefined,
         .client_transpiler = undefined,
@@ -747,6 +753,13 @@ pub fn deinit(dev: *DevServer) void {
             event.aligned.files.deinit(dev.allocator);
             event.aligned.extra_files.deinit(dev.allocator);
         },
+        .testing_batch_events = switch (dev.testing_batch_events) {
+            .disabled => {},
+            .enabled => |*batch| {
+                batch.entry_points.deinit(allocator);
+            },
+            .enable_after_bundle => {},
+        },
     };
     dev.allocation_scope.deinit();
     bun.destroy(dev);
@@ -895,6 +908,13 @@ pub fn memoryCost(dev: *DevServer) usize {
         },
         .route_lookup = {
             cost += memoryCostArrayHashMap(dev.route_lookup);
+        },
+        .testing_batch_events = switch (dev.testing_batch_events) {
+            .disabled => {},
+            .enabled => |batch| {
+                cost += memoryCostArrayHashMap(batch.entry_points.set);
+            },
+            .enable_after_bundle => {},
         },
     };
     return cost;
@@ -2032,6 +2052,7 @@ pub fn finalizeBundle(
     bv2: *bun.bundle_v2.BundleV2,
     result: bun.bundle_v2.DevServerOutput,
 ) bun.OOM!void {
+    var had_sent_hmr_event = false;
     defer {
         bv2.deinit();
         dev.current_bundle = null;
@@ -2039,6 +2060,20 @@ pub fn finalizeBundle(
         dev.assets.reindexIfNeeded(dev.allocator) catch {
             // not fatal: the assets may be reindexed some time later.
         };
+
+        // Signal for testing framework where it is in synchronization
+        if (dev.testing_batch_events == .enable_after_bundle) {
+            dev.testing_batch_events = .{ .enabled = .empty };
+            dev.publish(.testing_watch_synchronization, &.{
+                MessageId.testing_watch_synchronization.char(),
+                0,
+            }, .binary);
+        } else {
+            dev.publish(.testing_watch_synchronization, &.{
+                MessageId.testing_watch_synchronization.char(),
+                if (had_sent_hmr_event) 4 else 3,
+            }, .binary);
+        }
 
         dev.startNextBundleIfPresent();
 
@@ -2265,6 +2300,11 @@ pub fn finalizeBundle(
     }
 
     // Index all failed files now that the incremental graph has been updated.
+    if (dev.incremental_result.failures_removed.items.len > 0 or
+        dev.incremental_result.failures_added.items.len > 0)
+    {
+        had_sent_hmr_event = true;
+    }
     try dev.indexFailures();
 
     try dev.client_graph.ensureStaleBitCapacity(false);
@@ -2472,10 +2512,10 @@ pub fn finalizeBundle(
     }
     try w.writeInt(i32, -1, .little);
 
-    // Send CSS mutations
     const css_chunks = result.cssChunks();
     if (will_hear_hot_update) {
         if (dev.client_graph.current_chunk_len > 0 or css_chunks.len > 0) {
+            // Send CSS mutations
             const asset_values = dev.assets.files.values();
             try w.writeInt(u32, @intCast(css_chunks.len), .little);
             const sources = bv2.graph.input_files.items(.source);
@@ -2487,6 +2527,7 @@ pub fn finalizeBundle(
                 try w.writeAll(css_data);
             }
 
+            // Send the JS chunk
             if (dev.client_graph.current_chunk_len > 0) {
                 const hash = hash: {
                     var source_map_hash: bun.bundle_v2.ContentHasher.Hash = .init(0x4b12); // arbitrarily different seed than what .initial_response uses
@@ -2512,6 +2553,7 @@ pub fn finalizeBundle(
         }
 
         dev.publish(.hot_update, hot_update_payload.items, .binary);
+        had_sent_hmr_event = true;
     }
 
     if (dev.incremental_result.failures_added.items.len > 0) {
@@ -5721,12 +5763,13 @@ pub fn onWebSocketUpgrade(
 
 /// Every message is to use `.binary`/`ArrayBuffer` transport mode. The first byte
 /// indicates a Message ID; see comments on each type for how to interpret the rest.
+/// Avoid changing message ID values, as some of these are hard-coded in tests.
 ///
 /// This format is only intended for communication via the browser and DevServer.
 /// Server-side HMR is implemented using a different interface. This API is not
 /// versioned alongside Bun; breaking changes may occur at any point.
 ///
-/// All integers are sent in little-endian
+/// All integers are sent in little-endian.
 pub const MessageId = enum(u8) {
     /// Version payload. Sent on connection startup. The client should issue a
     /// hard-reload when it mismatches with its `config.version`.
@@ -5814,13 +5857,15 @@ pub const MessageId = enum(u8) {
     set_url_response = 'n',
     /// Used for synchronization in DevServer tests, to identify when a update was
     /// acknowledged by the watcher but intentionally took no action.
-    redundant_watch = 'r',
+    /// - `u8`: See bake-harness.ts WatchSynchronization enum.
+    testing_watch_synchronization = 'r',
 
     pub inline fn char(id: MessageId) u8 {
         return @intFromEnum(id);
     }
 };
 
+/// Avoid changing message ID values, as some of these are hard-coded in tests.
 pub const IncomingMessageId = enum(u8) {
     /// Subscribe to an event channel. Payload is a sequence of chars available
     /// in HmrTopic.
@@ -5828,6 +5873,8 @@ pub const IncomingMessageId = enum(u8) {
     /// Emitted on client-side navigations.
     /// Rest of payload is a UTF-8 string.
     set_url = 'n',
+    /// Tells the DevServer to batch events together.
+    testing_batch_events = 'H',
 
     /// Invalid data
     _,
@@ -5838,7 +5885,7 @@ const HmrTopic = enum(u8) {
     errors = 'e',
     browser_error = 'E',
     visualizer = 'v',
-    redundant_watch = 'r',
+    testing_watch_synchronization = 'r',
 
     /// Invalid data
     _,
@@ -5942,6 +5989,40 @@ const HmrSocket = struct {
                 s.active_route = rbi.toOptional();
                 var response: [5]u8 = .{MessageId.set_url_response.char()} ++ std.mem.toBytes(rbi.get());
                 _ = ws.send(&response, .binary, false, true);
+            },
+            .testing_batch_events => switch (s.dev.testing_batch_events) {
+                .disabled => {
+                    if (s.dev.current_bundle != null) {
+                        s.dev.testing_batch_events = .enable_after_bundle;
+                    } else {
+                        s.dev.testing_batch_events = .{ .enabled = .empty };
+                        s.dev.publish(.testing_watch_synchronization, &.{
+                            MessageId.testing_watch_synchronization.char(),
+                            0,
+                        }, .binary);
+                    }
+                },
+                .enable_after_bundle => {
+                    // do not expose a websocket event that panics a release build
+                    bun.debugAssert(false);
+                    ws.close();
+                },
+                .enabled => |event_const| {
+                    var event = event_const;
+                    s.dev.testing_batch_events = .disabled;
+
+                    if (event.entry_points.set.count() == 0) {
+                        s.dev.publish(.testing_watch_synchronization, &.{
+                            MessageId.testing_watch_synchronization.char(),
+                            2,
+                        }, .binary);
+                        return;
+                    }
+
+                    s.dev.startAsyncBundle(event.entry_points, true, event.timer) catch bun.outOfMemory();
+
+                    event.entry_points.deinit(s.dev.allocator);
+                },
             },
             _ => ws.close(),
         }
@@ -6200,7 +6281,10 @@ pub const HotReloadEvent = struct {
                     bun.fmt.fmtSlice(event.dirs.keys(), ", "),
                 });
 
-            dev.publish(.redundant_watch, &.{MessageId.redundant_watch.char()}, .binary);
+            dev.publish(.testing_watch_synchronization, &.{
+                MessageId.testing_watch_synchronization.char(),
+                1,
+            }, .binary);
             return;
         }
 
@@ -6219,6 +6303,7 @@ pub const HotReloadEvent = struct {
         defer debug.log("HMR Task end", .{});
 
         const dev = first.owner;
+
         if (Environment.isDebug) {
             assert(first.debug_mutex.tryLock());
             assert(first.contention_indicator.load(.seq_cst) == 0);
@@ -6231,7 +6316,7 @@ pub const HotReloadEvent = struct {
 
         var sfb = std.heap.stackFallback(4096, dev.allocator);
         const temp_alloc = sfb.get();
-        var entry_points: EntryPointList = EntryPointList.empty;
+        var entry_points: EntryPointList = .empty;
         defer entry_points.deinit(temp_alloc);
 
         first.processFileList(dev, &entry_points, temp_alloc);
@@ -6248,6 +6333,19 @@ pub const HotReloadEvent = struct {
 
         if (entry_points.set.count() == 0) {
             return;
+        }
+
+        switch (dev.testing_batch_events) {
+            .disabled => {},
+            .enabled => |*ev| {
+                ev.append(dev, entry_points, timer) catch bun.outOfMemory();
+                dev.publish(.testing_watch_synchronization, &.{
+                    MessageId.testing_watch_synchronization.char(),
+                    1,
+                }, .binary);
+                return;
+            },
+            .enable_after_bundle => bun.debugAssert(false),
         }
 
         dev.startAsyncBundle(
@@ -7440,6 +7538,26 @@ fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
     try reader.readNoEof(memory);
     return memory;
 }
+
+const TestingBatch = struct {
+    entry_points: EntryPointList,
+    timer: std.time.Timer,
+
+    const empty: @This() = .{
+        .entry_points = .empty,
+        .timer = undefined,
+    };
+
+    pub fn append(self: *@This(), dev: *DevServer, entry_points: EntryPointList, timer: std.time.Timer) !void {
+        assert(entry_points.set.count() > 0);
+        if (self.entry_points.set.count() == 0) {
+            self.timer = timer;
+        }
+        for (entry_points.set.keys(), entry_points.set.values()) |k, v| {
+            try self.entry_points.append(dev.allocator, k, v);
+        }
+    }
+};
 
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
 fn VoidFieldTypes(comptime T: type) type {

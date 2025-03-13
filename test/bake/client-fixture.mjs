@@ -15,6 +15,7 @@ url = new URL(url, "http://localhost:3000");
 
 const storeHotChunks = args.includes("--store-hot-chunks");
 const expectErrors = args.includes("--expect-errors");
+const verboseWebSockets = args.includes("--verbose-web-sockets");
 
 // Create a new window instance
 let window;
@@ -23,8 +24,13 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
+let isUpdating = null;
 
 function reset() {
+  if (isUpdating !== null) {
+    clearImmediate(isUpdating);
+    isUpdating = null;
+  }
   for (const ws of webSockets) {
     ws.onclose = () => {};
     ws.onerror = () => {};
@@ -68,31 +74,23 @@ function createWindow(windowUrl) {
       super(url, protocols, options);
       webSockets.push(this);
       this.addEventListener("message", event => {
+        const data = new Uint8Array(event.data);
+        if (data[0] === 'u'.charCodeAt(0) || data[0] === 'e'.charCodeAt(0)) {
+          isUpdating = setImmediate(() => {
+            process.send({ type: "received-hmr-event", args: [] });
+            isUpdating = null;
+          });
+        }
         if (!allowWebSocketMessages) {
-          const data = new Uint8Array(event.data);
-          console.error(
-            "[E] WebSocket message received while messages are not allowed. Event type",
-            JSON.stringify(String.fromCharCode(data[0])),
-          );
-          let hexDump = "";
-          for (let i = 0; i < data.length; i += 16) {
-            // Print offset
-            hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
-            // Print hex values
-            const chunk = data.slice(i, i + 16);
-            const hexValues = Array.from(chunk)
-              .map(b => b.toString(16).padStart(2, "0"))
-              .join(" ");
-            hexDump += hexValues.padEnd(48, " ");
-            // Print ASCII
-            hexDump += "\x1b[2m| \x1b[0m";
-            for (const byte of chunk) {
-              hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
-            }
-            hexDump += "\n";
+          const allowedTypes = ["n", "r"];
+          if (allowedTypes.includes(String.fromCharCode(data[0]))) {
+            return;
           }
-          console.error(hexDump);
+          dumpWebSocketMessage('[E] WebSocket message received while messages are not allowed', data);
           process.exit(exitCodeMap.websocketMessagesAreBanned);
+        } else {
+          verboseWebSockets &&
+          dumpWebSocketMessage('[I] WebSocket', data);
         }
       });
     }
@@ -106,7 +104,7 @@ function createWindow(windowUrl) {
   const originalConsole = window.console;
   window.console = {
     log: (...args) => {
-      process?.send({ type: "message", args: args });
+      process.send({ type: "message", args: args });
     },
     error: (...args) => {
       console.error("[E]", ...args);
@@ -120,6 +118,9 @@ function createWindow(windowUrl) {
       originalConsole.warn(...args);
     },
     info: (...args) => {
+      if (args[0]?.startsWith("[Bun] Hot-module-reloading socket connected")) {
+        process.send({ type: "received-hmr-event", args: [] });
+      }
       if (args[0]?.startsWith("[WS] receive message")) return;
       if (args[0]?.startsWith("Updated modules:")) return;
       console.info("[I]", ...args);
@@ -164,6 +165,31 @@ function createWindow(windowUrl) {
       return nativeEval.call(window, code);
     };
   }
+}
+
+function dumpWebSocketMessage(message, data) {
+  console.error(
+    `${message}. Event type`,
+    JSON.stringify(String.fromCharCode(data[0])),
+  );
+  let hexDump = "";
+  for (let i = 0; i < data.length; i += 16) {
+    // Print offset
+    hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
+    // Print hex values
+    const chunk = data.slice(i, i + 16);
+    const hexValues = Array.from(chunk)
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join(" ");
+    hexDump += hexValues.padEnd(48, " ");
+    // Print ASCII
+    hexDump += "\x1b[2m| \x1b[0m";
+    for (const byte of chunk) {
+      hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
+    }
+    hexDump += "\n";
+  }
+  console.error(hexDump);
 }
 
 async function handleReload() {

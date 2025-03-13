@@ -147,6 +147,19 @@ type ErrorSpec = string;
 
 type FileObject = Record<string, string | Buffer | BunFile>;
 
+enum WatchSynchronization {
+  // Callback for starting a batch
+  Started = 0,
+  // During a batch, files were seen. Batch is still running.
+  SeenFiles = 1,
+  // Batch no longer running, files seen!
+  ResultDidNotBundle = 2,
+  // Sent on every build finished:
+  AnyBuildFinished = 3,
+  // Sent on every build finished, you must wait for web sockets:
+  AnyBuildFinishedWaitForWebSockets = 4,
+}
+
 export class Dev extends EventEmitter {
   rootDir: string;
   port: number;
@@ -155,6 +168,7 @@ export class Dev extends EventEmitter {
   connectedClients: Set<Client> = new Set();
   options: { files: Record<string, string> };
   nodeEnv: "development" | "production";
+  batchingChanges = false;
 
   socket?: WebSocket;
 
@@ -193,7 +207,8 @@ export class Dev extends EventEmitter {
         connected.resolve();
       }
       if (data[0] === "r".charCodeAt(0)) {
-        this.emit("redundant_watch");
+        console.log("watch_synchronization", WatchSynchronization[data[1]]);
+        this.emit("watch_synchronization", data[1]);
       }
       this.emit("hmr", data);
     };
@@ -217,25 +232,91 @@ export class Dev extends EventEmitter {
     });
   }
 
+  #waitForSyncEvent(event: WatchSynchronization) {
+    return new Promise<void>((resolve, reject) => {
+      let dev = this;
+      function handle(kind: WatchSynchronization) {
+        if (kind === event) {
+          dev.off("watch_synchronization", handle);
+          resolve();
+        }
+      }
+      dev.on("watch_synchronization", handle);
+    });
+  }
+
+  async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
+    if (this.batchingChanges) return null;
+    this.batchingChanges = true;
+
+    let dev = this;
+    const initWait = this.#waitForSyncEvent(WatchSynchronization.Started);
+    this.socket!.send("H");
+    await initWait;
+
+    console.log("initWait done");
+
+    const seenFiles = Promise.withResolvers<void>();
+    function onSeenFiles(ev: WatchSynchronization) {
+      if (ev === WatchSynchronization.SeenFiles) {
+        seenFiles.resolve();
+        dev.off("watch_synchronization", onSeenFiles);
+      }
+    }
+    this.on("watch_synchronization", onSeenFiles);
+
+    let wantsHmrEvent = true;
+    for (const client of dev.connectedClients) {
+      if (!client.webSocketMessagesAllowed) {
+        wantsHmrEvent = false;
+        break;
+      }
+    }
+
+    const wait = this.waitForHotReload(wantsHmrEvent);
+    return {
+      [Symbol.asyncDispose]: async() => {
+        console.log("dispose", wantsHmrEvent, interactive);
+        if (wantsHmrEvent && interactive) {
+          await seenFiles.promise;
+        } else if (wantsHmrEvent) {
+          await Promise.race([
+            seenFiles.promise,
+            Bun.sleep(1000),
+          ]);
+        }
+
+        dev.off("watch_synchronization", onSeenFiles);
+
+        this.socket!.send("H");
+        await wait;
+
+        let errors = options.errors;
+        if (errors !== null) {
+          errors ??= [];
+          for (const client of this.connectedClients) {
+            await client.expectErrorOverlay(errors, options.snapshot);
+          }
+        }
+        this.batchingChanges = false;
+      },
+    };
+  }
+
   write(file: string, contents: string, options: { errors?: null | ErrorSpec[]; dedent?: boolean } = {}) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && this.waitForHotReload();
+      await using _wait = isDev ? await this.batchChanges({
+        errors: options.errors,
+        snapshot: snapshot,
+      }) : null;
+
       await Bun.write(
         this.join(file),
         ((typeof contents === "string" && options.dedent) ?? true) ? dedent(contents) : contents,
       );
-      await wait;
-
-      let errors = options.errors;
-      if (isDev && errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, snapshot);
-        }
-      }
     });
   }
 
@@ -263,7 +344,10 @@ export class Dev extends EventEmitter {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && options.wait && this.waitForHotReload();
+      await using _wait = isDev ? await this.batchChanges({
+        errors: options.errors,
+        snapshot: snapshot,
+      }) : null;
 
       const filePath = this.join(file);
       if (!fs.existsSync(filePath)) {
@@ -271,15 +355,6 @@ export class Dev extends EventEmitter {
       }
 
       fs.unlinkSync(filePath);
-      await wait;
-
-      let errors = options.errors;
-      if (isDev && options.wait && errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, snapshot);
-        }
-      }
     });
   }
 
@@ -295,7 +370,12 @@ export class Dev extends EventEmitter {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("patch " + file);
-      const wait = this.waitForHotReload();
+      const isDev = this.nodeEnv === "development";
+      await using _wait = isDev ? await this.batchChanges({
+        errors: errors,
+        snapshot: snapshot,
+      }) : null;
+
       const filename = this.join(file);
       const source = fs.readFileSync(filename, "utf8");
       const contents = source.replace(find, replace);
@@ -303,14 +383,6 @@ export class Dev extends EventEmitter {
         throw new Error(`Couldn't find and replace ${JSON.stringify(find)} in ${file}`);
       }
       await Bun.write(filename, typeof contents === "string" && shouldDedent ? dedent(contents) : contents);
-      await wait;
-
-      if (errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, snapshot);
-        }
-      }
     });
   }
 
@@ -318,22 +390,54 @@ export class Dev extends EventEmitter {
     return path.join(this.rootDir, file);
   }
 
-  async waitForHotReload() {
+  waitForHotReload(wantsHmrEvent: boolean) {
     if (this.nodeEnv !== "development") return Promise.resolve();
-    const err = this.output.waitForLine(/error/i).catch(() => {});
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i, isCI ? 1000 : 250).catch(() => {});
-    const ctrl = new AbortController();
-    await Promise.race([
-      // On failure, give a little time in case a partial write caused a
-      // bundling error, and a success came in.
-      err.then(
-        () => Bun.sleep(500),
-        () => {},
-      ),
-      success,
-      EventEmitter.once(this, "redundant_watch", { signal: ctrl.signal }),
-    ]);
-    ctrl.abort();
+    let dev = this;
+    return new Promise<void>((resolve, reject) => {
+      let timer: NodeJS.Timer | null = null;
+      let clientWaits = 0;
+      let seenMainEvent = false;
+      function cleanupAndResolve() {
+        timer !== null && clearTimeout(timer);
+        dev.off("watch_synchronization", onEvent);
+        for (const dispose of disposes) {
+          dispose();
+        }
+        resolve();
+      }
+      const disposes = new Set<() => void>();
+      for (const client of dev.connectedClients) {
+        const socketEventHandler = () => {
+          console.log("received-hmr-event");
+          clientWaits++;
+          if (seenMainEvent && clientWaits === dev.connectedClients.size) {
+            client.off("received-hmr-event", socketEventHandler);
+            cleanupAndResolve();
+          }
+        };
+        client.on("received-hmr-event", socketEventHandler);
+        disposes.add(() => {
+          client.off("received-hmr-event", socketEventHandler);
+        });
+      }
+      function onEvent(kind: WatchSynchronization) {
+        assert(kind !== WatchSynchronization.Started, "WatchSynchronization.Started should not be emitted");
+        if (kind === WatchSynchronization.AnyBuildFinished) {
+          cleanupAndResolve();
+        } else if (kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets) {
+          seenMainEvent = true;
+          if (clientWaits === dev.connectedClients.size) {
+            cleanupAndResolve();
+          }
+        } else if (kind === WatchSynchronization.ResultDidNotBundle) {
+          if (wantsHmrEvent) {
+            console.warn("Received ResultDidNotBundle, but we wanted a reload? Consider using expectNoWebSocketActivity");
+          } 
+          cleanupAndResolve();
+        }
+      };
+      dev.on("watch_synchronization", onEvent);
+    });
   }
 
   async client(
@@ -552,6 +656,7 @@ export class Client extends EventEmitter {
   suppressInteractivePrompt: boolean = false;
   expectingReload = false;
   hmr = false;
+  webSocketMessagesAllowed = true;
 
   constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean }) {
     super();
@@ -684,19 +789,37 @@ export class Client extends EventEmitter {
   }
 
   expectMessage(...x: any) {
+    return this.#expectMessageImpl(true, x);
+  }
+
+  expectMessageInAnyOrder(...x: any) {
+    return this.#expectMessageImpl(false, x);
+  }
+
+  #expectMessageImpl(strictOrdering: boolean, x: any[]) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       if (this.exited) throw new Error("Client exited while waiting for message");
       if (this.messages.length !== x.length) {
+        if (interactive) {
+          console.log("Waiting for messages (have", this.messages.length, "expected", x.length, ")");
+        }
+        const dev = this;
         // Wait up to a threshold before giving up
+        function cleanup() {
+          dev.off("message", onMessage);
+          dev.off("exit", onExit);
+        }
         const resolver = Promise.withResolvers();
         function onMessage(message: any) {
-          if (this.messages.length === x.length) resolver.resolve();
+          process.nextTick(() => {
+            if (dev.messages.length === x.length) resolver.resolve();
+          });
         }
         function onExit() {
           resolver.resolve();
         }
-        this.once("message", onMessage);
-        this.once("exit", onExit);
+        this.on("message", onMessage);
+        this.on("exit", onExit);
         let t: any = setTimeout(
           () => {
             t = null;
@@ -706,11 +829,15 @@ export class Client extends EventEmitter {
         );
         await resolver.promise;
         if (t) clearTimeout(t);
-        this.off("message", onMessage);
+        cleanup();
       }
       if (this.exited) throw new Error("Client exited while waiting for message");
-      const m = this.messages;
+      let m = this.messages;
       this.messages = [];
+      if (!strictOrdering) {
+        m = m.sort();
+        x = x.sort();
+      }
       expect(m).toEqual(x);
     });
   }
@@ -935,12 +1062,14 @@ export class Client extends EventEmitter {
 
       // Block WebSocket messages
       this.#proc.send({ type: "set-allow-websocket-messages", args: [false] });
+      this.webSocketMessagesAllowed = false;
 
       try {
         await cb();
       } finally {
         // Re-enable WebSocket messages
         this.#proc.send({ type: "set-allow-websocket-messages", args: [true] });
+        this.webSocketMessagesAllowed = true;
       }
     });
   }
@@ -1509,11 +1638,6 @@ function testImpl<T extends DevServerTest>(
         : "PROD"
   }:${basename}-${count}: ${description}`;
   try {
-    // TODO: resolve ci flakiness.
-    if (isCI && isWindows) {
-      return jest.test.skip(name, run);
-    }
-
     jest.test(
       name,
       run,

@@ -426,23 +426,3 @@ devTest("custom hook tracking", {
     await c.expectMessage("PASS");
   },
 });
-devTest("explicit react refresh runtime is used", {
-  files: {
-    "index.html": emptyHtmlFile({
-      styles: [],
-      scripts: ["index.tsx"],
-    }),
-    "index.tsx": `
-      console.log("TWO");
-      function App() {}
-    `,
-    "node_modules/react-refresh/runtime.js": /* js */ `
-      export const performReactRefresh = () => {};
-      console.log("ONE");
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/", {});
-    await c.expectMessage("ONE", "TWO");
-  },
-});

@@ -982,7 +982,7 @@ pub fn getLoaderAndVirtualSource(
         jsc_vm,
         specifier_str,
     );
-    var path = Fs.Path.init(normalized_file_path_from_specifier);
+    var path = Fs.Path.initFile(normalized_file_path_from_specifier);
 
     var loader: ?Loader = path.loader(&jsc_vm.transpiler.options.loaders);
     var virtual_source: ?*logger.Source = null;
@@ -1006,7 +1006,7 @@ pub fn getLoaderAndVirtualSource(
             // "file:" loader makes no sense for blobs
             // so let's default to tsx.
             if (blob.getFileName()) |filename| {
-                const current_path = Fs.Path.init(filename);
+                const current_path = Fs.Path.initFile(filename);
 
                 // Only treat it as a file if is a Bun.file()
                 if (blob.needsToReadFile()) {
@@ -2043,7 +2043,7 @@ pub const TransformOptions = struct {
         assert(entryPointName.len > 0);
 
         const entryPoint = Fs.File{
-            .path = Fs.Path.init(entryPointName),
+            .path = Fs.Path.initFile(entryPointName),
             .contents = code,
         };
 

@@ -719,7 +719,9 @@ pub const Resolver = struct {
                     .success = Result{
                         .import_kind = kind,
                         .path_pair = PathPair{
-                            .primary = Path.init(import_path),
+                            // NOTE: not actually a "file" but we want this to
+                            // follow the same code path as files.
+                            .primary = Path.initFile(import_path),
                         },
                         .is_external = true,
                         .module_type = .cjs,
@@ -808,7 +810,7 @@ pub const Resolver = struct {
                             .success = Result{
                                 .import_kind = kind,
                                 .path_pair = PathPair{
-                                    .primary = Path.init(import_path),
+                                    .primary = Path.initFile(import_path),
                                 },
                                 .is_standalone_module = true,
                                 .module_type = .esm,
@@ -828,7 +830,7 @@ pub const Resolver = struct {
                                 .success = Result{
                                     .import_kind = kind,
                                     .path_pair = PathPair{
-                                        .primary = Path.init(file.name),
+                                        .primary = Path.initFile(file.name),
                                     },
                                     .is_standalone_module = true,
                                     .module_type = .esm,
@@ -1171,7 +1173,7 @@ pub const Resolver = struct {
 
                 return .{
                     .success = Result{
-                        .path_pair = .{ .primary = Path.init(import_path) },
+                        .path_pair = .{ .primary = Path.initFile(import_path) },
                         .is_external = true,
                     },
                 };
@@ -1216,7 +1218,7 @@ pub const Resolver = struct {
 
                 return .{
                     .success = Result{
-                        .path_pair = .{ .primary = Path.init(r.fs.dirname_store.append(@TypeOf(abs_path), abs_path) catch unreachable) },
+                        .path_pair = .{ .primary = Path.initFile(r.fs.dirname_store.append(@TypeOf(abs_path), abs_path) catch unreachable) },
                         .is_external = true,
                     },
                 };
@@ -1235,7 +1237,7 @@ pub const Resolver = struct {
 
                             // Is the path disabled?
                             if (remap.len == 0) {
-                                var _path = Path.init(r.fs.dirname_store.append(string, abs_path) catch unreachable);
+                                var _path = Path.initFile(r.fs.dirname_store.append(string, abs_path) catch unreachable);
                                 _path.is_disabled = true;
                                 return .{
                                     .success = Result{
@@ -1350,7 +1352,7 @@ pub const Resolver = struct {
                         }
                         return .{
                             .success = Result{
-                                .path_pair = .{ .primary = Path.init(query) },
+                                .path_pair = .{ .primary = Path.initFile(query) },
                                 .is_external = true,
                             },
                         };
@@ -1433,7 +1435,7 @@ pub const Resolver = struct {
                                         // "browser": {"module": false}
                                         // the module doesn't exist and it's disabled
                                         // so we should just not try to load it
-                                        var primary = Path.init(import_path);
+                                        var primary = Path.initFile(import_path);
                                         primary.is_disabled = true;
                                         return .{
                                             .success = Result{
@@ -2010,7 +2012,7 @@ pub const Resolver = struct {
                     if (err == error.FileNotFound) {
                         switch (manager.getPreinstallState(resolved_package_id)) {
                             .done => {
-                                var path = Fs.Path.init(import_path);
+                                var path = Fs.Path.initFile(import_path);
                                 path.is_disabled = true;
                                 // this might mean the package is disabled
                                 return .{
@@ -2538,7 +2540,7 @@ pub const Resolver = struct {
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
         // then it will be undefined memory if we parse another tsconfig.json late
-        const key_path = Fs.Path.init(r.fs.dirname_store.append(string, file) catch unreachable);
+        const key_path = Fs.Path.initFile(r.fs.dirname_store.append(string, file) catch unreachable);
 
         const source = logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
@@ -2830,7 +2832,7 @@ pub const Resolver = struct {
                         r.dir_cache.markNotFound(queue_top.result);
                         rfs.entries.markNotFound(cached_dir_entry_result);
                         if (comptime enable_logging) {
-                            const pretty = r.prettyPath(Path.init(queue_top.unsafe_path));
+                            const pretty = r.prettyPath(Path.initFile(queue_top.unsafe_path));
 
                             r.log.addErrorFmt(
                                 null,
@@ -3133,7 +3135,7 @@ pub const Resolver = struct {
                 if (JSC.HardcodedModule.Aliases.has(esm_resolution.path, r.opts.target)) {
                     return .{
                         .success = .{
-                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
+                            .path_pair = .{ .primary = bun.fs.Path.initFile(esm_resolution.path) },
                             .is_external = true,
                         },
                     };
@@ -3346,7 +3348,7 @@ pub const Resolver = struct {
                         if (remap.len == 0) {
                             const paths = [_]string{ path, field_rel_path };
                             const new_path = r.fs.absAlloc(r.allocator, &paths) catch unreachable;
-                            var _path = Path.init(new_path);
+                            var _path = Path.initFile(new_path);
                             _path.is_disabled = true;
                             return MatchResult{
                                 .path_pair = PathPair{
@@ -3368,14 +3370,14 @@ pub const Resolver = struct {
         if (r.loadAsFile(field_abs_path, extension_order)) |result| {
             if (dir_info.package_json) |package_json| {
                 return MatchResult{
-                    .path_pair = PathPair{ .primary = Fs.Path.init(result.path) },
+                    .path_pair = PathPair{ .primary = Fs.Path.initFile(result.path) },
                     .package_json = package_json,
                     .dirname_fd = result.dirname_fd,
                 };
             }
 
             return MatchResult{
-                .path_pair = PathPair{ .primary = Fs.Path.init(result.path) },
+                .path_pair = PathPair{ .primary = Fs.Path.initFile(result.path) },
                 .dirname_fd = result.dirname_fd,
                 .diff_case = result.diff_case,
             };
@@ -3496,7 +3498,7 @@ pub const Resolver = struct {
 
                         if (dir_info.package_json) |package_json| {
                             return MatchResult{
-                                .path_pair = .{ .primary = Path.init(out_buf) },
+                                .path_pair = .{ .primary = Path.initFile(out_buf) },
                                 .diff_case = lookup.diff_case,
                                 .package_json = package_json,
                                 .dirname_fd = dir_info.getFileDescriptor(),
@@ -3504,7 +3506,7 @@ pub const Resolver = struct {
                         }
 
                         return MatchResult{
-                            .path_pair = .{ .primary = Path.init(out_buf) },
+                            .path_pair = .{ .primary = Path.initFile(out_buf) },
                             .diff_case = lookup.diff_case,
 
                             .dirname_fd = dir_info.getFileDescriptor(),
@@ -3547,7 +3549,7 @@ pub const Resolver = struct {
                         if (remap.len == 0) {
                             const paths = [_]string{ path, field_rel_path };
                             const new_path = r.fs.absBuf(&paths, bufs(.remap_path));
-                            var _path = Path.init(new_path);
+                            var _path = Path.initFile(new_path);
                             _path.is_disabled = true;
                             return MatchResult{
                                 .path_pair = PathPair{
@@ -3562,7 +3564,7 @@ pub const Resolver = struct {
 
                         // Is this a file
                         if (r.loadAsFile(remapped_abs, extension_order)) |file_result| {
-                            return MatchResult{ .dirname_fd = file_result.dirname_fd, .path_pair = .{ .primary = Path.init(file_result.path) }, .diff_case = file_result.diff_case };
+                            return MatchResult{ .dirname_fd = file_result.dirname_fd, .path_pair = .{ .primary = Path.initFile(file_result.path) }, .diff_case = file_result.diff_case };
                         }
 
                         // Is it a directory with an index?
@@ -3594,7 +3596,7 @@ pub const Resolver = struct {
                     if ((r.dirInfoCached(file.path[0 .. node_modules_folder_offset + package_name_length]) catch null)) |package_dir_info| {
                         if (package_dir_info.package_json) |package_json| {
                             return MatchResult{
-                                .path_pair = .{ .primary = Path.init(file.path) },
+                                .path_pair = .{ .primary = Path.initFile(file.path) },
                                 .diff_case = file.diff_case,
                                 .dirname_fd = file.dirname_fd,
                                 .package_json = package_json,
@@ -3610,7 +3612,7 @@ pub const Resolver = struct {
             }
 
             return MatchResult{
-                .path_pair = .{ .primary = Path.init(file.path) },
+                .path_pair = .{ .primary = Path.initFile(file.path) },
                 .diff_case = file.diff_case,
                 .dirname_fd = file.dirname_fd,
                 .file_fd = file.file_fd,
@@ -3771,7 +3773,7 @@ pub const Resolver = struct {
                     r.allocator,
                     "Cannot read directory \"{s}\": {s}",
                     .{
-                        r.prettyPath(Path.init(dir_path)),
+                        r.prettyPath(Path.initFile(dir_path)),
                         @errorName(dir_entry.err.original_err),
                     },
                 ) catch {};
@@ -4135,7 +4137,7 @@ pub const Resolver = struct {
                     tsconfigpath,
                     if (FeatureFlags.store_file_descriptors) fd else .zero,
                 ) catch |err| brk: {
-                    const pretty = r.prettyPath(Path.init(tsconfigpath));
+                    const pretty = r.prettyPath(Path.initFile(tsconfigpath));
 
                     if (err == error.ENOENT or err == error.FileNotFound) {
                         r.log.addErrorFmt(null, logger.Loc.Empty, r.allocator, "Cannot find tsconfig file {}", .{bun.fmt.QuotedFormatter{ .text = pretty }}) catch {};

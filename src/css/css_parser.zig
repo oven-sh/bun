@@ -1408,7 +1408,7 @@ pub const BundlerAtRuleParser = struct {
             const import_record_index = this.import_records.len;
             import_rule.import_record_idx = import_record_index;
             this.import_records.push(this.allocator, ImportRecord{
-                .path = bun.fs.Path.init(import_rule.url),
+                .path = bun.fs.Path.initFile(import_rule.url),
                 .kind = if (import_rule.supports != null) .at_conditional else .at,
                 .range = bun.logger.Range{
                     .loc = bun.logger.Loc{ .start = @intCast(start_position) },
@@ -3420,7 +3420,7 @@ pub fn StyleSheet(comptime AtRule: type) type {
                                     const import_record_idx = new_import_records.len;
                                     import_rule.import_record_idx = import_record_idx;
                                     new_import_records.push(allocator, ImportRecord{
-                                        .path = bun.fs.Path.init(import_rule.url),
+                                        .path = bun.fs.Path.initFile(import_rule.url),
                                         .kind = if (import_rule.supports != null) .at_conditional else .at,
                                         .range = bun.logger.Range.None,
                                     }) catch bun.outOfMemory();
@@ -3850,7 +3850,7 @@ pub const Parser = struct {
         if (this.import_records) |import_records| {
             const idx = import_records.len;
             import_records.push(this.allocator(), ImportRecord{
-                .path = bun.fs.Path.init(url),
+                .path = bun.fs.Path.initFile(url),
                 .kind = kind,
                 .range = bun.logger.Range{
                     .loc = bun.logger.Loc{ .start = @intCast(start_position) },

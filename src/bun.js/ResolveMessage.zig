@@ -157,7 +157,7 @@ pub const ResolveMessage = struct {
         resolve_error.* = ResolveMessage{
             .msg = msg.clone(allocator) catch unreachable,
             .allocator = allocator,
-            .referrer = Fs.Path.init(referrer),
+            .referrer = Fs.Path.initFile(referrer),
         };
         return resolve_error.toJS(globalThis);
     }

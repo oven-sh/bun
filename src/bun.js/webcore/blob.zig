@@ -4752,10 +4752,10 @@ pub const Blob = struct {
 
     pub fn getLoader(blob: *const Blob, jsc_vm: *VirtualMachine) ?bun.options.Loader {
         if (blob.getFileName()) |filename| {
-            const current_path = bun.fs.Path.init(filename);
+            const current_path = bun.fs.Path.initWithNamespace(filename, "blob");
             return current_path.loader(&jsc_vm.transpiler.options.loaders) orelse .tsx;
         } else if (blob.getMimeTypeOrContentType()) |mime_type| {
-            return .fromMimeType(mime_type);
+            return bun.options.Loader.fromMimeType(mime_type);
         } else {
             // Be maximally permissive.
             return .tsx;

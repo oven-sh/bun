@@ -5216,7 +5216,7 @@ fn NewParser_(
 
                     str.resolveRopeIfNeeded(p.allocator);
                     const pathname = str.string(p.allocator) catch unreachable;
-                    const path = fs.Path.init(pathname);
+                    const path = fs.Path.initFile(pathname);
 
                     const handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
 
@@ -13021,7 +13021,7 @@ fn NewParser_(
         }
 
         pub fn addImportRecordByRange(p: *P, kind: ImportKind, range: logger.Range, name: string) u32 {
-            return p.addImportRecordByRangeAndPath(kind, range, fs.Path.init(name));
+            return p.addImportRecordByRangeAndPath(kind, range, fs.Path.initFile(name));
         }
 
         pub fn addImportRecordByRangeAndPath(p: *P, kind: ImportKind, range: logger.Range, path: fs.Path) u32 {

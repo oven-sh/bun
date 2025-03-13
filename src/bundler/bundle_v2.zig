@@ -100,6 +100,7 @@ const Analytics = @import("../analytics/analytics_thread.zig");
 const URL = @import("../url.zig").URL;
 const Linker = linker.Linker;
 const Resolver = _resolver.Resolver;
+const ResolverResult = _resolver.Result;
 const TOML = @import("../toml/toml_parser.zig").TOML;
 const EntryPoints = bun.transpiler.EntryPoints;
 const Dependency = js_ast.Dependency;
@@ -2354,12 +2355,7 @@ pub const BundleV2 = struct {
             .success => |result| {
                 var out_source_index: ?Index = null;
                 if (!result.external) {
-                    var path = Fs.Path.init(result.path);
-                    if (result.namespace.len == 0 or strings.eqlComptime(result.namespace, "file")) {
-                        path.namespace = "file";
-                    } else {
-                        path.namespace = result.namespace;
-                    }
+                    var path = Fs.Path.initWithNamespace(result.path, result.namespace);
 
                     const existing = this.pathToSourceIndexMap(resolve.import_record.original_target).getOrPut(this.graph.allocator, path.hashKey()) catch unreachable;
                     if (!existing.found_existing) {
@@ -3031,7 +3027,7 @@ pub const BundleV2 = struct {
                 }
 
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                    import_record.path = Fs.Path.initFile(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.source_index = Index.invalid;
                     import_record.is_external_without_side_effects = true;
@@ -3059,7 +3055,7 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            const transpiler, const bake_graph: bake.Graph, const target =
+            const transpiler: *Transpiler, const bake_graph: bake.Graph, const target =
                 if (import_record.tag == .bake_resolve_to_ssr_graph)
             brk: {
                 if (this.framework == null) {
@@ -3098,7 +3094,7 @@ pub const BundleV2 = struct {
             };
 
             var had_busted_dir_cache = false;
-            var resolve_result = inner: while (true) break transpiler.resolver.resolveWithFramework(
+            var resolve_result: ResolverResult = inner: while (true) break transpiler.resolver.resolveWithFramework(
                 source_dir,
                 import_record.path.text,
                 import_record.kind,
@@ -4561,7 +4557,7 @@ pub const ParseTask = struct {
                             switch (file) {
                                 .code => |code| break :brk .{ .contents = code, .fd = bun.invalid_fd },
                                 .import => |path| {
-                                    file_path.* = Fs.Path.init(path);
+                                    file_path.* = Fs.Path.initFile(path);
                                     break :lookup_builtin;
                                 },
                             }
@@ -11099,7 +11095,7 @@ pub const LinkerContext = struct {
                                         continue;
                                     },
                                 };
-                                p.* = bun.fs.Path.init(DataURL.encodeStringAsShortestDataURL(allocator, "text/css", std.mem.trim(u8, print_result.code, " \n\r\t")));
+                                p.* = bun.fs.Path.initFile(DataURL.encodeStringAsShortestDataURL(allocator, "text/css", std.mem.trim(u8, print_result.code, " \n\r\t")));
                             }
                         }
 
@@ -11684,7 +11680,7 @@ pub const LinkerContext = struct {
                 cross_chunk_import_records.appendAssumeCapacity(
                     .{
                         .kind = import_record.import_kind,
-                        .path = Fs.Path.init(ctx.chunks[import_record.chunk_index].unique_key),
+                        .path = Fs.Path.initFile(ctx.chunks[import_record.chunk_index].unique_key),
                         .range = Logger.Range.None,
                     },
                 );
@@ -17787,7 +17783,7 @@ pub const AstBuilder = struct {
     pub fn addImportRecord(p: *AstBuilder, path: []const u8, kind: ImportKind) !u32 {
         const index = p.import_records.items.len;
         try p.import_records.append(p.allocator, .{
-            .path = bun.fs.Path.init(path),
+            .path = bun.fs.Path.initFile(path),
             .kind = kind,
             .range = .{},
         });

@@ -1422,7 +1422,7 @@ pub const Source = struct {
     };
 
     pub fn initEmptyFile(filepath: string) Source {
-        const path = fs.Path.init(filepath);
+        const path = fs.Path.initFile(filepath);
         return Source{ .path = path, .contents = "" };
     }
 
@@ -1447,7 +1447,7 @@ pub const Source = struct {
     }
 
     pub fn initPathString(pathString: string, contents: string) Source {
-        const path = fs.Path.init(pathString);
+        const path = fs.Path.initFile(pathString);
         return Source{ .path = path, .contents = contents };
     }
 

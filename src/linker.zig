@@ -221,8 +221,7 @@ pub const Linker = struct {
                         }
 
                         if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                            import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
-                            import_record.path.namespace = "bun";
+                            import_record.path = Fs.Path.initWithNamespace(import_record.path.text["bun:".len..], "bun");
 
                             if (strings.eqlComptime(import_record.path.text, "test")) {
                                 import_record.tag = .bun_test;
@@ -350,7 +349,7 @@ pub const Linker = struct {
 
                 if (strings.eqlComptime(namespace, "bun") or strings.eqlComptime(namespace, "file") or namespace.len == 0) {
                     const relative_name = linker.fs.relative(source_dir, source_path);
-                    return Fs.Path.initWithPretty(source_path, relative_name);
+                    return Fs.Path.initWithPrettyAndNamespace(source_path, relative_name, namespace);
                 } else {
                     return Fs.Path.initWithNamespace(source_path, namespace);
                 }
@@ -360,7 +359,7 @@ pub const Linker = struct {
 
                 var pretty: string = undefined;
                 if (use_hashed_name) {
-                    var basepath = Fs.Path.init(source_path);
+                    var basepath = Fs.Path.initFile(source_path);
                     const basename = try linker.getHashedFilename(basepath, null);
                     const dir = basepath.name.dirWithTrailingSlash();
                     var _pretty = try linker.allocator.alloc(u8, dir.len + basename.len + basepath.name.ext.len);
@@ -388,7 +387,7 @@ pub const Linker = struct {
                 if (strings.eqlComptime(namespace, "node")) {
                     if (comptime Environment.isDebug) bun.assert(strings.eqlComptime(source_path[0..5], "node:"));
 
-                    return Fs.Path.init(try std.fmt.allocPrint(
+                    return Fs.Path.initWithNamespace(try std.fmt.allocPrint(
                         linker.allocator,
                         // assumption: already starts with "node:"
                         "{s}/{s}",
@@ -396,7 +395,7 @@ pub const Linker = struct {
                             strings.withoutTrailingSlash(origin.href),
                             strings.withoutLeadingSlash(source_path),
                         },
-                    ));
+                    ), "node");
                 } else {
                     var absolute_pathname = Fs.PathName.init(source_path);
 
@@ -416,19 +415,19 @@ pub const Linker = struct {
                     var basename = std.fs.path.basename(base);
 
                     if (use_hashed_name) {
-                        const basepath = Fs.Path.init(source_path);
+                        const basepath = Fs.Path.initFile(source_path);
 
                         basename = try linker.getHashedFilename(basepath, null);
                     }
 
-                    return Fs.Path.init(try origin.joinAlloc(
+                    return Fs.Path.initWithNamespace(try origin.joinAlloc(
                         linker.allocator,
                         "",
                         dirname,
                         basename,
                         absolute_pathname.ext,
                         source_path,
-                    ));
+                    ), namespace);
                 }
             },
 

@@ -46,7 +46,7 @@ fn createImportRecord(this: *HTMLScanner, input_path: []const u8, kind: ImportKi
     } else input_path;
 
     const record = ImportRecord{
-        .path = fs.Path.init(try this.allocator.dupeZ(u8, path_to_use)),
+        .path = fs.Path.initFile(try this.allocator.dupeZ(u8, path_to_use)),
         .kind = kind,
         .range = logger.Range.None,
     };

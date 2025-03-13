@@ -1969,7 +1969,7 @@ const ServerResponsePrototype = {
   },
   writeContinue(cb) {
     this.socket[kHandle]?.response?.writeContinue();
-    cb();
+    cb?.();
   },
 
   // This end method is actually on the OutgoingMessage prototype in Node.js

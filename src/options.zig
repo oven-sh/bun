@@ -27,6 +27,7 @@ const Runtime = @import("./runtime.zig").Runtime;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const MacroRemap = @import("./resolver/package_json.zig").MacroMap;
 const DotEnv = @import("./env_loader.zig");
+const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 pub const defines = @import("./defines.zig");
 pub const Define = defines.Define;
@@ -970,7 +971,9 @@ const LoaderResult = struct {
     path: Fs.Path,
     is_main: bool,
     specifier: string,
+    package_json: ?*const PackageJSON,
 };
+
 pub fn getLoaderAndVirtualSource(
     specifier_str: string,
     jsc_vm: *JSC.VirtualMachine,
@@ -1035,12 +1038,23 @@ pub fn getLoaderAndVirtualSource(
 
     const is_main = strings.eqlLong(specifier, jsc_vm.main, true);
 
+    const dir = path.name.dir;
+    // NOTE: we cannot trust `path.isFile()` since it's not always correct
+    const package_json: ?*const PackageJSON = if (std.fs.path.isAbsolute(dir))
+        if (jsc_vm.transpiler.resolver.readDirInfo(dir) catch null) |dir_info|
+            dir_info.package_json orelse dir_info.enclosing_package_json
+        else
+            null
+    else
+        null;
+
     return .{
         .loader = loader,
         .virtual_source = virtual_source,
         .path = path,
         .is_main = is_main,
         .specifier = specifier,
+        .package_json = package_json,
     };
 }
 

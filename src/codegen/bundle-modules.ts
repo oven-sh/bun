@@ -379,6 +379,10 @@ namespace InternalModuleRegistryConstants {
   );
 }
 
+/**
+ * IDs with bits set past this offset are used for builtin modules.
+ */
+const BUILTIN = 9;
 // This is a generated enum for zig code (exports.zig)
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "ResolvedSourceTag.zig"),
@@ -387,23 +391,24 @@ pub const ResolvedSourceTag = enum(u32) {
     // Predefined
     javascript = 0,
     package_json_type_module = 1,
-    wasm = 2,
-    object = 3,
-    file = 4,
-    esm = 5,
-    json_for_object_loader = 6,
+    package_json_type_commonjs = 2,
+    wasm = 3,
+    object = 4,
+    file = 5,
+    esm = 6,
+    json_for_object_loader = 7,
     /// Generate an object with "default" set to all the exports, including a "default" propert
-    exports_object = 7,
+    exports_object = 8,
 
     /// Generate a module that only exports default the input JSValue
-    export_default_object = 8,
+    export_default_object = 9,
 
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
-    // In this enum are represented as \`(1 << 9) & id\`
-${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << 9) | n},`).join("\n")}
+    // In this enum are represented as \`(1 << ${BUILTIN}) & id\`
+${moduleList.map((id, n) => `    @"${idToPublicSpecifierOrEnumName(id)}" = ${(1 << BUILTIN) | n},`).join("\n")}
     // Native modules run through a different system using ESM registry.
 ${Object.entries(nativeModuleIds)
-  .map(([id, n]) => `    @"${id}" = ${(1 << 10) | n},`)
+  .map(([id, n]) => `    @"${id}" = ${(1 << (BUILTIN + 1)) | n},`)
   .join("\n")}
 };
 `,
@@ -415,23 +420,24 @@ writeIfNotChanged(
   `enum SyntheticModuleType : uint32_t {
     JavaScript = 0,
     PackageJSONTypeModule = 1,
-    Wasm = 2,
-    ObjectModule = 3,
-    File = 4,
-    ESM = 5,
-    JSONForObjectLoader = 6,
-    ExportsObject = 7,
-    ExportDefaultObject = 8,
+    PackageJSONTypeCommonJS = 2,
+    Wasm = 3,
+    ObjectModule = 4,
+    File = 5,
+    ESM = 6,
+    JSONForObjectLoader = 7,
+    ExportsObject = 8,
+    ExportDefaultObject = 9,
     // Built in modules are loaded through InternalModuleRegistry by numerical ID.
-    // In this enum are represented as \`(1 << 9) & id\`
-    InternalModuleRegistryFlag = 1 << 9,
-${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${(1 << 9) | n},`).join("\n")}
+    // In this enum are represented as \`(1 << ${BUILTIN}) & id\`
+    InternalModuleRegistryFlag = 1 << ${BUILTIN},
+${moduleList.map((id, n) => `    ${idToEnumName(id)} = ${BUILTIN | n},`).join("\n")}
 
     // Native modules run through the same system, but with different underlying initializers.
     // They also have bit 10 set to differentiate them from JS builtins.
-    NativeModuleFlag = (1 << 10) | (1 << 9),
+    NativeModuleFlag = (1 << ${BUILTIN + 1}) | (1 << ${BUILTIN}),
 ${Object.entries(nativeModuleEnumToId)
-  .map(([id, n]) => `    ${id} = ${(1 << 10) | n},`)
+  .map(([id, n]) => `    ${id} = ${(1 << (BUILTIN + 1)) | n},`)
   .join("\n")}
 };
 

@@ -4,7 +4,7 @@
 
 #include "NodeValidator.h"
 #include "JSBufferEncodingType.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSArrayBuffer.h>

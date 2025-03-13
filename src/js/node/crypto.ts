@@ -42,7 +42,7 @@ const {
   ECDH,
   DiffieHellman: _DiffieHellman,
   DiffieHellmanGroup: _DiffieHellmanGroup,
-} = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
+} = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
   pbkdf2: _pbkdf2,

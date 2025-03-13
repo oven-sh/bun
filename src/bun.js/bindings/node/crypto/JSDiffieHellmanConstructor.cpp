@@ -5,7 +5,7 @@
 #include "NodeValidator.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include "util.h"
+#include "CryptoUtil.h"
 #include "openssl/dh.h"
 #include "openssl/bn.h"
 #include "openssl/err.h"

@@ -14,7 +14,7 @@
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
 #include "JSBuffer.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "BunString.h"
 #include <openssl/bn.h>
 #include <openssl/ecdsa.h>

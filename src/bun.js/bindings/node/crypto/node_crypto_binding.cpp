@@ -1,4 +1,4 @@
-#include "NodeCrypto.h"
+#include "node_crypto_binding.h"
 #include "KeyObject.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/JSArrayBufferView.h"

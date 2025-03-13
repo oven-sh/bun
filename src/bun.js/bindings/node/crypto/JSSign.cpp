@@ -13,7 +13,7 @@
 #include "AsymmetricKeyValue.h"
 #include "NodeValidator.h"
 #include "JSBuffer.h"
-#include "util.h"
+#include "CryptoUtil.h"
 #include "BunString.h"
 #include "JSVerify.h"
 #include "CryptoAlgorithmRegistry.h"

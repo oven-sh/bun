@@ -1695,9 +1695,7 @@ pub const Path = struct {
     /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
     /// The location of this resource. For the `file` namespace, this is
-    /// an absolute path with native slashes or an empty string.
-    ///
-    /// NOTE(@DonIsaac): This guarantee is broken in many places.
+    /// usually an absolute path with native slashes or an empty string.
     text: string,
     namespace: string,
     // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
@@ -1711,11 +1709,6 @@ pub const Path = struct {
     const ns_file = "file";
     const ns_macro = "macro";
 
-    /// `true` if this is a `Path` to a file. File paths guarantee that
-    /// `this.text` is an absolute path to a file (in native format) or an empty
-    /// string. `Path` does not guarantee that file exists.
-    ///
-    /// FIXME(@DonIsaac): This invariant is broken in many places.
     pub fn isFile(this: *const Path) bool {
         return this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file");
     }
@@ -1920,7 +1913,7 @@ pub const Path = struct {
         return Path{
             .pretty = text,
             .text = text,
-            .namespace = determineNamespace(text),
+            .namespace = "file",
             .name = PathName.init(text),
         };
     }
@@ -1929,7 +1922,7 @@ pub const Path = struct {
         return Path{
             .pretty = pretty,
             .text = text,
-            .namespace = determineNamespace(text),
+            .namespace = "file",
             .name = PathName.init(text),
         };
     }
@@ -1961,32 +1954,6 @@ pub const Path = struct {
             .namespace = namespace,
             .name = PathName.init(package),
         };
-    }
-
-    fn determineNamespace(text: string) string {
-        const eql = bun.strings.eqlComptime;
-        var namespace: string = ns_file;
-        // `data:`, `blob:`, etc. we only check common ones. We'll need to
-        // update this if we want to handle namespaces longer than 4 characters.
-        const url_namespace_prefix_len = "data:".len;
-
-        if (text.len > url_namespace_prefix_len and text[url_namespace_prefix_len] == ':') {
-            const maybe_namespace = text[0..url_namespace_prefix_len];
-            if (eql(maybe_namespace, "data:")) {
-                namespace = ns_dataurl;
-            } else if (eql(maybe_namespace, "blob:")) {
-                namespace = ns_blob;
-            }
-        }
-
-        // FIXME: this invariant is broken in many places
-        // if (Environment.isDebug) {
-        //     if (bun.strings.eqlComptime(namespace, ns_file)) {
-        //         bun.assertf(text.len == 0 or std.fs.path.isAbsolute(text), "Expected `file` paths to be absolute, got '{s}'", .{text});
-        //     }
-        // }
-
-        return namespace;
     }
 
     pub fn isBefore(a: *Path, b: Path) bool {

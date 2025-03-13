@@ -981,21 +981,17 @@ const ServerPrototype = {
             http_res.writeHead(503);
             http_res.end();
             socket.destroy();
-          } else {
-            const upgrade = http_req.headers.upgrade;
-            if (upgrade) {
-              server.emit("upgrade", http_req, socket, kEmptyBuffer);
-            } else {
-              server.emit("request", http_req, http_res);
-            }
-          }
-
-          if (http_req.headers.expect === "100-continue") {
+          } else if (http_req.headers.upgrade) {
+            server.emit("upgrade", http_req, socket, kEmptyBuffer);
+          } else if (http_req.headers.expect === "100-continue") {
             if (server.listenerCount("checkContinue") > 0) {
               server.emit("checkContinue", http_req, http_res);
             } else {
               http_res.writeContinue();
+              server.emit("request", http_req, http_res);
             }
+          } else {
+            server.emit("request", http_req, http_res);
           }
 
           socket.cork();
@@ -1825,7 +1821,7 @@ function emitContinueAndSocketNT(self) {
     self.emit("socket", self.socket);
   }
 
-  //Emit continue event for the client (internally we auto handle it)
+  // Emit continue event for the client (internally we auto handle it)
   if (!self._closed && self.getHeader("expect") === "100-continue") {
     self.emit("continue");
   }
@@ -1972,7 +1968,8 @@ const ServerResponsePrototype = {
     this._writeRaw("HTTP/1.1 102 Processing\r\n\r\n", "ascii", cb);
   },
   writeContinue(cb) {
-    this._writeRaw("HTTP/1.1 100 Continue\r\n\r\n", "ascii", cb);
+    this.socket[kHandle]?.response?.writeContinue();
+    cb();
   },
 
   // This end method is actually on the OutgoingMessage prototype in Node.js

@@ -6609,7 +6609,7 @@ pub const NodeHTTPResponse = struct {
         }
     }
 
-    pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    pub fn writeContinue(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         const arguments = callframe.arguments_old(1).slice();
         _ = arguments; // autofix
         if (this.isDone()) {

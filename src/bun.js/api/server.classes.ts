@@ -100,9 +100,12 @@ export default [
         fn: "writeHead",
         length: 3,
       },
+      writeContinue: {
+        fn: "writeContinue",
+      },
       write: {
         fn: "write",
-        length: 2,
+        length: 3,
       },
       end: {
         fn: "end",

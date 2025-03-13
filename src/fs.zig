@@ -150,9 +150,34 @@ pub const FileSystem = struct {
             const _kind: Entry.Kind = switch (entry.kind) {
                 .directory => .dir,
                 // This might be wrong!
-                .sym_link => .file,
-                .file => .file,
-                else => return,
+                .sym_link, .file => .file,
+                .unknown => kind: {
+                    // Certain filesystems don't return kind information in getdents, so we need to check ourselves
+                    const stat = try entry.dir.statFile(name_slice);
+                    break :kind switch (stat.kind) {
+                        .directory => .dir,
+                        .sym_link, .file => .file,
+
+                        .block_device,
+                        .character_device,
+                        .named_pipe,
+                        .unix_domain_socket,
+                        .whiteout,
+                        .door,
+                        .event_port,
+                        .unknown,
+                        => return,
+                    };
+                },
+
+                .block_device,
+                .character_device,
+                .named_pipe,
+                .unix_domain_socket,
+                .whiteout,
+                .door,
+                .event_port,
+                => return,
             };
 
             const stored = try brk: {

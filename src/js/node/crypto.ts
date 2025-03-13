@@ -40,6 +40,7 @@ const {
   verify,
   Hmac: _Hmac,
   Hash: _Hash,
+  ECDH,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
 
 const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
@@ -8526,9 +8527,6 @@ var require_crypto_browserify2 = __commonJS({
     exports.getCiphers = getCiphers;
     exports.listCiphers = aes.listCiphers;
 
-    const ecdh = require_browser9();
-    exports.ECDH = ecdh.ECDH;
-    exports.createECDH = ecdh.createECDH;
     exports.getRandomValues = values => crypto.getRandomValues(values);
     exports.constants = $processBindingConstants.crypto;
   },
@@ -9157,4 +9155,9 @@ crypto_exports.diffieHellman = function diffieHellman(options) {
   }
 
   return statelessDH(privateKey.$bunNativePtr, publicKey.$bunNativePtr);
+};
+
+crypto_exports.ECDH = ECDH;
+crypto_exports.createECDH = function createECDH(curve) {
+  return new ECDH(curve);
 };

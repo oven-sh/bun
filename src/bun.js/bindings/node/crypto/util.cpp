@@ -106,8 +106,7 @@ WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObjec
         return res;
     }
 
-    res = parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
-    return res;
+    return parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
 }
 
 std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue)

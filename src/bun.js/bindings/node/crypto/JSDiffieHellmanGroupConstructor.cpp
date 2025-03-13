@@ -30,12 +30,6 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Check that we have at least one argument (group name)
-    if (callFrame->argumentCount() < 1) {
-        throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "Group name argument is required"_s);
-        return {};
-    }
-
     // Use the validator to check if the argument is a string
     V::validateString(scope, globalObject, callFrame->argument(0), "group name"_s);
     RETURN_IF_EXCEPTION(scope, {});
@@ -45,8 +39,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
 
     auto dh = ncrypto::DHPointer::FromGroup(name);
     if (!dh) {
-        throwError(globalObject, scope, ErrorCode::ERR_CRYPTO_UNKNOWN_DH_GROUP, "Unknown DH group"_s);
-        return {};
+        return Bun::ERR::CRYPTO_UNKNOWN_DH_GROUP(scope, globalObject);
     }
 
     // Get the appropriate structure and create the DiffieHellmanGroup object
@@ -68,7 +61,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
         scope.release();
     }
 
-    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, std::move(dh)));
+    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTFMove(dh)));
 }
 
 } // namespace Bun

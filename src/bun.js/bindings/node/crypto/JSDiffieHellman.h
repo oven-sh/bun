@@ -59,4 +59,6 @@ private:
     unsigned m_sizeForGC = 0;
 };
 
+void setupDiffieHellmanClassStructure(JSC::LazyClassStructure::Initializer&);
+
 } // namespace Bun

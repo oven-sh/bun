@@ -1478,10 +1478,8 @@ static int64_t indexOfBuffer(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     return indexOf(typedVector, byteLength, typedVectorValue, lengthValue, byteOffset);
 }
 
-static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter buffer, bool last)
+static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter buffer, bool last)
 {
-    auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     bool dir = !last;
     const uint8_t* typedVector = buffer->typedVector();
     size_t byteLength = buffer->byteLength();
@@ -1542,13 +1540,18 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*
 
 static JSC::EncodedJSValue jsBufferPrototypeFunction_includesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
-    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, false);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto index = indexOf(lexicalGlobalObject, scope, callFrame, castedThis, false);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(jsBoolean(index != -1));
 }
 
 static JSC::EncodedJSValue jsBufferPrototypeFunction_indexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
-    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, false);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto index = indexOf(lexicalGlobalObject, scope, callFrame, castedThis, false);
     return JSC::JSValue::encode(jsNumber(index));
 }
 
@@ -1626,7 +1629,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
 
 static JSC::EncodedJSValue jsBufferPrototypeFunction_lastIndexOfBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSArrayBufferView>::ClassParameter castedThis)
 {
-    auto index = indexOf(lexicalGlobalObject, callFrame, castedThis, true);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto index = indexOf(lexicalGlobalObject, scope, callFrame, castedThis, true);
     return JSC::JSValue::encode(jsNumber(index));
 }
 
@@ -1812,10 +1817,9 @@ JSC::EncodedJSValue jsBufferToStringFromBytes(JSGlobalObject* lexicalGlobalObjec
     }
 }
 
-JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
+JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSC::JSArrayBufferView* castedThis, size_t offset, size_t length, WebCore::BufferEncodingType encoding)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto byteLength = castedThis->byteLength();
 
@@ -1883,7 +1887,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JSGlobalO
     JSC::JSValue arg3 = callFrame->argument(2);
 
     if (argsCount == 0)
-        return jsBufferToString(lexicalGlobalObject, castedThis, start, end, encoding);
+        return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end, encoding);
 
     if (!arg1.isUndefined()) {
         encoding = parseEncoding(scope, lexicalGlobalObject, arg1, false);
@@ -1913,7 +1917,7 @@ lstart:
 
     auto offset = start;
     auto length = end > start ? end - start : 0;
-    return jsBufferToString(lexicalGlobalObject, castedThis, offset, length, encoding);
+    return jsBufferToString(lexicalGlobalObject, scope, castedThis, offset, length, encoding);
 }
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L544
@@ -1956,7 +1960,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
         return {};
     }
 
-    return jsBufferToString(lexicalGlobalObject, castedThis, start, end - start, encoding);
+    return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
 // DOMJIT makes it slower! TODO: investigate why

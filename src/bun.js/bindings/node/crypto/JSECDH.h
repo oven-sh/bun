@@ -57,7 +57,6 @@ private:
     static void destroy(JSC::JSCell* cell) { static_cast<JSECDH*>(cell)->~JSECDH(); }
 
     ncrypto::ECKeyPointer m_key;
-    unsigned m_sizeForGC = 0;
 };
 
 void setupECDHClassStructure(JSC::LazyClassStructure::Initializer&);

@@ -1,8 +1,14 @@
 #include "JSDiffieHellmanGroup.h"
-#include "../../webcore/DOMIsoSubspaces.h"
-#include "../../ZigGlobalObject.h"
+#include "JSDiffieHellmanGroupPrototype.h"
+#include "JSDiffieHellmanGroupConstructor.h"
+#include "DOMIsoSubspaces.h"
+#include "ZigGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
+#include <JavaScriptCore/LazyClassStructure.h>
+#include <JavaScriptCore/LazyClassStructureInlines.h>
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/ObjectPrototype.h>
 
 namespace Bun {
 
@@ -27,5 +33,19 @@ void JSDiffieHellmanGroup::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSDiffieHellmanGroup);
+
+void setupDiffieHellmanGroupClassStructure(JSC::LazyClassStructure::Initializer& init)
+{
+    auto* prototypeStructure = JSDiffieHellmanGroupPrototype::createStructure(init.vm, init.global, init.global->objectPrototype());
+    auto* prototype = JSDiffieHellmanGroupPrototype::create(init.vm, init.global, prototypeStructure);
+
+    auto* constructorStructure = JSDiffieHellmanGroupConstructor::createStructure(init.vm, init.global, init.global->functionPrototype());
+    auto* constructor = JSDiffieHellmanGroupConstructor::create(init.vm, constructorStructure, prototype);
+
+    auto* structure = JSDiffieHellmanGroup::createStructure(init.vm, init.global, prototype);
+    init.setPrototype(prototype);
+    init.setStructure(structure);
+    init.setConstructor(constructor);
+}
 
 } // namespace Bun

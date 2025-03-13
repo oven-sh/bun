@@ -5,7 +5,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <wtf/text/WTFString.h>
-#include "../../ncrypto.h"
+#include "ncrypto.h"
 #include "BunClientData.h"
 namespace Bun {
 
@@ -58,5 +58,7 @@ private:
     ncrypto::DHPointer m_dh;
     unsigned m_sizeForGC = 0;
 };
+
+void setupDiffieHellmanGroupClassStructure(JSC::LazyClassStructure::Initializer&);
 
 } // namespace Bun

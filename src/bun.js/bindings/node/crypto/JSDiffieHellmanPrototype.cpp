@@ -96,6 +96,9 @@ JSC_DEFINE_CUSTOM_GETTER(jsDiffieHellmanGetter_verifyError, (JSC::JSGlobalObject
 
     auto& dh = thisObject->getImpl();
     auto result = dh.check();
+    if (result == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
+        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
+    }
 
     return JSC::JSValue::encode(JSC::jsNumber(static_cast<int>(result)));
 }

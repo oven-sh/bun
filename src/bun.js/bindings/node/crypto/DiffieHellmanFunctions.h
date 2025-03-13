@@ -53,11 +53,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncComputeSecretTemplate(JSC::JSGlobalO
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "computeSecret requires a public key argument"_s);
-        return {};
-    }
-
     // Get the arguments
     JSC::JSValue keyArg = callFrame->argument(0);
     JSC::JSValue inputEncodingArg = callFrame->argument(1);
@@ -239,11 +234,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPublicKeyTemplate(JSC::JSGlobalOb
         return {};
     }
 
-    if (callFrame->argumentCount() < 1) {
-        throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "setPublicKey requires a key argument"_s);
-        return {};
-    }
-
     JSC::JSValue keyArg = callFrame->argument(0);
 
     // Process the public key input
@@ -278,11 +268,6 @@ JSC::EncodedJSValue jsDiffieHellmanProtoFuncSetPrivateKeyTemplate(JSC::JSGlobalO
     auto* thisObject = JSC::jsDynamicCast<DiffieHellmanType*>(callFrame->thisValue());
     if (UNLIKELY(!thisObject)) {
         throwThisTypeError(*globalObject, scope, DiffieHellmanType::info()->className, "setPrivateKey"_s);
-        return {};
-    }
-
-    if (callFrame->argumentCount() < 1) {
-        throwError(globalObject, scope, ErrorCode::ERR_MISSING_ARGS, "setPrivateKey requires a key argument"_s);
         return {};
     }
 

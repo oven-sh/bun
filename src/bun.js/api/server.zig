@@ -9362,13 +9362,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // "/*" routes are added backwards, so if they have a static route, it will never be matched
             // so we need to check for that first
             if (!has_dev_catch_all and !@"has /*" and this.config.onNodeHTTPRequest != .zero) {
-                std.log.info("setting /* <0>", .{});
                 app.any("/*", *ThisServer, this, onNodeHTTPRequest);
             } else if (!has_dev_catch_all and !@"has /*" and this.config.onRequest != .zero) {
-                std.log.info("setting /* <1>", .{});
                 app.any("/*", *ThisServer, this, onRequest);
             } else if (!has_dev_catch_all and this.config.onNodeHTTPRequest != .zero) {
-                std.log.info("setting /* <2>", .{});
                 app.post("/*", *ThisServer, this, onNodeHTTPRequest);
                 app.put("/*", *ThisServer, this, onNodeHTTPRequest);
                 app.patch("/*", *ThisServer, this, onNodeHTTPRequest);
@@ -9377,14 +9374,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 app.trace("/*", *ThisServer, this, onNodeHTTPRequest);
                 app.connect("/*", *ThisServer, this, onNodeHTTPRequest);
             } else if (!has_dev_catch_all and this.config.onRequest != .zero) {
-                std.log.info("setting /* <3>", .{});
                 // "/*" routes are added backwards, so if they have a static route,
                 // it will never be matched so we need to check for that first
                 if (!@"has /*") {
-                    std.log.info("setting /* <4>", .{});
                     app.any("/*", *ThisServer, this, onRequest);
                 } else {
-                    std.log.info("setting /* <5>", .{});
                     // The HTML catch-all receives GET, HEAD.
                     app.post("/*", *ThisServer, this, onRequest);
                     app.put("/*", *ThisServer, this, onRequest);
@@ -9395,10 +9389,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     app.connect("/*", *ThisServer, this, onRequest);
                 }
             } else if (!has_dev_catch_all and this.config.onRequest == .zero and !@"has /*") {
-                std.log.info("setting /* <6>", .{});
                 app.any("/*", *ThisServer, this, on404);
             } else if (!has_dev_catch_all and this.config.onRequest == .zero) {
-                std.log.info("setting /* <7>", .{});
                 app.post("/*", *ThisServer, this, on404);
                 app.put("/*", *ThisServer, this, on404);
                 app.patch("/*", *ThisServer, this, on404);
@@ -9406,8 +9398,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 app.options("/*", *ThisServer, this, on404);
                 app.trace("/*", *ThisServer, this, on404);
                 app.connect("/*", *ThisServer, this, on404);
-            } else {
-                std.log.info("setting /* <8>", .{});
             }
 
             return route_list_value;

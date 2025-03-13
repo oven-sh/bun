@@ -990,6 +990,23 @@ pub const PostgresRequest = struct {
             // differently than what Postgres does when given a timestamp with
             // timezone.
             if (tag.isBinaryFormatSupported() and value.isString()) .text else tag) {
+                .text_array => {
+                    const l = try writer.length();
+                    try writer.write("{");
+                    var arr_iter = value.arrayIterator(globalObject);
+                    while (arr_iter.next()) |item| {
+                        var str = String.fromJS2(item, globalObject) catch return error.OutOfMemory;
+                        defer str.deref();
+                        const slice = str.toUTF8WithoutRef(bun.default_allocator);
+                        defer slice.deinit();
+                        try writer.write(slice.slice());
+                        if (arr_iter.i < arr_iter.len) {
+                            try writer.write(",");
+                        }
+                    }
+                    try writer.write("}");
+                    try l.writeExcludingSelf();
+                },
                 .jsonb, .json => {
                     var str = bun.String.empty;
                     defer str.deref();

@@ -27,7 +27,6 @@ const {
 
 const {
   statelessDH,
-  ecdhConvertKey,
   getCurves,
   certVerifySpkac,
   certExportPublicKey,
@@ -42,9 +41,6 @@ const {
   Hash: _Hash,
   ECDH,
 } = $cpp("NodeCrypto.cpp", "createNodeCryptoBinding");
-
-const { POINT_CONVERSION_COMPRESSED, POINT_CONVERSION_HYBRID, POINT_CONVERSION_UNCOMPRESSED } =
-  $processBindingConstants.crypto;
 
 const {
   pbkdf2: _pbkdf2,

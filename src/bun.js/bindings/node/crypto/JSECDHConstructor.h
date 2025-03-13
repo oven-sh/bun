@@ -39,11 +39,7 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM& vm, JSC::JSObject* prototype)
-    {
-        Base::finishCreation(vm, 2, "ECDH"_s);
-        putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    }
+    void finishCreation(JSC::VM& vm, JSC::JSObject* prototype);
 };
 
 } // namespace Bun

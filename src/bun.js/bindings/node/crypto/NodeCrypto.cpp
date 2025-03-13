@@ -105,66 +105,6 @@ JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObje
     return JSC::JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-
-    if (callFrame->argumentCount() < 3)
-        return throwVMError(lexicalGlobalObject, scope, "ECDH.convertKey requires 3 arguments"_s);
-
-    auto keyBuffer = KeyObject__GetBuffer(callFrame->argument(0));
-    if (keyBuffer.hasException())
-        return JSValue::encode(jsUndefined());
-
-    auto buffer = keyBuffer.releaseReturnValue();
-
-    if (buffer.size() == 0)
-        return JSValue::encode(JSC::jsEmptyString(vm));
-
-    auto curveName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
-    if (scope.exception())
-        return encodedJSValue();
-
-    int nid = OBJ_sn2nid(curveName.utf8().data());
-    if (nid == NID_undef)
-        return Bun::ERR::CRYPTO_INVALID_CURVE(scope, lexicalGlobalObject);
-
-    auto group = ncrypto::ECGroupPointer::NewByCurveName(nid);
-    if (!group)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to get EC_GROUP"_s);
-
-    auto point = ncrypto::ECPointPointer::New(group);
-    if (!point)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to create EC_POINT"_s);
-
-    const unsigned char* key_data = buffer.data();
-    size_t key_length = buffer.size();
-
-    if (!EC_POINT_oct2point(group, point, key_data, key_length, nullptr))
-        return throwVMError(lexicalGlobalObject, scope, "Failed to convert Buffer to EC_POINT"_s);
-
-    uint32_t form = callFrame->argument(2).toUInt32(lexicalGlobalObject);
-    if (scope.exception())
-        return encodedJSValue();
-
-    size_t size = EC_POINT_point2oct(group, point, static_cast<point_conversion_form_t>(form), nullptr, 0, nullptr);
-    if (size == 0)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to calculate buffer size"_s);
-
-    auto buf = ArrayBuffer::createUninitialized(size, 1);
-    if (!EC_POINT_point2oct(group, point, static_cast<point_conversion_form_t>(form), reinterpret_cast<uint8_t*>(buf->data()), size, nullptr))
-        return throwVMError(lexicalGlobalObject, scope, "Failed to convert EC_POINT to Buffer"_s);
-
-    auto* result = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(buf), 0, size);
-
-    if (!result)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to allocate result buffer"_s);
-
-    return JSValue::encode(result);
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsGetCurves, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -444,8 +384,6 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "statelessDH"_s)),
         JSFunction::create(vm, globalObject, 2, "statelessDH"_s, jsStatelessDH, ImplementationVisibility::Public, NoIntrinsic), 0);
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "ecdhConvertKey"_s)),
-        JSFunction::create(vm, globalObject, 3, "ecdhConvertKey"_s, jsECDHConvertKey, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certVerifySpkac"_s)),
         JSFunction::create(vm, globalObject, 1, "verifySpkac"_s, jsCertVerifySpkac, ImplementationVisibility::Public, NoIntrinsic), 0);

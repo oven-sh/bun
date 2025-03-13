@@ -182,6 +182,12 @@ describe("napi", () => {
     });
   });
 
+  describe("napi_get_value_string_*", () => {
+    it("behaves like node on edge cases", () => {
+      checkSameOutput("test_get_value_string", []);
+    });
+  });
+
   it("#1288", async () => {
     const result = checkSameOutput("self", []);
     expect(result).toBe("hello world!");

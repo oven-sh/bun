@@ -19,7 +19,9 @@ declare module "bun" {
 }
 ```
 
-You can use these declarations in two ways:
+You can write as many `declare module "bun"` declarations as you need. Symbols will be accessible from other files inside of the declaration, and they will all be merged when the types are evaluated.
+
+You can consume these declarations in two ways:
 
 1. Importing it from `'bun'`:
 
@@ -37,6 +39,14 @@ myFunction();
 const myInterface: Bun.MyInterface = {};
 const myType: Bun.MyType = "cool";
 Bun.myFunction();
+```
+
+Consuming them inside the ambient declarations is also easy:
+
+```ts
+// These are equivalent
+type A = import("bun").MyType;
+type A = Bun.MyType;
 ```
 
 ## File Structure

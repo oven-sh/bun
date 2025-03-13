@@ -47,6 +47,7 @@ function reset() {
       warn: () => {},
       info: () => {},
       assert: () => {},
+      trace: () => {},
     };
   }
 }
@@ -130,6 +131,7 @@ function createWindow(windowUrl) {
       console.trace(...args);
       process.exit(exitCodeMap.assertionFailed);
     },
+    trace: console.trace,
   };
 
   window.location.reload = async () => {

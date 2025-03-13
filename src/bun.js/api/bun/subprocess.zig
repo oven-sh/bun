@@ -708,7 +708,7 @@ pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.Ca
     const value = callFrame.argument(0);
 
     const success = ipc_data.serializeAndSend(global, value);
-    if (!success) return .zero;
+    if (!success) if (global.hasException()) return .zero;
 
     return .undefined;
 }

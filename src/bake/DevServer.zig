@@ -2701,7 +2701,9 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
             dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch bun.outOfMemory();
         }
 
-        dev.startAsyncBundle(entry_points, is_reload, timer) catch bun.outOfMemory();
+        if (entry_points.set.count() > 0) {
+            dev.startAsyncBundle(entry_points, is_reload, timer) catch bun.outOfMemory();
+        }
 
         dev.next_bundle.route_queue.clearRetainingCapacity();
     }
@@ -5698,6 +5700,7 @@ fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
             0..,
         ) |k, v, i| {
             const normalized_key = dev.relativePath(k);
+            defer dev.releaseRelativePathBuf();
             try w.writeInt(u32, @intCast(normalized_key.len), .little);
             if (k.len == 0) continue;
             try w.writeAll(normalized_key);

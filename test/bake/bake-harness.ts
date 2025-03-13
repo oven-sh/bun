@@ -1512,7 +1512,7 @@ function testImpl<T extends DevServerTest>(
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
       dedent`
-        import appConfig from "${path.join(mainDir, "bun.app.ts")}";
+        import appConfig from ${JSON.stringify(path.join(mainDir, "bun.app.ts"))};
         import { fullGC } from "bun:jsc";
 
         const routes = appConfig.static ?? (appConfig.routes ??= {});

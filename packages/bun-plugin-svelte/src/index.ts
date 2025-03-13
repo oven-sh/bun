@@ -29,6 +29,20 @@ function SveltePlugin(options: SvelteOptions = kEmptyObject as SvelteOptions): B
   return {
     name: "bun-plugin-svelte",
     setup(builder) {
+      // resolve "svelte" export conditions
+      //
+      // FIXME: the dev server does not currently respect bundler configs; it
+      // just passes a fake one to plugins and then never uses it. we need to to
+      // update it to ~not~ do this.
+      if (builder?.config) {
+        var conditions = builder.config.conditions ?? [];
+        if (typeof conditions === "string") {
+          conditions = [conditions];
+        }
+        conditions.push("svelte");
+        builder.config.conditions = conditions;
+      }
+
       const { config = kEmptyObject as Partial<BuildConfig> } = builder;
       const baseCompileOptions = getBaseCompileOptions(options ?? (kEmptyObject as Partial<SvelteOptions>), config);
       const baseModuleCompileOptions = getBaseModuleCompileOptions(

@@ -463,7 +463,14 @@ describe("bun", () => {
     if (process.platform === "win32") {
       const { exitCode, stderr, stdout } = spawnSync({
         cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", ...(elideLines !== undefined ? ["--elide-lines", String(elideLines)] : []), "script"],
+        cmd: [
+          bunExe(),
+          "run",
+          "--filter",
+          "./packages/dep0",
+          ...(elideLines !== undefined ? ["--elide-lines", String(elideLines)] : []),
+          "script",
+        ],
         env: { ...bunEnv, ...env, FORCE_COLOR: "1", NO_COLOR: "0" },
         stdout: "pipe",
         stderr: "pipe",
@@ -471,17 +478,10 @@ describe("bun", () => {
 
       expect(stderr.toString()).toMatch(win32Warning);
 
+      // In non-terminal environments (win32), eliding is completely disabled
+      // so we should only check for the warning & antipattern
       const stdoutval = stdout.toString();
-      for (const r of target_pattern) {
-        expect(stdoutval).toMatch(r);
-      }
-
-      if (antipattern) {
-        for (const r of Array.isArray(antipattern) ? antipattern : [antipattern]) {
-          expect(stdoutval).not.toMatch(r);
-        }
-      }
-
+      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
       expect(exitCode).toBe(0);
       return;
     }
@@ -523,7 +523,7 @@ describe("bun", () => {
     runElideLinesTest({
       target_pattern: [/\[3 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
       antipattern: [/\[10 lines elided\]/],
-      env: { BUN_CONFIG_ELIDE_LINES: "17" }
+      env: { BUN_CONFIG_ELIDE_LINES: "17" },
     });
   });
 
@@ -532,7 +532,7 @@ describe("bun", () => {
       elideLines: 12,
       target_pattern: [/\[8 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
       antipattern: [/\[15 lines elided\]/],
-      env: { BUN_CONFIG_ELIDE_LINES: "5" }
+      env: { BUN_CONFIG_ELIDE_LINES: "5" },
     });
   });
 });

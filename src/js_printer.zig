@@ -4646,6 +4646,7 @@ fn NewPrinter(
                     p.printStringLiteralUTF8(import_record_path, false);
 
                     // backwards compatibility: previously, we always stripped type
+                    var fetch_parameters: ModuleInfo.FetchParameters = .none;
                     if (comptime is_bun_platform) if (record.loader) |loader| {
                         const str: []const u8 = switch (loader) {
                             .jsx => "jsx",
@@ -4672,12 +4673,13 @@ fn NewPrinter(
                         p.printWhitespacer(ws(" }"));
 
                         if (p.moduleInfo()) |mi| {
-                            try mi.requestModule(import_record_path, switch (loader) {
+                            fetch_parameters = switch (loader) {
                                 .json => .json,
                                 else => ModuleInfo.FetchParameters.hostDefined(try mi.str(str)),
-                            });
+                            };
                         }
                     };
+                    if (p.moduleInfo()) |mi| try mi.requestModule(import_record_path, fetch_parameters);
                     p.printSemicolonAfterStatement();
                 },
                 .s_block => |s| {

@@ -1970,13 +1970,6 @@ pub const Path = struct {
         };
     }
 
-    pub fn isBefore(a: *Path, b: Path) bool {
-        return a.namespace > b.namespace ||
-            (a.namespace == b.namespace and (a.text < b.text ||
-            (a.text == b.text and (a.flags < b.flags ||
-            (a.flags == b.flags)))));
-    }
-
     pub fn isNodeModule(this: *const Path) bool {
         return strings.lastIndexOf(this.name.dir, std.fs.path.sep_str ++ "node_modules" ++ std.fs.path.sep_str) != null;
     }

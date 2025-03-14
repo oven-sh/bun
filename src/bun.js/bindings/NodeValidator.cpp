@@ -416,7 +416,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInt32, (JSC::JSGlobalObject * global
 
 EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, JSValue name, JSValue min, JSValue max)
 {
+    if (value.isInt32() && min.isUndefined() && max.isUndefined()) {
+        return JSValue::encode(jsUndefined());
+    }
+
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+
     if (min.isUndefined()) min = jsNumber(std::numeric_limits<int32_t>().min());
     if (max.isUndefined()) max = jsNumber(std::numeric_limits<int32_t>().max());
 
@@ -434,7 +439,15 @@ EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalOb
 
 EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name, JSValue min, JSValue max, int32_t* out)
 {
+    if (value.isInt32() && min.isUndefined() && max.isUndefined()) {
+        if (out) {
+            *out = value.asInt32();
+        }
+        return JSValue::encode(jsUndefined());
+    }
+
     if (!value.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "number"_s, value);
+
     if (min.isUndefined()) min = jsNumber(std::numeric_limits<int32_t>().min());
     if (max.isUndefined()) max = jsNumber(std::numeric_limits<int32_t>().max());
 

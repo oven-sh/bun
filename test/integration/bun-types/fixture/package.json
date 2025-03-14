@@ -1,15 +1,13 @@
 {
   "name": "fixture",
   "module": "index.ts",
-  "peerDependencies": {
-    "typescript": "^5.8.2"
-  },
   "scripts": {
     "check": "tsc --noEmit -p ./tsconfig.json"
   },
   "type": "module",
   "dependencies": {
     "@oven/typescript-bun-lib-dom": "github:alii/lib-dom-bun-testing#f34eacab7b78435ee18f0227974bc0a6756ccb0f",
-    "@types/bun": "types-bun-1.2.6.tgz"
+    "@types/bun": "types-bun-1.2.6.tgz",
+    "typescript": "^5.8.2"
   }
 }

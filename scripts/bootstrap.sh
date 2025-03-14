@@ -919,10 +919,9 @@ install_llvm() {
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/main"
 		install_packages \
 			"lld$(llvm_version)" \
-			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/community"
+			--repository "http://dl-cdn.alpinelinux.org/alpine/v3.21/community"
 		;;
 	esac
 }

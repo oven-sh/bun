@@ -20,7 +20,7 @@ await $`cat < ${response} | wc -c`; // 1256
 - **Safety**: Bun Shell escapes all strings by default, preventing shell injection attacks.
 - **JavaScript interop**: Use `Response`, `ArrayBuffer`, `Blob`, `Bun.file(path)` and other JavaScript objects as stdin, stdout, and stderr.
 - **Shell scripting**: Bun Shell can be used to run shell scripts (`.bun.sh` files).
-- **Custom interpreter**: Bun Shell is written in Zig, along with it's lexer, parser, and interpreter. Bun Shell is a small programming language.
+- **Custom interpreter**: Bun Shell is written in Zig, along with its lexer, parser, and interpreter. Bun Shell is a small programming language.
 
 ## Getting started
 
@@ -56,9 +56,9 @@ By default, `await`ing will return stdout and stderr as `Buffer`s.
 ```js
 import { $ } from "bun";
 
-const { stdout, stderr } = await $`echo "Hello World!"`.quiet();
+const { stdout, stderr } = await $`echo "Hello!"`.quiet();
 
-console.log(stdout); // Buffer(6) [ 72, 101, 108, 108, 111, 32 ]
+console.log(stdout); // Buffer(7) [ 72, 101, 108, 108, 111, 33, 10 ]
 console.log(stderr); // Buffer(0) []
 ```
 

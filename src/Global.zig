@@ -91,6 +91,10 @@ export fn Bun__atexit(function: ExitFn) void {
     }
 }
 
+pub fn addExitCallback(function: ExitFn) void {
+    Bun__atexit(function);
+}
+
 pub fn runExitCallbacks() void {
     for (on_exit_callbacks.items) |callback| {
         callback();

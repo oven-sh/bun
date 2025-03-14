@@ -148,7 +148,7 @@ const PatchTaskFifo = std.fifo.LinearFifo(*PatchTask, .{ .Static = 32 });
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
-const GlobalStringBuilder = @import("../string_builder.zig");
+const GlobalStringBuilder = bun.StringBuilder;
 const SlicedString = Semver.SlicedString;
 pub const Repository = @import("./repository.zig").Repository;
 pub const Bin = @import("./bin.zig").Bin;
@@ -2493,7 +2493,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
 pub const Resolution = @import("./resolution.zig").Resolution;
 const Progress = bun.Progress;
-const TaggedPointer = @import("../tagged_pointer.zig");
 
 const DependencyInstallContext = struct {
     tree_id: Lockfile.Tree.Id = 0,
@@ -2766,8 +2765,8 @@ pub const PackageManager = struct {
 
     pub const WorkspaceFilter = union(enum) {
         all,
-        name: []const u32,
-        path: []const u32,
+        name: []const u8,
+        path: []const u8,
 
         pub fn init(allocator: std.mem.Allocator, input: string, cwd: string, path_buf: []u8) OOM!WorkspaceFilter {
             if ((input.len == 1 and input[0] == '*') or strings.eqlComptime(input, "**")) {
@@ -2793,23 +2792,17 @@ pub const PackageManager = struct {
                 // won't match anything
                 return .{ .path = &.{} };
             }
+            const copy_start = @intFromBool(prepend_negate);
+            const copy_end = copy_start + filter.len;
 
-            // TODO(dylan-conway): finish encoding agnostic glob matcher so we don't
-            // need to convert
-            const len = bun.simdutf.length.utf32.from.utf8.le(filter) + @intFromBool(prepend_negate);
-            const buf = try allocator.alloc(u32, len);
-
-            const result = bun.simdutf.convert.utf8.to.utf32.with_errors.le(filter, buf[@intFromBool(prepend_negate)..]);
-            if (!result.isSuccessful()) {
-                // won't match anything
-                return .{ .path = &.{} };
-            }
+            const buf = try allocator.alloc(u8, copy_end);
+            @memcpy(buf[copy_start..copy_end], filter);
 
             if (prepend_negate) {
                 buf[0] = '!';
             }
 
-            const pattern = buf[0..len];
+            const pattern = buf[0..copy_end];
 
             return if (is_path)
                 .{ .path = pattern }
@@ -2819,7 +2812,9 @@ pub const PackageManager = struct {
 
         pub fn deinit(this: WorkspaceFilter, allocator: std.mem.Allocator) void {
             switch (this) {
-                .path, .name => |pattern| allocator.free(pattern),
+                .name,
+                .path,
+                => |pattern| allocator.free(pattern),
                 .all => {},
             }
         }
@@ -3773,7 +3768,7 @@ pub const PackageManager = struct {
         try PATH.appendSlice(this.node_gyp_tempdir_name);
         try this.env.map.put("PATH", PATH.items);
 
-        const npm_config_node_gyp = try bun.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
+        const npm_config_node_gyp = try std.fmt.bufPrint(&path_buf, "{s}{s}{s}{s}{s}", .{
             strings.withoutTrailingSlash(this.temp_dir_name),
             std.fs.path.sep_str,
             strings.withoutTrailingSlash(this.node_gyp_tempdir_name),
@@ -5208,8 +5203,9 @@ pub const PackageManager = struct {
                 }
             }
 
-            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>"
-            if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
+            // allow overriding all dependencies unless the dependency is coming directly from an alias, "npm:<this dep>" or
+            // if it's a workspaceOnly dependency
+            if (!dependency.behavior.isWorkspaceOnly() and (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides())) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
                     name, name_hash = switch (new.tag) {
@@ -6369,13 +6365,14 @@ pub const PackageManager = struct {
                                 installer.node_modules.path = path;
                                 installer.current_tree_id = ctx.tree_id;
                                 const pkg_id = ptask.callback.apply.pkg_id;
+                                const resolution = &manager.lockfile.packages.items(.resolution)[pkg_id];
 
                                 installer.installPackageWithNameAndResolution(
                                     ctx.dependency_id,
                                     pkg_id,
                                     log_level,
                                     ptask.callback.apply.pkgname,
-                                    ptask.callback.apply.resolution,
+                                    resolution,
                                     false,
                                     false,
                                 );
@@ -7166,6 +7163,7 @@ pub const PackageManager = struct {
 
         filter_patterns: []const string = &.{},
         pack_destination: string = "",
+        pack_filename: string = "",
         pack_gzip_level: ?string = null,
         // json_output: bool = false,
 
@@ -7579,6 +7577,7 @@ pub const PackageManager = struct {
 
                 this.filter_patterns = cli.filters;
                 this.pack_destination = cli.pack_destination;
+                this.pack_filename = cli.pack_filename;
                 this.pack_gzip_level = cli.pack_gzip_level;
                 // this.json_output = cli.json_output;
 
@@ -9645,6 +9644,7 @@ pub const PackageManager = struct {
         clap.parseParam("-a, --all") catch unreachable,
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
+        clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
     });
@@ -9692,6 +9692,7 @@ pub const PackageManager = struct {
     const pack_params: []const ParamType = &(shared_params ++ [_]ParamType{
         // clap.parseParam("--filter <STR>...                      Pack each matching workspace") catch unreachable,
         clap.parseParam("--destination <STR>                    The directory the tarball will be saved in") catch unreachable,
+        clap.parseParam("--filename <STR>                       The filename of the tarball") catch unreachable,
         clap.parseParam("--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9.") catch unreachable,
         clap.parseParam("<POS> ...                              ") catch unreachable,
     });
@@ -9736,6 +9737,7 @@ pub const PackageManager = struct {
         filters: []const string = &.{},
 
         pack_destination: string = "",
+        pack_filename: string = "",
         pack_gzip_level: ?string = null,
 
         development: bool = false,
@@ -10156,6 +10158,9 @@ pub const PackageManager = struct {
                 if (comptime subcommand != .publish) {
                     if (args.option("--destination")) |dest| {
                         cli.pack_destination = dest;
+                    }
+                    if (args.option("--filename")) |file| {
+                        cli.pack_filename = file;
                     }
                 }
 
@@ -11011,6 +11016,7 @@ pub const PackageManager = struct {
             &current_package_json.source,
             .{
                 .indent = current_package_json_indent,
+                .mangled_props = null,
             },
         ) catch |err| {
             Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -11087,6 +11093,7 @@ pub const PackageManager = struct {
                     &root_package_json.source,
                     .{
                         .indent = root_package_json.indentation,
+                        .mangled_props = null,
                     },
                 ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -11150,6 +11157,7 @@ pub const PackageManager = struct {
                 &source,
                 .{
                     .indent = current_package_json_indent,
+                    .mangled_props = null,
                 },
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -14445,7 +14453,8 @@ pub const PackageManager = struct {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
         var out_buffer: bun.PathBuffer = undefined;
         const result = try bun.getFdPathZ(manager.options.global_bin_dir.fd, &out_buffer);
-        manager.options.bin_path = bun.cstring(try FileSystem.instance.dirname_store.append([:0]u8, result));
+        const path = try FileSystem.instance.dirname_store.append([:0]u8, result);
+        manager.options.bin_path = path.ptr[0..path.len :0];
     }
 
     pub fn startProgressBarIfNone(manager: *PackageManager) void {
@@ -15213,7 +15222,7 @@ pub const PackageManager = struct {
                     },
                 };
 
-                switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                switch (bun.glob.walk.matchImpl(manager.allocator, pattern, path_or_name)) {
                     .match, .negate_match => install_root_dependencies = true,
 
                     .negate_no_match => {

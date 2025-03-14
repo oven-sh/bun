@@ -57,19 +57,18 @@ pub const TextEncoder = struct {
             const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
             bun.assert(result.written <= buf.len);
             bun.assert(result.read == slice.len);
-            const array_buffer = uint8array.asArrayBuffer(globalThis).?;
+            const array_buffer = uint8array.asArrayBuffer(globalThis) orelse return .zero;
             bun.assert(result.written == array_buffer.len);
             @memcpy(array_buffer.byteSlice()[0..result.written], buf[0..result.written]);
             return uint8array;
         } else {
             const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, slice) catch {
-                return JSC.toInvalidArguments("Out of memory", .{}, globalThis);
+                return globalThis.throwOutOfMemoryValue();
             };
             bun.assert(bytes.len >= slice.len);
             return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
         }
     }
-
     pub export fn TextEncoder__encode16(
         globalThis: *JSGlobalObject,
         ptr: [*]const u16,
@@ -111,6 +110,52 @@ pub const TextEncoder = struct {
                 slice,
             ) catch {
                 return JSC.toInvalidArguments("Out of memory", .{}, globalThis);
+            };
+            return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
+        }
+    }
+
+    pub export fn c(
+        globalThis: *JSGlobalObject,
+        ptr: [*]const u16,
+        len: usize,
+    ) JSValue {
+        // as much as possible, rely on JSC to own the memory
+        // their code is more battle-tested than bun's code
+        // so we do a stack allocation here
+        // and then copy into JSC memory
+        // unless it's huge
+        // JSC will GC Uint8Array that occupy less than 512 bytes
+        // so it's extra good for that case
+        // this also means there won't be reallocations for small strings
+        var buf: [2048]u8 = undefined;
+
+        const slice = ptr[0..len];
+
+        // max utf16 -> utf8 length
+        if (slice.len <= buf.len / 4) {
+            const result = strings.copyUTF16IntoUTF8(&buf, @TypeOf(slice), slice, true);
+            if (result.read == 0 or result.written == 0) {
+                const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, 3);
+                const array_buffer = uint8array.asArrayBuffer(globalThis).?;
+                const replacement_char = [_]u8{ 239, 191, 189 };
+                @memcpy(array_buffer.slice()[0..replacement_char.len], &replacement_char);
+                return uint8array;
+            }
+            const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
+            bun.assert(result.written <= buf.len);
+            bun.assert(result.read == slice.len);
+            const array_buffer = uint8array.asArrayBuffer(globalThis).?;
+            bun.assert(result.written == array_buffer.len);
+            @memcpy(array_buffer.slice()[0..result.written], buf[0..result.written]);
+            return uint8array;
+        } else {
+            const bytes = strings.toUTF8AllocWithType(
+                bun.default_allocator,
+                @TypeOf(slice),
+                slice,
+            ) catch {
+                return globalThis.throwOutOfMemoryValue();
             };
             return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
         }
@@ -424,7 +469,7 @@ pub const TextEncoderStreamEncoder = struct {
             return globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
         }
 
-        const str: ZigString = (arguments[0].toStringOrNull(globalObject) orelse return .zero).getZigString(globalObject);
+        const str = try arguments[0].getZigString(globalObject);
 
         if (str.is16Bit()) {
             return this.encodeUTF16(globalObject, str.utf16SliceAligned());
@@ -961,31 +1006,13 @@ pub const Encoder = struct {
             else => unreachable,
         } catch 0;
     }
-    export fn Bun__encoding__byteLengthLatin1(input: [*]const u8, len: usize, encoding: u8) usize {
-        return switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .utf8 => byteLengthU8(input, len, .utf8),
-            .latin1 => byteLengthU8(input, len, .ascii),
-            .ascii => byteLengthU8(input, len, .ascii),
-            .ucs2 => byteLengthU8(input, len, .utf16le),
-            .utf16le => byteLengthU8(input, len, .utf16le),
-            .base64 => byteLengthU8(input, len, .base64),
-            .base64url => byteLengthU8(input, len, .base64url),
-            .hex => byteLengthU8(input, len, .hex),
-            else => unreachable,
-        };
+    // TODO(@190n) handle unpaired surrogates
+    export fn Bun__encoding__byteLengthLatin1AsUTF8(input: [*]const u8, len: usize) usize {
+        return byteLengthU8(input, len, .utf8);
     }
-    export fn Bun__encoding__byteLengthUTF16(input: [*]const u16, len: usize, encoding: u8) usize {
-        return switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
-            .utf8 => byteLengthU16(input, len, .utf8),
-            .latin1 => byteLengthU16(input, len, .ascii),
-            .ascii => byteLengthU16(input, len, .ascii),
-            .ucs2 => byteLengthU16(input, len, .utf16le),
-            .utf16le => byteLengthU16(input, len, .utf16le),
-            .base64 => byteLengthU16(input, len, .base64),
-            .base64url => byteLengthU16(input, len, .base64url),
-            .hex => byteLengthU16(input, len, .hex),
-            else => unreachable,
-        };
+    // TODO(@190n) handle unpaired surrogates
+    export fn Bun__encoding__byteLengthUTF16AsUTF8(input: [*]const u16, len: usize) usize {
+        return strings.elementLengthUTF16IntoUTF8([]const u16, input[0..len]);
     }
     export fn Bun__encoding__constructFromLatin1(globalObject: *JSGlobalObject, input: [*]const u8, len: usize, encoding: u8) JSValue {
         const slice = switch (@as(JSC.Node.Encoding, @enumFromInt(encoding))) {
@@ -1253,7 +1280,7 @@ pub const Encoder = struct {
             },
 
             .hex => {
-                return strings.decodeHexToBytes(to_ptr[0..to_len], u8, input[0..len]);
+                return strings.decodeHexToBytesTruncate(to_ptr[0..to_len], u8, input[0..len]);
             },
 
             .base64, .base64url => {
@@ -1332,7 +1359,7 @@ pub const Encoder = struct {
             },
 
             .hex => {
-                return strings.decodeHexToBytes(to[0..to_len], u16, input[0..len]);
+                return strings.decodeHexToBytesTruncate(to[0..to_len], u16, input[0..len]);
             },
 
             .base64, .base64url => {
@@ -1344,32 +1371,6 @@ pub const Encoder = struct {
                 const transcoded = strings.toUTF8Alloc(bun.default_allocator, input[0..len]) catch return 0;
                 defer bun.default_allocator.free(transcoded);
                 return writeU8(transcoded.ptr, transcoded.len, to, to_len, encoding);
-            },
-            // else => return &[_]u8{};
-        }
-    }
-
-    /// Node returns imprecise byte length here
-    /// Should be fast enough for us to return precise length
-    pub fn byteLengthU16(input: [*]const u16, len: usize, comptime encoding: JSC.Node.Encoding) usize {
-        if (len == 0)
-            return 0;
-
-        switch (comptime encoding) {
-            // these should be the same size
-            .ascii, .latin1, .utf8 => {
-                return strings.elementLengthUTF16IntoUTF8([]const u16, input[0..len]);
-            },
-            .ucs2, .buffer, .utf16le => {
-                return len * 2;
-            },
-
-            .hex => {
-                return len / 2;
-            },
-
-            .base64, .base64url => {
-                return bun.base64.decodeLenUpperBound(len);
             },
             // else => return &[_]u8{};
         }
@@ -1472,8 +1473,8 @@ pub const Encoder = struct {
         _ = Bun__encoding__writeLatin1;
         _ = Bun__encoding__writeUTF16;
 
-        _ = Bun__encoding__byteLengthLatin1;
-        _ = Bun__encoding__byteLengthUTF16;
+        _ = Bun__encoding__byteLengthLatin1AsUTF8;
+        _ = Bun__encoding__byteLengthUTF16AsUTF8;
 
         _ = Bun__encoding__toString;
         _ = Bun__encoding__toStringUTF8;

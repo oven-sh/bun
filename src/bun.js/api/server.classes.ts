@@ -83,6 +83,7 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
+    values: ["routeList"],
   });
 }
 export default [
@@ -90,6 +91,89 @@ export default [
   generate(`DebugHTTPServer`),
   generate(`HTTPSServer`),
   generate(`DebugHTTPSServer`),
+
+  define({
+    name: "NodeHTTPResponse",
+    JSType: "0b11101110",
+    proto: {
+      writeHead: {
+        fn: "writeHead",
+        length: 3,
+      },
+      write: {
+        fn: "write",
+        length: 2,
+      },
+      end: {
+        fn: "end",
+        length: 2,
+      },
+      cork: {
+        fn: "cork",
+        length: 1,
+      },
+      ref: {
+        fn: "jsRef",
+      },
+      unref: {
+        fn: "jsUnref",
+      },
+      abort: {
+        fn: "abort",
+        length: 0,
+      },
+      pause: {
+        fn: "doPause",
+        length: 0,
+      },
+      drainRequestBody: {
+        fn: "drainRequestBody",
+        length: 0,
+      },
+      dumpRequestBody: {
+        fn: "dumpRequestBody",
+        length: 0,
+      },
+      resume: {
+        fn: "doResume",
+        length: 0,
+      },
+      bufferedAmount: {
+        getter: "getBufferedAmount",
+      },
+      aborted: {
+        getter: "getAborted",
+      },
+      finished: {
+        getter: "getFinished",
+      },
+      hasBody: {
+        getter: "getHasBody",
+      },
+      ended: {
+        getter: "getEnded",
+      },
+      ondata: {
+        getter: "getOnData",
+        setter: "setOnData",
+      },
+      onabort: {
+        getter: "getOnAbort",
+        setter: "setOnAbort",
+      },
+      // ontimeout: {
+      //   getter: "getOnTimeout",
+      //   setter: "setOnTimeout",
+      // },
+      onwritable: {
+        getter: "getOnWritable",
+        setter: "setOnWritable",
+      },
+    },
+    klass: {},
+    finalize: true,
+    noConstructor: true,
+  }),
 
   define({
     name: "ServerWebSocket",

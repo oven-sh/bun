@@ -1,7 +1,7 @@
 const URL = @import("../url.zig").URL;
 const bun = @import("root").bun;
 const std = @import("std");
-const MutableString = @import("../string_mutable.zig").MutableString;
+const MutableString = bun.MutableString;
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
@@ -1369,13 +1369,13 @@ pub const PackageManifest = struct {
                 return global.throw("expected manifest filename and registry string arguments", .{});
             }
 
-            const manifest_filename_str = args[0].toBunString(global);
+            const manifest_filename_str = try args[0].toBunString(global);
             defer manifest_filename_str.deref();
 
             const manifest_filename = manifest_filename_str.toUTF8(bun.default_allocator);
             defer manifest_filename.deinit();
 
-            const registry_str = args[1].toBunString(global);
+            const registry_str = try args[1].toBunString(global);
             defer registry_str.deref();
 
             const registry = registry_str.toUTF8(bun.default_allocator);

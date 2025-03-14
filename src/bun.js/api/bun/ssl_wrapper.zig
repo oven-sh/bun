@@ -1,6 +1,6 @@
 const bun = @import("root").bun;
 
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("./x509.zig");
 const JSC = bun.JSC;
 const uws = bun.uws;
@@ -58,7 +58,7 @@ pub fn SSLWrapper(comptime T: type) type {
 
         /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after the SSLWrapper is deinitialized
         pub fn initWithCTX(ctx: *BoringSSL.SSL_CTX, is_client: bool, handlers: Handlers) !This {
-            BoringSSL.load();
+            bun.BoringSSL.load();
             const ssl = BoringSSL.SSL_new(ctx) orelse return error.OutOfMemory;
             errdefer BoringSSL.SSL_free(ssl);
 
@@ -94,7 +94,7 @@ pub fn SSLWrapper(comptime T: type) type {
         }
 
         pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) !This {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
             var err: uws.create_bun_socket_error_t = .none;

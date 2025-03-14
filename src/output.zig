@@ -468,16 +468,6 @@ pub fn isVerbose() bool {
     return false;
 }
 
-// var _source_for_test: if (Environment.isTest) Source else void = undefined;
-// var _source_for_test_set = false;
-// pub fn initTest() void {
-//     if (_source_for_test_set) return;
-//     _source_for_test_set = true;
-//     const in = std.io.getStdErr();
-//     const out = std.io.getStdOut();
-//     _source_for_test = Source.init(File.from(out), File.from(in));
-//     Source.set(&_source_for_test);
-// }
 pub fn enableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = true;
 }
@@ -788,6 +778,8 @@ fn ScopedLogger(comptime tagname: []const u8, comptime disabled: bool) type {
                 return;
             }
 
+            if (bun.crash_handler.isPanicking()) return;
+
             if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
             defer {
                 if (Environment.enable_logs)
@@ -835,6 +827,13 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
         tag,
         disabled,
     ).log;
+}
+
+pub fn up(n: usize) void {
+    print("\x1B[{d}A", .{n});
+}
+pub fn clearToEnd() void {
+    print("\x1B[0J", .{});
 }
 
 // Valid "colors":
@@ -1174,10 +1173,14 @@ pub const ScopedDebugWriter = struct {
     pub threadlocal var disable_inside_log: isize = 0;
 };
 pub fn disableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log += 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log += 1;
+    }
 }
 pub fn enableScopedDebugWriter() void {
-    ScopedDebugWriter.disable_inside_log -= 1;
+    if (!@inComptime()) {
+        ScopedDebugWriter.disable_inside_log -= 1;
+    }
 }
 
 extern "c" fn getpid() c_int;

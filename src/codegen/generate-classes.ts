@@ -1,6 +1,6 @@
 // @ts-nocheck
 import path from "path";
-import type { ClassDefinition, Field } from "./class-definitions";
+import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions";
 import { camelCase, pascalCase, writeIfNotChanged } from "./helpers";
 import jsclasses from "./../bun.js/bindings/js_classes";
 
@@ -560,7 +560,7 @@ class ${name} final : public JSC::InternalFunction {
       )}* prototype);
 
       static constexpr unsigned StructureFlags = Base::StructureFlags;
-      static constexpr bool needsDestruction = false;
+      static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
       static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
       {
@@ -1163,6 +1163,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
 
     if ("fn" in proto[name]) {
       const fn = proto[name].fn;
+      const invalidThisBehavior = proto[name].invalidThisBehavior ?? InvalidThisBehavior.Throw;
       rows.push(`
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -1172,8 +1173,13 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
   ${className(typeName)}* thisObject = jsDynamicCast<${className(typeName)}*>(callFrame->thisValue());
 
   if (UNLIKELY(!thisObject)) {
-      scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
-      return {};
+      ${
+        invalidThisBehavior == InvalidThisBehavior.Throw
+          ? `
+    scope.throwException(lexicalGlobalObject, Bun::createInvalidThisError(lexicalGlobalObject, callFrame->thisValue(), "${typeName}"_s));
+    return {};`
+          : `return JSValue::encode(JSC::jsUndefined());`
+      }
   }
 
   JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -2281,7 +2287,7 @@ JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalO
     switch (id) {
 ${jsclasses
   .map(v => v[0])
-  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(cell->inherits<WebCore::JS${v}>()));`)
+  .map((v, i) => `    case ${i}: return JSValue::encode(jsBoolean(jsDynamicCast<WebCore::JS${v}*>(cell) != nullptr));`)
   .join("\n")}
     }
     return JSValue::encode(jsBoolean(false));

@@ -14,8 +14,9 @@ const Test = @import("./test/jest.zig");
 const Router = @import("./api/filesystem_router.zig");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const uws = bun.uws;
-const TaggedPointerTypes = @import("../tagged_pointer.zig");
+const TaggedPointerTypes = @import("../ptr.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
+const JSError = bun.JSError;
 
 pub const ExceptionValueRef = [*c]js.JSValueRef;
 pub const JSValueRef = js.JSValueRef;
@@ -245,6 +246,7 @@ pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {
 /// Print a JSValue to stdout; this is only meant for debugging purposes
 pub fn dump(value: JSC.WebCore.JSValue, globalObject: *JSC.JSGlobalObject) !void {
     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject };
+    defer formatter.deinit();
     try Output.errorWriter().print("{}\n", .{value.toFmt(globalObject, &formatter)});
     Output.flush();
 }
@@ -260,10 +262,25 @@ pub const ArrayBuffer = extern struct {
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
 
+    // require('buffer').kMaxLength.
+    // keep in sync with Bun::Buffer::kMaxLength
+    pub const max_size = std.math.maxInt(c_uint);
+
     extern fn JSBuffer__fromMmap(*JSC.JSGlobalObject, addr: *anyopaque, len: usize) JSC.JSValue;
 
     // 4 MB or so is pretty good for mmap()
     const mmap_threshold = 1024 * 1024 * 4;
+
+    pub fn bytesPerElement(this: *const ArrayBuffer) ?u8 {
+        return switch (this.typed_array_type) {
+            .ArrayBuffer, .DataView => null,
+            .Uint8Array, .Uint8ClampedArray, .Int8Array => 1,
+            .Uint16Array, .Int16Array, .Float16Array => 2,
+            .Uint32Array, .Int32Array, .Float32Array => 4,
+            .BigUint64Array, .BigInt64Array, .Float64Array => 8,
+            else => null,
+        };
+    }
 
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
@@ -354,7 +371,7 @@ pub const ArrayBuffer = extern struct {
 
     pub const Strong = struct {
         array_buffer: ArrayBuffer,
-        held: JSC.Strong = .{},
+        held: JSC.Strong = .empty,
 
         pub fn clear(this: *ArrayBuffer.Strong) void {
             var ref: *JSC.napi.Ref = this.ref orelse return;
@@ -409,13 +426,19 @@ pub const ArrayBuffer = extern struct {
     }
 
     extern "c" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSC.JSValue;
-    pub fn allocBuffer(globalThis: *JSC.JSGlobalObject, len: usize) struct { JSC.JSValue, []u8 } {
+    extern "c" fn Bun__allocArrayBufferForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSC.JSValue;
+
+    pub fn alloc(global: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType, len: u32) JSError!struct { JSC.JSValue, []u8 } {
         var ptr: [*]u8 = undefined;
-        const buffer = Bun__allocUint8ArrayForCopy(globalThis, len, @ptrCast(&ptr));
-        if (buffer.isEmpty()) {
-            return .{ buffer, &.{} };
+        const buf = switch (comptime kind) {
+            .Uint8Array => Bun__allocUint8ArrayForCopy(global, len, @ptrCast(&ptr)),
+            .ArrayBuffer => Bun__allocArrayBufferForCopy(global, len, @ptrCast(&ptr)),
+            else => @compileError("Not implemented yet"),
+        };
+        if (buf == .zero) {
+            return error.JSError;
         }
-        return .{ buffer, ptr[0..len] };
+        return .{ buf, ptr[0..len] };
     }
 
     extern "c" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSC.JSValue;
@@ -1092,7 +1115,7 @@ pub fn wrapInstanceMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = string_value.getZigString(globalThis);
+                        args[i] = try string_value.getZigString(globalThis);
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -1245,7 +1268,7 @@ pub fn wrapStaticMethod(
                             return globalThis.throwInvalidArguments("Expected string", .{});
                         }
 
-                        args[i] = string_value.getZigString(globalThis);
+                        args[i] = try string_value.getZigString(globalThis);
                     },
                     ?JSC.Cloudflare.ContentOptions => {
                         if (iter.nextEat()) |content_arg| {
@@ -1318,7 +1341,7 @@ pub const Ref = struct {
     }
 };
 
-pub const Strong = @import("./Strong.zig").Strong;
+pub const Strong = @import("./Strong.zig");
 pub const Weak = @import("./Weak.zig").Weak;
 pub const WeakRefType = @import("./Weak.zig").WeakRefType;
 
@@ -1394,7 +1417,7 @@ pub const BinaryType = enum(u4) {
 
     pub fn fromJSValue(globalThis: *JSC.JSGlobalObject, input: JSC.JSValue) bun.JSError!?BinaryType {
         if (input.isString()) {
-            return Map.getWithEql(try input.toBunString2(globalThis), bun.String.eqlComptime);
+            return Map.getWithEql(try input.toBunString(globalThis), bun.String.eqlComptime);
         }
 
         return null;

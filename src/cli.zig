@@ -271,7 +271,8 @@ pub const Arguments = struct {
     } ++ auto_only_params;
 
     const build_only_params = [_]ParamType{
-        clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
+        clap.parseParam("--production                     Set NODE_ENV=production and enable minification") catch unreachable,
+        clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code. Implies --production") catch unreachable,
         clap.parseParam("--bytecode                       Use a bytecode cache") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
@@ -281,7 +282,7 @@ pub const Arguments = struct {
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'linked', 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--banner <STR>                   Add a banner to the bundled output such as \"use client\"; for a bundle being used with RSCs") catch unreachable,
         clap.parseParam("--footer <STR>                   Add a footer to the bundled output such as // built with bun!") catch unreachable,
-        clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
+        clap.parseParam("--format <STR>                   Specifies the module format to build to. \"esm\", \"cjs\" and \"iife\" are supported. Defaults to \"esm\".") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
@@ -297,7 +298,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
         clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
-        clap.parseParam("--css-chunking      Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
+        clap.parseParam("--css-chunking                   Chunk CSS files together to reduce duplicated CSS loaded in a browser. Only has an effect when multiple entrypoints import CSS") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
         clap.parseParam("--app                            (EXPERIMENTAL) Build a web app for production using Bun Bake.") catch unreachable,
@@ -635,7 +636,12 @@ pub const Arguments = struct {
 
         opts.drop = args.options("--drop");
 
-        const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
+        // Node added a `--loader` flag (that's kinda like `--register`). It's
+        // completely different from ours.
+        const loader_tuple = if (cmd != .RunAsNodeCommand)
+            try LoaderColonList.resolve(allocator, args.options("--loader"))
+        else
+            .{ .keys = &[_]u8{}, .values = &[_]Api.Loader{} };
 
         if (loader_tuple.keys.len > 0) {
             opts.loaders = .{
@@ -833,6 +839,8 @@ pub const Arguments = struct {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
             ctx.bundler_options.bytecode = args.flag("--bytecode");
 
+            const production = args.flag("--production");
+
             if (args.flag("--app")) {
                 if (!bun.FeatureFlags.bake()) {
                     Output.errGeneric("To use the experimental \"--app\" option, upgrade to the canary build of bun via \"bun upgrade --canary\"", .{});
@@ -864,7 +872,7 @@ pub const Arguments = struct {
                 ctx.bundler_options.footer = footer;
             }
 
-            const minify_flag = args.flag("--minify");
+            const minify_flag = args.flag("--minify") or production;
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
@@ -1128,7 +1136,6 @@ pub const Arguments = struct {
         const jsx_fragment = args.option("--jsx-fragment");
         const jsx_import_source = args.option("--jsx-import-source");
         const jsx_runtime = args.option("--jsx-runtime");
-        const react_fast_refresh = true;
 
         if (cmd == .AutoCommand or cmd == .RunCommand) {
             // "run.silent" in bunfig.toml
@@ -1163,8 +1170,7 @@ pub const Arguments = struct {
         if (jsx_factory != null or
             jsx_fragment != null or
             jsx_import_source != null or
-            jsx_runtime != null or
-            !react_fast_refresh)
+            jsx_runtime != null)
         {
             var default_factory = "".*;
             var default_fragment = "".*;
@@ -1176,7 +1182,6 @@ pub const Arguments = struct {
                     .import_source = (jsx_import_source orelse &default_import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                     .development = false,
-                    .react_fast_refresh = react_fast_refresh,
                 };
             } else {
                 opts.jsx = Api.Jsx{
@@ -1185,7 +1190,6 @@ pub const Arguments = struct {
                     .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                     .development = false,
-                    .react_fast_refresh = react_fast_refresh,
                 };
             }
         }
@@ -1199,6 +1203,19 @@ pub const Arguments = struct {
                 Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
                 Output.flush();
                 Global.exit(1);
+            }
+
+            if (args.flag("--production")) {
+                const any_html = for (opts.entry_points) |entry_point| {
+                    if (strings.hasSuffixComptime(entry_point, ".html")) {
+                        break true;
+                    }
+                } else false;
+                if (any_html) {
+                    ctx.bundler_options.css_chunking = true;
+                }
+
+                ctx.bundler_options.production = true;
             }
         }
 
@@ -1330,7 +1347,7 @@ pub const HelpCommand = struct {
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
         \\
-        \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
+        \\  <b><cyan>init<r>                           Start an empty Bun project from a built-in template
         \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
         \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
         \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
@@ -1553,6 +1570,8 @@ pub const Command = struct {
             bake: bool = false,
             bake_debug_dump_server: bool = false,
             bake_debug_disable_minify: bool = false,
+
+            production: bool = false,
 
             env_behavior: Api.DotEnvBehavior = .disable,
             env_prefix: []const u8 = "",
@@ -1798,7 +1817,7 @@ pub const Command = struct {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, bun.argv),
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv[@min(2, bun.argv.len)..]),
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
                 const ctx = try Command.init(allocator, log, .BuildCommand);
@@ -2196,6 +2215,7 @@ pub const Command = struct {
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
                     const cwd = try std.posix.getcwd(&entry_point_buf);
                     @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+                    ctx.passthrough = try std.mem.concat(ctx.allocator, []const u8, &.{ ctx.positionals, ctx.passthrough });
                     try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len], null);
                     return;
                 }
@@ -2363,13 +2383,14 @@ pub const Command = struct {
 
                 .InitCommand => {
                     const intro_text =
-                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\<entrypoints\>]<r>
+                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[flags]<r> <blue>[\<folder\>]<r>
                         \\  Initialize a Bun project in the current directory.
                         \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
                         \\
                         \\<b>Flags<r>:
                         \\      <cyan>--help<r>             Print this menu
                         \\  <cyan>-y, --yes<r>              Accept all default options
+                        \\  <cyan>-m, --minimal<r>          Only initialize type definitions
                         \\
                         \\<b>Examples:<r>
                         \\  <b><green>bun init<r>

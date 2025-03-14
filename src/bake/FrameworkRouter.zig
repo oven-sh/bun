@@ -423,7 +423,7 @@ pub const Style = union(enum) {
 
     pub fn fromJS(value: JSValue, global: *JSC.JSGlobalObject) !Style {
         if (value.isString()) {
-            const bun_string = try value.toBunString2(global);
+            const bun_string = try value.toBunString(global);
             var sfa = std.heap.stackFallback(4096, bun.default_allocator);
             const utf8 = bun_string.toUTF8(sfa.get());
             defer utf8.deinit();
@@ -1081,7 +1081,8 @@ fn scanInner(
 /// creation. A production-grade JS api would be able to re-use objects.
 pub const JSFrameworkRouter = struct {
     pub const codegen = JSC.Codegen.JSFrameworkFileSystemRouter;
-    pub usingnamespace codegen;
+    pub const toJS = codegen.toJS;
+    pub const fromJS = codegen.fromJS;
 
     files: std.ArrayListUnmanaged(bun.String),
     router: FrameworkRouter,
@@ -1165,7 +1166,7 @@ pub const JSFrameworkRouter = struct {
 
     pub fn match(jsfr: *JSFrameworkRouter, global: *JSGlobalObject, callframe: *JSC.CallFrame) !JSValue {
         const path_js = callframe.argumentsAsArray(1)[0];
-        const path_str = try path_js.toBunString2(global);
+        const path_str = try path_js.toBunString(global);
         defer path_str.deref();
         const path_slice = path_str.toSlice(bun.default_allocator);
         defer path_slice.deinit();

@@ -8,7 +8,7 @@ const bun = @import("root").bun;
 pub fn BabyList(comptime Type: type) type {
     return struct {
         const ListType = @This();
-        ptr: [*]Type = undefined,
+        ptr: [*]Type = &[_]Type{},
         len: u32 = 0,
         cap: u32 = 0,
 
@@ -174,7 +174,7 @@ pub fn BabyList(comptime Type: type) type {
             bun.assert(this.cap >= this.len);
         }
 
-        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {
+        pub fn initCapacity(allocator: std.mem.Allocator, len: usize) std.mem.Allocator.Error!ListType {
             return initWithBuffer(try allocator.alloc(Type, len));
         }
 
@@ -313,6 +313,12 @@ pub fn BabyList(comptime Type: type) type {
         pub fn insert(this: *@This(), allocator: std.mem.Allocator, index: usize, val: Type) !void {
             var list__ = this.listManaged(allocator);
             try list__.insert(index, val);
+            this.update(list__);
+        }
+
+        pub fn insertSlice(this: *@This(), allocator: std.mem.Allocator, index: usize, vals: []const Type) !void {
+            var list__ = this.listManaged(allocator);
+            try list__.insertSlice(index, vals);
             this.update(list__);
         }
 

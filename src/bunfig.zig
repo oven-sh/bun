@@ -384,7 +384,7 @@ pub const Bunfig = struct {
                 }
             }
 
-            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand) {
+            if (comptime cmd.isNPMRelated() or cmd == .RunCommand or cmd == .AutoCommand or cmd == .TestCommand) {
                 if (json.getObject("install")) |install_obj| {
                     var install: *Api.BunInstall = this.ctx.install orelse brk: {
                         const install = try this.allocator.create(Api.BunInstall);
@@ -690,6 +690,12 @@ pub const Bunfig = struct {
                         this.bunfig.serve_plugins = plugins;
                     }
 
+                    if (serve_obj.get("hmr")) |hmr| {
+                        if (hmr.asBool()) |value| {
+                            this.bunfig.serve_hmr = value;
+                        }
+                    }
+
                     if (serve_obj.get("minify")) |minify| {
                         if (minify.asBool()) |value| {
                             this.bunfig.serve_minify_syntax = value;
@@ -710,6 +716,30 @@ pub const Bunfig = struct {
                         } else {
                             try this.addError(minify.loc, "Expected minify to be boolean or object");
                         }
+                    }
+
+                    if (serve_obj.get("define")) |expr| {
+                        try this.expect(expr, .e_object);
+                        var valid_count: usize = 0;
+                        const properties = expr.data.e_object.properties.slice();
+                        for (properties) |prop| {
+                            if (prop.value.?.data != .e_string) continue;
+                            valid_count += 1;
+                        }
+                        var buffer = allocator.alloc([]const u8, valid_count * 2) catch unreachable;
+                        var keys = buffer[0..valid_count];
+                        var values = buffer[valid_count..];
+                        var i: usize = 0;
+                        for (properties) |prop| {
+                            if (prop.value.?.data != .e_string) continue;
+                            keys[i] = prop.key.?.data.e_string.string(allocator) catch unreachable;
+                            values[i] = prop.value.?.data.e_string.string(allocator) catch unreachable;
+                            i += 1;
+                        }
+                        this.bunfig.serve_define = Api.StringMap{
+                            .keys = keys,
+                            .values = values,
+                        };
                     }
                     this.bunfig.bunfig_path = bun.default_allocator.dupe(u8, this.source.path.text) catch bun.outOfMemory();
 
@@ -858,7 +888,6 @@ pub const Bunfig = struct {
                     .import_source = @constCast(jsx_import_source),
                     .runtime = jsx_runtime,
                     .development = jsx_dev,
-                    .react_fast_refresh = false,
                 };
             } else {
                 var jsx: *Api.Jsx = &this.bunfig.jsx.?;

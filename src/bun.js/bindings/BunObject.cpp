@@ -350,10 +350,18 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
         throwTypeError(globalObject, scope, "Internal error: BunShell constructor did not return an object"_s);
         return {};
     }
+
     auto* bunShell = shell.getObject();
+
+    auto ShellError = bunShell->get(globalObject, JSC::Identifier::fromString(vm, "ShellError"_s));
+    if (UNLIKELY(!ShellError.isObject())) {
+        throwTypeError(globalObject, scope, "Internal error: BunShell.ShellError is not an object"_s);
+        return {};
+    }
 
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "braces"_s), 1, Generated::BunObject::jsBraces, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+    bunShell->putDirect(vm, JSC::Identifier::fromString(vm, "ShellError"_s), ShellError.getObject(), JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
 }
@@ -442,7 +450,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunSleep,
     }
 
     JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    Bun__Timer__setTimeout(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue), {});
+    Bun__Timer__setTimeout(globalObject, JSValue::encode(promise), JSC::JSValue::encode(millisecondsValue), {}, Bun::CountdownOverflowBehavior::Clamp);
     return JSC::JSValue::encode(promise);
 }
 
@@ -684,7 +692,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 
 /* Source for BunObject.lut.h
 @begin bunObjectTable
-    $                                              constructBunShell                                                   ReadOnly|DontDelete|PropertyCallback
+    $                                              constructBunShell                                                   DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
     FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback
@@ -703,6 +711,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     embeddedFiles                                  BunObject_getter_wrap_embeddedFiles                                 DontDelete|PropertyCallback
     S3Client                                       BunObject_getter_wrap_S3Client                                      DontDelete|PropertyCallback
     s3                                             BunObject_getter_wrap_s3                                            DontDelete|PropertyCallback
+    CSRF                                           BunObject_getter_wrap_CSRF                                          DontDelete|PropertyCallback
     allocUnsafe                                    BunObject_callback_allocUnsafe                                      DontDelete|Function 1
     argv                                           BunObject_getter_wrap_argv                                          DontDelete|PropertyCallback
     build                                          BunObject_callback_build                                            DontDelete|Function 1
@@ -787,7 +796,7 @@ public:
 
     DECLARE_INFO;
 
-    static constexpr bool needsDestruction = false;
+    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     template<typename CellType, JSC::SubspaceAccess>
@@ -885,7 +894,6 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
 
     // :'(
     object->reifyAllStaticProperties(lexicalGlobalObject);
-
     RETURN_IF_EXCEPTION(scope, void());
 
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);

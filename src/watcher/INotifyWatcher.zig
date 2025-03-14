@@ -187,7 +187,7 @@ pub fn read(this: *INotifyWatcher) bun.JSC.Maybe([]const *align(1) Event) {
     var count: u32 = 0;
     while (i < read_eventlist_bytes.len) {
         // It is NOT aligned naturally. It is align 1!!!
-        const event: *align(1) Event = @alignCast(@ptrCast(read_eventlist_bytes[i..][0..@sizeOf(Event)].ptr));
+        const event: *align(1) Event = @ptrCast(read_eventlist_bytes[i..][0..@sizeOf(Event)].ptr);
         this.eventlist_ptrs[count] = event;
         i += event.size();
         count += 1;

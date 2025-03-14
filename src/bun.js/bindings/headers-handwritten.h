@@ -53,6 +53,7 @@ typedef struct BunString {
     BunStringImpl impl;
 
     enum ZeroCopyTag { ZeroCopy };
+    enum NonNullTag { NonNull };
 
     // If it's not a WTFStringImpl, this does nothing
     inline void ref();
@@ -68,6 +69,10 @@ typedef struct BunString {
     // if it was a ZigString, it still allocates a WTF::StringImpl.
     // It's only truly zero-copy if it was already a WTFStringImpl (which it is if it came from JS and we didn't use ZigString)
     WTF::String toWTFString(ZeroCopyTag) const;
+
+    // If the string is empty, this will ensure m_impl is non-null by
+    // using shared static emptyString.
+    WTF::String toWTFString(NonNullTag) const;
 
     WTF::String transferToWTFString();
 
@@ -379,8 +384,8 @@ extern "C" void ZigString__free_global(const unsigned char* ptr, size_t len);
 extern "C" size_t Bun__encoding__writeLatin1(const unsigned char* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 extern "C" size_t Bun__encoding__writeUTF16(const UChar* ptr, size_t len, unsigned char* to, size_t other_len, Encoding encoding);
 
-extern "C" size_t Bun__encoding__byteLengthLatin1(const unsigned char* ptr, size_t len, Encoding encoding);
-extern "C" size_t Bun__encoding__byteLengthUTF16(const UChar* ptr, size_t len, Encoding encoding);
+extern "C" size_t Bun__encoding__byteLengthLatin1AsUTF8(const unsigned char* ptr, size_t len);
+extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const UChar* ptr, size_t len);
 
 extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
 extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);

@@ -34,8 +34,8 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
-const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+const TaggedPointer = @import("../ptr.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
@@ -462,7 +462,7 @@ pub const RefCountedStr = struct {
 /// A) or B) won't even mutate the environment anyway.
 ///
 /// A way to reduce copying is to only do it when the env is mutated: copy-on-write.
-pub const CowEnvMap = bun.Cow(EnvMap, struct {
+pub const CowEnvMap = bun.ptr.Cow(EnvMap, struct {
     pub fn copy(val: *const EnvMap) EnvMap {
         return val.clone();
     }
@@ -688,7 +688,7 @@ pub const ParsedShellScript = struct {
             var value = object_iter.value;
             if (value == .undefined) continue;
 
-            const value_str = value.getZigString(globalThis);
+            const value_str = try value.getZigString(globalThis);
             const slice = value_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             const keyref = EnvStr.initRefCounted(keyslice);
             defer keyref.deref();
@@ -3671,8 +3671,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_redirect.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_redirect.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 this.next();
@@ -4089,8 +4088,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_args.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_args.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 child.deinit();
@@ -4691,8 +4689,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_assigns.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_assigns.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
 
@@ -4715,8 +4712,7 @@ pub const Interpreter = struct {
                         else => @panic("Invalid state"),
                     };
                     defer err.deinit(bun.default_allocator);
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 // Handling this case from the shell spec:
@@ -4936,12 +4932,11 @@ pub const Interpreter = struct {
                 .buffered_closed = buffered_closed,
             } };
             const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
+                // FIXME: There's a race condition where this could change variants before spawnAsync returns.
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.exec = .none;
-                    const msg = e.fmt();
-                    defer bun.default_allocator.free(msg);
-                    this.writeFailingError("{s}", .{msg});
+                    this.writeFailingError("{}\n", .{e});
                     return;
                 },
             };
@@ -10149,13 +10144,13 @@ pub const Interpreter = struct {
                 }
 
                 const maybe1 = iter.next().?;
-                const int1 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
+                const int1 = std.fmt.parseFloat(f32, bun.sliceTo(maybe1, 0)) catch return this.fail("seq: invalid argument\n");
                 this._end = int1;
                 if (this._start > this._end) this.increment = -1;
 
                 const maybe2 = iter.next();
                 if (maybe2 == null) return this.do();
-                const int2 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
+                const int2 = std.fmt.parseFloat(f32, bun.sliceTo(maybe2.?, 0)) catch return this.fail("seq: invalid argument\n");
                 this._start = int1;
                 this._end = int2;
                 if (this._start < this._end) this.increment = 1;
@@ -10163,7 +10158,7 @@ pub const Interpreter = struct {
 
                 const maybe3 = iter.next();
                 if (maybe3 == null) return this.do();
-                const int3 = bun.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
+                const int3 = std.fmt.parseFloat(f32, bun.sliceTo(maybe3.?, 0)) catch return this.fail("seq: invalid argument\n");
                 this._start = int1;
                 this.increment = int2;
                 this._end = int3;

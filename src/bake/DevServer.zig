@@ -9,8 +9,8 @@
 //! For questions about DevServer, please consult the delusional @paperclover
 pub const DevServer = @This();
 pub const debug = bun.Output.Scoped(.DevServer, false);
-pub const memoryLog = bun.Output.Scoped(.DevServerMemory, true);
 pub const igLog = bun.Output.scoped(.IncrementalGraph, false);
+const DebugHTTPServer = @import("../bun.js/api/server.zig").DebugHTTPServer;
 
 pub const Options = struct {
     /// Arena must live until DevServer.deinit()
@@ -19,9 +19,6 @@ pub const Options = struct {
     vm: *VirtualMachine,
     framework: bake.Framework,
     bundler_options: bake.SplitBundlerOptions,
-    /// When set, nothing is ever bundled for the server-side,
-    /// and DevSever acts purely as a frontend bundler.
-    frontend_only: bool = false,
 
     // Debugging features
     dump_sources: ?[]const u8 = if (Environment.isDebug) ".bake-debug" else null,
@@ -33,10 +30,10 @@ pub const Options = struct {
 // made it easier to group related fields together, but one must remember those
 // structures still depend on the DevServer pointer.
 
-/// Used for all server-wide allocations. In debug, this shows up in
-/// a separate named heap. Thread-safe.
-// TODO: make this an "AllocationScope" (debug memory tool i've yet to write)
+/// Used for all server-wide allocations. In debug, is is backed by a scope. Thread-safe.
 allocator: Allocator,
+/// All methods are no-op in release builds.
+allocation_scope: AllocationScope,
 /// Absolute path to project root directory. For the HMR
 /// runtime, its module IDs are strings relative to this.
 root: []const u8,
@@ -71,7 +68,12 @@ route_lookup: AutoArrayHashMapUnmanaged(IncrementalGraph(.server).FileIndex, Rou
 /// the active pages are notified of a hot updates.
 html_router: HTMLRouter,
 /// Assets are accessible via `/_bun/asset/<key>`
+/// This store is not thread safe.
 assets: Assets,
+/// Similar to `assets`, specialized for the additional needs of source mappings.
+source_maps: SourceMapStore,
+// /// Allocations that require a reference count.
+// ref_strings: RefString.Store,
 /// All bundling failures are stored until a file is saved and rebuilt.
 /// They are stored in the wire format the HMR runtime expects so that
 /// serialization only happens once.
@@ -81,6 +83,8 @@ bundling_failures: std.ArrayHashMapUnmanaged(
     SerializedFailure.ArrayHashContextViaOwner,
     false,
 ) = .{},
+/// When set, nothing is ever bundled for the server-side,
+/// and DevSever acts purely as a frontend bundler.
 frontend_only: bool,
 /// The Plugin API is missing a way to attach filesystem watchers (addWatchFile)
 /// This special case makes `bun-plugin-tailwind` work, which is a requirement
@@ -159,6 +163,8 @@ next_bundle: struct {
     requests: DeferredRequest.List,
 },
 deferred_request_pool: bun.HiveArray(DeferredRequest.Node, DeferredRequest.max_preallocated).Fallback,
+/// UWS can handle closing the websocket connections themselves
+active_websocket_connections: std.AutoHashMapUnmanaged(*HmrSocket, void),
 
 // Debugging
 
@@ -166,6 +172,17 @@ dump_dir: if (bun.FeatureFlags.bake_debugging_features) ?std.fs.Dir else void,
 /// Reference count to number of active sockets with the visualizer enabled.
 emit_visualizer_events: u32,
 has_pre_crash_handler: bool,
+/// Perfect incremental bundling implies that there are zero bugs in the
+/// code that bundles, watches, and rebuilds routes and client side code.
+///
+/// More specifically, when this is false, DevServer will run a full rebundle
+/// when a user force-refreshes an error page. In a perfect system, a rebundle
+/// could not possibly fix the build. But since builds are NOT perfect, this
+/// could very well be the case.
+///
+/// DISABLED in releases, ENABLED in debug.
+/// Can be enabled with env var `BUN_ASSUME_PERFECT_INCREMENTAL=1`
+assume_perfect_incremental_bundling: bool = false,
 
 pub const internal_prefix = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -209,8 +226,6 @@ pub const RouteBundle = struct {
     pub const Framework = struct {
         route_index: Route.Index,
 
-        // TODO: micro-opt: use a singular strong
-
         /// Cached to avoid re-creating the array every request.
         /// TODO: Invalidated when a layout is added or removed from this route.
         cached_module_list: JSC.Strong,
@@ -221,9 +236,8 @@ pub const RouteBundle = struct {
         /// Invalidated when the list of CSS files changes.
         cached_css_file_array: JSC.Strong,
 
-        /// Contain the list of serialized failures. Hashmap allows for
-        /// efficient lookup and removal of failing files.
-        /// When state == .evaluation_failure, this is populated with that error.
+        /// When state == .evaluation_failure, this is populated with the route
+        /// evaluation error mirrored in the dev server hash map
         evaluate_failure: ?SerializedFailure,
     };
 
@@ -233,17 +247,14 @@ pub const RouteBundle = struct {
         bundled_file: IncrementalGraph(.client).FileIndex,
         /// Invalidated when the HTML file is modified, but not it's imports.
         /// The style tag is injected here.
-        head_end_tag_index: ByteOffset.Optional,
-        /// Invalidated when the HTML file is modified, but not it's imports.
-        /// The script tag is injected here.
-        body_end_tag_index: ByteOffset.Optional,
+        script_injection_offset: ByteOffset.Optional,
         /// The HTML file bundled, from the bundler.
         bundled_html_text: ?[]const u8,
         /// Derived from `bundled_html_text` + `client_script_generation`
         /// and css information. Invalidated when:
         /// - The HTML file itself modified.
         /// - The list of CSS files changes.
-        /// - TODO: Any downstream file is rebundled.
+        /// - Any downstream file is rebundled.
         cached_response: ?*StaticRoute,
 
         const ByteOffset = bun.GenericIndex(u32, u8);
@@ -280,6 +291,26 @@ pub const RouteBundle = struct {
         html: *HTMLBundle.HTMLBundleRoute,
     };
 
+    pub fn deinit(rb: *RouteBundle, allocator: Allocator) void {
+        if (rb.client_bundle) |blob| blob.deref();
+        switch (rb.data) {
+            .framework => |*fw| {
+                fw.cached_client_bundle_url.deinit();
+                fw.cached_css_file_array.deinit();
+                fw.cached_module_list.deinit();
+            },
+            .html => |*html| {
+                if (html.bundled_html_text) |text| {
+                    allocator.free(text);
+                }
+                if (html.cached_response) |cached_response| {
+                    cached_response.deref();
+                }
+                html.html_bundle.deref();
+            },
+        }
+    }
+
     pub fn invalidateClientBundle(self: *RouteBundle) void {
         if (self.client_bundle) |bundle| {
             bundle.deref();
@@ -287,7 +318,7 @@ pub const RouteBundle = struct {
         }
         self.client_script_generation = std.crypto.random.int(u32);
         switch (self.data) {
-            .framework => |*fw| fw.cached_client_bundle_url.clear(),
+            .framework => |*fw| fw.cached_client_bundle_url.clearWithoutDeallocation(),
             .html => |*html| if (html.cached_response) |cached_response| {
                 cached_response.deref();
                 html.cached_response = null;
@@ -295,9 +326,8 @@ pub const RouteBundle = struct {
         }
     }
 
-    /// Does NOT count @sizeOf(RouteBundle)
     pub fn memoryCost(self: *const RouteBundle) usize {
-        var cost: usize = 0;
+        var cost: usize = @sizeOf(RouteBundle);
         if (self.client_bundle) |bundle| cost += bundle.memoryCost();
         switch (self.data) {
             .framework => {
@@ -315,7 +345,7 @@ pub const RouteBundle = struct {
 
 /// DevServer is stored on the heap, storing its allocator.
 pub fn init(options: Options) bun.JSOOM!*DevServer {
-    const allocator = bun.default_allocator;
+    const unchecked_allocator = bun.default_allocator;
     bun.analytics.Features.dev_server +|= 1;
 
     var dump_dir = if (bun.FeatureFlags.bake_debugging_features)
@@ -331,15 +361,17 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 
     const separate_ssr_graph = if (options.framework.server_components) |sc| sc.separate_ssr_graph else false;
 
-    const dev = bun.create(allocator, DevServer, .{
-        .allocator = allocator,
+    const dev = bun.new(DevServer, .{
+        .allocator = undefined,
+        // 'init' is a no-op in release
+        .allocation_scope = AllocationScope.init(unchecked_allocator),
 
         .root = options.root,
         .vm = options.vm,
         .server = null,
         .directory_watchers = .empty,
-        .server_fetch_function_callback = .{},
-        .server_register_update_callback = .{},
+        .server_fetch_function_callback = .empty,
+        .server_register_update_callback = .empty,
         .generation = 0,
         .graph_safety_lock = .unlocked,
         .dump_dir = dump_dir,
@@ -349,13 +381,14 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .has_pre_crash_handler = bun.FeatureFlags.bake_debugging_features and
             options.dump_state_on_crash orelse
             bun.getRuntimeFeatureFlag("BUN_DUMP_STATE_ON_CRASH"),
-        .frontend_only = options.frontend_only,
+        .frontend_only = options.framework.file_system_router_types.len == 0,
         .client_graph = .empty,
         .server_graph = .empty,
         .incremental_result = .empty,
         .route_lookup = .empty,
         .route_bundles = .empty,
         .html_router = .empty,
+        .active_websocket_connections = .empty,
         .current_bundle = null,
         .next_bundle = .{
             .route_queue = .empty,
@@ -367,10 +400,16 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
             .files = .empty,
             .refs = .empty,
         },
-        .log = .init(allocator),
+        .source_maps = .empty,
         .plugin_state = .unknown,
         .bundling_failures = .{},
-        .deferred_request_pool = .init(allocator),
+        .assume_perfect_incremental_bundling = if (bun.Environment.isDebug)
+            if (bun.getenvZ("BUN_ASSUME_PERFECT_INCREMENTAL")) |env|
+                !bun.strings.eqlComptime(env, "0")
+            else
+                true
+        else
+            bun.getRuntimeFeatureFlag("BUN_ASSUME_PERFECT_INCREMENTAL"),
 
         .server_transpiler = undefined,
         .client_transpiler = undefined,
@@ -379,9 +418,16 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         .configuration_hash_key = undefined,
         .router = undefined,
         .watcher_atomics = undefined,
+        .log = undefined,
+        .deferred_request_pool = undefined,
     });
+    errdefer bun.destroy(dev);
+    const allocator = dev.allocation_scope.allocator();
+    dev.allocator = allocator;
+    dev.log = .init(allocator);
+    dev.deferred_request_pool = .init(allocator);
+
     const global = dev.vm.global;
-    errdefer allocator.destroy(dev);
 
     assert(dev.server_graph.owner() == dev);
     assert(dev.client_graph.owner() == dev);
@@ -401,17 +447,16 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     dev.bun_watcher.start() catch |err|
         return global.throwError(err, "while initializing file watcher thread for development server");
 
-    dev.server_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-    dev.client_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-    dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
-
     dev.watcher_atomics = WatcherAtomics.init(dev);
 
-    dev.framework.initBundler(allocator, &dev.log, .development, .server, &dev.server_transpiler, &dev.bundler_options.server) catch |err|
+    // This causes a memory leak, but the allocator is otherwise used on multiple threads.
+    const transpiler_allocator = bun.default_allocator;
+
+    dev.framework.initTranspiler(transpiler_allocator, &dev.log, .development, .server, &dev.server_transpiler, &dev.bundler_options.server) catch |err|
         return global.throwError(err, generic_action);
     dev.server_transpiler.options.dev_server = dev;
-    dev.framework.initBundler(
-        allocator,
+    dev.framework.initTranspiler(
+        transpiler_allocator,
         &dev.log,
         .development,
         .client,
@@ -421,11 +466,18 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         return global.throwError(err, generic_action);
     dev.client_transpiler.options.dev_server = dev;
 
+    dev.server_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+    dev.client_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
+
     if (separate_ssr_graph) {
-        dev.framework.initBundler(allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler, &dev.bundler_options.ssr) catch |err|
+        dev.framework.initTranspiler(transpiler_allocator, &dev.log, .development, .ssr, &dev.ssr_transpiler, &dev.bundler_options.ssr) catch |err|
             return global.throwError(err, generic_action);
         dev.ssr_transpiler.options.dev_server = dev;
+        dev.ssr_transpiler.resolver.watcher = dev.bun_watcher.getResolveWatcher();
     }
+
+    assert(dev.server_transpiler.resolver.opts.target != .browser);
+    assert(dev.client_transpiler.resolver.opts.target == .browser);
 
     dev.framework = dev.framework.resolve(&dev.server_transpiler.resolver, &dev.client_transpiler.resolver, options.arena) catch {
         if (dev.framework.is_built_in_react)
@@ -434,8 +486,8 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
     };
 
     errdefer dev.route_lookup.clearAndFree(allocator);
-    // errdefer dev.client_graph.deinit(allocator);
-    // errdefer dev.server_graph.deinit(allocator);
+    errdefer dev.client_graph.deinit(allocator);
+    errdefer dev.server_graph.deinit(allocator);
 
     dev.configuration_hash_key = hash_key: {
         var hash = std.hash.Wyhash.init(128);
@@ -507,8 +559,6 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         }
         hash.update(&.{0});
 
-        bun.writeAnyToHasher(&hash, options.frontend_only);
-
         break :hash_key std.fmt.bytesToHex(std.mem.asBytes(&hash.final()), .lower);
     };
 
@@ -518,7 +568,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         assert(try dev.client_graph.insertStale(rfr.import_source, false) == IncrementalGraph(.client).react_refresh_index);
     }
 
-    if (!options.frontend_only) {
+    if (!dev.frontend_only) {
         dev.initServerRuntime();
     }
 
@@ -549,7 +599,7 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
                     toOpaqueFileId(.client, try dev.client_graph.insertStale(client, false)).toOptional()
                 else
                     .none,
-                .server_file_string = .{},
+                .server_file_string = .empty,
             });
 
             try dev.route_lookup.put(allocator, server_file, .{
@@ -561,12 +611,10 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
         break :router try FrameworkRouter.initEmpty(dev.root, types.items, allocator);
     };
 
-    if (options.frontend_only) {
-        // TODO: move scanning to be one tick after server startup. this way the
-        // line saying the server is ready shows quicker, and route errors show up
-        // after that line.
-        try dev.scanInitialRoutes();
-    }
+    // TODO: move scanning to be one tick after server startup. this way the
+    // line saying the server is ready shows quicker, and route errors show up
+    // after that line.
+    try dev.scanInitialRoutes();
 
     if (bun.FeatureFlags.bake_debugging_features and dev.has_pre_crash_handler)
         try bun.crash_handler.appendPreCrashHandler(DevServer, dev, dumpStateDueToCrash);
@@ -575,114 +623,126 @@ pub fn init(options: Options) bun.JSOOM!*DevServer {
 }
 
 pub fn deinit(dev: *DevServer) void {
-    // TODO: Currently deinit is not implemented, as it was assumed to be alive for
-    // the remainder of this process' lifespan. This isn't always true.
+    dev_server_deinit_count_for_testing +|= 1;
+
     const allocator = dev.allocator;
+    const discard = voidFieldTypeDiscardHelper;
+    _ = VoidFieldTypes(DevServer){
+        .root = {},
+        .allocator = {},
+        .allocation_scope = {}, // deinit at end
+        .configuration_hash_key = {},
+        .plugin_state = {},
+        .generation = {},
+        .bundles_since_last_error = {},
+        .emit_visualizer_events = {},
+        .deferred_request_pool = {},
+        .frontend_only = {},
+        .vm = {},
+        .server = {},
+        .server_transpiler = {},
+        .client_transpiler = {},
+        .ssr_transpiler = {},
+        .framework = {},
+        .bundler_options = {},
+        .assume_perfect_incremental_bundling = {},
 
-    // _ = VoidFieldTypes(DevServer){
-    //     // has no action taken
-    //     .allocator = {},
-    //     .configuration_hash_key = {},
-    //     .graph_safety_lock = {},
-    //     .bun_watcher = {},
-    //     .watcher_atomics = {},
-    //     .plugin_state = {},
-    //     .generation = {},
-    //     .bundles_since_last_error = {},
-    //     .emit_visualizer_events = {},
-    //     .dump_dir = {},
-    //     .frontend_only = {},
-    //     .server_fetch_function_callback = {},
-    //     .server_register_update_callback = {},
-    //     .deferred_request_pool = {},
-
-    //     .has_pre_crash_handler = if (dev.has_pre_crash_handler)
-    //         bun.crash_handler.removePreCrashHandler(dev),
-
-    //     // pointers that are not considered a part of DevServer
-    //     .vm = {},
-    //     .server = {},
-    //     .server_transpiler = {},
-    //     .client_transpiler = {},
-    //     .ssr_transpiler = {},
-    //     .log = {},
-    //     .framework = {}, // TODO: maybe
-    //     .bundler_options = {}, // TODO: maybe
-
-    //     // to be counted.
-    //     .root = {
-    //         cost += dev.root.len;
-    //     },
-    //     .router = {
-    //         cost += dev.router.memoryCost();
-    //     },
-    //     .route_bundles = for (dev.route_bundles.items) |*bundle| {
-    //         cost += bundle.memoryCost();
-    //     },
-    //     .server_graph = {
-    //         cost += dev.server_graph.memoryCost();
-    //     },
-    //     .client_graph = {
-    //         cost += dev.client_graph.memoryCost();
-    //     },
-    //     .assets = {
-    //         cost += dev.assets.memoryCost();
-    //     },
-    //     .incremental_result = {
-    //         cost += memoryCostArrayList(dev.incremental_result.client_components_added);
-    //         cost += memoryCostArrayList(dev.incremental_result.html_routes_affected);
-    //         cost += memoryCostArrayList(dev.incremental_result.framework_routes_affected);
-    //         cost += memoryCostArrayList(dev.incremental_result.client_components_removed);
-    //         cost += memoryCostArrayList(dev.incremental_result.failures_removed);
-    //         cost += memoryCostArrayList(dev.incremental_result.client_components_affected);
-    //         cost += memoryCostArrayList(dev.incremental_result.failures_added);
-    //     },
-    //     .has_tailwind_plugin_hack = if (dev.has_tailwind_plugin_hack) |hack| {
-    //         cost += memoryCostArrayHashMap(hack);
-    //     },
-    //     .directory_watchers = {
-    //         cost += memoryCostArrayList(dev.directory_watchers.dependencies);
-    //         cost += memoryCostArrayList(dev.directory_watchers.dependencies_free_list);
-    //         cost += memoryCostArrayHashMap(dev.directory_watchers.watches);
-    //         for (dev.directory_watchers.dependencies.items) |dep| {
-    //             cost += dep.specifier.len;
-    //         }
-    //     },
-    //     .html_router = {
-    //         // std does not provide a way to measure exact allocation size of HashMapUnmanaged
-    //         cost += dev.html_router.map.capacity() * (@sizeOf(*HTMLBundle.HTMLBundleRoute) + @sizeOf([]const u8));
-    //         // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
-    //     },
-    //     .bundling_failures = {
-    //         cost += memoryCostSlice(dev.bundling_failures.keys());
-    //         for (dev.bundling_failures.keys()) |failure| {
-    //             cost += failure.data.len;
-    //         }
-    //     },
-    //     .current_bundle = {
-    //         // All entries are owned by the bundler arena, not DevServer, except for `requests`
-    //         if (dev.current_bundle) |bundle| {
-    //             var r = bundle.requests.first;
-    //             while (r) |request| : (r = request.next) {
-    //                 cost += @sizeOf(DeferredRequest.Node);
-    //             }
-    //         }
-    //     },
-    //     .next_bundle = {
-    //         var r = dev.next_bundle.requests.first;
-    //         while (r) |request| : (r = request.next) {
-    //             cost += @sizeOf(DeferredRequest.Node);
-    //         }
-    //         cost += memoryCostArrayHashMap(dev.next_bundle.route_queue);
-    //     },
-    //     .route_lookup = {
-    //         cost += memoryCostArrayHashMap(dev.route_lookup);
-    //     },
-    // };
-
-    allocator.destroy(dev);
-    // if (bun.Environment.isDebug)
-    //     bun.todoPanic(@src(), "bake.DevServer.deinit()", .{});
+        .graph_safety_lock = dev.graph_safety_lock.lock(),
+        .bun_watcher = dev.bun_watcher.deinit(true),
+        .dump_dir = if (bun.FeatureFlags.bake_debugging_features) if (dev.dump_dir) |*dir| dir.close(),
+        .log = dev.log.deinit(),
+        .server_fetch_function_callback = dev.server_fetch_function_callback.deinit(),
+        .server_register_update_callback = dev.server_register_update_callback.deinit(),
+        .has_pre_crash_handler = if (dev.has_pre_crash_handler)
+            bun.crash_handler.removePreCrashHandler(dev),
+        .router = {
+            dev.router.deinit(allocator);
+        },
+        .route_bundles = {
+            for (dev.route_bundles.items) |*rb| {
+                rb.deinit(allocator);
+            }
+            dev.route_bundles.deinit(allocator);
+        },
+        .server_graph = dev.server_graph.deinit(allocator),
+        .client_graph = dev.client_graph.deinit(allocator),
+        .assets = dev.assets.deinit(allocator),
+        .incremental_result = discard(VoidFieldTypes(IncrementalResult){
+            .had_adjusted_edges = {},
+            .client_components_added = dev.incremental_result.client_components_added.deinit(allocator),
+            .framework_routes_affected = dev.incremental_result.framework_routes_affected.deinit(allocator),
+            .client_components_removed = dev.incremental_result.client_components_removed.deinit(allocator),
+            .failures_removed = dev.incremental_result.failures_removed.deinit(allocator),
+            .client_components_affected = dev.incremental_result.client_components_affected.deinit(allocator),
+            .failures_added = dev.incremental_result.failures_added.deinit(allocator),
+            .html_routes_soft_affected = dev.incremental_result.html_routes_soft_affected.deinit(allocator),
+            .html_routes_hard_affected = dev.incremental_result.html_routes_hard_affected.deinit(allocator),
+        }),
+        .has_tailwind_plugin_hack = if (dev.has_tailwind_plugin_hack) |*hack| {
+            hack.deinit(allocator);
+        },
+        .directory_watchers = {
+            // dev.directory_watchers.dependencies
+            for (dev.directory_watchers.watches.keys()) |dir_name| {
+                allocator.free(dir_name);
+            }
+            for (dev.directory_watchers.dependencies.items) |watcher| {
+                allocator.free(watcher.specifier);
+            }
+            dev.directory_watchers.watches.deinit(allocator);
+            dev.directory_watchers.dependencies.deinit(allocator);
+            dev.directory_watchers.dependencies_free_list.deinit(allocator);
+        },
+        .html_router = dev.html_router.map.deinit(dev.allocator),
+        .bundling_failures = {
+            for (dev.bundling_failures.keys()) |failure| {
+                failure.deinit(dev);
+            }
+            dev.bundling_failures.deinit(allocator);
+        },
+        .current_bundle = {
+            if (dev.current_bundle) |_| {
+                bun.debugAssert(false); // impossible to de-initialize this state correctly.
+            }
+        },
+        .next_bundle = {
+            var r = dev.next_bundle.requests.first;
+            while (r) |request| {
+                defer dev.deferred_request_pool.put(request);
+                // TODO: deinitializing in this state is almost certainly an assertion failure.
+                // This code is shipped in release because it is only reachable by experimenntal server components.
+                bun.debugAssert(request.data.handler != .server_handler);
+                request.data.deinit();
+                r = request.next;
+            }
+            dev.next_bundle.route_queue.deinit(allocator);
+        },
+        .route_lookup = dev.route_lookup.deinit(allocator),
+        .source_maps = {
+            for (dev.source_maps.entries.values()) |value| {
+                allocator.free(value.sourceContents());
+                allocator.free(value.file_paths);
+                value.response.deref();
+            }
+            dev.source_maps.entries.deinit(allocator);
+        },
+        .active_websocket_connections = {
+            var it = dev.active_websocket_connections.keyIterator();
+            while (it.next()) |item| {
+                const s: *HmrSocket = item.*;
+                if (s.underlying) |websocket|
+                    websocket.close();
+            }
+            dev.active_websocket_connections.deinit(allocator);
+        },
+        .watcher_atomics = for (&dev.watcher_atomics.events) |*event| {
+            event.aligned.dirs.deinit(dev.allocator);
+            event.aligned.files.deinit(dev.allocator);
+            event.aligned.extra_files.deinit(dev.allocator);
+        },
+    };
+    dev.allocation_scope.deinit();
+    bun.destroy(dev);
 }
 
 /// Returns an estimation for how many bytes DevServer is explicitly aware of.
@@ -696,6 +756,7 @@ pub fn deinit(dev: *DevServer) void {
 /// is exponentially easy to mess up memory management.
 pub fn memoryCost(dev: *DevServer) usize {
     var cost: usize = @sizeOf(DevServer);
+    const discard = voidFieldTypeDiscardHelper;
     // See https://github.com/ziglang/zig/issues/21879
     _ = VoidFieldTypes(DevServer){
         // does not contain pointers
@@ -714,6 +775,7 @@ pub fn memoryCost(dev: *DevServer) usize {
         .server_fetch_function_callback = {},
         .server_register_update_callback = {},
         .deferred_request_pool = {},
+        .assume_perfect_incremental_bundling = {},
 
         // pointers that are not considered a part of DevServer
         .vm = {},
@@ -722,8 +784,9 @@ pub fn memoryCost(dev: *DevServer) usize {
         .client_transpiler = {},
         .ssr_transpiler = {},
         .log = {},
-        .framework = {}, // TODO: maybe
-        .bundler_options = {}, // TODO: maybe
+        .framework = {},
+        .bundler_options = {},
+        .allocation_scope = {},
 
         // to be counted.
         .root = {
@@ -744,15 +807,44 @@ pub fn memoryCost(dev: *DevServer) usize {
         .assets = {
             cost += dev.assets.memoryCost();
         },
-        .incremental_result = {
-            cost += memoryCostArrayList(dev.incremental_result.client_components_added);
-            cost += memoryCostArrayList(dev.incremental_result.html_routes_affected);
-            cost += memoryCostArrayList(dev.incremental_result.framework_routes_affected);
-            cost += memoryCostArrayList(dev.incremental_result.client_components_removed);
-            cost += memoryCostArrayList(dev.incremental_result.failures_removed);
-            cost += memoryCostArrayList(dev.incremental_result.client_components_affected);
-            cost += memoryCostArrayList(dev.incremental_result.failures_added);
+        .active_websocket_connections = {
+            cost += dev.active_websocket_connections.capacity() * @sizeOf(*HmrSocket);
         },
+        .source_maps = {
+            cost += memoryCostArrayHashMap(dev.source_maps.entries);
+            for (dev.source_maps.entries.values()) |entry| {
+                cost += entry.response.memoryCost();
+                cost += memoryCostSlice(entry.sourceContents());
+                cost += memoryCostSlice(entry.file_paths); // do not re-count contents
+            }
+        },
+        .incremental_result = discard(VoidFieldTypes(IncrementalResult){
+            .had_adjusted_edges = {},
+            .client_components_added = {
+                cost += memoryCostArrayList(dev.incremental_result.client_components_added);
+            },
+            .framework_routes_affected = {
+                cost += memoryCostArrayList(dev.incremental_result.framework_routes_affected);
+            },
+            .client_components_removed = {
+                cost += memoryCostArrayList(dev.incremental_result.client_components_removed);
+            },
+            .failures_removed = {
+                cost += memoryCostArrayList(dev.incremental_result.failures_removed);
+            },
+            .client_components_affected = {
+                cost += memoryCostArrayList(dev.incremental_result.client_components_affected);
+            },
+            .failures_added = {
+                cost += memoryCostArrayList(dev.incremental_result.failures_added);
+            },
+            .html_routes_soft_affected = {
+                cost += memoryCostArrayList(dev.incremental_result.html_routes_soft_affected);
+            },
+            .html_routes_hard_affected = {
+                cost += memoryCostArrayList(dev.incremental_result.html_routes_hard_affected);
+            },
+        }),
         .has_tailwind_plugin_hack = if (dev.has_tailwind_plugin_hack) |hack| {
             cost += memoryCostArrayHashMap(hack);
         },
@@ -762,6 +854,9 @@ pub fn memoryCost(dev: *DevServer) usize {
             cost += memoryCostArrayHashMap(dev.directory_watchers.watches);
             for (dev.directory_watchers.dependencies.items) |dep| {
                 cost += dep.specifier.len;
+            }
+            for (dev.directory_watchers.watches.keys()) |dir_name| {
+                cost += dir_name.len;
             }
         },
         .html_router = {
@@ -775,13 +870,11 @@ pub fn memoryCost(dev: *DevServer) usize {
                 cost += failure.data.len;
             }
         },
-        .current_bundle = {
-            // All entries are owned by the bundler arena, not DevServer, except for `requests`
-            if (dev.current_bundle) |bundle| {
-                var r = bundle.requests.first;
-                while (r) |request| : (r = request.next) {
-                    cost += @sizeOf(DeferredRequest.Node);
-                }
+        // All entries are owned by the bundler arena, not DevServer, except for `requests`
+        .current_bundle = if (dev.current_bundle) |bundle| {
+            var r = bundle.requests.first;
+            while (r) |request| : (r = request.next) {
+                cost += @sizeOf(DeferredRequest.Node);
             }
         },
         .next_bundle = {
@@ -846,7 +939,8 @@ fn scanInitialRoutes(dev: *DevServer) !void {
 }
 
 /// Returns true if a catch-all handler was attached.
-pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
+pub fn setRoutes(dev: *DevServer, server: anytype) !bool {
+    // TODO: all paths here must be prefixed with publicPath if set.
     dev.server = bun.JSC.API.AnyServer.from(server);
     const app = server.app.?;
     const is_ssl = @typeInfo(@TypeOf(app)).pointer.child.is_ssl;
@@ -854,6 +948,9 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
     app.get(client_prefix ++ "/:route", *DevServer, dev, wrapGenericRequestHandler(onJsRequest, is_ssl));
     app.get(asset_prefix ++ "/:asset", *DevServer, dev, wrapGenericRequestHandler(onAssetRequest, is_ssl));
     app.get(internal_prefix ++ "/src/*", *DevServer, dev, wrapGenericRequestHandler(onSrcRequest, is_ssl));
+    app.post(internal_prefix ++ "/report_error", *DevServer, dev, wrapGenericRequestHandler(ErrorReportRequest.run, is_ssl));
+
+    app.any(internal_prefix, *DevServer, dev, wrapGenericRequestHandler(onNotFound, is_ssl));
 
     app.ws(
         internal_prefix ++ "/hmr",
@@ -869,6 +966,12 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
             dev,
             wrapGenericRequestHandler(onIncrementalVisualizer, is_ssl),
         );
+        app.get(
+            internal_prefix ++ "/iv",
+            *DevServer,
+            dev,
+            redirectHandler(internal_prefix ++ "/incremental_visualizer", is_ssl),
+        );
     }
 
     // Only attach a catch-all handler if the framework has filesystem router
@@ -881,31 +984,63 @@ pub fn attachRoutes(dev: *DevServer, server: anytype) !bool {
     }
 }
 
+fn onNotFound(_: *DevServer, _: *Request, resp: anytype) void {
+    notFound(resp);
+}
+
+fn notFound(resp: anytype) void {
+    resp.corked(onNotFoundCorked, .{resp});
+}
+
+fn onNotFoundCorked(resp: anytype) void {
+    resp.writeStatus("404 Not Found");
+    resp.end("Not Found", false);
+}
+
+fn onOutdatedJSCorked(resp: anytype) void {
+    // Send a payload to instantly reload the page. This only happens when the
+    // client bundle is invalidated while the page is loading, aka when you
+    // perform many file updates that cannot be hot-updated.
+    resp.writeStatus("200 OK");
+    resp.writeHeader("Content-Type", MimeType.javascript.value);
+    resp.end(
+        \\try{location.reload()}catch(_){}
+        \\addEventListener("DOMContentLoaded",function(event){location.reload()})
+    , false);
+}
+
 fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     const route_id = req.parameter(0);
-    if (!bun.strings.hasSuffixComptime(route_id, ".js"))
-        return req.setYield(true);
-    const min_len = "-00000000FFFFFFFF.js".len;
+    const is_map = bun.strings.hasSuffixComptime(route_id, ".js.map");
+    if (!is_map and !bun.strings.hasSuffixComptime(route_id, ".js"))
+        return notFound(resp);
+    const min_len = "00000000FFFFFFFF.js".len + (if (is_map) ".map".len else 0);
     if (route_id.len < min_len)
-        return req.setYield(true);
-    const hex = route_id[route_id.len - min_len + 1 ..][0 .. @sizeOf(u64) * 2];
+        return notFound(resp);
+    const hex = route_id[route_id.len - min_len ..][0 .. @sizeOf(u64) * 2];
     if (hex.len != @sizeOf(u64) * 2)
-        return req.setYield(true);
+        return notFound(resp);
     const id = parseHexToInt(u64, hex) orelse
-        return req.setYield(true);
+        return notFound(resp);
+
+    if (is_map) {
+        const entry = dev.source_maps.entries.getPtr(id) orelse
+            return notFound(resp);
+        entry.response.onRequest(req, resp);
+        return;
+    }
 
     const route_bundle_index: RouteBundle.Index = .init(@intCast(id & 0xFFFFFFFF));
     const generation: u32 = @intCast(id >> 32);
 
     if (route_bundle_index.get() >= dev.route_bundles.items.len)
-        return req.setYield(true);
+        return notFound(resp);
 
     const route_bundle = dev.route_bundles.items[route_bundle_index.get()];
     if (route_bundle.client_script_generation != generation or
         route_bundle.server_state != .loaded)
     {
-        bun.Output.debugWarn("TODO: Outdated JS Payload", .{});
-        return req.setYield(true);
+        return resp.corked(onOutdatedJSCorked, .{resp});
     }
 
     dev.onJsRequestWithBundle(route_bundle_index, resp, bun.http.Method.which(req.method()) orelse .POST);
@@ -914,15 +1049,15 @@ fn onJsRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
 fn onAssetRequest(dev: *DevServer, req: *Request, resp: AnyResponse) void {
     const param = req.parameter(0);
     if (param.len < @sizeOf(u64) * 2)
-        return req.setYield(true);
+        return notFound(resp);
     const hex = param[0 .. @sizeOf(u64) * 2];
     var out: [@sizeOf(u64)]u8 = undefined;
     assert((std.fmt.hexToBytes(&out, hex) catch
-        return req.setYield(true)).len == @sizeOf(u64));
+        return notFound(resp)).len == @sizeOf(u64));
     const hash: u64 = @bitCast(out);
     debug.log("onAssetRequest {} {s}", .{ hash, param });
     const asset = dev.assets.get(hash) orelse
-        return req.setYield(true);
+        return notFound(resp);
     req.setYield(false);
     asset.on(resp);
 }
@@ -951,6 +1086,22 @@ inline fn wrapGenericRequestHandler(
     }.handle;
 }
 
+inline fn redirectHandler(comptime path: []const u8, comptime is_ssl: bool) fn (
+    dev: *DevServer,
+    req: *Request,
+    resp: *uws.NewApp(is_ssl).Response,
+) void {
+    return struct {
+        fn handle(dev: *DevServer, req: *Request, resp: *uws.NewApp(is_ssl).Response) void {
+            _ = dev;
+            _ = req;
+            resp.writeStatus("302 Found");
+            resp.writeHeader("Location", path);
+            resp.end("Redirecting...", false);
+        }
+    }.handle;
+}
+
 fn onIncrementalVisualizer(_: *DevServer, _: *Request, resp: anytype) void {
     resp.corked(onIncrementalVisualizerCorked, .{resp});
 }
@@ -960,7 +1111,6 @@ fn onIncrementalVisualizerCorked(resp: anytype) void {
         @embedFile("incremental_visualizer.html")
     else
         bun.runtimeEmbedFile(.src_eager, "bake/incremental_visualizer.html");
-    resp.writeHeaderInt("Content-Length", code.len);
     resp.end(code, false);
 }
 
@@ -1017,11 +1167,13 @@ fn ensureRouteIsBundled(
                     },
                     .err => {
                         // TODO: render plugin error page
-                        resp.endWithoutBody(true);
+                        resp.end("Plugin Error", false);
                         return;
                     },
                     .loaded => {},
                 }
+
+                // TODO(@heimskr): store the request?
 
                 // Prepare a bundle with just this route.
                 var sfa = std.heap.stackFallback(4096, dev.allocator);
@@ -1066,6 +1218,7 @@ fn ensureRouteIsBundled(
                 switch (try checkRouteFailures(dev, route_bundle_index, resp)) {
                     .stop => return,
                     .ok => {}, // Errors were cleared or not in the way.
+                    .rebuild => continue :sw .unqueued, // Do the build all over again
                 }
             }
 
@@ -1073,12 +1226,11 @@ fn ensureRouteIsBundled(
             continue :sw .loaded;
         },
         .evaluation_failure => {
-            resp.corked(sendSerializedFailures, .{
-                dev,
+            try dev.sendSerializedFailures(
                 resp,
                 (&(dev.routeBundlePtr(route_bundle_index).data.framework.evaluate_failure.?))[0..1],
                 .evaluation,
-            });
+            );
         },
         .loaded => switch (kind) {
             .server_handler => dev.onFrameworkRequestWithBundle(route_bundle_index, .{ .stack = req }, resp),
@@ -1109,22 +1261,40 @@ fn deferRequest(
     requests_array.prepend(deferred);
 }
 
-fn checkRouteFailures(dev: *DevServer, route_bundle_index: RouteBundle.Index, resp: anytype) !enum { stop, ok } {
+fn checkRouteFailures(
+    dev: *DevServer,
+    route_bundle_index: RouteBundle.Index,
+    resp: anytype,
+) !enum { stop, ok, rebuild } {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var gts = try dev.initGraphTraceState(sfa);
+    var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
     defer dev.incremental_result.failures_added.clearRetainingCapacity();
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
     try dev.traceAllRouteImports(dev.routeBundlePtr(route_bundle_index), &gts, .find_errors);
     if (dev.incremental_result.failures_added.items.len > 0) {
-        resp.corked(sendSerializedFailures, .{
-            dev,
+        // See comment on this field for information
+        if (!dev.assume_perfect_incremental_bundling) {
+            // Cache bust EVERYTHING reachable
+            inline for (.{
+                .{ .graph = &dev.client_graph, .bits = &gts.client_bits },
+                .{ .graph = &dev.server_graph, .bits = &gts.server_bits },
+            }) |entry| {
+                var it = entry.bits.iterator(.{});
+                while (it.next()) |file_index| {
+                    entry.graph.stale_files.set(file_index);
+                }
+            }
+            return .rebuild;
+        }
+
+        try dev.sendSerializedFailures(
             resp,
             dev.incremental_result.failures_added.items,
             .bundler,
-        });
+        );
         return .stop;
     } else {
         // Failures are unreachable by this route, so it is OK to load.
@@ -1153,6 +1323,15 @@ fn appendRouteEntryPointsIfNotStale(dev: *DevServer, entry_points: *EntryPointLi
         .html => |*html| {
             try entry_points.append(alloc, html.html_bundle.html_bundle.path, .{ .client = true });
         },
+    }
+
+    if (dev.has_tailwind_plugin_hack) |*map| {
+        for (map.keys()) |abs_path| {
+            const file = dev.client_graph.bundled_files.get(abs_path) orelse
+                continue;
+            if (file.flags.kind == .css)
+                entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
+        }
     }
 }
 
@@ -1241,9 +1420,9 @@ fn onHtmlRequestWithBundle(dev: *DevServer, route_bundle_index: RouteBundle.Inde
         const payload = generateHTMLPayload(dev, route_bundle_index, route_bundle, html) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
         html.cached_response = StaticRoute.initFromAnyBlob(
-            .fromOwnedSlice(dev.allocator, payload),
+            &.fromOwnedSlice(dev.allocator, payload),
             .{
-                .mime_type = .html,
+                .mime_type = &.html,
                 .server = dev.server orelse unreachable,
             },
         );
@@ -1256,12 +1435,11 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     assert(route_bundle.server_state == .loaded); // if not loaded, following values wont be initialized
     assert(html.html_bundle.dev_server_id.unwrap() == route_bundle_index);
     assert(html.cached_response == null);
-    const head_end_tag_index = (html.head_end_tag_index.unwrap() orelse unreachable).get();
-    const body_end_tag_index = (html.body_end_tag_index.unwrap() orelse unreachable).get();
+    const script_injection_offset = (html.script_injection_offset.unwrap() orelse unreachable).get();
     const bundled_html = html.bundled_html_text orelse unreachable;
 
-    // The bundler records two offsets in development mode, splitting the HTML
-    // file into three chunks. DevServer is able to insert style/script tags
+    // The bundler records an offsets in development mode, splitting the HTML
+    // file into two chunks. DevServer is able to insert style/script tags
     // using the information available in IncrementalGraph. This approach
     // allows downstream files to update without re-bundling the HTML file.
     //
@@ -1269,14 +1447,13 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     // <html>
     // <head>
     //   <title>Single Page Web App</title>
-    // {head_end_tag_index}</head>
+    // {script_injection_offset}</head>
     // <body>
     //   <div id="root"></div>
-    // {body_end_tag_index}</body>
+    // </body>
     // </html>
-    const before_head_end = bundled_html[0..head_end_tag_index];
-    const before_body_end = bundled_html[head_end_tag_index..body_end_tag_index];
-    const after_body_end = bundled_html[body_end_tag_index..];
+    const before_head_end = bundled_html[0..script_injection_offset];
+    const after_head_end = bundled_html[script_injection_offset..];
 
     var display_name = bun.strings.withoutSuffixComptime(bun.path.basename(html.html_bundle.html_bundle.path), ".html");
     // TODO: function for URL safe chars
@@ -1288,7 +1465,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     // Prepare bitsets for tracing
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var gts = try dev.initGraphTraceState(sfa);
+    var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
     // Run tracing
     dev.client_graph.reset();
@@ -1312,8 +1489,7 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
         array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&name), .lower));
         array.appendSliceAssumeCapacity(".css\">");
     }
-    array.appendSliceAssumeCapacity(before_body_end);
-    // Insert the client script tag before "</body>"
+
     array.appendSliceAssumeCapacity("<script type=\"module\" crossorigin src=\"");
     array.appendSliceAssumeCapacity(client_prefix);
     array.appendSliceAssumeCapacity("/");
@@ -1322,12 +1498,14 @@ fn generateHTMLPayload(dev: *DevServer, route_bundle_index: RouteBundle.Index, r
     array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&@as(u32, route_bundle_index.get())), .lower));
     array.appendSliceAssumeCapacity(&std.fmt.bytesToHex(std.mem.asBytes(&route_bundle.client_script_generation), .lower));
     array.appendSliceAssumeCapacity(".js\"></script>");
-    array.appendSliceAssumeCapacity(after_body_end);
+
+    // DevServer used to put the script tag before the body end, but to match the regular bundler it does not do this.
+    array.appendSliceAssumeCapacity(after_head_end);
     assert(array.items.len == array.capacity); // incorrect memory allocation size
     return array.items;
 }
 
-fn getJavaScriptCodeForHTMLFile(
+fn generateJavaScriptCodeForHTMLFile(
     dev: *DevServer,
     index: bun.JSAst.Index,
     import_records: []bun.BabyList(bun.ImportRecord),
@@ -1336,24 +1514,41 @@ fn getJavaScriptCodeForHTMLFile(
 ) bun.OOM![]const u8 {
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var array: std.ArrayListUnmanaged(u8) = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch bun.outOfMemory();
+    var array = std.ArrayListUnmanaged(u8).initCapacity(sfa, 65536) catch bun.outOfMemory();
     defer array.deinit(sfa);
     const w = array.writer(sfa);
 
     try w.writeAll("  ");
     try bun.js_printer.writeJSONString(input_file_sources[index.get()].path.pretty, @TypeOf(w), w, .utf8);
-    try w.writeAll("(m) {\n  ");
+    try w.writeAll(": [ [");
+    var any = false;
     for (import_records[index.get()].slice()) |import| {
-        if (import.source_index.isValid() and loaders[import.source_index.get()] == .css) continue;
-        try w.writeAll("  m.dynamicImport(");
+        if (import.source_index.isValid()) {
+            if (!loaders[import.source_index.get()].isJavaScriptLike())
+                continue; // ignore non-JavaScript imports
+        } else {
+            // Find the in-graph import.
+            const file = dev.client_graph.bundled_files.get(import.path.text) orelse
+                continue;
+            if (file.flags.kind != .js)
+                continue;
+        }
+        if (!any) {
+            any = true;
+            try w.writeAll("\n");
+        }
+        try w.writeAll("    ");
         try bun.js_printer.writeJSONString(import.path.pretty, @TypeOf(w), w, .utf8);
-        try w.writeAll(");\n  ");
+        try w.writeAll(", 0,\n");
     }
-    try w.writeAll("},\n");
+    if (any) {
+        try w.writeAll("  ");
+    }
+    try w.writeAll("], [], [], () => {}, false],\n");
 
-    // Avoid-recloning if it is was moved to the hap
+    // Avoid-recloning if it is was moved to the heap
     return if (array.items.ptr == &sfa_state.buffer)
-        try bun.default_allocator.dupe(u8, array.items)
+        try dev.allocator.dupe(u8, array.items)
     else
         array.items;
 }
@@ -1364,9 +1559,9 @@ pub fn onJsRequestWithBundle(dev: *DevServer, bundle_index: RouteBundle.Index, r
         const payload = dev.generateClientBundle(route_bundle) catch bun.outOfMemory();
         errdefer dev.allocator.free(payload);
         route_bundle.client_bundle = StaticRoute.initFromAnyBlob(
-            .fromOwnedSlice(dev.allocator, payload),
+            &.fromOwnedSlice(dev.allocator, payload),
             .{
-                .mime_type = .javascript,
+                .mime_type = &.javascript,
                 .server = dev.server orelse unreachable,
             },
         );
@@ -1540,7 +1735,7 @@ fn startAsyncBundle(
     dev.next_bundle.requests = .{};
 }
 
-fn indexFailures(dev: *DevServer) !void {
+fn prepareAndLogResolutionFailures(dev: *DevServer) !void {
     // Since resolution failures can be asynchronous, their logs are not inserted
     // until the very end.
     const resolution_failures = dev.current_bundle.?.resolution_failure_entries;
@@ -1558,13 +1753,15 @@ fn indexFailures(dev: *DevServer) !void {
 
     // Theoretically, it shouldn't be possible for errors to leak into dev.log, but just in
     // case that happens, they can be printed out.
-    if (dev.log.hasErrors()) {
+    if (dev.log.hasErrors() and dev.log.msgs.items.len > 0) {
         if (Environment.isDebug) {
             Output.debugWarn("dev.log should not be written into when using DevServer", .{});
         }
         dev.log.print(Output.errorWriter()) catch {};
     }
+}
 
+fn indexFailures(dev: *DevServer) !void {
     // After inserting failures into the IncrementalGraphs, they are traced to their routes.
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
@@ -1578,7 +1775,7 @@ fn indexFailures(dev: *DevServer) !void {
 
         total_len += dev.incremental_result.failures_removed.items.len * @sizeOf(u32);
 
-        var gts = try dev.initGraphTraceState(sfa);
+        var gts = try dev.initGraphTraceState(sfa, 0);
         defer gts.deinit(sfa);
 
         var payload = try std.ArrayList(u8).initCapacity(sfa, total_len);
@@ -1590,7 +1787,7 @@ fn indexFailures(dev: *DevServer) !void {
 
         for (dev.incremental_result.failures_removed.items) |removed| {
             try w.writeInt(u32, @bitCast(removed.getOwner().encode()), .little);
-            removed.deinit();
+            removed.deinit(dev);
         }
 
         for (dev.incremental_result.failures_added.items) |added| {
@@ -1598,8 +1795,8 @@ fn indexFailures(dev: *DevServer) !void {
 
             switch (added.getOwner()) {
                 .none, .route => unreachable,
-                .server => |index| try dev.server_graph.traceDependencies(index, &gts, .no_stop),
-                .client => |index| try dev.client_graph.traceDependencies(index, &gts, .no_stop),
+                .server => |index| try dev.server_graph.traceDependencies(index, &gts, .no_stop, index),
+                .client => |index| try dev.client_graph.traceDependencies(index, &gts, .no_stop, index),
             }
         }
 
@@ -1611,7 +1808,11 @@ fn indexFailures(dev: *DevServer) !void {
                 dev.markAllRouteChildrenFailed(entry.route_index);
         }
 
-        for (dev.incremental_result.html_routes_affected.items) |index| {
+        for (dev.incremental_result.html_routes_soft_affected.items) |index| {
+            dev.routeBundlePtr(index).server_state = .possible_bundling_failures;
+        }
+
+        for (dev.incremental_result.html_routes_hard_affected.items) |index| {
             dev.routeBundlePtr(index).server_state = .possible_bundling_failures;
         }
 
@@ -1626,7 +1827,7 @@ fn indexFailures(dev: *DevServer) !void {
 
         for (dev.incremental_result.failures_removed.items) |removed| {
             try w.writeInt(u32, @bitCast(removed.getOwner().encode()), .little);
-            removed.deinit();
+            removed.deinit(dev);
         }
 
         dev.publish(.errors, payload.items, .binary);
@@ -1647,7 +1848,7 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
     // Prepare bitsets
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
     const sfa = sfa_state.get();
-    var gts = try dev.initGraphTraceState(sfa);
+    var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
 
     // Run tracing
@@ -1672,24 +1873,12 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         .html => |html| html.bundled_file,
     };
 
-    const hash = hash: {
-        var source_map_hash: bun.bundle_v2.ContentHasher.Hash = .init(0x4b10); // arbitrarily different seed than what .initial_response uses
-        const keys = dev.client_graph.bundled_files.keys();
-        for (dev.client_graph.current_chunk_parts.items) |part| {
-            source_map_hash.update(keys[part.get()]);
-            source_map_hash.update(dev.client_graph.source_maps.items[part.get()].vlq_chunk.slice());
-        }
-        break :hash source_map_hash.final();
-    };
     // Insert the source map
-    if (try dev.assets.putOrIncrementRefCount(hash, 1)) |static_route_ptr| {
-        // TODO: this asset is never unreferenced
-        const source_map = try dev.client_graph.takeSourceMap(.initial_response, sfa, dev.allocator);
-        errdefer dev.allocator.free(source_map);
-        static_route_ptr.* = StaticRoute.initFromAnyBlob(.fromOwnedSlice(dev.allocator, source_map), .{
-            .server = dev.server.?,
-            .mime_type = .json,
-        });
+    const source_map_id = @as(u64, route_bundle.client_script_generation) << 32;
+    if (try dev.source_maps.putOrIncrementRefCount(source_map_id, 1)) |entry| {
+        var arena = std.heap.ArenaAllocator.init(sfa);
+        defer arena.deinit();
+        try dev.client_graph.takeSourceMap(.initial_response, arena.allocator(), dev.allocator, entry);
     }
 
     const client_bundle = dev.client_graph.takeJSBundle(.{
@@ -1699,11 +1888,8 @@ fn generateClientBundle(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM![]u
         else
             "",
         .react_refresh_entry_point = react_fast_refresh_id,
-        .source_map_id = hash,
+        .source_map_id = source_map_id,
     });
-
-    const source_map = try dev.client_graph.takeSourceMap(.initial_response, sfa, dev.allocator);
-    dev.allocator.free(source_map);
 
     return client_bundle;
 }
@@ -1720,7 +1906,7 @@ fn generateCssJSArray(dev: *DevServer, route_bundle: *RouteBundle) bun.OOM!JSC.J
     var sfa_state = std.heap.stackFallback(65536, dev.allocator);
 
     const sfa = sfa_state.get();
-    var gts = try dev.initGraphTraceState(sfa);
+    var gts = try dev.initGraphTraceState(sfa, 0);
     defer gts.deinit(sfa);
 
     // Run tracing
@@ -1791,6 +1977,8 @@ pub const HotUpdateContext = struct {
     import_records: []bun.ImportRecord.List,
     /// bundle_v2.Graph.server_component_boundaries.slice()
     scbs: bun.JSAst.ServerComponentBoundary.List.Slice,
+    /// bundle_v2.Graph.input_files.items(.loader)
+    loaders: []bun.options.Loader,
     /// Which files have a server-component boundary.
     server_to_client_bitset: DynamicBitSetUnmanaged,
     /// Used to reduce calls to the IncrementalGraph hash table.
@@ -1810,7 +1998,7 @@ pub const HotUpdateContext = struct {
         rc: *const HotUpdateContext,
         comptime side: bake.Side,
         i: bun.JSAst.Index,
-    ) *IncrementalGraph(side).FileIndex {
+    ) *IncrementalGraph(side).FileIndex.Optional {
         const start = switch (side) {
             .client => 0,
             .server => rc.sources.len,
@@ -1862,6 +2050,7 @@ pub fn finalizeBundle(
 
     const js_chunk = result.jsPseudoChunk();
     const input_file_sources = bv2.graph.input_files.items(.source);
+    const input_file_loaders = bv2.graph.input_files.items(.loader);
     const import_records = bv2.graph.ast.items(.import_records);
     const targets = bv2.graph.ast.items(.target);
     const scbs = bv2.graph.server_component_boundaries.slice();
@@ -1881,10 +2070,12 @@ pub fn finalizeBundle(
     }
 
     const resolved_index_cache = try bv2.graph.allocator.alloc(u32, input_file_sources.len * 2);
+    @memset(resolved_index_cache, @intFromEnum(IncrementalGraph(.server).FileIndex.Optional.none));
 
     var ctx: bun.bake.DevServer.HotUpdateContext = .{
         .import_records = import_records,
         .sources = input_file_sources,
+        .loaders = input_file_loaders,
         .scbs = scbs,
         .server_to_client_bitset = scb_bitset,
         .resolved_index_cache = resolved_index_cache,
@@ -1892,6 +2083,7 @@ pub fn finalizeBundle(
         .gts = undefined,
     };
 
+    const quoted_source_contents: []const []const u8 = bv2.linker.graph.files.items(.quoted_source_contents);
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     for (
@@ -1906,21 +2098,37 @@ pub fn finalizeBundle(
             bun.assert(!part_range.source_index.isRuntime());
             break :brk .empty;
         };
+        // TODO: investigate why linker.files is not indexed by linker's index
+        // const linker_index = bv2.linker.graph.stable_source_indices[index.get()];
+        // const quoted_contents = quoted_source_contents[linker_index];
+        const quoted_contents = quoted_source_contents[part_range.source_index.get()];
         switch (targets[part_range.source_index.get()].bakeGraph()) {
-            .server => try dev.server_graph.receiveChunk(&ctx, index, .{ .js = compile_result.code() }, source_map, false),
-            .ssr => try dev.server_graph.receiveChunk(&ctx, index, .{ .js = compile_result.code() }, source_map, true),
-            .client => try dev.client_graph.receiveChunk(&ctx, index, .{ .js = compile_result.code() }, source_map, false),
+            inline else => |graph| try (switch (graph) {
+                .client => dev.client_graph,
+                else => dev.server_graph,
+            }).receiveChunk(
+                &ctx,
+                index,
+                .{ .js = .{
+                    .code = compile_result.code(),
+                    .source_map = source_map,
+                    .quoted_contents = .initOwned(@constCast(quoted_contents), dev.allocator),
+                } },
+                graph == .ssr,
+            ),
         }
     }
 
     for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
+        assert(chunk.content == .css);
+
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
 
         const code = try chunk.intermediate_output.code(
             dev.allocator,
             &bv2.graph,
             &bv2.linker.graph,
-            "/_bun/TODO-import-prefix-where-is-this-used?",
+            "THIS_SHOULD_NEVER_BE_EMITTED_IN_DEV_MODE",
             chunk,
             result.chunks,
             null,
@@ -1938,15 +2146,15 @@ pub fn finalizeBundle(
         // TODO: use a hash mix with the first half being a path hash (to identify files) and
         // the second half to be the content hash (to know if the file has changed)
         const hash = bun.hash(key);
-        const asset_index = (try dev.assets.replacePath(
+        const asset_index = try dev.assets.replacePath(
             key,
-            .fromOwnedSlice(dev.allocator, code.buffer),
-            .css,
+            &.fromOwnedSlice(dev.allocator, code.buffer),
+            &.css,
             hash,
-        )).index;
+        );
         // Later code needs to retrieve the CSS content
         // The hack is to use `entry_point_id`, which is otherwise unused, to store an index.
-        chunk.entry_point.entry_point_id = asset_index;
+        chunk.entry_point.entry_point_id = asset_index.get();
 
         // Track css files that look like tailwind files.
         if (dev.has_tailwind_plugin_hack) |*map| {
@@ -1958,7 +2166,7 @@ pub fn finalizeBundle(
             }
         }
 
-        try dev.client_graph.receiveChunk(&ctx, index, .{ .css = hash }, null, false);
+        try dev.client_graph.receiveChunk(&ctx, index, .{ .css = hash }, false);
 
         // If imported on server, there needs to be a server-side file entry
         // so that edges can be attached. When a file is only imported on
@@ -1975,7 +2183,7 @@ pub fn finalizeBundle(
     for (result.htmlChunks()) |*chunk| {
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
         const compile_result = chunk.compile_results_for_chunk[0].html;
-        const generated_js = try dev.getJavaScriptCodeForHTMLFile(
+        const generated_js = try dev.generateJavaScriptCodeForHTMLFile(
             index,
             import_records,
             input_file_sources,
@@ -1984,11 +2192,14 @@ pub fn finalizeBundle(
         try dev.client_graph.receiveChunk(
             &ctx,
             index,
-            .{ .js = generated_js },
-            null, // HTML chunk does not have a source map.
+            .{ .js = .{
+                .code = generated_js,
+                .source_map = .empty,
+                .quoted_contents = .empty,
+            } },
             false,
         );
-        const client_index = ctx.getCachedIndex(.client, index).*;
+        const client_index = ctx.getCachedIndex(.client, index).*.unwrap() orelse @panic("unresolved index");
         const route_bundle_index = dev.client_graph.htmlRouteBundleIndex(client_index);
         const route_bundle = dev.routeBundlePtr(route_bundle_index);
         assert(route_bundle.data.html.bundled_file == client_index);
@@ -2002,40 +2213,42 @@ pub fn finalizeBundle(
         if (html.bundled_html_text) |slice| {
             dev.allocator.free(slice);
         }
+        dev.allocation_scope.assertOwned(compile_result.code);
         html.bundled_html_text = compile_result.code;
 
-        html.head_end_tag_index = .init(compile_result.offsets.head_end_tag);
-        html.body_end_tag_index = .init(compile_result.offsets.body_end_tag);
+        html.script_injection_offset = .init(compile_result.script_injection_offset);
 
         chunk.entry_point.entry_point_id = @intCast(route_bundle_index.get());
     }
 
-    var gts = try dev.initGraphTraceState(bv2.graph.allocator);
+    var gts = try dev.initGraphTraceState(
+        bv2.graph.allocator,
+        if (result.cssChunks().len > 0) bv2.graph.input_files.len else 0,
+    );
     defer gts.deinit(bv2.graph.allocator);
     ctx.gts = &gts;
     ctx.server_seen_bit_set = try bun.bit_set.DynamicBitSetUnmanaged.initEmpty(bv2.graph.allocator, dev.server_graph.bundled_files.count());
 
     dev.incremental_result.had_adjusted_edges = false;
 
+    try prepareAndLogResolutionFailures(dev);
+
     // Pass 2, update the graph's edges by performing import diffing on each
     // changed file, removing dependencies. This pass also flags what routes
     // have been modified.
     for (js_chunk.content.javascript.parts_in_chunk_in_order) |part_range| {
         switch (targets[part_range.source_index.get()].bakeGraph()) {
-            .server, .ssr => try dev.server_graph.processChunkDependencies(&ctx, part_range.source_index, bv2.graph.allocator),
-            .client => try dev.client_graph.processChunkDependencies(&ctx, part_range.source_index, bv2.graph.allocator),
+            .server, .ssr => try dev.server_graph.processChunkDependencies(&ctx, .normal, part_range.source_index, bv2.graph.allocator),
+            .client => try dev.client_graph.processChunkDependencies(&ctx, .normal, part_range.source_index, bv2.graph.allocator),
         }
     }
     for (result.htmlChunks()) |*chunk| {
         const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
-        try dev.client_graph.processChunkDependencies(&ctx, index, bv2.graph.allocator);
+        try dev.client_graph.processChunkDependencies(&ctx, .normal, index, bv2.graph.allocator);
     }
-    for (result.cssChunks(), result.css_file_list.values()) |*chunk, metadata| {
-        const index = bun.JSAst.Index.init(chunk.entry_point.source_index);
-        // TODO: index css deps. this must add all recursively referenced files
-        // as dependencies of the entry point, instead of building a recursive tree.
-        _ = index;
-        _ = metadata;
+    for (result.cssChunks()) |*chunk| {
+        const entry_index = bun.JSAst.Index.init(chunk.entry_point.source_index);
+        try dev.client_graph.processChunkDependencies(&ctx, .css, entry_index, bv2.graph.allocator);
     }
 
     // Index all failed files now that the incremental graph has been updated.
@@ -2093,7 +2306,7 @@ pub fn finalizeBundle(
 
     var has_route_bits_set = false;
 
-    var hot_update_payload_sfa = std.heap.stackFallback(65536, bun.default_allocator);
+    var hot_update_payload_sfa = std.heap.stackFallback(65536, dev.allocator);
     var hot_update_payload = std.ArrayList(u8).initCapacity(hot_update_payload_sfa.get(), 65536) catch
         unreachable; // enough space
     defer hot_update_payload.deinit();
@@ -2117,7 +2330,7 @@ pub fn finalizeBundle(
     if (will_hear_hot_update and
         current_bundle.had_reload_event and
         (dev.incremental_result.framework_routes_affected.items.len +
-        dev.incremental_result.html_routes_affected.items.len) > 0 and
+        dev.incremental_result.html_routes_hard_affected.items.len) > 0 and
         dev.bundling_failures.count() == 0)
     {
         has_route_bits_set = true;
@@ -2131,7 +2344,7 @@ pub fn finalizeBundle(
                 markAllRouteChildren(&dev.router, 1, .{&route_bits}, request.route_index);
             }
         }
-        for (dev.incremental_result.html_routes_affected.items) |route_bundle_index| {
+        for (dev.incremental_result.html_routes_hard_affected.items) |route_bundle_index| {
             route_bits.set(route_bundle_index.get());
             route_bits_client.set(route_bundle_index.get());
         }
@@ -2154,10 +2367,12 @@ pub fn finalizeBundle(
         has_route_bits_set = true;
 
         dev.incremental_result.framework_routes_affected.clearRetainingCapacity();
+        dev.incremental_result.html_routes_hard_affected.clearRetainingCapacity();
+        dev.incremental_result.html_routes_soft_affected.clearRetainingCapacity();
         gts.clear();
 
         for (dev.incremental_result.client_components_affected.items) |index| {
-            try dev.server_graph.traceDependencies(index, &gts, .no_stop);
+            try dev.server_graph.traceDependencies(index, &gts, .no_stop, index);
         }
 
         // A bit-set is used to avoid duplicate entries. This is not a problem
@@ -2179,7 +2394,7 @@ pub fn finalizeBundle(
             const bundle = &dev.route_bundles.items[bundled_route_index];
             bundle.invalidateClientBundle();
         }
-    } else if (dev.incremental_result.html_routes_affected.items.len > 0) {
+    } else if (dev.incremental_result.html_routes_hard_affected.items.len > 0) {
         // When only HTML routes were affected, there may not be any client
         // components that got affected, but the bundles for these HTML routes
         // are invalid now. That is why HTML routes above writes into
@@ -2191,6 +2406,16 @@ pub fn finalizeBundle(
             const bundle = &dev.route_bundles.items[bundled_route_index];
             bundle.invalidateClientBundle();
         }
+    }
+
+    // Softly affected HTML routes only need the bundle invalidated. WebSocket
+    // connections don't have to be told anything.
+    if (dev.incremental_result.html_routes_soft_affected.items.len > 0) {
+        for (dev.incremental_result.html_routes_soft_affected.items) |index| {
+            dev.routeBundlePtr(index).invalidateClientBundle();
+            route_bits.set(index.get());
+        }
+        has_route_bits_set = true;
     }
 
     // `route_bits` will have all of the routes that were modified. If any of
@@ -2205,7 +2430,7 @@ pub fn finalizeBundle(
             const route_bundle = dev.routeBundlePtr(RouteBundle.Index.init(@intCast(i)));
             if (dev.incremental_result.had_adjusted_edges) {
                 switch (route_bundle.data) {
-                    .framework => |*fw_bundle| fw_bundle.cached_css_file_array.clear(),
+                    .framework => |*fw_bundle| fw_bundle.cached_css_file_array.clearWithoutDeallocation(),
                     .html => |*html| if (html.cached_response) |blob| {
                         blob.deref();
                         html.cached_response = null;
@@ -2255,18 +2480,13 @@ pub fn finalizeBundle(
                     const keys = dev.client_graph.bundled_files.keys();
                     for (dev.client_graph.current_chunk_parts.items) |part| {
                         source_map_hash.update(keys[part.get()]);
-                        source_map_hash.update(dev.client_graph.source_maps.items[part.get()].vlq_chunk.slice());
+                        source_map_hash.update(dev.client_graph.source_maps.items[part.get()].vlq());
                     }
-                    break :hash source_map_hash.final();
+                    // Set the bottom bit. This ensures that the resource can never be confused for a route bundle.
+                    break :hash source_map_hash.final() | 1;
                 };
-                // Insert the source map
-                if (try dev.assets.putOrIncrementRefCount(hash, hot_update_subscribers)) |static_route_ptr| {
-                    const source_map = try dev.client_graph.takeSourceMap(.hmr_chunk, bv2.graph.allocator, dev.allocator);
-                    errdefer dev.allocator.free(source_map);
-                    static_route_ptr.* = StaticRoute.initFromAnyBlob(.fromOwnedSlice(dev.allocator, source_map), .{
-                        .server = dev.server.?,
-                        .mime_type = .json,
-                    });
+                if (try dev.source_maps.putOrIncrementRefCount(hash, 1)) |entry| {
+                    try dev.client_graph.takeSourceMap(.hmr_chunk, bv2.graph.allocator, dev.allocator, entry);
                 }
                 // Build and send the source chunk
                 try dev.client_graph.takeJSBundleToList(&hot_update_payload, .{
@@ -2301,12 +2521,11 @@ pub fn finalizeBundle(
                 .bundled_html_page => |ram| ram.response,
             };
 
-            resp.corked(sendSerializedFailures, .{
-                dev,
+            try dev.sendSerializedFailures(
                 resp,
                 dev.bundling_failures.keys(),
                 .bundler,
-            });
+            );
         }
         return;
     }
@@ -2320,12 +2539,7 @@ pub fn finalizeBundle(
                 Output.enableBuffering();
             }
 
-            if (Environment.isDebug and memoryLog.isVisible()) {
-                Output.prettyErrorln("<d>DevServer: {}, RSS: {}", .{
-                    bun.fmt.size(dev.memoryCost(), .{}),
-                    bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
-                });
-            }
+            dev.printMemoryLine();
 
             dev.bundles_since_last_error += 1;
             if (dev.bundles_since_last_error > 1) {
@@ -2333,12 +2547,7 @@ pub fn finalizeBundle(
             }
         } else {
             dev.bundles_since_last_error = 0;
-            if (Environment.isDebug and memoryLog.isVisible()) {
-                Output.prettyErrorln("<d>DevServer: {}, RSS: {}", .{
-                    bun.fmt.size(dev.memoryCost(), .{}),
-                    bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
-                });
-            }
+            dev.printMemoryLine();
         }
 
         Output.prettyError("<green>{s} in {d}ms<r>", .{
@@ -2351,9 +2560,12 @@ pub fn finalizeBundle(
 
         // Compute a file name to display
         const file_name: ?[]const u8 = if (current_bundle.had_reload_event)
-            dev.relativePath(
-                bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
-            )
+            if (bv2.graph.entry_points.items.len > 0)
+                dev.relativePath(
+                    bv2.graph.input_files.items(.source)[bv2.graph.entry_points.items[0].get()].path.text,
+                )
+            else
+                null // TODO: How does this happen
         else switch (dev.routeBundlePtr(current_bundle.requests.first.?.data.route_bundle_index).data) {
             .html => |html| dev.relativePath(html.html_bundle.html_bundle.path),
             .framework => |fw| file_name: {
@@ -2404,19 +2616,28 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
 
     // If there were pending requests, begin another bundle.
     if (dev.next_bundle.reload_event != null or dev.next_bundle.requests.first != null) {
-        var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+        var sfb = std.heap.stackFallback(4096, dev.allocator);
         const temp_alloc = sfb.get();
-        var entry_points: EntryPointList = EntryPointList.empty;
+        var entry_points: EntryPointList = .empty;
         defer entry_points.deinit(temp_alloc);
 
-        if (dev.next_bundle.reload_event) |event| {
+        const is_reload, const timer = if (dev.next_bundle.reload_event) |event| brk: {
+            dev.next_bundle.reload_event = null;
+
+            const reload_event_timer = event.timer;
+
             event.processFileList(dev, &entry_points, temp_alloc);
 
             if (dev.watcher_atomics.recycleEventFromDevServer(event)) |second| {
+                if (Environment.isDebug) {
+                    assert(second.debug_mutex.tryLock());
+                }
                 second.processFileList(dev, &entry_points, temp_alloc);
                 dev.watcher_atomics.recycleSecondEventFromDevServer(second);
             }
-        }
+
+            break :brk .{ true, reload_event_timer };
+        } else .{ false, std.time.Timer.start() catch @panic("timers unsupported") };
 
         for (dev.next_bundle.route_queue.keys()) |route_bundle_index| {
             const rb = dev.routeBundlePtr(route_bundle_index);
@@ -2424,14 +2645,9 @@ fn startNextBundleIfPresent(dev: *DevServer) void {
             dev.appendRouteEntryPointsIfNotStale(&entry_points, temp_alloc, route_bundle_index) catch bun.outOfMemory();
         }
 
-        dev.startAsyncBundle(
-            entry_points,
-            dev.next_bundle.reload_event != null,
-            std.time.Timer.start() catch @panic("timers unsupported"),
-        ) catch bun.outOfMemory();
+        dev.startAsyncBundle(entry_points, is_reload, timer) catch bun.outOfMemory();
 
         dev.next_bundle.route_queue.clearRetainingCapacity();
-        dev.next_bundle.reload_event = null;
     }
 }
 
@@ -2442,6 +2658,7 @@ pub fn handleParseTaskFailure(
     graph: bake.Graph,
     abs_path: []const u8,
     log: *const Log,
+    bv2: *BundleV2,
 ) bun.OOM!void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
@@ -2453,31 +2670,18 @@ pub fn handleParseTaskFailure(
         log.msgs.items.len,
     });
 
-    if (err == error.FileNotFound) {
-        // Special-case files being deleted. Note that if a
-        // file never existed, resolution would fail first.
-        //
-        // TODO: this should walk up the graph one level, and queue all of these
-        // files for re-bundling if they aren't already in the BundleV2 graph.
+    if (err == error.FileNotFound or err == error.ModuleNotFound) {
+        // Special-case files being deleted. Note that if a file had never
+        // existed, resolution would fail first.
         switch (graph) {
-            .server, .ssr => try dev.server_graph.onFileDeleted(abs_path, log),
-            .client => try dev.client_graph.onFileDeleted(abs_path, log),
+            .server, .ssr => dev.server_graph.onFileDeleted(abs_path, bv2),
+            .client => dev.client_graph.onFileDeleted(abs_path, bv2),
         }
     } else {
-        Output.prettyErrorln("<red><b>Error{s} while bundling \"{s}\":<r>", .{
-            if (log.errors +| log.warnings != 1) "s" else "",
-            dev.relativePath(abs_path),
-        });
-        log.print(Output.errorWriterBuffered()) catch {};
-        Output.flush();
-
-        // Do not index css errors
-        if (!bun.strings.hasSuffixComptime(abs_path, ".css")) {
-            switch (graph) {
-                .server => try dev.server_graph.insertFailure(.abs_path, abs_path, log, false),
-                .ssr => try dev.server_graph.insertFailure(.abs_path, abs_path, log, true),
-                .client => try dev.client_graph.insertFailure(.abs_path, abs_path, log, false),
-            }
+        switch (graph) {
+            .server => try dev.server_graph.insertFailure(.abs_path, abs_path, log, false),
+            .ssr => try dev.server_graph.insertFailure(.abs_path, abs_path, log, true),
+            .client => try dev.client_graph.insertFailure(.abs_path, abs_path, log, false),
         }
     }
 }
@@ -2569,16 +2773,13 @@ fn onRequest(dev: *DevServer, req: *Request, resp: anytype) void {
         return;
     }
 
-    switch (dev.server.?) {
-        inline else => |s| {
-            if (@typeInfo(@TypeOf(s.app.?)).pointer.child.Response != @typeInfo(@TypeOf(resp)).pointer.child) {
-                unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
-            }
-            if (s.config.onRequest != .zero) {
-                s.onRequest(req, resp);
-                return;
-            }
-        },
+    if (DevServer.AnyResponse != @typeInfo(@TypeOf(resp)).pointer.child) {
+        unreachable; // mismatch between `is_ssl` with server and response types. optimize these checks out.
+    }
+
+    if (dev.server.?.config.onRequest != .zero) {
+        dev.server.?.onRequest(req, resp);
+        return;
     }
 
     sendBuiltInNotFound(resp);
@@ -2608,9 +2809,9 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
             .framework => |route_index| .{ .framework = .{
                 .route_index = route_index,
                 .evaluate_failure = null,
-                .cached_module_list = .{},
-                .cached_client_bundle_url = .{},
-                .cached_css_file_array = .{},
+                .cached_module_list = .empty,
+                .cached_client_bundle_url = .empty,
+                .cached_css_file_array = .empty,
             } },
             .html => |html| brk: {
                 const incremental_graph_index = try dev.client_graph.insertStaleExtra(html.html_bundle.path, false, true);
@@ -2618,14 +2819,13 @@ fn getOrPutRouteBundle(dev: *DevServer, route: RouteBundle.UnresolvedIndex) !Rou
                 break :brk .{ .html = .{
                     .html_bundle = html,
                     .bundled_file = incremental_graph_index,
-                    .head_end_tag_index = .none,
-                    .body_end_tag_index = .none,
+                    .script_injection_offset = .none,
                     .cached_response = null,
                     .bundled_html_text = null,
                 } };
             },
         },
-        .client_script_generation = 0,
+        .client_script_generation = std.crypto.random.int(u32),
         .server_state = .unqueued,
         .client_bundle = null,
         .active_viewers = 0,
@@ -2653,24 +2853,11 @@ fn sendSerializedFailures(
     resp: AnyResponse,
     failures: []const SerializedFailure,
     kind: ErrorPageKind,
-) void {
-    switch (resp) {
-        inline else => |r| sendSerializedFailuresInner(dev, r, failures, kind),
-    }
-}
+) !void {
+    var buf: std.ArrayList(u8) = try .initCapacity(dev.allocator, 2048);
+    errdefer buf.deinit();
 
-fn sendSerializedFailuresInner(
-    dev: *DevServer,
-    resp: anytype,
-    failures: []const SerializedFailure,
-    kind: ErrorPageKind,
-) void {
-    // TODO: write to Blob and serve that
-    resp.writeStatus("500 Internal Server Error");
-    resp.writeHeader("Content-Type", MimeType.html.value);
-
-    // TODO: what to do about return values here?
-    _ = resp.write(switch (kind) {
+    try buf.appendSlice(switch (kind) {
         inline else => |k| std.fmt.comptimePrint(
             \\<!doctype html>
             \\<html lang="en">
@@ -2691,35 +2878,54 @@ fn sendSerializedFailuresInner(
         ),
     });
 
-    var sfb = std.heap.stackFallback(65536, dev.allocator);
-    var arena_state = std.heap.ArenaAllocator.init(sfb.get());
-    defer arena_state.deinit();
-
     for (failures) |fail| {
         const len = bun.base64.encodeLen(fail.data);
-        const buf = arena_state.allocator().alloc(u8, len) catch bun.outOfMemory();
-        const encoded = buf[0..bun.base64.encode(buf, fail.data)];
-        _ = resp.write(encoded);
 
-        _ = arena_state.reset(.retain_capacity);
+        try buf.ensureUnusedCapacity(len);
+        const start = buf.items.len;
+        buf.items.len += len;
+        const to_write_into = buf.items[start..];
+
+        var encoded = to_write_into[0..bun.base64.encode(to_write_into, fail.data)];
+        while (encoded.len > 0 and encoded[encoded.len - 1] == '=') {
+            encoded.len -= 1;
+        }
+
+        buf.items.len = start + encoded.len;
     }
 
-    const pre = "\"),c=>c.charCodeAt(0));";
+    const pre = "\"),c=>c.charCodeAt(0));let config={bun:\"" ++ bun.Global.package_json_version_with_canary ++ "\"};";
     const post = "</script></body></html>";
 
     if (Environment.codegen_embed) {
-        _ = resp.end(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post, false);
+        try buf.appendSlice(pre ++ @embedFile("bake-codegen/bake.error.js") ++ post);
     } else {
-        _ = resp.write(pre);
-        _ = resp.write(bun.runtimeEmbedFile(.codegen_eager, "bake.error.js"));
-        _ = resp.end(post, false);
+        try buf.appendSlice(pre);
+        try buf.appendSlice(bun.runtimeEmbedFile(.codegen_eager, "bake.error.js"));
+        try buf.appendSlice(post);
     }
+
+    StaticRoute.sendBlobThenDeinit(resp, &.fromArrayList(buf), .{
+        .mime_type = &.html,
+        .server = dev.server.?,
+        .status_code = 500,
+    });
 }
 
 fn sendBuiltInNotFound(resp: anytype) void {
     const message = "404 Not Found";
     resp.writeStatus("404 Not Found");
     resp.end(message, true);
+}
+
+fn printMemoryLine(dev: *DevServer) void {
+    if (!debug.isVisible()) return;
+    Output.prettyErrorln("<d>DevServer tracked {}, measured: {} ({}), process: {}<r>", .{
+        bun.fmt.size(dev.memoryCost(), .{}),
+        dev.allocation_scope.state.allocations.count(),
+        bun.fmt.size(dev.allocation_scope.state.total_memory_allocated, .{}),
+        bun.fmt.size(bun.sys.selfProcessMemoryUsage() orelse 0, .{}),
+    });
 }
 
 const FileKind = enum(u2) {
@@ -2729,6 +2935,9 @@ const FileKind = enum(u2) {
     /// `code` is JavaScript code. This field is also used for HTML files, where
     /// the associated JS just calls `require` to emulate the script tags.
     js,
+    /// `code` is JavaScript code of a module exporting a single file path.
+    /// This is used when the loader is not `css` nor `isJavaScriptLike()`
+    asset,
     /// `code` is the URL where the CSS file is to be fetched from, ex.
     /// '/_bun/css/0000000000000000.css'
     css,
@@ -2762,11 +2971,12 @@ const FileKind = enum(u2) {
 pub fn IncrementalGraph(side: bake.Side) type {
     return struct {
         // Unless otherwise mentioned, all data structures use DevServer's allocator.
+        // All arrays are indexed by FileIndex, except for the two edge-related arrays.
 
         /// Keys are absolute paths for the "file" namespace, or the
         /// pretty-formatted path value that appear in imports. Absolute paths
         /// are stored so the watcher can quickly query and invalidate them.
-        /// Key slices are owned by `default_allocator`
+        /// Key slices are owned by `dev.allocator`
         bundled_files: bun.StringArrayHashMapUnmanaged(File),
         /// Source maps are stored out-of-line to make `File` objects smaller,
         /// as file information is accessed much more frequently than source maps.
@@ -2776,6 +2986,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// until after a bundle, since resizing the bit-set requires an
         /// exact size, instead of the log approach that dynamic arrays use.
         stale_files: DynamicBitSetUnmanaged,
+
+        // TODO: rename `dependencies` to something that clearly indicates direction.
+        // such as "parent" or "consumer"
 
         /// Start of a file's 'dependencies' linked list. These are the other
         /// files that have imports to this file. Walk this list to discover
@@ -2863,7 +3076,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 /// Content depends on `flags.kind`
                 /// See function wrappers to safely read into this data
                 content: extern union {
-                    /// Allocated by default_allocator. Access with `.jsCode()`
+                    /// Allocated by `dev.allocator`. Access with `.jsCode()`
                     /// When stale, the code is "", otherwise it contains at
                     /// least one non-whitespace character, as empty chunks
                     /// contain at least a function wrapper.
@@ -2879,11 +3092,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 flags: Flags,
 
                 const Flags = packed struct(u32) {
+                    /// Kind determines the data representation in `content`, as
+                    /// well as how this file behaves when tracing.
+                    kind: FileKind,
                     /// If the file has an error, the failure can be looked up
                     /// in the `.failures` map.
                     failed: bool,
                     /// For JS files, this is a component root; the server contains a matching file.
-                    /// For CSS files, this is also marked on the stylesheet that is imported from JS.
                     is_hmr_root: bool,
                     /// This is a file is an entry point to the framework.
                     /// Changing this will always cause a full page reload.
@@ -2891,10 +3106,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     /// If this file has a HTML RouteBundle. The bundle index is tucked away in:
                     /// `graph.source_maps.items[i].extra.empty.html_bundle_route_index`
                     is_html_route: bool,
-                    /// CSS files get special handling
-                    kind: FileKind,
+                    /// A CSS root is the first file in a CSS bundle, aka the
+                    /// one that the JS or HTML file points into.
+                    ///
+                    /// There are many complicated rules when CSS files
+                    /// reference each other, none of which are modelled in
+                    /// IncrementalGraph. Instead, any change to downstream
+                    /// files will find the CSS root, and queue it for a
+                    /// re-bundle. Additionally, CSS roots only have one level
+                    /// of imports, as the code in `finalizeBundle` will add all
+                    /// referenced files as edges directly to the root, creating
+                    /// a flat list instead of a tree. Those downstream files
+                    /// remaining empty; only present so that invalidation can
+                    /// trace them to this root.
+                    is_css_root: bool,
 
-                    unused: enum(u26) { unused } = .unused,
+                    unused: enum(u25) { unused } = .unused,
                 };
 
                 comptime {
@@ -2903,7 +3130,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
 
                 fn initJavaScript(code_slice: []const u8, flags: Flags) @This() {
-                    assert(flags.kind == .js);
+                    assert(flags.kind == .js or flags.kind == .asset);
                     return .{
                         .content = .{ .js_code_ptr = code_slice.ptr },
                         .code_len = @intCast(code_slice.len),
@@ -2921,7 +3148,6 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
 
                 fn initUnknown(flags: Flags) @This() {
-                    assert(flags.kind == .unknown);
                     return .{
                         .content = .{ .unknown = .unknown }, // unused
                         .code_len = 0, // unused
@@ -2930,7 +3156,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
 
                 fn jsCode(file: @This()) []const u8 {
-                    assert(file.flags.kind == .js);
+                    assert(file.flags.kind == .js or file.flags.kind == .asset);
                     return file.content.js_code_ptr[0..file.code_len];
                 }
 
@@ -2949,46 +3175,51 @@ pub fn IncrementalGraph(side: bake.Side) type {
             },
         };
 
+        fn freeFileContent(g: *IncrementalGraph(.client), index: FileIndex, key: []const u8, file: File, css: enum { unref_css, ignore_css }) void {
+            switch (file.flags.kind) {
+                .js, .asset => {
+                    g.owner().allocator.free(file.jsCode());
+                    const map = &g.source_maps.items[index.get()];
+                    g.owner().allocator.free(map.vlq());
+                    if (map.quoted_contents_flags.is_owned) {
+                        map.quotedContentsCowString().deinit(g.owner().allocator);
+                    }
+                },
+                .css => if (css == .unref_css) {
+                    g.owner().assets.unrefByPath(key);
+                },
+                .unknown => {},
+            }
+        }
+
         /// Packed source mapping data
         pub const PackedMap = struct {
-            /// Allocated by default_allocator. Access with `.slice()`
+            /// Allocated by `dev.allocator`. Access with `.vlq()`
             /// This is stored to allow lazy construction of source map files.
-            /// Aligned to 4 bytes to reduce struct size/padding.
-            vlq_chunk: struct {
-                ptr_top: u32,
-                ptr_bottom: u32,
-                len: u32,
-
-                pub fn init(data: []const u8) @This() {
-                    if (@inComptime() and data.len == 0) {
-                        return .{ .ptr_top = 0, .ptr_bottom = 0xffffffff, .len = 0 };
-                    }
-                    return .{
-                        .ptr_top = @intCast(@intFromPtr(data.ptr) >> 32),
-                        .ptr_bottom = @intCast(@intFromPtr(data.ptr) & 0xffffffff),
-                        .len = @intCast(data.len),
-                    };
-                }
-
-                pub fn slice(chunk: @This()) []const u8 {
-                    return @as([*]const u8, @ptrFromInt(
-                        (@as(usize, chunk.ptr_top) << 32) + chunk.ptr_bottom,
-                    ))[0..chunk.len];
-                }
+            vlq_ptr: [*]u8,
+            vlq_len: u32,
+            /// The bundler runs quoting on multiple threads, so it only makes
+            /// sense to preserve that effort for concatenation and
+            /// re-concatenation.
+            quoted_contents_ptr: [*]const u8,
+            quoted_contents_flags: packed struct(u32) {
+                len: u31,
+                is_owned: bool,
             },
-            /// This field is overloaded depending on if the source map data is
+            /// This field is overloaded depending on if the VLQ data is
             /// present or not (.len != 0).
             extra: extern union {
                 /// Used to track the last state of the source map chunk. This
-                /// is used when concatenating chunks. The generated column
-                /// is not tracked because it is always zero (all chunks end
-                /// in a newline because minification is off), and the generated
-                /// line is recomputed on demand
+                /// is used when concatenating chunks. The generated column is
+                /// not tracked because it is always zero (all chunks end in a
+                /// newline because minification is off), and the generated line
+                /// is recomputed on demand and is different per concatenation.
                 end_state: extern struct {
                     original_line: i32,
                     original_column: i32,
                 },
                 empty: extern struct {
+                    /// Number of lines to skip. Computed on demand.
                     line_count: bun.GenericIndex(u32, u8).Optional,
                     // Cannot use RouteBundle.Index because `extern union` above :(
                     html_bundle_route_index: bun.GenericIndex(u32, u8).Optional,
@@ -2996,28 +3227,51 @@ pub fn IncrementalGraph(side: bake.Side) type {
             },
 
             pub const empty: PackedMap = .{
-                .vlq_chunk = .init(""),
+                .vlq_ptr = &[0]u8{},
+                .vlq_len = 0,
+                .quoted_contents_ptr = &[0]u8{},
+                .quoted_contents_flags = .{
+                    .len = 0,
+                    .is_owned = false,
+                },
                 .extra = .{ .empty = .{
                     .line_count = .none,
                     .html_bundle_route_index = .none,
                 } },
             };
 
-            pub fn fromSourceMap(source_map: SourceMap.Chunk) PackedMap {
-                return if (source_map.buffer.list.items.len > 0) .{
-                    .vlq_chunk = .init(source_map.buffer.list.items),
-                    .extra = .{
-                        .end_state = .{
-                            .original_line = source_map.end_state.original_line,
-                            .original_column = source_map.end_state.original_column,
-                        },
+            pub fn vlq(self: @This()) []u8 {
+                return self.vlq_ptr[0..self.vlq_len];
+            }
+
+            pub fn quotedContentsCowString(self: @This()) bun.ptr.CowString {
+                return bun.ptr.CowString.initUnchecked(self.quoted_contents_ptr[0..self.quoted_contents_flags.len], self.quoted_contents_flags.is_owned);
+            }
+
+            pub fn quotedContents(self: @This()) []const u8 {
+                return self.quoted_contents_ptr[0..self.quoted_contents_flags.len];
+            }
+
+            pub fn fromNonEmptySourceMap(source_map: SourceMap.Chunk, quoted_contents: bun.ptr.CowString) !PackedMap {
+                assert(source_map.buffer.list.items.len > 0);
+                return .{
+                    .vlq_ptr = source_map.buffer.list.items.ptr,
+                    .vlq_len = @intCast(source_map.buffer.list.items.len),
+                    .quoted_contents_ptr = quoted_contents.ptr,
+                    .quoted_contents_flags = .{
+                        .len = @intCast(quoted_contents.flags.len),
+                        .is_owned = quoted_contents.flags.is_owned,
                     },
-                } else .empty;
+                    .extra = .{ .end_state = .{
+                        .original_line = source_map.end_state.original_line,
+                        .original_column = source_map.end_state.original_column,
+                    } },
+                };
             }
 
             comptime {
-                assert(@sizeOf(@This()) == @sizeOf(u32) * 5);
-                assert(@alignOf(@This()) == @alignOf(u32));
+                assert(@sizeOf(@This()) == @sizeOf(usize) * 4);
+                assert(@alignOf(@This()) == @alignOf(usize));
             }
         };
 
@@ -3025,9 +3279,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
         // for a simpler example. It is more complicated here because this
         // structure is two-way.
         pub const Edge = struct {
-            /// The file with the `import` statement
+            /// The file with the import statement
             dependency: FileIndex,
-            /// The file that `dependency` is importing
+            /// The file the import statement references.
             imported: FileIndex,
 
             next_import: EdgeIndex.Optional,
@@ -3043,8 +3297,27 @@ pub fn IncrementalGraph(side: bake.Side) type {
         /// An index into `edges`
         const EdgeIndex = bun.GenericIndex(u32, Edge);
 
-        pub fn deinit() void {
-            @panic("TODO");
+        pub fn deinit(g: *@This(), allocator: Allocator) void {
+            _ = VoidFieldTypes(@This()){
+                .bundled_files = {
+                    for (g.bundled_files.keys(), g.bundled_files.values(), 0..) |k, v, i| {
+                        allocator.free(k);
+                        if (side == .client)
+                            g.freeFileContent(.init(@intCast(i)), k, v, .ignore_css);
+                    }
+                    g.bundled_files.deinit(allocator);
+                },
+                .source_maps = if (side == .client)
+                    g.source_maps.deinit(allocator),
+                .stale_files = g.stale_files.deinit(allocator),
+                .first_dep = g.first_dep.deinit(allocator),
+                .first_import = g.first_import.deinit(allocator),
+                .edges = g.edges.deinit(allocator),
+                .edges_free_list = g.edges_free_list.deinit(allocator),
+                .current_chunk_len = {},
+                .current_chunk_parts = g.current_chunk_parts.deinit(allocator),
+                .current_css_files = if (side == .client) g.current_css_files.deinit(allocator),
+            };
         }
 
         /// Does NOT count @sizeOf(@This())
@@ -3096,10 +3369,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
             ctx: *HotUpdateContext,
             index: bun.JSAst.Index,
             content: union(enum) {
-                js: []const u8,
+                js: struct {
+                    code: []const u8,
+                    source_map: SourceMap.Chunk,
+                    quoted_contents: bun.ptr.CowString,
+                },
                 css: u64,
             },
-            source_map: ?SourceMap.Chunk,
             is_ssr_graph: bool,
         ) !void {
             const dev = g.owner();
@@ -3111,7 +3387,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             if (Environment.allow_assert) {
                 switch (content) {
                     .css => {},
-                    .js => |js| if (bun.strings.isAllWhitespace(js)) {
+                    .js => |js| if (bun.strings.isAllWhitespace(js.code)) {
                         // Should at least contain the function wrapper
                         bun.Output.panic("Empty chunk is impossible: {s} {s}", .{
                             key,
@@ -3126,25 +3402,26 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             // Dump to filesystem if enabled
             if (bun.FeatureFlags.bake_debugging_features and content == .js) if (dev.dump_dir) |dump_dir| {
-                dumpBundleForChunk(dev, dump_dir, side, key, content.js, true, is_ssr_graph);
+                dumpBundleForChunk(dev, dump_dir, side, key, content.js.code, true, is_ssr_graph);
             };
 
             const gop = try g.bundled_files.getOrPut(dev.allocator, key);
             const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, key);
+                gop.key_ptr.* = try dev.allocator.dupe(u8, key);
                 try g.first_dep.append(dev.allocator, .none);
                 try g.first_import.append(dev.allocator, .none);
-                if (side == .client)
-                    try g.source_maps.append(dev.allocator, if (source_map) |map| .fromSourceMap(map) else .empty);
+                if (side == .client) {
+                    try g.source_maps.append(dev.allocator, .empty);
+                }
             }
 
             if (g.stale_files.bit_length > gop.index) {
                 g.stale_files.unset(gop.index);
             }
 
-            ctx.getCachedIndex(side, index).* = FileIndex.init(@intCast(gop.index));
+            ctx.getCachedIndex(side, index).* = .init(FileIndex.init(@intCast(gop.index)));
 
             switch (side) {
                 .client => {
@@ -3153,22 +3430,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = ctx.server_to_client_bitset.isSet(index.get()),
                         .is_special_framework_file = false,
                         .is_html_route = false,
+                        .is_css_root = content == .css, // non-root CSS files never get registered in this function
                         .kind = switch (content) {
-                            .js => .js,
+                            .js => if (ctx.loaders[index.get()].isJavaScriptLike()) .js else .asset,
                             .css => .css,
                         },
                     };
                     if (gop.found_existing) {
                         // Free the original content
-                        switch (gop.value_ptr.flags.kind) {
-                            .js => {
-                                bun.default_allocator.free(gop.value_ptr.jsCode());
-                                bun.default_allocator.free(g.source_maps.items[file_index.get()].vlq_chunk.slice());
-                                if (source_map) |map| g.source_maps.items[file_index.get()] = .fromSourceMap(map);
-                            },
-                            .css => {}, // do not need to unref css as it has been replaced already
-                            .unknown => {},
-                        }
+                        g.freeFileContent(file_index, key, gop.value_ptr.*, .ignore_css);
 
                         // Free a failure if it exists
                         if (gop.value_ptr.flags.failed) {
@@ -3190,10 +3460,21 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     switch (content) {
                         .css => |css| gop.value_ptr.* = .initCSS(css, flags),
                         .js => |js| {
-                            gop.value_ptr.* = .initJavaScript(js, flags);
+                            dev.allocation_scope.assertOwned(js.code);
+                            gop.value_ptr.* = .initJavaScript(js.code, flags);
+
+                            // Append source map
+                            if (js.source_map.buffer.len() > 0) {
+                                dev.allocation_scope.assertOwned(js.source_map.buffer.list.items);
+                                if (js.quoted_contents.flags.is_owned)
+                                    dev.allocation_scope.assertOwned(js.quoted_contents.slice());
+                                g.source_maps.items[file_index.get()] = try .fromNonEmptySourceMap(js.source_map, js.quoted_contents);
+                            } else {
+                                js.quoted_contents.deinit(dev.allocator);
+                            }
                             // Track JavaScript chunks for concatenation
                             try g.current_chunk_parts.append(dev.allocator, file_index);
-                            g.current_chunk_len += js.len;
+                            g.current_chunk_len += js.code.len;
                         },
                     }
                 },
@@ -3255,8 +3536,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         }
                     }
                     if (content == .js) {
-                        try g.current_chunk_parts.append(dev.allocator, content.js);
-                        g.current_chunk_len += content.js.len;
+                        try g.current_chunk_parts.append(dev.allocator, content.js.code);
+                        g.current_chunk_len += content.js.code.len;
+                        content.js.quoted_contents.deinit(dev.allocator);
+                        if (content.js.source_map.buffer.len() > 0) {
+                            var vlq = content.js.source_map.buffer;
+                            vlq.deinit();
+                        }
                     }
                 },
             }
@@ -3275,19 +3561,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
         pub fn processChunkDependencies(
             g: *@This(),
             ctx: *HotUpdateContext,
+            comptime mode: enum { normal, css },
             bundle_graph_index: bun.JSAst.Index,
             temp_alloc: Allocator,
         ) bun.OOM!void {
             const log = bun.Output.scoped(.processChunkDependencies, false);
-            const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*;
+            const file_index: FileIndex = ctx.getCachedIndex(side, bundle_graph_index).*.unwrap() orelse
+                @panic("unresolved index"); // do not process for failed chunks
             log("index id={d} {}:", .{
                 file_index.get(),
                 bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
             });
 
+            // Build a map from the existing import list. Later, entries that
+            // were not marked as `.seen = true` will be freed.
             var quick_lookup: TempLookup.HashTable = .{};
             defer quick_lookup.deinit(temp_alloc);
-
             {
                 var it: ?EdgeIndex = g.first_import.items[file_index.get()].unwrap();
                 while (it) |edge_index| {
@@ -3307,10 +3596,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // removing edges.
             const quick_lookup_values_to_care_len = quick_lookup.count();
 
+            // A new import linked list is constructed. A side effect of this
+            // approach is that the order of the imports is reversed on every
+            // save. However, the ordering here doesn't matter.
             var new_imports: EdgeIndex.Optional = .none;
             defer g.first_import.items[file_index.get()] = new_imports;
 
-            if (side == .server) {
+            // (CSS chunks are not present on the server side)
+            if (mode == .normal and side == .server) {
                 if (ctx.server_seen_bit_set.isSet(file_index.get())) return;
 
                 const file = &g.bundled_files.values()[file_index.get()];
@@ -3328,7 +3621,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 }
             }
 
-            try g.processChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index);
+            switch (mode) {
+                .normal => try g.processChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
+                .css => try g.processCSSChunkImportRecords(ctx, temp_alloc, &quick_lookup, &new_imports, file_index, bundle_graph_index),
+            }
 
             // '.seen = false' means an import was removed and should be freed
             for (quick_lookup.values()[0..quick_lookup_values_to_care_len]) |val| {
@@ -3346,10 +3642,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             if (side == .server) {
                 // Follow this file to the route to mark it as stale.
-                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary);
+                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary, file_index);
             } else {
                 // Follow this file to the HTML route or HMR root to mark the client bundle as stale.
-                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary);
+                try g.traceDependencies(file_index, ctx.gts, .stop_at_boundary, file_index);
             }
         }
 
@@ -3366,13 +3662,173 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 const prev_dependency = &g.edges.items[prev.get()];
                 prev_dependency.next_dependency = edge.next_dependency;
             } else {
-                assert(g.first_dep.items[edge.imported.get()].unwrap() == edge_index);
+                assert_eql(g.first_dep.items[edge.imported.get()].unwrap(), edge_index);
                 g.first_dep.items[edge.imported.get()] = .none;
             }
             if (edge.next_dependency.unwrap()) |next| {
                 const next_dependency = &g.edges.items[next.get()];
                 next_dependency.prev_dependency = edge.prev_dependency;
             }
+        }
+
+        fn processCSSChunkImportRecords(
+            g: *@This(),
+            ctx: *HotUpdateContext,
+            temp_alloc: Allocator,
+            quick_lookup: *TempLookup.HashTable,
+            new_imports: *EdgeIndex.Optional,
+            file_index: FileIndex,
+            bundler_index: bun.JSAst.Index,
+        ) !void {
+            bun.assert(bundler_index.isValid());
+            bun.assert(ctx.loaders[bundler_index.get()].isCSS());
+
+            var sfb = std.heap.stackFallback(@sizeOf(bun.JSAst.Index) * 64, temp_alloc);
+            const queue_alloc = sfb.get();
+
+            // This queue avoids stack overflow.
+            // Infinite loop is prevented by the tracing bits in `processEdgeAttachment`.
+            var queue: ArrayListUnmanaged(bun.JSAst.Index) = .empty;
+            defer queue.deinit(queue_alloc);
+
+            for (ctx.import_records[bundler_index.get()].slice()) |import_record| {
+                const result = try processEdgeAttachment(g, ctx, temp_alloc, quick_lookup, new_imports, file_index, import_record, .css);
+                if (result == .@"continue" and import_record.source_index.isValid()) {
+                    try queue.append(queue_alloc, import_record.source_index);
+                }
+            }
+
+            while (queue.popOrNull()) |index| {
+                for (ctx.import_records[index.get()].slice()) |import_record| {
+                    const result = try processEdgeAttachment(g, ctx, temp_alloc, quick_lookup, new_imports, file_index, import_record, .css);
+                    if (result == .@"continue" and import_record.source_index.isValid()) {
+                        try queue.append(queue_alloc, import_record.source_index);
+                    }
+                }
+            }
+        }
+
+        fn processEdgeAttachment(
+            g: *@This(),
+            ctx: *HotUpdateContext,
+            temp_alloc: Allocator,
+            quick_lookup: *TempLookup.HashTable,
+            new_imports: *EdgeIndex.Optional,
+            file_index: FileIndex,
+            import_record: bun.ImportRecord,
+            comptime mode: enum {
+                js_or_html,
+                /// When set, the graph tracing state bits are used to prevent
+                /// infinite recursion. This is only done for CSS, since it:
+                /// - Recursively processes its imports
+                /// - Does not use its tracing bits for anything else
+                css,
+            },
+        ) bun.OOM!enum { @"continue", stop } {
+            const log = bun.Output.scoped(.processEdgeAttachment, false);
+
+            // When an import record is duplicated, it gets marked unused.
+            // This happens in `ConvertESMExportsForHmr.deduplicatedImport`
+            // There is still a case where deduplication must happen.
+            if (import_record.is_unused) return .stop;
+            if (import_record.source_index.isRuntime()) return .stop;
+
+            const key = import_record.path.keyForIncrementalGraph();
+            log("processEdgeAttachment({s}, {})", .{ key, import_record.source_index });
+
+            // Attempt to locate the FileIndex from bundle_v2's Source.Index
+            const imported_file_index: FileIndex, const kind = brk: {
+                if (import_record.source_index.isValid()) {
+                    const kind: FileKind = if (mode == .css)
+                        switch (ctx.loaders[import_record.source_index.get()]) {
+                            .css => .css,
+                            else => .asset,
+                        };
+                    if (ctx.getCachedIndex(side, import_record.source_index).*.unwrap()) |i| {
+                        break :brk .{ i, kind };
+                    } else if (mode == .css) {
+                        const index = (try g.insertEmpty(key, kind)).index;
+                        // TODO: make this more clear that:
+                        // temp_alloc == bv2.graph.allocator
+                        try ctx.gts.resize(side, temp_alloc, index.get() + 1);
+                        break :brk .{ index, kind };
+                    }
+                }
+
+                break :brk switch (mode) {
+                    // All invalid source indices are external URLs that cannot be watched.
+                    .css => return .stop,
+                    // Check IncrementalGraph to find an file from a prior build.
+                    .js_or_html => .{
+                        .init(@intCast(
+                            g.bundled_files.getIndex(key) orelse
+                                // Not tracked in IncrementalGraph. This can be hit for
+                                // certain external files.
+                                return .@"continue",
+                        )),
+                        {},
+                    },
+                };
+            };
+
+            if (Environment.isDebug) {
+                bun.assert(imported_file_index.get() < g.bundled_files.count());
+            }
+
+            // For CSS files visiting other CSS files, prevent infinite
+            // recursion.  CSS files visiting assets cannot cause recursion
+            // since assets cannot import other files.
+            if (mode == .css and kind == .css) {
+                if (ctx.gts.bits(side).isSet(imported_file_index.get()))
+                    return .stop;
+                ctx.gts.bits(side).set(imported_file_index.get());
+            }
+
+            const gop = try quick_lookup.getOrPut(temp_alloc, imported_file_index);
+            if (gop.found_existing) {
+                // If the edge has already been seen, it will be skipped
+                // to ensure duplicate edges never exist.
+                if (gop.value_ptr.seen) return .@"continue";
+                const lookup = gop.value_ptr;
+                lookup.seen = true;
+                const dep = &g.edges.items[lookup.edge_index.get()];
+                dep.next_import = new_imports.*;
+                new_imports.* = lookup.edge_index.toOptional();
+            } else {
+                // A new edge is needed to represent the dependency and import.
+                const first_dep = &g.first_dep.items[imported_file_index.get()];
+                const edge = try g.newEdge(.{
+                    .next_import = new_imports.*,
+                    .next_dependency = first_dep.*,
+                    .prev_dependency = .none,
+                    .imported = imported_file_index,
+                    .dependency = file_index,
+                });
+                if (first_dep.*.unwrap()) |dep| {
+                    g.edges.items[dep.get()].prev_dependency = edge.toOptional();
+                }
+                new_imports.* = edge.toOptional();
+                first_dep.* = edge.toOptional();
+
+                g.owner().incremental_result.had_adjusted_edges = true;
+
+                // To prevent duplicates, add into the quick lookup map
+                // the file index so that it does exist.
+                gop.value_ptr.* = .{
+                    .edge_index = edge,
+                    .seen = true,
+                };
+
+                log("attach edge={d} | id={d} {} -> id={d} {}", .{
+                    edge.get(),
+                    file_index.get(),
+                    bun.fmt.quote(g.bundled_files.keys()[file_index.get()]),
+                    imported_file_index.get(),
+                    bun.fmt.quote(g.bundled_files.keys()[imported_file_index.get()]),
+                });
+            }
+
+            return .@"continue";
         }
 
         fn processChunkImportRecords(
@@ -3384,6 +3840,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             file_index: FileIndex,
             index: bun.JSAst.Index,
         ) !void {
+            bun.assert(index.isValid());
+            // don't call this function for CSS sources
+            bun.assert(ctx.loaders[index.get()] != .css);
+
             const log = bun.Output.scoped(.processChunkDependencies, false);
             for (ctx.import_records[index.get()].slice()) |import_record| {
                 // When an import record is duplicated, it gets marked unused.
@@ -3392,23 +3852,22 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 if (import_record.is_unused) continue;
 
                 if (!import_record.source_index.isRuntime()) try_index_record: {
+                    // TODO: move this block into a function
                     const key = import_record.path.keyForIncrementalGraph();
-                    const imported_file_index = if (import_record.source_index.isInvalid())
-                        FileIndex.init(@intCast(
-                            g.bundled_files.getIndex(key) orelse break :try_index_record,
-                        ))
-                    else
-                        ctx.getCachedIndex(side, import_record.source_index).*;
+                    const imported_file_index: FileIndex = brk: {
+                        if (import_record.source_index.isValid()) {
+                            if (ctx.getCachedIndex(side, import_record.source_index).*.unwrap()) |i| {
+                                break :brk i;
+                            }
+                        }
+                        break :brk .init(@intCast(
+                            g.bundled_files.getIndex(key) orelse
+                                break :try_index_record,
+                        ));
+                    };
 
                     if (Environment.isDebug) {
-                        if (imported_file_index.get() > g.bundled_files.count()) {
-                            Output.debugWarn("Invalid mapped source index {x}. {} was not inserted into IncrementalGraph", .{
-                                imported_file_index.get(),
-                                bun.fmt.quote(key),
-                            });
-                            Output.flush();
-                            continue;
-                        }
+                        bun.assert(imported_file_index.get() < g.bundled_files.count());
                     }
 
                     const gop = try quick_lookup.getOrPut(temp_alloc, imported_file_index);
@@ -3461,10 +3920,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
         const TraceDependencyGoal = enum {
             stop_at_boundary,
             no_stop,
-            css_to_route,
         };
 
-        fn traceDependencies(g: *@This(), file_index: FileIndex, gts: *GraphTraceState, comptime goal: TraceDependencyGoal) !void {
+        fn traceDependencies(
+            g: *@This(),
+            file_index: FileIndex,
+            gts: *GraphTraceState,
+            goal: TraceDependencyGoal,
+            from_file_index: FileIndex,
+        ) !void {
             g.owner().graph_safety_lock.assertLocked();
 
             if (Environment.enable_logs) {
@@ -3497,14 +3961,25 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 },
                 .client => {
                     const dev = g.owner();
-                    if (file.flags.is_hmr_root or (file.flags.kind == .css and goal == .css_to_route)) {
+                    if (file.flags.is_hmr_root) {
                         const key = g.bundled_files.keys()[file_index.get()];
                         const index = dev.server_graph.getFileIndex(key) orelse
                             Output.panic("Server Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
-                        try dev.server_graph.traceDependencies(index, gts, goal);
+                        try dev.server_graph.traceDependencies(index, gts, goal, index);
                     } else if (file.flags.is_html_route) {
                         const route_bundle_index = dev.client_graph.htmlRouteBundleIndex(file_index);
-                        try dev.incremental_result.html_routes_affected.append(dev.allocator, route_bundle_index);
+
+                        // If the HTML file itself was modified, or an asset was
+                        // modified, this must be a hard reload. Otherwise just
+                        // invalidate the script tag.
+                        const list = if (from_file_index == file_index or
+                            g.bundled_files.values()[from_file_index.get()].flags.kind == .asset)
+                            &dev.incremental_result.html_routes_hard_affected
+                        else
+                            &dev.incremental_result.html_routes_soft_affected;
+
+                        try list.append(dev.allocator, route_bundle_index);
+
                         if (goal == .stop_at_boundary)
                             return;
                     }
@@ -3526,7 +4001,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
             while (it) |dep_index| {
                 const edge = g.edges.items[dep_index.get()];
                 it = edge.next_dependency.unwrap();
-                try g.traceDependencies(edge.dependency, gts, goal);
+                try g.traceDependencies(
+                    edge.dependency,
+                    gts,
+                    goal,
+                    file_index,
+                );
             }
         }
 
@@ -3556,6 +4036,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         const index = dev.client_graph.getFileIndex(key) orelse
                             Output.panic("Client Incremental Graph is missing component for {}", .{bun.fmt.quote(key)});
                         try dev.client_graph.traceImports(index, gts, goal);
+
+                        if (Environment.isDebug and file.kind == .css) {
+                            // Server CSS files never have imports. They are
+                            // purely a reference to the client graph.
+                            bun.assert(g.first_import.items[file_index.get()] == .none);
+                        }
                     }
                     if (goal == .find_errors and file.failed) {
                         const fail = g.owner().bundling_failures.getKeyAdapted(
@@ -3567,18 +4053,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     }
                 },
                 .client => {
-                    assert(!g.stale_files.isSet(file_index.get())); // should not be left stale
                     if (file.flags.kind == .css) {
+                        // It is only possible to find CSS roots by tracing.
+                        bun.debugAssert(file.flags.is_css_root);
+
                         if (goal == .find_css) {
                             try g.current_css_files.append(g.owner().allocator, file.cssAssetId());
                         }
 
-                        // Do not count css files as a client module
-                        // and also do not trace its imports.
-                        //
-                        // The server version of this code does not need to
-                        // early return, since server css files never have
-                        // imports.
+                        // See the comment on `is_css_root` on how CSS roots
+                        // have a slightly different meaning for their assets.
+                        // Regardless, CSS can't import JS, so this trace is done.
                         return;
                     }
 
@@ -3594,6 +4079,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         ) orelse
                             @panic("Failed to get bundling failure");
                         try g.owner().incremental_result.failures_added.append(g.owner().allocator, fail);
+                        return;
                     }
                 },
             }
@@ -3615,17 +4101,18 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
         pub fn insertStaleExtra(g: *@This(), abs_path: []const u8, is_ssr_graph: bool, is_route: bool) bun.OOM!FileIndex {
             g.owner().graph_safety_lock.assertLocked();
+            const dev_allocator = g.owner().allocator;
 
             debug.log("Insert stale: {s}", .{abs_path});
-            const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
+            const gop = try g.bundled_files.getOrPut(dev_allocator, abs_path);
             const file_index = FileIndex.init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
-                try g.first_dep.append(g.owner().allocator, .none);
-                try g.first_import.append(g.owner().allocator, .none);
+                gop.key_ptr.* = try dev_allocator.dupe(u8, abs_path);
+                try g.first_dep.append(dev_allocator, .none);
+                try g.first_import.append(dev_allocator, .none);
                 if (side == .client)
-                    try g.source_maps.append(g.owner().allocator, .empty);
+                    try g.source_maps.append(dev_allocator, .empty);
             } else {
                 if (side == .server) {
                     if (is_route) gop.value_ptr.*.is_route = true;
@@ -3643,23 +4130,17 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .is_html_route = is_route,
+                        .is_css_root = false,
                         .kind = .unknown,
                     };
                     if (gop.found_existing) {
-                        const source_map = &g.source_maps.items[file_index.get()];
-                        switch (gop.value_ptr.flags.kind) {
-                            .js => g.owner().allocator.free(gop.value_ptr.jsCode()),
-                            .css => g.owner().assets.unrefByPath(gop.key_ptr.*),
-                            .unknown => {},
-                        }
-                        if (source_map.vlq_chunk.len > 0) {
-                            g.owner().allocator.free(source_map.vlq_chunk.slice());
-                            source_map.* = .empty;
-                        }
+                        g.freeFileContent(file_index, gop.key_ptr.*, gop.value_ptr.*, .unref_css);
+
                         flags.is_html_route = flags.is_html_route or gop.value_ptr.flags.is_html_route;
                         flags.failed = gop.value_ptr.flags.failed;
                         flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
                         flags.is_hmr_root = gop.value_ptr.flags.is_hmr_root;
+                        flags.is_css_root = gop.value_ptr.flags.is_css_root;
                     }
                     gop.value_ptr.* = File.initUnknown(flags);
                 },
@@ -3685,59 +4166,71 @@ pub fn IncrementalGraph(side: bake.Side) type {
         }
 
         /// Returns the key that was inserted.
-        pub fn insertEmpty(g: *@This(), abs_path: []const u8) bun.OOM![]const u8 {
-            comptime assert(side == .client); // not implemented
+        pub fn insertEmpty(g: *@This(), abs_path: []const u8, kind: FileKind) bun.OOM!struct {
+            index: FileIndex,
+            key: []const u8,
+        } {
             g.owner().graph_safety_lock.assertLocked();
-            const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
+            const dev_allocator = g.owner().allocator;
+            const gop = try g.bundled_files.getOrPut(dev_allocator, abs_path);
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
-                gop.value_ptr.* = File.initUnknown(.{
-                    .failed = false,
-                    .is_hmr_root = false,
-                    .is_special_framework_file = false,
-                    .is_html_route = false,
-                    .kind = .unknown,
-                });
-                try g.first_dep.append(g.owner().allocator, .none);
-                try g.first_import.append(g.owner().allocator, .none);
+                gop.key_ptr.* = try dev_allocator.dupe(u8, abs_path);
+                gop.value_ptr.* = switch (side) {
+                    .client => File.initUnknown(.{
+                        .failed = false,
+                        .is_hmr_root = false,
+                        .is_special_framework_file = false,
+                        .is_html_route = false,
+                        .is_css_root = false,
+                        .kind = kind,
+                    }),
+                    .server => .{
+                        .is_rsc = false,
+                        .is_ssr = false,
+                        .is_route = false,
+                        .is_client_component_boundary = false,
+                        .failed = false,
+                        .kind = kind,
+                    },
+                };
+                try g.first_dep.append(dev_allocator, .none);
+                try g.first_import.append(dev_allocator, .none);
                 if (side == .client)
-                    try g.source_maps.append(g.owner().allocator, .empty);
+                    try g.source_maps.append(dev_allocator, .empty);
+                try g.ensureStaleBitCapacity(true);
             }
-            return gop.key_ptr.*;
+            return .{ .index = .init(@intCast(gop.index)), .key = gop.key_ptr.* };
         }
 
         /// Server CSS files are just used to be targets for graph traversal.
         /// Its content lives only on the client.
         pub fn insertCssFileOnServer(g: *@This(), ctx: *HotUpdateContext, index: bun.JSAst.Index, abs_path: []const u8) bun.OOM!void {
             g.owner().graph_safety_lock.assertLocked();
+            const dev_allocator = g.owner().allocator;
 
             debug.log("Insert stale: {s}", .{abs_path});
-            const gop = try g.bundled_files.getOrPut(g.owner().allocator, abs_path);
-            const file_index = FileIndex.init(@intCast(gop.index));
+            const gop = try g.bundled_files.getOrPut(dev_allocator, abs_path);
+            const file_index: FileIndex = .init(@intCast(gop.index));
 
             if (!gop.found_existing) {
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, abs_path);
-                try g.first_dep.append(g.owner().allocator, .none);
-                try g.first_import.append(g.owner().allocator, .none);
-                if (side == .client)
-                    try g.source_maps.append(g.owner().allocator, .empty);
+                gop.key_ptr.* = try dev_allocator.dupe(u8, abs_path);
+                try g.first_dep.append(dev_allocator, .none);
+                try g.first_import.append(dev_allocator, .none);
             }
 
             switch (side) {
                 .client => @compileError("not implemented: use receiveChunk"),
-                .server => {
-                    gop.value_ptr.* = .{
-                        .is_rsc = false,
-                        .is_ssr = false,
-                        .is_route = false,
-                        .is_client_component_boundary = false,
-                        .failed = false,
-                        .kind = .css,
-                    };
+                .server => gop.value_ptr.* = .{
+                    .is_rsc = false,
+                    .is_ssr = false,
+                    .is_route = false,
+                    .is_client_component_boundary = false,
+                    .failed = false,
+                    .kind = .css,
                 },
             }
 
-            ctx.getCachedIndex(.server, index).* = file_index;
+            ctx.getCachedIndex(.server, index).* = .init(file_index);
         }
 
         pub fn insertFailure(
@@ -3752,12 +4245,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
         ) bun.OOM!void {
             g.owner().graph_safety_lock.assertLocked();
 
+            const dev_allocator = g.owner().allocator;
+
             const Gop = std.StringArrayHashMapUnmanaged(File).GetOrPutResult;
             // found_existing is destructured separately so that it is
             // comptime-known true when mode == .index
             const gop: Gop, const found_existing, const file_index = switch (mode) {
                 .abs_path => brk: {
-                    const gop = try g.bundled_files.getOrPut(g.owner().allocator, key);
+                    const gop = try g.bundled_files.getOrPut(dev_allocator, key);
                     break :brk .{ gop, gop.found_existing, FileIndex.init(@intCast(gop.index)) };
                 },
                 // When given an index, no fetch is needed.
@@ -3778,11 +4273,11 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             if (!found_existing) {
                 comptime assert(mode == .abs_path);
-                gop.key_ptr.* = try bun.default_allocator.dupe(u8, key);
-                try g.first_dep.append(g.owner().allocator, .none);
-                try g.first_import.append(g.owner().allocator, .none);
+                gop.key_ptr.* = try dev_allocator.dupe(u8, key);
+                try g.first_dep.append(dev_allocator, .none);
+                try g.first_import.append(dev_allocator, .none);
                 if (side == .client)
-                    try g.source_maps.append(g.owner().allocator, .empty);
+                    try g.source_maps.append(dev_allocator, .empty);
             }
 
             try g.ensureStaleBitCapacity(true);
@@ -3795,22 +4290,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         .is_hmr_root = false,
                         .is_special_framework_file = false,
                         .is_html_route = false,
+                        .is_css_root = false,
                         .kind = .unknown,
                     };
                     if (found_existing) {
-                        const source_map = &g.source_maps.items[file_index.get()];
-                        switch (gop.value_ptr.flags.kind) {
-                            .js => g.owner().allocator.free(gop.value_ptr.jsCode()),
-                            .css => g.owner().assets.unrefByPath(gop.key_ptr.*),
-                            .unknown => {},
-                        }
-                        if (source_map.vlq_chunk.len > 0) {
-                            g.owner().allocator.free(source_map.vlq_chunk.slice());
-                            source_map.* = .empty;
-                        }
+                        g.freeFileContent(file_index, gop.key_ptr.*, gop.value_ptr.*, .unref_css);
                         flags.is_html_route = gop.value_ptr.flags.is_html_route;
                         flags.is_special_framework_file = gop.value_ptr.flags.is_special_framework_file;
                         flags.is_hmr_root = gop.value_ptr.flags.is_hmr_root;
+                        flags.is_css_root = gop.value_ptr.flags.is_css_root;
                     }
                     gop.value_ptr.* = File.initUnknown(flags);
                 },
@@ -3845,6 +4333,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // the error list as it changes while also supporting a REPL
             log.print(Output.errorWriter()) catch {};
             const failure = try SerializedFailure.initFromLog(
+                dev,
                 fail_owner,
                 dev.relativePath(gop.key_ptr.*),
                 log.msgs.items,
@@ -3857,15 +4346,52 @@ pub fn IncrementalGraph(side: bake.Side) type {
             }
         }
 
-        pub fn onFileDeleted(g: *@This(), abs_path: []const u8, log: *const Log) !void {
+        pub fn onFileDeleted(g: *@This(), abs_path: []const u8, bv2: *bun.BundleV2) void {
             const index = g.getFileIndex(abs_path) orelse return;
 
-            if (g.first_dep.items[index.get()] == .none) {
-                g.disconnectAndDeleteFile(index);
-            } else {
-                // TODO: This is incorrect, delete it!
-                // Keep the file so others may refer to it, but mark as failed.
-                try g.insertFailure(.abs_path, abs_path, log, false);
+            const keys = g.bundled_files.keys();
+
+            // Disconnect all imports
+            var it: ?EdgeIndex = g.first_import.items[index.get()].unwrap();
+            while (it) |edge_index| {
+                const dep = g.edges.items[edge_index.get()];
+                it = dep.next_import.unwrap();
+                assert(dep.dependency == index);
+
+                g.disconnectEdgeFromDependencyList(edge_index);
+                g.freeEdge(edge_index);
+            }
+
+            // Rebuild all dependencies
+            it = g.first_dep.items[index.get()].unwrap();
+            while (it) |edge_index| {
+                const dep = g.edges.items[edge_index.get()];
+                it = dep.next_dependency.unwrap();
+                assert(dep.imported == index);
+
+                bv2.enqueueFileFromDevServerIncrementalGraphInvalidation(
+                    keys[dep.dependency.get()],
+                    switch (side) {
+                        .client => .browser,
+                        .server => .bun,
+                    },
+                ) catch bun.outOfMemory();
+            }
+
+            // Bust the resolution caches of the dir containing this file,
+            // so that it cannot be resolved.
+            const dirname = std.fs.path.dirname(abs_path) orelse abs_path;
+            _ = bv2.transpiler.resolver.bustDirCache(dirname);
+
+            // Additionally, clear the cached entry of the file from the path to
+            // source index map.
+            const hash = bun.hash(abs_path);
+            for ([_]*bun.bundle_v2.PathToSourceIndexMap{
+                &bv2.graph.path_to_source_index_map,
+                &bv2.graph.client_path_to_source_index_map,
+                &bv2.graph.ssr_path_to_source_index_map,
+            }) |map| {
+                _ = map.remove(hash);
             }
         }
 
@@ -3882,8 +4408,12 @@ pub fn IncrementalGraph(side: bake.Side) type {
             );
         }
 
+        /// Given a set of paths, mark the relevant files as stale and append
+        /// them into `entry_points`. This is called whenever a file is changed,
+        /// and a new bundle has to be run.
         pub fn invalidate(g: *@This(), paths: []const []const u8, entry_points: *EntryPointList, alloc: Allocator) !void {
             g.owner().graph_safety_lock.assertLocked();
+            const keys = g.bundled_files.keys();
             const values = g.bundled_files.values();
             for (paths) |path| {
                 const index = g.bundled_files.getIndex(path) orelse {
@@ -3895,14 +4425,60 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 g.stale_files.set(index);
                 const data = &values[index];
                 switch (side) {
-                    .client => {
+                    .client => switch (data.flags.kind) {
+                        .css => {
+                            if (data.flags.is_css_root) {
+                                try entry_points.appendCss(alloc, path);
+                            }
+
+                            var it = g.first_dep.items[index].unwrap();
+                            while (it) |edge_index| {
+                                const entry = g.edges.items[edge_index.get()];
+                                const dep = entry.dependency;
+                                g.stale_files.set(dep.get());
+
+                                const dep_file = values[dep.get()];
+                                if (dep_file.flags.is_css_root) {
+                                    try entry_points.appendCss(alloc, keys[dep.get()]);
+                                }
+
+                                it = entry.next_dependency.unwrap();
+                            }
+                        },
+                        .asset => {
+                            var it = g.first_dep.items[index].unwrap();
+                            while (it) |edge_index| {
+                                const entry = g.edges.items[edge_index.get()];
+                                const dep = entry.dependency;
+                                g.stale_files.set(dep.get());
+
+                                const dep_file = values[dep.get()];
+                                // Assets violate the "do not reprocess
+                                // unchanged files" rule by reprocessing ALL
+                                // dependencies, instead of just the CSS roots.
+                                //
+                                // This is currently required to force HTML
+                                // bundles to become up to date with the new
+                                // asset URL. Additionally, it is currently seen
+                                // as a bit nicer in HMR to do this for all JS
+                                // files, though that could be reconsidered.
+                                if (dep_file.flags.is_css_root) {
+                                    try entry_points.appendCss(alloc, keys[dep.get()]);
+                                } else {
+                                    try entry_points.appendJs(alloc, keys[dep.get()], .client);
+                                }
+
+                                it = entry.next_dependency.unwrap();
+                            }
+
+                            try entry_points.appendJs(alloc, path, .client);
+                        },
                         // When re-bundling SCBs, only bundle the server. Otherwise
                         // the bundler gets confused and bundles both sides without
                         // knowledge of the boundary between them.
-                        if (data.flags.kind == .css)
-                            try entry_points.appendCss(alloc, path)
-                        else if (!data.flags.is_hmr_root)
+                        .js, .unknown => if (!data.flags.is_hmr_root) {
                             try entry_points.appendJs(alloc, path, .client);
+                        },
                     },
                     .server => {
                         if (data.is_rsc)
@@ -3983,6 +4559,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         } else {
                             try w.writeAll("null");
                         }
+                        try w.writeAll(",\n  bun: \"" ++ bun.Global.package_json_version_with_canary ++ "\"");
                         try w.writeAll(",\n  version: \"");
                         try w.writeAll(&g.owner().configuration_hash_key);
                         try w.writeAll("\"");
@@ -3995,12 +4572,13 @@ pub fn IncrementalGraph(side: bake.Side) type {
                                 .utf8,
                             );
                         }
+                        try w.writeAll("\n");
                     },
                     .hmr_chunk => {},
                 }
-                try w.writeAll("\n})");
+                try w.writeAll("})");
                 if (side == .client) if (options.source_map_id) |source_map_id| {
-                    try w.writeAll("\n//# sourceMappingURL=" ++ asset_prefix);
+                    try w.writeAll("\n//# sourceMappingURL=" ++ client_prefix ++ "/");
                     try w.writeAll(&std.fmt.bytesToHex(std.mem.asBytes(&source_map_id), .lower));
                     try w.writeAll(".js.map\n");
                 };
@@ -4019,11 +4597,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
             for (g.current_chunk_parts.items) |entry| {
                 list.appendSliceAssumeCapacity(switch (side) {
                     // entry is an index into files
-                    .client => brk: {
-                        if (Environment.allow_assert)
-                            bun.assert(files[entry.get()].flags.kind == .js);
-                        break :brk files[entry.get()].jsCode();
-                    },
+                    .client => files[entry.get()].jsCode(),
                     // entry is the '[]const u8' itself
                     .server => entry,
                 });
@@ -4045,8 +4619,14 @@ pub fn IncrementalGraph(side: bake.Side) type {
             };
         }
 
-        /// Uses `arena` as a temporary allocator, returning a string owned by `gpa`
-        pub fn takeSourceMap(g: *@This(), kind: ChunkKind, arena: std.mem.Allocator, gpa: Allocator) ![]u8 {
+        pub const SourceMapGeneration = struct {
+            json: []u8,
+            mappings: bun.StringPointer,
+            file_paths: [][]const u8,
+        };
+
+        /// Uses `arena` as a temporary allocator, fills in all fields of `out` except ref_count
+        pub fn takeSourceMap(g: *@This(), kind: ChunkKind, arena: std.mem.Allocator, gpa: Allocator, out: *SourceMapStore.Entry) bun.OOM!void {
             if (side == .server) @compileError("not implemented");
 
             const paths = g.bundled_files.keys();
@@ -4061,31 +4641,115 @@ pub fn IncrementalGraph(side: bake.Side) type {
             };
 
             j.pushStatic(
-                \\{"version":3,"sourceRoot":"/_bun/src","sources":[
+                \\{"version":3,"sources":["bun://Bun/Bun HMR Runtime"
             );
 
+            // This buffer is temporary, holding the quoted source paths, joined with commas.
             var source_map_strings = std.ArrayList(u8).init(arena);
             defer source_map_strings.deinit();
-            const smw = source_map_strings.writer();
-            var needs_comma = false;
+
+            var path_count: usize = 0;
             for (g.current_chunk_parts.items) |entry| {
-                if (source_maps[entry.get()].vlq_chunk.len == 0)
-                    continue;
-                if (needs_comma)
-                    try source_map_strings.appendSlice(",");
-                needs_comma = true;
-                try bun.js_printer.writeJSONString(
-                    g.owner().relativePath(paths[entry.get()]),
-                    @TypeOf(smw),
-                    smw,
-                    .utf8,
-                );
+                path_count += 1;
+                try source_map_strings.appendSlice(",");
+                const path = paths[entry.get()];
+                if (std.fs.path.isAbsolute(path)) {
+                    const is_windows_drive_path = Environment.isWindows and bun.path.isSepAny(path[0]);
+                    try source_map_strings.appendSlice(if (is_windows_drive_path)
+                        "file:///"
+                    else
+                        "\"file://");
+                    if (Environment.isWindows and !is_windows_drive_path) {
+                        // UNC namespace -> file://server/share/path.ext
+                        bun.strings.percentEncodeWrite(
+                            if (path.len > 2 and bun.path.isSepAny(path[0]) and bun.path.isSepAny(path[1]))
+                                path[2..]
+                            else
+                                path, // invalid but must not crash
+                            &source_map_strings,
+                        ) catch |err| switch (err) {
+                            error.IncompleteUTF8 => @panic("Unexpected: asset with incomplete UTF-8 as file path"),
+                            error.OutOfMemory => |e| return e,
+                        };
+                    } else {
+                        // posix paths always start with '/'
+                        // -> file:///path/to/file.js
+                        // windows drive letter paths have the extra slash added
+                        // -> file:///C:/path/to/file.js
+                        bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| switch (err) {
+                            error.IncompleteUTF8 => @panic("Unexpected: asset with incomplete UTF-8 as file path"),
+                            error.OutOfMemory => |e| return e,
+                        };
+                    }
+                    try source_map_strings.appendSlice("\"");
+                } else {
+                    try source_map_strings.appendSlice("\"bun://");
+                    bun.strings.percentEncodeWrite(path, &source_map_strings) catch |err| switch (err) {
+                        error.IncompleteUTF8 => @panic("Unexpected: asset with incomplete UTF-8 as file path"),
+                        error.OutOfMemory => |e| return e,
+                    };
+                    try source_map_strings.appendSlice("\"");
+                }
             }
+            var file_paths = try ArrayListUnmanaged([]const u8).initCapacity(gpa, path_count);
+            errdefer file_paths.deinit(gpa);
+            var source_contents = try ArrayListUnmanaged(bun.StringPointer).initCapacity(gpa, path_count);
+            errdefer source_contents.deinit(gpa);
+            try source_contents.ensureTotalCapacity(gpa, path_count);
             j.pushStatic(source_map_strings.items);
             j.pushStatic(
-                \\],"names":[],"mappings":"
+                \\],"sourcesContent":["// (Bun's internal HMR runtime is minified)"
+            );
+            for (g.current_chunk_parts.items) |file_index| {
+                const map = &source_maps[file_index.get()];
+                // For empty chunks, put a blank entry. This allows HTML
+                // files to get their stack remapped, despite having no
+                // actual mappings.
+                if (map.vlq_len == 0) {
+                    const ptr: bun.StringPointer = .{
+                        .offset = @intCast(j.len + ",\"".len),
+                        .length = 0,
+                    };
+                    j.pushStatic(",\"\"");
+                    file_paths.appendAssumeCapacity(paths[file_index.get()]);
+                    source_contents.appendAssumeCapacity(ptr);
+                    continue;
+                }
+                j.pushStatic(",");
+                const quoted_slice = map.quotedContents();
+                if (quoted_slice.len == 0) {
+                    bun.debugAssert(false); // vlq without source contents!
+                    const ptr: bun.StringPointer = .{
+                        .offset = @intCast(j.len + ",\"".len),
+                        .length = 0,
+                    };
+                    j.pushStatic(",\"// Did not have source contents for this file.\n// This is a bug in Bun's bundler and should be reported with a reproduction.\"");
+                    file_paths.appendAssumeCapacity(paths[file_index.get()]);
+                    source_contents.appendAssumeCapacity(ptr);
+                    continue;
+                }
+                // Store the location of the source file. Since it is going
+                // to be stored regardless for use by the served source map.
+                // These 8 bytes per file allow remapping sources without
+                // reading from disk, as well as ensuring that remaps to
+                // this exact sourcemap can print the previous state of
+                // the code when it was modified.
+                bun.assert(quoted_slice[0] == '"');
+                bun.assert(quoted_slice[quoted_slice.len - 1] == '"');
+                const ptr: bun.StringPointer = .{
+                    .offset = @intCast(j.len + "\"".len),
+                    .length = @intCast(quoted_slice.len - "\"\"".len),
+                };
+                j.pushStatic(quoted_slice);
+                file_paths.appendAssumeCapacity(paths[file_index.get()]);
+                source_contents.appendAssumeCapacity(ptr);
+            }
+            // This first mapping makes the bytes from line 0 column 0 to the next mapping
+            j.pushStatic(
+                \\],"names":[],"mappings":"AAAA
             );
 
+            const mappings_start = j.len - 4;
             var prev_end_state: SourceMap.SourceMapState = .{
                 .generated_line = 0,
                 .generated_column = 0,
@@ -4097,10 +4761,10 @@ pub fn IncrementalGraph(side: bake.Side) type {
             // +2 because the magic fairy in my dreams said it would align the source maps.
             var lines_between: u32 = runtime.line_count + 2;
 
-            var non_empty_source_index: i32 = 0;
-            for (g.current_chunk_parts.items) |entry| {
+            // Join all of the mappings together.
+            for (g.current_chunk_parts.items, 1..) |entry, source_index| {
                 const source_map = &source_maps[entry.get()];
-                if (source_map.vlq_chunk.len == 0) {
+                if (source_map.vlq_len == 0) {
                     if (source_map.extra.empty.line_count.unwrap()) |line_count| {
                         lines_between += line_count.get();
                     } else {
@@ -4108,11 +4772,59 @@ pub fn IncrementalGraph(side: bake.Side) type {
                         source_map.extra.empty.line_count = .init(count);
                         lines_between += count;
                     }
+                    // TODO: consider reviving this code. it generates a valid
+                    // map according to Source Map Visualization, but it does
+                    // not map correctly in Chrome or Bun. This code tries to
+                    // add a mapping for each source line of unmapped code, so
+                    // at the very minimum the file name can be retrieved.
+                    // In practice, Bun may not need this as the only chunks
+                    // with this behavior are HTML and empty JS files.
+
+                    // if (lines_between > 0) {
+                    //     j.pushStatic(try bun.strings.repeatingAlloc(arena, lines_between, ';'));
+                    //     lines_between = 0;
+                    // }
+                    // if (source_map.extra.empty.line_count.unwrap()) |lc| {
+                    //     lines_between = lc.get();
+                    // } else {
+                    //     const count: u32 = @intCast(bun.strings.countChar(files[entry.get()].jsCode(), '\n'));
+                    //     source_map.extra.empty.line_count = .init(count);
+                    //     lines_between = count;
+                    // }
+                    // // For empty chunks, put a blank entry for HTML. This will
+                    // // consist of a single mapping per line to cover the file
+                    // assert(lines_between > 1); // there is one line to open the function, and one line `},` to close it
+                    // const repeating_mapping = ";AAAA"; // VLQ [0, 0, 0, 0] to repeat a column zero same source index mapping
+                    // const original_line = SourceMap.encodeVLQWithLookupTable(-prev_end_state.original_line);
+                    // const original_column = SourceMap.encodeVLQWithLookupTable(-prev_end_state.original_column);
+                    // var list = std.ArrayList(u8).init(arena);
+                    // const first = "AC"; // VLQ [0, 1], generated column and generated source index
+                    // try list.ensureTotalCapacityPrecise(
+                    //     @as(usize, (lines_between + 1) * repeating_mapping.len) +
+                    //         first.len +
+                    //         @as(usize, original_line.len) +
+                    //         @as(usize, original_column.len),
+                    // );
+                    // list.appendSliceAssumeCapacity(first);
+                    // list.appendSliceAssumeCapacity(original_line.slice());
+                    // list.appendSliceAssumeCapacity(original_column.slice());
+                    // for (0..lines_between + 1) |_| {
+                    //     list.appendSliceAssumeCapacity(repeating_mapping);
+                    // }
+                    // j.pushStatic(list.items);
+                    // prev_end_state = .{
+                    //     .source_index = @intCast(source_index),
+                    //     .generated_line = 0,
+                    //     .generated_column = 0,
+                    //     .original_line = 0,
+                    //     .original_column = 0,
+                    // };
+                    // lines_between = 1;
                     continue;
                 }
 
                 const start_state: SourceMap.SourceMapState = .{
-                    .source_index = non_empty_source_index,
+                    .source_index = @intCast(source_index),
                     .generated_line = @intCast(lines_between),
                     .generated_column = 0,
                     .original_line = 0,
@@ -4125,34 +4837,46 @@ pub fn IncrementalGraph(side: bake.Side) type {
                     arena,
                     prev_end_state,
                     start_state,
-                    source_map.vlq_chunk.slice(),
+                    source_map.vlq(),
                 );
 
                 prev_end_state = .{
-                    .source_index = non_empty_source_index,
+                    .source_index = @intCast(source_index),
                     .generated_line = 0,
                     .generated_column = 0,
                     .original_line = source_map.extra.end_state.original_line,
                     .original_column = source_map.extra.end_state.original_column,
                 };
-
-                non_empty_source_index += 1;
             }
+            const mappings_len = j.len - mappings_start;
 
-            const slice = try j.doneWithEnd(gpa, "\"}");
+            const json_bytes = try j.doneWithEnd(gpa, "\"}");
+            errdefer @compileError("last try should be the final alloc");
 
             if (bun.FeatureFlags.bake_debugging_features) if (g.owner().dump_dir) |dump_dir| {
                 const rel_path_escaped = "latest_chunk.js.map";
                 dumpBundle(dump_dir, switch (side) {
                     .client => .client,
                     .server => .server,
-                }, rel_path_escaped, slice, false) catch |err| {
+                }, rel_path_escaped, json_bytes, false) catch |err| {
                     bun.handleErrorReturnTrace(err, @errorReturnTrace());
                     Output.warn("Could not dump bundle: {}", .{err});
                 };
             };
 
-            return slice;
+            out.* = .{
+                .ref_count = out.ref_count,
+                .response = .initFromAnyBlob(&.fromOwnedSlice(gpa, json_bytes), .{
+                    .server = g.owner().server,
+                    .mime_type = &.json,
+                }),
+                .mappings_data = .{
+                    .offset = @intCast(mappings_start),
+                    .length = @intCast(mappings_len),
+                },
+                .file_paths = file_paths.items,
+                .source_contents = source_contents.items.ptr,
+            };
         }
 
         fn disconnectAndDeleteFile(g: *@This(), file_index: FileIndex) void {
@@ -4179,6 +4903,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
 
             g.owner().allocator.free(keys[file_index.get()]);
             keys[file_index.get()] = ""; // cannot be `undefined` as it may be read by hashmap logic
+
+            assert_eql(g.first_dep.items[file_index.get()], .none);
+            assert_eql(g.first_import.items[file_index.get()], .none);
 
             // TODO: it is infeasible to swapRemove a file since
             // FrameworkRouter, SerializedFailure, and more structures contains
@@ -4228,7 +4955,12 @@ const IncrementalResult = struct {
     framework_routes_affected: ArrayListUnmanaged(RouteIndexAndRecurseFlag),
     /// HTML routes have slightly different anatomy than their
     /// framework-provided counterparts, and get a separate list.
-    html_routes_affected: ArrayListUnmanaged(RouteBundle.Index),
+    /// This list is just for when a script/style URL needs to be rewritten.
+    html_routes_soft_affected: ArrayListUnmanaged(RouteBundle.Index),
+    /// Requires a hard reload of active viewers.
+    /// - Changed HTML File
+    /// - Non-JS/CSS link between HTML file and import, such as image.
+    html_routes_hard_affected: ArrayListUnmanaged(RouteBundle.Index),
     /// Set to true if any IncrementalGraph edges were added or removed.
     had_adjusted_edges: bool,
 
@@ -4263,7 +4995,8 @@ const IncrementalResult = struct {
 
     const empty: IncrementalResult = .{
         .framework_routes_affected = .{},
-        .html_routes_affected = .{},
+        .html_routes_soft_affected = .{},
+        .html_routes_hard_affected = .{},
         .had_adjusted_edges = false,
         .failures_removed = .{},
         .failures_added = .{},
@@ -4274,7 +5007,8 @@ const IncrementalResult = struct {
 
     fn reset(result: *IncrementalResult) void {
         result.framework_routes_affected.clearRetainingCapacity();
-        result.html_routes_affected.clearRetainingCapacity();
+        result.html_routes_soft_affected.clearRetainingCapacity();
+        result.html_routes_hard_affected.clearRetainingCapacity();
         assert(result.failures_removed.items.len == 0);
         result.failures_added.clearRetainingCapacity();
         result.client_components_added.clearRetainingCapacity();
@@ -4306,6 +5040,16 @@ const GraphTraceState = struct {
         gts.server_bits.setAll(false);
         gts.client_bits.setAll(false);
     }
+
+    fn resize(gts: *GraphTraceState, side: bake.Side, allocator: Allocator, new_size: usize) !void {
+        const b = switch (side) {
+            .client => &gts.client_bits,
+            .server => &gts.server_bits,
+        };
+        if (b.bit_length < new_size) {
+            try b.resize(allocator, new_size, false);
+        }
+    }
 };
 
 const TraceImportGoal = enum {
@@ -4314,24 +5058,25 @@ const TraceImportGoal = enum {
     find_errors,
 };
 
-fn initGraphTraceState(dev: *const DevServer, sfa: Allocator) !GraphTraceState {
+/// `extra_client_bits` is specified if it is possible that the client graph may
+/// increase in size while the bits are being used. This happens with CSS files,
+/// though [TODO] might not actually be necessary.
+fn initGraphTraceState(dev: *const DevServer, sfa: Allocator, extra_client_bits: usize) !GraphTraceState {
     var server_bits = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.server_graph.bundled_files.count());
     errdefer server_bits.deinit(sfa);
-    const client_bits = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.client_graph.bundled_files.count());
+    const client_bits = try DynamicBitSetUnmanaged.initEmpty(sfa, dev.client_graph.bundled_files.count() + extra_client_bits);
     return .{ .server_bits = server_bits, .client_bits = client_bits };
 }
 
 /// When a file fails to import a relative path, directory watchers are added so
 /// that when a matching file is created, the dependencies can be rebuilt. This
 /// handles HMR cases where a user writes an import before creating the file,
-/// or moves files around.
+/// or moves files around. This structure is not thread-safe.
 ///
 /// This structure manages those watchers, including releasing them once
 /// import resolution failures are solved.
+// TODO: when a file fixes its resolution, there is no code specifically to remove the watchers.
 const DirectoryWatchStore = struct {
-    /// This guards all store state
-    lock: Mutex,
-
     /// List of active watchers. Can be re-ordered on removal
     watches: bun.StringArrayHashMapUnmanaged(Entry),
     dependencies: ArrayListUnmanaged(Dep),
@@ -4339,7 +5084,6 @@ const DirectoryWatchStore = struct {
     dependencies_free_list: ArrayListUnmanaged(Dep.Index),
 
     const empty: DirectoryWatchStore = .{
-        .lock = .{},
         .watches = .{},
         .dependencies = .{},
         .dependencies_free_list = .{},
@@ -4349,40 +5093,53 @@ const DirectoryWatchStore = struct {
         return @alignCast(@fieldParentPtr("directory_watchers", store));
     }
 
-    pub fn trackResolutionFailure(
-        store: *DirectoryWatchStore,
-        import_source: []const u8,
-        specifier: []const u8,
-        renderer: bake.Graph,
-    ) bun.OOM!void {
-        store.lock.lock();
-        defer store.lock.unlock();
-
-        // When it does not resolve to a file path, there is
-        // nothing to track. Bake does not watch node_modules.
-        if (!(bun.strings.startsWith(specifier, "./") or
-            bun.strings.startsWith(specifier, "../"))) return;
+    pub fn trackResolutionFailure(store: *DirectoryWatchStore, import_source: []const u8, specifier: []const u8, renderer: bake.Graph, loader: bun.options.Loader) bun.OOM!void {
+        // When it does not resolve to a file path, there is nothing to track.
+        if (specifier.len == 0) return;
         if (!std.fs.path.isAbsolute(import_source)) return;
+
+        switch (loader) {
+            .tsx, .ts, .jsx, .js => {
+                if (!(bun.strings.startsWith(specifier, "./") or
+                    bun.strings.startsWith(specifier, "../"))) return;
+            },
+
+            // Imports in CSS can resolve to relative files without './'
+            // Imports in HTML can resolve to project-relative paths by
+            // prefixing with '/', but that is done in HTMLScanner.
+            .css, .html => {},
+
+            // Multiple parts of DevServer rely on the fact that these
+            // loaders do not depend on importing other files.
+            .file,
+            .json,
+            .jsonc,
+            .toml,
+            .wasm,
+            .napi,
+            .base64,
+            .dataurl,
+            .text,
+            .bunsh,
+            .sqlite,
+            .sqlite_embedded,
+            => bun.debugAssert(false),
+        }
 
         const buf = bun.PathBufferPool.get();
         defer bun.PathBufferPool.put(buf);
         const joined = bun.path.joinAbsStringBuf(bun.path.dirname(import_source, .auto), buf, &.{specifier}, .auto);
         const dir = bun.path.dirname(joined, .auto);
 
-        // `import_source` is not a stable string. let's share memory with the file graph.
-        // this requires that
+        // The `import_source` parameter is not a stable string. Since the
+        // import source will be added to IncrementalGraph anyways, this is a
+        // great place to share memory.
         const dev = store.owner();
         dev.graph_safety_lock.lock();
         defer dev.graph_safety_lock.unlock();
         const owned_file_path = switch (renderer) {
-            .client => path: {
-                const index = try dev.client_graph.insertStale(import_source, false);
-                break :path dev.client_graph.bundled_files.keys()[index.get()];
-            },
-            .server, .ssr => path: {
-                const index = try dev.client_graph.insertStale(import_source, renderer == .ssr);
-                break :path dev.client_graph.bundled_files.keys()[index.get()];
-            },
+            .client => (try dev.client_graph.insertEmpty(import_source, .unknown)).key,
+            .server, .ssr => (try dev.server_graph.insertEmpty(import_source, .unknown)).key,
         };
 
         store.insert(dir, owned_file_path, specifier) catch |err| switch (err) {
@@ -4400,6 +5157,7 @@ const DirectoryWatchStore = struct {
         file_path: []const u8,
         specifier: []const u8,
     ) !void {
+        assert(specifier.len > 0);
         // TODO: watch the parent dir too.
         const dev = store.owner();
 
@@ -4412,13 +5170,14 @@ const DirectoryWatchStore = struct {
         if (store.dependencies_free_list.items.len == 0)
             try store.dependencies.ensureUnusedCapacity(dev.allocator, 1);
 
-        const gop = try store.watches.getOrPut(dev.allocator, dir_name_to_watch);
+        const gop = try store.watches.getOrPut(dev.allocator, bun.strings.withoutTrailingSlashWindowsPath(dir_name_to_watch));
+        const specifier_cloned = if (specifier[0] == '.' or std.fs.path.isAbsolute(specifier))
+            try dev.allocator.dupe(u8, specifier)
+        else
+            try std.fmt.allocPrint(dev.allocator, "./{s}", .{specifier});
+        errdefer dev.allocator.free(specifier_cloned);
+
         if (gop.found_existing) {
-            const specifier_cloned = try dev.allocator.dupe(u8, specifier);
-            errdefer dev.allocator.free(specifier_cloned);
-
-            // TODO: check for dependency
-
             const dep = store.appendDepAssumeCapacity(.{
                 .next = gop.value_ptr.first_dep.toOptional(),
                 .source_file_path = file_path,
@@ -4436,54 +5195,46 @@ const DirectoryWatchStore = struct {
             break :fd if (fd == .zero) null else fd;
         } else null;
 
-        const fd, const owned_fd = if (cache_fd) |fd|
+        const fd, const owned_fd = if (Watcher.requires_file_descriptors) if (cache_fd) |fd|
             .{ fd, false }
-        else
-            .{
-                switch (bun.sys.open(
-                    &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
-                        error.NameTooLong => return, // wouldn't be able to open, ignore
-                    }),
-                    bun.O.DIRECTORY,
-                    0,
-                )) {
-                    .result => |fd| fd,
-                    .err => |err| switch (err.getErrno()) {
-                        // If this directory doesn't exist, a watcher should be
-                        // placed on the parent directory. Then, if this
-                        // directory is later created, the watcher can be
-                        // properly initialized. This would happen if you write
-                        // an import path like `./dir/whatever/hello.tsx` and
-                        // `dir` does not exist, Bun must place a watcher on
-                        // `.`, see the creation of `dir`, and repeat until it
-                        // can open a watcher on `whatever` to see the creation
-                        // of `hello.tsx`
-                        .NOENT => {
-                            // TODO: implement that. for now it ignores
-                            return;
-                        },
-                        .NOTDIR => return error.Ignore, // ignore
-                        else => {
-                            bun.todoPanic(@src(), "log watcher error", .{});
-                        },
-                    },
+        else switch (bun.sys.open(
+            &(std.posix.toPosixPath(dir_name_to_watch) catch |err| switch (err) {
+                error.NameTooLong => return error.Ignore, // wouldn't be able to open, ignore
+            }),
+            // O_EVTONLY is the flag to indicate that only watches will be used.
+            bun.O.DIRECTORY | bun.c.O_EVTONLY,
+            0,
+        )) {
+            .result => |fd| .{ fd, true },
+            .err => |err| switch (err.getErrno()) {
+                // If this directory doesn't exist, a watcher should be placed
+                // on the parent directory. Then, if this directory is later
+                // created, the watcher can be properly initialized. This would
+                // happen if a specifier like `./dir/whatever/hello.tsx` and
+                // `dir` does not exist, Bun must place a watcher on `.`, see
+                // the creation of `dir`, and repeat until it can open a watcher
+                // on `whatever` to see the creation of `hello.tsx`
+                .NOENT => {
+                    // TODO: implement that. for now it ignores (BUN-10968)
+                    return error.Ignore;
                 },
-                true,
-            };
-        errdefer _ = if (owned_fd) bun.sys.close(fd);
-
-        debug.log("-> fd: {} ({s})", .{
-            fd,
-            if (owned_fd) "from dir cache" else "owned fd",
-        });
+                .NOTDIR => return error.Ignore, // ignore
+                else => {
+                    bun.todoPanic(@src(), "log watcher error", .{});
+                },
+            },
+        } else .{ bun.invalid_fd, false };
+        errdefer _ = if (Watcher.requires_file_descriptors) if (owned_fd) bun.sys.close(fd);
+        if (Watcher.requires_file_descriptors)
+            debug.log("-> fd: {} ({s})", .{
+                fd,
+                if (owned_fd) "from dir cache" else "owned fd",
+            });
 
         const dir_name = try dev.allocator.dupe(u8, dir_name_to_watch);
         errdefer dev.allocator.free(dir_name);
 
-        gop.key_ptr.* = dir_name;
-
-        const specifier_cloned = try dev.allocator.dupe(u8, specifier);
-        errdefer dev.allocator.free(specifier_cloned);
+        gop.key_ptr.* = bun.strings.withoutTrailingSlashWindowsPath(dir_name);
 
         const watch_index = switch (dev.bun_watcher.addDirectory(fd, dir_name, bun.Watcher.getHash(dir_name), false)) {
             .err => return error.Ignore,
@@ -4518,7 +5269,7 @@ const DirectoryWatchStore = struct {
     }
 
     /// Expects dependency list to be already freed
-    fn freeEntry(store: *DirectoryWatchStore, entry_index: usize) void {
+    fn freeEntry(store: *DirectoryWatchStore, alloc: Allocator, entry_index: usize) void {
         const entry = store.watches.values()[entry_index];
 
         debug.log("DirectoryWatchStore.freeEntry({d}, {})", .{
@@ -4529,6 +5280,8 @@ const DirectoryWatchStore = struct {
         store.owner().bun_watcher.removeAtIndex(entry.watch_index, 0, &.{}, .file);
 
         defer _ = if (entry.dir_fd_owned) bun.sys.close(entry.dir);
+
+        alloc.free(store.watches.keys()[entry_index]);
         store.watches.swapRemoveAt(entry_index);
 
         if (store.watches.entries.len == 0) {
@@ -4563,8 +5316,8 @@ const DirectoryWatchStore = struct {
         /// The file used
         source_file_path: []const u8,
         /// The specifier that failed. Before running re-build, it is resolved for, as
-        /// creating an unrelated file should not re-emit another error. Default-allocator
-        specifier: []const u8,
+        /// creating an unrelated file should not re-emit another error. Allocated memory
+        specifier: []u8,
 
         const Index = bun.GenericIndex(u32, Dep);
     };
@@ -4585,12 +5338,12 @@ const ChunkKind = enum {
 /// The HMR client in the browser is expected to sort the final list of errors
 /// for deterministic output; there is code in DevServer that uses `swapRemove`.
 pub const SerializedFailure = struct {
-    /// Serialized data is always owned by default_allocator
+    /// Serialized data is always owned by dev.allocator
     /// The first 32 bits of this slice contain the owner
     data: []u8,
 
-    pub fn deinit(f: SerializedFailure) void {
-        bun.default_allocator.free(f.data);
+    pub fn deinit(f: SerializedFailure, dev: *DevServer) void {
+        dev.allocator.free(f.data);
     }
 
     /// The metaphorical owner of an incremental file error. The packed variant
@@ -4611,8 +5364,8 @@ pub const SerializedFailure = struct {
         }
 
         pub const Packed = packed struct(u32) {
-            kind: enum(u2) { none, route, client, server },
             data: u30,
+            kind: enum(u2) { none, route, client, server },
 
             pub fn decode(owner: Packed) Owner {
                 return switch (owner.kind) {
@@ -4621,6 +5374,10 @@ pub const SerializedFailure = struct {
                     .server => .{ .server = IncrementalGraph(.server).FileIndex.init(owner.data) },
                     .route => .{ .route = RouteBundle.Index.init(owner.data) },
                 };
+            }
+
+            comptime {
+                assert(@as(u32, @bitCast(Packed{ .kind = .none, .data = 1 })) == 1);
             }
         };
     };
@@ -4676,13 +5433,13 @@ pub const SerializedFailure = struct {
         js_aggregate,
     };
 
-    pub fn initFromJs(owner: Owner, value: JSValue) !SerializedFailure {
+    pub fn initFromJs(dev: *DevServer, owner: Owner, value: JSValue) !SerializedFailure {
         {
             _ = value;
             @panic("TODO");
         }
         // Avoid small re-allocations without requesting so much from the heap
-        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+        var sfb = std.heap.stackFallback(65536, dev.allocator);
         var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
             unreachable; // enough space
         const w = payload.writer();
@@ -4692,7 +5449,7 @@ pub const SerializedFailure = struct {
 
         // Avoid-recloning if it is was moved to the hap
         const data = if (payload.items.ptr == &sfb.buffer)
-            try bun.default_allocator.dupe(u8, payload.items)
+            try dev.allocator.dupe(u8, payload.items)
         else
             payload.items;
 
@@ -4700,6 +5457,7 @@ pub const SerializedFailure = struct {
     }
 
     pub fn initFromLog(
+        dev: *DevServer,
         owner: Owner,
         // for .client and .server, these are meant to be relative file paths
         owner_display_name: []const u8,
@@ -4708,7 +5466,7 @@ pub const SerializedFailure = struct {
         assert(messages.len > 0);
 
         // Avoid small re-allocations without requesting so much from the heap
-        var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+        var sfb = std.heap.stackFallback(65536, dev.allocator);
         var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
             unreachable; // enough space
         const w = payload.writer();
@@ -4725,7 +5483,7 @@ pub const SerializedFailure = struct {
 
         // Avoid-recloning if it is was moved to the hap
         const data = if (payload.items.ptr == &sfb.buffer)
-            try bun.default_allocator.dupe(u8, payload.items)
+            try dev.allocator.dupe(u8, payload.items)
         else
             payload.items;
 
@@ -4841,8 +5599,8 @@ noinline fn dumpBundleForChunk(dev: *DevServer, dump_dir: std.fs.Dir, side: bake
     var a: bun.PathBuffer = undefined;
     var b: [bun.MAX_PATH_BYTES * 2]u8 = undefined;
     const rel_path = bun.path.relativeBufZ(&a, cwd, key);
-    const size = std.mem.replacementSize(u8, rel_path, "../", "_.._/");
-    _ = std.mem.replace(u8, rel_path, "../", "_.._/", &b);
+    const size = std.mem.replacementSize(u8, rel_path, ".." ++ std.fs.path.sep_str, "_.._" ++ std.fs.path.sep_str);
+    _ = std.mem.replace(u8, rel_path, ".." ++ std.fs.path.sep_str, "_.._" ++ std.fs.path.sep_str, &b);
     const rel_path_escaped = b[0..size];
     dumpBundle(dump_dir, switch (side) {
         .client => .client,
@@ -4856,7 +5614,7 @@ fn emitVisualizerMessageIfNeeded(dev: *DevServer) void {
     if (!bun.FeatureFlags.bake_debugging_features) return;
     if (dev.emit_visualizer_events == 0) return;
 
-    var sfb = std.heap.stackFallback(65536, bun.default_allocator);
+    var sfb = std.heap.stackFallback(65536, dev.allocator);
     var payload = std.ArrayList(u8).initCapacity(sfb.get(), 65536) catch
         unreachable; // enough capacity on the stack
     defer payload.deinit();
@@ -4884,7 +5642,7 @@ fn writeVisualizerMessage(dev: *DevServer, payload: *std.ArrayList(u8)) !void {
             try w.writeInt(u32, @intCast(normalized_key.len), .little);
             if (k.len == 0) continue;
             try w.writeAll(normalized_key);
-            try w.writeByte(@intFromBool(g.stale_files.isSet(i) or switch (side) {
+            try w.writeByte(@intFromBool(g.stale_files.isSetAllowOutOfBound(i, true) or switch (side) {
                 .server => v.failed,
                 .client => v.flags.failed,
             }));
@@ -4933,7 +5691,8 @@ pub fn onWebSocketUpgrade(
         .subscriptions = .{},
         .active_route = .none,
     });
-    res.upgrade(
+    dev.active_websocket_connections.put(dev.allocator, dw, {}) catch bun.outOfMemory();
+    _ = res.upgrade(
         *HmrSocket,
         dw,
         req.header("sec-websocket-key") orelse "",
@@ -5036,6 +5795,9 @@ pub const MessageId = enum(u8) {
     /// Sent in response to `set_url`.
     /// - `u32`: Route index
     set_url_response = 'n',
+    /// Used for synchronization in DevServer tests, to identify when a update was
+    /// acknowledged by the watcher but intentionally took no action.
+    redundant_watch = 'r',
 
     pub inline fn char(id: MessageId) u8 {
         return @intFromEnum(id);
@@ -5046,19 +5808,9 @@ pub const IncomingMessageId = enum(u8) {
     /// Subscribe to an event channel. Payload is a sequence of chars available
     /// in HmrTopic.
     subscribe = 's',
-    // /// Subscribe to `.route_manifest` events. No payload.
-    // subscribe_route_manifest = 'r',
-    // /// Emit a hot update for a file without actually changing its on-disk
-    // /// content. This can be used by an editor extension to stream contents in
-    // /// IDE to reflect in the browser. This is gated to only work on localhost
-    // /// socket connections.
-    // virtual_file_change = 'w',
     /// Emitted on client-side navigations.
     /// Rest of payload is a UTF-8 string.
     set_url = 'n',
-    /// Emit a message from the browser. Payload is opaque bytes that DevServer
-    /// does not care about. In practice, the payload is a JSON object.
-    browser_message = 'm',
 
     /// Invalid data
     _,
@@ -5069,7 +5821,7 @@ const HmrTopic = enum(u8) {
     errors = 'e',
     browser_error = 'E',
     visualizer = 'v',
-    // route_manifest = 'r',
+    redundant_watch = 'r',
 
     /// Invalid data
     _,
@@ -5102,6 +5854,7 @@ const HmrTopic = enum(u8) {
 
 const HmrSocket = struct {
     dev: *DevServer,
+    underlying: ?AnyWebSocket = null,
     subscriptions: HmrTopic.Bits,
     /// Allows actions which inspect or mutate sensitive DevServer state.
     is_from_localhost: bool,
@@ -5111,6 +5864,7 @@ const HmrSocket = struct {
 
     pub fn onOpen(s: *HmrSocket, ws: AnyWebSocket) void {
         _ = ws.send(&(.{MessageId.version.char()} ++ s.dev.configuration_hash_key), .binary, false, true);
+        s.underlying = ws;
     }
 
     pub fn onMessage(s: *HmrSocket, ws: AnyWebSocket, msg: []const u8, opcode: uws.Opcode) void {
@@ -5172,7 +5926,7 @@ const HmrSocket = struct {
                 var response: [5]u8 = .{MessageId.set_url_response.char()} ++ std.mem.toBytes(rbi.get());
                 _ = ws.send(&response, .binary, false, true);
             },
-            else => ws.close(),
+            _ => ws.close(),
         }
     }
 
@@ -5189,7 +5943,8 @@ const HmrSocket = struct {
             s.dev.routeBundlePtr(old).active_viewers -= 1;
         }
 
-        defer s.dev.allocator.destroy(s);
+        bun.debugAssert(s.dev.active_websocket_connections.remove(s));
+        s.dev.allocator.destroy(s);
     }
 };
 
@@ -5228,14 +5983,13 @@ const c = struct {
 pub fn startReloadBundle(dev: *DevServer, event: *HotReloadEvent) bun.OOM!void {
     defer event.files.clearRetainingCapacity();
 
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = std.heap.stackFallback(4096, dev.allocator);
     const temp_alloc = sfb.get();
     var entry_points: EntryPointList = EntryPointList.empty;
     defer entry_points.deinit(temp_alloc);
 
     event.processFileList(dev, &entry_points, temp_alloc);
     if (entry_points.set.count() == 0) {
-        Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
         return;
     }
 
@@ -5282,38 +6036,71 @@ pub const HotReloadEvent = struct {
     owner: *DevServer,
     /// Initialized in WatcherAtomics.watcherReleaseAndSubmitEvent
     concurrent_task: JSC.ConcurrentTask,
-    /// The watcher is not able to peek into the incremental graph to know what
-    /// files to invalidate, so the watch events are de-duplicated and passed
-    /// along.
-    files: bun.StringArrayHashMapUnmanaged(Watcher.Event.Op),
+    /// The watcher is not able to peek into IncrementalGraph to know what files
+    /// to invalidate, so the watch events are de-duplicated and passed along.
+    /// The keys are owned by the file watcher.
+    files: bun.StringArrayHashMapUnmanaged(void),
+    /// Directories are watched so that resolution failures can be solved.
+    /// The keys are owned by the file watcher.
+    dirs: bun.StringArrayHashMapUnmanaged(void),
+    /// Same purpose as `files` but keys do not have an owner.
+    extra_files: std.ArrayListUnmanaged(u8),
     /// Initialized by the WatcherAtomics.watcherAcquireEvent
     timer: std.time.Timer,
     /// This event may be referenced by either DevServer or Watcher thread.
     /// 1 if referenced, 0 if unreferenced; see WatcherAtomics
     contention_indicator: std.atomic.Value(u32),
 
+    debug_mutex: if (Environment.isDebug) bun.Mutex else void,
+
     pub fn initEmpty(owner: *DevServer) HotReloadEvent {
         return .{
             .owner = owner,
             .concurrent_task = undefined,
             .files = .empty,
+            .dirs = .empty,
             .timer = undefined,
             .contention_indicator = .init(0),
+            .debug_mutex = if (Environment.isDebug) .{} else {},
+            .extra_files = .empty,
         };
     }
 
-    pub fn append(
-        event: *HotReloadEvent,
-        allocator: Allocator,
-        file_path: []const u8,
-        op: Watcher.Event.Op,
-    ) void {
-        const gop = event.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
-        if (gop.found_existing) {
-            gop.value_ptr.* = gop.value_ptr.merge(op);
-        } else {
-            gop.value_ptr.* = op;
-        }
+    pub fn reset(ev: *HotReloadEvent) void {
+        if (Environment.isDebug)
+            ev.debug_mutex.unlock();
+
+        ev.files.clearRetainingCapacity();
+        ev.dirs.clearRetainingCapacity();
+        ev.extra_files.clearRetainingCapacity();
+        ev.timer = undefined;
+    }
+
+    pub fn isEmpty(ev: *const HotReloadEvent) bool {
+        return (ev.files.count() + ev.dirs.count()) == 0;
+    }
+
+    pub fn appendFile(event: *HotReloadEvent, allocator: Allocator, file_path: []const u8) void {
+        _ = event.files.getOrPut(allocator, file_path) catch bun.outOfMemory();
+    }
+
+    pub fn appendDir(event: *HotReloadEvent, allocator: Allocator, dir_path: []const u8, maybe_sub_path: ?[]const u8) void {
+        if (dir_path.len == 0) return;
+        _ = event.dirs.getOrPut(allocator, dir_path) catch bun.outOfMemory();
+
+        const sub_path = maybe_sub_path orelse return;
+        if (sub_path.len == 0) return;
+
+        const platform = bun.path.Platform.auto;
+        const ends_with_sep = platform.isSeparator(dir_path[dir_path.len - 1]);
+        const starts_with_sep = platform.isSeparator(sub_path[0]);
+        const sep_offset: i32 = if (ends_with_sep and starts_with_sep) -1 else 1;
+
+        event.extra_files.ensureUnusedCapacity(allocator, @intCast(@as(i32, @intCast(dir_path.len + sub_path.len)) + sep_offset + 1)) catch bun.outOfMemory();
+        event.extra_files.appendSliceAssumeCapacity(if (ends_with_sep) dir_path[0 .. dir_path.len - 1] else dir_path);
+        event.extra_files.appendAssumeCapacity(platform.separator());
+        event.extra_files.appendSliceAssumeCapacity(sub_path);
+        event.extra_files.appendAssumeCapacity(0);
     }
 
     /// Invalidates items in IncrementalGraph, appending all new items to `entry_points`
@@ -5321,31 +6108,91 @@ pub const HotReloadEvent = struct {
         event: *HotReloadEvent,
         dev: *DevServer,
         entry_points: *EntryPointList,
-        alloc: Allocator,
+        temp_alloc: Allocator,
     ) void {
-        const changed_file_paths = event.files.keys();
-        // TODO: check for .delete and remove items from graph. this has to be done
-        // with care because some editors save by deleting and recreating the file.
-        // delete events are not to be trusted at face value. also, merging of
-        // events can cause .write and .delete to be true at the same time.
-        const changed_file_attributes = event.files.values();
-        _ = changed_file_attributes;
+        dev.graph_safety_lock.lock();
+        defer dev.graph_safety_lock.unlock();
 
-        {
-            dev.graph_safety_lock.lock();
-            defer dev.graph_safety_lock.unlock();
+        // First handle directories, because this may mutate `event.files`
+        if (dev.directory_watchers.watches.count() > 0) for (event.dirs.keys()) |changed_dir_with_slash| {
+            const changed_dir = bun.strings.withoutTrailingSlashWindowsPath(changed_dir_with_slash);
 
-            inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
-                g.invalidate(changed_file_paths, entry_points, alloc) catch bun.outOfMemory();
-            }
+            // Bust resolution cache, but since Bun does not watch all
+            // directories in a codebase, this only targets the following resolutions
+            _ = dev.server_transpiler.resolver.bustDirCache(changed_dir);
 
-            if (dev.has_tailwind_plugin_hack) |*map| {
-                for (map.keys()) |abs_path| {
-                    const file = dev.client_graph.bundled_files.get(abs_path) orelse
-                        continue;
-                    if (file.flags.kind == .css)
-                        entry_points.appendCss(alloc, abs_path) catch bun.outOfMemory();
+            // if a directory watch exists for resolution failures, check those now.
+            if (dev.directory_watchers.watches.getIndex(changed_dir)) |watcher_index| {
+                const entry = &dev.directory_watchers.watches.values()[watcher_index];
+                var new_chain: DirectoryWatchStore.Dep.Index.Optional = .none;
+                var it: ?DirectoryWatchStore.Dep.Index = entry.first_dep;
+
+                while (it) |index| {
+                    const dep = &dev.directory_watchers.dependencies.items[index.get()];
+                    it = dep.next.unwrap();
+
+                    if ((dev.server_transpiler.resolver.resolve(
+                        bun.path.dirname(dep.source_file_path, .auto),
+                        dep.specifier,
+                        .stmt,
+                    ) catch null) != null) {
+                        // this resolution result is not preserved as passing it
+                        // into BundleV2 is too complicated. the resolution is
+                        // cached, anyways.
+                        event.appendFile(dev.allocator, dep.source_file_path);
+                        dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch bun.outOfMemory();
+                    } else {
+                        // rebuild a new linked list for unaffected files
+                        dep.next = new_chain;
+                        new_chain = index.toOptional();
+                    }
                 }
+
+                if (new_chain.unwrap()) |new_first_dep| {
+                    entry.first_dep = new_first_dep;
+                } else {
+                    // without any files to depend on this watcher is freed
+                    dev.directory_watchers.freeEntry(dev.allocator, watcher_index);
+                }
+            }
+        };
+
+        var rest_extra = event.extra_files.items;
+        while (bun.strings.indexOfChar(rest_extra, 0)) |str| {
+            event.files.put(dev.allocator, rest_extra[0..str], {}) catch bun.outOfMemory();
+            rest_extra = rest_extra[str + 1 ..];
+        }
+        if (rest_extra.len > 0) {
+            event.files.put(dev.allocator, rest_extra, {}) catch bun.outOfMemory();
+        }
+
+        const changed_file_paths = event.files.keys();
+        inline for (.{ &dev.server_graph, &dev.client_graph }) |g| {
+            g.invalidate(changed_file_paths, entry_points, temp_alloc) catch bun.outOfMemory();
+        }
+
+        if (entry_points.set.count() == 0) {
+            Output.debugWarn("nothing to bundle", .{});
+            if (changed_file_paths.len > 0)
+                Output.debugWarn("modified files: {s}", .{
+                    bun.fmt.fmtSlice(changed_file_paths, ", "),
+                });
+
+            if (event.dirs.count() > 0)
+                Output.debugWarn("modified dirs: {s}", .{
+                    bun.fmt.fmtSlice(event.dirs.keys(), ", "),
+                });
+
+            dev.publish(.redundant_watch, &.{MessageId.redundant_watch.char()}, .binary);
+            return;
+        }
+
+        if (dev.has_tailwind_plugin_hack) |*map| {
+            for (map.keys()) |abs_path| {
+                const file = dev.client_graph.bundled_files.get(abs_path) orelse
+                    continue;
+                if (file.flags.kind == .css)
+                    entry_points.appendCss(temp_alloc, abs_path) catch bun.outOfMemory();
             }
         }
     }
@@ -5355,7 +6202,8 @@ pub const HotReloadEvent = struct {
         defer debug.log("HMR Task end", .{});
 
         const dev = first.owner;
-        if (Environment.allow_assert) {
+        if (Environment.isDebug) {
+            assert(first.debug_mutex.tryLock());
             assert(first.contention_indicator.load(.seq_cst) == 0);
         }
 
@@ -5364,23 +6212,24 @@ pub const HotReloadEvent = struct {
             return;
         }
 
-        // defer event.files.clearRetainingCapacity();
-
-        var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+        var sfb = std.heap.stackFallback(4096, dev.allocator);
         const temp_alloc = sfb.get();
         var entry_points: EntryPointList = EntryPointList.empty;
         defer entry_points.deinit(temp_alloc);
 
         first.processFileList(dev, &entry_points, temp_alloc);
+
         const timer = first.timer;
 
         if (dev.watcher_atomics.recycleEventFromDevServer(first)) |second| {
+            if (Environment.isDebug) {
+                assert(second.debug_mutex.tryLock());
+            }
             second.processFileList(dev, &entry_points, temp_alloc);
             dev.watcher_atomics.recycleSecondEventFromDevServer(second);
         }
 
         if (entry_points.set.count() == 0) {
-            Output.debugWarn("nothing to bundle. watcher may potentially be watching too many files.", .{});
             return;
         }
 
@@ -5420,8 +6269,8 @@ const WatcherAtomics = struct {
     pub fn init(dev: *DevServer) WatcherAtomics {
         return .{
             .events = .{
-                .{ .aligned = HotReloadEvent.initEmpty(dev) },
-                .{ .aligned = HotReloadEvent.initEmpty(dev) },
+                .{ .aligned = .initEmpty(dev) },
+                .{ .aligned = .initEmpty(dev) },
             },
             .current = 0,
             .watcher_events_emitted = .init(0),
@@ -5439,7 +6288,7 @@ const WatcherAtomics = struct {
         switch (ev.contention_indicator.swap(1, .seq_cst)) {
             0 => {
                 // New event, initialize the timer if it is empty.
-                if (ev.files.count() == 0)
+                if (ev.isEmpty())
                     ev.timer = std.time.Timer.start() catch unreachable;
             },
             1 => {
@@ -5457,6 +6306,9 @@ const WatcherAtomics = struct {
 
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
+        if (Environment.isDebug)
+            assert(ev.debug_mutex.tryLock());
+
         return ev;
     }
 
@@ -5466,7 +6318,16 @@ const WatcherAtomics = struct {
         state.watcher_has_event.unlock();
         ev.owner.bun_watcher.thread_lock.assertLocked();
 
-        if (ev.files.count() > 0) {
+        if (Environment.isDebug) {
+            for (std.mem.asBytes(&ev.timer)) |b| {
+                if (b != 0xAA) break;
+            } else @panic("timer is undefined memory in watcherReleaseAndSubmitEvent");
+        }
+
+        if (Environment.isDebug)
+            ev.debug_mutex.unlock();
+
+        if (!ev.isEmpty()) {
             @branchHint(.likely);
             // There are files to be processed, increment this count first.
             const prev_count = state.watcher_events_emitted.fetchAdd(1, .seq_cst);
@@ -5502,8 +6363,7 @@ const WatcherAtomics = struct {
     /// Called by DevServer after it receives a task callback. If this returns
     /// another event, that event must be recycled with `recycleSecondEventFromDevServer`
     fn recycleEventFromDevServer(state: *WatcherAtomics, first_event: *HotReloadEvent) ?*HotReloadEvent {
-        first_event.files.clearRetainingCapacity();
-        first_event.timer = undefined;
+        first_event.reset();
 
         // Reset the watch count to zero, while detecting if
         // the other watch event was submitted.
@@ -5541,8 +6401,7 @@ const WatcherAtomics = struct {
     }
 
     fn recycleSecondEventFromDevServer(state: *WatcherAtomics, second_event: *HotReloadEvent) void {
-        second_event.files.clearRetainingCapacity();
-        second_event.timer = undefined;
+        second_event.reset();
 
         state.dev_server_has_event.unlock();
         if (Environment.allow_assert) {
@@ -5556,8 +6415,6 @@ const WatcherAtomics = struct {
 
 /// Called on watcher's thread; Access to dev-server state restricted.
 pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?[:0]u8, watchlist: Watcher.ItemList) void {
-    _ = changed_files;
-
     debug.log("onFileUpdate start", .{});
     defer debug.log("onFileUpdate end", .{});
 
@@ -5571,8 +6428,6 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
 
     defer dev.bun_watcher.flushEvictions();
 
-    // TODO: alot of code is missing
-    // TODO: story for busting resolution cache smartly?
     for (events) |event| {
         // TODO: why does this out of bounds when you delete every file in the directory?
         if (event.index >= file_paths.len) continue;
@@ -5587,50 +6442,19 @@ pub fn onFileUpdate(dev: *DevServer, events: []Watcher.Event, changed_files: []?
         switch (kind) {
             .file => {
                 if (event.op.delete or event.op.rename) {
+                    // TODO: audit this line heavily
                     dev.bun_watcher.removeAtIndex(event.index, 0, &.{}, .file);
                 }
 
-                ev.append(dev.allocator, file_path, event.op);
+                ev.appendFile(dev.allocator, file_path);
             },
             .directory => {
-                // bust the directory cache since this directory has changed
-                _ = dev.server_transpiler.resolver.bustDirCache(bun.strings.withoutTrailingSlashWindowsPath(file_path));
-
-                // if a directory watch exists for resolution
-                // failures, check those now.
-                dev.directory_watchers.lock.lock();
-                defer dev.directory_watchers.lock.unlock();
-                if (dev.directory_watchers.watches.getIndex(file_path)) |watcher_index| {
-                    const entry = &dev.directory_watchers.watches.values()[watcher_index];
-                    var new_chain: DirectoryWatchStore.Dep.Index.Optional = .none;
-                    var it: ?DirectoryWatchStore.Dep.Index = entry.first_dep;
-
-                    while (it) |index| {
-                        const dep = &dev.directory_watchers.dependencies.items[index.get()];
-                        it = dep.next.unwrap();
-                        if ((dev.server_transpiler.resolver.resolve(
-                            bun.path.dirname(dep.source_file_path, .auto),
-                            dep.specifier,
-                            .stmt,
-                        ) catch null) != null) {
-                            // the resolution result is not preserved as safely
-                            // transferring it into BundleV2 is too complicated. the
-                            // resolution is cached, anyways.
-                            ev.append(dev.allocator, dep.source_file_path, .{ .write = true });
-                            dev.directory_watchers.freeDependencyIndex(dev.allocator, index) catch bun.outOfMemory();
-                        } else {
-                            // rebuild a new linked list for unaffected files
-                            dep.next = new_chain;
-                            new_chain = index.toOptional();
-                        }
-                    }
-
-                    if (new_chain.unwrap()) |new_first_dep| {
-                        entry.first_dep = new_first_dep;
-                    } else {
-                        // without any files to depend on this watcher is freed
-                        dev.directory_watchers.freeEntry(watcher_index);
-                    }
+                // INotifyWatcher stores sub paths into `changed_files`
+                // the other platforms do not appear to write anything into `changed_files` ever.
+                if (Environment.isLinux) {
+                    ev.appendDir(dev.allocator, file_path, if (event.name_len > 0) changed_files[event.name_off] else null);
+                } else {
+                    ev.appendDir(dev.allocator, file_path, null);
                 }
             },
         }
@@ -5730,7 +6554,7 @@ fn relativePath(dev: *const DevServer, path: []const u8) []const u8 {
         threadlocal var buf: bun.PathBuffer = undefined;
     }.buf;
     const rel = bun.path.relativePlatformBuf(relative_path_buf, dev.root, path, .auto, true);
-    // @constCast: `rel` is owned by a mutable threadlocal buffer in the path code.
+    // @constCast: `rel` is owned by a mutable threadlocal buffer above
     bun.path.platformToPosixInPlace(u8, @constCast(rel));
     return rel;
 }
@@ -5757,7 +6581,7 @@ fn dumpStateDueToCrash(dev: *DevServer) !void {
     try file.writeAll(start);
     try file.writeAll("\nlet inlinedData = Uint8Array.from(atob(\"");
 
-    var sfb = std.heap.stackFallback(4096, bun.default_allocator);
+    var sfb = std.heap.stackFallback(4096, dev.allocator);
     var payload = try std.ArrayList(u8).initCapacity(sfb.get(), 4096);
     defer payload.deinit();
     try dev.writeVisualizerMessage(&payload);
@@ -5788,14 +6612,12 @@ pub const EntryPointList = struct {
 
     pub const empty: EntryPointList = .{ .set = .{} };
 
-    const Flags = packed struct(u8) {
+    pub const Flags = packed struct(u8) {
         client: bool = false,
         server: bool = false,
         ssr: bool = false,
         /// When this is set, also set .client = true
         css: bool = false,
-        // /// Indicates the file might have been deleted.
-        // potentially_deleted: bool = false,
 
         unused: enum(u4) { unused = 0 } = .unused,
     };
@@ -5872,75 +6694,91 @@ const HTMLRouter = struct {
 
 pub fn putOrOverwriteAsset(
     dev: *DevServer,
-    abs_path: []const u8,
-    contents: AnyBlob,
+    path: *const bun.fs.Path,
+    /// Ownership is transferred to this function.
+    contents: *const AnyBlob,
     content_hash: u64,
 ) !void {
     dev.graph_safety_lock.lock();
     defer dev.graph_safety_lock.unlock();
-    _ = try dev.assets.replacePath(abs_path, contents, .detectFromPath(abs_path), content_hash);
+    _ = try dev.assets.replacePath(path.text, contents, &.byExtension(path.name.extWithoutLeadingDot()), content_hash);
 }
 
 /// Storage for hashed assets on `/_bun/asset/{hash}.ext`
 pub const Assets = struct {
     /// Keys are absolute paths, sharing memory with the keys in IncrementalGraph(.client)
     /// Values are indexes into files
-    path_map: bun.StringArrayHashMapUnmanaged(u32),
+    path_map: bun.StringArrayHashMapUnmanaged(EntryIndex),
     /// Content-addressable store. Multiple paths can point to the same content
     /// hash, which is tracked by the `refs` array. One reference is held to
     /// contained StaticRoute instances when they are stored.
     files: AutoArrayHashMapUnmanaged(u64, *StaticRoute),
     /// Indexed by the same index of `files`. The value is never `0`.
     refs: ArrayListUnmanaged(u32),
-
+    /// When mutating `files`'s keys, the map must be reindexed to function.
     needs_reindex: bool = false,
+
+    pub const EntryIndex = bun.GenericIndex(u30, Assets);
 
     fn owner(assets: *Assets) *DevServer {
         return @alignCast(@fieldParentPtr("assets", assets));
     }
 
-    // / When an asset is overwritten, it receives a new URL to get around browser auto-caching.
-    /// The old URL is immediately invalidated.
+    pub fn getHash(assets: *Assets, path: []const u8) ?u64 {
+        return if (assets.path_map.get(path)) |idx|
+            assets.files.keys()[idx.get()]
+        else
+            null;
+    }
+
+    /// When an asset is overwritten, it receives a new URL to get around browser caching.
+    /// The old URL is immediately revoked.
     pub fn replacePath(
         assets: *Assets,
         /// not allocated
         abs_path: []const u8,
-        contents: AnyBlob,
-        mime_type: MimeType,
+        /// Ownership is transferred to this function
+        contents: *const AnyBlob,
+        mime_type: *const MimeType,
         /// content hash of the asset
         content_hash: u64,
-    ) !struct { index: u30 } {
+    ) !EntryIndex {
         defer assert(assets.files.count() == assets.refs.items.len);
         const alloc = assets.owner().allocator;
-        debug.log("replacePath {} {} - {s}/{s}", .{
+        debug.log("replacePath {} {} - {s}/{s} ({s})", .{
             bun.fmt.quote(abs_path),
             content_hash,
             asset_prefix,
             &std.fmt.bytesToHex(std.mem.asBytes(&content_hash), .lower),
+            mime_type.value,
         });
 
         const gop = try assets.path_map.getOrPut(alloc, abs_path);
         if (!gop.found_existing) {
             // Locate a stable pointer for the file path
-            const stable_abs_path = try assets.owner().client_graph.insertEmpty(abs_path);
+            const stable_abs_path = (try assets.owner().client_graph.insertEmpty(abs_path, .unknown)).key;
             gop.key_ptr.* = stable_abs_path;
         } else {
-            const i = gop.value_ptr.*;
+            const entry_index = gop.value_ptr.*;
             // When there is one reference to the asset, the entry can be
             // replaced in-place with the new asset.
-            if (assets.refs.items[i] == 1) {
+            if (assets.refs.items[entry_index.get()] == 1) {
                 const slice = assets.files.entries.slice();
-                slice.items(.key)[i] = content_hash;
-                slice.items(.value)[i] = StaticRoute.initFromAnyBlob(contents, .{
+
+                const prev = slice.items(.value)[entry_index.get()];
+                prev.deref();
+
+                slice.items(.key)[entry_index.get()] = content_hash;
+                slice.items(.value)[entry_index.get()] = StaticRoute.initFromAnyBlob(contents, .{
                     .mime_type = mime_type,
                     .server = assets.owner().server orelse unreachable,
                 });
                 comptime assert(@TypeOf(slice.items(.hash)[0]) == void);
                 assets.needs_reindex = true;
-                return .{ .index = @intCast(i) };
+                return entry_index;
             } else {
-                assets.refs.items[i] -= 1;
-                assert(assets.refs.items[i] > 0);
+                assets.refs.items[entry_index.get()] -= 1;
+                assert(assets.refs.items[entry_index.get()] > 0);
             }
         }
 
@@ -5954,12 +6792,11 @@ pub const Assets = struct {
             });
         } else {
             assets.refs.items[file_index_gop.index] += 1;
-            var contents_mut = contents;
+            var contents_mut = contents.*;
             contents_mut.detach();
         }
-        gop.value_ptr.* = @intCast(file_index_gop.index);
-
-        return .{ .index = @intCast(gop.value_ptr.*) };
+        gop.value_ptr.* = .init(@intCast(file_index_gop.index));
+        return gop.value_ptr.*;
     }
 
     /// Returns a pointer to insert the *StaticRoute. If `null` is returned, then it
@@ -5977,20 +6814,25 @@ pub const Assets = struct {
     }
 
     pub fn unrefByHash(assets: *Assets, content_hash: u64, dec_count: u32) void {
-        defer assert(assets.files.count() == assets.refs.items.len);
-        assert(dec_count > 0);
         const index = assets.files.getIndex(content_hash) orelse
             Output.panic("Asset double unref: {s}", .{std.fmt.fmtSliceHexLower(std.mem.asBytes(&content_hash))});
-        assets.refs.items[index] -= dec_count;
-        if (assets.refs.items[index] == 0) {
-            assets.files.swapRemoveAt(index);
-            _ = assets.refs.swapRemove(index);
+        assets.unrefByIndex(.init(@intCast(index)), dec_count);
+    }
+
+    pub fn unrefByIndex(assets: *Assets, index: EntryIndex, dec_count: u32) void {
+        defer assert(assets.files.count() == assets.refs.items.len);
+        assert(dec_count > 0);
+        assets.refs.items[index.get()] -= dec_count;
+        if (assets.refs.items[index.get()] == 0) {
+            assets.files.values()[index.get()].deref();
+            assets.files.swapRemoveAt(index.get());
+            _ = assets.refs.swapRemove(index.get());
         }
     }
 
     pub fn unrefByPath(assets: *Assets, path: []const u8) void {
         const entry = assets.path_map.fetchSwapRemove(path) orelse return;
-        assets.unrefByHash(entry.value, 1);
+        assets.unrefByIndex(entry.value, 1);
     }
 
     pub fn reindexIfNeeded(assets: *Assets, alloc: Allocator) !void {
@@ -6022,6 +6864,177 @@ pub const Assets = struct {
     }
 };
 
+/// Storage for source maps on `/_bun/client/{id}.js.map`
+///
+/// All source maps are referenced counted, so that when a bundle is unloaded,
+/// the unreachable source map URLs are revoked, and their memory freed.
+pub const SourceMapStore = struct {
+    entries: AutoArrayHashMapUnmanaged(u64, Entry),
+
+    pub const empty: SourceMapStore = .{ .entries = .empty };
+
+    pub const Entry = struct {
+        /// Sum of:
+        /// - How many active pages could try to request this source map?
+        /// - For route bundle client scripts, 1 until invalidation.
+        ref_count: u32,
+        /// Notes:
+        /// - Bundler produces VLQ mappings, and there is not a well written
+        ///   implementation to go from Mapping.List to VLQ.
+        /// - All mapping info needs to be somewhere, since watch updates would
+        ///   taint IncrementalGraph state, leading to broken old sourcemaps.
+        /// - The "mappings" field, being VLQ, cannot contain escape sequences,
+        ///   therefore it can still be extracted without a JSON parser.
+        /// - VLQ encoding is smaller than Mapping.List
+        ///
+        /// Since server-side error remapping is semi-rare, the parsed source
+        /// maps are released as soon as the error is finished printing, with
+        /// currently no re-use.
+        response: *StaticRoute,
+        /// Pointer into `response.blob` to where `mappings` is stored.
+        mappings_data: bun.StringPointer,
+        /// Outer slice is allocated. Inner slices are shared keys in
+        /// IncrementalGraph. Indexes are off by one because of the HMR
+        /// Runtime, which is not present in this list.
+        file_paths: [][]const u8,
+        /// Only entries from plugins are persisted after a bundle. Like
+        /// `file_paths`, indexes are off by one. A pointer into `response.blob`
+        /// to JSON encoded source contents, not including the quotes.
+        // TODO: reduce the size of this slice
+        source_contents: [*]bun.StringPointer,
+
+        pub fn sourceContents(self: @This()) []const bun.StringPointer {
+            return self.source_contents[0..self.file_paths.len];
+        }
+
+        fn deinit(entry: *Entry, dev: *DevServer) void {
+            dev.allocator.free(entry.file_paths);
+            dev.allocator.free(entry.source_contents);
+
+            // should not have been removed or unreferenced.
+            assert(entry.ref_count > 0);
+            assert(entry.file_paths.ptr == entry.file_paths.ptr);
+        }
+    };
+
+    pub fn owner(store: *SourceMapStore) *DevServer {
+        return @alignCast(@fieldParentPtr("source_maps", store));
+    }
+
+    /// If an *Entry is returned, caller must initialize it with the source map.
+    pub fn putOrIncrementRefCount(store: *SourceMapStore, source_map_id: u64, ref_count: u32) !?*Entry {
+        const gop = try store.entries.getOrPut(store.owner().allocator, source_map_id);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{
+                .ref_count = ref_count,
+                .source_contents = undefined,
+                .response = undefined,
+                .mappings_data = undefined,
+                .file_paths = undefined,
+            };
+            return gop.value_ptr;
+        } else {
+            gop.value_ptr.*.ref_count += ref_count;
+            return null;
+        }
+    }
+
+    const GetResult = struct {
+        index: bun.GenericIndex(u32, Entry),
+        mappings: SourceMap.Mapping.List,
+        file_paths: []const []const u8,
+        source_contents: []const bun.StringPointer,
+        bytes: []const u8,
+
+        pub fn deinit(self: *@This(), dev: *DevServer) void {
+            self.mappings.deinit(dev.allocator);
+            // file paths and source contents are borrowed
+        }
+    };
+
+    pub fn getParsedSourceMap(store: *SourceMapStore, source_map_id: u64) ?GetResult {
+        const index = store.entries.getIndex(source_map_id) orelse
+            return null; // source map was collected.
+        const entry = &store.entries.values()[index];
+
+        switch (SourceMap.Mapping.parse(
+            store.owner().allocator,
+            entry.mappings_data.slice(entry.response.blob.slice()),
+            null,
+            @intCast(entry.file_paths.len),
+            0, // unused
+        )) {
+            .fail => |fail| {
+                Output.debugWarn("Failed to re-parse source map: {s}", .{fail.msg});
+                return null;
+            },
+            .success => |psm| {
+                // TODO: consider storing mappings for, say, a minute. this
+                // means having a loop in client code would re-use the
+                // allocation. if this is deemed a bad idea, replace this
+                // comment with an explanation why.
+                // entry.parsed_mappings = psm.mappings;
+                return .{
+                    .index = .init(@intCast(index)),
+                    .mappings = psm.mappings,
+                    .file_paths = entry.file_paths,
+                    .source_contents = entry.source_contents[0..entry.file_paths.len],
+                    .bytes = entry.response.blob.slice(),
+                };
+            },
+        }
+    }
+};
+
+// NOTE: not used but keeping around in case a use case is found soon
+// /// Instead of a pointer to `struct { data: []const u8, ref_count: u32 }`, all
+// /// reference counts are in a shared map. This is used by strings shared between
+// /// source maps and the incremental graph. Not thread-safe.
+// ///
+// /// Transfer from default allocator to RefString with `dev.ref_strings.register(slice)`
+// ///
+// /// Prefer `CowString` (maybe allocated or borrowed) or `[]const u8` (known lifetime) over this structure.
+// const RefString = struct {
+//     /// Allocated by `dev.allocator`, free with `.unref()`
+//     data: []const u8,
+
+//     pub fn deref(str: RefString, store: *Store) void {
+//         const index = store.strings.getIndex(str.ptr) orelse unreachable;
+//         const slice = store.strings.entries.slice();
+//         const ref_count = &slice.items(.value)[index];
+//         if (ref_count.* == 1) {
+//             store.strings.swapRemoveAt(index);
+//             dev.allocator.free(str.data);
+//         } else {
+//             ref_count.* -= 1;
+//         }
+//     }
+
+//     pub fn dupeRef(str: RefString, store: *Store) RefString {
+//         const ref_count = store.strings.getPtr(str.ptr) orelse unreachable;
+//         ref_count.* += 1;
+//         return str;
+//     }
+
+//     pub const Store = struct {
+//         /// Key -> Data. Value -> Reference count
+//         strings: AutoArrayHashMapUnmanaged([*]u8, u32),
+
+//         pub const empty: Store = .{ .strings = .empty };
+
+//         /// `data` must be owned by `dev.allocator`
+//         pub fn register(store: *Store, data: []u8) !RefString {
+//             const gop = try store.strings.getOrPut(dev.allocator, data.ptr);
+//             if (gop.found_existing) {
+//                 gop.value_ptr.* += 1;
+//             } else {
+//                 gop.value_ptr = 1;
+//             }
+//             return .{ .data = data };
+//         }
+//     };
+// };
+
 pub fn onPluginsResolved(dev: *DevServer, plugins: ?*Plugin) !void {
     dev.bundler_options.plugin = plugins;
     dev.plugin_state = .loaded;
@@ -6036,6 +7049,368 @@ pub fn onPluginsRejected(dev: *DevServer) !void {
     }
     dev.next_bundle.route_queue.clearRetainingCapacity();
     // TODO: allow recovery from this state
+}
+
+/// Fetched when a client-side error happens. This performs two actions
+/// - Logs the remapped stack trace to the console.
+/// - Replies with the remapped stack trace.
+/// Payload:
+/// - `u32`: Responding message ID (echoed back)
+/// - `u32`: Length of message
+/// - `[n]u8`: Message
+/// - `u32`: Length of error name
+/// - `[n]u8`: Error name
+/// - `u32`: Number of stack frames. For each
+///   - `u32`: Line number (0 for unavailable)
+///   - `u32`: Column number (0 for unavailable)
+///   - `u32`: Length of file name (0 for unavailable)
+///   - `[n]u8`: File name
+///   - `u32`: Length of function name (0 for unavailable)
+///   - `[n]u8`: Function name
+const ErrorReportRequest = struct {
+    dev: *DevServer,
+    body: uws.BodyReaderMixin(@This(), "body", runWithBody, finalize),
+
+    fn run(dev: *DevServer, _: *Request, resp: anytype) void {
+        const ctx = bun.new(ErrorReportRequest, .{
+            .dev = dev,
+            .body = .init(dev.allocator),
+        });
+        ctx.dev.server.?.onPendingRequest();
+        ctx.body.readBody(resp);
+    }
+
+    fn finalize(ctx: *ErrorReportRequest) void {
+        ctx.dev.server.?.onStaticRequestComplete();
+        bun.destroy(ctx);
+    }
+
+    fn runWithBody(ctx: *ErrorReportRequest, body: []const u8, r: AnyResponse) !void {
+        // .finalize has to be called last, but only in the non-error path.
+        var should_finalize_self = false;
+        defer if (should_finalize_self) ctx.finalize();
+
+        var s = std.io.fixedBufferStream(body);
+        const reader = s.reader();
+
+        var sfa = std.heap.stackFallback(131072, ctx.dev.allocator);
+        const temp_alloc = sfa.get();
+        var arena = std.heap.ArenaAllocator.init(temp_alloc);
+        defer arena.deinit();
+
+        // Read payload, assemble ZigException
+        const name = try readString32(reader, temp_alloc);
+        defer temp_alloc.free(name);
+        const message = try readString32(reader, temp_alloc);
+        defer temp_alloc.free(message);
+        const browser_url = try readString32(reader, temp_alloc);
+        defer temp_alloc.free(browser_url);
+        var frames: ArrayListUnmanaged(JSC.ZigStackFrame) = .empty;
+        defer frames.deinit(temp_alloc);
+        const stack_count = @min(try reader.readInt(u32, .little), 255); // does not support more than 255
+        try frames.ensureTotalCapacity(temp_alloc, stack_count);
+        for (0..stack_count) |_| {
+            const line = try reader.readInt(i32, .little);
+            const column = try reader.readInt(i32, .little);
+            const function_name = try readString32(reader, temp_alloc);
+            const file_name = try readString32(reader, temp_alloc);
+            frames.appendAssumeCapacity(.{
+                .function_name = .init(function_name),
+                .source_url = .init(file_name),
+                .position = if (line > 0) .{
+                    .line = .fromOneBased(line + 1),
+                    .column = .fromOneBased(@max(1, column)),
+                    .line_start_byte = 0,
+                } else .{
+                    .line = .invalid,
+                    .column = .invalid,
+                    .line_start_byte = 0,
+                },
+                .code_type = .None,
+                .remapped = false,
+            });
+        }
+
+        const runtime_name = "Bun HMR Runtime";
+
+        // All files that DevServer could provide a source map fit the pattern:
+        // `/_bun/client/<label>-{u64}.js`
+        // Where the u64 is a unique identifier pointing into sourcemaps.
+        //
+        // HMR chunks use this too, but currently do not host their JS code.
+        var parsed_source_maps: AutoArrayHashMapUnmanaged(u64, ?SourceMapStore.GetResult) = .empty;
+        try parsed_source_maps.ensureTotalCapacity(temp_alloc, 4);
+        defer for (parsed_source_maps.values()) |*value| {
+            if (value.*) |*v| v.deinit(ctx.dev);
+        };
+        var runtime_lines: ?[5][]const u8 = null;
+        var first_line_of_interest: usize = 0;
+        var top_frame_position: JSC.ZigStackFramePosition = undefined;
+        var region_of_interest_line: u32 = 0;
+        for (frames.items) |*frame| {
+            const source_url = frame.source_url.value.ZigString.slice();
+            // The browser code strips "http://localhost:3000" when the string
+            // has /_bun/client. It's done because JS can refer to `location`
+            const id = parseId(source_url, browser_url) orelse continue;
+
+            // Get and cache the parsed source map
+            const gop = try parsed_source_maps.getOrPut(temp_alloc, id);
+            if (!gop.found_existing) {
+                const psm = ctx.dev.source_maps.getParsedSourceMap(id) orelse {
+                    Output.debugWarn("Failed to find mapping for {s}, {d}", .{ source_url, id });
+                    gop.value_ptr.* = null;
+                    continue;
+                };
+                gop.value_ptr.* = psm;
+            }
+            const result: *const SourceMapStore.GetResult = &(gop.value_ptr.* orelse continue);
+
+            // When before the first generated line, remap to the HMR runtime
+            const generated_mappings = result.mappings.items(.generated);
+            if (frame.position.line.oneBased() < generated_mappings[1].lines) {
+                frame.source_url = .init(runtime_name); // matches value in source map
+                frame.position = .invalid;
+                continue;
+            }
+
+            // Remap the frame
+            const remapped = SourceMap.Mapping.find(
+                result.mappings,
+                frame.position.line.oneBased(),
+                frame.position.column.zeroBased(),
+            );
+            if (remapped) |remapped_position| {
+                frame.position = .{
+                    .line = .fromZeroBased(remapped_position.originalLine()),
+                    .column = .fromZeroBased(remapped_position.originalColumn()),
+                    .line_start_byte = 0,
+                };
+                const index = remapped_position.source_index;
+                if (index >= 1 and (index - 1) < result.file_paths.len) {
+                    const abs_path = result.file_paths[@intCast(index - 1)];
+                    frame.source_url = .init(abs_path);
+                    const rel_path = ctx.dev.relativePath(abs_path);
+                    if (bun.strings.eql(frame.function_name.value.ZigString.slice(), rel_path)) {
+                        frame.function_name = .empty;
+                    }
+                    frame.remapped = true;
+
+                    if (runtime_lines == null) {
+                        const json_encoded_source_code = result.source_contents[@intCast(index - 1)].slice(result.bytes);
+                        // First line of interest is two above the target line.
+                        const target_line = @as(usize, @intCast(frame.position.line.zeroBased()));
+                        first_line_of_interest = target_line -| 2;
+                        region_of_interest_line = @intCast(target_line - first_line_of_interest);
+                        runtime_lines = try extractJsonEncodedSourceCode(
+                            json_encoded_source_code,
+                            @intCast(first_line_of_interest),
+                            5,
+                            arena.allocator(),
+                        );
+                        top_frame_position = frame.position;
+                    }
+                } else if (index == 0) {
+                    // Should be picked up by above but just in case.
+                    frame.source_url = .init(runtime_name);
+                    frame.position = .invalid;
+                }
+            }
+        }
+
+        // Stack traces can often end with random runtime frames that are not relevant.
+        trim_runtime_frames: {
+            // Ensure that trimming will not remove ALL frames.
+            for (frames.items) |frame| {
+                if (!frame.position.isInvalid() or frame.source_url.value.ZigString.slice().ptr != runtime_name) {
+                    break;
+                }
+            } else break :trim_runtime_frames;
+
+            // Move all frames up
+            var i: usize = 0;
+            for (frames.items[i..]) |frame| {
+                if (frame.position.isInvalid() and frame.source_url.value.ZigString.slice().ptr == runtime_name) {
+                    continue; // skip runtime frames
+                }
+
+                frames.items[i] = frame;
+                i += 1;
+            }
+            frames.items.len = i;
+        }
+
+        var exception: JSC.ZigException = .{
+            .type = .Error,
+            .runtime_type = .Nothing,
+            .name = .init(name),
+            .message = .init(message),
+            .stack = .fromFrames(frames.items),
+            .exception = null,
+            .remapped = false,
+            .browser_url = .init(browser_url),
+        };
+
+        const stderr = Output.errorWriterBuffered();
+        defer Output.flush();
+        switch (Output.enable_ansi_colors_stderr) {
+            inline else => |ansi_colors| ctx.dev.vm.printExternallyRemappedZigException(
+                &exception,
+                null,
+                @TypeOf(stderr),
+                stderr,
+                true,
+                ansi_colors,
+            ) catch {},
+        }
+
+        var out: std.ArrayList(u8) = .init(ctx.dev.allocator);
+        errdefer out.deinit();
+        const w = out.writer();
+
+        try w.writeInt(u32, exception.stack.frames_len, .little);
+        for (exception.stack.frames()) |frame| {
+            try w.writeInt(i32, frame.position.line.oneBased(), .little);
+            try w.writeInt(i32, frame.position.column.oneBased(), .little);
+
+            const function_name = frame.function_name.value.ZigString.slice();
+            try w.writeInt(u32, @intCast(function_name.len), .little);
+            try w.writeAll(function_name);
+
+            const src_to_write = frame.source_url.value.ZigString.slice();
+            if (bun.strings.hasPrefixComptime(src_to_write, "/")) {
+                const file = ctx.dev.relativePath(src_to_write);
+                try w.writeInt(u32, @intCast(file.len), .little);
+                try w.writeAll(file);
+            } else {
+                try w.writeInt(u32, @intCast(src_to_write.len), .little);
+                try w.writeAll(src_to_write);
+            }
+        }
+
+        if (runtime_lines) |*lines| {
+            // trim empty lines
+            var adjusted_lines: [][]const u8 = lines;
+            while (adjusted_lines.len > 0 and adjusted_lines[0].len == 0) {
+                adjusted_lines = adjusted_lines[1..];
+                region_of_interest_line -|= 1;
+                first_line_of_interest += 1;
+            }
+            while (adjusted_lines.len > 0 and adjusted_lines[adjusted_lines.len - 1].len == 0) {
+                adjusted_lines.len -= 1;
+            }
+
+            try w.writeInt(u8, @intCast(adjusted_lines.len), .little);
+            try w.writeInt(u32, @intCast(region_of_interest_line), .little);
+            try w.writeInt(u32, @intCast(first_line_of_interest + 1), .little);
+            try w.writeInt(u32, @intCast(top_frame_position.column.oneBased()), .little);
+
+            for (adjusted_lines) |line| {
+                try w.writeInt(u32, @intCast(line.len), .little);
+                try w.writeAll(line);
+            }
+        } else {
+            try w.writeInt(u8, 0, .little);
+        }
+
+        StaticRoute.sendBlobThenDeinit(r, &.fromArrayList(out), .{
+            .mime_type = &.other,
+            .server = ctx.dev.server.?,
+        });
+        should_finalize_self = true;
+    }
+
+    fn parseId(source_url: []const u8, browser_url: []const u8) ?u64 {
+        if (!bun.strings.startsWith(source_url, browser_url))
+            return null;
+        const after_host = source_url[bun.strings.withoutTrailingSlash(browser_url).len..];
+        if (!bun.strings.hasPrefixComptime(after_host, client_prefix ++ "/"))
+            return null;
+        const after_prefix = after_host[client_prefix.len + 1 ..];
+        // Extract the ID
+        if (!bun.strings.hasSuffixComptime(after_prefix, ".js"))
+            return null;
+        const min_len = "00000000FFFFFFFF.js".len;
+        if (after_prefix.len < min_len)
+            return null;
+        const hex = after_prefix[after_prefix.len - min_len ..][0 .. @sizeOf(u64) * 2];
+        if (hex.len != @sizeOf(u64) * 2)
+            return null;
+        return parseHexToInt(u64, hex) orelse
+            return null;
+    }
+
+    /// Instead of decoding the entire file, just decode the desired section.
+    fn extractJsonEncodedSourceCode(contents: []const u8, target_line: u32, comptime n: usize, arena: Allocator) !?[n][]const u8 {
+        var line: usize = 0;
+        var prev: usize = 0;
+        const index_of_first_line = if (target_line == 0)
+            0 // no iteration needed
+        else while (bun.strings.indexOfCharPos(contents, '\\', prev)) |i| : (prev = i + 2) {
+            if (i >= contents.len - 2) return null;
+            // Bun's JSON printer will not use a sillier encoding for newline.
+            if (contents[i + 1] == 'n') {
+                line += 1;
+                if (line == target_line)
+                    break i + 2;
+            }
+        } else return null;
+
+        var rest = contents[index_of_first_line..];
+
+        // For decoding JSON escapes, the JS Lexer decoding function has
+        // `decodeEscapeSequences`, which only supports decoding to UTF-16.
+        // Alternatively, it appears the TOML lexer has copied this exact
+        // function but for UTF-8. So the decoder can just use that.
+        //
+        // This function expects but does not assume the escape sequences
+        // given are valid, and does not bubble errors up.
+        var log = Log.init(arena);
+        var l: @import("../toml/toml_lexer.zig").Lexer = .{
+            .log = &log,
+            .source = .initEmptyFile(""),
+            .allocator = arena,
+            .should_redact_logs = false,
+            .prev_error_loc = .Empty,
+        };
+        defer log.deinit();
+
+        var result: [n][]const u8 = .{""} ** n;
+        for (&result) |*decoded_line| {
+            var has_extra_escapes = false;
+            prev = 0;
+            // Locate the line slice
+            const end_of_line = while (bun.strings.indexOfCharPos(rest, '\\', prev)) |i| : (prev = i + 2) {
+                if (i >= rest.len - 1) return null;
+                if (rest[i + 1] == 'n') {
+                    break i;
+                }
+                has_extra_escapes = true;
+            } else rest.len;
+            const encoded_line = rest[0..end_of_line];
+
+            // Decode it
+            if (has_extra_escapes) {
+                var bytes: std.ArrayList(u8) = try .initCapacity(arena, encoded_line.len);
+                try l.decodeEscapeSequences(0, encoded_line, false, std.ArrayList(u8), &bytes);
+                decoded_line.* = bytes.items;
+            } else {
+                decoded_line.* = encoded_line;
+            }
+
+            if (end_of_line + 2 >= rest.len) break;
+            rest = rest[end_of_line + 2 ..];
+        }
+
+        return result;
+    }
+};
+
+fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
+    const len = try reader.readInt(u32, .little);
+    const memory = try alloc.alloc(u8, len);
+    errdefer alloc.free(memory);
+    try reader.readNoEof(memory);
+    return memory;
 }
 
 /// userland implementation of https://github.com/ziglang/zig/issues/21879
@@ -6054,6 +7429,20 @@ fn VoidFieldTypes(comptime T: type) type {
     } });
 }
 
+fn voidFieldTypeDiscardHelper(data: anytype) void {
+    _ = data;
+}
+
+/// `test/bake/deinitialization.test.ts` checks for this as well as all tests
+/// using the dev server test harness (test/bake/bake-harness.ts)
+///
+/// In debug builds, this will also assert that AllocationScope.deinit was
+/// called, validating that all Dev Server tests have no leaks.
+var dev_server_deinit_count_for_testing: usize = 0;
+pub fn getDeinitCountForTesting() usize {
+    return dev_server_deinit_count_for_testing;
+}
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Mutex = bun.Mutex;
@@ -6063,6 +7452,7 @@ const AutoArrayHashMapUnmanaged = std.AutoArrayHashMapUnmanaged;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
 const assert = bun.assert;
+const assert_eql = bun.assert_eql;
 const DynamicBitSetUnmanaged = bun.bit_set.DynamicBitSetUnmanaged;
 
 const bake = bun.bake;
@@ -6106,3 +7496,4 @@ const SourceMap = bun.sourcemap;
 const VLQ = SourceMap.VLQ;
 
 const StringJoiner = bun.StringJoiner;
+const AllocationScope = bun.AllocationScope;

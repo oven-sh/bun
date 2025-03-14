@@ -47,6 +47,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
 
     if (UNLIKELY(object->hasNonReifiedStaticProperties())) {
         object->reifyAllStaticProperties(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
 #if OS(WINDOWS)

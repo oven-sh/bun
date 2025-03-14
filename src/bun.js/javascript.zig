@@ -19,14 +19,14 @@ const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const Fs = @import("../fs.zig");
 const Resolver = @import("../resolver/resolver.zig");
 const ast = @import("../import_record.zig");
-const MacroEntryPoint = bun.transpiler.MacroEntryPoint;
+const MacroEntryPoint = bun.transpiler.EntryPoints.MacroEntryPoint;
 const ParseResult = bun.transpiler.ParseResult;
 const logger = bun.logger;
 const Api = @import("../api/schema.zig").Api;
 const options = @import("../options.zig");
 const Transpiler = bun.Transpiler;
 const PluginRunner = bun.transpiler.PluginRunner;
-const ServerEntryPoint = bun.transpiler.ServerEntryPoint;
+const ServerEntryPoint = bun.transpiler.EntryPoints.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
@@ -79,7 +79,7 @@ const Watcher = bun.Watcher;
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
 
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 const Task = JSC.Task;
 
 pub const Buffer = MarkedArrayBuffer;
@@ -293,6 +293,7 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
+    /// You must call `sourcemap.map.deref()` or you will leak memory
     fn getWithContent(
         this: *SavedSourceMap,
         path: string,
@@ -365,6 +366,7 @@ pub const SavedSourceMap = struct {
         }
     }
 
+    /// You must `deref()` the returned value or you will leak memory
     pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
         return this.getWithContent(path, .mappings_only).map;
     }
@@ -416,7 +418,7 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
-extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, JSValue, JSValue) void;
 
 comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
@@ -462,7 +464,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
     if (message.isUndefined()) {
         return globalObject.throwMissingArgumentsValue(&.{"message"});
     }
-    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean() and !message.isNull()) {
         return globalObject.throwInvalidArgumentTypeValue("message", "string, object, number, or boolean", message);
     }
 
@@ -470,7 +472,7 @@ pub fn Bun__Process__send_(globalObject: *JSGlobalObject, callFrame: *JSC.CallFr
 
     if (good) {
         if (callback.isFunction()) {
-            Bun__Process__queueNextTick1(zigGlobal, callback, .zero);
+            Bun__Process__queueNextTick1(zigGlobal, callback, .null);
         }
     } else {
         const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
@@ -724,7 +726,7 @@ const AutoKiller = struct {
         while (this.processes.popOrNull()) |process| {
             if (!process.key.hasExited()) {
                 log("process.kill {d}", .{process.key.pid});
-                count += @as(u32, @intFromBool(process.key.kill(bun.SignalCode.default) == .result));
+                count += @as(u32, @intFromBool(process.key.kill(@intFromEnum(bun.SignalCode.default)) == .result));
             }
         }
         return count;
@@ -769,7 +771,6 @@ pub const VirtualMachine = struct {
     main_is_html_entrypoint: bool = false,
     main_resolved_path: bun.String = bun.String.empty,
     main_hash: u32 = 0,
-    process: bun.JSC.C.JSObjectRef = null,
     entry_point: ServerEntryPoint = undefined,
     origin: URL = URL{},
     node_fs: ?*Node.NodeFS = null,
@@ -867,7 +868,7 @@ pub const VirtualMachine = struct {
     is_us_loop_entered: bool = false,
     pending_internal_promise: *JSInternalPromise = undefined,
     entry_point_result: struct {
-        value: JSC.Strong = .{},
+        value: JSC.Strong = .empty,
         cjs_set_value: bool = false,
     } = .{},
 
@@ -898,6 +899,15 @@ pub const VirtualMachine = struct {
     body_value_hive_allocator: BodyValueHiveAllocator = undefined,
 
     is_inside_deferred_task_queue: bool = false,
+
+    // defaults off. .on("message") will set it to true unles overridden
+    // process.channel.unref() will set it to false and mark it overridden
+    // on disconnect it will be disabled
+    channel_ref: bun.Async.KeepAlive = .{},
+    // if process.channel.ref() or unref() has been called, this is set to true
+    channel_ref_overridden: bool = false,
+    // if one disconnect event listener should be ignored
+    channel_ref_should_ignore_one_disconnect_event_listener: bool = false,
 
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSGlobalObject, JSValue) void;
 
@@ -992,6 +1002,10 @@ pub const VirtualMachine = struct {
                 return null;
             };
         }
+
+        pub export fn Bun__thisThreadHasVM() bool {
+            return vm != null;
+        }
     };
 
     pub inline fn get() *VirtualMachine {
@@ -1015,14 +1029,21 @@ pub const VirtualMachine = struct {
         }
     }
 
-    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+    pub fn isEventLoopAliveExcludingImmediates(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
             vm.active_tasks +
             vm.event_loop.tasks.count +
-            vm.event_loop.immediate_tasks.count +
-            vm.event_loop.next_immediate_tasks.count +
             @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
+    }
+
+    pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
+        return vm.isEventLoopAliveExcludingImmediates() or
+            // We need to keep running in this case so that immediate tasks get run. But immediates
+            // intentionally don't make the event loop _active_ so we need to check for them
+            // separately.
+            vm.event_loop.immediate_tasks.count > 0 or
+            vm.event_loop.next_immediate_tasks.count > 0;
     }
 
     pub fn wakeup(this: *VirtualMachine) void {
@@ -1300,14 +1321,6 @@ pub const VirtualMachine = struct {
         this.pending_internal_promise = this.reloadEntryPoint(this.main) catch @panic("Failed to reload");
     }
 
-    pub fn io(this: *VirtualMachine) *bun.AsyncIO {
-        if (this.io_ == null) {
-            this.io_ = bun.AsyncIO.init(this) catch @panic("Failed to initialize AsyncIO");
-        }
-
-        return &this.io_.?;
-    }
-
     pub inline fn nodeFS(this: *VirtualMachine) *Node.NodeFS {
         return this.node_fs orelse brk: {
             this.node_fs = bun.default_allocator.create(Node.NodeFS) catch unreachable;
@@ -1374,7 +1387,7 @@ pub const VirtualMachine = struct {
 
     pub fn specifierIsEvalEntryPoint(this: *VirtualMachine, specifier: JSValue) callconv(.C) bool {
         if (this.module_loader.eval_source) |eval_source| {
-            var specifier_str = specifier.toBunString(this.global);
+            var specifier_str = specifier.toBunString(this.global) catch @panic("unexpected exception");
             defer specifier_str.deref();
             return specifier_str.eqlUTF8(eval_source.path.text);
         }
@@ -1405,13 +1418,18 @@ pub const VirtualMachine = struct {
 
     pub fn onExit(this: *VirtualMachine) void {
         this.exit_handler.dispatchOnExit();
+        this.is_shutting_down = true;
 
         const rare_data = this.rare_data orelse return;
-        var hooks = rare_data.cleanup_hooks;
-        defer if (!is_main_thread_vm) hooks.clearAndFree(bun.default_allocator);
-        rare_data.cleanup_hooks = .{};
-        for (hooks.items) |hook| {
-            hook.execute();
+        defer rare_data.cleanup_hooks.clearAndFree(bun.default_allocator);
+        // Make sure we run new cleanup hooks introduced by running cleanup hooks
+        while (rare_data.cleanup_hooks.items.len > 0) {
+            var hooks = rare_data.cleanup_hooks;
+            defer hooks.deinit(bun.default_allocator);
+            rare_data.cleanup_hooks = .{};
+            for (hooks.items) |hook| {
+                hook.execute();
+            }
         }
     }
 
@@ -1646,7 +1664,7 @@ pub const VirtualMachine = struct {
                         this.eventLoop().autoTickActive();
 
                         if (comptime Environment.enable_logs)
-                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                            log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
                     },
                     .shortly => {
                         // Handle .incrementRefConcurrently
@@ -1661,7 +1679,7 @@ pub const VirtualMachine = struct {
                         this.uwsLoop().tickWithTimeout(&deadline);
 
                         if (comptime Environment.enable_logs)
-                            log("waited: {}", .{bun.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
+                            log("waited: {}", .{std.fmt.fmtDuration(@intCast(@as(i64, @truncate(std.time.nanoTimestamp() - bun.CLI.start_time))))});
 
                         const elapsed = bun.timespec.now();
                         if (elapsed.order(&deadline) != .lt) {
@@ -2418,93 +2436,15 @@ pub const VirtualMachine = struct {
 
         const specifier_clone = _specifier.toUTF8(bun.default_allocator);
         defer specifier_clone.deinit();
-        const normalized_file_path_from_specifier, const specifier = ModuleLoader.normalizeSpecifier(jsc_vm, specifier_clone.slice());
         const referrer_clone = referrer.toUTF8(bun.default_allocator);
         defer referrer_clone.deinit();
-        var path = Fs.Path.init(normalized_file_path_from_specifier);
 
-        // For blobs.
-        var blob_source: ?JSC.WebCore.Blob = null;
         var virtual_source_to_use: ?logger.Source = null;
-        defer {
-            if (blob_source) |*blob| {
-                blob.deinit();
-            }
-        }
-
-        const loader, const virtual_source = brk: {
-            if (jsc_vm.module_loader.eval_source) |eval_source| {
-                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]"))) {
-                    break :brk .{ .tsx, eval_source };
-                }
-                if (strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))) {
-                    break :brk .{ .tsx, eval_source };
-                }
-            }
-
-            var ext_for_loader = path.name.ext;
-
-            // Support errors within blob: URLs
-            // Be careful to handle Bun.file(), in addition to regular Blob/File objects
-            // Bun.file() should be treated the same as a file path.
-            if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
-                if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
-                    blob_source = blob;
-
-                    if (blob.getFileName()) |filename| {
-                        const current_path = Fs.Path.init(filename);
-                        if (blob.needsToReadFile()) {
-                            path = current_path;
-                        }
-
-                        ext_for_loader = current_path.name.ext;
-                    } else if (blob.getMimeTypeOrContentType()) |mime_type| {
-                        if (strings.hasPrefixComptime(mime_type.value, "application/javascript-jsx")) {
-                            ext_for_loader = ".jsx";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript-jsx")) {
-                            ext_for_loader = ".tsx";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/javascript")) {
-                            ext_for_loader = ".js";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/typescript")) {
-                            ext_for_loader = ".ts";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json")) {
-                            ext_for_loader = ".json";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/json5")) {
-                            ext_for_loader = ".jsonc";
-                        } else if (strings.hasPrefixComptime(mime_type.value, "application/jsonc")) {
-                            ext_for_loader = ".jsonc";
-                        } else if (mime_type.category == .text) {
-                            ext_for_loader = ".txt";
-                        } else {
-                            // Be maximally permissive.
-                            ext_for_loader = ".tsx";
-                        }
-                    } else {
-                        // Be maximally permissive.
-                        ext_for_loader = ".tsx";
-                    }
-
-                    if (!blob.needsToReadFile()) {
-                        virtual_source_to_use = logger.Source{
-                            .path = path,
-                            .contents = blob.sharedView(),
-                        };
-                    }
-                } else {
-                    return error.ModuleNotFound;
-                }
-            }
-
-            break :brk .{
-                jsc_vm.transpiler.options.loaders.get(ext_for_loader) orelse brk2: {
-                    if (strings.eqlLong(specifier, jsc_vm.main, true)) {
-                        break :brk2 options.Loader.js;
-                    }
-                    break :brk2 options.Loader.file;
-                },
-                if (virtual_source_to_use) |*src| src else null,
-            };
+        var blob_to_deinit: ?JSC.WebCore.Blob = null;
+        const lr = options.getLoaderAndVirtualSource(specifier_clone.slice(), jsc_vm, &virtual_source_to_use, &blob_to_deinit, null) catch {
+            return error.ModuleNotFound;
         };
+        defer if (blob_to_deinit) |*blob| blob.deinit();
 
         // .print_source, which is used by exceptions avoids duplicating the entire source code
         // but that means we have to be careful of the lifetime of the source code
@@ -2514,13 +2454,13 @@ pub const VirtualMachine = struct {
 
         return try ModuleLoader.transpileSourceCode(
             jsc_vm,
-            specifier,
+            lr.specifier,
             referrer_clone.slice(),
             _specifier,
-            path,
-            loader,
+            lr.path,
+            lr.loader orelse if (lr.is_main) .js else .file,
             log,
-            virtual_source,
+            lr.virtual_source,
             null,
             VirtualMachine.source_code_printer.?,
             globalObject,
@@ -2836,6 +2776,12 @@ pub const VirtualMachine = struct {
     }
 
     pub const main_file_name: string = "bun:main";
+
+    pub export fn Bun__drainMicrotasksFromJS(globalObject: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        _ = callframe; // autofix
+        globalObject.bunVM().drainMicrotasks();
+        return .undefined;
+    }
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {
         this.eventLoop().drainMicrotasks();
@@ -3442,6 +3388,7 @@ pub const VirtualMachine = struct {
         }
 
         this.printErrorInstance(
+            .js,
             value,
             exception_list,
             formatter,
@@ -3618,11 +3565,9 @@ pub const VirtualMachine = struct {
         }
 
         // defer this so that it copies correctly
-        defer {
-            if (exception_list) |list| {
-                exception.addToErrorList(list, this.transpiler.fs.top_level_dir, &this.origin) catch unreachable;
-            }
-        }
+        defer if (exception_list) |list| {
+            exception.addToErrorList(list, this.transpiler.fs.top_level_dir, &this.origin) catch unreachable;
+        };
 
         const NoisyBuiltinFunctionMap = bun.ComptimeStringMap(void, .{
             .{"asyncModuleEvaluation"},
@@ -3820,11 +3765,47 @@ pub const VirtualMachine = struct {
         }
     }
 
-    fn printErrorInstance(this: *VirtualMachine, error_instance: JSValue, exception_list: ?*ExceptionList, formatter: *ConsoleObject.Formatter, comptime Writer: type, writer: Writer, comptime allow_ansi_color: bool, comptime allow_side_effects: bool) !void {
-        var exception_holder = ZigException.Holder.init();
-        var exception = exception_holder.zigException();
-        defer exception_holder.deinit(this);
-        defer error_instance.ensureStillAlive();
+    pub fn printExternallyRemappedZigException(
+        this: *VirtualMachine,
+        zig_exception: *ZigException,
+        formatter: ?*ConsoleObject.Formatter,
+        comptime Writer: type,
+        writer: Writer,
+        comptime allow_side_effects: bool,
+        comptime allow_ansi_color: bool,
+    ) !void {
+        var default_formatter: ConsoleObject.Formatter = .{ .globalThis = this.global };
+        defer default_formatter.deinit();
+        try this.printErrorInstance(
+            .zig_exception,
+            zig_exception,
+            null,
+            formatter orelse &default_formatter,
+            Writer,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
+    }
+
+    fn printErrorInstance(
+        this: *VirtualMachine,
+        comptime mode: enum { js, zig_exception },
+        error_instance: switch (mode) {
+            .js => JSValue,
+            .zig_exception => *ZigException,
+        },
+        exception_list: ?*ExceptionList,
+        formatter: *ConsoleObject.Formatter,
+        comptime Writer: type,
+        writer: Writer,
+        comptime allow_ansi_color: bool,
+        comptime allow_side_effects: bool,
+    ) !void {
+        var exception_holder = if (mode == .js) ZigException.Holder.init();
+        var exception = if (mode == .js) exception_holder.zigException() else error_instance;
+        defer if (mode == .js) exception_holder.deinit(this);
+        defer if (mode == .js) error_instance.ensureStillAlive();
 
         // The ZigException structure stores substrings of the source code, in
         // which we need the lifetime of this data to outlive the inner call to
@@ -3832,14 +3813,16 @@ pub const VirtualMachine = struct {
         var source_code_slice: ?ZigString.Slice = null;
         defer if (source_code_slice) |slice| slice.deinit();
 
-        this.remapZigException(
-            exception,
-            error_instance,
-            exception_list,
-            &exception_holder.need_to_clear_parser_arena_on_deinit,
-            &source_code_slice,
-            formatter.error_display_level != .warn,
-        );
+        if (mode == .js) {
+            this.remapZigException(
+                exception,
+                error_instance,
+                exception_list,
+                &exception_holder.need_to_clear_parser_arena_on_deinit,
+                &source_code_slice,
+                formatter.error_display_level != .warn,
+            );
+        }
         const prev_had_errors = this.had_errors;
         this.had_errors = true;
         defer this.had_errors = prev_had_errors;
@@ -3900,11 +3883,12 @@ pub const VirtualMachine = struct {
         const name = exception.name;
         const message = exception.message;
 
-        const is_error_instance = error_instance != .zero and error_instance.jsType() == .ErrorInstance;
+        const is_error_instance = mode == .js and
+            (error_instance != .zero and error_instance.jsType() == .ErrorInstance);
         const code: ?[]const u8 = if (is_error_instance) code: {
             if (error_instance.uncheckedPtrCast(JSC.JSObject).getCodePropertyVMInquiry(this.global)) |code_value| {
                 if (code_value.isString()) {
-                    const code_string = code_value.toBunString2(this.global) catch {
+                    const code_string = code_value.toBunString(this.global) catch {
                         // JSC::JSString to WTF::String can only fail on out of memory.
                         bun.outOfMemory();
                     };
@@ -3960,7 +3944,7 @@ pub const VirtualMachine = struct {
                     );
                 }
 
-                try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color, formatter.error_display_level);
+                try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
             } else if (top_frame) |top| {
                 defer did_print_name = true;
                 const display_line = source.line + 1;
@@ -4005,12 +3989,12 @@ pub const VirtualMachine = struct {
                     }
                 }
 
-                try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color, formatter.error_display_level);
+                try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
             }
         }
 
         if (!did_print_name) {
-            try this.printErrorNameAndMessage(name, message, code, Writer, writer, allow_ansi_color, formatter.error_display_level);
+            try this.printErrorNameAndMessage(name, message, !exception.browser_url.isEmpty(), code, Writer, writer, allow_ansi_color, formatter.error_display_level);
         }
 
         // This is usually unsafe to do, but we are protecting them each time first
@@ -4135,7 +4119,7 @@ pub const VirtualMachine = struct {
                     }
                 }
             }
-        } else if (error_instance != .zero) {
+        } else if (mode == .js and error_instance != .zero) {
             // If you do reportError([1,2,3]] we should still show something at least.
             const tag = JSC.Formatter.Tag.getAdvanced(
                 error_instance,
@@ -4159,9 +4143,19 @@ pub const VirtualMachine = struct {
 
         try printStackTrace(@TypeOf(writer), writer, exception.stack, allow_ansi_color);
 
+        if (!exception.browser_url.isEmpty()) {
+            try writer.print(
+                comptime Output.prettyFmt(
+                    "    <d>from <r>browser tab <magenta>{}<r>\n",
+                    allow_ansi_color,
+                ),
+                .{exception.browser_url},
+            );
+        }
+
         for (errors_to_append.items) |err| {
             try writer.writeAll("\n");
-            try this.printErrorInstance(err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
+            try this.printErrorInstance(.js, err, exception_list, formatter, Writer, writer, allow_ansi_color, allow_side_effects);
         }
     }
 
@@ -4169,12 +4163,16 @@ pub const VirtualMachine = struct {
         _: *VirtualMachine,
         name: String,
         message: String,
+        is_browser_error: bool,
         optional_code: ?[]const u8,
         comptime Writer: type,
         writer: Writer,
         comptime allow_ansi_color: bool,
         error_display_level: ConsoleObject.FormatOptions.ErrorDisplayLevel,
     ) !void {
+        if (is_browser_error) {
+            try writer.writeAll(bun.Output.prettyFmt("<red>frontend<r> ", true));
+        }
         if (!name.isEmpty() and !message.isEmpty()) {
             const display_name, const display_message = if (name.eqlComptime("Error")) brk: {
                 // If `err.code` is set, and `err.message` is of form `{code}: {text}`,
@@ -4206,7 +4204,10 @@ pub const VirtualMachine = struct {
 
                 break :brk .{ String.empty, message };
             } else .{ name, message };
-            try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{ error_display_level.formatter(display_name, allow_ansi_color, .include_colon), display_message });
+            try writer.print(comptime Output.prettyFmt("{}<b>{}<r>\n", allow_ansi_color), .{
+                error_display_level.formatter(display_name, allow_ansi_color, .include_colon),
+                display_message,
+            });
         } else if (!name.isEmpty()) {
             try writer.print("{}\n", .{error_display_level.formatter(name, allow_ansi_color, .include_colon)});
         } else if (!message.isEmpty()) {
@@ -4377,7 +4378,7 @@ pub const VirtualMachine = struct {
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
-    extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
+    pub extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 
     pub const IPCInstanceUnion = union(enum) {
         /// IPC is put in this "enabled but not started" state when IPC is detected
@@ -4401,6 +4402,9 @@ pub const VirtualMachine = struct {
 
         pub fn ipc(this: *IPCInstance) ?*IPC.IPCData {
             return &this.data;
+        }
+        pub fn getGlobalThis(this: *IPCInstance) ?*JSGlobalObject {
+            return this.globalThis;
         }
 
         pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
@@ -4441,19 +4445,13 @@ pub const VirtualMachine = struct {
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
+            vm.channel_ref.disable();
             this.destroy();
         }
 
-        extern fn Bun__setChannelRef(*JSGlobalObject, bool) void;
-
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
-            if (global.bunVM().ipc) |*current_ipc| {
-                switch (current_ipc.*) {
-                    .initialized => |instance| {
-                        instance.data.close(true);
-                    },
-                    .waiting => {},
-                }
+            if (global.bunVM().getIPCInstance()) |current_ipc| {
+                current_ipc.data.close(true);
             }
         }
 
@@ -4520,7 +4518,7 @@ pub const VirtualMachine = struct {
             },
         };
 
-        instance.data.writeVersionPacket();
+        instance.data.writeVersionPacket(this.global);
 
         return instance;
     }

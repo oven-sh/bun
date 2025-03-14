@@ -9,7 +9,6 @@ const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
 const errno = posix.errno;
 const zeroes = mem.zeroes;
-const This = @This();
 pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
 pub const COPYFILE_STATE_SRC_FD = @as(c_int, 1);
 pub const COPYFILE_STATE_SRC_FILENAME = @as(c_int, 2);
@@ -88,73 +87,6 @@ pub const stat = blk: {
     const T = *const fn (?[*:0]const u8, ?*bun.Stat) callconv(.C) c_int;
     break :blk @extern(T, .{ .name = if (bun.Environment.isAarch64) "stat" else "stat64" });
 };
-
-// pub fn stat_absolute(path: [:0]const u8) StatError!Stat {
-//     if (builtin.os.tag == .windows) {
-//         var io_status_block: windows.IO_STATUS_BLOCK = undefined;
-//         var info: windows.FILE_ALL_INFORMATION = undefined;
-//         const rc = windows.ntdll.NtQueryInformationFile(self.handle, &io_status_block, &info, @sizeOf(windows.FILE_ALL_INFORMATION), .FileAllInformation);
-//         switch (rc) {
-//             .SUCCESS => {},
-//             .BUFFER_OVERFLOW => {},
-//             .INVALID_PARAMETER => unreachable,
-//             .ACCESS_DENIED => return error.AccessDenied,
-//             else => return windows.unexpectedStatus(rc),
-//         }
-//         return Stat{
-//             .inode = info.InternalInformation.IndexNumber,
-//             .size = @bitCast(u64, info.StandardInformation.EndOfFile),
-//             .mode = 0,
-//             .kind = if (info.StandardInformation.Directory == 0) .File else .Directory,
-//             .atime = windows.fromSysTime(info.BasicInformation.LastAccessTime),
-//             .mtime = windows.fromSysTime(info.BasicInformation.LastWriteTime),
-//             .ctime = windows.fromSysTime(info.BasicInformation.CreationTime),
-//         };
-//     }
-
-//     var st = zeroes(libc_stat);
-//     switch (errno(stat(path.ptr, &st))) {
-//         0 => {},
-//         // .EINVAL => unreachable,
-//         .EBADF => unreachable, // Always a race condition.
-//         .ENOMEM => return error.SystemResources,
-//         .EACCES => return error.AccessDenied,
-//         else => |err| return os.unexpectedErrno(err),
-//     }
-
-//     const atime = st.atime();
-//     const mtime = st.mtime();
-//     const ctime = st.ctime();
-//     return Stat{
-//         .inode = st.ino,
-//         .size = @bitCast(u64, st.size),
-//         .mode = st.mode,
-//         .kind = switch (builtin.os.tag) {
-//             .wasi => switch (st.filetype) {
-//                 os.FILETYPE_BLOCK_DEVICE => Kind.BlockDevice,
-//                 os.FILETYPE_CHARACTER_DEVICE => Kind.CharacterDevice,
-//                 os.FILETYPE_DIRECTORY => Kind.Directory,
-//                 os.FILETYPE_SYMBOLIC_LINK => Kind.SymLink,
-//                 os.FILETYPE_REGULAR_FILE => Kind.File,
-//                 os.FILETYPE_SOCKET_STREAM, os.FILETYPE_SOCKET_DGRAM => Kind.UnixDomainSocket,
-//                 else => Kind.Unknown,
-//             },
-//             else => switch (st.mode & os.S.IFMT) {
-//                 os.S.IFBLK => Kind.BlockDevice,
-//                 os.S.IFCHR => Kind.CharacterDevice,
-//                 os.S.IFDIR => Kind.Directory,
-//                 os.S.IFIFO => Kind.NamedPipe,
-//                 os.S.IFLNK => Kind.SymLink,
-//                 os.S.IFREG => Kind.File,
-//                 os.S.IFSOCK => Kind.UnixDomainSocket,
-//                 else => Kind.Unknown,
-//             },
-//         },
-//         .atime = @as(i128, atime.sec) * std.time.ns_per_s + atime.nsec,
-//         .mtime = @as(i128, mtime.sec) * std.time.ns_per_s + mtime.nsec,
-//         .ctime = @as(i128, ctime.sec) * std.time.ns_per_s + ctime.nsec,
-//     };
-// }
 
 // benchmarking this did nothing on macOS
 // i verified it wasn't returning -1
@@ -491,7 +423,7 @@ pub fn getSystemUptime() u64 {
 }
 
 pub fn getSystemLoadavg() [3]f64 {
-    var loadavg: bun.C.translated.struct_loadavg = undefined;
+    var loadavg: bun.c.struct_loadavg = undefined;
     var size: usize = @sizeOf(@TypeOf(loadavg));
 
     std.posix.sysctlbynameZ(
@@ -562,129 +494,125 @@ pub fn get_release(buf: []u8) []const u8 {
     return bun.sliceTo(buf, 0);
 }
 
-const IO_CTL_RELATED = struct {
-    pub const IOCPARM_MASK = @as(c_int, 0x1fff);
-    pub inline fn IOCPARM_LEN(x: anytype) @TypeOf((x >> @as(c_int, 16)) & IOCPARM_MASK) {
-        return (x >> @as(c_int, 16)) & IOCPARM_MASK;
-    }
-    pub inline fn IOCBASECMD(x: anytype) @TypeOf(x & ~(IOCPARM_MASK << @as(c_int, 16))) {
-        return x & ~(IOCPARM_MASK << @as(c_int, 16));
-    }
-    pub inline fn IOCGROUP(x: anytype) @TypeOf((x >> @as(c_int, 8)) & @as(c_int, 0xff)) {
-        return (x >> @as(c_int, 8)) & @as(c_int, 0xff);
-    }
-    pub const IOCPARM_MAX = IOCPARM_MASK + @as(c_int, 1);
-    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex));
-    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hex));
-    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
-    pub const IOC_INOUT = IOC_IN | IOC_OUT;
-    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hex));
-    pub inline fn _IOC(inout: anytype, group: anytype, num: anytype, len: anytype) @TypeOf(((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num) {
-        return ((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num;
-    }
-    pub inline fn _IO(g: anytype, n: anytype) @TypeOf(_IOC(IOC_VOID, g, n, @as(c_int, 0))) {
-        return _IOC(IOC_VOID, g, n, @as(c_int, 0));
-    }
-    pub inline fn _IOR(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_OUT, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        return _IOC(IOC_OUT, g, n, @import("std").zig.c_translation.sizeof(t));
-    }
-    pub inline fn _IOW(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_IN, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        return _IOC(IOC_IN, g, n, @import("std").zig.c_translation.sizeof(t));
-    }
-    pub inline fn _IOWR(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_INOUT, g, n, @import("std").zig.c_translation.sizeof(t))) {
-        return _IOC(IOC_INOUT, g, n, @import("std").zig.c_translation.sizeof(t));
-    }
-    pub const TIOCMODG = _IOR('t', @as(c_int, 3), c_int);
-    pub const TIOCMODS = _IOW('t', @as(c_int, 4), c_int);
-    pub const TIOCM_LE = @as(c_int, 0o001);
-    pub const TIOCM_DTR = @as(c_int, 0o002);
-    pub const TIOCM_RTS = @as(c_int, 0o004);
-    pub const TIOCM_ST = @as(c_int, 0o010);
-    pub const TIOCM_SR = @as(c_int, 0o020);
-    pub const TIOCM_CTS = @as(c_int, 0o040);
-    pub const TIOCM_CAR = @as(c_int, 0o100);
-    pub const TIOCM_CD = TIOCM_CAR;
-    pub const TIOCM_RNG = @as(c_int, 0o200);
-    pub const TIOCM_RI = TIOCM_RNG;
-    pub const TIOCM_DSR = @as(c_int, 0o400);
-    pub const TIOCEXCL = _IO('t', @as(c_int, 13));
-    pub const TIOCNXCL = _IO('t', @as(c_int, 14));
-    pub const TIOCFLUSH = _IOW('t', @as(c_int, 16), c_int);
-    pub const TIOCGETD = _IOR('t', @as(c_int, 26), c_int);
-    pub const TIOCSETD = _IOW('t', @as(c_int, 27), c_int);
-    pub const TIOCIXON = _IO('t', @as(c_int, 129));
-    pub const TIOCIXOFF = _IO('t', @as(c_int, 128));
-    pub const TIOCSBRK = _IO('t', @as(c_int, 123));
-    pub const TIOCCBRK = _IO('t', @as(c_int, 122));
-    pub const TIOCSDTR = _IO('t', @as(c_int, 121));
-    pub const TIOCCDTR = _IO('t', @as(c_int, 120));
-    pub const TIOCGPGRP = _IOR('t', @as(c_int, 119), c_int);
-    pub const TIOCSPGRP = _IOW('t', @as(c_int, 118), c_int);
-    pub const TIOCOUTQ = _IOR('t', @as(c_int, 115), c_int);
-    pub const TIOCSTI = _IOW('t', @as(c_int, 114), u8);
-    pub const TIOCNOTTY = _IO('t', @as(c_int, 113));
-    pub const TIOCPKT = _IOW('t', @as(c_int, 112), c_int);
-    pub const TIOCPKT_DATA = @as(c_int, 0x00);
-    pub const TIOCPKT_FLUSHREAD = @as(c_int, 0x01);
-    pub const TIOCPKT_FLUSHWRITE = @as(c_int, 0x02);
-    pub const TIOCPKT_STOP = @as(c_int, 0x04);
-    pub const TIOCPKT_START = @as(c_int, 0x08);
-    pub const TIOCPKT_NOSTOP = @as(c_int, 0x10);
-    pub const TIOCPKT_DOSTOP = @as(c_int, 0x20);
-    pub const TIOCPKT_IOCTL = @as(c_int, 0x40);
-    pub const TIOCSTOP = _IO('t', @as(c_int, 111));
-    pub const TIOCSTART = _IO('t', @as(c_int, 110));
-    pub const TIOCMSET = _IOW('t', @as(c_int, 109), c_int);
-    pub const TIOCMBIS = _IOW('t', @as(c_int, 108), c_int);
-    pub const TIOCMBIC = _IOW('t', @as(c_int, 107), c_int);
-    pub const TIOCMGET = _IOR('t', @as(c_int, 106), c_int);
-    // pub const TIOCGWINSZ = _IOR('t', @as(c_int, 104), struct_winsize);
-    // pub const TIOCSWINSZ = _IOW('t', @as(c_int, 103), struct_winsize);
-    pub const TIOCUCNTL = _IOW('t', @as(c_int, 102), c_int);
-    pub const TIOCSTAT = _IO('t', @as(c_int, 101));
-    pub inline fn UIOCCMD(n: anytype) @TypeOf(_IO('u', n)) {
-        return _IO('u', n);
-    }
-    pub const TIOCSCONS = _IO('t', @as(c_int, 99));
-    pub const TIOCCONS = _IOW('t', @as(c_int, 98), c_int);
-    pub const TIOCSCTTY = _IO('t', @as(c_int, 97));
-    pub const TIOCEXT = _IOW('t', @as(c_int, 96), c_int);
-    pub const TIOCSIG = _IO('t', @as(c_int, 95));
-    pub const TIOCDRAIN = _IO('t', @as(c_int, 94));
-    pub const TIOCMSDTRWAIT = _IOW('t', @as(c_int, 91), c_int);
-    pub const TIOCMGDTRWAIT = _IOR('t', @as(c_int, 90), c_int);
-    pub const TIOCSDRAINWAIT = _IOW('t', @as(c_int, 87), c_int);
-    pub const TIOCGDRAINWAIT = _IOR('t', @as(c_int, 86), c_int);
-    pub const TIOCDSIMICROCODE = _IO('t', @as(c_int, 85));
-    pub const TIOCPTYGRANT = _IO('t', @as(c_int, 84));
-    pub const TIOCPTYGNAME = _IOC(IOC_OUT, 't', @as(c_int, 83), @as(c_int, 128));
-    pub const TIOCPTYUNLK = _IO('t', @as(c_int, 82));
-    pub const TTYDISC = @as(c_int, 0);
-    pub const TABLDISC = @as(c_int, 3);
-    pub const SLIPDISC = @as(c_int, 4);
-    pub const PPPDISC = @as(c_int, 5);
-    // pub const TIOCGSIZE = TIOCGWINSZ;
-    // pub const TIOCSSIZE = TIOCSWINSZ;
-    pub const FIOCLEX = _IO('f', @as(c_int, 1));
-    pub const FIONCLEX = _IO('f', @as(c_int, 2));
-    pub const FIONREAD = _IOR('f', @as(c_int, 127), c_int);
-    pub const FIONBIO = _IOW('f', @as(c_int, 126), c_int);
-    pub const FIOASYNC = _IOW('f', @as(c_int, 125), c_int);
-    pub const FIOSETOWN = _IOW('f', @as(c_int, 124), c_int);
-    pub const FIOGETOWN = _IOR('f', @as(c_int, 123), c_int);
-    pub const FIODTYPE = _IOR('f', @as(c_int, 122), c_int);
-    pub const SIOCSHIWAT = _IOW('s', @as(c_int, 0), c_int);
-    pub const SIOCGHIWAT = _IOR('s', @as(c_int, 1), c_int);
-    pub const SIOCSLOWAT = _IOW('s', @as(c_int, 2), c_int);
-    pub const SIOCGLOWAT = _IOR('s', @as(c_int, 3), c_int);
-    pub const SIOCATMARK = _IOR('s', @as(c_int, 7), c_int);
-    pub const SIOCSPGRP = _IOW('s', @as(c_int, 8), c_int);
-    pub const SIOCGPGRP = _IOR('s', @as(c_int, 9), c_int);
-    // pub const SIOCSETVLAN = SIOCSIFVLAN;
-    // pub const SIOCGETVLAN = SIOCGIFVLAN;
-};
-
-pub usingnamespace IO_CTL_RELATED;
+pub const IOCPARM_MASK = @as(c_int, 0x1fff);
+pub inline fn IOCPARM_LEN(x: anytype) @TypeOf((x >> @as(c_int, 16)) & IOCPARM_MASK) {
+    return (x >> @as(c_int, 16)) & IOCPARM_MASK;
+}
+pub inline fn IOCBASECMD(x: anytype) @TypeOf(x & ~(IOCPARM_MASK << @as(c_int, 16))) {
+    return x & ~(IOCPARM_MASK << @as(c_int, 16));
+}
+pub inline fn IOCGROUP(x: anytype) @TypeOf((x >> @as(c_int, 8)) & @as(c_int, 0xff)) {
+    return (x >> @as(c_int, 8)) & @as(c_int, 0xff);
+}
+pub const IOCPARM_MAX = IOCPARM_MASK + @as(c_int, 1);
+pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex));
+pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hex));
+pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
+pub const IOC_INOUT = IOC_IN | IOC_OUT;
+pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hex));
+pub inline fn _IOC(inout: anytype, group: anytype, num: anytype, len: anytype) @TypeOf(((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num) {
+    return ((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num;
+}
+pub inline fn _IO(g: anytype, n: anytype) @TypeOf(_IOC(IOC_VOID, g, n, @as(c_int, 0))) {
+    return _IOC(IOC_VOID, g, n, @as(c_int, 0));
+}
+pub inline fn _IOR(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_OUT, g, n, @import("std").zig.c_translation.sizeof(t))) {
+    return _IOC(IOC_OUT, g, n, @import("std").zig.c_translation.sizeof(t));
+}
+pub inline fn _IOW(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_IN, g, n, @import("std").zig.c_translation.sizeof(t))) {
+    return _IOC(IOC_IN, g, n, @import("std").zig.c_translation.sizeof(t));
+}
+pub inline fn _IOWR(g: anytype, n: anytype, t: anytype) @TypeOf(_IOC(IOC_INOUT, g, n, @import("std").zig.c_translation.sizeof(t))) {
+    return _IOC(IOC_INOUT, g, n, @import("std").zig.c_translation.sizeof(t));
+}
+pub const TIOCMODG = _IOR('t', @as(c_int, 3), c_int);
+pub const TIOCMODS = _IOW('t', @as(c_int, 4), c_int);
+pub const TIOCM_LE = @as(c_int, 0o001);
+pub const TIOCM_DTR = @as(c_int, 0o002);
+pub const TIOCM_RTS = @as(c_int, 0o004);
+pub const TIOCM_ST = @as(c_int, 0o010);
+pub const TIOCM_SR = @as(c_int, 0o020);
+pub const TIOCM_CTS = @as(c_int, 0o040);
+pub const TIOCM_CAR = @as(c_int, 0o100);
+pub const TIOCM_CD = TIOCM_CAR;
+pub const TIOCM_RNG = @as(c_int, 0o200);
+pub const TIOCM_RI = TIOCM_RNG;
+pub const TIOCM_DSR = @as(c_int, 0o400);
+pub const TIOCEXCL = _IO('t', @as(c_int, 13));
+pub const TIOCNXCL = _IO('t', @as(c_int, 14));
+pub const TIOCFLUSH = _IOW('t', @as(c_int, 16), c_int);
+pub const TIOCGETD = _IOR('t', @as(c_int, 26), c_int);
+pub const TIOCSETD = _IOW('t', @as(c_int, 27), c_int);
+pub const TIOCIXON = _IO('t', @as(c_int, 129));
+pub const TIOCIXOFF = _IO('t', @as(c_int, 128));
+pub const TIOCSBRK = _IO('t', @as(c_int, 123));
+pub const TIOCCBRK = _IO('t', @as(c_int, 122));
+pub const TIOCSDTR = _IO('t', @as(c_int, 121));
+pub const TIOCCDTR = _IO('t', @as(c_int, 120));
+pub const TIOCGPGRP = _IOR('t', @as(c_int, 119), c_int);
+pub const TIOCSPGRP = _IOW('t', @as(c_int, 118), c_int);
+pub const TIOCOUTQ = _IOR('t', @as(c_int, 115), c_int);
+pub const TIOCSTI = _IOW('t', @as(c_int, 114), u8);
+pub const TIOCNOTTY = _IO('t', @as(c_int, 113));
+pub const TIOCPKT = _IOW('t', @as(c_int, 112), c_int);
+pub const TIOCPKT_DATA = @as(c_int, 0x00);
+pub const TIOCPKT_FLUSHREAD = @as(c_int, 0x01);
+pub const TIOCPKT_FLUSHWRITE = @as(c_int, 0x02);
+pub const TIOCPKT_STOP = @as(c_int, 0x04);
+pub const TIOCPKT_START = @as(c_int, 0x08);
+pub const TIOCPKT_NOSTOP = @as(c_int, 0x10);
+pub const TIOCPKT_DOSTOP = @as(c_int, 0x20);
+pub const TIOCPKT_IOCTL = @as(c_int, 0x40);
+pub const TIOCSTOP = _IO('t', @as(c_int, 111));
+pub const TIOCSTART = _IO('t', @as(c_int, 110));
+pub const TIOCMSET = _IOW('t', @as(c_int, 109), c_int);
+pub const TIOCMBIS = _IOW('t', @as(c_int, 108), c_int);
+pub const TIOCMBIC = _IOW('t', @as(c_int, 107), c_int);
+pub const TIOCMGET = _IOR('t', @as(c_int, 106), c_int);
+// pub const TIOCGWINSZ = _IOR('t', @as(c_int, 104), struct_winsize);
+// pub const TIOCSWINSZ = _IOW('t', @as(c_int, 103), struct_winsize);
+pub const TIOCUCNTL = _IOW('t', @as(c_int, 102), c_int);
+pub const TIOCSTAT = _IO('t', @as(c_int, 101));
+pub inline fn UIOCCMD(n: anytype) @TypeOf(_IO('u', n)) {
+    return _IO('u', n);
+}
+pub const TIOCSCONS = _IO('t', @as(c_int, 99));
+pub const TIOCCONS = _IOW('t', @as(c_int, 98), c_int);
+pub const TIOCSCTTY = _IO('t', @as(c_int, 97));
+pub const TIOCEXT = _IOW('t', @as(c_int, 96), c_int);
+pub const TIOCSIG = _IO('t', @as(c_int, 95));
+pub const TIOCDRAIN = _IO('t', @as(c_int, 94));
+pub const TIOCMSDTRWAIT = _IOW('t', @as(c_int, 91), c_int);
+pub const TIOCMGDTRWAIT = _IOR('t', @as(c_int, 90), c_int);
+pub const TIOCSDRAINWAIT = _IOW('t', @as(c_int, 87), c_int);
+pub const TIOCGDRAINWAIT = _IOR('t', @as(c_int, 86), c_int);
+pub const TIOCDSIMICROCODE = _IO('t', @as(c_int, 85));
+pub const TIOCPTYGRANT = _IO('t', @as(c_int, 84));
+pub const TIOCPTYGNAME = _IOC(IOC_OUT, 't', @as(c_int, 83), @as(c_int, 128));
+pub const TIOCPTYUNLK = _IO('t', @as(c_int, 82));
+pub const TTYDISC = @as(c_int, 0);
+pub const TABLDISC = @as(c_int, 3);
+pub const SLIPDISC = @as(c_int, 4);
+pub const PPPDISC = @as(c_int, 5);
+// pub const TIOCGSIZE = TIOCGWINSZ;
+// pub const TIOCSSIZE = TIOCSWINSZ;
+pub const FIOCLEX = _IO('f', @as(c_int, 1));
+pub const FIONCLEX = _IO('f', @as(c_int, 2));
+pub const FIONREAD = _IOR('f', @as(c_int, 127), c_int);
+pub const FIONBIO = _IOW('f', @as(c_int, 126), c_int);
+pub const FIOASYNC = _IOW('f', @as(c_int, 125), c_int);
+pub const FIOSETOWN = _IOW('f', @as(c_int, 124), c_int);
+pub const FIOGETOWN = _IOR('f', @as(c_int, 123), c_int);
+pub const FIODTYPE = _IOR('f', @as(c_int, 122), c_int);
+pub const SIOCSHIWAT = _IOW('s', @as(c_int, 0), c_int);
+pub const SIOCGHIWAT = _IOR('s', @as(c_int, 1), c_int);
+pub const SIOCSLOWAT = _IOW('s', @as(c_int, 2), c_int);
+pub const SIOCGLOWAT = _IOR('s', @as(c_int, 3), c_int);
+pub const SIOCATMARK = _IOR('s', @as(c_int, 7), c_int);
+pub const SIOCSPGRP = _IOW('s', @as(c_int, 8), c_int);
+pub const SIOCGPGRP = _IOR('s', @as(c_int, 9), c_int);
+// pub const SIOCSETVLAN = SIOCSIFVLAN;
+// pub const SIOCGETVLAN = SIOCGIFVLAN;
 
 // As of Zig v0.11.0-dev.1393+38eebf3c4, ifaddrs.h is not included in the headers
 pub const ifaddrs = extern struct {
@@ -699,14 +627,9 @@ pub const ifaddrs = extern struct {
 pub extern fn getifaddrs(*?*ifaddrs) c_int;
 pub extern fn freeifaddrs(?*ifaddrs) void;
 
-const net_if_h = @cImport({
-    // TODO: remove this c import! instead of adding to it, add to
-    // c-headers-for-zig.h and use bun.C.translated.
-    @cInclude("net/if.h");
-});
-pub const IFF_RUNNING = net_if_h.IFF_RUNNING;
-pub const IFF_UP = net_if_h.IFF_UP;
-pub const IFF_LOOPBACK = net_if_h.IFF_LOOPBACK;
+pub const IFF_RUNNING = bun.c.IFF_RUNNING;
+pub const IFF_UP = bun.c.IFF_UP;
+pub const IFF_LOOPBACK = bun.c.IFF_LOOPBACK;
 pub const sockaddr_dl = extern struct {
     sdl_len: u8, // Total length of sockaddr */
     sdl_family: u8, // AF_LINK */
@@ -723,17 +646,9 @@ pub const sockaddr_dl = extern struct {
     //#endif
 };
 
-pub usingnamespace @cImport({
-    // TODO: remove this c import! instead of adding to it, add to
-    // c-headers-for-zig.h and use bun.C.translated.
-    @cInclude("sys/spawn.h");
-    @cInclude("sys/fcntl.h");
-    @cInclude("sys/socket.h");
-});
-
 pub const F = struct {
-    pub const DUPFD_CLOEXEC = This.F_DUPFD_CLOEXEC;
-    pub const DUPFD = This.F_DUPFD;
+    pub const DUPFD_CLOEXEC = bun.c.F_DUPFD_CLOEXEC;
+    pub const DUPFD = bun.c.F_DUPFD;
 };
 
 // it turns out preallocating on APFS on an M1 is slower.

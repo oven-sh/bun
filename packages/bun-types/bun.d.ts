@@ -16,9 +16,13 @@
 declare module "bun" {
   import type { FFIFunctionCallableSymbol } from "bun:ffi";
   import type { Encoding as CryptoEncoding } from "crypto";
-  import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
-  import type { Stats } from "node:fs";
   import type { X509Certificate } from "node:crypto";
+  import type { Stats } from "node:fs";
+  import type { CipherNameAndProtocol, EphemeralKeyInfo, PeerCertificate } from "tls";
+
+  type DistributedOmit<T, K extends keyof T> = T extends T ? Omit<T, K> : never;
+  type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
+
   interface Env {
     NODE_ENV?: string;
     /**
@@ -303,6 +307,10 @@ declare module "bun" {
   export interface Shell {
     (strings: TemplateStringsArray, ...expressions: ShellExpression[]): ShellPromise;
 
+    readonly Shell: ShellConstructor;
+    readonly ShellError: typeof ShellError;
+    readonly ShellPromise: typeof ShellPromise;
+
     /**
      * Perform bash-like brace expansion on the given pattern.
      * @param pattern - Brace pattern to expand
@@ -354,9 +362,6 @@ declare module "bun" {
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
      */
     throws(shouldThrow: boolean): this;
-
-    readonly ShellPromise: typeof ShellPromise;
-    readonly Shell: ShellConstructor;
   }
 
   export interface ShellOutput {
@@ -454,55 +459,6 @@ declare module "bun" {
     parse(input: string): object;
   }
   const TOML: TOML;
-
-  type Serve<WebSocketDataType = undefined> =
-    | ServeOptions
-    | TLSServeOptions
-    | UnixServeOptions
-    | UnixTLSServeOptions
-    | WebSocketServeOptions<WebSocketDataType>
-    | TLSWebSocketServeOptions<WebSocketDataType>
-    | UnixWebSocketServeOptions<WebSocketDataType>
-    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
-
-  /**
-   * Start a fast HTTP server.
-   *
-   * @param options Server options (port defaults to $PORT || 3000)
-   *
-   * -----
-   *
-   * @example
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response("Hello World!");
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   * -----
-   *
-   * @example
-   *
-   * Send a file
-   *
-   * ```ts
-   * Bun.serve({
-   *   fetch(req: Request): Response | Promise<Response> {
-   *     return new Response(Bun.file("./package.json"));
-   *   },
-   *
-   *   // Optional port number - the default value is 3000
-   *   port: process.env.PORT || 3000,
-   * });
-   * ```
-   */
-  // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
-  function serve<T>(options: Serve<T>): Server;
 
   /**
    * Synchronously resolve a `moduleId` as though it were imported from `parent`
@@ -1383,6 +1339,18 @@ declare module "bun" {
     endpoint?: string;
 
     /**
+     * Use virtual hosted style endpoint. default to false, when true if `endpoint` is informed it will ignore the `bucket`
+     *
+     * @example
+     *     // Using virtual hosted style
+     *     const file = s3("my-file.txt", {
+     *       virtualHostedStyle: true,
+     *       endpoint: "https://my-bucket.s3.us-east-1.amazonaws.com"
+     *     });
+     */
+    virtualHostedStyle?: boolean;
+
+    /**
      * The size of each part in multipart uploads (in bytes).
      * - Minimum: 5 MiB
      * - Maximum: 5120 MiB
@@ -2021,9 +1989,9 @@ declare module "bun" {
     /** Database user for authentication (alias for username) */
     user?: string;
     /** Database password for authentication */
-    password?: string;
+    password?: string | (() => Promise<string>);
     /** Database password for authentication (alias for password) */
-    pass?: string;
+    pass?: string | (() => Promise<string>);
     /** Name of the database to connect to */
     database?: string;
     /** Name of the database to connect to (alias for database) */
@@ -2054,6 +2022,8 @@ declare module "bun" {
     max?: number;
     /** By default values outside i32 range are returned as strings. If this is true, values outside i32 range are returned as BigInts. */
     bigint?: boolean;
+    /** Automatic creation of prepared statements, defaults to true */
+    prepare?: boolean;
   };
 
   /**
@@ -2067,6 +2037,8 @@ declare module "bun" {
     cancelled: boolean;
     /** Cancels the executing query */
     cancel(): SQLQuery;
+    /** Execute as a simple query, no parameters are allowed but can execute multiple commands separated by semicolons */
+    simple(): SQLQuery;
     /** Executes the query */
     execute(): SQLQuery;
     /** Returns the raw query result */
@@ -2296,6 +2268,13 @@ declare module "bun" {
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
      */
     unsafe(string: string, values?: any[]): SQLQuery;
+    /**
+     * Reads a file and uses the contents as a query.
+     * Optional parameters can be used if the file includes $1, $2, etc
+     * @example
+     * const result = await sql.file("query.sql", [1, 2, 3]);
+     */
+    file(filename: string, values?: any[]): SQLQuery;
 
     /** Current client options */
     options: SQLOptions;
@@ -2327,10 +2306,68 @@ declare module "bun" {
    */
   interface SavepointSQL extends SQL {}
 
+  type CSRFAlgorithm = "blake2b256" | "blake2b512" | "sha256" | "sha384" | "sha512" | "sha512-256";
+  interface CSRFGenerateOptions {
+    /**
+     * The number of milliseconds until the token expires. 0 means the token never expires.
+     * @default 24 * 60 * 60 * 1000 (24 hours)
+     */
+    expiresIn?: number;
+    /**
+     * The encoding of the token.
+     * @default "base64url"
+     */
+    encoding?: "base64" | "base64url" | "hex";
+    /**
+     * The algorithm to use for the token.
+     * @default "sha256"
+     */
+    algorithm?: CSRFAlgorithm;
+  }
+
+  interface CSRFVerifyOptions {
+    /**
+     * The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     */
+    secret?: string;
+    /**
+     * The encoding of the token.
+     * @default "base64url"
+     */
+    encoding?: "base64" | "base64url" | "hex";
+    /**
+     * The algorithm to use for the token.
+     * @default "sha256"
+     */
+    algorithm?: CSRFAlgorithm;
+    /**
+     * The number of milliseconds until the token expires. 0 means the token never expires.
+     * @default 24 * 60 * 60 * 1000 (24 hours)
+     */
+    maxAge?: number;
+  }
+  interface CSRF {
+    /**
+     * Generate a CSRF token.
+     * @param secret The secret to use for the token. If not provided, a random default secret will be generated in memory and used.
+     * @param options The options for the token.
+     * @returns The generated token.
+     */
+    generate(secret?: string, options?: CSRFGenerateOptions): string;
+    /**
+     * Verify a CSRF token.
+     * @param token The token to verify.
+     * @param options The options for the token.
+     * @returns True if the token is valid, false otherwise.
+     */
+    verify(token: string, options?: CSRFVerifyOptions): boolean;
+  }
+
   var sql: SQL;
   var postgres: SQL;
   var SQL: SQL;
 
+  var CSRF: CSRF;
   /**
    *   This lets you use macros as regular imports
    *   @example
@@ -2621,9 +2658,15 @@ declare module "bun" {
     kind: ImportKind;
   }
 
+  /**
+   * @see [Bun.build API docs](https://bun.sh/docs/bundler#api)
+   */
   interface BuildConfig {
     entrypoints: string[]; // list of file path
     outdir?: string; // output directory
+    /**
+     * @default "browser"
+     */
     target?: Target; // default: "browser"
     /**
      * Output module format. Top-level await is only supported for `"esm"`.
@@ -2667,7 +2710,25 @@ declare module "bun" {
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean; // default: "none", true -> "inline"
+    /**
+     * Specifies if and how to generate source maps.
+     *
+     * - `"none"` - No source maps are generated
+     * - `"linked"` - A separate `*.ext.map` file is generated alongside each
+     *   `*.ext` file. A `//# sourceMappingURL` comment is added to the output
+     *   file to link the two. Requires `outdir` to be set.
+     * - `"inline"` - an inline source map is appended to the output file.
+     * - `"external"` - Generate a separate source map file for each input file.
+     *   No `//# sourceMappingURL` comment is added to the output file.
+     *
+     * `true` and `false` are aliasees for `"inline"` and `"none"`, respectively.
+     *
+     * @default "none"
+     *
+     * @see {@link outdir} required for `"linked"` maps
+     * @see {@link publicPath} to customize the base url of linked source maps
+     */
+    sourcemap?: "none" | "linked" | "inline" | "external" | "linked" | boolean;
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -2696,6 +2757,14 @@ declare module "bun" {
      * ```
      */
     env?: "inline" | "disable" | `${string}*`;
+    /**
+     * Whether to enable minification.
+     *
+     * Use `true`/`false` to enable/disable all minification options. Alternatively,
+     * you can pass an object for granular control over certain minifications.
+     *
+     * @default false
+     */
     minify?:
       | boolean
       | {
@@ -3669,6 +3738,30 @@ declare module "bun" {
         };
   }
 
+  namespace RouterTypes {
+    type ExtractRouteParams<T> = T extends `${string}:${infer Param}/${infer Rest}`
+      ? { [K in Param]: string } & ExtractRouteParams<Rest>
+      : T extends `${string}:${infer Param}`
+        ? { [K in Param]: string }
+        : T extends `${string}*`
+          ? {}
+          : {};
+
+    type RouteHandler<T extends string> = (req: BunRequest<T>, server: Server) => Response | Promise<Response>;
+
+    type HTTPMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+
+    type RouteHandlerObject<T extends string> = {
+      [K in HTTPMethod]?: RouteHandler<T>;
+    };
+
+    type RouteValue<T extends string> = Response | false | RouteHandler<T> | RouteHandlerObject<T>;
+  }
+
+  interface BunRequest<T extends string = string> extends Request {
+    params: RouterTypes.ExtractRouteParams<T>;
+  }
+
   interface GenericServeOptions {
     /**
      * What URI should be used to make {@link Request.url} absolute?
@@ -3730,26 +3823,6 @@ declare module "bun" {
      * This string will currently do nothing. But in the future it could be useful for logs or metrics.
      */
     id?: string | null;
-
-    /**
-     * Server static Response objects by route.
-     *
-     * @example
-     * ```ts
-     * Bun.serve({
-     *   static: {
-     *     "/": new Response("Hello World"),
-     *     "/about": new Response("About"),
-     *   },
-     *   fetch(req) {
-     *     return new Response("Fallback response");
-     *   },
-     * });
-     * ```
-     *
-     * @experimental
-     */
-    static?: Record<`/${string}`, Response>;
   }
 
   interface ServeOptions extends GenericServeOptions {
@@ -3962,13 +4035,14 @@ declare module "bun" {
 
   interface TLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends WebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {
+      TLSOptionsAsDeprecated {
     unix?: never;
     tls?: TLSOptions | TLSOptions[];
   }
+
   interface UnixTLSWebSocketServeOptions<WebSocketDataType = undefined>
     extends UnixWebSocketServeOptions<WebSocketDataType>,
-      TLSOptions {
+      TLSOptionsAsDeprecated {
     /**
      * If set, the HTTP server will listen on a unix socket instead of a port.
      * (Cannot be used with hostname+port)
@@ -3976,6 +4050,7 @@ declare module "bun" {
     unix: string;
     tls?: TLSOptions | TLSOptions[];
   }
+
   interface ErrorLike extends Error {
     code?: string;
     errno?: number;
@@ -4055,11 +4130,129 @@ declare module "bun" {
     secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
   }
 
-  interface TLSServeOptions extends ServeOptions, TLSOptions {
+  // Note for contributors: TLSOptionsAsDeprecated should be considered immutable
+  // and new TLS option keys should only be supported on the `.tls` property (which comes
+  // from the TLSOptions interface above).
+  /**
+   * This exists because Bun.serve() extends the TLSOptions object, but
+   * they're now considered deprecated. You should be passing the
+   * options on `.tls` instead.
+   *
+   * @example
+   * ```ts
+   * //// OLD ////
+   * Bun.serve({
+   *   fetch: () => new Response("Hello World"),
+   *   passphrase: "secret",
+   * });
+   *
+   * //// NEW ////
+   * Bun.serve({
+   *   fetch: () => new Response("Hello World"),
+   *   tls: {
+   *     passphrase: "secret",
+   *   },
+   * });
+   * ```
+   */
+  interface TLSOptionsAsDeprecated {
+    /**
+     * Passphrase for the TLS key
+     *
+     * @deprecated Use `.tls.passphrase` instead
+     */
+    passphrase?: string;
+
+    /**
+     * File path to a .pem file custom Diffie Helman parameters
+     *
+     * @deprecated Use `.tls.dhParamsFile` instead
+     */
+    dhParamsFile?: string;
+
+    /**
+     * Explicitly set a server name
+     *
+     * @deprecated Use `.tls.serverName` instead
+     */
+    serverName?: string;
+
+    /**
+     * This sets `OPENSSL_RELEASE_BUFFERS` to 1.
+     * It reduces overall performance but saves some memory.
+     * @default false
+     *
+     * @deprecated Use `.tls.lowMemoryMode` instead
+     */
+    lowMemoryMode?: boolean;
+
+    /**
+     * If set to `false`, any certificate is accepted.
+     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     *
+     * @deprecated Use `.tls.rejectUnauthorized` instead
+     */
+    rejectUnauthorized?: boolean;
+
+    /**
+     * If set to `true`, the server will request a client certificate.
+     *
+     * Default is `false`.
+     *
+     * @deprecated Use `.tls.requestCert` instead
+     */
+    requestCert?: boolean;
+
+    /**
+     * Optionally override the trusted CA certificates. Default is to trust
+     * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
+     * replaced when CAs are explicitly specified using this option.
+     *
+     * @deprecated Use `.tls.ca` instead
+     */
+    ca?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     *  Cert chains in PEM format. One cert chain should be provided per
+     *  private key. Each cert chain should consist of the PEM formatted
+     *  certificate for a provided private key, followed by the PEM
+     *  formatted intermediate certificates (if any), in order, and not
+     *  including the root CA (the root CA must be pre-known to the peer,
+     *  see ca). When providing multiple cert chains, they do not have to
+     *  be in the same order as their private keys in key. If the
+     *  intermediate certificates are not provided, the peer will not be
+     *  able to validate the certificate, and the handshake will fail.
+     *
+     * @deprecated Use `.tls.cert` instead
+     */
+    cert?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     * Private keys in PEM format. PEM allows the option of private keys
+     * being encrypted. Encrypted keys will be decrypted with
+     * options.passphrase. Multiple keys using different algorithms can be
+     * provided either as an array of unencrypted key strings or buffers,
+     * or an array of objects in the form {pem: <string|buffer>[,
+     * passphrase: <string>]}. The object form can only occur in an array.
+     * object.passphrase is optional. Encrypted keys will be decrypted with
+     * object.passphrase if provided, or options.passphrase if it is not.
+     *
+     * @deprecated Use `.tls.key` instead
+     */
+    key?: string | Buffer | BunFile | Array<string | Buffer | BunFile> | undefined;
+    /**
+     * Optionally affect the OpenSSL protocol behavior, which is not
+     * usually necessary. This should be used carefully if at all! Value is
+     * a numeric bitmask of the SSL_OP_* options from OpenSSL Options
+     *
+     * @deprecated `Use .tls.secureOptions` instead
+     */
+    secureOptions?: number | undefined; // Value is a numeric bitmask of the `SSL_OP_*` options
+  }
+
+  interface TLSServeOptions extends ServeOptions, TLSOptionsAsDeprecated {
     tls?: TLSOptions | TLSOptions[];
   }
 
-  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptions {
+  interface UnixTLSServeOptions extends UnixServeOptions, TLSOptionsAsDeprecated {
     tls?: TLSOptions | TLSOptions[];
   }
 
@@ -4126,7 +4319,14 @@ declare module "bun" {
      *
      * Passing other options such as `port` or `hostname` won't do anything.
      */
-    reload(options: Serve): void;
+    reload<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+      options: ServeFunctionOptions<T, R> & {
+        /**
+         * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
+         */
+        static?: R;
+      },
+    ): Server;
 
     /**
      * Mock the fetch handler for a running server.
@@ -4323,6 +4523,214 @@ declare module "bun" {
      */
     readonly id: string;
   }
+
+  type Serve<WebSocketDataType = undefined> =
+    | ServeOptions
+    | TLSServeOptions
+    | UnixServeOptions
+    | UnixTLSServeOptions
+    | WebSocketServeOptions<WebSocketDataType>
+    | TLSWebSocketServeOptions<WebSocketDataType>
+    | UnixWebSocketServeOptions<WebSocketDataType>
+    | UnixTLSWebSocketServeOptions<WebSocketDataType>;
+
+  /** 
+    Bun.serve provides a high-performance HTTP server with built-in routing support.
+    It enables both function-based and object-based route handlers with type-safe 
+    parameters and method-specific handling.
+
+    @example Basic Usage
+    ```ts
+    Bun.serve({
+      port: 3000,
+      fetch(req) {
+        return new Response("Hello World");
+      }
+    });
+    ```
+
+    @example Route-based Handlers
+    ```ts
+    Bun.serve({
+      routes: {
+        // Static responses
+        "/": new Response("Home page"),
+        
+        // Function handlers with type-safe parameters
+        "/users/:id": (req) => {
+          // req.params.id is typed as string
+          return new Response(`User ${req.params.id}`);
+        },
+        
+        // Method-specific handlers
+        "/api/posts": {
+          GET: () => new Response("Get posts"),
+          POST: async (req) => {
+            const body = await req.json();
+            return new Response("Created post");
+          },
+          DELETE: (req) => new Response("Deleted post")
+        },
+        
+        // Wildcard routes
+        "/static/*": (req) => {
+          // Handle any path under /static/
+          return new Response("Static file");
+        },
+        
+        // Disable route (fall through to fetch handler)
+        "/api/legacy": false
+      },
+      
+      // Fallback handler for unmatched routes
+      fetch(req) {
+        return new Response("Not Found", { status: 404 });
+      }
+    });
+    ```
+
+    @example Path Parameters
+    ```ts
+    Bun.serve({
+      routes: {
+        // Single parameter
+        "/users/:id": (req: BunRequest<"/users/:id">) => {
+          return new Response(`User ID: ${req.params.id}`);
+        },
+        
+        // Multiple parameters
+        "/posts/:postId/comments/:commentId": (
+          req: BunRequest<"/posts/:postId/comments/:commentId">
+        ) => {
+          return new Response(JSON.stringify(req.params));
+          // Output: {"postId": "123", "commentId": "456"}
+        }
+      }
+    });
+    ```
+
+    @example Route Precedence
+    ```ts
+    // Routes are matched in the following order:
+    // 1. Exact static routes ("/about")
+    // 2. Parameter routes ("/users/:id") 
+    // 3. Wildcard routes ("/api/*")
+
+    Bun.serve({
+      routes: {
+        "/api/users": () => new Response("Users list"),
+        "/api/users/:id": (req) => new Response(`User ${req.params.id}`),
+        "/api/*": () => new Response("API catchall"),
+        "/*": () => new Response("Root catchall")
+      }
+    });
+    ```
+
+    @example Error Handling
+    ```ts
+    Bun.serve({
+      routes: {
+        "/error": () => {
+          throw new Error("Something went wrong");
+        }
+      },
+      error(error) {
+        // Custom error handler
+        console.error(error);
+        return new Response(`Error: ${error.message}`, { 
+          status: 500 
+        });
+      }
+    });
+    ```
+
+    @example Server Lifecycle
+    ```ts
+    const server = Bun.serve({
+      // Server config...
+    });
+
+    // Update routes at runtime
+    server.reload({
+      routes: {
+        "/": () => new Response("Updated route")
+      }
+    });
+
+    // Stop the server
+    server.stop();
+    ```
+
+    @example Development Mode
+    ```ts
+    Bun.serve({
+      development: true, // Enable hot reloading
+      routes: {
+        // Routes will auto-reload on changes
+      }
+    });
+    ```
+
+    @example Type-Safe Request Handling
+    ```ts
+    type Post = {
+      id: string;
+      title: string;
+    };
+
+    Bun.serve({
+      routes: {
+        "/api/posts/:id": async (
+          req: BunRequest<"/api/posts/:id">
+        ) => {
+          if (req.method === "POST") {
+            const body: Post = await req.json();
+            return Response.json(body);
+          }
+          return new Response("Method not allowed", { 
+            status: 405 
+          });
+        }
+      }
+    });
+    ```
+    @param options - Server configuration options
+    @param options.routes - Route definitions mapping paths to handlers
+    */
+  function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
+    options: ServeFunctionOptions<T, R> & {
+      /**
+       * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
+       */
+      static?: R;
+    },
+  ): Server;
+
+  type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }> =
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+        routes: R;
+        fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+        routes?: never;
+        fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (WebSocketServeOptions<T> & {
+        routes: R;
+        fetch?: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      })
+    | (WebSocketServeOptions<T> & {
+        routes?: never;
+        fetch: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      });
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -4731,7 +5139,7 @@ declare module "bun" {
    */
   function openInEditor(path: string, options?: EditorOptions): void;
 
-  const fetch: typeof globalThis.fetch & {
+  var fetch: typeof globalThis.fetch & {
     preconnect(url: string): void;
   };
 
@@ -5349,12 +5757,18 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onStart(callback: OnStartCallback): void;
+    onStart(callback: OnStartCallback): this;
     onBeforeParse(
       constraints: PluginConstraints,
-      callback: { napiModule: unknown; symbol: string; external?: unknown | undefined },
-    ): void;
+      callback: {
+        napiModule: unknown;
+        symbol: string;
+        external?: unknown | undefined;
+      },
+    ): this;
     /**
      * Register a callback to load imports with a specific import specifier
      * @param constraints The constraints to apply the plugin to
@@ -5369,8 +5783,10 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): void;
+    onLoad(constraints: PluginConstraints, callback: OnLoadCallback): this;
     /**
      * Register a callback to resolve imports matching a filter and/or namespace
      * @param constraints The constraints to apply the plugin to
@@ -5385,8 +5801,10 @@ declare module "bun" {
      *   },
      * });
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): void;
+    onResolve(constraints: PluginConstraints, callback: OnResolveCallback): this;
     /**
      * The config object passed to `Bun.build` as is. Can be mutated.
      */
@@ -5417,8 +5835,10 @@ declare module "bun" {
      * const { foo } = require("hello:world");
      * console.log(foo); // "bar"
      * ```
+     *
+     * @returns `this` for method chaining
      */
-    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): void;
+    module(specifier: string, callback: () => OnLoadResult | Promise<OnLoadResult>): this;
   }
 
   interface BunPlugin {
@@ -5437,13 +5857,15 @@ declare module "bun" {
      *
      * If unspecified, it is assumed that the plugin is compatible with all targets.
      *
-     * This field is not read by Bun.plugin
+     * This field is not read by {@link Bun.plugin}
      */
     target?: Target;
     /**
      * A function that will be called when the plugin is loaded.
      *
-     * This function may be called in the same tick that it is registered, or it may be called later. It could potentially be called multiple times for different targets.
+     * This function may be called in the same tick that it is registered, or it
+     * may be called later. It could potentially be called multiple times for
+     * different targets.
      */
     setup(
       /**
@@ -5878,7 +6300,7 @@ declare module "bun" {
      * @param socket
      */
     open?(socket: Socket<Data>): void | Promise<void>;
-    close?(socket: Socket<Data>): void | Promise<void>;
+    close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;
@@ -6541,6 +6963,8 @@ declare module "bun" {
     resourceUsage: ResourceUsage;
 
     signalCode?: string;
+    exitedDueToTimeout?: true;
+    pid: number;
   }
 
   /**

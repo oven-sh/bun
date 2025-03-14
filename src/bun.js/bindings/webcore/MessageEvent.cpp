@@ -33,14 +33,13 @@
 #include "JSDOMConvert.h"
 #include "JSMessageEvent.h"
 #include <JavaScriptCore/JSCInlines.h>
-
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
 
 using namespace JSC;
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(MessageEvent);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(MessageEvent);
 
 MessageEvent::MessageEvent() = default;
 
@@ -96,10 +95,14 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
 {
     auto& vm = globalObject.vm();
     // Locker<JSC::JSLock> locker(vm.apiLock());
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
 
     bool didFail = false;
 
     auto deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::NonThrowing, &didFail);
+    if (UNLIKELY(catchScope.exception()))
+        deserialized = jsUndefined();
+
     JSC::Strong<JSC::Unknown> strongData(vm, deserialized);
 
     auto& eventType = didFail ? eventNames().messageerrorEvent : eventNames().messageEvent;

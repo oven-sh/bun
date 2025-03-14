@@ -25,9 +25,10 @@ comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
         @compileError(
             "" ++
-                "Bun requires Zig version " ++ recommended_zig_version ++ ". This is" ++
-                "automatically configured via Bun's CMake setup. You likely meant to run" ++
-                "`bun setup`. If you are trying to upgrade the Zig compiler," ++
+                "Bun requires Zig version " ++ recommended_zig_version ++ " (found " ++
+                builtin.zig_version_string ++ "). This is " ++
+                "automatically configured via Bun's CMake setup. You likely meant to run " ++
+                "`bun setup`. If you are trying to upgrade the Zig compiler, " ++
                 "run `./scripts/download-zig.sh master` or comment this message out.",
         );
     }
@@ -82,10 +83,7 @@ const BunBuildOptions = struct {
 
         var opts = b.addOptions();
         opts.addOption([]const u8, "base_path", b.pathFromRoot("."));
-        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{
-            b.build_root.path.?,
-            this.codegen_path,
-        }) catch @panic("OOM"));
+        opts.addOption([]const u8, "codegen_path", std.fs.path.resolve(b.graph.arena, &.{ b.build_root.path.?, this.codegen_path }) catch @panic("OOM"));
 
         opts.addOption(bool, "codegen_embed", this.shouldEmbedCode());
         opts.addOption(u32, "canary_revision", this.canary_revision orelse 0);
@@ -429,7 +427,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
         .root_source_file = switch (opts.os) {
             .wasm => b.path("root_wasm.zig"),
-            else => b.path("root.zig"),
+            else => b.path("src/main.zig"),
             // else => b.path("root_css.zig"),
         },
         .target = opts.target,
@@ -519,16 +517,6 @@ fn exists(path: []const u8) bool {
 fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     const os = opts.os;
 
-    const io_path = switch (os) {
-        .mac => "src/io/io_darwin.zig",
-        .linux => "src/io/io_linux.zig",
-        .windows => "src/io/io_windows.zig",
-        else => "src/io/io_stub.zig",
-    };
-    obj.root_module.addAnonymousImport("async_io", .{
-        .root_source_file = b.path(io_path),
-    });
-
     const zlib_internal_path = switch (os) {
         .windows => "src/deps/zlib.win32.zig",
         .linux, .mac => "src/deps/zlib.posix.zig",
@@ -597,6 +585,15 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
                 .root_source_file = .{ .cwd_relative = path },
             });
         }
+    }
+    inline for (.{
+        .{ .import = "completions-bash", .file = b.path("completions/bun.bash") },
+        .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
+        .{ .import = "completions-fish", .file = b.path("completions/bun.fish") },
+    }) |entry| {
+        obj.root_module.addAnonymousImport(entry.import, .{
+            .root_source_file = entry.file,
+        });
     }
 
     if (os == .windows) {

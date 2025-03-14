@@ -59,7 +59,7 @@ const ArrayIdentityContext = @import("../identity_context.zig").ArrayIdentityCon
 const Semver = bun.Semver;
 const ExternalString = Semver.ExternalString;
 const String = Semver.String;
-const GlobalStringBuilder = @import("../string_builder.zig");
+const GlobalStringBuilder = bun.StringBuilder;
 const SlicedString = Semver.SlicedString;
 const Repository = @import("./repository.zig").Repository;
 const Bin = @import("./bin.zig").Bin;
@@ -962,7 +962,7 @@ pub const Tree = struct {
                                 },
                             };
 
-                            switch (bun.glob.walk.matchImpl(pattern, path_or_name)) {
+                            switch (bun.glob.walk.matchImpl(builder.allocator, pattern, path_or_name)) {
                                 .match, .negate_match => match = true,
 
                                 .negate_no_match => {
@@ -2547,11 +2547,11 @@ pub fn saveToDisk(this: *Lockfile, load_result: *const LoadResult, options: *con
 
     var tmpname_buf: [512]u8 = undefined;
     var base64_bytes: [8]u8 = undefined;
-    bun.rand(&base64_bytes);
+    bun.csprng(&base64_bytes);
     const tmpname = if (save_format == .text)
-        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
+        std.fmt.bufPrintZ(&tmpname_buf, ".lock-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable
     else
-        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+        std.fmt.bufPrintZ(&tmpname_buf, ".lockb-{s}.tmp", .{std.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
 
     const file = switch (File.openat(std.fs.cwd(), tmpname, bun.O.CREAT | bun.O.WRONLY, 0o777)) {
         .err => |err| {
@@ -2688,7 +2688,7 @@ pub fn getPackageID(
 }
 
 /// Appends `pkg` to `this.packages`, and adds to `this.package_index`
-pub fn appendPackageNoDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
+pub fn appendPackageDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!PackageID {
     const entry = try this.package_index.getOrPut(pkg.name_hash);
 
     if (!entry.found_existing) {
@@ -2703,6 +2703,11 @@ pub fn appendPackageNoDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pa
 
     return switch (entry.value_ptr.*) {
         .id => |existing_id| {
+            if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
+                pkg.meta.id = existing_id;
+                return existing_id;
+            }
+
             const new_id: PackageID = @intCast(this.packages.len);
             pkg.meta.id = new_id;
             try this.packages.append(this.allocator, pkg.*);
@@ -2724,6 +2729,13 @@ pub fn appendPackageNoDedupe(this: *Lockfile, pkg: *Package, buf: string) OOM!Pa
             return new_id;
         },
         .ids => |*existing_ids| {
+            for (existing_ids.items) |existing_id| {
+                if (pkg.resolution.eql(&resolutions[existing_id], buf, buf)) {
+                    pkg.meta.id = existing_id;
+                    return existing_id;
+                }
+            }
+
             const new_id: PackageID = @intCast(this.packages.len);
             pkg.meta.id = new_id;
             try this.packages.append(this.allocator, pkg.*);
@@ -5045,7 +5057,7 @@ pub const Package = extern struct {
 
             if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
 
-            if (Glob.Ascii.detectGlobSyntax(input_path)) {
+            if (Glob.detectGlobSyntax(input_path)) {
                 workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
             }

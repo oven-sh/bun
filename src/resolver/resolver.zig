@@ -1122,9 +1122,9 @@ pub const Resolver = struct {
                 const platform = bun.path.Platform.auto;
                 const ends_with_dir = platform.isSeparator(import_path[import_path.len - 1]) or
                     (import_path.len > 3 and
-                    platform.isSeparator(import_path[import_path.len - 3]) and
-                    import_path[import_path.len - 2] == '.' and
-                    import_path[import_path.len - 1] == '.');
+                        platform.isSeparator(import_path[import_path.len - 3]) and
+                        import_path[import_path.len - 2] == '.' and
+                        import_path[import_path.len - 1] == '.');
                 const buf = bufs(.relative_abs_path);
                 import_path = r.fs.absBuf(&.{import_path}, buf);
                 if (ends_with_dir) {

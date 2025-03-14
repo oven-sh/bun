@@ -582,7 +582,7 @@ register_command(
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
     ${ZIG_EXECUTABLE}
-      build obj
+      build obj test
       ${CMAKE_ZIG_FLAGS}
       --prefix ${BUILD_PATH}
       -Dobj_format=${ZIG_OBJECT_FORMAT}
@@ -596,6 +596,7 @@ register_command(
       -Dcodegen_path=${CODEGEN_PATH}
       -Dcodegen_embed=$<IF:$<BOOL:${CODEGEN_EMBED}>,true,false>
       --prominent-compile-errors
+      --summary all
       ${ZIG_FLAGS_BUN}
   ARTIFACTS
     ${BUN_ZIG_OUTPUT}

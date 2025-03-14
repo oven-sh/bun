@@ -722,12 +722,71 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
         // Handle parsingContext option
         JSObject* optionsObject = asObject(optionsArg);
+
+        // Explicitly validate option types that are required for vm.compileFunction
+        // filename validation
+        if (JSValue filenameOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filename"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!filenameOpt.isUndefined() && !filenameOpt.isString()) {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.filename"_s, "string"_s, filenameOpt);
+            }
+        }
+
+        // lineOffset validation
+        if (JSValue lineOffsetOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "lineOffset"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!lineOffsetOpt.isUndefined() && !lineOffsetOpt.isNumber()) {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.lineOffset"_s, "number"_s, lineOffsetOpt);
+            }
+        }
+
+        // columnOffset validation
+        if (JSValue columnOffsetOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "columnOffset"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!columnOffsetOpt.isUndefined() && !columnOffsetOpt.isNumber()) {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.columnOffset"_s, "number"_s, columnOffsetOpt);
+            }
+        }
+
+        // cachedData validation
+        if (JSValue cachedDataOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "cachedData"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!cachedDataOpt.isUndefined() && !cachedDataOpt.isCell()) {
+                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
+            }
+
+            // If it's a cell, verify it's a Buffer, TypedArray, or DataView
+            if (cachedDataOpt.isCell()) {
+                JSCell* cell = cachedDataOpt.asCell();
+                bool isValidType = false;
+
+                // Check if it's a Buffer, TypedArray, or DataView
+                if (cell->inherits<JSC::JSArrayBufferView>() || cell->inherits<JSC::JSArrayBuffer>()) {
+                    isValidType = true;
+                } else if (JSC::JSArrayBufferView* view = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(cachedDataOpt)) {
+                    isValidType = !view->isDetached();
+                }
+
+                if (!isValidType) {
+                    return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.cachedData"_s, "Buffer, TypedArray, or DataView"_s, cachedDataOpt);
+                }
+            }
+        }
+
+        // produceCachedData validation
+        if (JSValue produceCachedDataOpt = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "produceCachedData"_s))) {
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!produceCachedDataOpt.isUndefined() && !produceCachedDataOpt.isBoolean()) {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.produceCachedData"_s, "boolean"_s, produceCachedDataOpt);
+            }
+        }
+
         JSValue parsingContextValue = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (!parsingContextValue.isUndefinedOrNull() && !parsingContextValue.isEmpty()) {
-            if (!parsingContextValue.isObject())
-                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.parsingContext"_s, "object"_s, parsingContextValue);
+        if (!parsingContextValue.isUndefined() && !parsingContextValue.isEmpty()) {
+            if (!parsingContextValue.isNull() || !parsingContextValue.isObject())
+                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 
             JSObject* context = asObject(parsingContextValue);
             auto* zigGlobalObject = defaultGlobalObject(globalObject);
@@ -745,7 +804,10 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         contextExtensionsValue = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextExtensions"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (!contextExtensionsValue.isUndefinedOrNull() && !contextExtensionsValue.isEmpty()) {
+        if (!contextExtensionsValue.isUndefined() && !contextExtensionsValue.isEmpty()) {
+            if (contextExtensionsValue.isNull() || !contextExtensionsValue.isObject())
+                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+
             if (auto* contextExtensionsObject = asObject(contextExtensionsValue)) {
                 if (!isArray(globalObject, contextExtensionsObject))
                     return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
@@ -756,7 +818,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
                 for (unsigned i = 0; i < length; i++) {
                     JSValue extension = contextExtensionsArray->getIndexQuickly(i);
                     if (!extension.isObject())
-                        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array<object>"_s, contextExtensionsValue);
+                        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions[0]"_s, "object"_s, extension);
                 }
             } else {
                 return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
@@ -764,8 +826,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         }
 
         // TODO: Handle additional options not in ScriptOptions:
-        // - cachedData (Buffer)
-        // - produceCachedData (boolean)
         // - importModuleDynamically (function)
     }
 

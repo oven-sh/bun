@@ -510,11 +510,16 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
       while (i < expectedExportKeyEnd) {
         const key = deps[i] as string;
         DEBUG.ASSERT(typeof key === "string");
-        if (!availableExportKeys.includes(key)) {
-          if (!hasExportStar(unloadedModule[ESMProps.stars], key)) {
-            throw new SyntaxError(`Module "${dep}" does not export key "${key}"`);
-          }
-        }
+        // TODO: there is a bug in the way exports are verified. Additionally a
+        // possible performance issue. For the meantime, this is disabled since
+        // it was not shipped in the initial 1.2.3 HMR, and real issues will 
+        // just throw 'undefined is not a function' or so on.
+
+        // if (!availableExportKeys.includes(key)) {
+        //   if (!hasExportStar(unloadedModule[ESMProps.stars], key)) {
+        //     throw new SyntaxError(`Module "${dep}" does not export key "${key}"`);
+        //   }
+        // }
         i++;
       }
       isAsync ||= unloadedModule[ESMProps.isAsync];

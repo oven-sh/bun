@@ -22,15 +22,15 @@ const random = struct {
     const max_range = 0xffff_ffff_ffff;
 
     fn randomInt(global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) bun.JSError!JSC.JSValue {
-        const args = callFrame.arguments();
+        var min_value, var max_value, var callback = callFrame.argumentsAsArray(3);
 
-        const min_value, const max_value, const callback, const min_specified = args: {
-            if (args.len == 2) {
-                break :args .{ JSC.jsNumber(0), args[0], args[1], false };
-            }
-
-            break :args .{ args[0], args[1], args[2], true };
-        };
+        var min_specified = true;
+        if (max_value.isUndefined() or max_value.isFunction()) {
+            callback = max_value;
+            max_value = min_value;
+            min_value = JSValue.jsNumber(0);
+            min_specified = false;
+        }
 
         if (!callback.isUndefined()) {
             _ = try validators.validateFunction(global, "callback", callback);
@@ -60,7 +60,15 @@ const random = struct {
             return global.ERR_OUT_OF_RANGE("The value of \"max\" is out of range. It must be <= {d}. Received {d}", .{ max_range, max - min }).throw();
         }
 
-        return JSC.jsNumber(std.crypto.random.intRangeLessThan(i64, min, max));
+        const res = std.crypto.random.intRangeLessThan(i64, min, max);
+
+        if (callback.isUndefined()) {
+            return JSC.jsNumber(res);
+        }
+
+        callback.callNextTick(global, 2, [2]JSValue{ .undefined, JSValue.jsNumber(res) });
+
+        return .undefined;
     }
 
     fn randomUUID(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {

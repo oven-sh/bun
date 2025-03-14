@@ -625,6 +625,14 @@ pub const JSValue = enum(i64) {
         ).unwrap();
     }
 
+    pub fn callNextTick(function: JSValue, global: *JSGlobalObject, comptime num_args: u3, args: [num_args]JSValue) void {
+        switch (num_args) {
+            1 => JSC.Bun__Process__queueNextTick1(@ptrCast(global), function, args[0]),
+            2 => JSC.Bun__Process__queueNextTick2(@ptrCast(global), function, args[0], args[1]),
+            else => @compileError("needs more copy paste"),
+        }
+    }
+
     /// The value cannot be empty. Check `!this.isEmpty()` before calling this function
     pub fn jsType(
         this: JSValue,

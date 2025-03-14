@@ -82,9 +82,11 @@ declare module "bun" {
     | "win32"
     | "cygwin"
     | "netbsd";
+
   type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
 
   type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
+
   /**
    * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
    * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
@@ -92,8 +94,6 @@ declare module "bun" {
   type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
 
   type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
-
-  type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
 
   interface ErrorEventInit extends EventInit {
     colno?: number;

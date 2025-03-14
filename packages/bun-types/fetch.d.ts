@@ -1,3 +1,22 @@
+/**
+ * Bun uses a customised version of `lib.dom.d.ts` that allows us to declare
+ * certain types from within bun-types instead of the original DOM definitions.
+ *
+ * Our `lib.dom.d.ts` declares BunGlobalSymbolRegistry as an empty interface,
+ * which we can then extend in `bun-types` with our own Bun-specific overrides.
+ *
+ * For example, the type `BodyInit` is implemented like this in Bun's lib.dom.d.ts:
+ * ```ts
+ * interface BunGlobalSymbolRegistry {};
+ * // ... elsewhere ...
+ * type BodyInit = BunGlobalSymbolRegistry extends {BodyInit: infer T} ? T : never;
+ * ```
+ *
+ * While this solution works well, the ideal approach would be to define these types
+ * entirely within bun-types without any declarations in lib.dom.d.ts. This isn't
+ * done yet as as we need to determine how to make the TypeScript lib-dom
+ * generator emit types for not-yet-existing definitions.
+ */
 interface BunGlobalSymbolRegistry {
   BodyInit: ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;
   HeadersInit: Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
@@ -7,26 +26,28 @@ declare module "bun" {
   type BodyInit = BunGlobalSymbolRegistry["BodyInit"];
   type HeadersInit = BunGlobalSymbolRegistry["HeadersInit"];
 
+  type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
+
   namespace __internal {
     /**
      * @internal
      */
-    type LibOrUndiciHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
+    type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
 
     /**
      * @internal
      */
-    type LibOrUndiciRequest = LibDomIsLoaded extends true ? {} : import("undici-types").Request;
+    type LibOrFallbackRequest = LibDomIsLoaded extends true ? {} : import("undici-types").Request;
 
     /**
      * @internal
      */
-    type LibOrUndiciResponse = LibDomIsLoaded extends true ? {} : import("undici-types").Response;
+    type LibOrFallbackResponse = LibDomIsLoaded extends true ? {} : import("undici-types").Response;
 
     /**
      * @internal
      */
-    type LibOrUndiciRequestInit = LibDomIsLoaded extends true
+    type LibOrFallbackRequestInit = LibDomIsLoaded extends true
       ? {}
       : Omit<import("undici-types").RequestInit, "body"> & {
           body?: BodyInit | null | undefined;
@@ -35,19 +56,9 @@ declare module "bun" {
     /**
      * @internal
      */
-    type LibOrUndiciResponseInit = LibDomIsLoaded extends true
-      ? {
-          headers?: HeadersInit;
+    type LibOrFallbackResponseInit = LibDomIsLoaded extends true ? {} : import("undici-types").ResponseInit;
 
-          /** @default 200 */
-          status?: number;
-
-          /** @default "OK" */
-          statusText?: string;
-        }
-      : import("undici-types").ResponseInit;
-
-    interface BunHeadersOverride extends LibOrUndiciHeaders {
+    interface BunHeadersOverride extends LibOrFallbackHeaders {
       /**
        * Convert {@link Headers} to a plain JavaScript object.
        *
@@ -82,19 +93,21 @@ declare module "bun" {
       getAll(name: "set-cookie" | "Set-Cookie"): string[];
     }
 
-    interface BunResponseOverride extends LibOrUndiciResponse {
+    interface BunRequestOverride extends LibOrFallbackRequest {
       headers: BunHeadersOverride;
     }
 
-    interface BunRequestOverride extends LibOrUndiciRequest {
+    interface BunResponseOverride extends LibOrFallbackResponse {
       headers: BunHeadersOverride;
     }
   }
 
-  interface RequestInit extends Bun.__internal.LibOrUndiciRequestInit {}
-  interface ResponseInit extends Bun.__internal.LibOrUndiciResponseInit {}
+  // Required so that you can do `Bun.RequestInit` & `Bun.ResponseInit`...
+  interface RequestInit extends Bun.__internal.LibOrFallbackRequestInit {}
+  interface ResponseInit extends Bun.__internal.LibOrFallbackResponseInit {}
 }
 
+// ...but also exist here, so they get declared globally
 interface RequestInit extends Bun.RequestInit {}
 interface ResponseInit extends Bun.ResponseInit {}
 

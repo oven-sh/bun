@@ -7,6 +7,8 @@ const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const uv = bun.windows.libuv;
+const validators = @import("./util/validators.zig");
+const envloader = @import("./../../env_loader.zig");
 
 pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     const arguments = callframe.arguments_old(1).slice();
@@ -105,6 +107,10 @@ pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
     var fmtstring = bun.String.createFormat("Unknown system error {d}", .{err_int}) catch bun.outOfMemory();
     return fmtstring.transferToJS(globalThis);
+}
+
+pub fn etimedoutErrorCode(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    return JSC.JSValue.jsNumberFromInt32(-bun.C.UV_ETIMEDOUT);
 }
 
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
@@ -211,4 +217,25 @@ pub fn normalizeEncoding(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     if (str.length() == 0) return JSC.Node.Encoding.utf8.toJS(globalThis);
     if (str.inMapCaseInsensitive(JSC.Node.Encoding.map)) |enc| return enc.toJS(globalThis);
     return JSC.JSValue.jsUndefined();
+}
+
+pub fn parseEnv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
+    const content = callframe.argument(0);
+    try validators.validateString(globalThis, content, "content", .{});
+
+    var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const str = content.asString().toSlice(globalThis, allocator);
+
+    var map = envloader.Map.init(allocator);
+    var p = envloader.Loader.init(&map, allocator);
+    p.loadFromString(str.slice(), true, false);
+
+    var obj = JSC.JSValue.createEmptyObject(globalThis, map.map.count());
+    for (map.map.keys(), map.map.values()) |k, v| {
+        obj.put(globalThis, JSC.ZigString.initUTF8(k), bun.String.createUTF8ForJS(globalThis, v.value));
+    }
+    return obj;
 }

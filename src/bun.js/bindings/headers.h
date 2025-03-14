@@ -811,6 +811,9 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onRejectStream);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolve);
 BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
 
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeHTTPRequest__onReject);
+
 #endif
 
 #ifdef __cplusplus

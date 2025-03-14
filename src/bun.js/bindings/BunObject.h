@@ -15,4 +15,7 @@ JSC_DECLARE_HOST_FUNCTION(functionFileURLToPath);
 JSC::JSValue constructBunFetchObject(VM& vm, JSObject* bunObject);
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject);
 
+JSC::JSObject* BunShell(JSGlobalObject* globalObject);
+JSC::JSValue ShellError(JSGlobalObject* globalObject);
+
 }

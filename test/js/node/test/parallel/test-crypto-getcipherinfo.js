@@ -24,7 +24,7 @@ for (const cipher of ciphers) {
 }
 
 const info = getCipherInfo('aes-128-cbc');
-assert.strictEqual(info.name, 'AES-128-CBC');
+assert.strictEqual(info.name, 'aes-128-cbc');
 assert.strictEqual(info.nid, 419);
 assert.strictEqual(info.blockSize, 16);
 assert.strictEqual(info.ivLength, 16);

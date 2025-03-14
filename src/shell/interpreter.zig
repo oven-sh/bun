@@ -34,8 +34,8 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
-const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+const TaggedPointer = @import("../ptr.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
@@ -462,7 +462,7 @@ pub const RefCountedStr = struct {
 /// A) or B) won't even mutate the environment anyway.
 ///
 /// A way to reduce copying is to only do it when the env is mutated: copy-on-write.
-pub const CowEnvMap = bun.Cow(EnvMap, struct {
+pub const CowEnvMap = bun.ptr.Cow(EnvMap, struct {
     pub fn copy(val: *const EnvMap) EnvMap {
         return val.clone();
     }
@@ -3671,8 +3671,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_redirect.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_redirect.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 this.next();
@@ -4089,8 +4088,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_args.expansion.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_args.expansion.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 child.deinit();
@@ -4691,8 +4689,7 @@ pub const Interpreter = struct {
                     const err = this.state.expanding_assigns.state.err;
                     defer err.deinit(bun.default_allocator);
                     this.state.expanding_assigns.deinit();
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
 
@@ -4715,8 +4712,7 @@ pub const Interpreter = struct {
                         else => @panic("Invalid state"),
                     };
                     defer err.deinit(bun.default_allocator);
-                    const buf = err.fmt();
-                    this.writeFailingError("{s}", .{buf});
+                    this.writeFailingError("{}\n", .{err});
                     return;
                 }
                 // Handling this case from the shell spec:
@@ -4936,12 +4932,11 @@ pub const Interpreter = struct {
                 .buffered_closed = buffered_closed,
             } };
             const subproc = switch (Subprocess.spawnAsync(this.base.eventLoop(), &shellio, spawn_args, &this.exec.subproc.child)) {
+                // FIXME: There's a race condition where this could change variants before spawnAsync returns.
                 .result => this.exec.subproc.child,
                 .err => |*e| {
                     this.exec = .none;
-                    const msg = e.fmt();
-                    defer bun.default_allocator.free(msg);
-                    this.writeFailingError("{s}", .{msg});
+                    this.writeFailingError("{}\n", .{e});
                     return;
                 },
             };

@@ -215,12 +215,19 @@ export default {
     page("bundler", "`Bun.build`", {
       description: "Bundle code for consumption in the browser with Bun's native bundler.",
     }),
-    page("bundler/html", "Bundle frontend & static sites", {
+    page("bundler/html", "HTML & static sites", {
       description: `Zero-config HTML bundler for single-page apps and multi-page apps. Automatic bundling, TailwindCSS plugins, TypeScript, JSX, React support, and incredibly fast builds`,
+    }),
+    page("bundler/css", "CSS", {
+      description: `Production ready CSS bundler with support for modern CSS features, CSS modules, and more.`,
     }),
     page("bundler/fullstack", "Fullstack Dev Server", {
       description: "Serve your frontend and backend from the same app with Bun's dev server.",
     }),
+    page("bundler/hmr", "Hot reloading", {
+      description: `Update modules in a running application without reloading the page using import.meta.hot`,
+    }),
+
     page("bundler/loaders", "Loaders", {
       description: "Bun's built-in loaders for the bundler and runtime",
     }),

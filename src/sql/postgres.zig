@@ -12,7 +12,7 @@ pub const short = u16;
 pub const PostgresShort = u16;
 const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
-const BoringSSL = @import("../boringssl.zig");
+const BoringSSL = bun.BoringSSL;
 pub const AnyPostgresError = error{
     ConnectionClosed,
     ExpectedRequest,
@@ -1258,25 +1258,25 @@ pub const PostgresSQLConnection = struct {
 
     /// Before being connected, this is a connection timeout timer.
     /// After being connected, this is an idle timeout timer.
-    timer: JSC.BunTimer.EventLoopTimer.Node = .{ .data = .{
+    timer: JSC.BunTimer.EventLoopTimer = .{
         .tag = .PostgresSQLConnectionTimeout,
         .next = .{
             .sec = 0,
             .nsec = 0,
         },
-    } },
+    },
 
     /// This timer controls the maximum lifetime of a connection.
     /// It starts when the connection successfully starts (i.e. after handshake is complete).
     /// It stops when the connection is closed.
     max_lifetime_interval_ms: u32 = 0,
-    max_lifetime_timer: JSC.BunTimer.EventLoopTimer.Node = .{ .data = .{
+    max_lifetime_timer: JSC.BunTimer.EventLoopTimer = .{
         .tag = .PostgresSQLConnectionMaxLifetime,
         .next = .{
             .sec = 0,
             .nsec = 0,
         },
-    } },
+    },
 
     pub const ConnectionFlags = packed struct {
         is_ready_for_query: bool = false,
@@ -1340,7 +1340,7 @@ pub const PostgresSQLConnection = struct {
         };
 
         fn hmac(password: []const u8, data: []const u8) ?[32]u8 {
-            var buf = std.mem.zeroes([bun.BoringSSL.EVP_MAX_MD_SIZE]u8);
+            var buf = std.mem.zeroes([bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8);
 
             // TODO: I don't think this is failable.
             const result = bun.hmac.generate(password, data, .sha256, &buf) orelse return null;
@@ -1387,7 +1387,7 @@ pub const PostgresSQLConnection = struct {
         pub fn nonce(this: *SASL) []const u8 {
             if (this.nonce_len == 0) {
                 var bytes: [nonce_byte_len]u8 = .{0} ** nonce_byte_len;
-                bun.rand(&bytes);
+                bun.csprng(&bytes);
                 this.nonce_len = @intCast(bun.base64.encode(&this.nonce_base64_bytes, &bytes));
             }
             return this.nonce_base64_bytes[0..this.nonce_len];
@@ -1421,23 +1421,23 @@ pub const PostgresSQLConnection = struct {
         };
     }
     pub fn disableConnectionTimeout(this: *PostgresSQLConnection) void {
-        if (this.timer.data.state == .ACTIVE) {
+        if (this.timer.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.timer);
         }
-        this.timer.data.state = .CANCELLED;
+        this.timer.state = .CANCELLED;
     }
     pub fn resetConnectionTimeout(this: *PostgresSQLConnection) void {
         // if we are processing data, don't reset the timeout, wait for the data to be processed
         if (this.flags.is_processing_data) return;
         const interval = this.getTimeoutInterval();
-        if (this.timer.data.state == .ACTIVE) {
+        if (this.timer.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.timer);
         }
         if (interval == 0) {
             return;
         }
 
-        this.timer.data.next = bun.timespec.msFromNow(@intCast(interval));
+        this.timer.next = bun.timespec.msFromNow(@intCast(interval));
         this.globalObject.bunVM().timer.insert(&this.timer);
     }
 
@@ -1496,16 +1496,16 @@ pub const PostgresSQLConnection = struct {
     }
     fn setupMaxLifetimeTimerIfNecessary(this: *PostgresSQLConnection) void {
         if (this.max_lifetime_interval_ms == 0) return;
-        if (this.max_lifetime_timer.data.state == .ACTIVE) return;
+        if (this.max_lifetime_timer.state == .ACTIVE) return;
 
-        this.max_lifetime_timer.data.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
+        this.max_lifetime_timer.next = bun.timespec.msFromNow(@intCast(this.max_lifetime_interval_ms));
         this.globalObject.bunVM().timer.insert(&this.max_lifetime_timer);
     }
 
     pub fn onConnectionTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
         debug("onConnectionTimeout", .{});
 
-        this.timer.data.state = .FIRED;
+        this.timer.state = .FIRED;
         if (this.flags.is_processing_data) {
             return .disarm;
         }
@@ -1531,7 +1531,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn onMaxLifetimeTimeout(this: *PostgresSQLConnection) JSC.BunTimer.EventLoopTimer.Arm {
         debug("onMaxLifetimeTimeout", .{});
-        this.max_lifetime_timer.data.state = .FIRED;
+        this.max_lifetime_timer.state = .FIRED;
         if (this.status == .failed) return .disarm;
         this.failFmt(.ERR_POSTGRES_LIFETIME_TIMEOUT, "Max lifetime timeout reached after {}", .{bun.fmt.fmtDurationOneDecimal(@as(u64, this.max_lifetime_interval_ms) *| std.time.ns_per_ms)});
         return .disarm;
@@ -1713,8 +1713,8 @@ pub const PostgresSQLConnection = struct {
                             return;
                         }
 
-                        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
-                        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
+                        if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                             const hostname = servername[0..bun.len(servername)];
                             if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                                 this.failWithJSValue(ssl_error.toJS(this.globalObject));
@@ -2103,10 +2103,10 @@ pub const PostgresSQLConnection = struct {
     }
 
     pub fn stopTimers(this: *PostgresSQLConnection) void {
-        if (this.timer.data.state == .ACTIVE) {
+        if (this.timer.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.timer);
         }
-        if (this.max_lifetime_timer.data.state == .ACTIVE) {
+        if (this.max_lifetime_timer.state == .ACTIVE) {
             this.globalObject.bunVM().timer.remove(&this.max_lifetime_timer);
         }
     }

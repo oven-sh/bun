@@ -1,17 +1,12 @@
-// Bundle tests are tests concerning bundling bugs that only occur in DevServer.
-import { devTest } from "../bake-harness";
+// HTML tests are tests relating to HTML files themselves.
+import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
-    "index.html": `
-      <html>
-      <head></head>
-      <body>
-        <h1>Hello</h1>
-        <script type="module" src="/script.ts"></script>
-      </body>
-      </html>
-    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["/script.ts"],
+      body: "<h1>Hello</h1>",
+    }),
     "script.ts": `
       console.log("hello");
     `,

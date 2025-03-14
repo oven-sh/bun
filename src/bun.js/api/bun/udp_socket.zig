@@ -96,12 +96,8 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         const span = std.mem.span(hostname.?);
         var hostname_string = if (scope_id) |id| blk: {
             if (comptime !bun.Environment.isWindows) {
-                const net_if = @cImport({
-                    @cInclude("net/if.h");
-                });
-
-                var buffer = std.mem.zeroes([net_if.IF_NAMESIZE:0]u8);
-                if (net_if.if_indextoname(id, &buffer) != null) {
+                var buffer = std.mem.zeroes([bun.c.IF_NAMESIZE:0]u8);
+                if (bun.c.if_indextoname(id, &buffer) != null) {
                     break :blk bun.String.createFormat("{s}%{s}", .{ span, std.mem.span(@as([*:0]u8, &buffer)) }) catch bun.outOfMemory();
                 }
             }
@@ -947,7 +943,9 @@ pub const UDPSocket = struct {
         this.connect_info = .{
             .port = port,
         };
-        // TODO reset cached remoteAddress property
+
+        UDPSocket.addressSetCached(callFrame.this(), globalThis, .zero);
+        UDPSocket.remoteAddressSetCached(callFrame.this(), globalThis, .zero);
 
         return .undefined;
     }

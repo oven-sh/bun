@@ -1743,17 +1743,20 @@ fn NewLexer_(
                         lexer.step();
 
                         if (lexer.code_point >= 0x80) {
+                            @branchHint(.unlikely);
                             while (isIdentifierContinue(lexer.code_point)) {
                                 lexer.step();
                             }
                         }
 
                         if (lexer.code_point != '\\') {
+                            @branchHint(.likely);
                             // this code is so hot that if you save lexer.raw() into a temporary variable
                             // it shows up in profiling
                             lexer.identifier = lexer.raw();
                             lexer.token = Keywords.get(lexer.identifier) orelse T.t_identifier;
                         } else {
+                            @branchHint(.unlikely);
                             const scan_result = try lexer.scanIdentifierWithEscapes(.normal);
                             lexer.identifier = scan_result.contents;
                             lexer.token = scan_result.token;
@@ -3244,58 +3247,15 @@ pub fn isLatin1Identifier(comptime Buffer: type, name: Buffer) bool {
 }
 
 fn latin1IdentifierContinueLength(name: []const u8) usize {
-    var remaining = name;
-    const wrap_len = 16;
-    const len_wrapped: usize = if (comptime Environment.enableSIMD) remaining.len - (remaining.len % wrap_len) else 0;
-    var wrapped = name[0..len_wrapped];
-    remaining = name[wrapped.len..];
+    // We don't use SIMD for this because the input will be very short.
+    return latin1IdentifierContinueLengthScalar(name);
+}
 
-    if (comptime Environment.enableSIMD) {
-        // This is not meaningfully faster on aarch64.
-        // Earlier attempt: https://zig.godbolt.org/z/j5G8M9ooG
-        // Later: https://zig.godbolt.org/z/7Yzh7df9v
-        const Vec = @Vector(wrap_len, u8);
-
-        while (wrapped.len > 0) : (wrapped = wrapped[wrap_len..]) {
-            var other: [wrap_len]u8 = undefined;
-            const vec: [wrap_len]u8 = wrapped[0..wrap_len].*;
-            for (vec, &other) |c, *dest| {
-                dest.* = switch (c) {
-                    '0'...'9',
-                    'a'...'z',
-                    'A'...'Z',
-                    '$',
-                    '_',
-                    => 0,
-                    else => 1,
-                };
-            }
-
-            if (std.simd.firstIndexOfValue(@as(Vec, @bitCast(other)), 1)) |first| {
-                if (comptime Environment.allow_assert) {
-                    for (vec[0..first]) |c| {
-                        bun.assert(isIdentifierContinue(c));
-                    }
-
-                    if (vec[first] < 128)
-                        bun.assert(!isIdentifierContinue(vec[first]));
-                }
-
-                return @as(usize, first) +
-                    @intFromPtr(wrapped.ptr) - @intFromPtr(name.ptr);
-            }
-        }
-    }
-
-    for (remaining, 0..) |c, len| {
+pub fn latin1IdentifierContinueLengthScalar(name: []const u8) usize {
+    for (name, 0..) |c, i| {
         switch (c) {
-            '0'...'9',
-            'a'...'z',
-            'A'...'Z',
-            '$',
-            '_',
-            => {},
-            else => return len + len_wrapped,
+            '0'...'9', 'a'...'z', 'A'...'Z', '$', '_' => {},
+            else => return i,
         }
     }
 

@@ -96,6 +96,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP_INVALID_HEADER_VALUE", TypeError],
   ["ERR_SERVER_ALREADY_LISTEN", Error],
   ["ERR_CHILD_PROCESS_IPC_REQUIRED", Error],
+  ["ERR_INVALID_ADDRESS_FAMILY", RangeError],
+  ["ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED", Error],
 
   // Bun-specific
   ["ERR_FORMDATA_PARSE_ERROR", TypeError],
@@ -158,7 +160,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_HEADERS_AFTER_RESPOND", Error],
   ["ERR_HTTP2_PUSH_DISABLED", Error],
   ["ERR_HTTP2_MAX_PENDING_SETTINGS_ACK", Error],
-  
+
   // HTTP
   ["ERR_UNESCAPED_CHARACTERS", TypeError],
 

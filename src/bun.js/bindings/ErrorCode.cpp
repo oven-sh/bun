@@ -1303,6 +1303,20 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_IP_ADDRESS, builder.toString()));
     }
 
+    case Bun::ErrorCode::ERR_INVALID_ADDRESS_FAMILY: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg2 = callFrame->argument(3);
+        auto str2 = arg2.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Invalid address family: "_s, str0, " "_s, str1, ":"_s, str2);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message));
+    }
+
     case Bun::ErrorCode::ERR_INVALID_ARG_VALUE: {
         JSValue arg0 = callFrame->argument(1);
         JSValue arg1 = callFrame->argument(2);
@@ -1681,6 +1695,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION, "Socket closed before the connection was established"_s));
     case ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED, "TLS session renegotiation disabled for this socket"_s));
+    case ErrorCode::ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED, "Custom engines not supported by this BoringSSL"_s));
 
     default: {
         break;

@@ -1252,6 +1252,7 @@ async function createConnection(options, onConnected, onClose) {
     maxLifetime = 0,
     prepare = true,
   } = options;
+
   let password = options.password;
   try {
     if (typeof password === "function") {
@@ -1390,6 +1391,8 @@ function loadOptions(o) {
     url = new URL(o);
   }
   o ||= {};
+  query = "";
+
   if (url) {
     ({ hostname, port, username, password, adapter } = o);
     // object overrides url
@@ -1404,12 +1407,15 @@ function loadOptions(o) {
     }
 
     const queryObject = url.searchParams.toJSON();
-    query = "";
     for (const key in queryObject) {
       if (key.toLowerCase() === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
       } else {
-        query += `${encodeURIComponent(key)}=${encodeURIComponent(queryObject[key])} `;
+        // this is valid for postgres for other databases it might not be valid
+        // check adapter then implement for other databases
+        // encode string with \0 as finalizer
+        // must be key\0value\0
+        query += `${key}\0${queryObject[key]}\0`;
       }
     }
     query = query.trim();
@@ -1419,7 +1425,14 @@ function loadOptions(o) {
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
   database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";
-
+  const connection = o.connection;
+  if (connection && $isObject(connection)) {
+    for (const key in connection) {
+      if (connection[key] !== undefined) {
+        query += `${key}\0${connection[key]}\0`;
+      }
+    }
+  }
   tls ||= o.tls || o.ssl;
   adapter ||= o.adapter || "postgres";
   max = o.max;

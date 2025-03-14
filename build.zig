@@ -319,7 +319,21 @@ pub fn build(b: *Build) !void {
             .{ .os = .linux, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64, .musl = true },
             .{ .os = .linux, .arch = .aarch64, .musl = true },
-        });
+        }, &.{ .Debug, .ReleaseFast });
+    }
+
+    // zig build check-all-debug
+    {
+        const step = b.step("check-all-debug", "Check for semantic analysis errors on all supported platforms in debug mode");
+        addMultiCheck(b, step, build_options, &.{
+            .{ .os = .windows, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .x86_64 },
+            .{ .os = .mac, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64 },
+            .{ .os = .linux, .arch = .aarch64 },
+            .{ .os = .linux, .arch = .x86_64, .musl = true },
+            .{ .os = .linux, .arch = .aarch64, .musl = true },
+        }, &.{.Debug});
     }
 
     // zig build check-windows
@@ -327,21 +341,21 @@ pub fn build(b: *Build) !void {
         const step = b.step("check-windows", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
-        });
+        }, &.{ .Debug, .ReleaseFast });
     }
     {
         const step = b.step("check-macos", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
-        });
+        }, &.{ .Debug, .ReleaseFast });
     }
     {
         const step = b.step("check-linux", "Check for semantic analysis errors on Windows");
         addMultiCheck(b, step, build_options, &.{
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
-        });
+        }, &.{ .Debug, .ReleaseFast });
     }
 
     // zig build translate-c-headers
@@ -369,9 +383,10 @@ pub fn addMultiCheck(
     parent_step: *Step,
     root_build_options: BunBuildOptions,
     to_check: []const struct { os: OperatingSystem, arch: Arch, musl: bool = false },
+    optimize: []const std.builtin.OptimizeMode,
 ) void {
     for (to_check) |check| {
-        for ([_]std.builtin.Mode{ .Debug, .ReleaseFast }) |mode| {
+        for (optimize) |mode| {
             const check_target = b.resolveTargetQuery(.{
                 .os_tag = OperatingSystem.stdOSTag(check.os),
                 .cpu_arch = check.arch,

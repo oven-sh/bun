@@ -21,7 +21,6 @@ const Maybe = JSC.Maybe;
 const File = std.fs.File;
 
 pub const IteratorResult = struct {
-    dir: std.fs.Dir,
     name: PathString,
     kind: Entry.Kind,
 };
@@ -140,7 +139,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     };
                     return .{
                         .result = IteratorResult{
-                            .dir = self.dir,
                             .name = PathString.init(name),
                             .kind = entry_kind,
                         },
@@ -199,7 +197,6 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                     };
                     return .{
                         .result = IteratorResult{
-                            .dir = self.dir,
                             .name = PathString.init(name),
                             .kind = entry_kind,
                         },

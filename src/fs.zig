@@ -147,28 +147,17 @@ pub const FileSystem = struct {
 
         pub fn addEntry(dir: *DirEntry, prev_map: ?*EntryMap, entry: *const bun.DirIterator.IteratorResult, allocator: std.mem.Allocator, comptime Iterator: type, iterator: Iterator) !void {
             const name_slice = entry.name.slice();
-            const _kind: Entry.Kind = switch (entry.kind) {
+            const found_kind: ?Entry.Kind = switch (entry.kind) {
                 .directory => .dir,
-                // This might be wrong!
-                .sym_link, .file => .file,
-                .unknown => kind: {
-                    // Certain filesystems don't return kind information in getdents, so we need to check ourselves
-                    const stat = try entry.dir.statFile(name_slice);
-                    break :kind switch (stat.kind) {
-                        .directory => .dir,
-                        .sym_link, .file => .file,
+                .file => .file,
 
-                        .block_device,
-                        .character_device,
-                        .named_pipe,
-                        .unix_domain_socket,
-                        .whiteout,
-                        .door,
-                        .event_port,
-                        .unknown,
-                        => return,
-                    };
-                },
+                // For a symlink, we will need to stat the target later
+                .sym_link,
+                // Some filesystems return `.unknown` from getdents() no matter the actual kind of the file
+                // (often because it would be slow to look up the kind). If we get this, then code that
+                // needs the kind will have to find it out later by calling stat().
+                .unknown,
+                => null,
 
                 .block_device,
                 .character_device,
@@ -191,10 +180,14 @@ pub const FileSystem = struct {
                         defer existing.mutex.unlock();
                         existing.dir = dir.dir;
 
-                        existing.need_stat = existing.need_stat or existing.cache.kind != _kind;
+                        existing.need_stat = existing.need_stat or
+                            found_kind == null or
+                            existing.cache.kind != found_kind;
                         // TODO: is this right?
-                        if (existing.cache.kind != _kind) {
-                            existing.cache.kind = _kind;
+                        if (existing.cache.kind != found_kind) {
+                            // if found_kind is null, we have set need_stat above, so we
+                            // store an arbitrary kind
+                            existing.cache.kind = found_kind orelse .file;
 
                             existing.cache.symlink = PathString.empty;
                         }
@@ -223,10 +216,12 @@ pub const FileSystem = struct {
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
-                    .need_stat = entry.kind == .sym_link,
+                    .need_stat = found_kind == null,
                     .cache = .{
                         .symlink = PathString.empty,
-                        .kind = _kind,
+                        // if found_kind is null, we have set need_stat above, so we
+                        // store an arbitrary kind
+                        .kind = found_kind orelse .file,
                     },
                 });
             };
@@ -240,7 +235,7 @@ pub const FileSystem = struct {
             }
 
             if (comptime FeatureFlags.verbose_fs) {
-                if (_kind == .dir) {
+                if (found_kind == .dir) {
                     Output.prettyln("   + {s}/", .{stored_name});
                 } else {
                     Output.prettyln("   + {s}", .{stored_name});

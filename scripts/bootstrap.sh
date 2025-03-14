@@ -918,7 +918,7 @@ install_llvm() {
 		install_packages \
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
-			"scudo-malloc" \
+			"scudo-malloc"
 		install_packages \
 			"lld$(llvm_version)" \
 			--repository "http://dl-cdn.alpinelinux.org/alpine/v3.21/community"

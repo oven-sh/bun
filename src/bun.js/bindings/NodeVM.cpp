@@ -36,11 +36,113 @@
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 #include "JavaScriptCore/LazyClassStructureInlines.h"
+#include "JavaScriptCore/Parser.h"
+#include "JavaScriptCore/SourceCodeKey.h"
+#include "JavaScriptCore/UnlinkedFunctionExecutable.h"
 
 #include "JavaScriptCore/JSCInlines.h"
 
 namespace Bun {
 using namespace WebCore;
+
+static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const String& functionBody, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr)
+{
+    VM& vm = globalObject->vm();
+    auto scope1 = DECLARE_THROW_SCOPE(vm);
+
+    // Create a SourceCode object for our function body
+    SourceCode sourceCode(
+        JSC::StringSourceProvider::create(functionBody, sourceOrigin, fileName, sourceTaintOrigin, position),
+        position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
+
+    // Setup parser for function expression
+    ParserError error;
+    JSTextPosition positionBeforeLastNewline;
+    bool isEvalNode = false;
+
+    // Create a name to use for parsing
+    Identifier name;
+    std::unique_ptr<ProgramNode> program;
+
+    // Parse the code differently based on string type (8-bit or 16-bit)
+    if (functionBody.is8Bit()) {
+        Parser<Lexer<LChar>> parser(vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
+            LexicallyScopedFeatures {}, JSParserScriptMode::Classic, SourceParseMode::ProgramMode,
+            FunctionMode::None, SuperBinding::NotNeeded, ConstructorKind::None, DerivedContextType::None,
+            isEvalNode, EvalContextType::None, nullptr);
+
+        program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
+    } else {
+        Parser<Lexer<UChar>> parser(vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
+            LexicallyScopedFeatures {}, JSParserScriptMode::Classic, SourceParseMode::ProgramMode,
+            FunctionMode::None, SuperBinding::NotNeeded, ConstructorKind::None, DerivedContextType::None,
+            isEvalNode, EvalContextType::None, nullptr);
+
+        program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
+    }
+
+    if (!program || error.isValid()) {
+        throwSyntaxError(globalObject, scope1, error.message());
+        return nullptr;
+    }
+
+    // Extract the function expression from the program
+    if (program->statements().isEmpty()) {
+        throwSyntaxError(globalObject, scope1, "No statements found in the code"_s);
+        return nullptr;
+    }
+
+    // The program should have a single expression statement containing a function expression
+    StatementNode* statement = program->singleStatement();
+    if (!statement || !statement->isExprStatement()) {
+        throwSyntaxError(globalObject, scope1, "Expected a function expression"_s);
+        return nullptr;
+    }
+
+    ExprStatementNode* exprStatement = static_cast<ExprStatementNode*>(statement);
+    ExpressionNode* expression = exprStatement->expr();
+    if (!expression || !expression->isFuncExprNode()) {
+        throwSyntaxError(globalObject, scope1, "Expected a function expression"_s);
+        return nullptr;
+    }
+
+    // Get metadata from the function expression
+    FunctionMetadataNode* metadata = static_cast<FuncExprNode*>(expression)->metadata();
+    if (!metadata) {
+        throwSyntaxError(globalObject, scope1, "Failed to extract function metadata"_s);
+        return nullptr;
+    }
+
+    // Create the UnlinkedFunctionExecutable
+    ConstructAbility constructAbility = constructAbilityForParseMode(metadata->parseMode());
+    UnlinkedFunctionExecutable* unlinkedFunctionExecutable = UnlinkedFunctionExecutable::create(
+        vm,
+        sourceCode,
+        metadata,
+        UnlinkedNormalFunction,
+        constructAbility,
+        InlineAttribute::None,
+        JSParserScriptMode::Classic,
+        nullptr,
+        std::nullopt,
+        std::nullopt,
+        DerivedContextType::None,
+        NeedsClassFieldInitializer::No,
+        PrivateBrandRequirement::None);
+
+    // Create a FunctionExecutable by linking the UnlinkedFunctionExecutable
+    FunctionExecutable* functionExecutable = unlinkedFunctionExecutable->link(vm, &sourceCode);
+
+    // Use the current scope or create a new one if not provided
+    JSScope* functionScope = scope ? scope : globalObject->globalScope();
+
+    // Get the appropriate structure
+    Structure* structure = JSFunction::selectStructureForNewFuncExp(globalObject, functionExecutable);
+
+    // Create and return the function
+    JSFunction* function = JSFunction::create(vm, globalObject, functionExecutable, functionScope, structure);
+    return function;
+}
 
 class NodeVMScriptConstructor final : public JSC::InternalFunction {
 public:
@@ -699,6 +801,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     ScriptOptions options;
     bool didThrow = false;
     NodeVMGlobalObject* parsingContext = nullptr;
+    JSValue contextExtensionsValue = jsUndefined();
 
     if (!optionsArg.isUndefined()) {
         if (!optionsArg.isObject())
@@ -730,8 +833,29 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
                 return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.parsingContext"_s, context, "must be a contextified object"_s);
         }
 
+        // Handle contextExtensions option
+        contextExtensionsValue = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "contextExtensions"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (!contextExtensionsValue.isUndefinedOrNull() && !contextExtensionsValue.isEmpty()) {
+            if (auto* contextExtensionsObject = asObject(contextExtensionsValue)) {
+                if (!isArray(globalObject, contextExtensionsObject))
+                    return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+
+                // Validate that all items in the array are objects
+                auto* contextExtensionsArray = jsCast<JSArray*>(contextExtensionsValue);
+                unsigned length = contextExtensionsArray->length();
+                for (unsigned i = 0; i < length; i++) {
+                    JSValue extension = contextExtensionsArray->getIndexQuickly(i);
+                    if (!extension.isObject())
+                        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array<object>"_s, contextExtensionsValue);
+                }
+            } else {
+                return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextExtensions"_s, "Array"_s, contextExtensionsValue);
+            }
+        }
+
         // TODO: Handle additional options not in ScriptOptions:
-        // - contextExtensions (array of objects)
         // - cachedData (Buffer)
         // - produceCachedData (boolean)
         // - importModuleDynamically (function)
@@ -761,13 +885,43 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     // Create the source origin
     SourceOrigin sourceOrigin = JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename));
 
-    // Create the function using constructFunction
-    JSObject* function = JSC::constructFunction(parsingContext,
+    // Process contextExtensions if they exist
+    JSScope* functionScope = parsingContext;
+
+    if (!contextExtensionsValue.isUndefinedOrNull() && !contextExtensionsValue.isEmpty() && contextExtensionsValue.isObject() && isArray(globalObject, contextExtensionsValue)) {
+        auto* contextExtensionsArray = jsCast<JSArray*>(contextExtensionsValue);
+        unsigned length = contextExtensionsArray->length();
+
+        if (length > 0) {
+            // Get the global scope from the parsing context
+            JSScope* currentScope = parsingContext->globalScope();
+
+            // Create JSWithScope objects for each context extension
+            for (unsigned i = 0; i < length; i++) {
+                JSValue extension = contextExtensionsArray->getIndexQuickly(i);
+                if (extension.isObject()) {
+                    JSObject* extensionObject = asObject(extension);
+                    currentScope = JSWithScope::create(vm, parsingContext, currentScope, extensionObject);
+                }
+            }
+
+            // Use the outermost JSWithScope as our function scope
+            functionScope = currentScope;
+        }
+    }
+
+    parsingContext->setGlobalScopeExtension(functionScope);
+
+    // Create the function using constructFunction with the appropriate scope chain
+    // JSFunction* function = constructAnonymousFunction(globalObject, &sourceString, &sourceOrigin, &options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset), functionScope);
+    JSObject* function = JSC::constructFunction(
+        parsingContext,
         ArgList(constructFunctionArgs),
         vm.propertyNames->anonymous,
         sourceOrigin,
         options.filename,
         JSC::SourceTaintedOrigin::Untainted,
+
         TextPosition(options.lineOffset, options.columnOffset));
 
     RETURN_IF_EXCEPTION(scope, {});
@@ -1101,6 +1255,12 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     }
 
     Base::getOwnPropertyNames(cell, globalObject, propertyNames, mode);
+}
+
+void NodeVMGlobalObject::lmao(JSC::FunctionMetadataNode* node)
+{
+    // if () {
+    // }
 }
 
 } // namespace Bun

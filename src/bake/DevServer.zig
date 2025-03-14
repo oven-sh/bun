@@ -4709,11 +4709,20 @@ pub fn IncrementalGraph(side: bake.Side) type {
             var source_map_strings = std.ArrayList(u8).init(arena);
             defer source_map_strings.deinit();
 
+            const dev = g.owner();
+            dev.relative_path_buf_lock.lock();
+            defer dev.relative_path_buf_lock.unlock();
+            const buf = &dev.relative_path_buf;
+
             var path_count: usize = 0;
             for (g.current_chunk_parts.items) |entry| {
                 path_count += 1;
                 try source_map_strings.appendSlice(",");
-                const path = paths[entry.get()];
+                const path = if (Environment.isWindows)
+                    paths[entry.get()]
+                else
+                    bun.path.pathToPosixBuf(u8, paths[entry.get()], &buf);
+
                 if (std.fs.path.isAbsolute(path)) {
                     const is_windows_drive_path = Environment.isWindows and bun.path.isSepAny(path[0]);
                     try source_map_strings.appendSlice(if (is_windows_drive_path)

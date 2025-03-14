@@ -7,7 +7,7 @@ const bun = @import("root").bun;
 const Environment = bun.Environment;
 const Fetch = JSC.WebCore.Fetch;
 const Bun = JSC.API.Bun;
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 const typeBaseName = @import("../meta.zig").typeBaseName;
 const AsyncGlobWalkTask = JSC.API.Glob.WalkTask.AsyncGlobWalkTask;
 const CopyFilePromiseTask = bun.JSC.WebCore.Blob.Store.CopyFilePromiseTask;
@@ -202,6 +202,12 @@ pub const ManagedTask = struct {
         const ctx = this.ctx;
         callback(ctx.?);
         bun.default_allocator.destroy(this);
+    }
+
+    pub fn cancel(this: *ManagedTask) void {
+        this.callback = &struct {
+            fn f(_: *anyopaque) void {}
+        }.f;
     }
 
     pub fn New(comptime Type: type, comptime Callback: anytype) type {

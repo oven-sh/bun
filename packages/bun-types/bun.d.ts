@@ -1,74 +1,3 @@
-declare class _ShellError extends Error implements ShellOutput {
-  readonly stdout: Buffer;
-  readonly stderr: Buffer;
-  readonly exitCode: number;
-
-  /**
-   * Read from stdout as a string
-   *
-   * @param encoding - The encoding to use when decoding the output
-   * @returns Stdout as a string with the given encoding
-   * @example
-   *
-   * ## Read as UTF-8 string
-   *
-   * ```ts
-   * const output = await $`echo hello`;
-   * console.log(output.text()); // "hello\n"
-   * ```
-   *
-   * ## Read as base64 string
-   *
-   * ```ts
-   * const output = await $`echo ${atob("hello")}`;
-   * console.log(output.text("base64")); // "hello\n"
-   * ```
-   *
-   */
-  text(encoding?: BufferEncoding): string;
-
-  /**
-   * Read from stdout as a JSON object
-   *
-   * @returns Stdout as a JSON object
-   * @example
-   *
-   * ```ts
-   * const output = await $`echo '{"hello": 123}'`;
-   * console.log(output.json()); // { hello: 123 }
-   * ```
-   *
-   */
-  json(): any;
-
-  /**
-   * Read from stdout as an ArrayBuffer
-   *
-   * @returns Stdout as an ArrayBuffer
-   * @example
-   *
-   * ```ts
-   * const output = await $`echo hello`;
-   * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
-   * ```
-   */
-  arrayBuffer(): ArrayBuffer;
-
-  /**
-   * Read from stdout as a Blob
-   *
-   * @returns Stdout as a blob
-   * @example
-   * ```ts
-   * const output = await $`echo hello`;
-   * console.log(output.blob()); // Blob { size: 6, type: "" }
-   * ```
-   */
-  blob(): Blob;
-
-  bytes(): Uint8Array;
-}
-
 /**
  * Bun.js runtime APIs
  *
@@ -184,6 +113,77 @@ declare module "bun" {
     | SpawnOptions.Readable
     | SpawnOptions.Writable
     | ReadableStream;
+
+  class ShellError extends Error implements ShellOutput {
+    readonly stdout: Buffer;
+    readonly stderr: Buffer;
+    readonly exitCode: number;
+
+    /**
+     * Read from stdout as a string
+     *
+     * @param encoding - The encoding to use when decoding the output
+     * @returns Stdout as a string with the given encoding
+     * @example
+     *
+     * ## Read as UTF-8 string
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.text()); // "hello\n"
+     * ```
+     *
+     * ## Read as base64 string
+     *
+     * ```ts
+     * const output = await $`echo ${atob("hello")}`;
+     * console.log(output.text("base64")); // "hello\n"
+     * ```
+     *
+     */
+    text(encoding?: BufferEncoding): string;
+
+    /**
+     * Read from stdout as a JSON object
+     *
+     * @returns Stdout as a JSON object
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo '{"hello": 123}'`;
+     * console.log(output.json()); // { hello: 123 }
+     * ```
+     *
+     */
+    json(): any;
+
+    /**
+     * Read from stdout as an ArrayBuffer
+     *
+     * @returns Stdout as an ArrayBuffer
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
+     * ```
+     */
+    arrayBuffer(): ArrayBuffer;
+
+    /**
+     * Read from stdout as a Blob
+     *
+     * @returns Stdout as a blob
+     * @example
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.blob()); // Blob { size: 6, type: "" }
+     * ```
+     */
+    blob(): Blob;
+
+    bytes(): Uint8Array;
+  }
 
   class ShellPromise extends Promise<ShellOutput> {
     get stdin(): WritableStream;
@@ -304,12 +304,12 @@ declare module "bun" {
     new (): Shell;
   }
 
-  type ShellError = _ShellError;
-
   export interface Shell {
     (strings: TemplateStringsArray, ...expressions: ShellExpression[]): ShellPromise;
 
-    readonly ShellError: typeof _ShellError;
+    readonly Shell: ShellConstructor;
+    readonly ShellError: typeof ShellError;
+    readonly ShellPromise: typeof ShellPromise;
 
     /**
      * Perform bash-like brace expansion on the given pattern.
@@ -362,9 +362,6 @@ declare module "bun" {
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
      */
     throws(shouldThrow: boolean): this;
-
-    readonly ShellPromise: typeof ShellPromise;
-    readonly Shell: ShellConstructor;
   }
 
   export interface ShellOutput {
@@ -4323,17 +4320,7 @@ declare module "bun" {
      * Passing other options such as `port` or `hostname` won't do anything.
      */
     reload<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-      options: (
-        | (Omit<ServeOptions, "fetch"> & {
-            routes: R;
-            fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-          })
-        | (Omit<ServeOptions, "routes"> & {
-            routes?: never;
-            fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-          })
-        | WebSocketServeOptions<T>
-      ) & {
+      options: ServeFunctionOptions<T, R> & {
         /**
          * @deprecated Use `routes` instead in new code. This will continue to work for awhile though.
          */
@@ -4711,23 +4698,39 @@ declare module "bun" {
     @param options.routes - Route definitions mapping paths to handlers
     */
   function serve<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }>(
-    options: (
-      | (DistributedOmit<Serve, "fetch"> & {
-          routes: R;
-          fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-        })
-      | (DistributedOmit<Serve, "routes"> & {
-          routes?: never;
-          fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
-        })
-      | WebSocketServeOptions<T>
-    ) & {
+    options: ServeFunctionOptions<T, R> & {
       /**
        * @deprecated Use `routes` instead in new code. This will continue to work for a while though.
        */
       static?: R;
     },
   ): Server;
+
+  type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }> =
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
+        routes: R;
+        fetch?: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "routes"> & {
+        routes?: never;
+        fetch: (this: Server, request: Request, server: Server) => Response | Promise<Response>;
+      })
+    | (WebSocketServeOptions<T> & {
+        routes: R;
+        fetch?: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      })
+    | (WebSocketServeOptions<T> & {
+        routes?: never;
+        fetch: (
+          this: Server,
+          request: Request,
+          server: Server,
+        ) => Response | Promise<Response | void | undefined> | void | undefined;
+      });
 
   /**
    * [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) powered by the fastest system calls available for operating on files.
@@ -6960,6 +6963,8 @@ declare module "bun" {
     resourceUsage: ResourceUsage;
 
     signalCode?: string;
+    exitedDueToTimeout?: true;
+    pid: number;
   }
 
   /**

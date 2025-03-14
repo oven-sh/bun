@@ -2493,7 +2493,6 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
 pub const Resolution = @import("./resolution.zig").Resolution;
 const Progress = bun.Progress;
-const TaggedPointer = @import("../tagged_pointer.zig");
 
 const DependencyInstallContext = struct {
     tree_id: Lockfile.Tree.Id = 0,

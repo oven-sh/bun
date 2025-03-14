@@ -626,7 +626,6 @@ if (isDockerEnabled()) {
       // Insert
       const result = await sql`INSERT INTO test ${sql(item)} returning *`;
 
-      // Retrieve and verify
       expect(result[0]).toEqual(item);
     } finally {
       await sql`DROP TABLE test`;
@@ -655,10 +654,8 @@ if (isDockerEnabled()) {
 
       // Update
       const update = { arr: ["c", "d"] };
-      await sql`UPDATE test SET ${sql(update)} WHERE id = ${item.id}`;
+      const result = await sql`UPDATE test SET ${sql(update)} WHERE id = ${item.id} returning *`;
 
-      // Retrieve and verify
-      const result = await sql`SELECT * FROM test WHERE id = ${item.id}`;
       expect(result[0]).toEqual({ ...item, ...update });
     } finally {
       await sql`DROP TABLE test`;

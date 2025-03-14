@@ -16,7 +16,7 @@ const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
 const CodepointIterator = @import("../string_immutable.zig").PackedCodepointIterator;
 const isAllAscii = @import("../string_immutable.zig").isAllASCII;
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 
 pub const interpret = @import("./interpreter.zig");
 pub const subproc = @import("./subproc.zig");

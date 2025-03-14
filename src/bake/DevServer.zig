@@ -2083,7 +2083,7 @@ pub fn finalizeBundle(
         .gts = undefined,
     };
 
-    const quoted_source_contents = bv2.linker.graph.files.items(.quoted_source_contents);
+    const quoted_source_contents: []const []const u8 = bv2.linker.graph.files.items(.quoted_source_contents);
     // Pass 1, update the graph's nodes, resolving every bundler source
     // index into its `IncrementalGraph(...).FileIndex`
     for (
@@ -2112,7 +2112,7 @@ pub fn finalizeBundle(
                 .{ .js = .{
                     .code = compile_result.code(),
                     .source_map = source_map,
-                    .quoted_contents = .initOwned(quoted_contents, dev.allocator),
+                    .quoted_contents = .initOwned(@constCast(quoted_contents), dev.allocator),
                 } },
                 graph == .ssr,
             ),
@@ -2195,7 +2195,7 @@ pub fn finalizeBundle(
             .{ .js = .{
                 .code = generated_js,
                 .source_map = .empty,
-                .quoted_contents = comptime .initNeverFree(""),
+                .quoted_contents = .empty,
             } },
             false,
         );
@@ -3244,15 +3244,15 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 return self.vlq_ptr[0..self.vlq_len];
             }
 
-            pub fn quotedContentsCowString(self: @This()) bun.CowString {
-                return bun.CowString.initUnchecked(self.quoted_contents_ptr[0..self.quoted_contents_flags.len], self.quoted_contents_flags.is_owned);
+            pub fn quotedContentsCowString(self: @This()) bun.ptr.CowString {
+                return bun.ptr.CowString.initUnchecked(self.quoted_contents_ptr[0..self.quoted_contents_flags.len], self.quoted_contents_flags.is_owned);
             }
 
             pub fn quotedContents(self: @This()) []const u8 {
                 return self.quoted_contents_ptr[0..self.quoted_contents_flags.len];
             }
 
-            pub fn fromNonEmptySourceMap(source_map: SourceMap.Chunk, quoted_contents: bun.CowString) !PackedMap {
+            pub fn fromNonEmptySourceMap(source_map: SourceMap.Chunk, quoted_contents: bun.ptr.CowString) !PackedMap {
                 assert(source_map.buffer.list.items.len > 0);
                 return .{
                     .vlq_ptr = source_map.buffer.list.items.ptr,
@@ -3372,7 +3372,7 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 js: struct {
                     code: []const u8,
                     source_map: SourceMap.Chunk,
-                    quoted_contents: bun.CowString,
+                    quoted_contents: bun.ptr.CowString,
                 },
                 css: u64,
             },

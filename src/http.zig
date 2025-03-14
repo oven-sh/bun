@@ -45,7 +45,7 @@ var default_arena: Arena = undefined;
 pub var http_thread: HTTPThread = undefined;
 const HiveArray = @import("./hive_array.zig").HiveArray;
 const Batch = bun.ThreadPool.Batch;
-const TaggedPointerUnion = @import("./tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("./ptr.zig").TaggedPointerUnion;
 const DeadSocket = opaque {};
 var dead_socket = @as(*DeadSocket, @ptrFromInt(1));
 //TODO: this needs to be freed when Worker Threads are implemented

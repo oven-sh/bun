@@ -32,7 +32,7 @@ const {
   certExportPublicKey,
   certExportChallenge,
   getCiphers,
-  _getCipherInfo,
+  getCipherInfo,
   Sign: _Sign,
   sign,
   Verify: _Verify,
@@ -82,27 +82,6 @@ Certificate.prototype = {};
 Certificate.verifySpkac = verifySpkac;
 Certificate.exportPublicKey = exportPublicKey;
 Certificate.exportChallenge = exportChallenge;
-
-function getCipherInfo(nameOrNid, options) {
-  if (typeof nameOrNid !== "string" && typeof nameOrNid !== "number") {
-    throw $ERR_INVALID_ARG_TYPE("nameOrNid", ["string", "number"], nameOrNid);
-  }
-  if (typeof nameOrNid === "number") validateInt32(nameOrNid, "nameOrNid");
-  let keyLength, ivLength;
-  if (options !== undefined) {
-    validateObject(options, "options");
-    ({ keyLength, ivLength } = options);
-    if (keyLength !== undefined) validateInt32(keyLength, "options.keyLength");
-    if (ivLength !== undefined) validateInt32(ivLength, "options.ivLength");
-  }
-
-  const ret = _getCipherInfo({}, nameOrNid, keyLength, ivLength);
-  if (ret !== undefined) {
-    ret.name &&= ret.name;
-    ret.type &&= StringPrototypeToLowerCase.$call(ret.type);
-  }
-  return ret;
-}
 
 var Buffer = globalThis.Buffer;
 const EMPTY_BUFFER = Buffer.alloc(0);

@@ -185,7 +185,7 @@ pub const ModuleInfo = struct {
     };
 
     pub const VarKind = enum { declared, lexical };
-    pub fn addVar(self: *ModuleInfo, name: []const u8, kind: VarKind) !void {
+    pub fn addVar(self: *ModuleInfo, name: StringID, kind: VarKind) !void {
         switch (kind) {
             .declared => try self.addDeclaredVariable(name),
             .lexical => try self.addLexicalVariable(name),
@@ -198,35 +198,32 @@ pub const ModuleInfo = struct {
         try self.record_kinds.append(kind);
         try self.buffer.appendSlice(data);
     }
-    pub fn addDeclaredVariable(self: *ModuleInfo, id: []const u8) !void {
-        try self._addRecord(.declared_variable, &.{try self.str(id)});
+    pub fn addDeclaredVariable(self: *ModuleInfo, id: StringID) !void {
+        try self._addRecord(.declared_variable, &.{id});
     }
-    pub fn addLexicalVariable(self: *ModuleInfo, id: []const u8) !void {
-        try self._addRecord(.lexical_variable, &.{try self.str(id)});
+    pub fn addLexicalVariable(self: *ModuleInfo, id: StringID) !void {
+        try self._addRecord(.lexical_variable, &.{id});
     }
-    pub fn addImportInfoSingle(self: *ModuleInfo, module_name: []const u8, import_name: []const u8, local_name: []const u8, only_used_as_type: bool) !void {
-        try self._addRecord(if (only_used_as_type) .import_info_single_type_script else .import_info_single, &.{ try self.str(module_name), try self.str(import_name), try self.str(local_name) });
+    pub fn addImportInfoSingle(self: *ModuleInfo, module_name: StringID, import_name: StringID, local_name: StringID, only_used_as_type: bool) !void {
+        try self._addRecord(if (only_used_as_type) .import_info_single_type_script else .import_info_single, &.{ module_name, import_name, local_name });
     }
-    pub fn addImportInfoNamespace(self: *ModuleInfo, module_name: []const u8, local_name: []const u8) !void {
-        try self._addRecord(.import_info_namespace, &.{ try self.str(module_name), try self.str("*"), try self.str(local_name) });
+    pub fn addImportInfoNamespace(self: *ModuleInfo, module_name: StringID, local_name: StringID) !void {
+        try self._addRecord(.import_info_namespace, &.{ module_name, try self.str("*"), local_name });
     }
-    pub fn addExportInfoIndirect(self: *ModuleInfo, export_name: []const u8, import_name: []const u8, module_name: []const u8) !void {
-        const export_name_id = try self.str(export_name);
-        if (try self._hasOrAddExportedName(export_name_id)) return; // a syntax error will be emitted later in this case
-        try self._addRecord(.export_info_indirect, &.{ export_name_id, try self.str(import_name), try self.str(module_name) });
+    pub fn addExportInfoIndirect(self: *ModuleInfo, export_name: StringID, import_name: StringID, module_name: StringID) !void {
+        if (try self._hasOrAddExportedName(export_name)) return; // a syntax error will be emitted later in this case
+        try self._addRecord(.export_info_indirect, &.{ export_name, import_name, module_name });
     }
-    pub fn addExportInfoLocal(self: *ModuleInfo, export_name: []const u8, local_name: []const u8) !void {
-        const export_name_id = try self.str(export_name);
-        if (try self._hasOrAddExportedName(export_name_id)) return; // a syntax error will be emitted later in this case
-        try self._addRecord(.export_info_local, &.{ export_name_id, try self.str(local_name), @enumFromInt(std.math.maxInt(u32)) });
+    pub fn addExportInfoLocal(self: *ModuleInfo, export_name: StringID, local_name: StringID) !void {
+        if (try self._hasOrAddExportedName(export_name)) return; // a syntax error will be emitted later in this case
+        try self._addRecord(.export_info_local, &.{ export_name, local_name, @enumFromInt(std.math.maxInt(u32)) });
     }
-    pub fn addExportInfoNamespace(self: *ModuleInfo, export_name: []const u8, module_name: []const u8) !void {
-        const export_name_id = try self.str(export_name);
-        if (try self._hasOrAddExportedName(export_name_id)) return; // a syntax error will be emitted later in this case
-        try self._addRecord(.export_info_namespace, &.{ export_name_id, try self.str(module_name) });
+    pub fn addExportInfoNamespace(self: *ModuleInfo, export_name: StringID, module_name: StringID) !void {
+        if (try self._hasOrAddExportedName(export_name)) return; // a syntax error will be emitted later in this case
+        try self._addRecord(.export_info_namespace, &.{ export_name, module_name });
     }
-    pub fn addExportInfoStar(self: *ModuleInfo, module_name: []const u8) !void {
-        try self._addRecord(.export_info_star, &.{try self.str(module_name)});
+    pub fn addExportInfoStar(self: *ModuleInfo, module_name: StringID) !void {
+        try self._addRecord(.export_info_star, &.{module_name});
     }
 
     pub fn _hasOrAddExportedName(self: *ModuleInfo, name: StringID) !bool {
@@ -281,10 +278,9 @@ pub const ModuleInfo = struct {
         self.strings_lens.appendAssumeCapacity(@as(u32, @truncate(value.len)));
         return @enumFromInt(@as(u32, @intCast(gpres.index)));
     }
-    pub const star_default = "*default*";
-    pub fn requestModule(self: *ModuleInfo, import_record_path: []const u8, fetch_parameters: FetchParameters) !void {
+    pub fn requestModule(self: *ModuleInfo, import_record_path: StringID, fetch_parameters: FetchParameters) !void {
         // jsc only records the attributes of the first import with the given import_record_path. so only put if not exists.
-        const gpres = try self.requested_modules.getOrPut(try self.str(import_record_path));
+        const gpres = try self.requested_modules.getOrPut(import_record_path);
         if (!gpres.found_existing) gpres.value_ptr.* = fetch_parameters;
     }
 
@@ -332,6 +328,8 @@ pub const ModuleInfo = struct {
     }
 };
 pub const StringID = enum(u32) {
+    star_default = std.math.maxInt(u32),
+    star_namespace = std.math.maxInt(u32) - 1,
     _,
 };
 
@@ -364,11 +362,7 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     for (0.., res.strings_lens) |index, len| {
         if (res.strings_buf.len < offset + len) return null; // error!
         const sub = res.strings_buf[offset..][0..len];
-        if (bun.strings.eqlComptime(sub, ModuleInfo.star_default)) {
-            identifiers.setFromStarDefault(index, vm);
-        } else {
-            identifiers.setFromUtf8(index, vm, sub);
-        }
+        identifiers.setFromUtf8(index, vm, sub);
         offset += len;
     }
 
@@ -377,8 +371,8 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
         for (res.record_kinds) |k| {
             if (i + (k.len() catch 0) > res.buffer.len) return null;
             switch (k) {
-                .declared_variable => declared_variables.add(identifiers, res.buffer[i]),
-                .lexical_variable => lexical_variables.add(identifiers, res.buffer[i]),
+                .declared_variable => declared_variables.add(vm, identifiers, res.buffer[i]),
+                .lexical_variable => lexical_variables.add(vm, identifiers, res.buffer[i]),
                 .import_info_single, .import_info_single_type_script, .import_info_namespace, .export_info_indirect, .export_info_local, .export_info_namespace, .export_info_star => {},
                 else => return null,
             }
@@ -425,7 +419,7 @@ export fn zig__ModuleInfo__destroy(info: *ModuleInfo) void {
 }
 
 const VariableEnvironment = opaque {
-    extern fn JSC__VariableEnvironment__add(environment: *VariableEnvironment, identifier_array: *IdentifierArray, identifier_index: StringID) void;
+    extern fn JSC__VariableEnvironment__add(environment: *VariableEnvironment, vm: *bun.JSC.VM, identifier_array: *IdentifierArray, identifier_index: StringID) void;
     pub const add = JSC__VariableEnvironment__add;
 };
 const IdentifierArray = opaque {
@@ -439,9 +433,6 @@ const IdentifierArray = opaque {
     pub fn setFromUtf8(self: *IdentifierArray, n: usize, vm: *bun.JSC.VM, str: []const u8) void {
         JSC__IdentifierArray__setFromUtf8(self, n, vm, str.ptr, str.len);
     }
-
-    extern fn JSC__IdentifierArray__setFromStarDefault(identifier_array: *IdentifierArray, n: usize, vm: *bun.JSC.VM) void;
-    pub const setFromStarDefault = JSC__IdentifierArray__setFromStarDefault;
 };
 const SourceCode = opaque {};
 const JSModuleRecord = opaque {

@@ -12,9 +12,6 @@ export default {
   get promises() {
     return (timersPromisesValue ??= require("node:timers/promises"));
   },
-  set promises(value) {
-    timersPromisesValue = value;
-  },
   active(timer) {
     if ($isCallable(timer?.refresh)) {
       timer.refresh();

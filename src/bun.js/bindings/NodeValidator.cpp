@@ -559,7 +559,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBuffer, (JSC::JSGlobalObject * globa
     auto buffer = callFrame->argument(0);
     auto name = callFrame->argument(1);
 
-    if (!buffer.isCell()) return JSValue::encode(jsUndefined());
+    if (!buffer.isCell()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "Buffer, TypedArray, or DataView"_s, buffer);
+    }
     auto ty = buffer.asCell()->type();
 
     if (JSC::typedArrayType(ty) == NotTypedArray) {
@@ -621,13 +623,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateObject, (JSC::JSGlobalObject * globa
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto value = callFrame->argument(0);
+    auto name = callFrame->argument(1);
 
     if (value.isNull() || JSC::isArray(globalObject, value)) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
     if (!value.isObject() || value.asCell()->type() != FinalObjectType) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, callFrame->argument(1), "object"_s, value);
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "object"_s, value);
     }
 
     return JSValue::encode(jsUndefined());

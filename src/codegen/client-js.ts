@@ -28,13 +28,12 @@ let $assert = function(check, sourceString, ...message) {
     Error.prepareStackTrace = (e, stack) => {
       return e.name + ': ' + e.message + '\\n' + stack.slice(1).map(x => '  at ' + x.toString()).join('\\n');
     };
-    const e = new Error(sourceString);
+    const e = new Error(message ?? sourceString);
     e.stack; // materialize stack
     e.name = 'AssertionError';
     Error.prepareStackTrace = prevPrepareStackTrace;
     console.error('[${publicName}] ASSERTION FAILED: ' + sourceString);
     if (message.length) console.warn(...message);
-    console.warn(e.stack.split('\\n')[1] + '\\n');
     if (Bun.env.ASSERT === 'CRASH') process.exit(0xAA);
     throw e;
   }

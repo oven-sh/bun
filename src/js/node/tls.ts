@@ -4,6 +4,8 @@ const net = require("node:net");
 const { Duplex } = require("node:stream");
 const { addServerName } = require("internal/net");
 const { throwNotImplemented } = require("internal/shared");
+const { validateBuffer, validateObject } = require("internal/validators");
+const crypto = require("node:crypto");
 
 const { Server: NetServer, Socket: NetSocket } = net;
 
@@ -263,6 +265,30 @@ var InternalSecureContext = class SecureContext {
     }
     this.context = context;
   }
+
+  // init
+  // setKey
+  // setCert
+  // addCACert
+  // setAllowPartialTrustChain
+  // addCRL
+  // addRootCerts
+  // setCipherSuites
+  // setCiphers
+  // setSigalgs
+  // setECDHCurve
+  // setDHParam
+  // setMaxProto
+  // setMinProto
+  // getMaxProto
+  // getMinProto
+  // setOptions
+  // setSessionIdContext
+  // setSessionTimeout
+  // close
+  // loadPKCS12
+  // setTicketKeys
+  // enableTicketKeyCallback
 };
 
 function SecureContext(options) {
@@ -488,6 +514,14 @@ function Server(options, secureConnectionListener): void {
   if (!(this instanceof Server)) {
     return new Server(options, secureConnectionListener);
   }
+  if (typeof options === "function") {
+    secureConnectionListener = options;
+    options = {};
+  } else if (options == null || typeof options === "object") {
+    options ??= {};
+  } else {
+    throw $ERR_INVALID_ARG_TYPE("options", "Object", options);
+  }
 
   NetServer.$apply(this, [options, secureConnectionListener]);
 
@@ -502,100 +536,7 @@ function Server(options, secureConnectionListener): void {
   this.ALPNProtocols = undefined;
 
   let contexts: Map<string, typeof InternalSecureContext> | null = null;
-
-  this.addContext = function (hostname, context) {
-    if (typeof hostname !== "string") {
-      throw new TypeError("hostname must be a string");
-    }
-    if (!(context instanceof InternalSecureContext)) {
-      context = createSecureContext(context);
-    }
-    if (this._handle) {
-      addServerName(this._handle, hostname, context);
-    } else {
-      if (!contexts) contexts = new Map();
-      contexts.set(hostname, context);
-    }
-  };
-
-  this.setSecureContext = function (options) {
-    if (options instanceof InternalSecureContext) {
-      options = options.context;
-    }
-    if (options) {
-      const { ALPNProtocols } = options;
-
-      if (ALPNProtocols) {
-        convertALPNProtocols(ALPNProtocols, this);
-      }
-
-      let key = options.key;
-      if (key) {
-        if (!isValidTLSArray(key)) {
-          throw new TypeError(
-            "key argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.key = key;
-      }
-      let cert = options.cert;
-      if (cert) {
-        if (!isValidTLSArray(cert)) {
-          throw new TypeError(
-            "cert argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.cert = cert;
-      }
-
-      let ca = options.ca;
-      if (ca) {
-        if (!isValidTLSArray(ca)) {
-          throw new TypeError(
-            "ca argument must be an string, Buffer, TypedArray, BunFile or an array containing string, Buffer, TypedArray or BunFile",
-          );
-        }
-        this.ca = ca;
-      }
-
-      let passphrase = options.passphrase;
-      if (passphrase && typeof passphrase !== "string") {
-        throw new TypeError("passphrase argument must be an string");
-      }
-      this.passphrase = passphrase;
-
-      let servername = options.servername;
-      if (servername && typeof servername !== "string") {
-        throw new TypeError("servername argument must be an string");
-      }
-      this.servername = servername;
-
-      let secureOptions = options.secureOptions || 0;
-      if (secureOptions && typeof secureOptions !== "number") {
-        throw new TypeError("secureOptions argument must be an number");
-      }
-      this.secureOptions = secureOptions;
-
-      const requestCert = options.requestCert || false;
-
-      if (requestCert) this._requestCert = requestCert;
-      else this._requestCert = undefined;
-
-      const rejectUnauthorized = options.rejectUnauthorized;
-
-      if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
-      } else this._rejectUnauthorized = rejectUnauthorizedDefault;
-    }
-  };
-
-  Server.prototype.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
-
-  Server.prototype.setTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
-  };
+  this._contexts = contexts;
 
   this[buntls] = function (port, host, isClient) {
     return [
@@ -620,6 +561,83 @@ function Server(options, secureConnectionListener): void {
   this.setSecureContext(options);
 }
 $toClass(Server, "Server", NetServer);
+
+Server.prototype.addContext = function addContext(hostname, context) {
+  if (typeof hostname !== "string") {
+    throw new TypeError("hostname must be a string");
+  }
+  if (!(context instanceof InternalSecureContext)) {
+    context = createSecureContext(context);
+  }
+  if (this._handle) {
+    addServerName(this._handle, hostname, context);
+  } else {
+    (this._contexts ??= new Map()).set(hostname, context);
+  }
+};
+
+Server.prototype.setSecureContext = function setSecureContext(options) {
+  validateObject(options, "options");
+
+  this.pfx = options.pfx ? options.pfx : undefined;
+  this.key = options.key ? options.key : undefined;
+  this.passphrase = options.passphrase ? options.passphrase : undefined;
+  this.cert = options.cert ? options.cert : undefined;
+  this.clientCertEngine = options.clientCertEngine ? options.clientCertEngine : undefined;
+  this.ca = options.ca ? options.ca : undefined;
+  this.minVersion = options.minVersion ? options.minVersion : undefined;
+  this.maxVersion = options.maxVersion ? options.maxVersion : undefined;
+  this.secureProtocol = options.secureProtocol ? options.secureProtocol : undefined;
+  this.crl = options.crl ? options.crl : undefined;
+  this.sigalgs = options.sigalgs;
+  this.ciphers = options.ciphers ? options.ciphers : (this.ciphers = undefined);
+  this.ecdhCurve = options.ecdhCurve;
+  this.dhparam = options.dhparam ? options.dhparam : (this.dhparam = undefined);
+  this.honorCipherOrder = options.honorCipherOrder !== undefined ? !!options.honorCipherOrder : true;
+
+  if (options.secureOptions || 0) this.secureOptions = options.secureOptions || 0;
+  else this.secureOptions = undefined;
+
+  this.sessionIdContext = options.sessionIdContext ? options.sessionIdContext : crypto.createHash("sha1").update(process.argv.join(" ")).digest("hex").slice(0, 32); // prettier-ignore
+  this.sessionTimeout = options.sessionTimeout ? options.sessionTimeout : undefined;
+  this.ticketKeys = options.ticketKeys ? options.ticketKeys : undefined;
+  this.privateKeyIdentifier = options.privateKeyIdentifier;
+  this.privateKeyEngine = options.privateKeyEngine;
+
+  this._sharedCreds = createSecureContext({
+    pfx: this.pfx,
+    key: this.key,
+    passphrase: this.passphrase,
+    cert: this.cert,
+    clientCertEngine: this.clientCertEngine,
+    ca: this.ca,
+    ciphers: this.ciphers,
+    sigalgs: this.sigalgs,
+    ecdhCurve: this.ecdhCurve,
+    dhparam: this.dhparam,
+    minVersion: this.minVersion,
+    maxVersion: this.maxVersion,
+    secureProtocol: this.secureProtocol,
+    secureOptions: this.secureOptions,
+    honorCipherOrder: this.honorCipherOrder,
+    crl: this.crl,
+    sessionIdContext: this.sessionIdContext,
+    ticketKeys: this.ticketKeys,
+    sessionTimeout: this.sessionTimeout,
+    privateKeyIdentifier: this.privateKeyIdentifier,
+    privateKeyEngine: this.privateKeyEngine,
+  });
+};
+
+Server.prototype.getTicketKeys = function getTicketKeys() {
+  throw Error("tls.Server.prototype.getTicketKeys Not implented in Bun yet");
+};
+
+Server.prototype.setTicketKeys = function setTicketKeys(keys) {
+  validateBuffer(keys, "buffer");
+  $assert(keys.byteLength === 48, "Session ticket keys must be a 48-byte buffer");
+  throw Error("tls.Server.prototype.setTicketKeys not implented in Bun yet");
+};
 
 function createServer(options, connectionListener) {
   return new Server(options, connectionListener);

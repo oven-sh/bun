@@ -50,6 +50,50 @@ using namespace Bun;
 
 namespace WebCore {
 
+JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue candidateValue = callFrame->argument(0);
+
+    // TODO(dylan-conway): handle bigint
+    if (candidateValue.isBigInt()) {
+    }
+
+    auto* candidateView = getArrayBufferOrView(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue optionsValue = callFrame->argument(1);
+    V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
+
+    int32_t checks = 0;
+    if (optionsValue.isObject()) {
+        JSObject* options = optionsValue.getObject();
+        JSValue checksValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "checks"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (!checksValue.isUndefined()) {
+            V::validateInt32(scope, lexicalGlobalObject, checksValue, "checks"_s, jsNumber(0), jsUndefined(), &checks);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(reinterpret_cast<const uint8_t*>(candidateView->vector()), candidateView->byteLength());
+    if (!candidate) {
+        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
+        return JSValue::encode({});
+    }
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto res = candidate.isPrime(checks, [globalObject](int32_t a, int32_t b) -> bool {
+        return !globalObject->isShuttingDown();
+    });
+
+    return JSValue::encode(jsBoolean(res != 0));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -413,6 +457,9 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
         globalObject->m_JSDiffieHellmanClassStructure.constructor(globalObject));
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "DiffieHellmanGroup"_s)),
         globalObject->m_JSDiffieHellmanGroupClassStructure.constructor(globalObject));
+
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrimeSync"_s)),
+        JSFunction::create(vm, globalObject, 2, "checkPrimeSync"_s, jsCheckPrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
 
     return obj;
 }

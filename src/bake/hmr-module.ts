@@ -282,6 +282,14 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (!mod) {
       mod = new HMRModule(id, true);
       registry.set(id, mod);
+    } else if (mod.esm) {
+      mod.esm = false;
+      mod.cjs = {
+        id,
+        exports: {},
+        require: this.require.bind(this),
+      };
+      mod.exports = null;
     }
     if (importer) {
       mod.importers.add(importer);
@@ -316,6 +324,10 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (!mod) {
       mod = new HMRModule(id, false);
       registry.set(id, mod);
+    } else if (!mod.esm) {
+      mod.esm = true;
+      mod.cjs = null;
+      mod.exports = null;
     }
     if (importer) {
       mod.importers.add(importer);
@@ -370,6 +382,14 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (!mod) {
       mod = new HMRModule(id, true);
       registry.set(id, mod);
+    } else if (mod.esm) {
+      mod.esm = false;
+      mod.cjs = {
+        id,
+        exports: {},
+        require: this.require.bind(this),
+      };
+      mod.exports = null;
     }
     if (importer) {
       mod.importers.add(importer);
@@ -383,7 +403,6 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       throw e;
     }
     mod.state = State.Loaded;
-
     return mod;
   } else {
     // ESM
@@ -404,13 +423,17 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (!mod) {
       mod = new HMRModule(id, false);
       registry.set(id, mod);
+    } else if (!mod.esm) {
+      mod.esm = true;
+      mod.exports = null;
+      mod.cjs = null;
     }
     if (importer) {
       mod.importers.add(importer);
     }
 
     const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
-      DEBUG.ASSERT(isAsync ? list.some(x => x instanceof Promise): list.every(x => x instanceof HMRModule));
+    DEBUG.ASSERT(isAsync ? list.some(x => x instanceof Promise): list.every(x => x instanceof HMRModule));
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.

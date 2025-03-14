@@ -24,7 +24,11 @@ import { exitCodeMapStrings } from "./exit-code-map.mjs";
 
 const isDebugBuild = Bun.version.includes("debug");
 
-const verboseSynchronization = (arg: string) => {};
+const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
+  ? (arg: string) => {
+      console.log("\x1b[36m" + arg + "\x1b[0m");
+    }
+  : () => {};
 
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {

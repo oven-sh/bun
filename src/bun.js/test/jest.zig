@@ -811,6 +811,7 @@ pub const DescribeScope = struct {
     file_id: TestRunner.File.ID,
     current_test_id: TestRunner.Test.ID = 0,
     value: JSValue = .zero,
+    locked: bool = false,
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
@@ -1117,6 +1118,7 @@ pub const DescribeScope = struct {
     pub fn runTests(this: *DescribeScope, globalObject: *JSGlobalObject) void {
         // Step 1. Initialize the test block
         globalObject.clearTerminationException();
+        this.locked = true;
 
         const file = this.file_id;
         const allocator = getAllocator(globalObject);
@@ -1793,6 +1795,10 @@ inline fn createScope(
         }
     } else if (!options.isEmptyOrUndefinedOrNull()) {
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
+    }
+
+    if (parent.locked) {
+        return globalThis.throwPretty("{s} cannot be called within a test. Use 'describe' to nest tests.", .{signature});
     }
 
     var tag_to_use = tag;

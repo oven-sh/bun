@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 9
+# Version: 10
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -1132,6 +1132,24 @@ install_tailscale() {
 	esac
 }
 
+install_fuse_python() {
+	# only linux needs this
+	case "$pm" in
+	apk)
+		install_packages \
+			python3-dev \
+			fuse-dev \
+			pkgconf
+		execute_sudo python3 -m venv /opt/fuse-python-venv
+		execute_sudo sh -c "source /opt/fuse-python-venv/bin/activate && pip install fuse-python"
+		grant_to_user /opt/fuse-python-venv
+		;;
+	apt | dnf | yum)
+		install_packages python3-fuse
+		;;
+	esac
+}
+
 create_buildkite_user() {
 	if ! [ "$ci" = "1" ] || ! [ "$os" = "linux" ]; then
 		return
@@ -1323,6 +1341,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chromium
+	install_fuse_python
 	clean_system
 }
 

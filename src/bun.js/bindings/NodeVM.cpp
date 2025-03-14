@@ -692,7 +692,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     JSValue paramsArg = callFrame->argument(1);
     if (paramsArg && !paramsArg.isUndefined()) {
         if (!paramsArg.isObject() || !isArray(globalObject, paramsArg))
-            return ERR::INVALID_ARG_TYPE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
+            return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "params"_s, "Array"_s, paramsArg);
 
         auto* paramsArray = jsCast<JSArray*>(paramsArg);
         unsigned length = paramsArray->length();

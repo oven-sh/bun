@@ -1149,7 +1149,10 @@ using namespace WebCore;
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm));
+    Zig::GlobalObject* shadow = Zig::GlobalObject::create(
+        vm,
+        Zig::GlobalObject::createStructure(vm),
+        ScriptExecutionContext::generateIdentifier());
     shadow->setConsole(shadow);
 
     return shadow;

@@ -624,10 +624,9 @@ if (isDockerEnabled()) {
       };
 
       // Insert
-      await sql`INSERT INTO test ${sql(item)}`;
+      const result = await sql`INSERT INTO test ${sql(item)} returning *`;
 
       // Retrieve and verify
-      const result = await sql`SELECT * FROM test WHERE id = ${item.id}`;
       expect(result[0]).toEqual(item);
     } finally {
       await sql`DROP TABLE test`;
@@ -661,6 +660,62 @@ if (isDockerEnabled()) {
       // Retrieve and verify
       const result = await sql`SELECT * FROM test WHERE id = ${item.id}`;
       expect(result[0]).toEqual({ ...item, ...update });
+    } finally {
+      await sql`DROP TABLE test`;
+    }
+  });
+
+  test("#17798: it should handle non-string values in array", async () => {
+    try {
+      await sql`
+    CREATE TEMPORARY TABLE test (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      arr TEXT[]
+    )
+  `;
+
+      // Test data
+      const item = {
+        id: 1,
+        name: "test",
+        arr: ["a", null, NaN, 12, 12.9, Infinity, -Infinity, true, false],
+      };
+
+      const expected_arr = ["a", null, "NaN", "12", "12.9", "Infinity", "-Infinity", "true", "false"];
+
+      // Insert
+      const result = await sql`INSERT INTO test ${sql(item)} returning *`;
+
+      expect(result[0]).toEqual({ ...item, arr: expected_arr });
+    } finally {
+      await sql`DROP TABLE test`;
+    }
+  });
+
+  test("#17798: it should handle nested arrays", async () => {
+    try {
+      await sql`
+    CREATE TEMPORARY TABLE test (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      arr TEXT[]
+    )
+  `;
+
+      // Test data
+      const item = {
+        id: 1,
+        name: "test",
+        arr: ["a", null, [NaN, 12, [12.9, Infinity]], -Infinity],
+      };
+
+      const expected_arr = ["a", null, "NaN,12,12.9,Infinity", "-Infinity"];
+
+      // Insert
+      const result = await sql`INSERT INTO test ${sql(item)} returning *`;
+
+      expect(result[0]).toEqual({ ...item, arr: expected_arr });
     } finally {
       await sql`DROP TABLE test`;
     }

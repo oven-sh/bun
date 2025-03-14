@@ -12,8 +12,9 @@ const nodeApiTests = Array.from(new Glob("**/*.js").scanSync(nodeApiRoot));
 
 // These js-native-api tests are known to fail and will be fixed in later PRs
 let failingJsNativeApiTests = [
-  // Fails because Bun doesn't support creating empty external strings
-  "test_string/test.js",
+  // We skip certain parts of test_string/test.js because we don't support creating empty external
+  // strings. We don't skip the entire thing because the other tests are useful to check.
+  // "test_string/test.js",
 ];
 
 // These are the tests from node-api that failed as of commit 83f536f4d, except for those that

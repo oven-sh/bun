@@ -117,6 +117,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_TLS_CERT_ALTNAME_INVALID", Error],
   ["ERR_TLS_SNI_FROM_SERVER", Error],
   ["ERR_TLS_RENEGOTIATION_DISABLED", Error],
+  ["ERR_TLS_INVALID_PROTOCOL_VERSION", TypeError],
+  ["ERR_TLS_PROTOCOL_VERSION_CONFLICT", TypeError],
 
   // NET
   ["ERR_SOCKET_CLOSED_BEFORE_CONNECTION", Error],
@@ -156,6 +158,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_HEADERS_AFTER_RESPOND", Error],
   ["ERR_HTTP2_PUSH_DISABLED", Error],
   ["ERR_HTTP2_MAX_PENDING_SETTINGS_ACK", Error],
+  
+  // HTTP
+  ["ERR_UNESCAPED_CHARACTERS", TypeError],
+
   // AsyncHooks
   ["ERR_ASYNC_TYPE", TypeError],
   ["ERR_INVALID_ASYNC_ID", RangeError],

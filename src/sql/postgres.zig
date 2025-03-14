@@ -918,7 +918,8 @@ fn writeArrayItem(
             try writer.write("\"");
         }
 
-        // Allocation happens only when the value is finite or the value is between -100 and 100
+        // Allocation happens only when the value is finite and
+        // the value is outside the range -100 and 100 or when the value has a floating point
         if (std.math.isFinite(num_value) and
             (num_value > 100 or num_value < -100 or
             num_value != @trunc(num_value)))

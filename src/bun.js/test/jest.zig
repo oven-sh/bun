@@ -557,11 +557,11 @@ pub const TestScope = struct {
         actual: u32 = 0,
     };
 
-    pub fn deinit(this: *TestScope, globalThis: *JSGlobalObject) void {
+    pub fn deinit(this: *TestScope) void {
         if (this.label.len > 0) {
             const label = this.label;
             this.label = "";
-            getAllocator(globalThis).free(label);
+            bun.default_allocator.free(label);
         }
     }
 
@@ -815,6 +815,8 @@ pub const DescribeScope = struct {
     skip_count: u32 = 0,
     ref_count: u32 = 1,
     tag: Tag = .pass,
+
+    pub usingnamespace bun.NewRefCounted(@This(), deinit, "DescribeScope");
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1139,7 +1141,7 @@ pub const DescribeScope = struct {
                     Jest.runner.?.reportFailure(i + this.test_id_start, source.path.text, tests[i].label, 0, 0, this);
                     i += 1;
                 }
-                this.deref(globalObject);
+                this.deref();
                 return;
             }
             if (end == 0) {
@@ -1198,26 +1200,11 @@ pub const DescribeScope = struct {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
         }
-        this.deref(globalThis);
+        this.deref();
     }
 
-    pub fn ref(this: *DescribeScope) void {
-        bun.debugAssert(this.ref_count > 0 and this.ref_count != std.math.maxInt(u32));
-        this.ref_count += 1;
-    }
-
-    pub fn deref(this: *DescribeScope, globalThis: *JSGlobalObject) void {
-        bun.assert(this.ref_count > 0);
-        bun.debugAssert(this.ref_count != std.math.maxInt(u32));
-        this.ref_count -= 1;
-        if (this.ref_count == 0) {
-            this.deinit(globalThis);
-            this.* = undefined;
-        }
-    }
-
-    fn deinit(this: *DescribeScope, globalThis: *JSGlobalObject) void {
-        const allocator = getAllocator(globalThis);
+    fn deinit(this: *DescribeScope) void {
+        const allocator = bun.default_allocator;
 
         if (this.label.len > 0) {
             const label = this.label;
@@ -1227,7 +1214,7 @@ pub const DescribeScope = struct {
 
         this.pending_tests.deinit(allocator);
         for (this.tests.items) |*t| {
-            t.deinit(globalThis);
+            t.deinit();
         }
         this.tests.clearAndFree(allocator);
     }
@@ -1368,6 +1355,9 @@ pub const TestRunnerTask = struct {
             return false;
         }
 
+        this.describe.ref();
+        defer this.describe.deref();
+
         var test_: TestScope = this.describe.tests.items[test_id];
         describe.current_test_id = test_id;
         const test_id_for_debugger = test_.test_id_for_debugger;
@@ -1394,8 +1384,6 @@ pub const TestRunnerTask = struct {
         if (this.needs_before_each) {
             this.needs_before_each = false;
             const label = test_.label;
-            this.describe.ref();
-            defer this.describe.deref(globalThis);
 
             if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
                 _ = jsc_vm.uncaughtException(globalThis, err, true);

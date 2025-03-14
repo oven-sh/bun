@@ -6115,7 +6115,10 @@ pub fn printAst(
         //
         // This is never a symbol collision because `uses_require_ref` means
         // `require` must be an unbound variable.
-        if (printer.moduleInfo()) |mi| mi.flags.contains_import_meta = true;
+        if (printer.moduleInfo()) |mi| {
+            mi.flags.contains_import_meta = true;
+            try mi.addVar("require", .declared);
+        }
         printer.print("var {require}=import.meta;");
     }
 

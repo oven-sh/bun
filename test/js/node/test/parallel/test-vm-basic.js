@@ -198,7 +198,7 @@ const vm = require('vm');
   }, {
     name: 'TypeError',
     code: 'ERR_INVALID_ARG_TYPE',
-    message: 'The "options" argument must be of type object. Received type string (\'string\')'
+    message: 'The "options" argument must be of type object. Received type string ("string")'
   });
 
   assert.throws(() => {

@@ -152,15 +152,6 @@ declare module "bun" {
     value: T[];
   }
 
-  interface ResponseInit {
-    headers?: Bun.__internal.BunHeadersInit;
-    /** @default 200 */
-    status?: number;
-
-    /** @default "OK" */
-    statusText?: string;
-  }
-
   interface EventSourceEventMap {
     error: Event;
     message: MessageEvent;
@@ -4064,7 +4055,7 @@ declare module "bun" {
         /**
          * Send any additional headers while upgrading, like cookies
          */
-        headers?: Bun.__internal.BunHeadersInit;
+        headers?: HeadersInit;
         /**
          * This value is passed to the {@link ServerWebSocket.data} property
          */

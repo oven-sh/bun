@@ -255,8 +255,8 @@ URL.canParse;
 URL.createObjectURL;
 URL.revokeObjectURL;
 
-declare const myBodyInit: BodyInit;
-declare const myHeadersInit: HeadersInit;
+declare const myBodyInit: Bun.BodyInit;
+declare const myHeadersInit: Bun.HeadersInit;
 
 new MessagePort();
 
@@ -283,6 +283,14 @@ Bun.fetch("", {
 });
 
 const myRequest: Request = new Request("");
+
+const myRequestInit: RequestInit = {
+  body: "",
+  method: "GET",
+};
+
+declare const requestInitKeys: `evaluate-${keyof RequestInit}`;
+requestInitKeys satisfies string;
 
 Bun.serve({
   fetch(req) {

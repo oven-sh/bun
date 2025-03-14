@@ -1,17 +1,17 @@
+interface BunGlobalSymbolRegistry {
+  BodyInit: ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;
+  HeadersInit: Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
+}
+
 declare module "bun" {
+  type BodyInit = BunGlobalSymbolRegistry["BodyInit"];
+  type HeadersInit = BunGlobalSymbolRegistry["HeadersInit"];
+
   namespace __internal {
-    type BunBodyInit = ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;
-
-    type BunHeadersInit =
-      | Headers
-      | Record<string, string>
-      | Array<[string, string]>
-      | IterableIterator<[string, string]>;
-
     /**
      * @internal
      */
-    type LibOrUndiciHeaders = LibDomIsLoaded extends true ? typeof globalThis.Headers : import("undici-types").Headers;
+    type LibOrUndiciHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
 
     /**
      * @internal
@@ -22,6 +22,30 @@ declare module "bun" {
      * @internal
      */
     type LibOrUndiciResponse = LibDomIsLoaded extends true ? {} : import("undici-types").Response;
+
+    /**
+     * @internal
+     */
+    type LibOrUndiciRequestInit = LibDomIsLoaded extends true
+      ? {}
+      : Omit<import("undici-types").RequestInit, "body"> & {
+          body?: BodyInit | null | undefined;
+        };
+
+    /**
+     * @internal
+     */
+    type LibOrUndiciResponseInit = LibDomIsLoaded extends true
+      ? {
+          headers?: HeadersInit;
+
+          /** @default 200 */
+          status?: number;
+
+          /** @default "OK" */
+          statusText?: string;
+        }
+      : import("undici-types").ResponseInit;
 
     interface BunHeadersOverride extends LibOrUndiciHeaders {
       /**
@@ -66,14 +90,20 @@ declare module "bun" {
       headers: BunHeadersOverride;
     }
   }
+
+  interface RequestInit extends Bun.__internal.LibOrUndiciRequestInit {}
+  interface ResponseInit extends Bun.__internal.LibOrUndiciResponseInit {}
 }
+
+interface RequestInit extends Bun.RequestInit {}
+interface ResponseInit extends Bun.ResponseInit {}
 
 interface Headers extends Bun.__internal.BunHeadersOverride {}
 declare var Headers: Bun.__internal.UseLibDomIfAvailable<
   "Headers",
   {
     prototype: Headers;
-    new (init?: Bun.__internal.BunHeadersInit): Headers;
+    new (init?: Bun.HeadersInit): Headers;
   }
 >;
 
@@ -92,7 +122,7 @@ declare var Request: Bun.__internal.UseLibDomIfAvailable<
 interface Response extends Bun.__internal.BunResponseOverride {}
 
 interface ResponseConstructor {
-  new (body?: Bun.__internal.BunBodyInit | null | undefined, init?: ResponseInit | undefined): Response;
+  new (body?: Bun.BodyInit | null | undefined, init?: ResponseInit | undefined): Response;
   /**
    * Create a new {@link Response} with a JSON body
    *

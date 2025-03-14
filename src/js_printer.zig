@@ -4674,7 +4674,7 @@ fn NewPrinter(
                         };
                         p.printWhitespacer(ws(" with { type: \""));
                         p.print(str);
-                        p.printWhitespacer(ws(" }"));
+                        p.printWhitespacer(ws("\" }"));
 
                         if (p.moduleInfo()) |mi| {
                             fetch_parameters = switch (loader) {

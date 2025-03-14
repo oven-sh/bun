@@ -1766,7 +1766,11 @@ pub const Printer = struct {
         }
 
         const writer = Output.writer();
-        try printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer);
+        printWithLockfile(allocator, lockfile, format, @TypeOf(writer), writer) catch |err| switch (err) {
+            error.OutOfMemory => bun.outOfMemory(),
+            error.BrokenPipe => {},
+            else => |e| return e,
+        };
         Output.flush();
     }
 

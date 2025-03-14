@@ -537,8 +537,11 @@ public:
     LazyClassStructure m_JSX509CertificateClassStructure;
     LazyClassStructure m_JSSignClassStructure;
     LazyClassStructure m_JSVerifyClassStructure;
+    LazyClassStructure m_JSDiffieHellmanClassStructure;
+    LazyClassStructure m_JSDiffieHellmanGroupClassStructure;
     LazyClassStructure m_JSHmacClassStructure;
     LazyClassStructure m_JSHashClassStructure;
+    LazyClassStructure m_JSECDHClassStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

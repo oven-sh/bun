@@ -77,6 +77,10 @@ extern "C" void JSC__IdentifierArray__setFromUtf8(Identifier* identifierArray, s
 {
     identifierArray[n] = Identifier::fromString(vm, AtomString::fromUTF8(std::span<const char>(str, len)));
 }
+extern "C" void JSC__IdentifierArray__setFromStarDefault(Identifier* identifierArray, size_t n, VM& vm)
+{
+    identifierArray[n] = vm.propertyNames->starDefaultPrivateName;
+}
 
 extern "C" void JSC__VariableEnvironment__add(VariableEnvironment& environment, Identifier* identifierArray, uint32_t index)
 {

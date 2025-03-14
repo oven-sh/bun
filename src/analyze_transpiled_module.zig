@@ -364,7 +364,11 @@ export fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     for (0.., res.strings_lens) |index, len| {
         if (res.strings_buf.len < offset + len) return null; // error!
         const sub = res.strings_buf[offset..][0..len];
-        identifiers.setFromUtf8(index, vm, sub);
+        if (bun.strings.eqlComptime(sub, ModuleInfo.star_default)) {
+            identifiers.setFromStarDefault(index, vm);
+        } else {
+            identifiers.setFromUtf8(index, vm, sub);
+        }
         offset += len;
     }
 
@@ -435,6 +439,9 @@ const IdentifierArray = opaque {
     pub fn setFromUtf8(self: *IdentifierArray, n: usize, vm: *bun.JSC.VM, str: []const u8) void {
         JSC__IdentifierArray__setFromUtf8(self, n, vm, str.ptr, str.len);
     }
+
+    extern fn JSC__IdentifierArray__setFromStarDefault(identifier_array: *IdentifierArray, n: usize, vm: *bun.JSC.VM) void;
+    pub const setFromStarDefault = JSC__IdentifierArray__setFromStarDefault;
 };
 const SourceCode = opaque {};
 const JSModuleRecord = opaque {

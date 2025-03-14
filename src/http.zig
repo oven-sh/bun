@@ -2337,6 +2337,10 @@ pub fn hashHeaderConst(comptime name: string) u64 {
 
     return hasher.final();
 }
+// for each request we need this hashs, putting on top of the file to avoid exceeding comptime quota limit
+const authorization_header_hash = hashHeaderConst("Authorization");
+const proxy_authorization_header_hash = hashHeaderConst("Proxy-Authorization");
+const cookie_header_hash = hashHeaderConst("Cookie");
 
 pub const Encoding = enum {
     identity,
@@ -4578,16 +4582,52 @@ pub fn handleResponseMetadata(
                     // locationURL’s origin, then for each headerName of CORS
                     // non-wildcard request-header name, delete headerName from
                     // request’s header list.
+                    var authorization_removed = false;
+                    var proxy_authorization_removed = false;
+                    var cookie_removed = false;
+                    // References:
+                    // https://github.com/nodejs/undici/commit/6805746680d27a5369d7fb67bc05f95a28247d75#diff-ea7696549c3a0b60a4a7e07cc79b6d4e950c7cb1068d47e368a510967d77e7e5R206
+                    // https://github.com/denoland/deno/commit/7456255cd10286d71363fc024e51b2662790448a#diff-6e35f325f0a4e1ae3214fde20c9108e9b3531df5d284ba3c93becb99bbfc48d5R70
                     if (!is_same_origin and this.header_entries.len > 0) {
-                        const authorization_header_hash = comptime hashHeaderConst("Authorization");
-                        for (this.header_entries.items(.name), 0..) |name_ptr, i| {
-                            const name = this.headerStr(name_ptr);
-                            if (name.len == "Authorization".len) {
-                                const hash = hashHeaderName(name);
-                                if (hash == authorization_header_hash) {
-                                    this.header_entries.orderedRemove(i);
-                                    break;
+                        var name_index: usize = 0;
+                        while (!authorization_removed or !proxy_authorization_removed or !cookie_removed) {
+                            const names = this.header_entries.items(.name);
+                            if (name_index >= names.len) {
+                                break;
+                            }
+                            continue_check: {
+                                for (names[name_index..], 0..) |name_ptr, i| {
+                                    const name = this.headerStr(name_ptr);
+                                    if (!authorization_removed and name.len == "Authorization".len) {
+                                        const hash = hashHeaderName(name);
+                                        if (hash == authorization_header_hash) {
+                                            this.header_entries.orderedRemove(i);
+                                            authorization_removed = true;
+                                            // reset the loop entries changed
+                                            name_index = i - @as(usize, @intFromBool(i > 0));
+                                            break :continue_check;
+                                        }
+                                    } else if (!proxy_authorization_removed and name.len == "Proxy-Authorization".len) {
+                                        const hash = hashHeaderName(name);
+                                        if (hash == proxy_authorization_header_hash) {
+                                            this.header_entries.orderedRemove(i);
+                                            proxy_authorization_removed = true;
+                                            // reset the loop entries changed
+                                            name_index = i - @as(usize, @intFromBool(i > 0));
+                                            break :continue_check;
+                                        }
+                                    } else if (!cookie_removed and name.len == "Cookie".len) {
+                                        const hash = hashHeaderName(name);
+                                        if (hash == cookie_header_hash) {
+                                            this.header_entries.orderedRemove(i);
+                                            cookie_removed = true;
+                                            // reset the loop entries changed
+                                            name_index = i - @as(usize, @intFromBool(i > 0));
+                                            break :continue_check;
+                                        }
+                                    }
                                 }
+                                break;
                             }
                         }
                     }

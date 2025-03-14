@@ -15,8 +15,8 @@ describe.skipIf(!isLinux)("running files on a FUSE mount", () => {
       // setup FUSE filesystem
       pythonProcess = spawn({
         cmd: fs.existsSync(VENV)
-          ? ["sh", "-c", `source ${join(VENV, "bin/activate")} && exec python3 fs.py -f ${mountpoint}`]
-          : ["python3", "fs.py", "-f", mountpoint],
+          ? ["sh", "-c", `source ${join(VENV, "bin/activate")} && exec python3 fuse-fs.py -f ${mountpoint}`]
+          : ["python3", "fuse-fs.py", "-f", mountpoint],
         cwd: __dirname,
         stdout: "pipe",
         stderr: "pipe",

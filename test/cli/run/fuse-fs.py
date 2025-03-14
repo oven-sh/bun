@@ -11,7 +11,7 @@ fuse.fuse_python_api = (0, 2)
 script = b'console.log("hello world");\n'
 
 
-class WeirdFs(fuse.Fuse):
+class TestingFs(fuse.Fuse):
     def getattr(self, path):
         st = fuse.Stat()
         if path == "/":
@@ -56,9 +56,9 @@ class WeirdFs(fuse.Fuse):
 
 
 def main():
-    server = WeirdFs(
+    server = TestingFs(
         version=fuse.__version__,
-        usage="\nSmall filesystem made for testing Bun under weird scenarios",
+        usage="\nSmall filesystem made for testing Bun's ability to run files off of FUSE",
         dash_s_do="setsingle",
     )
     server.parse(errex=1)

@@ -45,104 +45,12 @@
 namespace Bun {
 using namespace WebCore;
 
-static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const String& functionBody, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr)
-{
-    VM& vm = globalObject->vm();
-    auto scope1 = DECLARE_THROW_SCOPE(vm);
-
-    // Create a SourceCode object for our function body
-    SourceCode sourceCode(
-        JSC::StringSourceProvider::create(functionBody, sourceOrigin, fileName, sourceTaintOrigin, position),
-        position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
-
-    // Setup parser for function expression
-    ParserError error;
-    JSTextPosition positionBeforeLastNewline;
-    bool isEvalNode = false;
-
-    // Create a name to use for parsing
-    Identifier name;
-    std::unique_ptr<ProgramNode> program;
-
-    // Parse the code differently based on string type (8-bit or 16-bit)
-    if (functionBody.is8Bit()) {
-        Parser<Lexer<LChar>> parser(vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-            LexicallyScopedFeatures {}, JSParserScriptMode::Classic, SourceParseMode::ProgramMode,
-            FunctionMode::None, SuperBinding::NotNeeded, ConstructorKind::None, DerivedContextType::None,
-            isEvalNode, EvalContextType::None, nullptr);
-
-        program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
-    } else {
-        Parser<Lexer<UChar>> parser(vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-            LexicallyScopedFeatures {}, JSParserScriptMode::Classic, SourceParseMode::ProgramMode,
-            FunctionMode::None, SuperBinding::NotNeeded, ConstructorKind::None, DerivedContextType::None,
-            isEvalNode, EvalContextType::None, nullptr);
-
-        program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
-    }
-
-    if (!program || error.isValid()) {
-        throwSyntaxError(globalObject, scope1, error.message());
-        return nullptr;
-    }
-
-    // Extract the function expression from the program
-    if (program->statements().isEmpty()) {
-        throwSyntaxError(globalObject, scope1, "No statements found in the code"_s);
-        return nullptr;
-    }
-
-    // The program should have a single expression statement containing a function expression
-    StatementNode* statement = program->singleStatement();
-    if (!statement || !statement->isExprStatement()) {
-        throwSyntaxError(globalObject, scope1, "Expected a function expression"_s);
-        return nullptr;
-    }
-
-    ExprStatementNode* exprStatement = static_cast<ExprStatementNode*>(statement);
-    ExpressionNode* expression = exprStatement->expr();
-    if (!expression || !expression->isFuncExprNode()) {
-        throwSyntaxError(globalObject, scope1, "Expected a function expression"_s);
-        return nullptr;
-    }
-
-    // Get metadata from the function expression
-    FunctionMetadataNode* metadata = static_cast<FuncExprNode*>(expression)->metadata();
-    if (!metadata) {
-        throwSyntaxError(globalObject, scope1, "Failed to extract function metadata"_s);
-        return nullptr;
-    }
-
-    // Create the UnlinkedFunctionExecutable
-    ConstructAbility constructAbility = constructAbilityForParseMode(metadata->parseMode());
-    UnlinkedFunctionExecutable* unlinkedFunctionExecutable = UnlinkedFunctionExecutable::create(
-        vm,
-        sourceCode,
-        metadata,
-        UnlinkedNormalFunction,
-        constructAbility,
-        InlineAttribute::None,
-        JSParserScriptMode::Classic,
-        nullptr,
-        std::nullopt,
-        std::nullopt,
-        DerivedContextType::None,
-        NeedsClassFieldInitializer::No,
-        PrivateBrandRequirement::None);
-
-    // Create a FunctionExecutable by linking the UnlinkedFunctionExecutable
-    FunctionExecutable* functionExecutable = unlinkedFunctionExecutable->link(vm, &sourceCode);
-
-    // Use the current scope or create a new one if not provided
-    JSScope* functionScope = scope ? scope : globalObject->globalScope();
-
-    // Get the appropriate structure
-    Structure* structure = JSFunction::selectStructureForNewFuncExp(globalObject, functionExecutable);
-
-    // Create and return the function
-    JSFunction* function = JSFunction::create(vm, globalObject, functionExecutable, functionScope, structure);
-    return function;
-}
+/// For vm.compileFunction we need to return an anonymous function expression
+///
+/// This code is adapted/inspired from JSC::constructFunction, which is used for function declarations.
+static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const String& functionBody, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
+static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const String& body, ThrowScope& scope);
+static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope);
 
 class NodeVMScriptConstructor final : public JSC::InternalFunction {
 public:
@@ -913,25 +821,14 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     parsingContext->setGlobalScopeExtension(functionScope);
 
     // Create the function using constructFunction with the appropriate scope chain
-    // JSFunction* function = constructAnonymousFunction(globalObject, &sourceString, &sourceOrigin, &options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset), functionScope);
-    JSObject* function = JSC::constructFunction(
-        parsingContext,
-        ArgList(constructFunctionArgs),
-        vm.propertyNames->anonymous,
-        sourceOrigin,
-        options.filename,
-        JSC::SourceTaintedOrigin::Untainted,
-
-        TextPosition(options.lineOffset, options.columnOffset));
+    JSFunction* function = constructAnonymousFunction(globalObject, sourceString, sourceOrigin, options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset), functionScope);
 
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!function)
         return throwVMError(globalObject, scope, "Failed to compile function"_s);
 
-    JSFunction* jsFunction = jsCast<JSFunction*>(function);
-
-    return JSValue::encode(jsFunction);
+    return JSValue::encode(function);
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1257,10 +1154,152 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     Base::getOwnPropertyNames(cell, globalObject, propertyNames, mode);
 }
 
-void NodeVMGlobalObject::lmao(JSC::FunctionMetadataNode* node)
+static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const String& functionBody, const SourceOrigin& sourceOrigin, const String& fileName, JSC::SourceTaintedOrigin sourceTaintOrigin, TextPosition position, JSC::JSScope* scope)
 {
-    // if () {
-    // }
+    VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    // wrap the function body in an anonymous function expression
+    String code = stringifyAnonymousFunction(globalObject, functionBody, throwScope);
+    EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
+
+    SourceCode sourceCode(
+        JSC::StringSourceProvider::create(code, sourceOrigin, fileName, sourceTaintOrigin, position),
+        position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
+
+    LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
+
+    ParserError error;
+    bool isEvalNode = false;
+
+    // use default name
+    Identifier name;
+    std::unique_ptr<ProgramNode> program;
+
+    if (code.is8Bit()) {
+        Parser<Lexer<LChar>> parser(vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
+            lexicallyScopedFeatures, JSParserScriptMode::Classic, SourceParseMode::ProgramMode,
+            FunctionMode::None, SuperBinding::NotNeeded, ConstructorKind::None, DerivedContextType::None,
+            isEvalNode, EvalContextType::None, nullptr);
+
+        program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
+    } else {
+        Parser<Lexer<UChar>> parser(vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
+            lexicallyScopedFeatures, JSParserScriptMode::Classic, SourceParseMode::ProgramMode,
+            FunctionMode::None, SuperBinding::NotNeeded, ConstructorKind::None, DerivedContextType::None,
+            isEvalNode, EvalContextType::None, nullptr);
+
+        program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
+    }
+
+    if (!program || error.isValid()) {
+        throwSyntaxError(globalObject, throwScope, error.message());
+        return nullptr;
+    }
+
+    // the code we passed in should be a single expression statement containing a function expression
+    StatementNode* statement = program->singleStatement();
+    if (!statement || !statement->isExprStatement()) {
+        throwSyntaxError(globalObject, throwScope, "Expected a function expression"_s);
+        return nullptr;
+    }
+
+    ExprStatementNode* exprStatement = static_cast<ExprStatementNode*>(statement);
+    ExpressionNode* expression = exprStatement->expr();
+    if (!expression || !expression->isFuncExprNode()) {
+        throwSyntaxError(globalObject, throwScope, "Expected a function expression"_s);
+        return nullptr;
+    }
+
+    FunctionMetadataNode* metadata = static_cast<FuncExprNode*>(expression)->metadata();
+    ASSERT(metadata);
+    if (!metadata)
+        return nullptr;
+
+    ConstructAbility constructAbility = constructAbilityForParseMode(metadata->parseMode());
+    UnlinkedFunctionExecutable* unlinkedFunctionExecutable = UnlinkedFunctionExecutable::create(
+        vm,
+        sourceCode,
+        metadata,
+        UnlinkedNormalFunction,
+        constructAbility,
+        InlineAttribute::None,
+        JSParserScriptMode::Classic,
+        nullptr,
+        std::nullopt,
+        std::nullopt,
+        DerivedContextType::None,
+        NeedsClassFieldInitializer::No,
+        PrivateBrandRequirement::None);
+
+    unlinkedFunctionExecutable->recordParse(program->features(), metadata->lexicallyScopedFeatures(), /* hasCapturedVariables */ false);
+
+    FunctionExecutable* functionExecutable = unlinkedFunctionExecutable->link(vm, nullptr, sourceCode, -1);
+
+    JSScope* functionScope = scope ? scope : globalObject->globalScope();
+
+    Structure* structure = JSFunction::selectStructureForNewFuncExp(globalObject, functionExecutable);
+
+    JSFunction* function = JSFunction::create(vm, globalObject, functionExecutable, functionScope, structure);
+    return function;
+}
+
+static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const String& body, ThrowScope& scope)
+{
+    // Create an anonymous function expression with the provided body
+    String program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
+
+    if (UNLIKELY(!program)) {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    return program;
+}
+
+// Helper function to create an anonymous function expression with parameters
+static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope)
+{
+    // How we stringify functions is important for creating anonymous function expressions
+    String program;
+    if (args.isEmpty()) {
+        // No arguments, just an empty function body
+        program = "(function () {\n\n})"_s;
+    } else if (args.size() == 1) {
+        // Just the function body
+        auto body = args.at(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
+        if (UNLIKELY(!program)) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+    } else {
+        // Process parameters and body
+        unsigned parameterCount = args.size() - 1;
+        StringBuilder paramString;
+
+        for (unsigned i = 0; i < parameterCount; ++i) {
+            auto param = args.at(i).toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            if (i > 0)
+                paramString.append(", "_s);
+
+            paramString.append(param);
+        }
+
+        auto body = args.at(parameterCount).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
+        if (UNLIKELY(!program)) {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+    }
+
+    return program;
 }
 
 } // namespace Bun

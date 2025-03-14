@@ -48,7 +48,7 @@ using namespace WebCore;
 /// For vm.compileFunction we need to return an anonymous function expression
 ///
 /// This code is adapted/inspired from JSC::constructFunction, which is used for function declarations.
-static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const String& functionBody, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
+static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
 static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const String& body, ThrowScope& scope);
 static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope);
 
@@ -820,8 +820,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
 
     parsingContext->setGlobalScopeExtension(functionScope);
 
-    // Create the function using constructFunction with the appropriate scope chain
-    JSFunction* function = constructAnonymousFunction(globalObject, sourceString, sourceOrigin, options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset), functionScope);
+    // Create the function using constructAnonymousFunction with the appropriate scope chain
+    JSFunction* function = constructAnonymousFunction(globalObject, ArgList(constructFunctionArgs), sourceOrigin, options.filename, JSC::SourceTaintedOrigin::Untainted, TextPosition(options.lineOffset, options.columnOffset), functionScope);
 
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1154,13 +1154,13 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     Base::getOwnPropertyNames(cell, globalObject, propertyNames, mode);
 }
 
-static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const String& functionBody, const SourceOrigin& sourceOrigin, const String& fileName, JSC::SourceTaintedOrigin sourceTaintOrigin, TextPosition position, JSC::JSScope* scope)
+static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName, JSC::SourceTaintedOrigin sourceTaintOrigin, TextPosition position, JSC::JSScope* scope)
 {
     VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    // wrap the function body in an anonymous function expression
-    String code = stringifyAnonymousFunction(globalObject, functionBody, throwScope);
+    // wrap the arguments in an anonymous function expression
+    String code = stringifyAnonymousFunction(globalObject, args, throwScope);
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
     SourceCode sourceCode(
@@ -1192,15 +1192,20 @@ static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalOb
         program = parser.parse<ProgramNode>(error, name, ParsingContext::Normal);
     }
 
-    if (!program || error.isValid()) {
-        throwSyntaxError(globalObject, throwScope, error.message());
+    if (!program) {
+        RELEASE_ASSERT(error.isValid());
+        auto exception = error.toErrorObject(globalObject, sourceCode, -1);
+        throwException(globalObject, throwScope, exception);
         return nullptr;
     }
 
     // the code we passed in should be a single expression statement containing a function expression
     StatementNode* statement = program->singleStatement();
     if (!statement || !statement->isExprStatement()) {
-        throwSyntaxError(globalObject, throwScope, "Expected a function expression"_s);
+        JSToken token;
+        error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, token, "Parser error"_s, -1);
+        auto exception = error.toErrorObject(globalObject, sourceCode, -1);
+        throwException(globalObject, throwScope, exception);
         return nullptr;
     }
 

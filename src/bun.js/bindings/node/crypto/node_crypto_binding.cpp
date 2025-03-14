@@ -52,7 +52,7 @@ namespace WebCore {
 
 JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue candidateValue = callFrame->argument(0);
@@ -65,7 +65,10 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue optionsValue = callFrame->argument(1);
-    V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
+    if (!optionsValue.isUndefined()) {
+        V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     int32_t checks = 0;
     if (optionsValue.isObject()) {
@@ -74,7 +77,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!checksValue.isUndefined()) {
-            V::validateInt32(scope, lexicalGlobalObject, checksValue, "checks"_s, jsNumber(0), jsUndefined(), &checks);
+            V::validateInt32(scope, lexicalGlobalObject, checksValue, "options.checks"_s, jsNumber(0), jsUndefined(), &checks);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }
@@ -92,6 +95,59 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
     });
 
     return JSValue::encode(jsBoolean(res != 0));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimePrime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue sizeValue = callFrame->argument(0);
+    int32_t size = 0;
+    V::validateInt32(scope, lexicalGlobalObject, sizeValue, "size"_s, jsNumber(1), jsUndefined(), &size);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue optionsValue = callFrame->argument(1);
+    if (!optionsValue.isUndefined()) {
+        V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    bool safe = false;
+    bool bigint = false;
+    JSValue addValue = jsUndefined();
+    JSValue remValue = jsUndefined();
+    if (optionsValue.isObject()) {
+        JSObject* options = optionsValue.getObject();
+
+        JSValue safeValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "safe"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        JSValue bigintValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "bigint"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        addValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "add"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        remValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "rem"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (!safeValue.isUndefined()) {
+            V::validateBoolean(scope, lexicalGlobalObject, safeValue, "options.safe"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            safe = safeValue.asBoolean();
+        }
+
+        if (!bigintValue.isUndefined()) {
+            V::validateBoolean(scope, lexicalGlobalObject, bigintValue, "options.bigint"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            bigint = bigintValue.asBoolean();
+        }
+    }
+
+    if (!addValue.isUndefined()) {
+        if (addValue.isBigInt()) {
+            // TODO(dylan-conway): handle bigint
+        } else {
+        }
+    }
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

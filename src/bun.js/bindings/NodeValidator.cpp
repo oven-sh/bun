@@ -250,6 +250,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validateBoolean, (JSC::JSGlobalObject * glob
     return JSValue::encode(jsUndefined());
 }
 
+JSC::EncodedJSValue V::validateBoolean(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, ASCIILiteral name)
+{
+    if (!value.isBoolean()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, name, "boolean"_s, value);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

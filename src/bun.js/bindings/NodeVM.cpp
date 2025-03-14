@@ -725,7 +725,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         JSValue parsingContextValue = optionsObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (!parsingContextValue.isUndefined()) {
+        if (!parsingContextValue.isUndefinedOrNull() && !parsingContextValue.isEmpty()) {
             if (!parsingContextValue.isObject())
                 return ERR::INVALID_ARG_TYPE(scope, globalObject, "options.parsingContext"_s, "object"_s, parsingContextValue);
 

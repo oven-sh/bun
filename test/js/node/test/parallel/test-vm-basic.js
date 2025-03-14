@@ -151,8 +151,20 @@ const vm = require('vm');
       '});\n\n(function() {\nconsole.log(1);\n})();\n\n(function() {'
     );
   }, {
-    name: 'SyntaxError',
-    message: "Unexpected token '}'"
+    // V8 has this function called (see `Compiler::GetWrappedFunction`) which
+    // can parse _just_ the body of a function without needing to wrap it in
+    // a function expression or declaration. This gives better parsing error
+    // messages.
+    //
+    // JSC does not an analogous function (that I'm aware of), so we have to wrap the provided body in an anonymous
+    // function expression. This test ensures that the beginning `})` does not close the wrapping function.
+    //
+    // This is checked in our implementation because we expect the result of parsing to be a single anonymous function
+    // expression.
+    message: 'Parser error',
+    // Original error message from Node.js
+    // name: 'SyntaxError',
+    // message: "Unexpected token '}'"
   });
 
   // Tests for failed argument validation

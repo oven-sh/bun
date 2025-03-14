@@ -34,6 +34,7 @@ const socket_async_http_abort_tracker = AsyncHTTP.getSocketAsyncHTTPAbortTracker
 const log = Output.scoped(.fetch, false);
 const HTTPClient = @import("../../http.zig").HTTPClient;
 pub const end_of_chunked_http1_1_encoding_response_body = "0\r\n\r\n";
+const MAX_KEEPALIVE_HOSTNAME = 128;
 
 pub fn getContext(comptime ssl: bool) *NewHTTPContext(ssl) {
     return if (ssl) &http_thread.https_context else &http_thread.http_context;
@@ -97,8 +98,6 @@ pub fn NewHTTPContext(comptime ssl: bool) type {
             PooledSocket,
         });
         const ssl_int = @as(c_int, @intFromBool(ssl));
-
-        const MAX_KEEPALIVE_HOSTNAME = 128;
 
         pub fn sslCtx(this: *@This()) *BoringSSL.SSL_CTX {
             if (comptime !ssl) {

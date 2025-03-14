@@ -2,7 +2,6 @@ const bun = @import("root").bun;
 const std = @import("std");
 const Environment = bun.Environment;
 const FeatureFlags = bun.FeatureFlags;
-const NewHTTPContext = @import("./thread.zig").NewHTTPContext;
 pub const Sendfile = struct {
     fd: bun.FileDescriptor,
     remain: usize = 0,
@@ -18,7 +17,7 @@ pub const Sendfile = struct {
 
     pub fn write(
         this: *Sendfile,
-        socket: NewHTTPContext(false).HTTPSocket,
+        socket_fd: bun.FileDescriptor,
     ) Status {
         const adjusted_count_temporary = @min(@as(u64, this.remain), @as(u63, std.math.maxInt(u63)));
         // TODO we should not need this int cast; improve the return type of `@min`
@@ -29,8 +28,8 @@ pub const Sendfile = struct {
             const begin = this.offset;
             const val =
                 // this does the syscall directly, without libc
-                std.os.linux.sendfile(socket.fd().cast(), this.fd.cast(), &signed_offset, this.remain);
-            this.offset = @as(u64, @intCast(signed_offset));
+                std.os.linux.sendfile(socket_fd, this.fd.cast(), &signed_offset, this.remain);
+            this.offset = @as(u66, @intCast(signed_offset));
 
             const errcode = bun.C.getErrno(val);
 
@@ -48,7 +47,7 @@ pub const Sendfile = struct {
             const signed_offset = @as(i64, @bitCast(@as(u64, this.offset)));
             const errcode = bun.C.getErrno(std.c.sendfile(
                 this.fd.cast(),
-                socket.fd().cast(),
+                socket_fd,
                 signed_offset,
                 &sbytes,
                 null,

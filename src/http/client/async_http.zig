@@ -84,27 +84,6 @@ pub const ThreadlocalAsyncHTTP = struct {
     pub usingnamespace bun.New(@This());
 };
 
-pub const Encoding = enum {
-    identity,
-    gzip,
-    deflate,
-    brotli,
-    chunked,
-
-    pub fn canUseLibDeflate(this: Encoding) bool {
-        return switch (this) {
-            .gzip, .deflate => true,
-            else => false,
-        };
-    }
-
-    pub fn isCompressed(this: Encoding) bool {
-        return switch (this) {
-            .brotli, .gzip, .deflate => true,
-            else => false,
-        };
-    }
-};
 pub const FetchRedirect = enum(u8) {
     follow,
     manual,

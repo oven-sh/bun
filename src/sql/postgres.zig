@@ -903,7 +903,7 @@ fn writeArrayItem(
         const slice = str.toUTF8WithoutRef(bun.default_allocator);
         defer slice.deinit();
         try writer.write(slice.slice());
-    } else if (item.isUndefinedOrNull()) {
+    } else if (item.isNull()) {
         try writer.write("NULL");
     } else if (item.isNumber()) {
         const num_value = item.asNumber();
@@ -948,6 +948,13 @@ fn writeArrayItem(
         if (should_quote) {
             try writer.write("\"");
         }
+    } else {
+        // Doesn't show exactly where the error happened ?
+        return globalObject.throwValue(postgresErrorToJS(
+            globalObject,
+            "Array items must be string, number, boolean, null, or array",
+            error.UnsupportedArrayFormat,
+        ));
     }
 }
 

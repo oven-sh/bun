@@ -242,7 +242,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
         auto actual = dumpRecordInfo(resultValue);
         auto expected = dumpRecordInfo(moduleRecord);
         if (actual != expected) {
-            dataLog("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  ---code---\n\n", sourceCode.toUTF8().data(), "\n");
+            dataLog("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  --- module key ---\n", moduleKey.utf8().data(), "\n  --- code ---\n\n", sourceCode.toUTF8().data(), "\n");
             dataLog("  ------", "\n");
             dataLog("  BunAnalyzeTranspiledModule:", "\n");
 

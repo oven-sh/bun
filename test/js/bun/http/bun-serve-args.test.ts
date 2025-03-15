@@ -534,19 +534,19 @@ describe("Bun.serve hostname coercion", () => {
         });
         expect(server.hostname).toBe(defaultHostname);
       }).not.toThrow();
+    });
 
-      test("empty string should be ignored", () => {
-        expect(() => {
-          using server = serve({
-            hostname: "",
-            port: 0,
-            fetch() {
-              return new Response("ok");
-            },
-          });
-          expect(server.hostname).toBe(defaultHostname);
-        }).not.toThrow();
-      });
+    test("empty string should be ignored", () => {
+      expect(() => {
+        using server = serve({
+          hostname: "",
+          port: 0,
+          fetch() {
+            return new Response("ok");
+          },
+        });
+        expect(server.hostname).toBe(defaultHostname);
+      }).not.toThrow();
     });
   });
 });

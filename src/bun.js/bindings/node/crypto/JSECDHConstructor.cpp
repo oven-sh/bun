@@ -86,18 +86,18 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
 
     JSValue keyValue = callFrame->argument(0);
-    JSValue keyEncValue = callFrame->argument(2);
-    auto* keyView = getArrayBufferOrView(lexicalGlobalObject, scope, keyValue, "key"_s, keyEncValue);
+    JSValue inEncValue = callFrame->argument(2);
+    auto* keyView = getArrayBufferOrView(lexicalGlobalObject, scope, keyValue, "key"_s, inEncValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     auto buffer = keyView->span();
 
-    if (buffer.size() == 0)
-        return JSValue::encode(JSC::jsEmptyString(vm));
+    JSValue formatValue = callFrame->argument(4);
+    point_conversion_form_t form = JSECDH::getFormat(lexicalGlobalObject, scope, formatValue);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    auto curveName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
-    if (scope.exception())
-        return encodedJSValue();
+    auto curveName = curveValue.toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
 
     int nid = OBJ_sn2nid(curveName.utf8().data());
     if (nid == NID_undef)
@@ -117,24 +117,24 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     if (!EC_POINT_oct2point(group, point, key_data, key_length, nullptr))
         return throwVMError(lexicalGlobalObject, scope, "Failed to convert Buffer to EC_POINT"_s);
 
-    uint32_t form = callFrame->argument(2).toUInt32(lexicalGlobalObject);
-    if (scope.exception())
-        return encodedJSValue();
-
     size_t size = EC_POINT_point2oct(group, point, static_cast<point_conversion_form_t>(form), nullptr, 0, nullptr);
     if (size == 0)
         return throwVMError(lexicalGlobalObject, scope, "Failed to calculate buffer size"_s);
 
-    auto buf = ArrayBuffer::createUninitialized(size, 1);
-    if (!EC_POINT_point2oct(group, point, static_cast<point_conversion_form_t>(form), reinterpret_cast<uint8_t*>(buf->data()), size, nullptr))
+    WTF::Vector<uint8_t> buf;
+    if (!buf.tryGrow(size)) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return JSValue::encode({});
+    }
+
+    if (!EC_POINT_point2oct(group, point, form, buf.data(), buf.size(), nullptr))
         return throwVMError(lexicalGlobalObject, scope, "Failed to convert EC_POINT to Buffer"_s);
 
-    auto* result = JSC::JSUint8Array::create(lexicalGlobalObject, reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject)->JSBufferSubclassStructure(), WTFMove(buf), 0, size);
+    JSValue outEncValue = callFrame->argument(3);
+    BufferEncodingType outEnc = getEncodingDefaultBuffer(lexicalGlobalObject, scope, outEncValue);
+    RETURN_IF_EXCEPTION(scope, {});
 
-    if (!result)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to allocate result buffer"_s);
-
-    return JSValue::encode(result);
+    return StringBytes::encode(lexicalGlobalObject, scope, buf.span(), outEnc);
 }
 
 } // namespace Bun

@@ -120,15 +120,14 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     int fieldSize = EC_GROUP_get_degree(ecdh->m_group);
     size_t outLen = (fieldSize + 7) / 8;
 
-    // Allocate a buffer for the result
-    auto result = JSC::ArrayBuffer::tryCreate(outLen, 1);
-    if (!result) {
-        throwError(globalObject, scope, ErrorCode::ERR_MEMORY_ALLOCATION_FAILED, "Failed to allocate buffer for ECDH secret"_s);
+    WTF::Vector<uint8_t> secret;
+    if (!secret.tryGrow(outLen)) {
+        throwOutOfMemoryError(globalObject, scope);
         return {};
     }
 
     // Compute the shared secret
-    if (!ECDH_compute_key(result->data(), result->byteLength(), pubPoint, ecdh->m_key.get(), nullptr)) {
+    if (!ECDH_compute_key(secret.data(), secret.size(), pubPoint, ecdh->m_key.get(), nullptr)) {
         return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to compute ECDH key"_s);
     }
 
@@ -136,11 +135,8 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncComputeSecret, (JSC::JSGlobalObject * gl
     BufferEncodingType outputEncodingType = Bun::getEncodingDefaultBuffer(globalObject, scope, outputEncodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Create a span from the result data for encoding
-    std::span<const uint8_t> resultSpan(static_cast<const uint8_t*>(result->data()), outLen);
-
     // Return the encoded result
-    return StringBytes::encode(globalObject, scope, resultSpan, outputEncodingType);
+    return StringBytes::encode(globalObject, scope, secret.span(), outputEncodingType);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHProtoFuncGetPublicKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

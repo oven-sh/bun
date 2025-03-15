@@ -149,11 +149,6 @@ Configure the output stream by passing one of the following values to `stdout/st
 
 ---
 
-- `ArrayBufferView`
-- Write to a preallocated buffer (not yet implemented).
-
----
-
 - `number`
 - Write to the file with the given file descriptor.
 

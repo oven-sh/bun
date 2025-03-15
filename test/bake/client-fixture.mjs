@@ -62,13 +62,13 @@ function createWindow(windowUrl) {
     onEvent("bun:afterUpdate", () => {
       setTimeout(() => {
         process.send({ type: "received-hmr-event", args: [] });
-      }, 50)
+      }, 50);
     });
     hasReadyEventListener = true;
     onEvent("bun:ready", () => {
       setTimeout(() => {
         process.send({ type: "received-hmr-event", args: [] });
-      }, 50)
+      }, 50);
     });
   };
 
@@ -137,8 +137,8 @@ function createWindow(windowUrl) {
         if (!hasReadyEventListener) {
           setTimeout(() => {
             process.send({ type: "received-hmr-event", args: [] });
-          }, 50)
-        };
+          }, 50);
+        }
       }
       if (args[0]?.startsWith("[WS] receive message")) return;
       if (args[0]?.startsWith("Updated modules:")) return;

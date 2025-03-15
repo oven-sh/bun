@@ -4712,7 +4712,9 @@ pub fn IncrementalGraph(side: bake.Side) type {
             const dev = g.owner();
             dev.relative_path_buf_lock.lock();
             defer dev.relative_path_buf_lock.unlock();
-            const buf = &dev.relative_path_buf;
+
+            const buf = bun.PathBufferPool.get();
+            defer bun.PathBufferPool.put(buf);
 
             var path_count: usize = 0;
             for (g.current_chunk_parts.items) |entry| {

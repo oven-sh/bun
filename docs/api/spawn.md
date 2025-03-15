@@ -385,7 +385,7 @@ spawnSync echo hi    1.47 ms/iter     (1.14 ms … 2.64 ms)   1.57 ms   2.37 ms 
 
 ## Reference
 
-A reference of the Spawn API and types are shown below. The types have been simplified for readability. For full details, see the [spawn-types.d.ts](https://github.com/oven-sh/bun/blob/main/spawn-types.d.ts) file.
+A reference of the Spawn API and types are shown below. The real types have complex generics to strongly type the `Subprocess` streams with the options passed to `Bun.spawn` and `Bun.spawnSync`. For full details, find these types as defined [bun.d.ts](https://github.com/oven-sh/bun/blob/main/packages/bun-types/bun.d.ts).
 
 ```ts
 interface Bun {

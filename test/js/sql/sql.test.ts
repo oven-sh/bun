@@ -606,6 +606,118 @@ if (isDockerEnabled()) {
     }
   });
 
+  test("#17798: it should handle inserting values of type text[] using array of values", async () => {
+    try {
+      await sql`
+    CREATE TEMPORARY TABLE test (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      arr TEXT[]
+    )
+  `;
+
+      // Test data
+      const item = {
+        id: 1,
+        name: "test",
+        arr: ["a", "b"],
+      };
+
+      // Insert
+      const result = await sql`INSERT INTO test ${sql(item)} returning *`;
+
+      expect(result[0]).toEqual(item);
+    } finally {
+      await sql`DROP TABLE test`;
+    }
+  });
+
+  test("#17798: it should handle updating values of type text[] using array of values", async () => {
+    try {
+      await sql`
+    CREATE TEMPORARY TABLE test (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      arr TEXT[]
+    )
+  `;
+
+      // Test data
+      const item = {
+        id: 1,
+        name: "test",
+        arr: ["a", "b"],
+      };
+
+      // Insert
+      await sql`INSERT INTO test ${sql(item)}`;
+
+      // Update
+      const update = { arr: ["c", "d"] };
+      const result = await sql`UPDATE test SET ${sql(update)} WHERE id = ${item.id} returning *`;
+
+      expect(result[0]).toEqual({ ...item, ...update });
+    } finally {
+      await sql`DROP TABLE test`;
+    }
+  });
+
+  test("#17798: it should handle non-string values in array", async () => {
+    try {
+      await sql`
+    CREATE TEMPORARY TABLE test (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      arr TEXT[]
+    )
+  `;
+
+      // Test data
+      const item = {
+        id: 1,
+        name: "test",
+        arr: ["a", null, NaN, 12, 12.9, Infinity, -Infinity, true, false],
+      };
+
+      const expected_arr = ["a", null, "NaN", "12", "12.9", "Infinity", "-Infinity", "true", "false"];
+
+      // Insert
+      const result = await sql`INSERT INTO test ${sql(item)} returning *`;
+
+      expect(result[0]).toEqual({ ...item, arr: expected_arr });
+    } finally {
+      await sql`DROP TABLE test`;
+    }
+  });
+
+  test("#17798: it should handle nested arrays", async () => {
+    try {
+      await sql`
+    CREATE TEMPORARY TABLE test (
+      id INTEGER PRIMARY KEY,
+      name TEXT,
+      arr TEXT[]
+    )
+  `;
+
+      // Test data
+      const item = {
+        id: 1,
+        name: "test",
+        arr: ["a", null, [NaN, 12, [12.9, Infinity]], -Infinity],
+      };
+
+      const expected_arr = ["a", null, "NaN,12,12.9,Infinity", "-Infinity"];
+
+      // Insert
+      const result = await sql`INSERT INTO test ${sql(item)} returning *`;
+
+      expect(result[0]).toEqual({ ...item, arr: expected_arr });
+    } finally {
+      await sql`DROP TABLE test`;
+    }
+  });
+
   test("Transaction throws on uncaught savepoint", async () => {
     await sql`create table test (a int)`;
     try {

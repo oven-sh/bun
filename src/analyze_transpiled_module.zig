@@ -166,7 +166,8 @@ pub const ModuleInfo = struct {
     exported_names: std.AutoArrayHashMapUnmanaged(StringID, void),
     finalized: bool = false,
 
-    _deserialized: ModuleInfoDeserialized = undefined,
+    /// only initialized after .finalize() is called
+    _deserialized: ModuleInfoDeserialized,
 
     pub fn asDeserialized(self: *ModuleInfo) *ModuleInfoDeserialized {
         bun.assert(self.finalized);
@@ -247,6 +248,7 @@ pub const ModuleInfo = struct {
             .buffer = std.ArrayList(StringID).init(allocator),
             .record_kinds = std.ArrayList(RecordKind).init(allocator),
             .flags = .{ .contains_import_meta = false, .is_typescript = is_typescript },
+            ._deserialized = undefined,
         };
     }
     fn deinit(self: *ModuleInfo) void {

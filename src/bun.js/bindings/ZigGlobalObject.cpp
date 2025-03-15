@@ -33,7 +33,6 @@
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMicrotask.h"
-
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
@@ -164,6 +163,9 @@
 #include "JSVerify.h"
 #include "JSHmac.h"
 #include "JSHash.h"
+#include "JSDiffieHellman.h"
+#include "JSDiffieHellmanGroup.h"
+#include "JSECDH.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -1892,6 +1894,24 @@ extern "C" JSC__JSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalO
     return JSValue::encode(array);
 }
 
+extern "C" JSC__JSValue Bun__allocArrayBufferForCopy(JSC::JSGlobalObject* lexicalGlobalObject, size_t len, void** ptr)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto buf = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, len);
+
+    if (UNLIKELY(!buf)) {
+        return {};
+    }
+
+    *ptr = buf->vector();
+
+    return JSValue::encode(buf);
+}
+
 extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, bool isBuffer)
 {
     VM& vm = globalObject->vm();
@@ -2855,6 +2875,21 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSVerifyClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupJSVerifyClassStructure(init);
+        });
+
+    m_JSDiffieHellmanClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupDiffieHellmanClassStructure(init);
+        });
+
+    m_JSDiffieHellmanGroupClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupDiffieHellmanGroupClassStructure(init);
+        });
+
+    m_JSECDHClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupECDHClassStructure(init);
         });
 
     m_JSHmacClassStructure.initLater(
@@ -4056,6 +4091,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
     thisObject->m_JSSignClassStructure.visit(visitor);
     thisObject->m_JSVerifyClassStructure.visit(visitor);
+    thisObject->m_JSDiffieHellmanClassStructure.visit(visitor);
+    thisObject->m_JSDiffieHellmanGroupClassStructure.visit(visitor);
+    thisObject->m_JSECDHClassStructure.visit(visitor);
     thisObject->m_JSHmacClassStructure.visit(visitor);
     thisObject->m_JSHashClassStructure.visit(visitor);
     thisObject->m_statValues.visit(visitor);

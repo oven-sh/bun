@@ -46,7 +46,7 @@ public:
     //
     //    module.parent = parent;
     //
-    mutable JSC::WriteBarrier<Unknown> m_overridenParent;
+    mutable JSC::WriteBarrier<Unknown> m_overriddenParent;
 
     // Not visited by the GC.
     // When the module is assigned a JSCommonJSModule parent, it is assigned to this field.

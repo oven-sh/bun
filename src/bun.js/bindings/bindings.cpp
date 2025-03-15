@@ -6423,3 +6423,10 @@ CPP_DECL bool Bun__util__isInsideNodeModules(JSC::JSGlobalObject* globalObject, 
 
     return inNodeModules;
 }
+
+#if BUN_DEBUG
+CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
+{
+    return callFrame->describeFrame();
+}
+#endif

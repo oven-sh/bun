@@ -37,6 +37,10 @@ export default [
         fn: "updateSettings",
         length: 1,
       },
+      setLocalWindowSize: {
+        fn: "setLocalWindowSize",
+        length: 1,
+      },
       read: {
         fn: "read",
         length: 1,

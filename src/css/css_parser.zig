@@ -7145,13 +7145,19 @@ const Notation = struct {
 ///
 /// Returns null if value was an infinite number
 pub fn dtoa_short(buf: *[129]u8, value: f32, comptime precision: u8) !struct { []u8, ?Notation } {
-    // We must pass finite numbers to dtoa_short_impl
+    // We can't give Infinity/-Infinity to dtoa_short_impl so
+    // we'l handle them here.
+    //
+    // We need to print a valid finite number otherwise browsers like Safari will
+    // render certain things wrong (see https://github.com/oven-sh/bun/issues/18064)
+    //
+    // We'll use 3.40282e38 which is approximately the largest finite number in 32-bit IEEE754 floating point
     if (std.math.isPositiveInf(value)) {
-        buf[0.."1e999".len].* = "1e999".*;
-        return .{ buf[0.."1e999".len], null };
+        buf[0.."3.40282e38".len].* = "3.40282e38".*;
+        return .{ buf[0.."3.40282e38".len], null };
     } else if (std.math.isNegativeInf(value)) {
-        buf[0.."-1e999".len].* = "-1e999".*;
-        return .{ buf[0.."-1e999".len], null };
+        buf[0.."-3.40282e38".len].* = "-3.40282e38".*;
+        return .{ buf[0.."-3.40282e38".len], null };
     }
     // We shouldn't receive NaN here.
     // NaN is not a valid CSS token and any inlined calculations from `calc()` we ensure

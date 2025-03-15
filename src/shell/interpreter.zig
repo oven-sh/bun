@@ -34,8 +34,8 @@ const Syscall = @import("../sys.zig");
 const Glob = @import("../glob.zig");
 const ResolvePath = @import("../resolver/resolve_path.zig");
 const DirIterator = @import("../bun.js/node/dir_iterator.zig");
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
-const TaggedPointer = @import("../tagged_pointer.zig").TaggedPointer;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
+const TaggedPointer = @import("../ptr.zig").TaggedPointer;
 pub const WorkPoolTask = @import("../work_pool.zig").Task;
 pub const WorkPool = @import("../work_pool.zig").WorkPool;
 const windows = bun.windows;
@@ -462,7 +462,7 @@ pub const RefCountedStr = struct {
 /// A) or B) won't even mutate the environment anyway.
 ///
 /// A way to reduce copying is to only do it when the env is mutated: copy-on-write.
-pub const CowEnvMap = bun.Cow(EnvMap, struct {
+pub const CowEnvMap = bun.ptr.Cow(EnvMap, struct {
     pub fn copy(val: *const EnvMap) EnvMap {
         return val.clone();
     }

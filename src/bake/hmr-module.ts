@@ -433,7 +433,11 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     }
 
     const { list, isAsync } = parseEsmDependencies(mod, deps, loadModuleAsync<false>);
-    DEBUG.ASSERT(isAsync ? list.some(x => x instanceof Promise): list.every(x => x instanceof HMRModule));
+    DEBUG.ASSERT(
+      isAsync //
+        ? list.some(x => x instanceof Promise)
+        : list.every(x => x instanceof HMRModule)
+    );
 
     // Running finishLoadModuleAsync synchronously when there are no promises is
     // not a performance optimization but a behavioral correctness issue.
@@ -485,7 +489,7 @@ function finishLoadModuleAsync(mod: HMRModule, load: UnloadedESM[3], modules: HM
 type GenericModuleLoader<R> = (id: Id, isUserDynamic: false, importer: HMRModule) => R;
 // TODO: This function is currently recursive.
 function parseEsmDependencies<T extends GenericModuleLoader<any>>(
-  mod: HMRModule,
+  parent: HMRModule,
   deps: (string | number)[],
   enqueueModuleLoad: T,
 ) {
@@ -498,7 +502,8 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
     DEBUG.ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
     DEBUG.ASSERT(typeof deps[i + 1] === "number");
-    list.push(enqueueModuleLoad(dep, false, mod));
+    const promiseOrModule = enqueueModuleLoad(dep, false, parent);
+    list.push(promiseOrModule);
 
     const unloadedModule = unloadedModuleRegistry[dep];
     if (!unloadedModule) {
@@ -522,10 +527,14 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         // }
         i++;
       }
-      isAsync ||= unloadedModule[ESMProps.isAsync];
+      isAsync ||= promiseOrModule instanceof Promise;
     } else {
       DEBUG.ASSERT(!registry.get(dep)?.esm);
       i = expectedExportKeyEnd;
+
+      if (IS_BUN_DEVELOPMENT) {
+        DEBUG.ASSERT(list[list.length - 1] as any instanceof HMRModule);
+      }
     }
   }
   return { list, isAsync };

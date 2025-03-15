@@ -27,6 +27,7 @@
 *.db
 *.dmg
 *.dSYM
+*.dwo
 *.generated.ts
 *.jsb
 *.lib

@@ -129,10 +129,10 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        const file_handle: std.fs.File = if (_file_handle) |__file|
-            std.fs.File{ .handle = __file }
+        const file_handle: bun.sys.File = if (_file_handle) |__file|
+            bun.sys.File{ .handle = __file }
         else
-            try std.fs.openFileAbsoluteZ(path, .{ .mode = .read_only });
+            try bun.sys.File.open(path, bun.sys.O.RDONLY, 0).unwrap();
 
         defer {
             if (rfs.needToCloseFiles() and _file_handle == null) {
@@ -157,7 +157,7 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle else 0,
+            .fd = if (FeatureFlags.store_file_descriptors) file_handle.handle.int() else 0,
         };
     }
 
@@ -183,11 +183,11 @@ pub const Fs = struct {
     ) !Entry {
         var rfs = _fs.fs;
 
-        var file_handle: std.fs.File = if (_file_handle) |__file| __file.asFile() else undefined;
+        var file_handle: bun.sys.File = if (_file_handle) |__file| bun.sys.File{ .handle = __file } else undefined;
 
         if (_file_handle == null) {
             if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd != .zero) {
-                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), bun.O.RDONLY, 0).unwrap() catch |err| brk: {
+                file_handle = .{ .handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), bun.O.RDONLY, 0).unwrap() catch |err| brk: {
                     switch (err) {
                         error.ENOENT => {
                             const handle = try bun.openFile(path, .{ .mode = .read_only });
@@ -199,19 +199,18 @@ pub const Fs = struct {
                         },
                         else => return err,
                     }
-                }).asFile();
+                }) };
             } else {
-                file_handle = try bun.openFile(path, .{ .mode = .read_only });
+                file_handle = .{ .handle = try bun.sys.openA(path, bun.sys.O.RDONLY, 0).unwrap() };
             }
         }
 
         if (comptime !Environment.isWindows) // skip on Windows because NTCreateFile will do it.
-            debug("openat({}, {s}) = {}", .{ dirname_fd, path, bun.toFD(file_handle.handle) });
+            debug("openat({}, {s}) = {}", .{ dirname_fd, path, file_handle.handle });
 
         const will_close = rfs.needToCloseFiles() and _file_handle == null;
         defer {
             if (will_close) {
-                debug("readFileWithAllocator close({d})", .{file_handle.handle});
                 file_handle.close();
             }
         }
@@ -233,7 +232,7 @@ pub const Fs = struct {
 
         return Entry{
             .contents = file.contents,
-            .fd = if (FeatureFlags.store_file_descriptors and !will_close) bun.toFD(file_handle.handle) else bun.invalid_fd,
+            .fd = if (FeatureFlags.store_file_descriptors and !will_close) file_handle.handle else bun.invalid_fd,
         };
     }
 };

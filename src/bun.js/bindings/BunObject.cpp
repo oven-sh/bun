@@ -39,6 +39,8 @@
 #include "GeneratedBunObject.h"
 #include "JavaScriptCore/BunV8HeapSnapshotBuilder.h"
 #include "BunObjectModule.h"
+#include "JSCookie.h"
+#include "JSCookieMap.h"
 
 #ifdef WIN32
 #include <ws2def.h>
@@ -81,6 +83,9 @@ static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject
 {
     return jsCast<Zig::GlobalObject*>(bunObject->globalObject())->ArrayBufferSink();
 }
+
+static JSValue constructCookieObject(VM& vm, JSObject* bunObject);
+static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
@@ -694,6 +699,8 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 @begin bunObjectTable
     $                                              constructBunShell                                                   DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_getter_wrap_ArrayBufferSink                               DontDelete|PropertyCallback
+    Cookie                                         constructCookieObject                                              DontDelete|ReadOnly|PropertyCallback
+    CookieMap                                      constructCookieMapObject                                           DontDelete|ReadOnly|PropertyCallback
     CryptoHasher                                   BunObject_getter_wrap_CryptoHasher                                  DontDelete|PropertyCallback
     FFI                                            BunObject_getter_wrap_FFI                                           DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_getter_wrap_FileSystemRouter                              DontDelete|PropertyCallback
@@ -844,6 +851,18 @@ public:
 #undef bunObjectReadableStreamToTextCodeGenerator
 
 const JSC::ClassInfo JSBunObject::s_info = { "Bun"_s, &Base::s_info, &bunObjectTable, nullptr, CREATE_METHOD_TABLE(JSBunObject) };
+
+static JSValue constructCookieObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return WebCore::JSCookie::getConstructor(vm, zigGlobalObject);
+}
+
+static JSValue constructCookieMapObject(VM& vm, JSObject* bunObject)
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    return WebCore::JSCookieMap::getConstructor(vm, zigGlobalObject);
+}
 
 JSC::JSObject* createBunObject(VM& vm, JSObject* globalObject)
 {

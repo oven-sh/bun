@@ -919,6 +919,10 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForExposedToWorkerAndWindow;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParams;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParamsIterator;
+    
+    std::unique_ptr<IsoSubspace> m_subspaceForCookie;
+    std::unique_ptr<IsoSubspace> m_subspaceForCookieMap;
+    std::unique_ptr<IsoSubspace> m_subspaceForCookieMapIterator;
 
     std::unique_ptr<IsoSubspace> m_subspaceForDOMException;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;

@@ -44,7 +44,7 @@ describe.skipIf(!isLinux)("running files on a FUSE mount", () => {
       if (pythonProcess) {
         try {
           // run umount
-          const umount = spawn({ cmd: ["umount", mountpoint] });
+          const umount = spawn({ cmd: ["fusermount", "-u", mountpoint] });
           await umount.exited;
           // wait for graceful exit
           await Promise.race([pythonProcess.exited, Bun.sleep(1000)]);

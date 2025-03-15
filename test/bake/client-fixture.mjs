@@ -15,6 +15,7 @@ url = new URL(url, "http://localhost:3000");
 
 const storeHotChunks = args.includes("--store-hot-chunks");
 const expectErrors = args.includes("--expect-errors");
+const verboseWebSockets = args.includes("--verbose-web-sockets");
 
 // Create a new window instance
 let window;
@@ -23,6 +24,7 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
+let updatingTimer = null;
 
 function reset() {
   for (const ws of webSockets) {
@@ -41,6 +43,7 @@ function reset() {
       warn: () => {},
       info: () => {},
       assert: () => {},
+      trace: () => {},
     };
   }
 }
@@ -53,6 +56,21 @@ function createWindow(windowUrl) {
     width: 1024,
     height: 768,
   });
+
+  let hasReadyEventListener = false;
+  window["bun do not use this outside of internal testing or else i'll cry"] = ({ onEvent }) => {
+    onEvent("bun:afterUpdate", () => {
+      setTimeout(() => {
+        process.send({ type: "received-hmr-event", args: [] });
+      }, 50);
+    });
+    hasReadyEventListener = true;
+    onEvent("bun:ready", () => {
+      setTimeout(() => {
+        process.send({ type: "received-hmr-event", args: [] });
+      }, 50);
+    });
+  };
 
   window.fetch = async function (url, options) {
     if (typeof url === "string") {
@@ -68,31 +86,25 @@ function createWindow(windowUrl) {
       super(url, protocols, options);
       webSockets.push(this);
       this.addEventListener("message", event => {
-        if (!allowWebSocketMessages) {
-          const data = new Uint8Array(event.data);
-          console.error(
-            "[E] WebSocket message received while messages are not allowed. Event type",
-            JSON.stringify(String.fromCharCode(data[0])),
-          );
-          let hexDump = "";
-          for (let i = 0; i < data.length; i += 16) {
-            // Print offset
-            hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
-            // Print hex values
-            const chunk = data.slice(i, i + 16);
-            const hexValues = Array.from(chunk)
-              .map(b => b.toString(16).padStart(2, "0"))
-              .join(" ");
-            hexDump += hexValues.padEnd(48, " ");
-            // Print ASCII
-            hexDump += "\x1b[2m| \x1b[0m";
-            for (const byte of chunk) {
-              hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
-            }
-            hexDump += "\n";
+        const data = new Uint8Array(event.data);
+        if (data[0] === "e".charCodeAt(0)) {
+          if (updatingTimer) {
+            clearTimeout(updatingTimer);
           }
-          console.error(hexDump);
+          updatingTimer = setTimeout(() => {
+            process.send({ type: "received-hmr-event", args: [] });
+            updatingTimer = null;
+          }, 250);
+        }
+        if (!allowWebSocketMessages) {
+          const allowedTypes = ["n", "r"];
+          if (allowedTypes.includes(String.fromCharCode(data[0]))) {
+            return;
+          }
+          dumpWebSocketMessage("[E] WebSocket message received while messages are not allowed", data);
           process.exit(exitCodeMap.websocketMessagesAreBanned);
+        } else {
+          verboseWebSockets && dumpWebSocketMessage("[I] WebSocket", data);
         }
       });
     }
@@ -106,7 +118,7 @@ function createWindow(windowUrl) {
   const originalConsole = window.console;
   window.console = {
     log: (...args) => {
-      process?.send({ type: "message", args: args });
+      process.send({ type: "message", args: args });
     },
     error: (...args) => {
       console.error("[E]", ...args);
@@ -120,6 +132,14 @@ function createWindow(windowUrl) {
       originalConsole.warn(...args);
     },
     info: (...args) => {
+      if (args[0]?.startsWith("[Bun] Hot-module-reloading socket connected")) {
+        // Wait for all CSS assets to be fully loaded before emitting the event
+        if (!hasReadyEventListener) {
+          setTimeout(() => {
+            process.send({ type: "received-hmr-event", args: [] });
+          }, 50);
+        }
+      }
       if (args[0]?.startsWith("[WS] receive message")) return;
       if (args[0]?.startsWith("Updated modules:")) return;
       console.info("[I]", ...args);
@@ -130,9 +150,14 @@ function createWindow(windowUrl) {
       console.trace(...args);
       process.exit(exitCodeMap.assertionFailed);
     },
+    trace: console.trace,
   };
 
   window.location.reload = async () => {
+    if (updatingTimer) {
+      clearTimeout(updatingTimer);
+    }
+    console.info("[I] location.reload()");
     reset();
     if (expectingReload) {
       // Permission already granted, proceed with reload
@@ -164,6 +189,28 @@ function createWindow(windowUrl) {
       return nativeEval.call(window, code);
     };
   }
+}
+
+function dumpWebSocketMessage(message, data) {
+  console.error(`${message}. Event type`, JSON.stringify(String.fromCharCode(data[0])));
+  let hexDump = "";
+  for (let i = 0; i < data.length; i += 16) {
+    // Print offset
+    hexDump += "\x1b[2m" + i.toString(16).padStart(4, "0") + "\x1b[0m ";
+    // Print hex values
+    const chunk = data.slice(i, i + 16);
+    const hexValues = Array.from(chunk)
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join(" ");
+    hexDump += hexValues.padEnd(48, " ");
+    // Print ASCII
+    hexDump += "\x1b[2m| \x1b[0m";
+    for (const byte of chunk) {
+      hexDump += byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "\x1b[2m.\x1b[0m";
+    }
+    hexDump += "\n";
+  }
+  console.error(hexDump);
 }
 
 async function handleReload() {

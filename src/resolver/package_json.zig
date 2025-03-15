@@ -604,7 +604,7 @@ pub const PackageJSON = struct {
             null,
         ) catch |err| {
             if (err != error.IsDir) {
-                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.init(input_path)), @errorName(err) }) catch unreachable;
+                r.log.addErrorFmt(null, logger.Loc.Empty, allocator, "Cannot read file \"{s}\": {s}", .{ r.prettyPath(fs.Path.initFile(input_path)), @errorName(err) }) catch unreachable;
             }
 
             return null;
@@ -615,7 +615,7 @@ pub const PackageJSON = struct {
             debug.addNoteFmt("The file \"{s}\" exists", .{package_json_path});
         }
 
-        const key_path = fs.Path.init(package_json_path);
+        const key_path = fs.Path.initFile(package_json_path);
 
         var json_source = logger.Source.initPathString(key_path.text, entry.contents);
         json_source.path.pretty = r.prettyPath(json_source.path);

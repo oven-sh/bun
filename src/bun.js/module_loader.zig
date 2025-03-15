@@ -246,7 +246,7 @@ pub const RuntimeTranspilerStore = struct {
         loader: bun.options.Loader,
     ) *anyopaque {
         var job: *TranspilerJob = this.store.get();
-        const owned_path = Fs.Path.init(bun.default_allocator.dupe(u8, path.text) catch unreachable);
+        const owned_path = Fs.Path.initFile(bun.default_allocator.dupe(u8, path.text) catch unreachable);
         const promise = JSC.JSInternalPromise.create(globalObject);
         job.* = TranspilerJob{
             .non_threadsafe_input_specifier = input_specifier,
@@ -617,7 +617,7 @@ pub const RuntimeTranspilerStore = struct {
                 }
 
                 if (strings.hasPrefixComptime(import_record.path.text, "bun:")) {
-                    import_record.path = Fs.Path.init(import_record.path.text["bun:".len..]);
+                    import_record.path = Fs.Path.initFile(import_record.path.text["bun:".len..]);
                     import_record.path.namespace = "bun";
                     import_record.is_external_without_side_effects = true;
 
@@ -1071,7 +1071,7 @@ pub const ModuleLoader = struct {
             opts.promise_ptr.?.* = this_promise.asInternalPromise().?;
             const referrer = buf.append(opts.referrer);
             const specifier = buf.append(opts.specifier);
-            const path = Fs.Path.init(buf.append(opts.path.text));
+            const path = Fs.Path.initFile(buf.append(opts.path.text));
 
             return AsyncModule{
                 .parse_result = opts.parse_result,
@@ -2554,7 +2554,7 @@ pub const ModuleLoader = struct {
 
         var virtual_source = logger.Source.initPathString(specifier, source_code_slice.slice());
         var log = logger.Log.init(jsc_vm.allocator);
-        const path = Fs.Path.init(specifier);
+        const path = Fs.Path.initFile(specifier);
 
         const loader = if (loader_ != ._none)
             options.Loader.fromAPI(loader_)

@@ -27,8 +27,6 @@ const WPathBuffer = bun.WPathBuffer;
 
 pub const debug = Output.scoped(.fs, true);
 
-// pub const FilesystemImplementation = @import("fs_impl.zig");
-
 pub const Preallocate = struct {
     pub const Counts = struct {
         pub const dir_entry: usize = 2048;
@@ -1186,9 +1184,9 @@ pub const FileSystem = struct {
                 if (size == 0) {
                     if (comptime use_shared_buffer) {
                         shared_buffer.reset();
-                        return PathContentsPair{ .path = Path.init(path), .contents = shared_buffer.list.items };
+                        return PathContentsPair{ .path = Path.initWithNamespace(path), .contents = shared_buffer.list.items };
                     } else {
-                        return PathContentsPair{ .path = Path.init(path), .contents = "" };
+                        return PathContentsPair{ .path = Path.initFile(path), .contents = "" };
                     }
                 }
 
@@ -1269,7 +1267,7 @@ pub const FileSystem = struct {
                         }
                         if (comptime Environment.isWindows) try file.seekTo(prev_file_pos.?);
 
-                        return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
+                        return PathContentsPair{ .path = Path.initFile(path), .contents = file_contents };
                     }
 
                     break :brk buf[0..read_count];
@@ -1292,7 +1290,7 @@ pub const FileSystem = struct {
                 @memcpy(buf[0..initial_read.len], initial_read);
 
                 if (size == 0) {
-                    return PathContentsPair{ .path = Path.init(path), .contents = "" };
+                    return PathContentsPair{ .path = Path.initFile(path), .contents = "" };
                 }
 
                 // stick a zero at the end
@@ -1312,7 +1310,7 @@ pub const FileSystem = struct {
                 }
             }
 
-            return PathContentsPair{ .path = Path.init(path), .contents = file_contents };
+            return PathContentsPair{ .path = Path.initFile(path), .contents = file_contents };
         }
 
         pub fn kindFromAbsolute(
@@ -1695,13 +1693,73 @@ pub const Path = struct {
     /// for content hashes), this should contain forward slashes on Windows.
     pretty: string,
     /// The location of this resource. For the `file` namespace, this is
-    /// an absolute path with native slashes.
+    /// usually an absolute path with native slashes.
     text: string,
     namespace: string,
     // TODO(@paperdave): investigate removing or simplifying this property (it's 64 bytes)
     name: PathName,
     is_disabled: bool = false,
     is_symlink: bool = false,
+
+    // files may use "file" or an empty string as their namespace
+    const file = "";
+
+    pub const empty = Fs.Path.initFile("");
+
+    /// Create a new `Path` to the given url, path, etc.
+    ///
+    /// The Path's namespace will be determined from `text`. If you already know
+    /// what the namespace should be, use `initWithNamespace` instead.
+    pub fn init(text: string) Path {
+        return Path.initWithPrettyAndNamespace(text, text, Path.determineNamespace(text));
+    }
+
+    /// Create a new `Path` to the given url, path, etc.
+    ///
+    /// The Path's namespace will be determined from `text`. If you already know
+    /// what the namespace should be, use `initWithNamespace` instead.
+    pub fn initWithPretty(text: string, pretty: string) Path {
+        return Path.initWithPrettyAndNamespace(text, pretty, Path.determineNamespace(text));
+    }
+
+    /// Create a `Path` representing an absolute or relative path to a file.
+    pub fn initFile(path: string) callconv(bun.callconv_inline) Path {
+        return Path.initWithNamespace(path, file);
+    }
+
+    /// Create a new `Path` with a pre-determined namespace.
+    pub fn initWithNamespace(text: string, namespace: string) Path {
+        return Path.initWithPrettyAndNamespace(text, text, namespace);
+    }
+
+    pub fn initWithPrettyAndNamespace(text: string, pretty: string, namespace: string) Path {
+        return Path{
+            .pretty = pretty,
+            .text = text,
+            .namespace = namespace,
+            .name = PathName.init(text),
+        };
+    }
+
+    pub inline fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
+        return comptime Path{
+            .pretty = namespace ++ ":" ++ package,
+            .is_symlink = true,
+            .text = text,
+            .namespace = namespace,
+            .name = PathName.init(text),
+        };
+    }
+
+    pub inline fn initForKitBuiltIn(comptime namespace: string, comptime package: string) Path {
+        return comptime Path{
+            .pretty = namespace ++ ":" ++ package,
+            .is_symlink = true,
+            .text = "_bun/" ++ package,
+            .namespace = namespace,
+            .name = PathName.init(package),
+        };
+    }
 
     pub fn isFile(this: *const Path) bool {
         return this.namespace.len == 0 or strings.eqlComptime(this.namespace, "file");
@@ -1816,7 +1874,7 @@ pub const Path = struct {
                 return this.*;
             }
 
-            var new_path = Fs.Path.init(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
+            var new_path = Fs.Path.initFile(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
             new_path.pretty = this.text;
             new_path.namespace = this.namespace;
             new_path.is_symlink = this.is_symlink;
@@ -1826,7 +1884,7 @@ pub const Path = struct {
                 return this.*;
             }
 
-            var new_path = Fs.Path.init(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
+            var new_path = Fs.Path.initFile(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
             new_path.pretty = "";
             new_path.namespace = this.namespace;
             new_path.is_symlink = this.is_symlink;
@@ -1835,9 +1893,8 @@ pub const Path = struct {
             if (FileSystem.FilenameStore.instance.exists(this.text) or FileSystem.DirnameStore.instance.exists(this.text)) {
                 return this.*;
             }
-            var new_path = Fs.Path.init(try FileSystem.FilenameStore.instance.append([]const u8, this.text));
+            var new_path = Fs.Path.initWithNamespace(try FileSystem.FilenameStore.instance.append([]const u8, this.text), this.namespace);
             new_path.pretty = this.text[start_len[0]..][0..start_len[1]];
-            new_path.namespace = this.namespace;
             new_path.is_symlink = this.is_symlink;
             return new_path;
         } else {
@@ -1846,14 +1903,14 @@ pub const Path = struct {
                 (FileSystem.FilenameStore.instance.exists(this.pretty) or
                 FileSystem.DirnameStore.instance.exists(this.pretty)))
             {
+                bun.debugAssert(this.isFile());
                 return this.*;
             }
 
             if (strings.indexOf(this.text, this.pretty)) |offset| {
                 var text = try FileSystem.FilenameStore.instance.append([]const u8, this.text);
-                var new_path = Fs.Path.init(text);
+                var new_path = Fs.Path.initWithNamespace(text, this.namespace);
                 new_path.pretty = text[offset..][0..this.pretty.len];
-                new_path.namespace = this.namespace;
                 new_path.is_symlink = this.is_symlink;
                 return new_path;
             } else {
@@ -1862,10 +1919,9 @@ pub const Path = struct {
                 buf.ptr[this.text.len] = 0;
                 const new_pretty = buf[this.text.len + 1 ..][0..this.pretty.len];
                 bun.copy(u8, buf[this.text.len + 1 ..], this.pretty);
-                var new_path = Fs.Path.init(buf[0..this.text.len]);
+                var new_path = Fs.Path.initWithNamespace(buf[0..this.text.len], this.namespace);
                 buf.ptr[buf.len - 1] = 0;
                 new_path.pretty = new_pretty;
-                new_path.namespace = this.namespace;
                 new_path.is_symlink = this.is_symlink;
                 return new_path;
             }
@@ -1885,9 +1941,8 @@ pub const Path = struct {
         return new;
     }
 
-    pub const empty = Fs.Path.init("");
-
     pub fn setRealpath(this: *Path, to: string) void {
+        bun.debugAssert(this.isFile());
         const old_path = this.text;
         this.text = to;
         this.name = PathName.init(to);
@@ -1901,53 +1956,6 @@ pub const Path = struct {
 
     pub fn generateKey(p: *Path, allocator: std.mem.Allocator) !string {
         return try std.fmt.allocPrint(allocator, "{s}://{s}", .{ p.namespace, p.text });
-    }
-
-    pub fn init(text: string) Path {
-        return Path{
-            .pretty = text,
-            .text = text,
-            .namespace = "file",
-            .name = PathName.init(text),
-        };
-    }
-
-    pub fn initWithPretty(text: string, pretty: string) Path {
-        return Path{
-            .pretty = pretty,
-            .text = text,
-            .namespace = "file",
-            .name = PathName.init(text),
-        };
-    }
-
-    pub fn initWithNamespace(text: string, namespace: string) Path {
-        return Path{
-            .pretty = text,
-            .text = text,
-            .namespace = namespace,
-            .name = PathName.init(text),
-        };
-    }
-
-    pub inline fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
-        return comptime Path{
-            .pretty = namespace ++ ":" ++ package,
-            .is_symlink = true,
-            .text = text,
-            .namespace = namespace,
-            .name = PathName.init(text),
-        };
-    }
-
-    pub inline fn initForKitBuiltIn(comptime namespace: string, comptime package: string) Path {
-        return comptime Path{
-            .pretty = namespace ++ ":" ++ package,
-            .is_symlink = true,
-            .text = "_bun/" ++ package,
-            .namespace = namespace,
-            .name = PathName.init(package),
-        };
     }
 
     pub fn isBefore(a: *Path, b: Path) bool {
@@ -1971,10 +1979,14 @@ pub const Path = struct {
         else
             path.pretty;
     }
+
+    fn determineNamespace(text: string) string {
+        if (text.len < 5) return file; // "data:", etc.
+        // Avoid searching all of `text` as an optimization. Most namespaces are 4
+        // characters, so 8 should give enough slack for uncommon cases
+        return if (bun.strings.indexOfChar(text[0..@min(text.len, 8)], ':')) |colon|
+            text[0..colon]
+        else
+            file;
+    }
 };
-
-// pub fn customRealpath(allocator: std.mem.Allocator, path: string) !string {
-//     var opened = try std.posix.open(path, if (Environment.isLinux) bun.O.PATH else bun.O.RDONLY, 0);
-//     defer std.posix.close(opened);
-
-// }

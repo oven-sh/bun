@@ -4466,7 +4466,7 @@ pub fn indexOfCharUsize(slice: []const u8, char: u8) ?usize {
     if (slice.len == 0)
         return null;
 
-    if (comptime !Environment.isNative) {
+    if (@inComptime() or comptime !Environment.isNative) {
         return std.mem.indexOfScalar(u8, slice, char);
     }
 

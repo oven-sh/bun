@@ -1257,7 +1257,7 @@ pub fn NewBundler(
             const entry = try this.fs_reader.readFile(this.fs, url, 0, true, input_fd);
             return logger.Source.initFile(
                 .{
-                    .path = Fs.Path.init(url),
+                    .path = Fs.Path.initFile(url),
                     .contents = entry.contents,
                 },
                 this.allocator,

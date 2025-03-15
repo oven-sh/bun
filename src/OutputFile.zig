@@ -158,7 +158,7 @@ pub fn initPending(loader: Loader, pending: resolver.Result) OutputFile {
 pub fn initFile(file: std.fs.File, pathname: string, size: usize) OutputFile {
     return .{
         .loader = .file,
-        .src_path = Fs.Path.init(pathname),
+        .src_path = Fs.Path.initFile(pathname),
         .size = size,
         .value = .{ .copy = FileOperation.fromFile(file.handle, pathname) },
     };
@@ -203,7 +203,7 @@ pub fn init(options: Options) OutputFile {
     return .{
         .loader = options.loader,
         .input_loader = options.input_loader,
-        .src_path = Fs.Path.init(options.input_path),
+        .src_path = Fs.Path.initFile(options.input_path),
         .dest_path = options.output_path,
         .size = options.size orelse switch (options.data) {
             .buffer => |buf| buf.data.len,

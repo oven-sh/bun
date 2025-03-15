@@ -6031,7 +6031,11 @@ const HmrSocket = struct {
                         return;
                     }
 
-                    s.dev.startAsyncBundle(event.entry_points, true, event.validatedTimer()) catch bun.outOfMemory();
+                    s.dev.startAsyncBundle(
+                        event.entry_points,
+                        true,
+                        std.time.Timer.start() catch @panic("timers unsupported"),
+                    ) catch bun.outOfMemory();
 
                     event.entry_points.deinit(s.dev.allocator);
                 },
@@ -6350,7 +6354,7 @@ pub const HotReloadEvent = struct {
         switch (dev.testing_batch_events) {
             .disabled => {},
             .enabled => |*ev| {
-                ev.append(dev, entry_points, timer) catch bun.outOfMemory();
+                ev.append(dev, entry_points) catch bun.outOfMemory();
                 dev.publish(.testing_watch_synchronization, &.{
                     MessageId.testing_watch_synchronization.char(),
                     1,
@@ -7553,25 +7557,11 @@ fn readString32(reader: anytype, alloc: Allocator) ![]const u8 {
 
 const TestingBatch = struct {
     entry_points: EntryPointList,
-    /// Memory is only valid when entry_points is not empty. Otherwise, there is
-    /// no sensible initial value to give this.
-    potentially_valid_timer: std.time.Timer,
 
-    const empty: @This() = .{
-        .entry_points = .empty,
-        .potentially_valid_timer = undefined,
-    };
+    const empty: @This() = .{ .entry_points = .empty };
 
-    pub fn validatedTimer(self: @This()) std.time.Timer {
-        assert(self.entry_points.set.count() > 0);
-        return self.potentially_valid_timer;
-    }
-
-    pub fn append(self: *@This(), dev: *DevServer, entry_points: EntryPointList, timer: std.time.Timer) !void {
+    pub fn append(self: *@This(), dev: *DevServer, entry_points: EntryPointList) !void {
         assert(entry_points.set.count() > 0);
-        if (self.entry_points.set.count() == 0) {
-            self.potentially_valid_timer = timer;
-        }
         for (entry_points.set.keys(), entry_points.set.values()) |k, v| {
             try self.entry_points.append(dev.allocator, k, v);
         }

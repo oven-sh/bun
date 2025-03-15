@@ -272,7 +272,7 @@ export class Dev extends EventEmitter {
     await initWait;
 
     let hasSeenFiles = true;
-    let seenFiles;
+    let seenFiles: PromiseWithResolvers<void>;
     function onSeenFiles(ev: WatchSynchronization) {
       if (ev === WatchSynchronization.SeenFiles) {
         hasSeenFiles = true;
@@ -301,16 +301,14 @@ export class Dev extends EventEmitter {
       [Symbol.asyncDispose]: async() => {
         if (wantsHmrEvent && interactive) {
           await seenFiles.promise;
-          if (!fastBatches) {
-            // Wait an extra delay to avoid double-triggering events.
-            await Bun.sleep(450);
-          }
         } else if (wantsHmrEvent) {
           await Promise.race([
             seenFiles.promise,
             Bun.sleep(1000),
           ]);
-        } else {
+        }
+        if (!fastBatches) {
+          // Wait an extra delay to avoid double-triggering events.
           await Bun.sleep(450);
         }
 

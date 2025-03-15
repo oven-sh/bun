@@ -1,8 +1,8 @@
-# Run Bun as a daemon with MEPS
+# Run Bun as a daemon with BGR
 
-[MEPS](https://github.com/mements/meps) is a lightweight process manager specifically optimized for Bun applications. It allows you to run your applications as daemons (background processes) with minimal configuration.
+[BGR](https://github.com/mements/bgr) is a lightweight process manager specifically optimized for Bun applications. It allows you to run your applications as daemons (background processes) with minimal configuration.
 
-Using MEPS as your process manager when deploying Bun applications offers several advantages:
+Using BGR as your process manager when deploying Bun applications offers several advantages:
 
 - **Native Bun Support**: Built specifically for the Bun runtime environment
 - **Lower Resource Usage**: Significantly lighter memory footprint than other process managers
@@ -14,10 +14,10 @@ Using MEPS as your process manager when deploying Bun applications offers severa
 
 ### Installation
 
-First, install MEPS globally:
+First, install BGR globally:
 
 ```bash
-npm install -g meps
+npm install -g bgr
 ```
 
 Make sure you have Bun installed:
@@ -28,10 +28,10 @@ curl -fsSL https://bun.sh/install | bash
 
 ### Running a Bun Application as a Daemon
 
-To start your Bun application as a daemon process with MEPS, use the following command:
+To start your Bun application as a daemon process with BGR, use the following command:
 
 ```bash
-meps --name my-bun-app --directory ~/projects/my-bun-app --command "bun index.ts"
+bgr --name my-bun-app --directory ~/projects/my-bun-app --command "bun index.ts"
 ```
 
 This command:
@@ -53,7 +53,7 @@ url = "postgres://localhost:5432/mydb"
 user = "admin"
 ```
 
-MEPS will automatically load this configuration and convert it to environment variables:
+BGR will automatically load this configuration and convert it to environment variables:
 
 ```
 APP_PORT=3000
@@ -68,22 +68,22 @@ Once your application is running, you can:
 
 **View all running processes:**
 ```bash
-meps
+bgr
 ```
 
 **Check status of a specific application:**
 ```bash
-meps my-bun-app
+bgr my-bun-app
 ```
 
 **Restart your application:**
 ```bash
-meps my-bun-app --restart
+bgr my-bun-app --restart
 ```
 
 **Stop and delete your application:**
 ```bash
-meps --delete my-bun-app
+bgr --delete my-bun-app
 ```
 
 ## Ensuring High Availability with a Guard Script
@@ -102,11 +102,11 @@ console.log(`🔍 Starting guard for process "${processName}"`);
 
 while (true) {
   try {
-    const result = await $`meps ${processName}`.quiet().nothrow();
+    const result = await $`bgr ${processName}`.quiet().nothrow();
     
     if (result.stdout.includes("○ Stopped") || result.exitCode !== 0) {
       console.log(`⚠️ Process "${processName}" is not running! Restarting...`);
-      await $`meps ${processName} --restart --force`.nothrow();
+      await $`bgr ${processName} --restart --force`.nothrow();
     } else {
       console.log(`✅ Process "${processName}" is running`);
     }
@@ -124,10 +124,10 @@ Run the guard script with:
 bun guard.ts
 ```
 
-You can also run the guard script itself with MEPS to ensure both your application and the guard are running as daemons:
+You can also run the guard script itself with BGR to ensure both your application and the guard are running as daemons:
 
 ```bash
-meps --name guard-script --directory ~/projects/my-bun-app --command "bun guard.ts"
+bgr --name guard-script --directory ~/projects/my-bun-app --command "bun guard.ts"
 ```
 
-That's it! Your Bun application is now running as a daemon with MEPS, with proper monitoring and automatic restarts.
+That's it! Your Bun application is now running as a daemon with BGR, with proper monitoring and automatic restarts.

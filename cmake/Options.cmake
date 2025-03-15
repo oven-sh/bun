@@ -26,7 +26,14 @@ else()
   setx(DEBUG OFF)
 endif()
 
-setx(TEST ON)
+optionx(BUN_TEST BOOL "Build Bun's unit test suite instead of the normal build" DEFAULT OFF)
+
+if (BUN_TEST)
+  setx(TEST ON)
+else()
+  setx(TEST OFF)
+endif()
+
 
 if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
   setx(ENABLE_SMOL ON)

@@ -15,9 +15,9 @@ comptime {
     bun.assert(builtin.target.cpu.arch.endian() == .little);
 }
 
-extern fn bun_warn_avx_missing(url: [*:0]const u8) void;
 pub extern "C" var _environ: ?*anyopaque;
 pub extern "C" var environ: ?*anyopaque;
+
 pub fn main() void {
     std.debug.print("tests are running\n", .{});
     bun.crash_handler.init();
@@ -42,11 +42,7 @@ pub fn main() void {
 
     Output.Source.Stdio.init();
     defer Output.flush();
-    if (Environment.isX64 and Environment.enableSIMD and Environment.isPosix) {
-        bun_warn_avx_missing(@import("./cli/upgrade_command.zig").Version.Bun__githubBaselineURL.ptr);
-    }
     bun.StackCheck.configureThread();
-    // bun.CLI.Cli.start(bun.default_allocator);
     runTests();
     bun.Global.exit(0);
 }
@@ -66,13 +62,15 @@ fn runTests() void {
         }
 
         if (result) |_| {
-            Output.pretty("<green>pass</r> - {s} <i>({d}ms)</r>", .{ name, elapsed });
+            Output.pretty("<green>pass</r> - {s} <i>({d}ms)</r>\n", .{ name, elapsed });
             pass += 1;
         } else |err| {
             Output.pretty("<red>fail</r> - {s} <i>({d}ms)</r>\n{s}", .{ t.name, elapsed, @errorName(err) });
             fail += 1;
         }
     }
+
+    // todo: detect leaks in a test, then run mi_stats_print_out?
 
     const total = pass + fail;
     bun.assert(total > 0);

@@ -11,8 +11,3 @@ pub const completions = struct {
 
 pub const JavaScriptCore = @import("./src/jsc.zig");
 pub const C = @import("./src/c.zig");
-
-test {
-    const std = @import("std");
-    try std.testing.expectEqual(1, 1);
-}

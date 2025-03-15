@@ -1,6 +1,4 @@
-if(TEST)
-  set(bun bun-test)
-elseif(DEBUG)
+if(DEBUG)
   set(bun bun-debug)
 # elseif(ENABLE_SMOL)
 #   set(bun bun-smol-profile)
@@ -12,6 +10,10 @@ elseif(ENABLE_ASSERTIONS)
 else()
   set(bun bun-profile)
   set(bunStrip bun)
+endif()
+
+if(TEST)
+  set(bun ${bun}-test)
 endif()
 
 set(bunExe ${bun}${CMAKE_EXECUTABLE_SUFFIX})
@@ -580,6 +582,12 @@ endif()
 set(ZIG_FLAGS_BUN)
 if(NOT "${REVISION}" STREQUAL "")
   set(ZIG_FLAGS_BUN ${ZIG_FLAGS_BUN} -Dsha=${REVISION})
+endif()
+
+if (TEST)
+  set(ZIG_STEPS test)
+else()
+  set(ZIG_STEPS obj)
 endif()
 
 register_command(

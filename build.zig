@@ -302,7 +302,7 @@ pub fn build(b: *Build) !void {
             .target = build_options.target,
             .use_llvm = !build_options.no_llvm,
             .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
-            .pic = true,
+            // .pic = true,
             .omit_frame_pointer = false,
             .strip = false,
         });

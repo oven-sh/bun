@@ -1774,6 +1774,7 @@ pub const DNSResolver = struct {
     vm: *JSC.VirtualMachine,
     polls: PollsMap,
     options: c_ares.ChannelOptions = .{},
+    timer_ref: JSC.BunTimer.TimerRef = .{},
 
     ref_count: u32 = 1,
     event_loop_timer: EventLoopTimer = .{
@@ -1889,8 +1890,8 @@ pub const DNSResolver = struct {
     const NameInfoPendingCache = bun.HiveArray(GetNameInfoRequest.PendingCacheKey, 32);
 
     pub fn checkTimeouts(this: *DNSResolver, now: *const timespec, vm: *JSC.VirtualMachine) EventLoopTimer.Arm {
+        this.timer_ref.unref(vm);
         defer {
-            vm.timer.incrementTimerRef(-1);
             this.deref();
         }
 
@@ -1933,25 +1934,27 @@ pub const DNSResolver = struct {
     }
 
     fn addTimer(this: *DNSResolver, now: ?*const timespec) bool {
+        this.timer_ref.ref(this.vm);
+
         if (this.event_loop_timer.state == .ACTIVE) {
             return false;
         }
 
         this.ref();
         this.event_loop_timer.next = (now orelse &timespec.now()).addMs(1000);
-        this.vm.timer.incrementTimerRef(1);
         this.vm.timer.insert(&this.event_loop_timer);
         return true;
     }
 
     fn removeTimer(this: *DNSResolver) void {
+        this.timer_ref.unref(this.vm);
+
         if (this.event_loop_timer.state != .ACTIVE) {
             return;
         }
 
         // Normally checkTimeouts does this, so we have to be sure to do it ourself if we cancel the timer
         defer {
-            this.vm.timer.incrementTimerRef(-1);
             this.deref();
         }
 

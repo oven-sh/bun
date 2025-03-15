@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const p = std.debug.print;
 
 const Build = std.Build;
 const Step = Build.Step;
@@ -285,6 +286,42 @@ pub fn build(b: *Build) !void {
         step.dependOn(addInstallObjectFile(b, bun_obj, "bun-zig", obj_format));
     }
 
+    // zig build test
+    {
+        var step = b.step("test", "Build Bun's unit test suite");
+        var o = build_options;
+        var unit_tests = b.addTest(.{
+            .name = "bun-test",
+            .optimize = build_options.optimize,
+            .root_source_file = b.path("unit_test.zig"),
+            // .root_source_file = b.path("root_test.zig"),
+            .test_runner = .{
+                .path = b.path("root_test.zig"),
+                .mode = .simple,
+            },
+            .target = build_options.target,
+            .use_llvm = !build_options.no_llvm,
+            .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
+            // .pic = true,
+            .omit_frame_pointer = false,
+            .strip = false,
+        });
+        configureObj(b, &o, unit_tests);
+        // unit_tests.export_table = true;
+        unit_tests.linker_allow_shlib_undefined = true;
+        // unit_tests.link_gc_sections = false;
+
+        const bin = unit_tests.getEmittedBin();
+        const obj = Build.LazyPath{ .generated = .{
+            .file = bin.generated.file,
+            .up = 1,
+            .sub_path = "bun-test.o",
+        } };
+        const cpy_obj = b.addInstallFile(obj, "bun-test.o");
+        step.dependOn(&unit_tests.step);
+        step.dependOn(&cpy_obj.step);
+    }
+
     // zig build windows-shim
     {
         var step = b.step("windows-shim", "Build the Windows shim (bun_shim_impl.exe + bun_shim_debug.exe)");
@@ -456,6 +493,11 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         .omit_frame_pointer = false,
         .strip = false, // stripped at the end
     });
+    configureObj(b, opts, obj);
+    return obj;
+}
+
+fn configureObj(b: *Build, opts: *BunBuildOptions, obj: *Compile) void {
     if (opts.enable_asan) {
         if (@hasField(Build.Module, "sanitize_address")) {
             obj.root_module.sanitize_address = true;
@@ -494,8 +536,6 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
 
     const translate_c = getTranslateC(b, opts.target, opts.optimize);
     obj.root_module.addImport("translated-c-headers", translate_c.createModule());
-
-    return obj;
 }
 
 const ObjectFormat = enum {

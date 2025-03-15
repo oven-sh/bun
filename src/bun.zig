@@ -1606,7 +1606,7 @@ pub fn concat(comptime T: type, dest: []T, src: []const []const T) void {
 
 pub const fast_debug_build_cmd = .None;
 pub const fast_debug_build_mode = fast_debug_build_cmd != .None and
-    Environment.isDebug;
+    Environment.isDebug and !Environment.isTest;
 
 pub const MultiArrayList = @import("./multi_array_list.zig").MultiArrayList;
 pub const NullableAllocator = @import("./allocators/NullableAllocator.zig");

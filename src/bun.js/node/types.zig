@@ -2181,9 +2181,9 @@ pub const PathOrBlob = union(enum) {
     }
 };
 
-comptime {
-    std.testing.refAllDecls(Process);
-}
+// comptime {
+//     std.testing.refAllDecls(Process);
+// }
 
 /// StatFS and BigIntStatFS classes from node:fs
 pub fn StatFSType(comptime big: bool) type {

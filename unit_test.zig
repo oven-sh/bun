@@ -19,7 +19,7 @@ test "idk strings or something" {
 
 // tests have panic recovery
 test "uh oh" {
-    @panic("oh no"); 
+    @panic("oh no");
 }
 
 // stack traces to allocations print when a leak is found

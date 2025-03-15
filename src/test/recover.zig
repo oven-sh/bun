@@ -43,7 +43,7 @@ fn ReturnType(func: anytype) type {
 }
 
 pub fn callForTest(
-    test_func: *const fn() anyerror!void,
+    test_func: *const fn () anyerror!void,
 ) anyerror!void {
     const prev_ctx: ?*const Context = top_ctx;
     var ctx: Context = std.mem.zeroes(Context);

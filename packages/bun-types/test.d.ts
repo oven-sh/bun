@@ -149,6 +149,10 @@ declare module "bun:test" {
     methodOrPropertyValue: K,
   ): Mock<T[K] extends (...args: any[]) => any ? T[K] : never>;
 
+  interface FunctionLike {
+    readonly name: string;
+  }
+
   /**
    * Describes a group of related tests.
    *
@@ -165,10 +169,6 @@ declare module "bun:test" {
    * @param label the label for the tests
    * @param fn the function that defines the tests
    */
-
-  interface FunctionLike {
-    readonly name: string;
-  }
   export interface Describe {
     (fn: () => void): void;
 

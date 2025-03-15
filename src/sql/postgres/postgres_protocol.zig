@@ -1330,8 +1330,7 @@ pub const StartupMessage = struct {
         const user = this.user.slice();
         const database = this.database.slice();
         const options = this.options.slice();
-
-        const count: usize = @sizeOf((int4)) + @sizeOf((int4)) + zFieldCount("user", user) + zFieldCount("database", database) + zFieldCount("client_encoding", "UTF8") + zFieldCount("", options) + 1;
+        const count: usize = @sizeOf((int4)) + @sizeOf((int4)) + zFieldCount("user", user) + zFieldCount("database", database) + zFieldCount("client_encoding", "UTF8") + options.len + 1;
 
         const header = toBytes(Int32(@as(u32, @truncate(count))));
         try writer.write(&header);
@@ -1349,13 +1348,11 @@ pub const StartupMessage = struct {
         } else {
             try writer.string(database);
         }
-
         try writer.string("client_encoding");
         try writer.string("UTF8");
-
-        if (options.len > 0)
-            try writer.string(options);
-
+        if (options.len > 0) {
+            try writer.write(options);
+        }
         try writer.write(&[_]u8{0});
     }
 

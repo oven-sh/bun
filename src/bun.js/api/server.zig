@@ -8706,7 +8706,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             const result: JSValue = onNodeHTTPRequestFn(
-                @bitCast(@intFromPtr(AnyServer.from(this).ptr.ptr())),
+                @intFromPtr(AnyServer.from(this).ptr.ptr()),
                 globalThis,
                 thisObject,
                 this.config.onNodeHTTPRequest,

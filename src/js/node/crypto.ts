@@ -43,6 +43,7 @@ const {
   DiffieHellman: _DiffieHellman,
   DiffieHellmanGroup: _DiffieHellmanGroup,
   checkPrimeSync,
+  generatePrimeSync,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
@@ -2625,3 +2626,4 @@ crypto_exports.createECDH = function createECDH(curve) {
 };
 
 crypto_exports.checkPrimeSync = checkPrimeSync;
+crypto_exports.generatePrimeSync = generatePrimeSync;

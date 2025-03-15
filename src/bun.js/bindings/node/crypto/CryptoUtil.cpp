@@ -92,6 +92,36 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
 
 }
 
+JSValue unsignedBigIntToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, JSValue bigIntValue, ASCIILiteral name)
+{
+    ASSERT(bigIntValue.isBigInt());
+    auto& vm = lexicalGlobalObject->vm();
+
+    JSBigInt* bigInt = bigIntValue.asHeapBigInt();
+
+    if (bigInt->sign()) {
+        ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, name, ">= 0"_s, bigIntValue);
+        return {};
+    }
+
+    WTF::String hex = bigInt->toString(lexicalGlobalObject, 16);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSString* paddedHex = hex.length() % 2
+        ? jsString(vm, tryMakeString('0', hex))
+        : jsString(vm, hex);
+    if (UNLIKELY(!paddedHex)) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+
+    GCOwnedDataScope<WTF::StringView> paddedView = paddedHex->view(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(lexicalGlobalObject, paddedView, BufferEncodingType::hex));
+    RELEASE_AND_RETURN(scope, buffer);
+}
+
 WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
 {
     BufferEncodingType res = BufferEncodingType::buffer;

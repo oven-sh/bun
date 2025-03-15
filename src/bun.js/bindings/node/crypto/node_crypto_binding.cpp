@@ -57,8 +57,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalO
 
     JSValue candidateValue = callFrame->argument(0);
 
-    // TODO(dylan-conway): handle bigint
     if (candidateValue.isBigInt()) {
+        candidateValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, candidateValue, "candidate"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     auto* candidateView = getArrayBufferOrView(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
@@ -142,12 +143,86 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimePrime, (JSC::JSGlobalObject * lexicalGlo
         }
     }
 
+    ncrypto::ClearErrorOnReturn clear;
+
+    ncrypto::BignumPointer add;
     if (!addValue.isUndefined()) {
         if (addValue.isBigInt()) {
-            // TODO(dylan-conway): handle bigint
-        } else {
+            addValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, addValue, "options.add"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        auto* addView = jsDynamicCast<JSC::JSArrayBufferView*>(addValue);
+        if (!addView) {
+            return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.add"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, addValue);
+        }
+
+        add.reset(reinterpret_cast<const uint8_t*>(addView->vector()), addView->byteLength());
+        if (!add) {
+            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
         }
     }
+
+    ncrypto::BignumPointer rem;
+    if (!remValue.isUndefined()) {
+        if (remValue.isBigInt()) {
+            remValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, remValue, "options.rem"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        auto* remView = jsDynamicCast<JSC::JSArrayBufferView*>(remValue);
+        if (!remView) {
+            return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.rem"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, remValue);
+        }
+
+        rem.reset(reinterpret_cast<const uint8_t*>(remView->vector()), remView->byteLength());
+        if (!rem) {
+            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
+        }
+    }
+
+    if (add) {
+        if (UNLIKELY(ncrypto::BignumPointer::GetBitCount(add.get()) > size)) {
+            throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.add"_s);
+            return JSValue::encode({});
+        }
+
+        if (UNLIKELY(rem && add <= rem)) {
+            throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.rem"_s);
+            return JSValue::encode({});
+        }
+    }
+
+    ncrypto::BignumPointer prime = ncrypto::BignumPointer::NewSecure();
+    if (!prime) {
+        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
+    }
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, [globalObject](int32_t a, int32_t b) -> bool {
+        return !globalObject->isShuttingDown();
+    });
+
+    if (bigint) {
+        WTF::Vector<uint8_t> primeBuf;
+        if (!primeBuf.tryGrow(prime.byteLength())) {
+            throwOutOfMemoryError(lexicalGlobalObject, scope, "could not generate prime"_s);
+            return JSValue::encode({});
+        }
+
+        ncrypto::BignumPointer::EncodePaddedInto(prime.get(), primeBuf.data(), primeBuf.size());
+
+        return JSValue::encode(JSBigInt::parseInt(lexicalGlobalObject, vm, primeBuf.span(), 16, JSBigInt::ErrorParseMode::ThrowExceptions, JSBigInt::ParseIntSign::Unsigned));
+    }
+
+    JSC::JSUint8Array* result = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), prime.byteLength());
+    if (!result) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope, "could not generate prime"_s);
+        return JSValue::encode({});
+    }
+
+    ncrypto::BignumPointer::EncodePaddedInto(prime.get(), reinterpret_cast<uint8_t*>(result->vector()), result->byteLength());
+
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -514,6 +589,8 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "DiffieHellmanGroup"_s)),
         globalObject->m_JSDiffieHellmanGroupClassStructure.constructor(globalObject));
 
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generatePrimeSync"_s)),
+        JSFunction::create(vm, globalObject, 2, "generatePrimeSync"_s, jsGeneratePrimePrime, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrimeSync"_s)),
         JSFunction::create(vm, globalObject, 2, "checkPrimeSync"_s, jsCheckPrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
 

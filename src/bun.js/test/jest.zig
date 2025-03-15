@@ -1797,10 +1797,6 @@ inline fn createScope(
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
-    if (parent.locked) {
-        return globalThis.throwPretty("{s} cannot be called within a test. Use 'describe' to nest tests.", .{signature});
-    }
-
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {
@@ -1815,6 +1811,10 @@ inline fn createScope(
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
     if (is_test) {
+        if (parent.locked) {
+            return globalThis.throwPretty("{s} cannot be called within a test. Use 'describe' to nest tests.", .{signature});
+        }
+
         if (!is_skip) {
             if (Jest.runner.?.filter_regex) |regex| {
                 var buffer: bun.MutableString = Jest.runner.?.filter_buffer;

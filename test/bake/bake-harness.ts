@@ -30,6 +30,15 @@ const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
     }
   : () => {};
 
+/**
+ * Can be set in fast development environments to improve iteration time.
+ * In CI/Windows it appears that sometimes these tests dont wait enough
+ * for things to happen, so the extra delay reduces flakiness.
+ * 
+ * Needs much more investigation.
+ */
+const fastBatches = !!process.env.BUN_DEV_SERVER_FAST_BATCHES;
+
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {
   fileSystemRouterTypes: [
@@ -110,6 +119,8 @@ export interface DevServerTest {
    * Avoid if possible, this is to reproduce specific bugs.
    */
   mainDir?: string;
+
+  skip?: ('win32'|'darwin'|'linux'|'ci')[],
 }
 
 let interactive = false;
@@ -282,7 +293,7 @@ export class Dev extends EventEmitter {
       [Symbol.asyncDispose]: async() => {
         if (wantsHmrEvent && interactive) {
           await seenFiles.promise;
-          if (isCI) {
+          if (!fastBatches) {
             // Wait an extra delay to avoid double-triggering events.
             await Bun.sleep(450);
           }
@@ -413,7 +424,8 @@ export class Dev extends EventEmitter {
         for (const dispose of disposes) {
           dispose();
         }
-        resolve();
+        if (fastBatches) resolve();
+        else setTimeout(resolve, 250);
       }
       const disposes = new Set<() => void>();
       for (const client of dev.connectedClients) {
@@ -430,9 +442,10 @@ export class Dev extends EventEmitter {
           client.off("received-hmr-event", socketEventHandler);
         });
       }
-      function onEvent(kind: WatchSynchronization) {
+      async function onEvent(kind: WatchSynchronization) {
         assert(kind !== WatchSynchronization.Started, "WatchSynchronization.Started should not be emitted");
         if (kind === WatchSynchronization.AnyBuildFinished) {
+          seenMainEvent = true;
           cleanupAndResolve();
         } else if (kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets) {
           verboseSynchronization("Need to wait for (" + clientWaits + "/" + dev.connectedClients.size + ") clients");
@@ -442,8 +455,10 @@ export class Dev extends EventEmitter {
           }
         } else if (kind === WatchSynchronization.ResultDidNotBundle) {
           if (wantsHmrEvent) {
-            console.warn("Received ResultDidNotBundle, but we wanted a reload? Consider using expectNoWebSocketActivity");
-          } 
+            await Bun.sleep(500);
+            if (seenMainEvent) return;
+            console.warn("\x1b[33mWARN: Dev Server did not pick up any changed files. Consider wrapping this call in expectNoWebSocketActivity\x1b[35m");
+          }
           cleanupAndResolve();
         }
       };
@@ -1415,7 +1430,7 @@ class OutputLineStream extends EventEmitter {
 
 export function indexHtmlScript(htmlFiles: string[]) {
   return [
-    ...htmlFiles.map((file, i) => `import html${i} from "./${file}";`),
+    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, '/'))};`),
     "export default {",
     "  static: {",
     ...(htmlFiles.length === 1
@@ -1437,6 +1452,11 @@ export function indexHtmlScript(htmlFiles: string[]) {
     "};",
   ].join("\n");
 }
+
+const skipTargets = [
+  process.platform,
+  isCI ? 'ci' : null,
+].filter(Boolean);
 
 function testImpl<T extends DevServerTest>(
   description: string,
@@ -1649,6 +1669,10 @@ function testImpl<T extends DevServerTest>(
         : "PROD"
   }:${basename}-${count}: ${description}`;
   try {
+    if (options.skip && options.skip.some(x => skipTargets.includes(x))) {
+      jest.test.todo(name, run);
+      return options;
+    }
     jest.test(
       name,
       run,

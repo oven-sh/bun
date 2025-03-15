@@ -4719,20 +4719,20 @@ pub fn IncrementalGraph(side: bake.Side) type {
                 path_count += 1;
                 try source_map_strings.appendSlice(",");
                 const path = if (Environment.isWindows)
-                    paths[entry.get()]
+                    bun.path.pathToPosixBuf(u8, paths[entry.get()], buf)
                 else
-                    bun.path.pathToPosixBuf(u8, paths[entry.get()], &buf);
+                    paths[entry.get()];
 
                 if (std.fs.path.isAbsolute(path)) {
-                    const is_windows_drive_path = Environment.isWindows and bun.path.isSepAny(path[0]);
+                    const is_windows_drive_path = Environment.isWindows and path[0] != '/';
                     try source_map_strings.appendSlice(if (is_windows_drive_path)
-                        "file:///"
+                        "\"file:///"
                     else
                         "\"file://");
                     if (Environment.isWindows and !is_windows_drive_path) {
                         // UNC namespace -> file://server/share/path.ext
                         bun.strings.percentEncodeWrite(
-                            if (path.len > 2 and bun.path.isSepAny(path[0]) and bun.path.isSepAny(path[1]))
+                            if (path.len > 2 and path[0] == '/' and path[1] == '/')
                                 path[2..]
                             else
                                 path, // invalid but must not crash

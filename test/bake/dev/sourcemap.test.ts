@@ -96,6 +96,7 @@ async function extractSourceMap(dev: Dev, scriptSource: string) {
   if (!sourceMap.startsWith('{')) {
     throw new Error("Source map is not valid JSON: " + sourceMap);
   }
+  console.log(sourceMap);
   return new Promise<SourceMap>((resolve, reject) => {
     try {
       SourceMapConsumer.with(sourceMap, null, async (consumer: any) => {

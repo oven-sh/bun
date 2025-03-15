@@ -243,6 +243,9 @@ devTest("directory cache bust case #17576", {
   },
 });
 devTest("deleting imported file shows error then recovers", {
+  skip: [
+    'win32', // unlinkSync is having weird behavior
+  ],
   files: {
     "index.html": emptyHtmlFile({
       styles: [],

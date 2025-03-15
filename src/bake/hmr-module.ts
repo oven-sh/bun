@@ -287,7 +287,7 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       mod.cjs = {
         id,
         exports: {},
-        require: this.require.bind(this),
+        require: mod.require.bind(this),
       };
       mod.exports = null;
     }
@@ -387,7 +387,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
       mod.cjs = {
         id,
         exports: {},
-        require: this.require.bind(this),
+        require: mod.require.bind(this),
       };
       mod.exports = null;
     }
@@ -571,6 +571,7 @@ type HotEventHandler = (data: any) => void;
 // If updating this, make sure the `devserver.d.ts` types are
 // kept in sync.
 type HMREvent = 
+  | "bun:ready"
   | "bun:beforeUpdate"
   | "bun:afterUpdate"
   | "bun:beforeFullReload"

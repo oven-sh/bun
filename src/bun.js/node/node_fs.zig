@@ -5681,69 +5681,8 @@ pub const NodeFS = struct {
 
         const dest = args.path.sliceZ(&this.sync_error_buf);
 
-        std.posix.unlinkZ(dest) catch |err1| {
-            bun.handleErrorReturnTrace(err1, @errorReturnTrace());
-            // empircally, it seems to return AccessDenied when the
-            // file is actually a directory on macOS.
-            if (args.recursive and
-                (err1 == error.IsDir or err1 == error.NotDir or err1 == error.AccessDenied))
-            {
-                std.posix.rmdirZ(dest) catch |err2| {
-                    bun.handleErrorReturnTrace(err2, @errorReturnTrace());
-                    const code: E = switch (err2) {
-                        error.AccessDenied => .ACCES,
-                        error.SymLinkLoop => .LOOP,
-                        error.NameTooLong => .NAMETOOLONG,
-                        error.SystemResources => .NOMEM,
-                        error.ReadOnlyFileSystem => .ROFS,
-                        error.FileBusy => .BUSY,
-                        error.FileNotFound => brk: {
-                            if (args.force) {
-                                return Maybe(Return.Rm).success;
-                            }
-                            break :brk .NOENT;
-                        },
-                        error.InvalidUtf8 => .INVAL,
-                        error.InvalidWtf8 => .INVAL,
-                        error.BadPathName => .INVAL,
-                        else => .FAULT,
-                    };
-
-                    return .{
-                        .err = bun.sys.Error.fromCode(code, .rm).withPath(args.path.slice()),
-                    };
-                };
-
-                return Maybe(Return.Rm).success;
-            }
-
-            {
-                const code: E = switch (err1) {
-                    error.AccessDenied => .ACCES,
-                    error.SymLinkLoop => .LOOP,
-                    error.NameTooLong => .NAMETOOLONG,
-                    error.SystemResources => .NOMEM,
-                    error.ReadOnlyFileSystem => .ROFS,
-                    error.FileBusy => .BUSY,
-                    error.InvalidUtf8 => .INVAL,
-                    error.InvalidWtf8 => .INVAL,
-                    error.BadPathName => .INVAL,
-                    error.FileNotFound => brk: {
-                        if (args.force) {
-                            return Maybe(Return.Rm).success;
-                        }
-                        break :brk .NOENT;
-                    },
-                    else => .FAULT,
-                };
-
-                return .{
-                    .err = bun.sys.Error.fromCode(code, .rm).withPath(args.path.slice()),
-                };
-            }
-        };
-
-        return Maybe(Return.Rm).success;
+        bun.assert(!args.recursive);
+        return bun.sys.unlink(dest);
     }
 
     pub fn statfs(this: *NodeFS, args: Arguments.StatFS, _: Flavor) Maybe(Return.StatFS) {

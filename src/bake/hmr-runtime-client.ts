@@ -221,6 +221,8 @@ try {
   }
 
   await loadModuleAsync(config.main, false, null);
+
+  emitEvent("bun:ready", null);
 } catch (e) {
   console.error(e);
   onRuntimeError(e, true, false);

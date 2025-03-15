@@ -50,12 +50,6 @@ function reset() {
 
 let allowWebSocketMessages = true;
 
-function onHMRReady() {
-  process.nextTick(() => {
-    process.send({ type: "received-hmr-event", args: [] });
-  });
-}
-
 function createWindow(windowUrl) {
   window = new Window({
     url: windowUrl,
@@ -63,9 +57,18 @@ function createWindow(windowUrl) {
     height: 768,
   });
 
+  let hasReadyEventListener = false;
   window["bun do not use this outside of internal testing or else i'll cry"] = ({ onEvent }) => {
     onEvent("bun:afterUpdate", () => {
-      process.send({ type: "received-hmr-event", args: [] });
+      setTimeout(() => {
+        process.send({ type: "received-hmr-event", args: [] });
+      }, 50)
+    });
+    hasReadyEventListener = true;
+    onEvent("bun:ready", () => {
+      setTimeout(() => {
+        process.send({ type: "received-hmr-event", args: [] });
+      }, 50)
     });
   };
 
@@ -131,7 +134,11 @@ function createWindow(windowUrl) {
     info: (...args) => {
       if (args[0]?.startsWith("[Bun] Hot-module-reloading socket connected")) {
         // Wait for all CSS assets to be fully loaded before emitting the event
-        onHMRReady();
+        if (!hasReadyEventListener) {
+          setTimeout(() => {
+            process.send({ type: "received-hmr-event", args: [] });
+          }, 50)
+        };
       }
       if (args[0]?.startsWith("[WS] receive message")) return;
       if (args[0]?.startsWith("Updated modules:")) return;

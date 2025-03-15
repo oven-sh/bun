@@ -37,7 +37,6 @@ comptime {
 
 const zero_sha = "0000000000000000000000000000000000000000";
 
-
 const BunBuildOptions = struct {
     target: ResolvedTarget,
     optimize: OptimizeMode,
@@ -289,99 +288,38 @@ pub fn build(b: *Build) !void {
 
     // zig build test
     {
-        const wants_obj = false;
         var step = b.step("test", "Build Bun's unit test suite");
         var o = build_options;
-        if (comptime wants_obj) {
-            var unit_tests = b.addObject(.{
-                .name = "bun-test",
-                .root_source_file = b.path("root_test.zig"),
-                .target = build_options.target,
-                .optimize = build_options.optimize,
-                .use_llvm = !build_options.no_llvm,
-                .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
-                .pic = true,
-                .omit_frame_pointer = false,
-                .strip = false,
-            });
-            configureObj(b, &o, unit_tests);
-            unit_tests.test_runner = .{
+        var unit_tests = b.addTest(.{
+            .name = "bun-test",
+            .optimize = build_options.optimize,
+            .root_source_file = b.path("unit_test.zig"),
+            // .root_source_file = b.path("root_test.zig"),
+            .test_runner = .{
                 .path = b.path("root_test.zig"),
                 .mode = .simple,
-            };
-            unit_tests.linker_allow_shlib_undefined = true;
-            unit_tests.import_symbols = true;
+            },
+            .target = build_options.target,
+            .use_llvm = !build_options.no_llvm,
+            .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
+            .pic = true,
+            .omit_frame_pointer = false,
+            .strip = false,
+        });
+        configureObj(b, &o, unit_tests);
+        // unit_tests.export_table = true;
+        unit_tests.linker_allow_shlib_undefined = true;
+        // unit_tests.link_gc_sections = false;
 
-            // const FakeStep = struct {
-            //     fn makeItGoAway(wrapped_step: *Step, options: Step.MakeOptions) anyerror!void {
-            //         const compile: *Compile = @fieldParentPtr("step", wrapped_step);
-            //         compile.step.make(wrapped_step, options) catch {};
-            //         return;
-            //     }
-            // };
-
-            // var fake_step = Step.init(.{
-            //     .name = "expect-errors",
-            //     .makeFn = &FakeStep.makeItGoAway,
-            //     .id = unit_tests.step.id,
-            // });
-            // foo
-            // unit_tests.kind = .@"test";
-            const bin = unit_tests.getEmittedBin();
-            std.debug.assert(unit_tests.generated_bin != null);
-            const install = b.addInstallFile(switch (obj_format) {
-                .obj => bin,
-                .bc => unit_tests.getEmittedLlvmBc(),
-            }, "bun-test.o");
-
-            step.dependOn(&unit_tests.step);
-            step.dependOn(&install.step);
-        } else {
-            var unit_tests = b.addTest(.{
-                .name = "bun-test",
-                .optimize = build_options.optimize,
-                .root_source_file = b.path("unit_test.zig"),
-                // .root_source_file = b.path("root_test.zig"),
-                .test_runner = .{
-                    .path = b.path("root_test.zig"),
-                    .mode = .simple,
-                },
-                .target = build_options.target,
-                .use_llvm = !build_options.no_llvm,
-                .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
-                .pic = true,
-                .omit_frame_pointer = false,
-                .strip = false,
-            });
-            configureObj(b, &o, unit_tests);
-            // unit_tests.linkage
-            // unit_tests.kind = .obj;
-            unit_tests.export_table = true;
-            // unit_tests.out_filename = std.zig.binNameAlloc(b.allocator, .{
-            //     .root_name = "bun-test",
-            //     .target = build_options.target.result,
-            //     .output_mode = .Obj,
-            //     .link_mode = .static,
-            //     // .version = options.version,
-            // }) catch @panic("OOM"); // b.installArtifact(unit_tests);
-
-            const bin = unit_tests.getEmittedBin();
-            // std.debug.assert(unit_tests.generated_bin != null);
-            // const install = b.addInstallFile(switch (obj_format) {
-            //     .obj => bin,
-            //     .bc => unit_tests.getEmittedLlvmBc(),
-            // }, "bun-test.o");
-            // const test_exe = b.addInstallArtifact(unit_tests, Step.InstallArtifact.Options{});
-
-            const cpy_obj = b.addObjCopy(bin, .{});
-
-            step.dependOn(&unit_tests.step);
-            step.dependOn(&cpy_obj.step);
-            // step.dependOn(&install.step);
-        }
-
-        // step.dependOn(addInstallObjectFile(b, unit_tests, "bun-test", obj_format));
-        // _ = &step;
+        const bin = unit_tests.getEmittedBin();
+        const obj = Build.LazyPath{ .generated = .{
+            .file = bin.generated.file,
+            .up = 1,
+            .sub_path = "bun-test.o",
+        } };
+        const cpy_obj = b.addInstallFile(obj, "bun-test.o");
+        step.dependOn(&unit_tests.step);
+        step.dependOn(&cpy_obj.step);
     }
 
     // zig build windows-shim

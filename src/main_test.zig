@@ -109,3 +109,12 @@ pub const overrides = struct {
 pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
     Output.panic("{s}", .{msg[0..len]});
 }
+
+comptime {
+    _ = bun.bake;
+    std.testing.refAllDecls(bun.bake);
+    std.testing.refAllDecls(@import("bun.js/node/buffer.zig").BufferVectorized);
+    std.testing.refAllDecls(bun.bun_js);
+    std.testing.refAllDeclsRecursive(@import("cli/upgrade_command.zig"));
+    std.testing.refAllDeclsRecursive(@import("cli/test_command.zig"));
+}

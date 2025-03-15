@@ -116,50 +116,9 @@ pub const Version = struct {
     comptime {
         _ = Bun__githubURL;
     }
-};
-
-pub const UpgradeCheckerThread = struct {
-    pub fn spawn(env_loader: *DotEnv.Loader) void {
-        if (env_loader.map.get("BUN_DISABLE_UPGRADE_CHECK") != null or
-            env_loader.map.get("CI") != null or
-            strings.eqlComptime(env_loader.get("BUN_CANARY") orelse "0", "1"))
-            return;
-        var update_checker_thread = std.Thread.spawn(.{}, run, .{env_loader}) catch return;
-        update_checker_thread.detach();
-    }
-
-    fn _run(env_loader: *DotEnv.Loader) anyerror!void {
-        var rand = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
-        const delay = rand.random().intRangeAtMost(u64, 100, 10000);
-        std.time.sleep(std.time.ns_per_ms * delay);
-
-        Output.Source.configureThread();
-        HTTP.HTTPThread.init(&.{});
-
-        defer {
-            js_ast.Expr.Data.Store.deinit();
-            js_ast.Stmt.Data.Store.deinit();
-        }
-
-        var version = (try UpgradeCommand.getLatestVersion(default_allocator, env_loader, null, null, false, true)) orelse return;
-
-        if (!version.isCurrent()) {
-            if (version.name()) |name| {
-                Output.prettyErrorln("\n<r><d>Bun v{s} is out. Run <b><cyan>bun upgrade<r> to upgrade.\n", .{name});
-                Output.flush();
-            }
-        }
-
-        version.buf.deinit();
-    }
-
-    fn run(env_loader: *DotEnv.Loader) void {
-        _run(env_loader) catch |err| {
-            if (Environment.isDebug) {
-                Output.prettyError("\n[UpgradeChecker] ERROR: {s}\n", .{@errorName(err)});
-                Output.flush();
-            }
-        };
+    test {
+        std.mem.doNotOptimizeAway(Bun__githubURL);
+        _ = Bun__githubURL;
     }
 };
 

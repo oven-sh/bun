@@ -551,7 +551,7 @@ pub const FSEventsLoop = struct {
         this.sem.deinit();
 
         if (this.watcher_count > 0) {
-            while (this.watchers.popOrNull()) |watcher| {
+            while (this.watchers.pop()) |watcher| {
                 if (watcher) |w| {
                     // unlink watcher
                     w.loop = null;

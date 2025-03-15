@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 
 pub const BuildTarget = enum { native, wasm, wasi };
 pub const build_target: BuildTarget = brk: {
-    if (@import("builtin").target.isWasm()) {
+    if (@import("builtin").cpu.arch.isWasm()) {
         break :brk BuildTarget.wasm;
     } else {
         break :brk BuildTarget.native;

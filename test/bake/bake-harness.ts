@@ -185,7 +185,7 @@ export class Dev extends EventEmitter {
   connectedClients: Set<Client> = new Set();
   options: { files: Record<string, string> };
   nodeEnv: "development" | "production";
-  batchingChanges = false;
+  batchingChanges: { write?: () => void } | null = null;
 
   socket?: WebSocket;
 
@@ -264,21 +264,28 @@ export class Dev extends EventEmitter {
 
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
     if (this.batchingChanges) return null;
-    this.batchingChanges = true;
+    this.batchingChanges = {};
 
     let dev = this;
     const initWait = this.#waitForSyncEvent(WatchSynchronization.Started);
     this.socket!.send("H");
     await initWait;
 
-    const seenFiles = Promise.withResolvers<void>();
+    let hasSeenFiles = true;
+    let seenFiles;
     function onSeenFiles(ev: WatchSynchronization) {
       if (ev === WatchSynchronization.SeenFiles) {
+        hasSeenFiles = true;
         seenFiles.resolve();
         dev.off("watch_synchronization", onSeenFiles);
       }
     }
-    this.on("watch_synchronization", onSeenFiles);
+    function resetSeenFilesWithResolvers() {
+      if (!hasSeenFiles) return;
+      seenFiles = Promise.withResolvers<void>();
+      dev.on("watch_synchronization", onSeenFiles);
+    }
+    resetSeenFilesWithResolvers();
 
     let wantsHmrEvent = true;
     for (const client of dev.connectedClients) {
@@ -289,7 +296,8 @@ export class Dev extends EventEmitter {
     }
 
     const wait = this.waitForHotReload(wantsHmrEvent);
-    return {
+    const b = {
+      write: resetSeenFilesWithResolvers,
       [Symbol.asyncDispose]: async() => {
         if (wantsHmrEvent && interactive) {
           await seenFiles.promise;
@@ -318,9 +326,11 @@ export class Dev extends EventEmitter {
             await client.expectErrorOverlay(errors, options.snapshot);
           }
         }
-        this.batchingChanges = false;
+        this.batchingChanges = null;
       },
     };
+    this.batchingChanges = b;
+    return b;
   }
 
   write(file: string, contents: string, options: { errors?: null | ErrorSpec[]; dedent?: boolean } = {}) {

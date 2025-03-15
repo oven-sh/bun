@@ -293,6 +293,7 @@ devTest("import.meta.hot.accept multiple modules", {
 
     // Test updating both files
     {
+      console.log('start batch');
       await using batch = await dev.batchChanges();
       await dev.write(
         "counter.ts",

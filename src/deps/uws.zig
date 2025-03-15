@@ -3398,7 +3398,8 @@ pub const AnyResponse = union(enum) {
     }
 };
 pub fn NewApp(comptime ssl: bool) type {
-    return opaque {
+    // TODO: change to `opaque` when https://github.com/ziglang/zig/issues/22869 is fixed
+    return struct {
         pub const is_ssl = ssl;
         const ssl_flag: i32 = @intFromBool(ssl);
         const ThisApp = @This();
@@ -3454,7 +3455,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 return us_socket_local_port(ssl_flag, @as(*uws.Socket, @ptrCast(this)));
             }
 
-            pub fn socket(this: *@This()) NewSocketHandler(ssl) {
+            pub fn socket(this: *ThisApp.ListenSocket) NewSocketHandler(ssl) {
                 return NewSocketHandler(ssl).from(@ptrCast(this));
             }
         };
@@ -4572,75 +4573,73 @@ pub const AnySocket = union(enum) {
 
 pub const udp = struct {
     pub const Socket = opaque {
-        const This = @This();
-
-        pub fn create(loop: *Loop, data_cb: *const fn (*This, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*This) callconv(.C) void, close_cb: *const fn (*This) callconv(.C) void, host: [*c]const u8, port: c_ushort, options: c_int, err: ?*c_int, user_data: ?*anyopaque) ?*This {
+        pub fn create(loop: *Loop, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, close_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, options: c_int, err: ?*c_int, user_data: ?*anyopaque) ?*udp.Socket {
             return us_create_udp_socket(loop, data_cb, drain_cb, close_cb, host, port, options, err, user_data);
         }
 
-        pub fn send(this: *This, payloads: []const [*]const u8, lengths: []const usize, addresses: []const ?*const anyopaque) c_int {
+        pub fn send(this: *udp.Socket, payloads: []const [*]const u8, lengths: []const usize, addresses: []const ?*const anyopaque) c_int {
             bun.assert(payloads.len == lengths.len and payloads.len == addresses.len);
             return us_udp_socket_send(this, payloads.ptr, lengths.ptr, addresses.ptr, @intCast(payloads.len));
         }
 
-        pub fn user(this: *This) ?*anyopaque {
+        pub fn user(this: *udp.Socket) ?*anyopaque {
             return us_udp_socket_user(this);
         }
 
-        pub fn bind(this: *This, hostname: [*c]const u8, port: c_uint) c_int {
+        pub fn bind(this: *udp.Socket, hostname: [*c]const u8, port: c_uint) c_int {
             return us_udp_socket_bind(this, hostname, port);
         }
 
         /// Get the bound port in host byte order
-        pub fn boundPort(this: *This) c_int {
+        pub fn boundPort(this: *udp.Socket) c_int {
             return us_udp_socket_bound_port(this);
         }
 
-        pub fn boundIp(this: *This, buf: [*c]u8, length: *i32) void {
+        pub fn boundIp(this: *udp.Socket, buf: [*c]u8, length: *i32) void {
             return us_udp_socket_bound_ip(this, buf, length);
         }
 
-        pub fn remoteIp(this: *This, buf: [*c]u8, length: *i32) void {
+        pub fn remoteIp(this: *udp.Socket, buf: [*c]u8, length: *i32) void {
             return us_udp_socket_remote_ip(this, buf, length);
         }
 
-        pub fn close(this: *This) void {
+        pub fn close(this: *udp.Socket) void {
             return us_udp_socket_close(this);
         }
 
-        pub fn connect(this: *This, hostname: [*c]const u8, port: c_uint) c_int {
+        pub fn connect(this: *udp.Socket, hostname: [*c]const u8, port: c_uint) c_int {
             return us_udp_socket_connect(this, hostname, port);
         }
 
-        pub fn disconnect(this: *This) c_int {
+        pub fn disconnect(this: *udp.Socket) c_int {
             return us_udp_socket_disconnect(this);
         }
 
-        pub fn setBroadcast(this: *This, enabled: bool) c_int {
+        pub fn setBroadcast(this: *udp.Socket, enabled: bool) c_int {
             return us_udp_socket_set_broadcast(this, @intCast(@intFromBool(enabled)));
         }
 
-        pub fn setUnicastTTL(this: *This, ttl: i32) c_int {
+        pub fn setUnicastTTL(this: *udp.Socket, ttl: i32) c_int {
             return us_udp_socket_set_ttl_unicast(this, @intCast(ttl));
         }
 
-        pub fn setMulticastTTL(this: *This, ttl: i32) c_int {
+        pub fn setMulticastTTL(this: *udp.Socket, ttl: i32) c_int {
             return us_udp_socket_set_ttl_multicast(this, @intCast(ttl));
         }
 
-        pub fn setMulticastLoopback(this: *This, enabled: bool) c_int {
+        pub fn setMulticastLoopback(this: *udp.Socket, enabled: bool) c_int {
             return us_udp_socket_set_multicast_loopback(this, @intCast(@intFromBool(enabled)));
         }
 
-        pub fn setMulticastInterface(this: *This, iface: *const std.posix.sockaddr.storage) c_int {
+        pub fn setMulticastInterface(this: *udp.Socket, iface: *const std.posix.sockaddr.storage) c_int {
             return us_udp_socket_set_multicast_interface(this, iface);
         }
 
-        pub fn setMembership(this: *This, address: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
+        pub fn setMembership(this: *udp.Socket, address: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
             return us_udp_socket_set_membership(this, address, iface, @intFromBool(drop));
         }
 
-        pub fn setSourceSpecificMembership(this: *This, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
+        pub fn setSourceSpecificMembership(this: *udp.Socket, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
             return us_udp_socket_set_source_specific_membership(this, source, group, iface, @intFromBool(drop));
         }
     };

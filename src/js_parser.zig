@@ -3029,8 +3029,8 @@ pub const Parser = struct {
                 // - require("foo")
                 import_record.is_unused = import_record.is_unused or
                     (import_record.kind == .stmt and
-                    !import_record.was_originally_bare_import and
-                    !import_record.calls_runtime_re_export_fn);
+                        !import_record.was_originally_bare_import and
+                        !import_record.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
@@ -5224,7 +5224,7 @@ fn NewParser_(
                     // we must also unwrap requires into imports.
                     const should_unwrap_require = p.options.features.unwrap_commonjs_to_esm and
                         (p.unwrap_all_requires or
-                        if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
+                            if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
                         // We cannot unwrap a require wrapped in a try/catch because
                         // import statements cannot be wrapped in a try/catch and
                         // require cannot return a promise.
@@ -6911,14 +6911,14 @@ fn NewParser_(
                                             var notes = allocator.alloc(logger.Data, 1) catch unreachable;
                                             notes[0] =
                                                 logger.rangeData(
-                                                p.source,
-                                                r,
-                                                std.fmt.allocPrint(
-                                                    allocator,
-                                                    "{s} was originally declared here",
-                                                    .{name},
-                                                ) catch unreachable,
-                                            );
+                                                    p.source,
+                                                    r,
+                                                    std.fmt.allocPrint(
+                                                        allocator,
+                                                        "{s} was originally declared here",
+                                                        .{name},
+                                                    ) catch unreachable,
+                                                );
 
                                             p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{name}) catch unreachable;
                                         } else if (_scope == scope.parent) {
@@ -7765,7 +7765,7 @@ fn NewParser_(
                 p.panic("Internal error", .{});
             }
 
-            _ = children.popOrNull();
+            _ = children.pop();
         }
 
         fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
@@ -12166,11 +12166,11 @@ fn NewParser_(
             }
 
             if (!p.lexer.has_newline_before and (
-            // Import Assertions are deprecated.
-            // Import Attributes are the new way to do this.
-            // But some code may still use "assert"
-            // We support both and treat them identically.
-            // Once Prettier & TypeScript support import attributes, we will add runtime support
+                // Import Assertions are deprecated.
+                // Import Attributes are the new way to do this.
+                // But some code may still use "assert"
+                // We support both and treat them identically.
+                // Once Prettier & TypeScript support import attributes, we will add runtime support
                 p.lexer.isContextualKeyword("assert") or p.lexer.token == .t_with))
             {
                 try p.lexer.next();
@@ -13357,7 +13357,7 @@ fn NewParser_(
                         if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and
                             strings.eqlComptime(name, "await")) or
                             (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and
-                            strings.eqlComptime(name, "yield")))
+                                strings.eqlComptime(name, "yield")))
                         {
                             if (strings.eqlComptime(name, "await")) {
                                 p.log.addRangeError(p.source, name_range, "Cannot use \"await\" here") catch unreachable;
@@ -16596,7 +16596,7 @@ fn NewParser_(
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation.
                     while (p.binary_expression_stack.items.len > stack_bottom) {
-                        v = p.binary_expression_stack.pop();
+                        v = p.binary_expression_stack.pop().?;
                         v.e.left = current;
                         current = v.visitRightAndFinish(p);
                     }
@@ -17131,10 +17131,11 @@ fn NewParser_(
                                 in.assign_target == .none and
                                 key.data.isStringValue() and
                                 strings.eqlComptime(
-                                // __proto__ is utf8, assume it lives in refs
-                                key.data.e_string.slice(p.allocator),
-                                "__proto__",
-                            )) {
+                                    // __proto__ is utf8, assume it lives in refs
+                                    key.data.e_string.slice(p.allocator),
+                                    "__proto__",
+                                ))
+                            {
                                 if (has_proto) {
                                     const r = js_lexer.rangeOfIdentifier(p.source, key.loc);
                                     p.log.addRangeError(p.source, r, "Cannot specify the \"__proto__\" property more than once per object") catch unreachable;
@@ -17250,9 +17251,10 @@ fn NewParser_(
                             if (e_.optional_chain == null and
                                 target_was_identifier_before_visit and
                                 strings.eqlComptime(
-                                p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name,
-                                "eval",
-                            )) {
+                                    p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name,
+                                    "eval",
+                                ))
+                            {
                                 e_.is_direct_eval = true;
 
                                 // Pessimistically assume that if this looks like a CommonJS module
@@ -17910,18 +17912,18 @@ fn NewParser_(
                 .e_if => |ex| {
                     return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.test_) and
                         (p.isSideEffectFreeUnboundIdentifierRef(
-                        ex.yes,
-                        ex.test_,
-                        true,
-                    ) or
-                        p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.yes)) and
+                            ex.yes,
+                            ex.test_,
+                            true,
+                        ) or
+                            p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.yes)) and
                         (p.isSideEffectFreeUnboundIdentifierRef(
-                        ex.no,
-                        ex.test_,
-                        false,
-                    ) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(
-                        &ex.no,
-                    ));
+                            ex.no,
+                            ex.test_,
+                            false,
+                        ) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(
+                            &ex.no,
+                        ));
                 },
                 .e_array => |ex| {
                     for (ex.items.slice()) |*item| {
@@ -18533,13 +18535,14 @@ fn NewParser_(
                                         // just not module.exports = { bar: function() {}  }
                                         // just not module.exports = { bar() {}  }
                                         switch (prop.value.?.data) {
-                                        .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
-                                        .e_call => |call| switch (call.target.data) {
                                             .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
-                                            else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
-                                        },
-                                        else => !prop.value.?.isPrimitiveLiteral(),
-                                    }) {
+                                            .e_call => |call| switch (call.target.data) {
+                                                .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                                else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
+                                            },
+                                            else => !prop.value.?.isPrimitiveLiteral(),
+                                        })
+                                    {
                                         p.deoptimizeCommonJSNamedExports();
                                         return null;
                                     }
@@ -23032,7 +23035,7 @@ fn NewParser_(
                 if (stmt.data == .s_local and
                     // Need to re-check lower_using for the k_using case in case lower_await is true
                     ((stmt.data.s_local.kind == .k_using and p.options.features.lower_using) or
-                    (stmt.data.s_local.kind == .k_await_using)))
+                        (stmt.data.s_local.kind == .k_await_using)))
                 {
                     return true;
                 }
@@ -23728,8 +23731,8 @@ fn NewParser_(
 
                 const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
                     !(parts.items.len > 0 and
-                    parts.items[0].stmts.len > 0 and
-                    parts.items[0].stmts[0].data == .s_directive);
+                        parts.items[0].stmts.len > 0 and
+                        parts.items[0].stmts[0].data == .s_directive);
 
                 total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
 
@@ -24279,9 +24282,9 @@ const ReactRefresh = struct {
         return id.len >= 4 and
             strings.hasPrefixComptime(id, "use") and
             switch (id[3]) {
-            'A'...'Z' => true,
-            else => false,
-        };
+                'A'...'Z' => true,
+                else => false,
+            };
     }
 
     pub const built_in_hooks = bun.ComptimeEnumMap(enum {

@@ -190,7 +190,11 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
             if (comptime cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
                 bun.assertf(
-                    debug.allocator.ptr == allocator.ptr and debug.allocator.vtable == allocator.vtable,
+                    // We cannot compare `ptr` here, because allocator implementations with no
+                    // associated data set the context pointer to `undefined`, therefore comparing
+                    // `ptr` may be undefined behavior. See https://github.com/ziglang/zig/pull/22691
+                    // and https://github.com/ziglang/zig/issues/23068.
+                    debug.allocator.vtable == allocator.vtable,
                     "CowSlice.deinit called with a different allocator than the one used to create it",
                     .{},
                 );

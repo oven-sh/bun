@@ -1531,6 +1531,8 @@ pub const EventLoop = struct {
         }
 
         this.flushImmediateQueue();
+        this.tickImmediateTasks(ctx);
+
         ctx.onAfterEventLoop();
         this.global.handleRejectedPromises();
     }
@@ -1610,6 +1612,7 @@ pub const EventLoop = struct {
         }
 
         this.flushImmediateQueue();
+        this.tickImmediateTasks(ctx);
         ctx.onAfterEventLoop();
     }
 

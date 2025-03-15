@@ -1215,9 +1215,9 @@ pub const Transpiler = struct {
                 var expr = if (kind == .jsonc)
                     // We allow importing tsconfig.*.json or jsconfig.*.json with comments
                     // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-                    JSON.parseTSConfig(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parseTSConfig(&source, transpiler.log, allocator) catch return null
                 else if (kind == .json)
-                    JSON.parse(&source, transpiler.log, allocator, false) catch return null
+                    JSON.parse(&source, transpiler.log, allocator) catch return null
                 else if (kind == .toml)
                     TOML.parse(&source, transpiler.log, allocator, false) catch return null
                 else
@@ -1245,7 +1245,7 @@ pub const Transpiler = struct {
                             defer duplicate_key_checker.deinit();
                             var count: usize = 0;
                             for (properties, decls, symbols, 0..) |*prop, *decl, *symbol, i| {
-                                const name = prop.key.?.data.e_string.slice(allocator);
+                                const name = prop.key.?.data.e_string.asWtf8CollapseRope(allocator) catch bun.outOfMemory();
                                 // Do not make named exports for "default" exports
                                 if (strings.eqlComptime(name, "default"))
                                     continue;
@@ -1347,9 +1347,7 @@ pub const Transpiler = struct {
             },
             // TODO: use lazy export AST
             .text => {
-                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String{
-                    .data = source.contents,
-                }, logger.Loc.Empty);
+                const expr = js_ast.Expr.init(js_ast.E.String, js_ast.E.String.init(source.contents), logger.Loc.Empty);
                 const stmt = js_ast.Stmt.alloc(js_ast.S.ExportDefault, js_ast.S.ExportDefault{
                     .value = js_ast.StmtOrExpr{ .expr = expr },
                     .default_name = js_ast.LocRef{

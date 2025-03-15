@@ -896,44 +896,44 @@ pub const PublishCommand = struct {
         dist_props[0] = .{
             .key = Expr.init(
                 E.String,
-                .{ .data = "integrity" },
+                E.String.init("integrity"),
                 logger.Loc.Empty,
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)}) },
+                E.String.init(try std.fmt.allocPrint(allocator, "{}", .{bun.fmt.integrity(integrity, .full)})),
                 logger.Loc.Empty,
             ),
         };
         dist_props[1] = .{
             .key = Expr.init(
                 E.String,
-                .{ .data = "shasum" },
+                E.String.init("shasum"),
                 logger.Loc.Empty,
             ),
             .value = Expr.init(
                 E.String,
-                .{ .data = try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)}) },
+                E.String.init(try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.bytesToHex(shasum, .lower)})),
                 logger.Loc.Empty,
             ),
         };
         dist_props[2] = .{
             .key = Expr.init(
                 E.String,
-                .{ .data = "tarball" },
+                E.String.init("tarball"),
                 logger.Loc.Empty,
             ),
             .value = Expr.init(
                 E.String,
-                .{
-                    .data = try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
+                E.String.init(
+                    try std.fmt.allocPrint(allocator, "http://{s}/{s}/-/{}", .{
                         // always use replace https with http
                         // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
                         strings.withoutTrailingSlash(strings.withoutPrefixComptime(registry.url.href, "https://")),
                         package_name,
                         Pack.fmtTarballFilename(package_name, package_version, .raw),
                     }),
-                },
+                ),
                 logger.Loc.Empty,
             ),
         };
@@ -1002,7 +1002,7 @@ pub const PublishCommand = struct {
                     var bin_props = std.ArrayList(G.Property).init(allocator);
                     const normalized = strings.withoutPrefixComptimeZ(
                         path.normalizeBufZ(
-                            try bin_str.string(allocator),
+                            try bin_str.asWtf8CollapseRope(allocator),
                             &path_buf,
                             .posix,
                         ),
@@ -1015,12 +1015,12 @@ pub const PublishCommand = struct {
                     try bin_props.append(.{
                         .key = Expr.init(
                             E.String,
-                            .{ .data = package_name },
+                            E.String.init(package_name),
                             logger.Loc.Empty,
                         ),
                         .value = Expr.init(
                             E.String,
-                            .{ .data = try allocator.dupe(u8, normalized) },
+                            E.String.init(try allocator.dupe(u8, normalized)),
                             logger.Loc.Empty,
                         ),
                     });
@@ -1038,12 +1038,12 @@ pub const PublishCommand = struct {
                     for (bin_obj.properties.slice()) |bin_prop| {
                         const key = key: {
                             if (bin_prop.key) |key| {
-                                if (key.isString() and key.data.e_string.len() != 0) {
+                                if (key.isString() and !key.data.e_string.isEmpty()) {
                                     break :key try allocator.dupeZ(
                                         u8,
                                         strings.withoutPrefixComptime(
                                             path.normalizeBuf(
-                                                try key.data.e_string.string(allocator),
+                                                try key.data.e_string.asWtf8CollapseRope(allocator),
                                                 &path_buf,
                                                 .posix,
                                             ),
@@ -1062,13 +1062,13 @@ pub const PublishCommand = struct {
 
                         const value = value: {
                             if (bin_prop.value) |value| {
-                                if (value.isString() and value.data.e_string.len() != 0) {
+                                if (value.isString() and !value.data.e_string.isEmpty()) {
                                     break :value try allocator.dupeZ(
                                         u8,
                                         strings.withoutPrefixComptimeZ(
                                             // replace separators
                                             path.normalizeBufZ(
-                                                try value.data.e_string.string(allocator),
+                                                try value.data.e_string.asWtf8CollapseRope(allocator),
                                                 &path_buf,
                                                 .posix,
                                             ),
@@ -1091,12 +1091,12 @@ pub const PublishCommand = struct {
                         try bin_props.append(.{
                             .key = Expr.init(
                                 E.String,
-                                .{ .data = key },
+                                E.String.init(key),
                                 logger.Loc.Empty,
                             ),
                             .value = Expr.init(
                                 E.String,
-                                .{ .data = value },
+                                E.String.init(value),
                                 logger.Loc.Empty,
                             ),
                         });
@@ -1174,12 +1174,12 @@ pub const PublishCommand = struct {
                         try bin_props.append(.{
                             .key = Expr.init(
                                 E.String,
-                                .{ .data = std.fs.path.basenamePosix(subpath) },
+                                E.String.init(std.fs.path.basenamePosix(subpath)),
                                 logger.Loc.Empty,
                             ),
                             .value = Expr.init(
                                 E.String,
-                                .{ .data = subpath },
+                                E.String.init(subpath),
                                 logger.Loc.Empty,
                             ),
                         });

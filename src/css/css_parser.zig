@@ -5736,14 +5736,12 @@ const Tokenizer = struct {
     }
 
     pub fn splitSourceMap(contents: []const u8) ?[]const u8 {
-        // FIXME: Use bun CodepointIterator
-        var iter = std.unicode.Utf8Iterator{ .bytes = contents, .i = 0 };
-        while (iter.nextCodepoint()) |c| {
-            switch (c) {
+        var i: usize = 0;
+        while (bun.strings.unicode.decodeFirst(.utf8_replace_invalid, contents[i..])) |dec_res| {
+            i += dec_res.advance;
+            switch (dec_res.codepoint) {
                 ' ', '\t', FORM_FEED_BYTE, '\r', '\n' => {
-                    const start = 0;
-                    const end = iter.i;
-                    return contents[start..end];
+                    return contents[0..i];
                 },
                 else => {},
             }
@@ -5877,8 +5875,10 @@ const Tokenizer = struct {
     }
 
     pub inline fn nextChar(this: *Tokenizer) u32 {
-        const len = bun.strings.utf8ByteSequenceLength(this.src[this.position]);
-        return bun.strings.decodeWTF8RuneT(this.src[this.position..].ptr[0..4], len, u32, bun.strings.unicode_replacement);
+        const dec_res = bun.strings.unicode.decodeFirst(.wtf8_replace_invalid, this.src[this.position..]) orelse {
+            return bun.strings.unicode_replacement; // ?
+        };
+        return @intCast(dec_res.codepoint);
     }
 
     pub inline fn nextByteUnchecked(this: *Tokenizer) u8 {

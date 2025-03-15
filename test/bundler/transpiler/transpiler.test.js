@@ -1689,13 +1689,14 @@ console.log(<div {...obj} key="after" />);`),
     });
 
     it("unicode surrogates", () => {
-      expectPrinted_(`console.log("𐌴")`, 'console.log("\\uD800\\uDF34")');
-      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("\\uD800\\uDF34")');
-      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("\\uD800\\uDF34")');
+      expectPrinted_(`console.log("𐌴")`, 'console.log("𐌴")');
+      expectPrinted_(`console.log("\\u{10334}")`, 'console.log("𐌴")');
+      expectPrinted_(`console.log("\\uD800\\uDF34")`, 'console.log("𐌴")');
+      expectPrinted_(`console.log("\\u{10334}" === "𐌴")`, "console.log(true)");
       expectPrinted_(`console.log("\\u{10334}" === "\\uD800\\uDF34")`, "console.log(true)");
       expectPrinted_(`console.log("\\u{10334}" === "\\uDF34\\uD800")`, "console.log(false)");
       expectPrintedMin_(`console.log("abc" + "def")`, 'console.log("abcdef")');
-      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("\\uD800" + "\\uDF34")');
+      expectPrintedMin_(`console.log("\\uD800" + "\\uDF34")`, 'console.log("𐌴")');
     });
 
     it("fold string addition", () => {
@@ -1841,12 +1842,12 @@ export const { dead } = { dead: "hello world!" };
       // check rope string
       expectBunPrinted_(`export const foo = ("a" + "b").length;`, `export const foo = 2`);
       expectBunPrinted_(
-        // check UTF-16
+        // check wtf-8
         `export const foo = "😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌".length;`,
         `export const foo = 52`,
       );
-      // no rope string for non-ascii
-      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = ("æ" + "™").length`);
+      // check non-ascii rope string
+      expectBunPrinted_(`export const foo = ("æ" + "™").length;`, `export const foo = 2`);
     });
 
     describe("Bun.js", () => {
@@ -2154,6 +2155,18 @@ console.log(resolve.length)
     expectParseError("class Foo { #\\u0063onstructor() {} }", 'Invalid method name "#constructor"');
     expectParseError("class Foo { static #\\u0063onstructor }", 'Invalid field name "#constructor"');
     expectParseError("class Foo { static #\\u0063onstructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { #\\u{63}onstructor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { #\\u{63}onstructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { static #\\u{63}onstructor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { static #\\u{63}onstructor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { #constru\\u0063tor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { #constru\\u0063tor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { static #constru\\u0063tor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { static #constru\\u0063tor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { #constru\\u{63}tor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { #constru\\u{63}tor() {} }", 'Invalid method name "#constructor"');
+    expectParseError("class Foo { static #constru\\u{63}tor }", 'Invalid field name "#constructor"');
+    expectParseError("class Foo { static #constru\\u{63}tor() {} }", 'Invalid method name "#constructor"');
     const errorText = '"#foo" has already been declared';
     expectParseError("class Foo { #foo; #foo }", errorText);
     expectParseError("class Foo { #foo; static #foo }", errorText);

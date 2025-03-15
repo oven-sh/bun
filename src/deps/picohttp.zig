@@ -149,7 +149,7 @@ pub const Request = struct {
 
             if (self.body.len > 0 and (content_type.len > 0 and bun.strings.hasPrefixComptime(content_type, "application/json") or bun.strings.hasPrefixComptime(content_type, "text/") or bun.strings.containsComptime(content_type, "json"))) {
                 _ = try writer.writeAll(" --data-raw ");
-                try bun.js_printer.writeJSONString(self.body, @TypeOf(writer), writer, .utf8);
+                try bun.js_printer.writeJSONString(.wtf8_replace_invalid, self.body, @TypeOf(writer), writer);
             }
         }
     };

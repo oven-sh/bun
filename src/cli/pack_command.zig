@@ -2025,9 +2025,9 @@ pub const PackCommand = struct {
                                 //     dependency.value = Expr.allocate(
                                 //         ctx.manager.allocator,
                                 //         E.String,
-                                //         .{
-                                //             .data = without_workspace_protocol,
-                                //         },
+                                //         E.String.init(
+                                //             without_workspace_protocol,
+                                //         ),
                                 //         .{},
                                 //     );
                                 //     continue;
@@ -2053,8 +2053,8 @@ pub const PackCommand = struct {
                                             dependency.value = Expr.allocate(
                                                 allocator,
                                                 E.String,
-                                                .{
-                                                    .data = try std.fmt.allocPrint(allocator, "{s}{}", .{
+                                                E.String.init(
+                                                    try std.fmt.allocPrint(allocator, "{s}{}", .{
                                                         switch (c) {
                                                             '^' => "^",
                                                             '~' => "~",
@@ -2063,7 +2063,7 @@ pub const PackCommand = struct {
                                                         },
                                                         workspace_version.fmt(lockfile.buffers.string_bytes.items),
                                                     }),
-                                                },
+                                                ),
                                                 .{},
                                             );
 
@@ -2082,9 +2082,7 @@ pub const PackCommand = struct {
                                 dependency.value = Expr.allocate(
                                     allocator,
                                     E.String,
-                                    .{
-                                        .data = try allocator.dupe(u8, without_workspace_protocol),
-                                    },
+                                    E.String.init(try allocator.dupe(u8, without_workspace_protocol)),
                                     .{},
                                 );
                             }

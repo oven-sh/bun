@@ -89,8 +89,9 @@ pub fn generate(allocator: std.mem.Allocator, contents: []const u8, approximate_
 
     var remaining = contents;
     while (remaining.len > 0) {
-        const len_ = strings.wtf8ByteSequenceLengthWithInvalid(remaining[0]);
-        const c = strings.decodeWTF8RuneT(remaining.ptr[0..4], len_, i32, 0);
+        const _result = strings.unicode.decodeFirst(.wtf8_replace_invalid, remaining).?;
+        const c: i32 = _result.codepoint;
+        const len_ = _result.advance;
         const cp_len = @as(usize, len_);
 
         if (column == 0) {

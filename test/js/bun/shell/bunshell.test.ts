@@ -269,10 +269,7 @@ describe("bunshell", () => {
 
     test("escape unicode", async () => {
       const { stdout } = await $`echo \\弟\\気`;
-      // TODO: Uncomment and replace after unicode in template tags is supported
-      // expect(stdout.toString("utf8")).toEqual(`\弟\気\n`);
-      // Set this here for now, because unicode in template tags while using .raw is broken, but should be fixed
-      expect(stdout.toString("utf8")).toEqual("\\u5F1F\\u6C17\n");
+      expect(stdout.toString("utf8")).toEqual(`\\弟\\気\n`);
     });
 
     /**

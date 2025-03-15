@@ -199,6 +199,8 @@ private:
                     httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
                 }
 
+                httpResponseData->fromAncientRequest = httpRequest->isAncient();
+
                 /* Select the router based on SNI (only possible for SSL) */
                 auto *selectedRouter = &httpContextData->router;
                 if constexpr (SSL) {

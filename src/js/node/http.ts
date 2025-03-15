@@ -2399,7 +2399,7 @@ function ServerResponse_finalDeprecated(chunk, encoding, callback) {
       req.complete = true;
       process.nextTick(emitRequestCloseNT, req);
     }
-    callback && callback();
+    callback?.();
     return;
   }
 
@@ -2488,9 +2488,7 @@ function ClientRequest(input, options, cb) {
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
-    if (writeCount > 1) {
-      startFetch();
-    }
+    startFetch();
     resolveNextChunk?.();
   };
 
@@ -2522,7 +2520,7 @@ function ClientRequest(input, options, cb) {
 
     for (let chunk of this[kBodyChunks]) {
       bodySize += chunk.length;
-      if (bodySize > MAX_FAKE_BACKPRESSURE_SIZE) {
+      if (bodySize >= MAX_FAKE_BACKPRESSURE_SIZE) {
         break;
       }
     }

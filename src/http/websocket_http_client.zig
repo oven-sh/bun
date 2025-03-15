@@ -826,72 +826,72 @@ const ReceiveState = enum {
     pub fn needControlFrame(this: ReceiveState) bool {
         return this != .need_body;
     }
+
+    fn parseWebSocketHeader(
+        bytes: [2]u8,
+        receiving_type: *Opcode,
+        payload_length: *usize,
+        is_fragmented: *bool,
+        is_final: *bool,
+        need_compression: *bool,
+    ) ReceiveState {
+        // 0                   1                   2                   3
+        // 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        // +-+-+-+-+-------+-+-------------+-------------------------------+
+        // |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+        // |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+        // |N|V|V|V|       |S|             |   (if payload len==126/127)   |
+        // | |1|2|3|       |K|             |                               |
+        // +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
+        // |     Extended payload length continued, if payload len == 127  |
+        // + - - - - - - - - - - - - - - - +-------------------------------+
+        // |                               |Masking-key, if MASK set to 1  |
+        // +-------------------------------+-------------------------------+
+        // | Masking-key (continued)       |          Payload Data         |
+        // +-------------------------------- - - - - - - - - - - - - - - - +
+        // :                     Payload Data continued ...                :
+        // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+        // |                     Payload Data continued ...                |
+        // +---------------------------------------------------------------+
+        const header = WebsocketHeader.fromSlice(bytes);
+        const payload = @as(usize, header.len);
+        payload_length.* = payload;
+        receiving_type.* = header.opcode;
+        is_fragmented.* = switch (header.opcode) {
+            .Continue => true,
+            else => false,
+        } or !header.final;
+        is_final.* = header.final;
+        need_compression.* = header.compressed;
+        if (header.mask and (header.opcode == .Text or header.opcode == .Binary)) {
+            return .need_mask;
+        }
+        // reserved bits must be 0
+        if (header.rsv != 0) {
+            return .fail;
+        }
+
+        return switch (header.opcode) {
+            .Text, .Continue, .Binary => if (payload <= 125)
+                return .need_body
+            else if (payload == 126)
+                return .extended_payload_length_16
+            else if (payload == 127)
+                return .extended_payload_length_64
+            else
+                return .fail,
+            .Close => .close,
+            .Ping => .ping,
+            .Pong => .pong,
+            else => .fail,
+        };
+    }
 };
 const DataType = enum {
     none,
     text,
     binary,
 };
-
-fn parseWebSocketHeader(
-    bytes: [2]u8,
-    receiving_type: *Opcode,
-    payload_length: *usize,
-    is_fragmented: *bool,
-    is_final: *bool,
-    need_compression: *bool,
-) ReceiveState {
-    // 0                   1                   2                   3
-    // 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    // +-+-+-+-+-------+-+-------------+-------------------------------+
-    // |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
-    // |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
-    // |N|V|V|V|       |S|             |   (if payload len==126/127)   |
-    // | |1|2|3|       |K|             |                               |
-    // +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
-    // |     Extended payload length continued, if payload len == 127  |
-    // + - - - - - - - - - - - - - - - +-------------------------------+
-    // |                               |Masking-key, if MASK set to 1  |
-    // +-------------------------------+-------------------------------+
-    // | Masking-key (continued)       |          Payload Data         |
-    // +-------------------------------- - - - - - - - - - - - - - - - +
-    // :                     Payload Data continued ...                :
-    // + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
-    // |                     Payload Data continued ...                |
-    // +---------------------------------------------------------------+
-    const header = WebsocketHeader.fromSlice(bytes);
-    const payload = @as(usize, header.len);
-    payload_length.* = payload;
-    receiving_type.* = header.opcode;
-    is_fragmented.* = switch (header.opcode) {
-        .Continue => true,
-        else => false,
-    } or !header.final;
-    is_final.* = header.final;
-    need_compression.* = header.compressed;
-    if (header.mask and (header.opcode == .Text or header.opcode == .Binary)) {
-        return .need_mask;
-    }
-    // reserved bits must be 0
-    if (header.rsv != 0) {
-        return .fail;
-    }
-
-    return switch (header.opcode) {
-        .Text, .Continue, .Binary => if (payload <= 125)
-            return .need_body
-        else if (payload == 126)
-            return .extended_payload_length_16
-        else if (payload == 127)
-            return .extended_payload_length_64
-        else
-            return .fail,
-        .Close => .close,
-        .Ping => .ping,
-        .Pong => .pong,
-        else => .fail,
-    };
-}
 
 const Copy = union(enum) {
     utf16: []const u16,
@@ -1333,7 +1333,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                         var need_compression = false;
                         is_final = false;
 
-                        receive_state = parseWebSocketHeader(
+                        receive_state = ReceiveState.parseWebSocketHeader(
                             header_bytes[0..2].*,
                             &receiving_type,
                             &receive_body_remain,

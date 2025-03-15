@@ -418,7 +418,8 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
-pub extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, func: JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick2(*ZigGlobalObject, func: JSValue, JSValue, JSValue) void;
 
 comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);

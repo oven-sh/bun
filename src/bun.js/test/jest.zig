@@ -103,11 +103,13 @@ pub const TestRunner = struct {
 
     unhandled_errors_between_tests: u32 = 0,
 
+    test_timeout_ref: JSC.BunTimer.TimerRef = .{},
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
-        _ = vm; // autofix
         this.event_loop_timer.state = .FIRED;
+        this.test_timeout_ref.unref(vm);
 
         if (this.pending_test) |pending_test| {
             if (!pending_test.reported and (this.active_test_for_timeout orelse return) == pending_test.test_id) {
@@ -132,13 +134,10 @@ pub const TestRunner = struct {
         const then = bun.timespec.msFromNow(@intCast(milliseconds));
         const vm = JSC.VirtualMachine.get();
 
-        this.event_loop_timer.tag = .TestRunner;
-        if (this.event_loop_timer.state == .ACTIVE) {
-            vm.timer.remove(&this.event_loop_timer);
-        }
+        this.test_timeout_ref.ref(vm);
 
-        this.event_loop_timer.next = then;
-        vm.timer.insert(&this.event_loop_timer);
+        this.event_loop_timer.tag = .TestRunner;
+        vm.timer.update(&this.event_loop_timer, &then);
     }
 
     pub fn enqueue(this: *TestRunner, task: *TestRunnerTask) void {

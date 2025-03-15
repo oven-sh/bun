@@ -733,6 +733,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, struct us_socket_con
     connect_socket->long_timeout = 255;
     connect_socket->low_prio_state = 0;
     connect_socket->connect_state = NULL;
+    connect_socket->connect_next = NULL;
     connect_socket->allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
     us_internal_socket_context_link_socket(context, connect_socket);
 

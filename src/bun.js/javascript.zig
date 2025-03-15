@@ -48,6 +48,7 @@ const MarkedArrayBuffer = @import("./base.zig").MarkedArrayBuffer;
 const getAllocator = @import("./base.zig").getAllocator;
 const JSValue = bun.JSC.JSValue;
 const NewClass = @import("./base.zig").NewClass;
+const GCController = @import("./GCController.zig").GCController;
 
 const JSGlobalObject = bun.JSC.JSGlobalObject;
 const ExceptionValueRef = bun.JSC.ExceptionValueRef;
@@ -887,7 +888,7 @@ pub const VirtualMachine = struct {
 
     module_loader: ModuleLoader = .{},
 
-    gc_controller: JSC.GarbageCollectionController = .{},
+    gc_controller: *GCController = undefined,
     worker: ?*JSC.WebWorker = null,
     ipc: ?IPCInstanceUnion = null,
 
@@ -1341,7 +1342,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub inline fn eventLoop(this: *VirtualMachine) *EventLoop {
+    pub inline fn eventLoop(this: *const VirtualMachine) *EventLoop {
         return this.event_loop;
     }
 

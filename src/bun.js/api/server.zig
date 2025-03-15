@@ -8849,7 +8849,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
         pub fn onUserRouteRequest(user_route: *UserRoute, req: *uws.Request, resp: *App.Response) void {
             const server = user_route.server;
+            const vm = server.vm;
             const index = user_route.id;
+            const important = vm.eventLoop().important();
+            important.enter();
+            defer important.exit();
 
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false) orelse return;
@@ -8896,7 +8900,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn onRequest(this: *ThisServer, req: *uws.Request, resp: *App.Response) void {
             var should_deinit_context = false;
             const prepared = this.prepareJsRequestContext(req, resp, &should_deinit_context, true) orelse return;
-
+            const important = this.vm.eventLoop().important();
+            important.enter();
+            defer important.exit();
             bun.assert(this.config.onRequest != .zero);
 
             const js_value = this.jsValueAssertAlive();
@@ -9097,6 +9103,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         fn upgradeWebSocketUserRoute(this: *UserRoute, resp: *App.Response, req: *uws.Request, upgrade_ctx: *uws.uws_socket_context_t) void {
             const server = this.server;
             const index = this.id;
+            const vm = server.vm;
+            const important = vm.eventLoop().important();
+            important.enter();
+            defer important.exit();
 
             var should_deinit_context = false;
             var prepared = server.prepareJsRequestContext(req, resp, &should_deinit_context, false) orelse return;

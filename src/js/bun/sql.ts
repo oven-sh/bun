@@ -1251,6 +1251,7 @@ async function createConnection(options, onConnected, onClose) {
     connectionTimeout = 30 * 1000,
     maxLifetime = 0,
     prepare = true,
+    path,
   } = options;
 
   let password = options.password;
@@ -1274,6 +1275,7 @@ async function createConnection(options, onConnected, onClose) {
       sslMode || SSLMode.disable,
       tls || null,
       query || "",
+      path || "",
       onConnected,
       onClose,
       idleTimeout,
@@ -1354,7 +1356,8 @@ function loadOptions(o) {
     onconnect,
     onclose,
     max,
-    bigint;
+    bigint,
+    path;
   let prepare = true;
   const env = Bun.env || {};
   var sslMode: SSLMode = SSLMode.disable;
@@ -1410,6 +1413,8 @@ function loadOptions(o) {
     for (const key in queryObject) {
       if (key.toLowerCase() === "sslmode") {
         sslMode = normalizeSSLMode(queryObject[key]);
+      } else if (key.toLowerCase() === "path") {
+        path = queryObject[key];
       } else {
         // this is valid for postgres for other databases it might not be valid
         // check adapter then implement for other databases
@@ -1421,7 +1426,15 @@ function loadOptions(o) {
     query = query.trim();
   }
   hostname ||= o.hostname || o.host || env.PGHOST || "localhost";
+
   port ||= Number(o.port || env.PGPORT || 5432);
+
+  path ||= o.path || "";
+  // add /.s.PGSQL.${port} if it doesn't exist
+  if (path && path?.indexOf("/.s.PGSQL.") === -1) {
+    path = `${path}/.s.PGSQL.${port}`;
+  }
+
   username ||= o.username || o.user || env.PGUSERNAME || env.PGUSER || env.USER || env.USERNAME || "postgres";
   database ||= o.database || o.db || decodeIfValid((url?.pathname ?? "").slice(1)) || env.PGDATABASE || username;
   password ||= o.password || o.pass || env.PGPASSWORD || "";

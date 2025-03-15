@@ -536,9 +536,10 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 // Setup compression if the server accepted our request
                 if (websocket_extensions_header.name.len > 0 and
                     websocket_extensions_header.value.len > 0 and
-                    std.mem.indexOf(u8, websocket_extensions_header.value, "permessage-deflate") != null) {
+                    std.mem.indexOf(u8, websocket_extensions_header.value, "permessage-deflate") != null)
+                {
                     log("Setting up compression with extension: {s}", .{websocket_extensions_header.value});
-                    
+
                     // After connection is established, we'll need to initialize compression
                     // Note: Initializing compression after didConnect since that's when we get WebSocket instance
                 }

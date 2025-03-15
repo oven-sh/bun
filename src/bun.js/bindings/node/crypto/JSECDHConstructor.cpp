@@ -114,12 +114,14 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
     const unsigned char* key_data = buffer.data();
     size_t key_length = buffer.size();
 
-    if (!EC_POINT_oct2point(group, point, key_data, key_length, nullptr))
-        return throwVMError(lexicalGlobalObject, scope, "Failed to convert Buffer to EC_POINT"_s);
+    if (!point.setFromBuffer({ key_data, key_length }, group)) {
+        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to convert Buffer to EC_POINT"_s);
+    }
 
-    size_t size = EC_POINT_point2oct(group, point, static_cast<point_conversion_form_t>(form), nullptr, 0, nullptr);
-    if (size == 0)
-        return throwVMError(lexicalGlobalObject, scope, "Failed to calculate buffer size"_s);
+    size_t size = EC_POINT_point2oct(group, point, form, nullptr, 0, nullptr);
+    if (size == 0) {
+        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to get public key length"_s);
+    }
 
     WTF::Vector<uint8_t> buf;
     if (!buf.tryGrow(size)) {
@@ -127,8 +129,9 @@ JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalO
         return JSValue::encode({});
     }
 
-    if (!EC_POINT_point2oct(group, point, form, buf.data(), buf.size(), nullptr))
-        return throwVMError(lexicalGlobalObject, scope, "Failed to convert EC_POINT to Buffer"_s);
+    if (!EC_POINT_point2oct(group, point, form, buf.data(), buf.size(), nullptr)) {
+        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Failed to get public key"_s);
+    }
 
     JSValue outEncValue = callFrame->argument(3);
     BufferEncodingType outEnc = getEncodingDefaultBuffer(lexicalGlobalObject, scope, outEncValue);

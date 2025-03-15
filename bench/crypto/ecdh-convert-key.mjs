@@ -6,18 +6,14 @@ function generateTestKeyPairs() {
   const keys = {};
 
   for (const curve of curves) {
-    try {
-      const ecdh = crypto.createECDH(curve);
-      ecdh.generateKeys();
+    const ecdh = crypto.createECDH(curve);
+    ecdh.generateKeys();
 
-      keys[curve] = {
-        compressed: ecdh.getPublicKey("hex", "compressed"),
-        uncompressed: ecdh.getPublicKey("hex", "uncompressed"),
-        instance: ecdh,
-      };
-    } catch (e) {
-      console.error(`Failed to generate keys for curve ${curve}: ${e.message}`);
-    }
+    keys[curve] = {
+      compressed: ecdh.getPublicKey("hex", "compressed"),
+      uncompressed: ecdh.getPublicKey("hex", "uncompressed"),
+      instance: ecdh,
+    };
   }
 
   return keys;

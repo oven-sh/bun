@@ -934,6 +934,18 @@ JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     return {};
 }
 
+JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue encodingValue)
+{
+    WTF::String encodingString = encodingValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::StringBuilder builder;
+    builder.append("Unknown encoding: "_s);
+    builder.append(encodingString);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, builder.toString()));
+    return {};
+}
+
 JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& statemsg)
 {
     auto message = makeString("Invalid state: "_s, statemsg);

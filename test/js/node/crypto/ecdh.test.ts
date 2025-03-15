@@ -1,6 +1,25 @@
 import { test, expect } from "bun:test";
 import { createECDH, ECDH, getCurves } from "node:crypto";
 
+// Helper function to generate test key pairs for various curves
+function generateTestKeyPairs() {
+  const curves = getCurves();
+  const keys = {};
+
+  for (const curve of curves) {
+    const ecdh = createECDH(curve);
+    ecdh.generateKeys();
+
+    keys[curve] = {
+      compressed: ecdh.getPublicKey("hex", "compressed"),
+      uncompressed: ecdh.getPublicKey("hex", "uncompressed"),
+      instance: ecdh,
+    };
+  }
+
+  return keys;
+}
+
 // Test creating an ECDH instance
 test("crypto.createECDH - creates ECDH instance", () => {
   // Get a supported curve from the available curves
@@ -156,4 +175,66 @@ test("ECDH - basic operations work on all supported curves", () => {
     // Check that secrets match
     expect(aliceSecret.toString("hex")).toBe(bobSecret.toString("hex"));
   }
+});
+
+// Tests for ECDH.convertKey functionality
+test("ECDH.convertKey - converts between compressed and uncompressed formats", () => {
+  const testKeys = generateTestKeyPairs();
+
+  for (const curve of Object.keys(testKeys)) {
+    const compressed = testKeys[curve].compressed;
+    const uncompressed = testKeys[curve].uncompressed;
+
+    // Test compressed to uncompressed
+    const convertedToUncompressed = ECDH.convertKey(compressed, curve, "hex", "hex", "uncompressed");
+    expect(convertedToUncompressed).toBe(uncompressed);
+
+    // Test uncompressed to compressed
+    const convertedToCompressed = ECDH.convertKey(uncompressed, curve, "hex", "hex", "compressed");
+    expect(convertedToCompressed).toBe(compressed);
+  }
+});
+
+test("ECDH.convertKey - supports different input and output encodings", () => {
+  const testKeys = generateTestKeyPairs();
+
+  const compressedHex = testKeys["prime256v1"].compressed;
+
+  // Convert from hex to buffer
+  const convertedToBuffer = ECDH.convertKey(compressedHex, "prime256v1", "hex", "buffer", "compressed");
+  expect(convertedToBuffer).toBeInstanceOf(Buffer);
+  expect(convertedToBuffer.toString("hex")).toBe(compressedHex);
+
+  // Convert from hex to base64
+  const convertedToBase64 = ECDH.convertKey(compressedHex, "prime256v1", "hex", "base64", "compressed");
+  expect(typeof convertedToBase64).toBe("string");
+  expect(Buffer.from(convertedToBase64, "base64").toString("hex")).toBe(compressedHex);
+});
+
+test("ECDH.convertKey - throws on invalid input", () => {
+  // Invalid key
+  expect(() => {
+    ECDH.convertKey("invalid-key", "prime256v1", "hex", "hex", "compressed");
+  }).toThrow("The argument 'encoding' is invalid for data of length 11. Received 'hex'");
+
+  // Invalid curve
+  expect(() => {
+    ECDH.convertKey(
+      "0102030405", // Some hex data
+      "not-a-valid-curve",
+      "hex",
+      "hex",
+      "compressed",
+    );
+  }).toThrow("Invalid EC curve name");
+
+  // Invalid input encoding
+  expect(() => {
+    ECDH.convertKey("0102030405", "prime256v1", "invalid-encoding", "hex", "compressed");
+  }).toThrow("Unknown encoding: invalid-encoding");
+
+  // Invalid format
+  expect(() => {
+    ECDH.convertKey("0102030405", "prime256v1", "hex", "hex", "invalid-format");
+  }).toThrow("Invalid ECDH format: invalid-format");
 });

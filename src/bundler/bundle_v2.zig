@@ -3207,16 +3207,22 @@ pub const BundleV2 = struct {
                                     ) catch bun.outOfMemory();
                                 }
                             } else {
+                                const buf = bun.PathBufferPool.get();
+                                defer bun.PathBufferPool.put(buf);
+                                const specifier_to_use = if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir)) brk: {
+                                    const specifier_to_use = import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..];
+                                    if (Environment.isWindows) {
+                                        break :brk bun.path.pathToPosixBuf(u8, specifier_to_use, buf);
+                                    }
+                                    break :brk specifier_to_use;
+                                } else import_record.path.text;
                                 addError(
                                     log,
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
                                     "Could not resolve: \"{s}\"",
-                                    .{if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir))
-                                        import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..]
-                                    else
-                                        import_record.path.text},
+                                    .{specifier_to_use},
                                     import_record.kind,
                                 ) catch bun.outOfMemory();
                             }

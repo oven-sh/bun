@@ -14,10 +14,8 @@ describe("runInContext()", () => {
 describe("runInNewContext()", () => {
   testRunInContext({ fn: runInNewContext, isIsolated: true, isNew: true });
   test("options can be a string", () => {
-    test("options can be a string", () => {
-      const result = runInNewContext("new Error().stack;", {}, "test-filename.js");
-      expect(result).toContain("test-filename.js");
-    });
+    const result = runInNewContext("new Error().stack;", {}, "test-filename.js");
+    expect(result).toContain("test-filename.js");
   });
 });
 

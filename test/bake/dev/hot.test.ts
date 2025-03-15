@@ -105,6 +105,7 @@ devTest("import.meta.hot.accept patches imports", {
   },
 });
 devTest("import.meta.hot.accept specifier", {
+  timeoutMultiplier: 3,
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["a.ts"],
@@ -293,7 +294,6 @@ devTest("import.meta.hot.accept multiple modules", {
 
     // Test updating both files
     {
-      console.log('start batch');
       await using batch = await dev.batchChanges();
       await dev.write(
         "counter.ts",

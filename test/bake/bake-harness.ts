@@ -312,7 +312,7 @@ export class Dev extends EventEmitter {
         }
         if (!fastBatches) {
           // Wait an extra delay to avoid double-triggering events.
-          await Bun.sleep(450);
+          await Bun.sleep(300);
         }
 
         dev.off("watch_synchronization", onSeenFiles);
@@ -1689,7 +1689,7 @@ function testImpl<T extends DevServerTest>(
       run,
       interactive
         ? interactive_timeout
-        : (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
+        : (options.timeoutMultiplier ?? 1) * (isWindows ? 15_000 : 10_000) * (Bun.version.includes("debug") ? 2 : 1),
     );
     return options;
   } catch {

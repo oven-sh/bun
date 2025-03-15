@@ -263,7 +263,10 @@ export class Dev extends EventEmitter {
   }
 
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
-    if (this.batchingChanges) return null;
+    if (this.batchingChanges) {
+      this.batchingChanges.write?.();
+      return null;
+    }
     this.batchingChanges = {};
 
     let dev = this;

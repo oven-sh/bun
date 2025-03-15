@@ -103,6 +103,9 @@ pub const TestRunner = struct {
 
     unhandled_errors_between_tests: u32 = 0,
 
+    /// used to prevent adding new tests while test() is executing
+    allow_adding_new_tests: bool = true,
+
     pub const Drainer = JSC.AnyTask.New(TestRunner, drain);
 
     pub fn onTestTimeout(this: *TestRunner, now: *const bun.timespec, vm: *VirtualMachine) void {
@@ -1390,7 +1393,9 @@ pub const TestRunnerTask = struct {
 
         this.sync_state = .pending;
         jsc_vm.auto_killer.enable();
+        if (Jest.runner) |r| r.allow_adding_new_tests = false;
         var result = TestScope.run(&test_, this);
+        if (Jest.runner) |r| r.allow_adding_new_tests = true;
 
         if (this.describe.tests.items.len > test_id) {
             this.describe.tests.items[test_id].timeout_millis = test_.timeout_millis;
@@ -1797,6 +1802,10 @@ inline fn createScope(
         return globalThis.throwPretty("{s} expects options to be a number or object", .{signature});
     }
 
+    if (Jest.runner) |r| if (!r.allow_adding_new_tests) {
+        return globalThis.throwPretty("{s} cannot be called within a test. Use 'describe' to nest tests.", .{signature});
+    };
+
     var tag_to_use = tag;
 
     if (tag_to_use == .only or parent.tag == .only) {
@@ -1811,10 +1820,6 @@ inline fn createScope(
         (tag != .only and Jest.runner.?.only and parent.tag != .only);
 
     if (is_test) {
-        if (parent.locked) {
-            return globalThis.throwPretty("{s} cannot be called within a test. Use 'describe' to nest tests.", .{signature});
-        }
-
         if (!is_skip) {
             if (Jest.runner.?.filter_regex) |regex| {
                 var buffer: bun.MutableString = Jest.runner.?.filter_buffer;

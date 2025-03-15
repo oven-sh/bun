@@ -1,6 +1,6 @@
 'use strict';
 
-const { spawnPromisified } = require('../../common');
+const { spawnPromisified } = require('../common');
 const assert = require('node:assert');
 const { describe, it } = require('node:test');
 

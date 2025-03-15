@@ -1,5 +1,5 @@
 'use strict';
-require('../../common');
+require('../common');
 const assert = require('assert');
 const { describe, it } = require('node:test');
 

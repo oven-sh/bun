@@ -1,6 +1,6 @@
 'use strict';
 
-require('../../common');
+require('../common');
 
 const assert = require('node:assert');
 const url = require('node:url');

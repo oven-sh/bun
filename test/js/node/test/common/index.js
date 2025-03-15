@@ -90,20 +90,28 @@ function parseTestFlags(filename = process.argv[1]) {
   fs.closeSync(fd);
   const source = buffer.toString('utf8', 0, bytesRead);
 
+  const flags = [];
   const flagStart = source.search(/\/\/ Flags:\s+--/) + 10;
 
+  const isNodeTest = source.includes('node:test');
+  if (isNodeTest) {
+    flags.push('test');
+  }
+
   if (flagStart === 9) {
-    return [];
+    return flags;
   }
   let flagEnd = source.indexOf('\n', flagStart);
   // Normalize different EOL.
   if (source[flagEnd - 1] === '\r') {
     flagEnd--;
   }
+
   return source
     .substring(flagStart, flagEnd)
     .split(/\s+/)
-    .filter(Boolean);
+    .filter(Boolean)
+    .concat(flags);
 }
 
 // Check for flags. Skip this for workers (both, the `cluster` module and
@@ -127,6 +135,10 @@ if (process.argv.length === 2 &&
         break;
       }
       if (flag === "--expose-internals" && process.versions.bun) {
+        process.env.SKIP_FLAG_CHECK = "1";
+        break;
+      }
+      if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;
       }

@@ -174,7 +174,7 @@ Some methods are not optimized yet.
 
 ### [`node:test`](https://nodejs.org/api/test.html)
 
-🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
+🟡 Partly implemented. Missing mocks, snapshots, timers. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 

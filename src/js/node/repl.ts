@@ -75,6 +75,7 @@ const builtinModules = [
   "wasi",
   "worker_threads",
   "zlib",
+  "node:test",
 ];
 
 export default {

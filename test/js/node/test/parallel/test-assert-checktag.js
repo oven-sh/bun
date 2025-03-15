@@ -1,5 +1,5 @@
 'use strict';
-const { hasCrypto } = require('../../common');
+const { hasCrypto } = require('../common');
 const { test } = require('node:test');
 const assert = require('assert');
 

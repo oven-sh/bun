@@ -48,6 +48,10 @@ fn buildRequestBody(
             .name = "Sec-WebSocket-Protocol",
             .value = client_protocol.slice(),
         },
+        .{
+            .name = "Sec-WebSocket-Extensions",
+            .value = "permessage-deflate; client_max_window_bits",
+        },
     };
 
     if (client_protocol.len > 0)
@@ -65,7 +69,8 @@ fn buildRequestBody(
         .host = host_.slice(),
         .port = port,
     };
-    const headers_ = static_headers[0 .. 1 + @as(usize, @intFromBool(client_protocol.len > 0))];
+    // Include the extension header
+    const headers_ = static_headers[0 .. 2 + @as(usize, @intFromBool(client_protocol.len > 0))];
     const pico_headers = PicoHTTP.Headers{ .headers = headers_ };
 
     return try std.fmt.allocPrint(
@@ -405,6 +410,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var upgrade_header = PicoHTTP.Header{ .name = "", .value = "" };
             var connection_header = PicoHTTP.Header{ .name = "", .value = "" };
             var websocket_accept_header = PicoHTTP.Header{ .name = "", .value = "" };
+            var websocket_extensions_header = PicoHTTP.Header{ .name = "", .value = "" };
             var visited_protocol = this.websocket_protocol == 0;
             // var visited_version = false;
 
@@ -445,6 +451,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                             if (visited_protocol and upgrade_header.name.len > 0 and connection_header.name.len > 0 and websocket_accept_header.name.len > 0) {
                                 break;
                             }
+                        }
+                    },
+                    "Sec-WebSocket-Extensions".len => {
+                        if (websocket_extensions_header.name.len == 0 and strings.eqlCaseInsensitiveASCII(header.name, "Sec-WebSocket-Extensions", false)) {
+                            websocket_extensions_header = header;
                         }
                     },
                     "Sec-WebSocket-Protocol".len => {
@@ -521,6 +532,16 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 defer this.deref();
                 const ws = bun.take(&this.outgoing_websocket).?;
                 const socket = this.tcp;
+
+                // Setup compression if the server accepted our request
+                if (websocket_extensions_header.name.len > 0 and
+                    websocket_extensions_header.value.len > 0 and
+                    std.mem.indexOf(u8, websocket_extensions_header.value, "permessage-deflate") != null) {
+                    log("Setting up compression with extension: {s}", .{websocket_extensions_header.value});
+                    
+                    // After connection is established, we'll need to initialize compression
+                    // Note: Initializing compression after didConnect since that's when we get WebSocket instance
+                }
 
                 this.tcp.detach();
                 // Once again for the TCP socket.

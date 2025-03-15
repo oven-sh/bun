@@ -22,8 +22,224 @@ const WebsocketHeader = protocol.WebsocketHeader;
 const WebsocketDataFrame = protocol.WebsocketDataFrame;
 const Opcode = protocol.Opcode;
 const ZigURL = @import("../url.zig").URL;
+const libdeflate = @import("../deps/libdeflate.zig");
 
 const Async = bun.Async;
+
+pub const WebSocketCompression = struct {
+    // Compression state
+    enabled: bool = false,
+    client_no_context_takeover: bool = false,
+    server_no_context_takeover: bool = false,
+    client_max_window_bits: u8 = 15, // Default is 15 (32KB window)
+    server_max_window_bits: u8 = 15, // Default is 15 (32KB window)
+    compressor: ?*libdeflate.Compressor = null,
+    decompressor: ?*libdeflate.Decompressor = null,
+    compression_buffer: []u8 = &[_]u8{},
+    
+    pub fn init() WebSocketCompression {
+        return .{};
+    }
+    
+    pub fn deinit(self: *WebSocketCompression) void {
+        if (self.compressor) |compressor| {
+            compressor.deinit();
+            self.compressor = null;
+        }
+        if (self.decompressor) |decompressor| {
+            decompressor.deinit();
+            self.decompressor = null;
+        }
+        if (self.compression_buffer.len > 0) {
+            default_allocator.free(self.compression_buffer);
+            self.compression_buffer = &[_]u8{};
+        }
+    }
+    
+    pub fn setup(self: *WebSocketCompression, extensions_header: []const u8) bool {
+        // Parse the extensions header to set up compression parameters
+        // Example: "permessage-deflate; client_max_window_bits=15; server_max_window_bits=15"
+        if (extensions_header.len == 0) return false;
+        
+        // Simple check for permessage-deflate extension
+        if (std.mem.indexOf(u8, extensions_header, "permessage-deflate") == null) return false;
+        
+        self.enabled = true;
+        
+        // Parse parameters
+        if (std.mem.indexOf(u8, extensions_header, "client_no_context_takeover") != null) {
+            self.client_no_context_takeover = true;
+        }
+        
+        if (std.mem.indexOf(u8, extensions_header, "server_no_context_takeover") != null) {
+            self.server_no_context_takeover = true;
+        }
+        
+        // Parse window bits parameters
+        if (std.mem.indexOf(u8, extensions_header, "client_max_window_bits=")) |client_pos| {
+            // Find the actual value after the equals sign
+            const start_pos = client_pos + "client_max_window_bits=".len;
+            var end_pos = start_pos;
+            while (end_pos < extensions_header.len and 
+                   std.ascii.isDigit(extensions_header[end_pos])) {
+                end_pos += 1;
+            }
+            
+            if (end_pos > start_pos) {
+                const value_str = extensions_header[start_pos..end_pos];
+                const value = std.fmt.parseInt(u8, value_str, 10) catch 15;
+                // Valid window bits values are 8-15, with 15 being the default
+                if (value >= 8 and value <= 15) {
+                    self.client_max_window_bits = value;
+                }
+            }
+        }
+
+        if (std.mem.indexOf(u8, extensions_header, "server_max_window_bits=")) |server_pos| {
+            // Find the actual value after the equals sign
+            const start_pos = server_pos + "server_max_window_bits=".len;
+            var end_pos = start_pos;
+            while (end_pos < extensions_header.len and 
+                   std.ascii.isDigit(extensions_header[end_pos])) {
+                end_pos += 1;
+            }
+            
+            if (end_pos > start_pos) {
+                const value_str = extensions_header[start_pos..end_pos];
+                const value = std.fmt.parseInt(u8, value_str, 10) catch 15;
+                // Valid window bits values are 8-15, with 15 being the default
+                if (value >= 8 and value <= 15) {
+                    self.server_max_window_bits = value;
+                }
+            }
+        }
+        
+        // Initialize compression/decompression
+        if (self.enabled) {
+            libdeflate.load();
+            
+            // Level 6 compression is a good balance of speed vs compression ratio
+            // Choose compression level based on window bits
+            var compression_level: c_int = 6; // Default
+            
+            if (self.server_max_window_bits <= 9) {
+                compression_level = 1; // For very small windows, use fast compression
+            } else if (self.server_max_window_bits <= 11) {
+                compression_level = 3; // For small windows
+            } else if (self.server_max_window_bits <= 13) {
+                compression_level = 5; // For medium windows
+            }
+            
+            self.compressor = libdeflate.Compressor.alloc(compression_level);
+            self.decompressor = libdeflate.Decompressor.alloc();
+            
+            // Log the negotiated parameters
+            log("Initialized compression with client_max_window_bits={d}, server_max_window_bits={d}", 
+                .{self.client_max_window_bits, self.server_max_window_bits});
+            
+            // Allocate a shared buffer for compression/decompression
+            // Start with a reasonable size that will be grown if needed
+            self.compression_buffer = default_allocator.alloc(u8, 8192) catch &[_]u8{};
+            
+            return self.compressor != null and self.decompressor != null and self.compression_buffer.len > 0;
+        }
+        
+        return false;
+    }
+    
+    pub fn compress(self: *WebSocketCompression, data: []const u8) ?[]const u8 {
+        if (!self.enabled or self.compressor == null) return null;
+        
+        // Make sure our buffer is large enough
+        const max_size = self.compressor.?.maxBytesNeeded(data, .deflate);
+        if (max_size > self.compression_buffer.len) {
+            if (self.compression_buffer.len > 0) {
+                default_allocator.free(self.compression_buffer);
+            }
+            self.compression_buffer = default_allocator.alloc(u8, max_size) catch return null;
+        }
+        
+        // Compress the data
+        const result = self.compressor.?.compress(data, self.compression_buffer, .deflate);
+        if (result.status == .success and result.written > 0) {
+            // Remove the last 4 bytes (0x00 0x00 0xff 0xff) as per RFC7692
+            if (result.written >= 4 and 
+                self.compression_buffer[result.written - 4] == 0x00 and
+                self.compression_buffer[result.written - 3] == 0x00 and
+                self.compression_buffer[result.written - 2] == 0xff and
+                self.compression_buffer[result.written - 1] == 0xff) {
+                
+                // If server_no_context_takeover is true, we should reset the compressor
+                // However, libdeflate doesn't have a direct way to reset the compressor
+                // So we would need to free and recreate it if needed
+                if (self.server_no_context_takeover) {
+                    if (self.compressor) |compressor| {
+                        compressor.deinit();
+                        
+                        // Create a new compressor with the same settings
+                        var compression_level: c_int = 6; // Default
+                        
+                        if (self.server_max_window_bits <= 9) {
+                            compression_level = 1; // For very small windows, use fast compression
+                        } else if (self.server_max_window_bits <= 11) {
+                            compression_level = 3; // For small windows
+                        } else if (self.server_max_window_bits <= 13) {
+                            compression_level = 5; // For medium windows
+                        }
+                        
+                        self.compressor = libdeflate.Compressor.alloc(compression_level);
+                    }
+                }
+                
+                return self.compression_buffer[0 .. result.written - 4];
+            }
+            return self.compression_buffer[0..result.written];
+        }
+        
+        return null;
+    }
+    
+    pub fn decompress(self: *WebSocketCompression, data: []const u8, estimated_size: usize) ?[]const u8 {
+        if (!self.enabled or self.decompressor == null) return null;
+        
+        // Make sure our buffer is large enough for decompression
+        // We might need to grow the buffer if the uncompressed data is large
+        if (estimated_size > self.compression_buffer.len) {
+            if (self.compression_buffer.len > 0) {
+                default_allocator.free(self.compression_buffer);
+            }
+            self.compression_buffer = default_allocator.alloc(u8, estimated_size) catch return null;
+        }
+        
+        // Append 0x00 0x00 0xff 0xff to the data as required by RFC7692
+        var input_buffer = default_allocator.alloc(u8, data.len + 4) catch return null;
+        defer default_allocator.free(input_buffer);
+        
+        @memcpy(input_buffer[0..data.len], data);
+        input_buffer[data.len] = 0x00;
+        input_buffer[data.len + 1] = 0x00;
+        input_buffer[data.len + 2] = 0xff;
+        input_buffer[data.len + 3] = 0xff;
+        
+        // Decompress
+        const result = self.decompressor.?.decompress(input_buffer, self.compression_buffer, .deflate);
+        if (result.status == .success and result.written > 0) {
+            // If client_no_context_takeover is true, we should reset the decompressor
+            // Similar to the compressor, libdeflate doesn't have a direct way to reset
+            // So we would need to free and recreate it
+            if (self.client_no_context_takeover) {
+                if (self.decompressor) |decompressor| {
+                    decompressor.deinit();
+                    self.decompressor = libdeflate.Decompressor.alloc();
+                }
+            }
+            
+            return self.compression_buffer[0..result.written];
+        }
+        
+        return null;
+    }
+};
 
 const log = Output.scoped(.WebSocketClient, false);
 
@@ -97,6 +313,8 @@ pub const CppWebSocket = opaque {
     extern fn WebSocket__didReceiveText(websocket_context: *CppWebSocket, clone: bool, text: *const JSC.ZigString) void;
     extern fn WebSocket__didReceiveBytes(websocket_context: *CppWebSocket, bytes: [*]const u8, byte_len: usize, opcode: u8) void;
     extern fn WebSocket__rejectUnauthorized(websocket_context: *CppWebSocket) bool;
+    extern fn WebSocket__setupCompression(websocket_context: *CppWebSocket, extensions: [*]const u8, extensions_len: usize) void;
+    
     pub fn didAbruptClose(this: *CppWebSocket, reason: ErrorCode) void {
         const loop = JSC.VirtualMachine.get().eventLoop();
         loop.enter();
@@ -132,6 +350,14 @@ pub const CppWebSocket = opaque {
         loop.enter();
         defer loop.exit();
         WebSocket__didConnect(this, socket, buffered_data, buffered_len);
+    }
+    pub fn setupCompression(_: *CppWebSocket, _: []const u8) void {
+        // Skip for now since setupCompression is not yet implemented in C++ side
+        // When implementing this in C++, uncomment the following:
+        // const loop = JSC.VirtualMachine.get().eventLoop();
+        // loop.enter();
+        // defer loop.exit();
+        // WebSocket__setupCompression(this, extensions.ptr, extensions.len);
     }
     extern fn WebSocket__incrementPendingActivity(websocket_context: *CppWebSocket) void;
     extern fn WebSocket__decrementPendingActivity(websocket_context: *CppWebSocket) void;
@@ -338,7 +564,7 @@ pub const Copy = union(enum) {
         }
     }
 
-    pub fn copy(this: @This(), globalThis: *JSC.JSGlobalObject, buf: []u8, content_byte_len: usize, opcode: Opcode) void {
+    pub fn copy(this: @This(), globalThis: *JSC.JSGlobalObject, buf: []u8, content_byte_len: usize, opcode: Opcode, compressed: bool) void {
         if (this == .raw) {
             bun.assert(buf.len >= this.raw.len);
             bun.assert(buf.ptr != this.raw.ptr);
@@ -367,7 +593,7 @@ pub const Copy = union(enum) {
         }
 
         header.mask = true;
-        header.compressed = false;
+        header.compressed = compressed;
         header.final = true;
         header.opcode = opcode;
 

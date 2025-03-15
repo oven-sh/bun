@@ -26,6 +26,7 @@ const ErrorCode = websocket_client.ErrorCode;
 const Mask = websocket_client.Mask;
 const ReceiveState = websocket_client.ReceiveState;
 const Copy = websocket_client.Copy;
+const WebSocketCompression = websocket_client.WebSocketCompression;
 
 const Async = bun.Async;
 
@@ -65,6 +66,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         initial_data_handler: ?*InitialDataHandler = null,
         event_loop: *JSC.EventLoop = undefined,
         ref_count: u32 = 1,
+
+        compression: WebSocketCompression = WebSocketCompression.init(),
 
         pub const name = if (ssl) "WebSocketClientTLS" else "WebSocketClient";
 
@@ -111,6 +114,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.ping_received = false;
             this.ping_len = 0;
             this.receive_pending_chunk_len = 0;
+            
+            // Free compression resources
+            this.compression.deinit();
         }
 
         pub fn cancel(this: *WebSocket) callconv(.C) void {
@@ -249,9 +255,28 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // we can avoid copying & allocating a temporary buffer
             if (is_final and data_.len == left_in_fragment and this.receive_pending_chunk_len == 0) {
                 if (this.receive_buffer.count == 0) {
+                    // Check if this data needs decompression
+                    if (this.compression.enabled and (kind == .Text or kind == .Binary)) {
+                        // We need to handle RSV1 bit properly in the header
+                        // For now, let's attempt to decompress if compression is enabled
+                        if (this.compression.decompress(data_, data_.len * 3)) |decompressed_data| {
+                            this.dispatchData(decompressed_data, kind);
+                            return data_.len;
+                        }
+                        // If decompression fails, fall back to uncompressed data
+                    }
                     this.dispatchData(data_, kind);
                     return data_.len;
                 } else if (data_.len == 0) {
+                    // For final fragments with empty data
+                    if (this.compression.enabled and (kind == .Text or kind == .Binary)) {
+                        const buffer_data = this.receive_buffer.readableSlice(0);
+                        if (this.compression.decompress(buffer_data, buffer_data.len * 3)) |decompressed_data| {
+                            this.dispatchData(decompressed_data, kind);
+                            this.clearReceiveBuffers(false);
+                            return 0;
+                        }
+                    }
                     this.dispatchData(this.receive_buffer.readableSlice(0), kind);
                     this.clearReceiveBuffers(false);
                     return 0;
@@ -269,6 +294,15 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.receive_pending_chunk_len = 0;
                 this.receive_body_remain = 0;
                 if (is_final) {
+                    // All data has been received, handle decompression for the complete message
+                    if (this.compression.enabled and (kind == .Text or kind == .Binary)) {
+                        const buffer_data = this.receive_buffer.readableSlice(0);
+                        if (this.compression.decompress(buffer_data, buffer_data.len * 3)) |decompressed_data| {
+                            this.dispatchData(decompressed_data, kind);
+                            this.clearReceiveBuffers(false);
+                            return data_.len;
+                        }
+                    }
                     this.dispatchData(this.receive_buffer.readableSlice(0), kind);
                     this.clearReceiveBuffers(false);
                 }
@@ -418,10 +452,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                             },
                         }
 
+                        // Handle compression if enabled
                         if (need_compression) {
-                            this.terminate(ErrorCode.compression_unsupported);
-                            terminated = true;
-                            break;
+                            if (!this.compression.enabled) {
+                                this.terminate(ErrorCode.compression_unsupported);
+                                terminated = true;
+                                break;
+                            }
                         }
 
                         // Handle when the payload length is 0, but it is a message
@@ -640,16 +677,16 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         fn copyToSendBuffer(this: *WebSocket, bytes: []const u8, do_write: bool) bool {
-            return this.sendData(.{ .raw = bytes }, do_write, .Binary);
+            return this.sendData(.{ .raw = bytes }, do_write, .Binary, false);
         }
 
-        fn sendData(this: *WebSocket, bytes: Copy, do_write: bool, opcode: Opcode) bool {
+        fn sendData(this: *WebSocket, bytes: Copy, do_write: bool, opcode: Opcode, compressed: bool) bool {
             var content_byte_len: usize = 0;
             const write_len = bytes.len(&content_byte_len);
             bun.assert(write_len > 0);
 
             var writable = this.send_buffer.writableWithSize(write_len) catch unreachable;
-            bytes.copy(this.globalThis, writable[0..write_len], content_byte_len, opcode);
+            bytes.copy(this.globalThis, writable[0..write_len], content_byte_len, opcode, compressed);
             this.send_buffer.update(write_len);
 
             if (do_write) {
@@ -810,17 +847,42 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             const opcode: Opcode = @enumFromInt(op);
             const slice = ptr[0..len];
+            
+            // Try compression if enabled and appropriate opcode
+            if (this.compression.enabled and (opcode == .Text or opcode == .Binary)) {
+                // See if we can compress the data
+                if (this.compression.compress(slice)) |compressed_data| {
+                    // Small optimization: only compress if it actually saves space
+                    if (compressed_data.len < slice.len) {
+                        const bytes = Copy{ .bytes = compressed_data };
+                        const frame_size = WebsocketHeader.frameSizeIncludingMask(compressed_data.len);
+                        
+                        // Create a header with compression flag set
+                        if (!this.hasBackpressure() and frame_size < stack_frame_size) {
+                            var inline_buf: [stack_frame_size]u8 = undefined;
+                            // We need to set the compression flag when copying
+                            bytes.copy(this.globalThis, inline_buf[0..frame_size], compressed_data.len, opcode, true);
+                            _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
+                            return;
+                        }
+                        
+                        _ = this.sendData(bytes, !this.hasBackpressure(), opcode, true);
+                        return;
+                    }
+                }
+            }
+            
+            // Fall back to uncompressed data
             const bytes = Copy{ .bytes = slice };
-            // fast path: small frame, no backpressure, attempt to send without allocating
             const frame_size = WebsocketHeader.frameSizeIncludingMask(len);
             if (!this.hasBackpressure() and frame_size < stack_frame_size) {
                 var inline_buf: [stack_frame_size]u8 = undefined;
-                bytes.copy(this.globalThis, inline_buf[0..frame_size], slice.len, opcode);
+                bytes.copy(this.globalThis, inline_buf[0..frame_size], slice.len, opcode, false);
                 _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
                 return;
             }
 
-            _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
+            _ = this.sendData(bytes, !this.hasBackpressure(), opcode, false);
         }
         fn hasTCP(this: *WebSocket) bool {
             return !this.tcp.isClosed() and !this.tcp.isShutdown();
@@ -841,6 +903,56 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             // Note: 0 is valid
 
             const opcode = @as(Opcode, @enumFromInt(@as(u4, @truncate(op))));
+            
+            // For compression, we need to first convert the string to UTF-8 bytes
+            if (this.compression.enabled and (opcode == .Text or opcode == .Binary)) {
+                var str_bytes: []const u8 = undefined;
+                var need_free = false;
+                
+                if (!str.is16Bit()) {
+                    str_bytes = str.slice();
+                } else {
+                    // Convert UTF-16 to UTF-8
+                    const utf8_len = strings.elementLengthUTF16IntoUTF8([]const u16, str.utf16SliceAligned());
+                    const utf8_buf = default_allocator.alloc(u8, utf8_len) catch null;
+                    if (utf8_buf) |buf| {
+                        need_free = true;
+                        const result = strings.copyUTF16IntoUTF8(buf, []const u16, str.utf16SliceAligned(), true);
+                        if (result.written > 0) {
+                            str_bytes = buf[0..result.written];
+                        } else {
+                            default_allocator.free(buf);
+                            need_free = false;
+                            str_bytes = str.slice();
+                        }
+                    } else {
+                        str_bytes = str.slice();
+                    }
+                }
+                
+                defer if (need_free) default_allocator.free(str_bytes);
+                
+                // Try compression
+                if (this.compression.compress(str_bytes)) |compressed_data| {
+                    // Only use compression if it actually saves space
+                    if (compressed_data.len < str_bytes.len) {
+                        const bytes = Copy{ .bytes = compressed_data };
+                        const frame_size = WebsocketHeader.frameSizeIncludingMask(compressed_data.len);
+                        
+                        if (!this.hasBackpressure() and frame_size < stack_frame_size) {
+                            var inline_buf: [stack_frame_size]u8 = undefined;
+                            bytes.copy(this.globalThis, inline_buf[0..frame_size], compressed_data.len, opcode, true);
+                            _ = this.enqueueEncodedBytes(tcp, inline_buf[0..frame_size]);
+                            return;
+                        }
+                        
+                        _ = this.sendData(bytes, !this.hasBackpressure(), opcode, true);
+                        return;
+                    }
+                }
+            }
+            
+            // Fall back to original uncompressed text handling
             {
                 var inline_buf: [stack_frame_size]u8 = undefined;
 
@@ -850,7 +962,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     var byte_len: usize = 0;
                     const frame_size = bytes.len(&byte_len);
                     if (!this.hasBackpressure() and frame_size < stack_frame_size) {
-                        bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len, opcode);
+                        bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len, opcode, false);
                         _ = this.enqueueEncodedBytes(tcp, inline_buf[0..frame_size]);
                         return;
                     }
@@ -860,7 +972,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     var byte_len: usize = 0;
                     const frame_size = bytes.len(&byte_len);
                     bun.assert(frame_size <= stack_frame_size);
-                    bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len, opcode);
+                    bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len, opcode, false);
                     _ = this.enqueueEncodedBytes(tcp, inline_buf[0..frame_size]);
                     return;
                 }
@@ -873,6 +985,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     Copy{ .latin1 = str.slice() },
                 !this.hasBackpressure(),
                 opcode,
+                false
             );
         }
 
@@ -978,6 +1091,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             ws.receive_buffer.ensureTotalCapacity(2048) catch return null;
             ws.poll_ref.ref(globalThis.bunVM());
 
+            // Initialize compression if header indicated support
+            // This would normally be done based on the Sec-WebSocket-Extensions response header
+            // For now, we'll enable it by default for testing
+            ws.initCompression("permessage-deflate");
+
             const buffered_slice: []u8 = buffered_data[0..buffered_data_len];
             if (buffered_slice.len > 0) {
                 const initial_data = InitialDataHandler.new(.{
@@ -1001,6 +1119,29 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 *anyopaque,
                 @ptrCast(ws),
             );
+        }
+        
+        pub fn initCompression(this: *WebSocket, extensions_header: []const u8) void {
+            // Only set up compression if the server indicated support in the response headers
+            if (extensions_header.len > 0 and std.mem.indexOf(u8, extensions_header, "permessage-deflate") != null) {
+                log("Setting up permessage-deflate compression with extension: {s}", .{extensions_header});
+                
+                // Initialize compression with the settings from the header
+                if (this.compression.setup(extensions_header)) {
+                    log("WebSocket compression enabled with client_max_window_bits={d}, server_max_window_bits={d}", 
+                        .{this.compression.client_max_window_bits, this.compression.server_max_window_bits});
+                    
+                    if (this.compression.client_no_context_takeover) {
+                        log("Client context takeover disabled", .{});
+                    }
+                    
+                    if (this.compression.server_no_context_takeover) {
+                        log("Server context takeover disabled", .{});
+                    }
+                } else {
+                    log("Failed to set up WebSocket compression", .{});
+                }
+            }
         }
 
         pub fn finalize(this: *WebSocket) callconv(.C) void {

@@ -2,6 +2,8 @@
 
 #include "utils.h"
 #include <cassert>
+#include <chrono>
+#include <literals>
 #include <thread>
 
 namespace napitests {

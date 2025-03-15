@@ -52,6 +52,8 @@ pub fn main() void {
 }
 
 fn runTests() void {
+    var pass: u32 = 0;
+    var fail: u32 = 0;
     for (builtin.test_functions) |t| {
         const start = std.time.milliTimestamp();
         std.testing.allocator_instance = .{};
@@ -65,10 +67,16 @@ fn runTests() void {
 
         if (result) |_| {
             Output.pretty("<green>pass</r> - {s} <i>({d}ms)</r>", .{ name, elapsed });
+            pass += 1;
         } else |err| {
             Output.pretty("<red>fail</r> - {s} <i>({d}ms)</r>\n{s}", .{ t.name, elapsed, @errorName(err) });
+            fail += 1;
         }
     }
+
+    const total = pass + fail;
+    bun.assert(total > 0);
+    Output.pretty("\n{d} tests, {d} passed, {d} failed\n", .{ total, pass, fail });
 }
 
 fn extractName(t: std.builtin.TestFn) []const u8 {

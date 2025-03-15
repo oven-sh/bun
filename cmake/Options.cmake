@@ -26,6 +26,8 @@ else()
   setx(DEBUG OFF)
 endif()
 
+setx(TEST ON)
+
 if(CMAKE_BUILD_TYPE MATCHES "MinSizeRel")
   setx(ENABLE_SMOL ON)
 endif()

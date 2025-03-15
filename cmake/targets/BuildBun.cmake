@@ -1,4 +1,6 @@
-if(DEBUG)
+if(TEST)
+  set(bun bun-test)
+elseif(DEBUG)
   set(bun bun-debug)
 # elseif(ENABLE_SMOL)
 #   set(bun bun-smol-profile)
@@ -529,6 +531,9 @@ file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
   ${CWD}/src/main.zig
+  ${CWD}/src/main_test.zig
+  ${CWD}/root_test.zig
+  ${CWD}/unit_test.zig
   ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 
@@ -550,7 +555,11 @@ else()
   list(APPEND BUN_ZIG_GENERATED_SOURCES ${BUN_BAKE_RUNTIME_OUTPUTS})
 endif()
 
-set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+if (TEST)
+  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-test.o)
+else()
+  set(BUN_ZIG_OUTPUT ${BUILD_PATH}/bun-zig.o)
+endif()
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm|ARM|arm64|ARM64|aarch64|AARCH64")
   if(APPLE)

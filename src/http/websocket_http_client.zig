@@ -17,9 +17,10 @@ const uws = bun.uws;
 const JSC = bun.JSC;
 const PicoHTTP = bun.picohttp;
 const ObjectPool = @import("../pool.zig").ObjectPool;
-const WebsocketHeader = @import("./websocket.zig").WebsocketHeader;
-const WebsocketDataFrame = @import("./websocket.zig").WebsocketDataFrame;
-const Opcode = @import("./websocket.zig").Opcode;
+const protocol = @import("./websocket_protocol.zig");
+const WebsocketHeader = protocol.WebsocketHeader;
+const WebsocketDataFrame = protocol.WebsocketDataFrame;
+const Opcode = protocol.Opcode;
 const ZigURL = @import("../url.zig").URL;
 
 const Async = bun.Async;

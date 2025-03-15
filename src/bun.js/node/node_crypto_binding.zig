@@ -62,13 +62,12 @@ const random = struct {
 
         const res = std.crypto.random.intRangeLessThan(i64, min, max);
 
-        if (callback.isUndefined()) {
-            return JSC.jsNumber(res);
+        if (!callback.isUndefined()) {
+            callback.callNextTick(global, [2]JSValue{ .undefined, JSValue.jsNumber(res) });
+            return JSValue.jsUndefined();
         }
 
-        callback.callNextTick(global, 2, [2]JSValue{ .undefined, JSValue.jsNumber(res) });
-
-        return .undefined;
+        return JSValue.jsNumber(res);
     }
 
     fn randomUUID(global: *JSGlobalObject, callFrame: *JSC.CallFrame) JSError!JSValue {

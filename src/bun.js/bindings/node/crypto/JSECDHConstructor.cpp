@@ -71,7 +71,8 @@ JSC_DEFINE_HOST_FUNCTION(constructECDH, (JSC::JSGlobalObject * globalObject, JSC
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSECDHClassStructure.get(zigGlobalObject);
 
-    return JSC::JSValue::encode(JSECDH::create(vm, structure, globalObject, WTFMove(key)));
+    const EC_GROUP* group = key.getGroup();
+    return JSC::JSValue::encode(JSECDH::create(vm, structure, globalObject, WTFMove(key), group));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsECDHConvertKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

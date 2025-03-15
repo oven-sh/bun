@@ -1016,6 +1016,19 @@ JSC::EncodedJSValue CRYPTO_INVALID_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlo
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Invalid key type"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, message));
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_OPERATION_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
 {
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message));
@@ -1033,6 +1046,15 @@ JSC::EncodedJSValue CRYPTO_ECDH_INVALID_PUBLIC_KEY(JSC::ThrowScope& throwScope, 
 {
     auto message = "Public key is not valid for specified curve"_s;
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_ECDH_INVALID_FORMAT(ThrowScope& scope, JSGlobalObject* globalObject, const WTF::String& formatString)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid ECDH format: "_s);
+    builder.append(formatString);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_ECDH_INVALID_FORMAT, builder.toString()));
     return {};
 }
 

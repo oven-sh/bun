@@ -625,7 +625,11 @@ pub const JSValue = enum(i64) {
         ).unwrap();
     }
 
-    pub fn callNextTick(function: JSValue, global: *JSGlobalObject, comptime num_args: u3, args: [num_args]JSValue) void {
+    pub fn callNextTick(function: JSValue, global: *JSGlobalObject, args: anytype) void {
+        if (Environment.isDebug) {
+            bun.assert(function.isCallable(global.vm()));
+        }
+        const num_args = @typeInfo(@TypeOf(args)).array.len;
         switch (num_args) {
             1 => JSC.Bun__Process__queueNextTick1(@ptrCast(global), function, args[0]),
             2 => JSC.Bun__Process__queueNextTick2(@ptrCast(global), function, args[0], args[1]),
@@ -2707,3 +2711,4 @@ const JSHostFunctionType = JSC.JSHostFunctionType;
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 const FetchHeaders = JSC.FetchHeaders;
+const Environment = bun.Environment;

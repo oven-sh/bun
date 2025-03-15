@@ -93,6 +93,10 @@ async function extractSourceMap(dev: Dev, scriptSource: string) {
     throw new Error("Source map URL not found in " + scriptSource);
   }
   const sourceMap = await dev.fetch(sourceMapUrl[1]).text();
+  if (!sourceMap.startsWith('{')) {
+    throw new Error("Source map is not valid JSON: " + sourceMap);
+  }
+  console.log(sourceMap);
   return new Promise<SourceMap>((resolve, reject) => {
     try {
       SourceMapConsumer.with(sourceMap, null, async (consumer: any) => {

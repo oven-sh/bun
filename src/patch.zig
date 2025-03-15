@@ -1381,26 +1381,27 @@ pub fn gitDiffInternal(
     try map.put("USERPROFILE", "");
 
     child_proc.env_map = &map;
-    var stdout = std.ArrayList(u8).init(allocator);
-    var stderr = std.ArrayList(u8).init(allocator);
+    var stdout: std.ArrayListUnmanaged(u8) = .empty;
+    var stderr: std.ArrayListUnmanaged(u8) = .empty;
     var deinit_stdout = true;
     var deinit_stderr = true;
     defer {
-        if (deinit_stdout) stdout.deinit();
-        if (deinit_stderr) stderr.deinit();
+        if (deinit_stdout) stdout.deinit(allocator);
+        if (deinit_stderr) stderr.deinit(allocator);
     }
     try child_proc.spawn();
-    try child_proc.collectOutput(&stdout, &stderr, 1024 * 1024 * 4);
+    try child_proc.collectOutput(allocator, &stdout, &stderr, 1024 * 1024 * 4);
     _ = try child_proc.wait();
     if (stderr.items.len > 0) {
         deinit_stderr = false;
-        return .{ .err = stderr };
+        return .{ .err = stderr.toManaged(allocator) };
     }
 
     debug("Before postprocess: {s}\n", .{stdout.items});
-    try gitDiffPostprocess(&stdout, old_folder, new_folder);
+    var stdout_managed = stdout.toManaged(allocator);
+    try gitDiffPostprocess(&stdout_managed, old_folder, new_folder);
     deinit_stdout = false;
-    return .{ .result = stdout };
+    return .{ .result = stdout_managed };
 }
 
 /// Now we need to do the equivalent of these regex subtitutions.
@@ -1535,9 +1536,9 @@ fn gitDiffPostprocess(stdout: *std.ArrayList(u8), old_folder: []const u8, new_fo
 fn shouldSkipLine(line: []const u8) bool {
     return line.len == 0 or
         (switch (line[0]) {
-        ' ', '-', '+' => true,
-        else => false,
-    } and
-        // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
-        (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
+            ' ', '-', '+' => true,
+            else => false,
+        } and
+            // line like: "--- a/numbers.txt" or "+++ b/numbers.txt" we should not skip
+            (!(line.len >= 4 and (std.mem.eql(u8, line[0..4], "--- ") or std.mem.eql(u8, line[0..4], "+++ ")))));
 }

@@ -1578,7 +1578,7 @@ const Cloner = struct {
 
     pub fn flush(this: *Cloner) anyerror!void {
         const max_package_id = this.old.packages.len;
-        while (this.clone_queue.popOrNull()) |to_clone| {
+        while (this.clone_queue.pop()) |to_clone| {
             const mapping = this.mapping[to_clone.old_resolution];
             if (mapping < max_package_id) {
                 this.lockfile.buffers.resolutions.items[to_clone.resolve_id] = mapping;
@@ -5510,7 +5510,7 @@ pub const Package = extern struct {
                             }
 
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
-                            // TODO: what if we could comptime call the syntax highlighter
+                                // TODO: what if we could comptime call the syntax highlighter
                                 \\Workspaces expects an array of strings, e.g.
                                 \\  <r><green>"workspaces"<r>: [
                                 \\    <green>"path/to/package"<r>
@@ -5522,7 +5522,7 @@ pub const Package = extern struct {
                             const key = item.key.?.asString(allocator).?;
                             const value = item.value.?.asString(allocator) orelse {
                                 log.addErrorFmt(&source, item.value.?.loc, allocator,
-                                // TODO: what if we could comptime call the syntax highlighter
+                                    // TODO: what if we could comptime call the syntax highlighter
                                     \\{0s} expects a map of specifiers, e.g.
                                     \\  <r><green>"{0s}"<r>: {{
                                     \\    <green>"bun"<r>: <green>"latest"<r>
@@ -5545,7 +5545,7 @@ pub const Package = extern struct {
                     else => {
                         if (group.behavior.isWorkspace()) {
                             log.addErrorFmt(&source, dependencies_q.loc, allocator,
-                            // TODO: what if we could comptime call the syntax highlighter
+                                // TODO: what if we could comptime call the syntax highlighter
                                 \\Workspaces expects an array of strings, e.g.
                                 \\  <r><green>"workspaces"<r>: [
                                 \\    <green>"path/to/package"<r>
@@ -6980,10 +6980,10 @@ pub const Serializer = struct {
                 if (next_num == has_patched_dependencies_tag) {
                     var patched_dependencies_name_and_version_hashes =
                         try Lockfile.Buffers.readArray(
-                        stream,
-                        allocator,
-                        std.ArrayListUnmanaged(PackageNameAndVersionHash),
-                    );
+                            stream,
+                            allocator,
+                            std.ArrayListUnmanaged(PackageNameAndVersionHash),
+                        );
                     defer patched_dependencies_name_and_version_hashes.deinit(allocator);
 
                     var map = lockfile.patched_dependencies;

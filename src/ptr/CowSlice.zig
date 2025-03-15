@@ -189,7 +189,6 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
         pub fn deinit(str: Self, allocator: Allocator) void {
             if (comptime cow_str_assertions) if (str.debug) |debug| {
                 debug.mutex.lock();
-                defer debug.mutex.unlock();
                 bun.assertf(
                     debug.allocator.ptr == allocator.ptr and debug.allocator.vtable == allocator.vtable,
                     "CowSlice.deinit called with a different allocator than the one used to create it",
@@ -205,6 +204,7 @@ pub fn CowSliceZ(T: type, comptime sentinel: ?T) type {
                     bun.destroy(debug);
                 } else {
                     debug.borrows -= 1; // double deinit of a borrowed string
+                    debug.mutex.unlock();
                 }
             };
             if (str.flags.is_owned) {

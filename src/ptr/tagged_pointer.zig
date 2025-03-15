@@ -8,16 +8,15 @@ const strings = bun.strings;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 
-const TagSize = u15;
 const AddressableSize = u49;
 
 pub const TaggedPointer = packed struct {
     _ptr: AddressableSize,
-    data: TagSize,
+    data: Tag,
 
-    pub const Tag = TagSize;
+    pub const Tag = u15;
 
-    pub inline fn init(ptr: anytype, data: TagSize) TaggedPointer {
+    pub inline fn init(ptr: anytype, data: Tag) TaggedPointer {
         const Ptr = @TypeOf(ptr);
         if (comptime Ptr == @TypeOf(null)) {
             return .{ ._ptr = 0, .data = data };
@@ -42,19 +41,19 @@ pub const TaggedPointer = packed struct {
     pub inline fn from(val: anytype) TaggedPointer {
         const ValueType = @TypeOf(val);
         return switch (ValueType) {
-            f64, i64, u64 => @as(TaggedPointer, @bitCast(val)),
-            ?*anyopaque, *anyopaque => @as(TaggedPointer, @bitCast(@intFromPtr(val))),
+            f64, i64, u64 => @bitCast(val),
+            ?*anyopaque, *anyopaque => @bitCast(@intFromPtr(val)),
             else => @compileError("Unsupported type: " ++ @typeName(ValueType)),
         };
     }
 
     pub inline fn to(this: TaggedPointer) *anyopaque {
-        return @as(*anyopaque, @ptrFromInt(@as(u64, @bitCast(this))));
+        return @ptrFromInt(@as(u64, @bitCast(this)));
     }
 };
 
 const TypeMapT = struct {
-    value: TagSize,
+    value: TaggedPointer.Tag,
     ty: type,
     name: []const u8,
 };
@@ -84,7 +83,7 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
     return .{
         .tag_type = @Type(.{
             .@"enum" = .{
-                .tag_type = TagSize,
+                .tag_type = TaggedPointer.Tag,
                 .fields = &enumFields,
                 .decls = &.{},
                 .is_exhaustive = false,
@@ -99,9 +98,9 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
 
     const TagType: type = result.tag_type;
 
-    return packed struct {
+    return struct {
         pub const Tag = TagType;
-        pub const TagInt = TagSize;
+        pub const TagInt = TaggedPointer.Tag;
         pub const type_map: TypeMap(Types) = result.ty_map;
         repr: TaggedPointer,
 

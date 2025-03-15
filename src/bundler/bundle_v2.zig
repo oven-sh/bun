@@ -3207,16 +3207,22 @@ pub const BundleV2 = struct {
                                     ) catch bun.outOfMemory();
                                 }
                             } else {
+                                const buf = bun.PathBufferPool.get();
+                                defer bun.PathBufferPool.put(buf);
+                                const specifier_to_use = if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir)) brk: {
+                                    const specifier_to_use = import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..];
+                                    if (Environment.isWindows) {
+                                        break :brk bun.path.pathToPosixBuf(u8, specifier_to_use, buf);
+                                    }
+                                    break :brk specifier_to_use;
+                                } else import_record.path.text;
                                 addError(
                                     log,
                                     source,
                                     import_record.range,
                                     this.graph.allocator,
                                     "Could not resolve: \"{s}\"",
-                                    .{if (loader == .html and bun.strings.hasPrefix(import_record.path.text, bun.fs.FileSystem.instance.top_level_dir))
-                                        import_record.path.text[bun.fs.FileSystem.instance.top_level_dir.len..]
-                                    else
-                                        import_record.path.text},
+                                    .{specifier_to_use},
                                     import_record.kind,
                                 ) catch bun.outOfMemory();
                             }
@@ -13790,33 +13796,18 @@ pub const LinkerContext = struct {
             }) catch unreachable; // is within bounds
 
             if (ast.flags.uses_module_ref or ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
+                clousure_args.appendSliceAssumeCapacity(&.{
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{
                             .ref = ast.module_ref,
                         }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(hmr_api_ref, Logger.Loc.Empty),
-                            .name = "cjs",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
                     },
-                );
-            }
-
-            if (ast.flags.uses_exports_ref) {
-                clousure_args.appendAssumeCapacity(
                     .{
                         .binding = Binding.alloc(temp_allocator, B.Identifier{
                             .ref = ast.exports_ref,
                         }, Logger.Loc.Empty),
-                        .default = Expr.allocate(temp_allocator, E.Dot, .{
-                            .target = Expr.initIdentifier(ast.module_ref, Logger.Loc.Empty),
-                            .name = "exports",
-                            .name_loc = Logger.Loc.Empty,
-                        }, Logger.Loc.Empty),
                     },
-                );
+                });
             }
 
             stmts.all_stmts.appendAssumeCapacity(Stmt.allocateExpr(temp_allocator, Expr.init(E.Function, .{ .func = .{
@@ -17764,7 +17755,6 @@ pub const AstBuilder = struct {
         try p.symbols.append(p.allocator, .{
             .kind = kind,
             .original_name = identifier,
-            .debug_mode_source_index = if (Environment.allow_assert) @intCast(p.source_index) else 0,
         });
         const ref: Ref = .{
             .inner_index = inner_index,

@@ -3,8 +3,10 @@ const builtin = @import("builtin");
 const bun = @import("root").bun;
 const Output = bun.Output;
 const Environment = bun.Environment;
+const recover = @import("test/recover.zig");
 
-pub const panic = bun.crash_handler.panic;
+// pub const panic = bun.crash_handler.panic;
+pub const panic = recover.panic;
 pub const std_options = std.Options{
     .enable_segfault_handler = false,
 };
@@ -20,7 +22,7 @@ pub extern "C" var environ: ?*anyopaque;
 
 pub fn main() void {
     std.debug.print("tests are running\n", .{});
-    bun.crash_handler.init();
+    // bun.crash_handler.init();
 
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
@@ -43,38 +45,89 @@ pub fn main() void {
     Output.Source.Stdio.init();
     defer Output.flush();
     bun.StackCheck.configureThread();
-    runTests();
-    bun.Global.exit(0);
+    const exit_code = runTests();
+    bun.Global.exit(exit_code);
 }
 
-fn runTests() void {
-    var pass: u32 = 0;
-    var fail: u32 = 0;
+const Stats = struct {
+    pass: u32 = 0,
+    fail: u32 = 0,
+    leak: u32 = 0,
+    panic: u32 = 0,
+
+    pub fn total(this: *const Stats) u32 {
+        return this.pass + this.fail + this.leak + this.panic;
+    }
+
+    pub fn exitCode(this: *const Stats) u8 {
+        var result: u8 = 0;
+        if (this.fail > 0) result |= 1;
+        if (this.leak > 0) result |= 2;
+        if (this.panic > 0) result |= 4;
+        return result;
+    }
+};
+
+fn runTests() u8 {
+    var stats = Stats{};
+    const all_start = std.time.milliTimestamp();
+    var stderr = std.io.getStdErr();
+
     for (builtin.test_functions) |t| {
-        const start = std.time.milliTimestamp();
         std.testing.allocator_instance = .{};
-        const result = t.func();
+
+        var did_lock = true;
+        stderr.lock(.exclusive) catch {
+            did_lock = false;
+        };
+        defer if (did_lock) stderr.unlock();
+
+        const start = std.time.milliTimestamp();
+        const result = recover.callForTest(t.func);
         const elapsed = std.time.milliTimestamp() - start;
 
         const name = extractName(t);
-        if (std.testing.allocator_instance.deinit() == .leak) {
-            Output.err(error.MemoryLeakDetected, "{s} leaked memory", .{name});
-        }
+        const memory_check = std.testing.allocator_instance.deinit();
 
         if (result) |_| {
-            Output.pretty("<green>pass</r> - {s} <i>({d}ms)</r>\n", .{ name, elapsed });
-            pass += 1;
+            if (memory_check == .leak) {
+                Output.pretty("<yellow>leak</r> - {s} <i>({d}ms)</r>\n", .{ name, elapsed });
+                stats.leak += 1;
+            } else {
+                Output.pretty("<green>pass</r> - {s} <i>({d}ms)</r>\n", .{ name, elapsed });
+                stats.pass += 1;
+            }
         } else |err| {
-            Output.pretty("<red>fail</r> - {s} <i>({d}ms)</r>\n{s}", .{ t.name, elapsed, @errorName(err) });
-            fail += 1;
+            switch (err) {
+                error.Panic => {
+                    Output.pretty("<magenta><b>panic</r> - {s} <i>({d}ms)</r>\n{s}", .{ t.name, elapsed, @errorName(err) });
+                    stats.panic += 1;
+                },
+                else => {
+                    Output.pretty("<red>fail</r> - {s} <i>({d}ms)</r>\n{s}", .{ t.name, elapsed, @errorName(err) });
+                    stats.fail += 1;
+                },
+            }
         }
     }
 
-    // todo: detect leaks in a test, then run mi_stats_print_out?
+    const total = stats.total();
+    const total_time = std.time.milliTimestamp() - all_start;
 
-    const total = pass + fail;
-    bun.assert(total > 0);
-    Output.pretty("\n{d} tests, {d} passed, {d} failed\n", .{ total, pass, fail });
+    if (total == stats.pass) {
+        Output.pretty("<green>All tests passed</r>\n", .{});
+    } else {
+        Output.pretty("\n<green>{d}</r> passed", .{stats.pass});
+        if (stats.fail > 0)
+            Output.pretty(", <red>{d}</r> failed", .{stats.fail})
+        else
+            Output.pretty(", 0 failed", .{});
+        if (stats.leak > 0) Output.pretty(", <yellow>{d}</r> leaked", .{stats.leak});
+        if (stats.panic > 0) Output.pretty(", <magenta>{d}</r> panicked", .{stats.panic});
+    }
+
+    Output.pretty("\n\n\tRan {d} tests in {d}ms\n", .{ total, total_time });
+    return stats.exitCode();
 }
 
 fn extractName(t: std.builtin.TestFn) []const u8 {

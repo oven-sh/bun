@@ -599,7 +599,7 @@ register_command(
     "Building src/*.zig for ${ZIG_TARGET}"
   COMMAND
     ${ZIG_EXECUTABLE}
-      build obj test
+      build ${ZIG_STEPS}
       ${CMAKE_ZIG_FLAGS}
       --prefix ${BUILD_PATH}
       -Dobj_format=${ZIG_OBJECT_FORMAT}

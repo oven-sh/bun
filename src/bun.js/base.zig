@@ -1476,8 +1476,9 @@ pub const MemoryReportingAllocator = struct {
     memory_cost: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     const log = Output.scoped(.MEM, false);
 
-    fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
-        const result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
+    fn alloc(context: *anyopaque, n: usize, alignment: std.mem.Alignment, return_address: usize) ?[*]u8 {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        const result = this.child_allocator.rawAlloc(n, alignment, return_address) orelse return null;
         _ = this.memory_cost.fetchAdd(n, .monotonic);
         if (comptime Environment.allow_assert)
             log("malloc({d}) = {d}", .{ n, this.memory_cost.raw });
@@ -1490,8 +1491,9 @@ pub const MemoryReportingAllocator = struct {
             log("discard({d}) = {d}", .{ buf.len, this.memory_cost.raw });
     }
 
-    fn resize(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-        if (this.child_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
+    fn resize(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        if (this.child_allocator.rawResize(buf, alignment, new_len, ret_addr)) {
             _ = this.memory_cost.fetchAdd(new_len -| buf.len, .monotonic);
             if (comptime Environment.allow_assert)
                 log("resize() = {d}", .{this.memory_cost.raw});
@@ -1501,8 +1503,9 @@ pub const MemoryReportingAllocator = struct {
         }
     }
 
-    fn free(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, ret_addr: usize) void {
-        this.child_allocator.rawFree(buf, buf_align, ret_addr);
+    fn free(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        this.child_allocator.rawFree(buf, alignment, ret_addr);
 
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
@@ -1550,9 +1553,10 @@ pub const MemoryReportingAllocator = struct {
     }
 
     pub const VTable = std.mem.Allocator.VTable{
-        .alloc = @ptrCast(&MemoryReportingAllocator.alloc),
-        .resize = @ptrCast(&MemoryReportingAllocator.resize),
-        .free = @ptrCast(&MemoryReportingAllocator.free),
+        .alloc = &MemoryReportingAllocator.alloc,
+        .resize = &MemoryReportingAllocator.resize,
+        .remap = &std.mem.Allocator.noRemap,
+        .free = &MemoryReportingAllocator.free,
     };
 };
 

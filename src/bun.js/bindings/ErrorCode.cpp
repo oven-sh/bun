@@ -399,7 +399,11 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
         StringView view = str;
 
         const bool needsEllipsis = jsString->length() > 28;
-        const bool needsEscape = str->contains('"');
+        // node checks for the presence of a single quote.
+        // - if it does not exist, use single quotes.
+        // - if it exists, json stringify (use double quotes).
+        // https://github.com/nodejs/node/blob/c3ed292d17c34578fd7806cb42da82bbe0cca103/lib/internal/errors.js#L1030
+        const bool needsEscape = str->contains('\'');
         if (needsEllipsis) {
             view = str->substring(0, 25);
         }
@@ -426,13 +430,17 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
                 }
             }
         } else {
-            builder.append('"');
+            builder.append('\'');
             builder.append(view);
         }
         if (needsEllipsis) {
             builder.append("..."_s);
         }
-        builder.append('"');
+        if (UNLIKELY(needsEscape)) {
+            builder.append('"');
+        } else {
+            builder.append('\'');
+        }
         builder.append(')');
         return;
     }
@@ -926,6 +934,18 @@ JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalO
     return {};
 }
 
+JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue encodingValue)
+{
+    WTF::String encodingString = encodingValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::StringBuilder builder;
+    builder.append("Unknown encoding: "_s);
+    builder.append(encodingString);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, builder.toString()));
+    return {};
+}
+
 JSC::EncodedJSValue INVALID_STATE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& statemsg)
 {
     auto message = makeString("Invalid state: "_s, statemsg);
@@ -1008,10 +1028,55 @@ JSC::EncodedJSValue CRYPTO_INVALID_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlo
     return {};
 }
 
+JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, WTF::ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Invalid key type"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYTYPE, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_OPERATION_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, ASCIILiteral message)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_INVALID_KEYPAIR(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Invalid key pair"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_KEYPAIR, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_ECDH_INVALID_PUBLIC_KEY(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Public key is not valid for specified curve"_s;
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_ECDH_INVALID_PUBLIC_KEY, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_ECDH_INVALID_FORMAT(ThrowScope& scope, JSGlobalObject* globalObject, const WTF::String& formatString)
+{
+    WTF::StringBuilder builder;
+    builder.append("Invalid ECDH format: "_s);
+    builder.append(formatString);
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_ECDH_INVALID_FORMAT, builder.toString()));
+    return {};
+}
+
 JSC::EncodedJSValue CRYPTO_JWK_UNSUPPORTED_CURVE(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& curve)
 {
-    auto message = makeString("Unsupported JWK EC curve: "_s, curve);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, message));
+    WTF::StringBuilder builder;
+    builder.append("Unsupported JWK EC curve: "_s);
+    builder.append(curve);
+    builder.append('.');
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_JWK_UNSUPPORTED_CURVE, builder.toString()));
     return {};
 }
 
@@ -1051,12 +1116,38 @@ JSC::EncodedJSValue CRYPTO_INCOMPATIBLE_KEY_OPTIONS(JSC::ThrowScope& throwScope,
     return {};
 }
 
-JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& digest)
+JSC::EncodedJSValue CRYPTO_INVALID_DIGEST(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& digest)
 {
     WTF::StringBuilder builder;
     builder.append("Invalid digest: "_s);
     builder.append(digest);
     throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_INVALID_DIGEST, builder.toString()));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_HASH_FINALIZED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_HASH_FINALIZED, "Digest already called"_s));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_HASH_UPDATE_FAILED(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject)
+{
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_HASH_UPDATE_FAILED, "Hash update failed"_s));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_TIMING_SAFE_EQUAL_LENGTH(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject)
+{
+    auto message = "Input buffers must have the same byte length"_s;
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_TIMING_SAFE_EQUAL_LENGTH, message));
+    return {};
+}
+
+JSC::EncodedJSValue CRYPTO_UNKNOWN_DH_GROUP(JSC::ThrowScope& scope, JSGlobalObject* globalObject)
+{
+    auto message = "Unknown DH group"_s;
+    scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_DH_GROUP, message));
     return {};
 }
 
@@ -1341,6 +1432,29 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         }
         case 2: {
             JSValue arg0 = callFrame->argument(1);
+            // ["foo", "bar", "baz"] -> 'The "foo", "bar", or "baz" argument must be specified'
+            if (auto* arr = jsDynamicCast<JSC::JSArray*>(arg0)) {
+                ASSERT(arr->length() > 0);
+                WTF::StringBuilder builder;
+                builder.append("The "_s);
+                for (unsigned i = 0, length = arr->length(); i < length; i++) {
+                    JSValue index = arr->getIndex(globalObject, i);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (i == length - 1) builder.append("or "_s);
+                    builder.append('"');
+                    auto* jsString = index.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto str = jsString->view(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    builder.append(str);
+                    builder.append('"');
+                    if (i != length - 1) builder.append(',');
+                    builder.append(' ');
+                }
+                builder.append("argument must be specified"_s);
+                return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+            }
+
             auto* jsString = arg0.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             auto str0 = jsString->view(globalObject);
@@ -1554,6 +1668,28 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_BUFFER_OUT_OF_BOUNDS, "Attempt to access memory outside buffer bounds"_s));
     }
 
+    case Bun::ErrorCode::ERR_TLS_INVALID_PROTOCOL_VERSION: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString(str0, " is not a valid "_s, str1, " TLS protocol version"_s);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_INVALID_PROTOCOL_VERSION, message));
+    }
+
+    case Bun::ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("TLS protocol version "_s, str0, " conflicts with secureProtocol "_s, str1);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_PROTOCOL_VERSION_CONFLICT, message));
+    }
+
     case ErrorCode::ERR_IPC_DISCONNECTED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_IPC_DISCONNECTED, "IPC channel is already disconnected"_s));
     case ErrorCode::ERR_SERVER_NOT_RUNNING:
@@ -1600,6 +1736,12 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
     case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
+    case ErrorCode::ERR_SOCKET_CLOSED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED, "Socket is closed"_s));
+    case ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SOCKET_CLOSED_BEFORE_CONNECTION, "Socket closed before the connection was established"_s));
+    case ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TLS_RENEGOTIATION_DISABLED, "TLS session renegotiation disabled for this socket"_s));
 
     default: {
         break;

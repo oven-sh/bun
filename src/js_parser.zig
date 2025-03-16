@@ -505,6 +505,7 @@ const TransposeState = struct {
     is_require_immediately_assigned_to_decl: bool = false,
     loc: logger.Loc = logger.Loc.Empty,
     import_record_tag: ?ImportRecord.Tag = null,
+    import_loader: ?bun.options.Loader = null,
     import_options: Expr = Expr.empty,
 };
 
@@ -2059,6 +2060,7 @@ pub const SideEffects = enum(u1) {
             .s_label => |label| {
                 return shouldKeepStmtInDeadControlFlow(p, label.stmt, allocator);
             },
+
             else => return true,
         }
     }
@@ -2391,6 +2393,18 @@ pub const SideEffects = enum(u1) {
             .e_inlined_enum => |inlined| {
                 return toBooleanWithoutDCECheck(inlined.value.data);
             },
+            .e_special => |special| switch (special) {
+                .module_exports,
+                .resolved_specifier_string,
+                .hot_data,
+                => {},
+                .hot_accept,
+                .hot_accept_visited,
+                .hot_enabled,
+                => return .{ .ok = true, .value = true, .side_effects = .no_side_effects },
+                .hot_disabled,
+                => return .{ .ok = true, .value = false, .side_effects = .no_side_effects },
+            },
             else => {},
         }
 
@@ -2575,6 +2589,7 @@ const ParsedPath = struct {
     text: string,
     is_macro: bool,
     import_tag: ImportRecord.Tag = .none,
+    loader: ?bun.options.Loader = null,
 };
 
 const StrictModeFeature = enum {
@@ -3014,8 +3029,8 @@ pub const Parser = struct {
                 // - require("foo")
                 import_record.is_unused = import_record.is_unused or
                     (import_record.kind == .stmt and
-                    !import_record.was_originally_bare_import and
-                    !import_record.calls_runtime_re_export_fn);
+                        !import_record.was_originally_bare_import and
+                        !import_record.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
@@ -3048,9 +3063,11 @@ pub const Parser = struct {
         scan_pass.approximate_newline_count = p.lexer.approximate_newline_count;
     }
 
-    pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8) !js_ast.Result {
+    pub fn toLazyExportAST(this: *Parser, expr: Expr, comptime runtime_api_call: []const u8, symbols: Symbol.List) !js_ast.Result {
         var p: JavaScriptParser = undefined;
         try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
+        defer p.lexer.deinit();
+
         p.lexer.track_comments = this.options.features.minify_identifiers;
         // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
         // Let's enable this flag file-wide
@@ -3060,9 +3077,11 @@ pub const Parser = struct {
             p.should_fold_typescript_constant_expressions = true;
         }
 
-        defer p.lexer.deinit();
-        const result: js_ast.Result = undefined;
-        _ = result;
+        // If we added to `p.symbols` it's going to fuck up all the indices
+        // in the `symbols` array.
+        bun.assert(p.symbols.items.len == 0);
+        p.symbols = symbols.listManaged(p.allocator);
+
         try p.prepareForVisitPass();
 
         var final_expr = expr;
@@ -3307,26 +3326,6 @@ pub const Parser = struct {
 
         const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
         try p.prepareForVisitPass();
-
-        // ESM is always strict mode. I don't think we need this.
-        // // Strip off a leading "use strict" directive when not bundling
-        // var directive = "";
-
-        // Insert a variable for "import.meta" at the top of the file if it was used.
-        // We don't need to worry about "use strict" directives because this only
-        // happens when bundling, in which case we are flatting the module scopes of
-        // all modules together anyway so such directives are meaningless.
-        // if (!p.import_meta_ref.isSourceIndexNull()) {
-        //     // heap so it lives beyond this function call
-        //     var decls = try p.allocator.alloc(G.Decl, 1);
-        //     decls[0] = Decl{ .binding = p.b(B.Identifier{
-        //         .ref = p.import_meta_ref,
-        //     }, logger.Loc.Empty), .value = p.newExpr(E.Object{}, logger.Loc.Empty) };
-        //     var importMetaStatement = p.s(S.Local{
-        //         .kind = .k_const,
-        //         .decls = decls,
-        //     }, logger.Loc.Empty);
-        // }
 
         var before = ListManaged(js_ast.Part).init(p.allocator);
         var after = ListManaged(js_ast.Part).init(p.allocator);
@@ -4799,6 +4798,7 @@ fn NewParser_(
         filename_ref: Ref = Ref.None,
         dirname_ref: Ref = Ref.None,
         import_meta_ref: Ref = Ref.None,
+        hmr_api_ref: Ref = Ref.None,
         scopes_in_order_visitor_index: usize = 0,
         has_classic_runtime_warned: bool = false,
         macro_call_count: MacroCallCountType = 0,
@@ -5224,7 +5224,7 @@ fn NewParser_(
                     // we must also unwrap requires into imports.
                     const should_unwrap_require = p.options.features.unwrap_commonjs_to_esm and
                         (p.unwrap_all_requires or
-                        if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
+                            if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
                         // We cannot unwrap a require wrapped in a try/catch because
                         // import statements cannot be wrapped in a try/catch and
                         // require cannot return a promise.
@@ -6751,6 +6751,10 @@ fn NewParser_(
                 .wrap_anon_server_functions => {},
                 .wrap_exports_for_server_reference => {},
             }
+
+            if (p.options.features.hot_module_reloading) {
+                p.hmr_api_ref = try p.declareCommonJSSymbol(.unbound, "hmr");
+            }
         }
 
         fn ensureRequireSymbol(p: *P) void {
@@ -6907,14 +6911,14 @@ fn NewParser_(
                                             var notes = allocator.alloc(logger.Data, 1) catch unreachable;
                                             notes[0] =
                                                 logger.rangeData(
-                                                p.source,
-                                                r,
-                                                std.fmt.allocPrint(
-                                                    allocator,
-                                                    "{s} was originally declared here",
-                                                    .{name},
-                                                ) catch unreachable,
-                                            );
+                                                    p.source,
+                                                    r,
+                                                    std.fmt.allocPrint(
+                                                        allocator,
+                                                        "{s} was originally declared here",
+                                                        .{name},
+                                                    ) catch unreachable,
+                                                );
 
                                             p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{name}) catch unreachable;
                                         } else if (_scope == scope.parent) {
@@ -7531,6 +7535,19 @@ fn NewParser_(
                             e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
                         }
                     },
+                    .bin_nullish_coalescing_assign, .bin_logical_or_assign => {
+                        // Special case `{}.field ??= value` to minify to `value`
+                        // This optimization is specifically to target this pattern in HMR:
+                        //    `import.meta.hot.data.etc ??= init()`
+                        if (e_.left.data.as(.e_dot)) |dot| {
+                            if (dot.target.data.as(.e_object)) |obj| {
+                                if (obj.properties.len == 0) {
+                                    if (!bun.strings.eqlComptime(dot.name, "__proto__"))
+                                        return e_.right;
+                                }
+                            }
+                        }
+                    },
                     else => {},
                 }
 
@@ -7748,7 +7765,7 @@ fn NewParser_(
                 p.panic("Internal error", .{});
             }
 
-            _ = children.popOrNull();
+            _ = children.pop();
         }
 
         fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
@@ -9075,8 +9092,8 @@ fn NewParser_(
                 item_refs.shrinkAndFree(stmt.items.len + @as(usize, @intFromBool(stmt.default_name != null)));
             }
 
-            if (path.import_tag != .none) {
-                try p.validateImportType(path.import_tag, &stmt);
+            if (path.import_tag != .none or path.loader != null) {
+                try p.validateAndSetImportType(&path, &stmt);
             }
 
             // Track the items for this namespace
@@ -9084,13 +9101,13 @@ fn NewParser_(
             return p.s(stmt, loc);
         }
 
-        fn validateImportType(p: *P, import_tag: ImportRecord.Tag, stmt: *S.Import) !void {
+        fn validateAndSetImportType(p: *P, path: *const ParsedPath, stmt: *S.Import) !void {
             @branchHint(.cold);
 
-            if (import_tag.loader() != null) {
-                p.import_records.items[stmt.import_record_index].tag = import_tag;
+            if (path.loader) |loader| {
+                p.import_records.items[stmt.import_record_index].loader = loader;
 
-                if (import_tag.isSQLite()) {
+                if (loader == .sqlite or loader == .sqlite_embedded) {
                     for (stmt.items) |*item| {
                         if (!(strings.eqlComptime(item.alias, "default") or strings.eqlComptime(item.alias, "db"))) {
                             try p.log.addError(
@@ -9101,7 +9118,7 @@ fn NewParser_(
                             break;
                         }
                     }
-                } else if (import_tag.onlySupportsDefaultImports()) {
+                } else if (loader == .file or loader == .text) {
                     for (stmt.items) |*item| {
                         if (!(strings.eqlComptime(item.alias, "default"))) {
                             try p.log.addError(
@@ -9113,8 +9130,8 @@ fn NewParser_(
                         }
                     }
                 }
-            } else if (import_tag == .bake_resolve_to_ssr_graph) {
-                p.import_records.items[stmt.import_record_index].tag = import_tag;
+            } else if (path.import_tag == .bake_resolve_to_ssr_graph) {
+                p.import_records.items[stmt.import_record_index].tag = path.import_tag;
             }
         }
 
@@ -9272,7 +9289,6 @@ fn NewParser_(
             try p.symbols.append(Symbol{
                 .kind = kind,
                 .original_name = identifier,
-                .debug_mode_source_index = if (comptime Environment.allow_assert) p.source.index.get() else 0,
             });
 
             if (is_typescript_enabled) {
@@ -9802,7 +9818,10 @@ fn NewParser_(
                                 }
                             }
                             p.has_es_module_syntax = true;
-                            return p.s(S.ExportClause{ .items = export_clause.clauses, .is_single_line = export_clause.is_single_line }, loc);
+                            return p.s(S.ExportClause{
+                                .items = export_clause.clauses,
+                                .is_single_line = export_clause.is_single_line,
+                            }, loc);
                         },
                         T.t_equals => {
                             // "export = value;"
@@ -12147,11 +12166,11 @@ fn NewParser_(
             }
 
             if (!p.lexer.has_newline_before and (
-            // Import Assertions are deprecated.
-            // Import Attributes are the new way to do this.
-            // But some code may still use "assert"
-            // We support both and treat them identically.
-            // Once Prettier & TypeScript support import attributes, we will add runtime support
+                // Import Assertions are deprecated.
+                // Import Attributes are the new way to do this.
+                // But some code may still use "assert"
+                // We support both and treat them identically.
+                // Once Prettier & TypeScript support import attributes, we will add runtime support
                 p.lexer.isContextualKeyword("assert") or p.lexer.token == .t_with))
             {
                 try p.lexer.next();
@@ -12196,29 +12215,22 @@ fn NewParser_(
                     if (supported_attribute) |attr| {
                         switch (attr) {
                             .type => {
+                                // This logic is duplicated in js_ast.zig fn importRecordTag()
                                 const type_attr = string_literal_text;
                                 if (strings.eqlComptime(type_attr, "macro")) {
                                     path.is_macro = true;
-                                } else if (strings.eqlComptime(type_attr, "sqlite")) {
-                                    path.import_tag = .with_type_sqlite;
-                                    if (has_seen_embed_true) {
-                                        path.import_tag = .with_type_sqlite_embedded;
-                                    }
-                                } else if (strings.eqlComptime(type_attr, "json")) {
-                                    path.import_tag = .with_type_json;
-                                } else if (strings.eqlComptime(type_attr, "toml")) {
-                                    path.import_tag = .with_type_toml;
-                                } else if (strings.eqlComptime(type_attr, "text")) {
-                                    path.import_tag = .with_type_text;
-                                } else if (strings.eqlComptime(type_attr, "file")) {
-                                    path.import_tag = .with_type_file;
+                                } else if (bun.options.Loader.fromString(type_attr)) |loader| {
+                                    path.loader = loader;
+                                    if (loader == .sqlite and has_seen_embed_true) path.loader = .sqlite_embedded;
+                                } else {
+                                    // unknown loader; consider erroring
                                 }
                             },
                             .embed => {
                                 if (strings.eqlComptime(string_literal_text, "true")) {
                                     has_seen_embed_true = true;
-                                    if (path.import_tag == .with_type_sqlite) {
-                                        path.import_tag = .with_type_sqlite_embedded;
+                                    if (path.loader != null and path.loader == .sqlite) {
+                                        path.loader = .sqlite_embedded;
                                     }
                                 }
                             },
@@ -13345,7 +13357,7 @@ fn NewParser_(
                         if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and
                             strings.eqlComptime(name, "await")) or
                             (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and
-                            strings.eqlComptime(name, "yield")))
+                                strings.eqlComptime(name, "yield")))
                         {
                             if (strings.eqlComptime(name, "await")) {
                                 p.log.addRangeError(p.source, name_range, "Cannot use \"await\" here") catch unreachable;
@@ -15785,6 +15797,7 @@ fn NewParser_(
                             .binding = p.b(B.Identifier{ .ref = ref }, local.loc),
                         };
                         try partStmts.append(p.s(S.Local{ .decls = G.Decl.List.init(decls) }, local.loc));
+                        try p.declared_symbols.append(p.allocator, .{ .ref = ref, .is_top_level = true });
                     }
                 }
                 p.relocated_top_level_vars.clearRetainingCapacity();
@@ -16165,11 +16178,6 @@ fn NewParser_(
                             }
                         }
                     }
-
-                    if (!p.import_meta_ref.isNull()) {
-                        p.recordUsage(p.import_meta_ref);
-                        return p.newExpr(E.Identifier{ .ref = p.import_meta_ref }, expr.loc);
-                    }
                 },
                 .e_spread => |exp| {
                     exp.value = p.visitExpr(exp.value);
@@ -16223,6 +16231,8 @@ fn NewParser_(
                             // `module.exports` -> `exports` optimization.
                             p.commonjs_module_exports_assigned_deoptimized = true;
                         }
+
+                        p.symbols.items[result.ref.innerIndex()].has_been_assigned_to = true;
                     }
 
                     var original_name: ?string = null;
@@ -16586,7 +16596,7 @@ fn NewParser_(
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation.
                     while (p.binary_expression_stack.items.len > stack_bottom) {
-                        v = p.binary_expression_stack.pop();
+                        v = p.binary_expression_stack.pop().?;
                         v.e.left = current;
                         current = v.visitRightAndFinish(p);
                     }
@@ -17121,10 +17131,11 @@ fn NewParser_(
                                 in.assign_target == .none and
                                 key.data.isStringValue() and
                                 strings.eqlComptime(
-                                // __proto__ is utf8, assume it lives in refs
-                                key.data.e_string.slice(p.allocator),
-                                "__proto__",
-                            )) {
+                                    // __proto__ is utf8, assume it lives in refs
+                                    key.data.e_string.slice(p.allocator),
+                                    "__proto__",
+                                ))
+                            {
                                 if (has_proto) {
                                     const r = js_lexer.rangeOfIdentifier(p.source, key.loc);
                                     p.log.addRangeError(p.source, r, "Cannot specify the \"__proto__\" property more than once per object") catch unreachable;
@@ -17203,7 +17214,7 @@ fn NewParser_(
                             .import_options = e_.options,
 
                             .loc = e_.expr.loc,
-                            .import_record_tag = e_.importRecordTag(),
+                            .import_loader = e_.importRecordLoader(),
                         };
 
                         return p.import_transposer.maybeTransposeIf(e_.expr, &state);
@@ -17240,9 +17251,10 @@ fn NewParser_(
                             if (e_.optional_chain == null and
                                 target_was_identifier_before_visit and
                                 strings.eqlComptime(
-                                p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name,
-                                "eval",
-                            )) {
+                                    p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name,
+                                    "eval",
+                                ))
+                            {
                                 e_.is_direct_eval = true;
 
                                 // Pessimistically assume that if this looks like a CommonJS module
@@ -17302,13 +17314,18 @@ fn NewParser_(
                             p.should_fold_typescript_constant_expressions = true;
                         }
 
+                        // When a value is targeted by `--drop`, it will be removed.
+                        // The HMR APIs in `import.meta.hot` are implicitly dropped when HMR is disabled.
                         var method_call_should_be_replaced_with_undefined = p.method_call_must_be_replaced_with_undefined;
-
                         if (method_call_should_be_replaced_with_undefined) {
                             p.method_call_must_be_replaced_with_undefined = false;
                             switch (e_.target.data) {
                                 // If we're removing this call, don't count any arguments as symbol uses
-                                .e_index, .e_dot => {
+                                .e_index, .e_dot, .e_identifier => {
+                                    p.is_control_flow_dead = true;
+                                },
+                                // Special case from `import.meta.hot.*` functions.
+                                .e_undefined => {
                                     p.is_control_flow_dead = true;
                                 },
                                 else => {
@@ -17400,7 +17417,14 @@ fn NewParser_(
                         return expr;
                     } else if (e_.target.data.as(.e_special)) |special|
                         switch (special) {
-                            .hot_accept => p.handleImportMetaHotAcceptCall(e_),
+                            .hot_accept => {
+                                p.handleImportMetaHotAcceptCall(e_);
+                                // After validating that the import.meta.hot
+                                // code is correct, discard the entire
+                                // expression in production.
+                                if (!p.options.features.hot_module_reloading)
+                                    return .{ .data = .e_undefined, .loc = expr.loc };
+                            },
                             else => {},
                         };
 
@@ -17888,18 +17912,18 @@ fn NewParser_(
                 .e_if => |ex| {
                     return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.test_) and
                         (p.isSideEffectFreeUnboundIdentifierRef(
-                        ex.yes,
-                        ex.test_,
-                        true,
-                    ) or
-                        p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.yes)) and
+                            ex.yes,
+                            ex.test_,
+                            true,
+                        ) or
+                            p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.yes)) and
                         (p.isSideEffectFreeUnboundIdentifierRef(
-                        ex.no,
-                        ex.test_,
-                        false,
-                    ) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(
-                        &ex.no,
-                    ));
+                            ex.no,
+                            ex.test_,
+                            false,
+                        ) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(
+                            &ex.no,
+                        ));
                 },
                 .e_array => |ex| {
                     for (ex.items.slice()) |*item| {
@@ -18320,13 +18344,6 @@ fn NewParser_(
         }
 
         fn selectLocalKind(p: *P, kind: S.Local.Kind) S.Local.Kind {
-            // When using Kit's HMR implementation, we need to preserve the local kind
-            // if possible, as more efficient code can be generated if something is known
-            // not to be an ESM live binding.
-            if (p.options.features.hot_module_reloading) {
-                return kind;
-            }
-
             // Use "var" instead of "let" and "const" if the variable declaration may
             // need to be separated from the initializer. This allows us to safely move
             // this declaration into a nested scope.
@@ -18518,13 +18535,14 @@ fn NewParser_(
                                         // just not module.exports = { bar: function() {}  }
                                         // just not module.exports = { bar() {}  }
                                         switch (prop.value.?.data) {
-                                        .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
-                                        .e_call => |call| switch (call.target.data) {
                                             .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
-                                            else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
-                                        },
-                                        else => !prop.value.?.isPrimitiveLiteral(),
-                                    }) {
+                                            .e_call => |call| switch (call.target.data) {
+                                                .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                                else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
+                                            },
+                                            else => !prop.value.?.isPrimitiveLiteral(),
+                                        })
+                                    {
                                         p.deoptimizeCommonJSNamedExports();
                                         return null;
                                     }
@@ -18743,10 +18761,9 @@ fn NewParser_(
                     }
 
                     if (strings.eqlComptime(name, "hot")) {
-                        if (!p.options.features.hot_module_reloading)
-                            return .{ .data = .e_undefined, .loc = loc };
-
-                        return .{ .data = .{ .e_special = .hot }, .loc = loc };
+                        return .{ .data = .{
+                            .e_special = if (p.options.features.hot_module_reloading) .hot_enabled else .hot_disabled,
+                        }, .loc = loc };
                     }
 
                     // Make all property accesses on `import.meta.url` side effect free.
@@ -18841,9 +18858,59 @@ fn NewParser_(
                             }
                         }
                     },
-                    .hot => {
-                        if (strings.eqlComptime(name, "accept")) {
-                            return .{ .data = .{ .e_special = .hot_accept }, .loc = loc };
+                    .hot_enabled, .hot_disabled => {
+                        const enabled = p.options.features.hot_module_reloading;
+                        if (bun.strings.eqlComptime(name, "data")) {
+                            return if (enabled)
+                                .{ .data = .{ .e_special = .hot_data }, .loc = loc }
+                            else
+                                Expr.init(E.Object, .{}, loc);
+                        }
+                        if (bun.strings.eqlComptime(name, "accept")) {
+                            if (!enabled) {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                                return .{ .data = .e_undefined, .loc = loc };
+                            }
+                            return .{ .data = .{
+                                .e_special = .hot_accept,
+                            }, .loc = loc };
+                        }
+                        const lookup_table = comptime bun.ComptimeStringMap(void, [_]struct { [:0]const u8, void }{
+                            .{ "decline", {} },
+                            .{ "dispose", {} },
+                            .{ "prune", {} },
+                            .{ "invalidate", {} },
+                            .{ "on", {} },
+                            .{ "off", {} },
+                            .{ "send", {} },
+                        });
+                        if (lookup_table.has(name)) {
+                            if (enabled) {
+                                return Expr.init(E.Dot, .{
+                                    .target = Expr.initIdentifier(p.hmr_api_ref, target.loc),
+                                    .name = name,
+                                    .name_loc = name_loc,
+                                }, loc);
+                            } else {
+                                p.method_call_must_be_replaced_with_undefined = true;
+                                return .{ .data = .e_undefined, .loc = loc };
+                            }
+                        } else {
+                            // This error is a bit out of place since the HMR
+                            // API is validated in the parser instead of at
+                            // runtime. When the API is not validated in this
+                            // way, the developer may unintentionally read or
+                            // write internal fields of HMRModule.
+                            p.log.addError(
+                                p.source,
+                                loc,
+                                std.fmt.allocPrint(
+                                    p.allocator,
+                                    "import.meta.hot.{s} does not exist",
+                                    .{name},
+                                ) catch bun.outOfMemory(),
+                            ) catch bun.outOfMemory();
+                            return .{ .data = .e_undefined, .loc = loc };
                         }
                     },
                     else => {},
@@ -19247,6 +19314,7 @@ fn NewParser_(
                             };
                             stmts.appendAssumeCapacity(p.s(S.ExportClause{
                                 .items = items,
+                                .is_single_line = false,
                             }, stmt.loc));
                         }
 
@@ -22967,7 +23035,7 @@ fn NewParser_(
                 if (stmt.data == .s_local and
                     // Need to re-check lower_using for the k_using case in case lower_await is true
                     ((stmt.data.s_local.kind == .k_using and p.options.features.lower_using) or
-                    (stmt.data.s_local.kind == .k_await_using)))
+                        (stmt.data.s_local.kind == .k_await_using)))
                 {
                     return true;
                 }
@@ -23242,6 +23310,7 @@ fn NewParser_(
                 if (exports.items.len > 0) {
                     result.appendAssumeCapacity(p.s(S.ExportClause{
                         .items = exports.items,
+                        .is_single_line = false,
                     }, loc));
                 }
 
@@ -23542,7 +23611,10 @@ fn NewParser_(
                 bun.assert(!p.options.tree_shaking);
                 bun.assert(p.options.features.hot_module_reloading);
 
-                var hmr_transform_ctx = ConvertESMExportsForHmr{ .last_part = &parts.items[parts.items.len - 1] };
+                var hmr_transform_ctx = ConvertESMExportsForHmr{
+                    .last_part = &parts.items[parts.items.len - 1],
+                    .is_in_node_modules = p.source.path.isNodeModule(),
+                };
                 try hmr_transform_ctx.stmts.ensureTotalCapacity(p.allocator, prealloc_count: {
                     // get a estimate on how many statements there are going to be
                     var count: usize = 0;
@@ -23659,8 +23731,8 @@ fn NewParser_(
 
                 const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
                     !(parts.items.len > 0 and
-                    parts.items[0].stmts.len > 0 and
-                    parts.items[0].stmts[0].data == .s_directive);
+                        parts.items[0].stmts.len > 0 and
+                        parts.items[0].stmts[0].data == .s_directive);
 
                 total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
 
@@ -23767,6 +23839,10 @@ fn NewParser_(
             }
 
             const wrapper_ref: Ref = brk: {
+                if (p.options.features.hot_module_reloading) {
+                    break :brk p.hmr_api_ref;
+                }
+
                 if (p.options.bundle and p.needsWrapperRef(parts.items)) {
                     break :brk p.newSymbol(
                         .other,
@@ -24052,6 +24128,19 @@ pub fn newLazyExportAST(
     source: *const logger.Source,
     comptime runtime_api_call: []const u8,
 ) anyerror!?js_ast.Ast {
+    return newLazyExportASTImpl(allocator, define, opts, log_to_copy_into, expr, source, runtime_api_call, .{});
+}
+
+pub fn newLazyExportASTImpl(
+    allocator: std.mem.Allocator,
+    define: *Define,
+    opts: Parser.Options,
+    log_to_copy_into: *logger.Log,
+    expr: Expr,
+    source: *const logger.Source,
+    comptime runtime_api_call: []const u8,
+    symbols: Symbol.List,
+) anyerror!?js_ast.Ast {
     var temp_log = logger.Log.init(allocator);
     const log = &temp_log;
     var parser = Parser{
@@ -24065,6 +24154,7 @@ pub fn newLazyExportAST(
     var result = parser.toLazyExportAST(
         expr,
         runtime_api_call,
+        symbols,
     ) catch |err| {
         if (temp_log.errors == 0) {
             log_to_copy_into.addRangeError(source, parser.lexer.range(), @errorName(err)) catch unreachable;
@@ -24192,9 +24282,9 @@ const ReactRefresh = struct {
         return id.len >= 4 and
             strings.hasPrefixComptime(id, "use") and
             switch (id[3]) {
-            'A'...'Z' => true,
-            else => false,
-        };
+                'A'...'Z' => true,
+                else => false,
+            };
     }
 
     pub const built_in_hooks = bun.ComptimeEnumMap(enum {
@@ -24222,6 +24312,9 @@ const ReactRefresh = struct {
 
 pub const ConvertESMExportsForHmr = struct {
     last_part: *js_ast.Part,
+    // files in node modules will not get hot updates, so the code generation
+    // can be a bit more concise for re-exports
+    is_in_node_modules: bool,
     imports_seen: bun.StringArrayHashMapUnmanaged(ImportRef) = .{},
     export_star_props: std.ArrayListUnmanaged(G.Property) = .{},
     export_props: std.ArrayListUnmanaged(G.Property) = .{},
@@ -24234,55 +24327,57 @@ pub const ConvertESMExportsForHmr = struct {
 
     fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void {
         const new_stmt = switch (stmt.data) {
-            else => stmt,
+            else => brk: {
+                break :brk stmt;
+            },
             .s_local => |st| stmt: {
-                if (!st.is_export) break :stmt stmt;
+                if (!st.is_export) {
+                    break :stmt stmt;
+                }
 
                 st.is_export = false;
 
-                if (st.kind.isReassignable()) {
-                    for (st.decls.slice()) |decl| {
-                        try ctx.visitBindingToExport(p, decl.binding, true);
+                var new_len: usize = 0;
+                for (st.decls.slice()) |*decl_ptr| {
+                    const decl = decl_ptr.*; // explicit copy to avoid aliasinng
+                    const value = decl.value orelse {
+                        st.decls.mut(new_len).* = decl;
+                        new_len += 1;
+                        try ctx.visitBindingToExport(p, decl.binding);
+                        continue;
+                    };
+
+                    switch (decl.binding.data) {
+                        .b_missing => {},
+
+                        .b_identifier => |id| {
+                            const symbol = p.symbols.items[id.ref.inner_index];
+
+                            // if the symbol is not used, we don't need to preserve
+                            // a binding in this scope. we can move it to the exports object.
+                            if (symbol.use_count_estimate == 0 and value.canBeMoved()) {
+                                try ctx.export_props.append(p.allocator, .{
+                                    .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
+                                    .value = value,
+                                });
+                            } else {
+                                st.decls.mut(new_len).* = decl;
+                                new_len += 1;
+                                try ctx.visitBindingToExport(p, decl.binding);
+                            }
+                        },
+
+                        else => {
+                            st.decls.mut(new_len).* = decl;
+                            new_len += 1;
+                            try ctx.visitBindingToExport(p, decl.binding);
+                        },
                     }
-                } else {
-                    // TODO: remove this dupe
-                    var dupe_decls = try std.ArrayListUnmanaged(G.Decl).initCapacity(p.allocator, st.decls.len);
-
-                    for (st.decls.slice()) |decl| {
-                        bun.assert(decl.value != null); // const must be initialized
-
-                        switch (decl.binding.data) {
-                            .b_missing => {},
-
-                            .b_identifier => |id| {
-                                const symbol = p.symbols.items[id.ref.inner_index];
-
-                                // if the symbol is not used, we don't need to preserve
-                                // a binding in this scope. we can move it to the exports object.
-                                if (symbol.use_count_estimate == 0 and decl.value.?.canBeMoved()) {
-                                    try ctx.export_props.append(p.allocator, .{
-                                        .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
-                                        .value = decl.value,
-                                    });
-                                } else {
-                                    dupe_decls.appendAssumeCapacity(decl);
-                                    try ctx.visitBindingToExport(p, decl.binding, false);
-                                }
-                            },
-
-                            else => {
-                                dupe_decls.appendAssumeCapacity(decl);
-                                try ctx.visitBindingToExport(p, decl.binding, false);
-                            },
-                        }
-                    }
-
-                    if (dupe_decls.items.len == 0) {
-                        return;
-                    }
-
-                    st.decls = G.Decl.List.fromList(dupe_decls);
                 }
+                if (new_len == 0) {
+                    return;
+                }
+                st.decls.len = @intCast(new_len);
 
                 break :stmt stmt;
             },
@@ -24307,7 +24402,6 @@ pub const ConvertESMExportsForHmr = struct {
                 }
 
                 // Try to move the export default expression to the end.
-                // TODO: make a function
                 const can_be_moved_to_inner_scope = switch (st.value) {
                     .stmt => |s| switch (s.data) {
                         .s_class => |c| c.class.canBeMoved() and (if (c.class.class_name) |name|
@@ -24371,8 +24465,11 @@ pub const ConvertESMExportsForHmr = struct {
                 }
             },
             .s_class => |st| stmt: {
+
                 // Strip the "export" keyword
-                if (!st.is_export) break :stmt stmt;
+                if (!st.is_export) {
+                    break :stmt stmt;
+                }
 
                 // Export as CommonJS
                 try ctx.export_props.append(p.allocator, .{
@@ -24392,13 +24489,13 @@ pub const ConvertESMExportsForHmr = struct {
 
                 st.func.flags.remove(.is_export);
 
-                // Export as CommonJS
-                try ctx.export_props.append(p.allocator, .{
-                    .key = Expr.init(E.String, .{
-                        .data = p.symbols.items[st.func.name.?.ref.?.inner_index].original_name,
-                    }, stmt.loc),
-                    .value = Expr.initIdentifier(st.func.name.?.ref.?, stmt.loc),
-                });
+                try ctx.visitRefToExport(
+                    p,
+                    st.func.name.?.ref.?,
+                    null,
+                    stmt.loc,
+                    false,
+                );
 
                 break :stmt stmt;
             },
@@ -24430,7 +24527,13 @@ pub const ConvertESMExportsForHmr = struct {
                             .import_record_index = st.import_record_index,
                         };
                     }
-                    try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, true);
+                    try ctx.visitRefToExport(
+                        p,
+                        ref,
+                        item.alias,
+                        item.name.loc,
+                        !ctx.is_in_node_modules, // live binding when this may be replaced
+                    );
 
                     // imports and export statements have their alias +
                     // original_name swapped. this is likely a design bug in
@@ -24462,7 +24565,6 @@ pub const ConvertESMExportsForHmr = struct {
                     });
                 } else {
                     // 'export * from' creates a spread, hoisted at the top.
-                    // TODO: for perfect HMR, this likely needs more instrumentation
                     try ctx.export_star_props.append(p.allocator, .{
                         .kind = .spread,
                         .value = Expr.initIdentifier(namespace_ref, stmt.loc),
@@ -24554,25 +24656,20 @@ pub const ConvertESMExportsForHmr = struct {
         return namespace_ref;
     }
 
-    fn visitBindingToExport(
-        ctx: *ConvertESMExportsForHmr,
-        p: anytype,
-        binding: Binding,
-        is_live_binding: bool,
-    ) !void {
+    fn visitBindingToExport(ctx: *ConvertESMExportsForHmr, p: anytype, binding: Binding) !void {
         switch (binding.data) {
             .b_missing => {},
             .b_identifier => |id| {
-                try ctx.visitRefToExport(p, id.ref, null, binding.loc, is_live_binding);
+                try ctx.visitRefToExport(p, id.ref, null, binding.loc, false);
             },
             .b_array => |array| {
                 for (array.items) |item| {
-                    try ctx.visitBindingToExport(p, item.binding, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.binding);
                 }
             },
             .b_object => |object| {
                 for (object.properties) |item| {
-                    try ctx.visitBindingToExport(p, item.value, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.value);
                 }
             },
         }
@@ -24591,11 +24688,16 @@ pub const ConvertESMExportsForHmr = struct {
             Expr.init(E.ImportIdentifier, .{ .ref = ref }, loc)
         else
             Expr.initIdentifier(ref, loc);
-        if (is_live_binding_source or symbol.kind == .import) {
-            // TODO: instead of requiring getters for live-bindings,
-            // a callback propagation system should be considered.
-            // mostly because here, these might not even be live
-            // bindings, and re-exports are so, so common.
+        if (is_live_binding_source or (symbol.kind == .import and !ctx.is_in_node_modules) or symbol.has_been_assigned_to) {
+            // TODO (2024-11-24) instead of requiring getters for live-bindings,
+            // a callback propagation system should be considered.  mostly
+            // because here, these might not even be live bindings, and
+            // re-exports are so, so common.
+            //
+            // update(2025-03-05): HMRModule in ts now contains an exhaustive map
+            // of importers. For local live bindings, these can just remember to
+            // mutate the field in the exports object. Re-exports can just be
+            // encoded into the module format, propagated in `replaceModules`
             const key = Expr.init(E.String, .{
                 .data = export_symbol_name orelse symbol.original_name,
             }, loc);
@@ -24608,7 +24710,6 @@ pub const ConvertESMExportsForHmr = struct {
             try ctx.last_part.symbol_uses.putNoClobber(p.allocator, arg1, .{ .count_estimate = 1 });
             try p.current_scope.generated.push(p.allocator, arg1);
 
-            // Live bindings need to update the value internally and externally.
             // 'get abc() { return abc }'
             try ctx.export_props.append(p.allocator, .{
                 .kind = .get,
@@ -24647,17 +24748,21 @@ pub const ConvertESMExportsForHmr = struct {
                 @memcpy(ctx.export_props.items[0..export_star_len], ctx.export_star_props.items);
             }
         }
+
         if (ctx.export_props.items.len > 0) {
+            const obj = Expr.init(E.Object, .{
+                .properties = G.Property.List.fromList(ctx.export_props),
+            }, logger.Loc.Empty);
+
+            // `hmr.exports = ...`
             try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
                 .value = Expr.assign(
                     Expr.init(E.Dot, .{
-                        .target = Expr.initIdentifier(p.module_ref, logger.Loc.Empty),
+                        .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
                         .name = "exports",
                         .name_loc = logger.Loc.Empty,
                     }, logger.Loc.Empty),
-                    Expr.init(E.Object, .{
-                        .properties = G.Property.List.fromList(ctx.export_props),
-                    }, logger.Loc.Empty),
+                    obj,
                 ),
             }, logger.Loc.Empty));
 
@@ -24666,9 +24771,20 @@ pub const ConvertESMExportsForHmr = struct {
             try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
         }
 
-        // TODO: emit a marker for HMR runtime to know the non-star export fields.
+        if (p.options.features.react_fast_refresh and p.react_refresh.register_used) {
+            try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+                .value = Expr.init(E.Call, .{
+                    .target = Expr.init(E.Dot, .{
+                        .target = Expr.initIdentifier(p.hmr_api_ref, .Empty),
+                        .name = "reactRefreshAccept",
+                        .name_loc = .Empty,
+                    }, .Empty),
+                    .args = .init(&.{}),
+                }, .Empty),
+            }, .Empty));
+        }
 
-        // TODO: this is a tiny mess. it is honestly trying to hard to merge all parts into one
+        // Merge all part metadata into the first part.
         for (all_parts[0 .. all_parts.len - 1]) |*part| {
             try ctx.last_part.declared_symbols.appendList(p.allocator, part.declared_symbols);
             try ctx.last_part.import_record_indices.append(p.allocator, part.import_record_indices.slice());

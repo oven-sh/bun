@@ -1,6 +1,6 @@
 // Bundle tests are tests concerning bundling bugs that only occur in DevServer.
 import { expect } from "bun:test";
-import { devTest, emptyHtmlFile, minimalFramework, reactRefreshStub } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -101,12 +101,12 @@ devTest("importing a file before it is created", {
 });
 devTest("default export same-scope handling", {
   files: {
-    ...reactRefreshStub,
     "index.html": emptyHtmlFile({
       styles: [],
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.ts"],
     }),
     "index.ts": `
+      import.meta.hot.accept();
       await import("./fixture1.ts"); 
       console.log((new ((await import("./fixture2.ts")).default)).a); 
       await import("./fixture3.ts"); 
@@ -137,6 +137,7 @@ devTest("default export same-scope handling", {
       console.log(new A().result);
     `,
     "fixture4.ts": `
+      import.meta.hot.accept();
       export default class MOVE {
         result = "FOUR"
       }
@@ -157,6 +158,7 @@ devTest("default export same-scope handling", {
       export default function() { return "EIGHT" };
     `,
     "fixture8.ts": `
+      import.meta.hot.accept();
       export default function MOVE() { return "NINE" };
     `,
     "fixture9.ts": `
@@ -193,17 +195,29 @@ devTest("default export same-scope handling", {
     await dev.writeNoChanges("fixture7.ts");
     const chunk = await c.getMostRecentHmrChunk();
     expect(chunk).toMatch(/default:\s*function/);
+
+    // Since fixture7.ts is not marked as accepting, it will bubble the update
+    // to `index.ts`, re-evaluate it and some of the dependencies.
+    c.expectMessage(
+      "TWO",
+      "FOUR",
+      "FIVE",
+      "SEVEN",
+      "EIGHT",
+      "NINE",
+      "ELEVEN",
+    );
   },
 });
 devTest("directory cache bust case #17576", {
   files: {
-    ...reactRefreshStub,
     "web/index.html": emptyHtmlFile({
       styles: [],
-      scripts: ["index.ts", "react-refresh/runtime"],
+      scripts: ["index.ts"],
     }),
     "web/index.ts": `
       console.log(123);
+      import.meta.hot.accept();
     `,
   },
   mainDir: "server",
@@ -214,8 +228,8 @@ devTest("directory cache bust case #17576", {
       await dev.write(
         "web/Test.ts",
         `
-        export const abc = 456;
-      `,
+          export const abc = 456;
+        `,
       );
     });
     await dev.write(
@@ -229,6 +243,9 @@ devTest("directory cache bust case #17576", {
   },
 });
 devTest("deleting imported file shows error then recovers", {
+  skip: [
+    'win32', // unlinkSync is having weird behavior
+  ],
   files: {
     "index.html": emptyHtmlFile({
       styles: [],
@@ -263,5 +280,111 @@ devTest("deleting imported file shows error then recovers", {
     await c.expectNoWebSocketActivity(async () => {
       await dev.delete("unrelated.ts");
     });
+  },
+});
+devTest("importing html file", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./index.html";
+      console.log(html);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ["index.ts:1:18: error: Browser builds cannot import HTML files."],
+    });
+  },
+});
+devTest("importing bun on the client", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import bun from "bun";
+      console.log(bun);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: ['index.ts:1:17: error: Browser build cannot import Bun builtin: "bun"'],
+    });
+  },
+});
+devTest("import.meta.main", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log(import.meta.main);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(false); // import.meta.main is always false because there is no single entry point
+
+    await dev.write(
+      "index.ts",
+      `
+        require;
+        console.log(import.meta.main);
+      `,
+    );
+    await c.expectMessage(false);
+  },
+});
+devTest("commonjs forms", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import cjs from "./cjs.js";
+      console.log(cjs);
+    `,
+    "cjs.js": `
+      module.exports.field = {};
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage({ field: {} });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `exports.field = "1";`);
+    });
+    await c.expectMessage({ field: "1" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theExports = exports; theExports.field = "2";`);
+    });
+    await c.expectMessage({ field: "2" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theModule = module; theModule.exports.field = "3";`);
+    });
+    await c.expectMessage({ field: "3" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let { exports } = module; exports.field = "4";`);
+    });
+    await c.expectMessage({ field: "4" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `var { exports } = module; exports.field = "4.5";`);
+    });
+    await c.expectMessage({ field: "4.5" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `let theExports = module.exports; theExports.field = "5";`);
+    });
+    await c.expectMessage({ field: "5" });
+    await c.expectReload(async () => {
+      await dev.write("cjs.js", `require; eval("module.exports.field = '6'");`);
+    });
+    await c.expectMessage({ field: "6" });
   },
 });

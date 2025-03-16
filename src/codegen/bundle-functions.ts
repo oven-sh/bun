@@ -1,5 +1,7 @@
 // This script is run when you change anything in src/js/*
 //
+// Documentation is in src/js/README.md
+//
 // Originally, the builtin bundler only supported function files, but then the module files were
 // added to this, which has made this entire setup extremely convoluted and a mess.
 //

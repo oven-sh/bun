@@ -12,7 +12,7 @@ pub const short = u16;
 pub const PostgresShort = u16;
 const Crypto = JSC.API.Bun.Crypto;
 const JSValue = JSC.JSValue;
-const BoringSSL = @import("../boringssl.zig");
+const BoringSSL = bun.BoringSSL;
 pub const AnyPostgresError = error{
     ConnectionClosed,
     ExpectedRequest,
@@ -1241,6 +1241,7 @@ pub const PostgresSQLConnection = struct {
     database: []const u8 = "",
     user: []const u8 = "",
     password: []const u8 = "",
+    path: []const u8 = "",
     options: []const u8 = "",
     options_buf: []const u8 = "",
 
@@ -1340,7 +1341,7 @@ pub const PostgresSQLConnection = struct {
         };
 
         fn hmac(password: []const u8, data: []const u8) ?[32]u8 {
-            var buf = std.mem.zeroes([bun.BoringSSL.EVP_MAX_MD_SIZE]u8);
+            var buf = std.mem.zeroes([bun.BoringSSL.c.EVP_MAX_MD_SIZE]u8);
 
             // TODO: I don't think this is failable.
             const result = bun.hmac.generate(password, data, .sha256, &buf) orelse return null;
@@ -1387,7 +1388,7 @@ pub const PostgresSQLConnection = struct {
         pub fn nonce(this: *SASL) []const u8 {
             if (this.nonce_len == 0) {
                 var bytes: [nonce_byte_len]u8 = .{0} ** nonce_byte_len;
-                bun.rand(&bytes);
+                bun.csprng(&bytes);
                 this.nonce_len = @intCast(bun.base64.encode(&this.nonce_base64_bytes, &bytes));
             }
             return this.nonce_base64_bytes[0..this.nonce_len];
@@ -1713,8 +1714,8 @@ pub const PostgresSQLConnection = struct {
                             return;
                         }
 
-                        const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
-                        if (BoringSSL.SSL_get_servername(ssl_ptr, 0)) |servername| {
+                        const ssl_ptr: *BoringSSL.c.SSL = @ptrCast(this.socket.getNativeHandle());
+                        if (BoringSSL.c.SSL_get_servername(ssl_ptr, 0)) |servername| {
                             const hostname = servername[0..bun.len(servername)];
                             if (!BoringSSL.checkServerIdentity(ssl_ptr, hostname)) {
                                 this.failWithJSValue(ssl_error.toJS(this.globalObject));
@@ -1847,7 +1848,7 @@ pub const PostgresSQLConnection = struct {
 
     pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
         var vm = globalObject.bunVM();
-        const arguments = callframe.arguments_old(14).slice();
+        const arguments = callframe.arguments_old(15).slice();
         const hostname_str = try arguments[0].toBunString(globalObject);
         defer hostname_str.deref();
         const port = arguments[1].coerce(i32, globalObject);
@@ -1916,13 +1917,17 @@ pub const PostgresSQLConnection = struct {
         var password: []const u8 = "";
         var database: []const u8 = "";
         var options: []const u8 = "";
+        var path: []const u8 = "";
 
         const options_str = try arguments[7].toBunString(globalObject);
         defer options_str.deref();
 
+        const path_str = try arguments[8].toBunString(globalObject);
+        defer path_str.deref();
+
         const options_buf: []u8 = brk: {
             var b = bun.StringBuilder{};
-            b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1;
+            b.cap += username_str.utf8ByteLength() + 1 + password_str.utf8ByteLength() + 1 + database_str.utf8ByteLength() + 1 + options_str.utf8ByteLength() + 1 + path_str.utf8ByteLength() + 1;
 
             b.allocate(bun.default_allocator) catch {};
             var u = username_str.toUTF8WithoutRef(bun.default_allocator);
@@ -1941,15 +1946,19 @@ pub const PostgresSQLConnection = struct {
             defer o.deinit();
             options = b.append(o.slice());
 
+            var _path = path_str.toUTF8WithoutRef(bun.default_allocator);
+            defer _path.deinit();
+            path = b.append(_path.slice());
+
             break :brk b.allocatedSlice();
         };
 
-        const on_connect = arguments[8];
-        const on_close = arguments[9];
-        const idle_timeout = arguments[10].toInt32();
-        const connection_timeout = arguments[11].toInt32();
-        const max_lifetime = arguments[12].toInt32();
-        const use_unnamed_prepared_statements = arguments[13].asBoolean();
+        const on_connect = arguments[9];
+        const on_close = arguments[10];
+        const idle_timeout = arguments[11].toInt32();
+        const connection_timeout = arguments[12].toInt32();
+        const max_lifetime = arguments[13].toInt32();
+        const use_unnamed_prepared_statements = arguments[14].asBoolean();
 
         const ptr: *PostgresSQLConnection = try bun.default_allocator.create(PostgresSQLConnection);
 
@@ -1959,6 +1968,7 @@ pub const PostgresSQLConnection = struct {
             .database = database,
             .user = username,
             .password = password,
+            .path = path,
             .options = options,
             .options_buf = options_buf,
             .socket = .{ .SocketTCP = .{ .socket = .{ .detached = {} } } },
@@ -1998,17 +2008,29 @@ pub const PostgresSQLConnection = struct {
                 break :brk ctx_;
             };
 
-            ptr.socket = .{
-                .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
-                    tls_config.deinit();
-                    if (tls_ctx) |tls| {
-                        tls.deinit(true);
-                    }
-                    ptr.deinit();
-                    return globalObject.throwError(err, "failed to connect to postgresql");
-                },
-            };
-
+            if (path.len > 0) {
+                ptr.socket = .{
+                    .SocketTCP = uws.SocketTCP.connectUnixAnon(path, ctx, ptr, false) catch |err| {
+                        tls_config.deinit();
+                        if (tls_ctx) |tls| {
+                            tls.deinit(true);
+                        }
+                        ptr.deinit();
+                        return globalObject.throwError(err, "failed to connect to postgresql");
+                    },
+                };
+            } else {
+                ptr.socket = .{
+                    .SocketTCP = uws.SocketTCP.connectAnon(hostname.slice(), port, ctx, ptr, false) catch |err| {
+                        tls_config.deinit();
+                        if (tls_ctx) |tls| {
+                            tls.deinit(true);
+                        }
+                        ptr.deinit();
+                        return globalObject.throwError(err, "failed to connect to postgresql");
+                    },
+                };
+            }
             ptr.resetConnectionTimeout();
         }
 

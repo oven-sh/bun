@@ -36,7 +36,7 @@ V8 has a [similar feature](https://v8.dev/blog/embedded-builtins) to this syntax
 
 On top of this, we have some special functions that are handled by the builtin preprocessor:
 
-- `require` works, but it must be passed a **string literal** that resolves to a module within `src/js`. This call gets replaced with `$getInternalField($internalModuleRegistery, <number>)`, which directly loads the module by its generated numerical ID, skipping the resolver for inter-internal modules.
+- `require` works, but it must be passed a **string literal** that resolves to a module within `src/js`. This call gets replaced with `$getInternalField($internalModuleRegistry, <number>)`, which directly loads the module by its generated numerical ID, skipping the resolver for inter-internal modules.
 
 - `$debug()` is exactly like console.log, but is stripped in release builds. It is disabled by default, requiring you to pass one of: `BUN_DEBUG_MODULE_NAME=1`, `BUN_DEBUG_JS=1`, or `BUN_DEBUG_ALL=1`. You can also do `if($debug) {}` to check if debug env var is set.
 
@@ -48,16 +48,20 @@ On top of this, we have some special functions that are handled by the builtin p
 
 ## Builtin Modules
 
-In module files, instead of using `module.exports`, use the `export default` variable. Due to the internal implementation, these must be `JSCell` types (function / object).
+Files in `node`, `bun`, `thirdparty`, and `internal` are all bundled as "modules". These go through the preprocessor to construct a JS function, where `export default`/`export function`/etc are converted into a `return` statement. Due to this, non-type `import` statements are not supported.
+
+By using `export default`, this controls the result of using `require` to import the module. When ESM imports this module (userland), all properties on this object are available as named exports. Named exports are preprocessed into properties on this default object.
 
 ```ts
+const fs = require("fs"); // load another builtin module
+
 export default {
   hello: 2,
   world: 3,
 };
 ```
 
-Keep in mind that **these are not ES modules**. `export default` is only syntax sugar to assign to the variable `$exports`, which is actually how the module exports its contents. `export var` and `export function` are banned syntax, and so is `import` (use `require` instead)
+Keep in mind that **these are not ES modules**. `export default` is only syntax sugar to assign to the variable `$exports`, which is actually how the module exports its contents.
 
 To actually wire up one of these modules to the resolver, that is done separately in `module_resolver.zig`. Maybe in the future we can do codegen for it.
 

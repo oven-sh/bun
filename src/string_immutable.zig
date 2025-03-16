@@ -894,7 +894,9 @@ pub fn withoutTrailingSlashWindowsPath(input: string) []const u8 {
         path.len -= 1;
     }
 
-    bun.assert(!isWindowsAbsolutePathMissingDriveLetter(u8, path));
+    if (Environment.isDebug)
+        bun.debugAssert(!std.fs.path.isAbsolute(path) or
+            !isWindowsAbsolutePathMissingDriveLetter(u8, path));
 
     return path;
 }
@@ -4382,6 +4384,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
 
     if (remaining[0] >= 127 or
         remaining[0] < 0x20 or
+        remaining[0] == '%' or
         remaining[0] == '\\' or
         remaining[0] == '"' or
         remaining[0] == '#' or
@@ -4402,6 +4405,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
                 @as(AsciiVectorU1, @bitCast(vec > max_16_ascii)) |
                 @as(AsciiVectorU1, @bitCast((vec < min_16_ascii))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('%')))) |
+                @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('\\')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('"')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('#')))) |
                 @as(AsciiVectorU1, @bitCast(vec == @as(AsciiVector, @splat('?')))) |
@@ -4425,6 +4429,7 @@ pub fn indexOfNeedsURLEncode(slice: []const u8) ?u32 {
         const char = char_.*;
         if (char > 127 or char < 0x20 or
             char == '\\' or
+            char == '%' or
             char == '"' or
             char == '#' or
             char == '?' or
@@ -5583,7 +5588,7 @@ pub fn moveSlice(slice: string, from: string, to: string) string {
     return result;
 }
 
-pub usingnamespace @import("exact_size_matcher.zig");
+pub const ExactSizeMatcher = @import("exact_size_matcher.zig").ExactSizeMatcher;
 
 pub const unicode_replacement = 0xFFFD;
 pub const unicode_replacement_str = brk: {

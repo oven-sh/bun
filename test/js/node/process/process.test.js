@@ -308,6 +308,7 @@ it("process.config", () => {
   expect(process.config).toEqual({
     variables: {
       enable_lto: false,
+      node_module_version: expect.any(Number),
       v8_enable_i8n_support: 1,
     },
     target_defaults: {},
@@ -374,7 +375,7 @@ it("process.argv in testing", () => {
 describe("process.exitCode", () => {
   it("validates int", () => {
     expect(() => (process.exitCode = "potato")).toThrow(
-      `The "code" argument must be of type number. Received type string ("potato")`,
+      `The "code" argument must be of type number. Received type string ('potato')`,
     );
     expect(() => (process.exitCode = 1.2)).toThrow(
       `The value of \"code\" is out of range. It must be an integer. Received 1.2`,

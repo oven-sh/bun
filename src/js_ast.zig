@@ -510,6 +510,8 @@ pub const B = union(Binding.Tag) {
         items: []ArrayBinding,
         has_spread: bool = false,
         is_single_line: bool = false,
+
+        pub const Item = ArrayBinding;
     };
 
     pub const Missing = struct {};
@@ -898,6 +900,15 @@ pub const G = struct {
     pub const FnBody = struct {
         loc: logger.Loc,
         stmts: StmtNodeList,
+
+        pub fn initReturnExpr(allocator: std.mem.Allocator, expr: Expr) !FnBody {
+            return .{
+                .stmts = try allocator.dupe(Stmt, &.{Stmt.alloc(S.Return, .{
+                    .value = expr,
+                }, expr.loc)}),
+                .loc = expr.loc,
+            };
+        }
     };
 
     pub const Fn = struct {
@@ -958,7 +969,7 @@ pub const Symbol = struct {
     /// This is the name that came from the parser. Printed names may be renamed
     /// during minification or to avoid name collisions. Do not use the original
     /// name during printing.
-    original_name: string,
+    original_name: []const u8,
 
     /// This is used for symbols that represent items in the import clause of an
     /// ES6 import statement. These should always be referenced by EImportIdentifier
@@ -1092,15 +1103,13 @@ pub const Symbol = struct {
 
     remove_overwritten_function_declaration: bool = false,
 
-    /// In debug mode, sometimes its helpful to know what source file
-    /// A symbol came from. This is used for that.
-    ///
-    /// We don't want this in non-debug mode because it increases the size of
-    /// the symbol table.
-    debug_mode_source_index: if (Environment.allow_assert)
-        Index.Int
-    else
-        u0 = 0,
+    /// Used in HMR to decide when live binding code is needed.
+    has_been_assigned_to: bool = false,
+
+    comptime {
+        bun.assert_eql(@sizeOf(Symbol), 88);
+        bun.assert_eql(@alignOf(Symbol), @alignOf([]const u8));
+    }
 
     const invalid_chunk_index = std.math.maxInt(u32);
     pub const invalid_nested_scope_slot = std.math.maxInt(u32);
@@ -1225,6 +1234,9 @@ pub const Symbol = struct {
 
         /// Assigning to a "const" symbol will throw a TypeError at runtime
         constant,
+
+        // CSS identifiers that are renamed to be unique to the file they are in
+        local_css,
 
         /// This annotates all other symbols that don't have special behavior.
         other,
@@ -1372,6 +1384,11 @@ pub const Symbol = struct {
             return Map{ .symbols_for_source = symbols_for_source };
         }
 
+        pub fn initWithOneList(list: List) Map {
+            const baby_list = BabyList(List).init((&list)[0..1]);
+            return initList(baby_list);
+        }
+
         pub fn initList(list: NestedList) Map {
             return Map{ .symbols_for_source = list };
         }
@@ -1439,6 +1456,17 @@ pub const OptionalChain = enum(u1) {
 };
 
 pub const E = struct {
+    /// This represents an internal property name that can be mangled. The symbol
+    /// referenced by this expression should be a "SymbolMangledProp" symbol.
+    pub const NameOfSymbol = struct {
+        ref: Ref = Ref.None,
+
+        /// If true, a preceding comment contains "@__KEY__"
+        ///
+        /// Currently not used
+        has_property_key_comment: bool = false,
+    };
+
     pub const Array = struct {
         items: ExprNodeList = ExprNodeList{},
         comma_after_spread: ?logger.Loc = null,
@@ -1571,11 +1599,15 @@ pub const E = struct {
         /// emits `exports` or `module.exports` depending on `commonjs_named_exports_deoptimized`
         module_exports,
         /// `import.meta.hot`
-        hot,
-        /// `import.meta.hot.accept`
+        hot_enabled,
+        /// Acts as .e_undefined, but allows property accesses to the rest of the HMR API.
+        hot_disabled,
+        /// `import.meta.hot.data` when HMR is enabled. Not reachable when it is disabled.
+        hot_data,
+        /// `import.meta.hot.accept` when HMR is enabled. Truthy.
         hot_accept,
         /// Converted from `hot_accept` to this in js_parser.zig when it is
-        /// passed strings. Printed as `import.meta.hot.acceptSpecifiers`
+        /// passed strings. Printed as `hmr.hot.acceptSpecifiers`
         hot_accept_visited,
         /// Prints the resolved specifier string for an import record.
         resolved_specifier_string: ImportRecord.Index,
@@ -1649,6 +1681,14 @@ pub const E = struct {
         is_async: bool = false,
         has_rest_arg: bool = false,
         prefer_expr: bool = false, // Use shorthand if true and "Body" is a single return statement
+
+        pub const noop_return_undefined: Arrow = .{
+            .args = &.{},
+            .body = .{
+                .loc = .Empty,
+                .stmts = &.{},
+            },
+        };
     };
 
     pub const Function = struct { func: G.Fn };
@@ -2807,7 +2847,8 @@ pub const E = struct {
             return this.import_record_index == std.math.maxInt(u32);
         }
 
-        pub fn importRecordTag(import: *const Import) ?ImportRecord.Tag {
+        pub fn importRecordLoader(import: *const Import) ?bun.options.Loader {
+            // This logic is duplicated in js_printer.zig fn parsePath()
             const obj = import.options.data.as(.e_object) orelse
                 return null;
             const with = obj.get("with") orelse obj.get("assert") orelse
@@ -2818,23 +2859,16 @@ pub const E = struct {
                 return null).data.as(.e_string) orelse
                 return null;
 
-            if (str.eqlComptime("json")) {
-                return .with_type_json;
-            } else if (str.eqlComptime("toml")) {
-                return .with_type_toml;
-            } else if (str.eqlComptime("text")) {
-                return .with_type_text;
-            } else if (str.eqlComptime("file")) {
-                return .with_type_file;
-            } else if (str.eqlComptime("sqlite")) {
-                const embed = brk: {
-                    const embed = with_obj.get("embed") orelse break :brk false;
-                    const embed_str = embed.data.as(.e_string) orelse break :brk false;
-                    break :brk embed_str.eqlComptime("true");
-                };
-
-                return if (embed) .with_type_sqlite_embedded else .with_type_sqlite;
-            }
+            if (!str.is_utf16) if (bun.options.Loader.fromString(str.data)) |loader| {
+                if (loader == .sqlite) {
+                    const embed = with_obj.get("embed") orelse return loader;
+                    const embed_str = embed.data.as(.e_string) orelse return loader;
+                    if (embed_str.eqlComptime("true")) {
+                        return .sqlite_embedded;
+                    }
+                }
+                return loader;
+            };
 
             return null;
         }
@@ -2845,7 +2879,7 @@ pub const Stmt = struct {
     loc: logger.Loc,
     data: Data,
 
-    pub const Batcher = bun.Batcher(Stmt);
+    pub const Batcher = NewBatcher(Stmt);
 
     pub fn assign(a: Expr, b: Expr) Stmt {
         return Stmt.alloc(
@@ -4228,6 +4262,14 @@ pub const Expr = struct {
         Data.Store.assert();
 
         switch (Type) {
+            E.NameOfSymbol => {
+                return Expr{
+                    .loc = loc,
+                    .data = Data{
+                        .e_name_of_symbol = Data.Store.append(E.NameOfSymbol, st),
+                    },
+                };
+            },
             E.Array => {
                 return Expr{
                     .loc = loc,
@@ -4602,6 +4644,7 @@ pub const Expr = struct {
         e_require_main,
         e_special,
         e_inlined_enum,
+        e_name_of_symbol,
 
         // object, regex and array may have had side effects
         pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -5289,6 +5332,8 @@ pub const Expr = struct {
 
         e_inlined_enum: *E.InlinedEnum,
 
+        e_name_of_symbol: *E.NameOfSymbol,
+
         comptime {
             bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
         }
@@ -5627,6 +5672,10 @@ pub const Expr = struct {
         pub fn writeToHasher(this: Expr.Data, hasher: anytype, symbol_table: anytype) void {
             writeAnyToHasher(hasher, std.meta.activeTag(this));
             switch (this) {
+                .e_name_of_symbol => |e| {
+                    const symbol = e.ref.getSymbol(symbol_table);
+                    hasher.update(symbol.original_name);
+                },
                 .e_array => |e| {
                     writeAnyToHasher(hasher, .{
                         e.is_single_line,
@@ -6227,6 +6276,7 @@ pub const Expr = struct {
 
         pub const Store = struct {
             const StoreType = NewStore(&.{
+                E.NameOfSymbol,
                 E.Array,
                 E.Arrow,
                 E.Await,
@@ -6340,7 +6390,10 @@ pub const S = struct {
         value: []const u8,
     };
 
-    pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
+    pub const ExportClause = struct {
+        items: []ClauseItem,
+        is_single_line: bool,
+    };
 
     pub const Empty = struct {};
 
@@ -6878,6 +6931,9 @@ pub const Ast = struct {
     char_freq: ?CharFreq = null,
     exports_ref: Ref = Ref.None,
     module_ref: Ref = Ref.None,
+    /// When using format .bake_internal_dev, this is the HMR variable instead
+    /// of the wrapper. This is because that format does not store module
+    /// wrappers in a variable.
     wrapper_ref: Ref = Ref.None,
     require_ref: Ref = Ref.None,
 
@@ -7777,7 +7833,7 @@ pub const Scope = struct {
         if (Symbol.isKindHoistedOrFunction(new) and
             Symbol.isKindHoistedOrFunction(existing) and
             (scope.kind == .entry or scope.kind == .function_body or scope.kind == .function_args or
-            (new == existing and Symbol.isKindHoisted(existing))))
+                (new == existing and Symbol.isKindHoisted(existing))))
         {
             return .replace_with_new;
         }
@@ -8498,7 +8554,7 @@ pub const Macro = struct {
 };
 
 pub const ASTMemoryAllocator = struct {
-    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.mem.page_size));
+    const SFA = std.heap.StackFallbackAllocator(@min(8192, std.heap.page_size_min));
 
     stack_allocator: SFA = undefined,
     bump_allocator: std.mem.Allocator = undefined,
@@ -8940,3 +8996,41 @@ const ToJSError = error{
 };
 
 const writeAnyToHasher = bun.writeAnyToHasher;
+
+/// Say you need to allocate a bunch of tiny arrays
+/// You could just do separate allocations for each, but that is slow
+/// With std.ArrayList, pointers invalidate on resize and that means it will crash.
+/// So a better idea is to batch up your allocations into one larger allocation
+/// and then just make all the arrays point to different parts of the larger allocation
+pub fn NewBatcher(comptime Type: type) type {
+    return struct {
+        head: []Type,
+
+        pub fn init(allocator: std.mem.Allocator, count: usize) !@This() {
+            const all = try allocator.alloc(Type, count);
+            return @This(){ .head = all };
+        }
+
+        pub fn done(this: *@This()) void {
+            bun.assert(this.head.len == 0); // count to init() was too large, overallocation
+        }
+
+        pub fn eat(this: *@This(), value: Type) *Type {
+            return @as(*Type, @ptrCast(&this.head.eat1(value).ptr));
+        }
+
+        pub fn eat1(this: *@This(), value: Type) []Type {
+            var prev = this.head[0..1];
+            prev[0] = value;
+            this.head = this.head[1..];
+            return prev;
+        }
+
+        pub fn next(this: *@This(), values: anytype) []Type {
+            this.head[0..values.len].* = values;
+            const prev = this.head[0..values.len];
+            this.head = this.head[values.len..];
+            return prev;
+        }
+    };
+}

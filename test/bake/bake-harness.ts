@@ -20,6 +20,24 @@ import { EventEmitter } from "node:events";
 import { dedent } from "../bundler/expectBundled.ts";
 import { bunEnv, isCI, isWindows, mergeWindowEnvs } from "harness";
 import { expect } from "bun:test";
+import { exitCodeMapStrings } from "./exit-code-map.mjs";
+
+const isDebugBuild = Bun.version.includes("debug");
+
+const verboseSynchronization = process.env.BUN_DEV_SERVER_VERBOSE_SYNC
+  ? (arg: string) => {
+      console.log("\x1b[36m" + arg + "\x1b[0m");
+    }
+  : () => {};
+
+/**
+ * Can be set in fast development environments to improve iteration time.
+ * In CI/Windows it appears that sometimes these tests dont wait enough
+ * for things to happen, so the extra delay reduces flakiness.
+ * 
+ * Needs much more investigation.
+ */
+const fastBatches = !!process.env.BUN_DEV_SERVER_FAST_BATCHES;
 
 /** For testing bundler related bugs in the DevServer */
 export const minimalFramework: Bake.Framework = {
@@ -47,14 +65,6 @@ function imageFixture(relative: string) {
   buf.sourcePath = relative;
   return buf;
 }
-
-/// Workaround to enable hot-module-reloading
-export const reactRefreshStub = {
-  "node_modules/react-refresh/runtime.js": `
-    export const performReactRefresh = () => {};
-    export const injectIntoGlobalHook = () => {};
-  `,
-};
 
 export function emptyHtmlFile({
   styles = [],
@@ -110,11 +120,12 @@ export interface DevServerTest {
    */
   mainDir?: string;
 
-  deinitTesting?: boolean;
+  skip?: ('win32'|'darwin'|'linux'|'ci')[],
 }
 
 let interactive = false;
 let activeClient: Client | null = null;
+const interactive_timeout = 24 * 60 * 60 * 1000; // 24 hours
 
 async function maybeWaitInteractive(message: string) {
   if (interactive) {
@@ -153,6 +164,19 @@ type ErrorSpec = string;
 
 type FileObject = Record<string, string | Buffer | BunFile>;
 
+enum WatchSynchronization {
+  // Callback for starting a batch
+  Started = 0,
+  // During a batch, files were seen. Batch is still running.
+  SeenFiles = 1,
+  // Batch no longer running, files seen!
+  ResultDidNotBundle = 2,
+  // Sent on every build finished:
+  AnyBuildFinished = 3,
+  // Sent on every build finished, you must wait for web sockets:
+  AnyBuildFinishedWaitForWebSockets = 4,
+}
+
 export class Dev extends EventEmitter {
   rootDir: string;
   port: number;
@@ -161,6 +185,7 @@ export class Dev extends EventEmitter {
   connectedClients: Set<Client> = new Set();
   options: { files: Record<string, string> };
   nodeEnv: "development" | "production";
+  batchingChanges: { write?: () => void } | null = null;
 
   socket?: WebSocket;
 
@@ -192,14 +217,15 @@ export class Dev extends EventEmitter {
   connectSocket() {
     const connected = Promise.withResolvers<void>();
     this.socket = new WebSocket(this.baseUrl + "/_bun/hmr");
-    this.socket.onmessage = (event) => {
+    this.socket.onmessage = event => {
       const data = new Uint8Array(event.data as any);
-      if (data[0] === 'V'.charCodeAt(0)) {
-        this.socket!.send('sr');
+      if (data[0] === "V".charCodeAt(0)) {
+        this.socket!.send("sr");
         connected.resolve();
       }
-      if (data[0] === 'r'.charCodeAt(0)) {
-        this.emit("redundant_watch");
+      if (data[0] === "r".charCodeAt(0)) {
+        verboseSynchronization("watch_synchronization: " + WatchSynchronization[data[1]]);
+        this.emit("watch_synchronization", data[1]);
       }
       this.emit("hmr", data);
     };
@@ -223,25 +249,105 @@ export class Dev extends EventEmitter {
     });
   }
 
+  #waitForSyncEvent(event: WatchSynchronization) {
+    return new Promise<void>((resolve, reject) => {
+      let dev = this;
+      function handle(kind: WatchSynchronization) {
+        if (kind === event) {
+          dev.off("watch_synchronization", handle);
+          resolve();
+        }
+      }
+      dev.on("watch_synchronization", handle);
+    });
+  }
+
+  async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
+    if (this.batchingChanges) {
+      this.batchingChanges.write?.();
+      return null;
+    }
+    this.batchingChanges = {};
+
+    let dev = this;
+    const initWait = this.#waitForSyncEvent(WatchSynchronization.Started);
+    this.socket!.send("H");
+    await initWait;
+
+    let hasSeenFiles = true;
+    let seenFiles: PromiseWithResolvers<void>;
+    function onSeenFiles(ev: WatchSynchronization) {
+      if (ev === WatchSynchronization.SeenFiles) {
+        hasSeenFiles = true;
+        seenFiles.resolve();
+        dev.off("watch_synchronization", onSeenFiles);
+      }
+    }
+    function resetSeenFilesWithResolvers() {
+      if (!hasSeenFiles) return;
+      seenFiles = Promise.withResolvers<void>();
+      dev.on("watch_synchronization", onSeenFiles);
+    }
+    resetSeenFilesWithResolvers();
+
+    let wantsHmrEvent = true;
+    for (const client of dev.connectedClients) {
+      if (!client.webSocketMessagesAllowed) {
+        wantsHmrEvent = false;
+        break;
+      }
+    }
+
+    const wait = this.waitForHotReload(wantsHmrEvent);
+    const b = {
+      write: resetSeenFilesWithResolvers,
+      [Symbol.asyncDispose]: async() => {
+        if (wantsHmrEvent && interactive) {
+          await seenFiles.promise;
+        } else if (wantsHmrEvent) {
+          await Promise.race([
+            seenFiles.promise,
+            Bun.sleep(1000),
+          ]);
+        }
+        if (!fastBatches) {
+          // Wait an extra delay to avoid double-triggering events.
+          await Bun.sleep(300);
+        }
+
+        dev.off("watch_synchronization", onSeenFiles);
+
+        this.socket!.send("H");
+        await wait;
+
+        let errors = options.errors;
+        if (errors !== null) {
+          errors ??= [];
+          for (const client of this.connectedClients) {
+            await client.expectErrorOverlay(errors, options.snapshot);
+          }
+        }
+        this.batchingChanges = null;
+      },
+    };
+    this.batchingChanges = b;
+    return b;
+  }
+
   write(file: string, contents: string, options: { errors?: null | ErrorSpec[]; dedent?: boolean } = {}) {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("write " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && this.waitForHotReload();
+      await using _wait = isDev ? await this.batchChanges({
+        errors: options.errors,
+        snapshot: snapshot,
+      }) : null;
+
       await Bun.write(
         this.join(file),
         ((typeof contents === "string" && options.dedent) ?? true) ? dedent(contents) : contents,
       );
-      await wait;
-
-      let errors = options.errors;
-      if (isDev && errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
-        }
-      }
     });
   }
 
@@ -269,7 +375,10 @@ export class Dev extends EventEmitter {
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("delete " + file);
       const isDev = this.nodeEnv === "development";
-      const wait = isDev && this.waitForHotReload();
+      await using _wait = isDev ? await this.batchChanges({
+        errors: options.errors,
+        snapshot: snapshot,
+      }) : null;
 
       const filePath = this.join(file);
       if (!fs.existsSync(filePath)) {
@@ -277,15 +386,6 @@ export class Dev extends EventEmitter {
       }
 
       fs.unlinkSync(filePath);
-      await wait;
-
-      let errors = options.errors;
-      if (isDev && errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
-        }
-      }
     });
   }
 
@@ -301,7 +401,12 @@ export class Dev extends EventEmitter {
     const snapshot = snapshotCallerLocation();
     return withAnnotatedStack(snapshot, async () => {
       await maybeWaitInteractive("patch " + file);
-      const wait = this.waitForHotReload();
+      const isDev = this.nodeEnv === "development";
+      await using _wait = isDev ? await this.batchChanges({
+        errors: errors,
+        snapshot: snapshot,
+      }) : null;
+
       const filename = this.join(file);
       const source = fs.readFileSync(filename, "utf8");
       const contents = source.replace(find, replace);
@@ -309,14 +414,6 @@ export class Dev extends EventEmitter {
         throw new Error(`Couldn't find and replace ${JSON.stringify(find)} in ${file}`);
       }
       await Bun.write(filename, typeof contents === "string" && shouldDedent ? dedent(contents) : contents);
-      await wait;
-
-      if (errors !== null) {
-        errors ??= [];
-        for (const client of this.connectedClients) {
-          await client.expectErrorOverlay(errors, null);
-        }
-      }
     });
   }
 
@@ -324,22 +421,60 @@ export class Dev extends EventEmitter {
     return path.join(this.rootDir, file);
   }
 
-  async waitForHotReload() {
+  waitForHotReload(wantsHmrEvent: boolean) {
     if (this.nodeEnv !== "development") return Promise.resolve();
-    const err = this.output.waitForLine(/error/i).catch(() => {});
-    const success = this.output.waitForLine(/bundled page|bundled route|reloaded/i).catch(() => {});
-    const ctrl = new AbortController();
-    await Promise.race([
-      // On failure, give a little time in case a partial write caused a
-      // bundling error, and a success came in.
-      err.then(
-        () => Bun.sleep(500),
-        () => {},
-      ),
-      success,
-      EventEmitter.once(this, "redundant_watch", { signal: ctrl.signal }),
-    ]);
-    ctrl.abort();
+    let dev = this;
+    return new Promise<void>((resolve, reject) => {
+      let timer: NodeJS.Timer | null = null;
+      let clientWaits = 0;
+      let seenMainEvent = false;
+      function cleanupAndResolve() {
+        verboseSynchronization("Cleaning up and resolving");
+        timer !== null && clearTimeout(timer);
+        dev.off("watch_synchronization", onEvent);
+        for (const dispose of disposes) {
+          dispose();
+        }
+        if (fastBatches) resolve();
+        else setTimeout(resolve, 250);
+      }
+      const disposes = new Set<() => void>();
+      for (const client of dev.connectedClients) {
+        const socketEventHandler = () => {
+          verboseSynchronization("Client received event");
+          clientWaits++;
+          if (seenMainEvent && clientWaits === dev.connectedClients.size) {
+            client.off("received-hmr-event", socketEventHandler);
+            cleanupAndResolve();
+          }
+        };
+        client.on("received-hmr-event", socketEventHandler);
+        disposes.add(() => {
+          client.off("received-hmr-event", socketEventHandler);
+        });
+      }
+      async function onEvent(kind: WatchSynchronization) {
+        assert(kind !== WatchSynchronization.Started, "WatchSynchronization.Started should not be emitted");
+        if (kind === WatchSynchronization.AnyBuildFinished) {
+          seenMainEvent = true;
+          cleanupAndResolve();
+        } else if (kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets) {
+          verboseSynchronization("Need to wait for (" + clientWaits + "/" + dev.connectedClients.size + ") clients");
+          seenMainEvent = true;
+          if (clientWaits === dev.connectedClients.size) {
+            cleanupAndResolve();
+          }
+        } else if (kind === WatchSynchronization.ResultDidNotBundle) {
+          if (wantsHmrEvent) {
+            await Bun.sleep(500);
+            if (seenMainEvent) return;
+            console.warn("\x1b[33mWARN: Dev Server did not pick up any changed files. Consider wrapping this call in expectNoWebSocketActivity\x1b[35m");
+          }
+          cleanupAndResolve();
+        }
+      };
+      dev.on("watch_synchronization", onEvent);
+    });
   }
 
   async client(
@@ -354,6 +489,7 @@ export class Dev extends EventEmitter {
     const client = new Client(new URL(url, this.baseUrl).href, {
       storeHotChunks: options.storeHotChunks,
       hmr: this.nodeEnv === "development",
+      expectErrors: !!options.errors,
     });
     const onPanic = () => client.output.emit("panic");
     this.output.on("panic", onPanic);
@@ -380,17 +516,22 @@ export class Dev extends EventEmitter {
     await Promise.race([
       //
       this.devProcess.exited,
-      new Promise(resolve => setTimeout(resolve, 2000)),
+      new Promise(resolve => setTimeout(resolve, interactive ? interactive_timeout : 2000)),
     ]);
     if (this.output.panicked) {
       await this.devProcess.exited;
       throw new Error("DevServer panicked");
     }
     if (this.devProcess.exitCode !== 0) {
-      throw new Error(
-        `DevServer exited with code ${this.devProcess.exitCode ?? `Signal ${this.devProcess.signalCode}`}`,
-      );
+      const code =
+        " with " +
+        (this.devProcess.exitCode ? `code ${this.devProcess.exitCode}` : `signal ${this.devProcess.signalCode}`);
+      throw new Error(`DevServer exited${code}`);
     }
+  }
+
+  mkdir(dir: string) {
+    return fs.mkdirSync(path.join(this.rootDir, dir), { recursive: true });
   }
 }
 
@@ -546,14 +687,15 @@ export class Client extends EventEmitter {
   #proc: Subprocess;
   output: OutputLineStream;
   exited = false;
-  exitCode: string | null = null;
+  exitCode: string | number | null = null;
   messages: any[] = [];
   #hmrChunk: string | null = null;
   suppressInteractivePrompt: boolean = false;
   expectingReload = false;
   hmr = false;
+  webSocketMessagesAllowed = true;
 
-  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean }) {
+  constructor(url: string, options: { storeHotChunks?: boolean; hmr: boolean; expectErrors?: boolean }) {
     super();
     activeClient = this;
     const proc = Bun.spawn({
@@ -564,6 +706,7 @@ export class Client extends EventEmitter {
         path.join(import.meta.dir, "client-fixture.mjs"),
         url,
         options.storeHotChunks ? "--store-hot-chunks" : "",
+        options.expectErrors ? "--expect-errors" : "",
       ].filter(Boolean) as string[],
       env: bunEnv,
       serialization: "json",
@@ -573,9 +716,9 @@ export class Client extends EventEmitter {
       onExit: (subprocess, exitCode, signalCode, error) => {
         danglingProcesses.delete(subprocess);
         if (exitCode !== null) {
-          this.exitCode = exitCode.toString();
+          this.exitCode = exitCode;
         } else if (signalCode !== null) {
-          this.exitCode = `SIG${signalCode}`;
+          this.exitCode = `${signalCode}`;
         } else {
           this.exitCode = "unknown";
         }
@@ -600,12 +743,16 @@ export class Client extends EventEmitter {
     this.output = new OutputLineStream("web", proc.stdout, proc.stderr);
   }
 
-  hardReload() {
+  hardReload(options: { errors?: ErrorSpec[] } = {}) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       await maybeWaitInteractive("hard-reload");
       if (this.exited) throw new Error("Client is not running.");
       this.#proc.send({ type: "hard-reload" });
-      await this.output.waitForLine(hmrClientInitRegex);
+
+      if (this.hmr) {
+        await this.output.waitForLine(hmrClientInitRegex);
+        await this.expectErrorOverlay(options.errors ?? []);
+      }
     });
   }
 
@@ -630,7 +777,13 @@ export class Client extends EventEmitter {
     } catch (e) {}
     await this.#proc.exited;
     if (this.exitCode !== null && this.exitCode !== "0") {
-      throw new Error(`Client exited with code ${this.exitCode}`);
+      let code;
+      if (exitCodeMapStrings[this.exitCode]) {
+        code = ": " + JSON.stringify(exitCodeMapStrings[this.exitCode]);
+      } else {
+        code = " with " + (typeof this.exitCode === "number" ? `code ${this.exitCode}` : `signal ${this.exitCode}`);
+      }
+      throw new Error(`Client exited${code}`);
     }
     if (this.messages.length > 0) {
       throw new Error(`Client sent ${this.messages.length} unread messages: ${JSON.stringify(this.messages, null, 2)}`);
@@ -652,11 +805,14 @@ export class Client extends EventEmitter {
       };
       this.once("reload", onEvent);
       this.once("exit", onEvent);
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.resolve();
-        this.expectingReload = false;
-      }, 1000);
+      let t: any = setTimeout(
+        () => {
+          t = null;
+          resolver.resolve();
+          this.expectingReload = false;
+        },
+        interactive ? interactive_timeout : 1000,
+      );
       await cb();
       await resolver.promise;
       if (t) clearTimeout(t);
@@ -670,30 +826,55 @@ export class Client extends EventEmitter {
   }
 
   expectMessage(...x: any) {
+    return this.#expectMessageImpl(true, x);
+  }
+
+  expectMessageInAnyOrder(...x: any) {
+    return this.#expectMessageImpl(false, x);
+  }
+
+  #expectMessageImpl(strictOrdering: boolean, x: any[]) {
     return withAnnotatedStack(snapshotCallerLocation(), async () => {
       if (this.exited) throw new Error("Client exited while waiting for message");
       if (this.messages.length !== x.length) {
+        if (interactive) {
+          console.log("Waiting for messages (have", this.messages.length, "expected", x.length, ")");
+        }
+        const dev = this;
         // Wait up to a threshold before giving up
+        function cleanup() {
+          dev.off("message", onMessage);
+          dev.off("exit", onExit);
+        }
         const resolver = Promise.withResolvers();
         function onMessage(message: any) {
-          if (this.messages.length === x.length) resolver.resolve();
+          process.nextTick(() => {
+            if (dev.messages.length === x.length) resolver.resolve();
+          });
         }
         function onExit() {
           resolver.resolve();
         }
-        this.once("message", onMessage);
-        this.once("exit", onExit);
-        let t: any = setTimeout(() => {
-          t = null;
-          resolver.resolve();
-        }, 1000);
+        this.on("message", onMessage);
+        this.on("exit", onExit);
+        let t: any = setTimeout(
+          () => {
+            t = null;
+            resolver.resolve();
+          },
+          interactive ? interactive_timeout : 1000,
+        );
         await resolver.promise;
         if (t) clearTimeout(t);
-        this.off("message", onMessage);
+        cleanup();
       }
       if (this.exited) throw new Error("Client exited while waiting for message");
-      const m = this.messages;
+      let m = this.messages;
       this.messages = [];
+      if (!strictOrdering) {
+        m = m.sort();
+        x = x.sort();
+      }
       expect(m).toEqual(x);
     });
   }
@@ -859,10 +1040,13 @@ export class Client extends EventEmitter {
       const resolver = Promise.withResolvers();
       this.once("hmr-chunk", () => resolver.resolve());
       this.once("exit", () => resolver.reject(new Error("Client exited while waiting for HMR chunk")));
-      let t: any = setTimeout(() => {
-        t = null;
-        resolver.reject(new Error("Timeout waiting for HMR chunk"));
-      }, 1000);
+      let t: any = setTimeout(
+        () => {
+          t = null;
+          resolver.reject(new Error("Timeout waiting for HMR chunk"));
+        },
+        interactive ? interactive_timeout : 1000,
+      );
       await resolver.promise;
       if (t) clearTimeout(t);
     }
@@ -915,12 +1099,14 @@ export class Client extends EventEmitter {
 
       // Block WebSocket messages
       this.#proc.send({ type: "set-allow-websocket-messages", args: [false] });
+      this.webSocketMessagesAllowed = false;
 
       try {
         await cb();
       } finally {
         // Re-enable WebSocket messages
         this.#proc.send({ type: "set-allow-websocket-messages", args: [true] });
+        this.webSocketMessagesAllowed = true;
       }
     });
   }
@@ -1131,6 +1317,7 @@ class OutputLineStream extends EventEmitter {
   disposed = false;
   closes = 0;
   panicked = false;
+  exitCode: number | string | null = null;
 
   constructor(name: string, readable1: ReadableStream, readable2: ReadableStream) {
     super();
@@ -1189,7 +1376,7 @@ class OutputLineStream extends EventEmitter {
 
   waitForLine(
     regex: RegExp,
-    timeout = (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
+    timeout = interactive ? interactive_timeout : (isWindows ? 5000 : 1000) * (Bun.version.includes("debug") ? 3 : 1),
   ): Promise<RegExpMatchArray> {
     if (this.panicked) {
       return new Promise((_, reject) => {
@@ -1219,7 +1406,11 @@ class OutputLineStream extends EventEmitter {
       };
       const onClose = () => {
         reset();
-        reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
+        if (exitCodeMapStrings[this.exitCode]) {
+          reject(new Error(exitCodeMapStrings[this.exitCode]));
+        } else {
+          reject(new Error("Process exited before line " + JSON.stringify(regex.toString()) + " was found"));
+        }
       };
       let panicked = false;
       this.on("line", onLine);
@@ -1250,7 +1441,7 @@ class OutputLineStream extends EventEmitter {
 
 export function indexHtmlScript(htmlFiles: string[]) {
   return [
-    ...htmlFiles.map((file, i) => `import html${i} from "./${file}";`),
+    ...htmlFiles.map((file, i) => `import html${i} from ${JSON.stringify("./" + file.replaceAll(path.sep, '/'))};`),
     "export default {",
     "  static: {",
     ...(htmlFiles.length === 1
@@ -1272,6 +1463,11 @@ export function indexHtmlScript(htmlFiles: string[]) {
     "};",
   ].join("\n");
 }
+
+const skipTargets = [
+  process.platform,
+  isCI ? 'ci' : null,
+].filter(Boolean);
 
 function testImpl<T extends DevServerTest>(
   description: string,
@@ -1358,7 +1554,7 @@ function testImpl<T extends DevServerTest>(
     fs.writeFileSync(
       path.join(root, "harness_start.ts"),
       dedent`
-        import appConfig from "${path.join(mainDir, "bun.app.ts")}";
+        import appConfig from ${JSON.stringify(path.join(mainDir, "bun.app.ts"))};
         import { fullGC } from "bun:jsc";
 
         const routes = appConfig.static ?? (appConfig.routes ??= {});
@@ -1416,12 +1612,13 @@ function testImpl<T extends DevServerTest>(
         bunEnv,
         {
           FORCE_COLOR: "1",
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           BUN_DUMP_STATE_ON_CRASH: "1",
           NODE_ENV,
-          // BUN_DEBUG_SERVER: "1",
-          BUN_DEBUG_DEVSERVER: "1",
-          BUN_DEBUG_WATCHER: "1",
+          BUN_DEBUG_DEVSERVER: isDebugBuild && interactive ? "1" : undefined,
+          BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
+          BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -1436,6 +1633,7 @@ function testImpl<T extends DevServerTest>(
     }
     // @ts-expect-error
     using stream = new OutputLineStream("dev", devProcess.stdout, devProcess.stderr);
+    devProcess.exited.then(exitCode => (stream.exitCode = exitCode));
     const port = parseInt((await stream.waitForLine(/localhost:(\d+)/))[1], 10);
     // @ts-expect-error
     const dev = new Dev(root, port, devProcess, stream, NODE_ENV, options);
@@ -1482,15 +1680,16 @@ function testImpl<T extends DevServerTest>(
         : "PROD"
   }:${basename}-${count}: ${description}`;
   try {
-    // TODO: resolve ci flakiness.
-    if (isCI && isWindows) {
-      return jest.test.skip(name, run);
+    if (options.skip && options.skip.some(x => skipTargets.includes(x))) {
+      jest.test.todo(name, run);
+      return options;
     }
-
     jest.test(
       name,
       run,
-      (options.timeoutMultiplier ?? 1) * (isWindows ? 10_000 : 5_000) * (Bun.version.includes("debug") ? 3 : 1),
+      interactive
+        ? interactive_timeout
+        : (options.timeoutMultiplier ?? 1) * (isWindows ? 15_000 : 10_000) * (Bun.version.includes("debug") ? 2 : 1),
     );
     return options;
   } catch {

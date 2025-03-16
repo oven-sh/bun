@@ -29,13 +29,18 @@ const SSLWrapper = @import("../bun.js/api/bun/ssl_wrapper.zig").SSLWrapper;
 const TextEncoder = @import("../bun.js/webcore/encoding.zig").Encoder;
 const JSC = bun.JSC;
 const EventLoopTimer = @import("../bun.js//api//Timer.zig").EventLoopTimer;
+const WriteResult = union(enum) {
+    want_more: usize,
+    backpressure: usize,
+};
 
 pub const CloseCode = enum(i32) {
     normal = 0,
     failure = 1,
 };
 
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
+
 fn NativeSocketHandleType(comptime ssl: bool) type {
     if (ssl) {
         return BoringSSL.SSL;
@@ -1626,12 +1631,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             // debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket)});
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_shutdown({d})", .{@intFromPtr(socket)});
                     return us_socket_shutdown(
                         comptime ssl_int,
                         socket,
                     );
                 },
                 .connecting => |socket| {
+                    debug("us_connecting_socket_shutdown({d})", .{@intFromPtr(socket)});
                     return us_connecting_socket_shutdown(
                         comptime ssl_int,
                         socket,
@@ -1650,14 +1657,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn shutdownRead(this: ThisSocket) void {
             switch (this.socket) {
                 .connected => |socket| {
-                    // debug("us_socket_shutdown_read({d})", .{@intFromPtr(socket)});
+                    debug("us_socket_shutdown_read({d})", .{@intFromPtr(socket)});
                     return us_socket_shutdown_read(
                         comptime ssl_int,
                         socket,
                     );
                 },
                 .connecting => |socket| {
-                    // debug("us_connecting_socket_shutdown_read({d})", .{@intFromPtr(socket)});
+                    debug("us_connecting_socket_shutdown_read({d})", .{@intFromPtr(socket)});
                     return us_connecting_socket_shutdown_read(
                         comptime ssl_int,
                         socket,
@@ -1676,12 +1683,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn isShutdown(this: ThisSocket) bool {
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_is_shut_down({d})", .{@intFromPtr(socket)});
                     return us_socket_is_shut_down(
                         comptime ssl_int,
                         socket,
                     ) > 0;
                 },
                 .connecting => |socket| {
+                    debug("us_connecting_socket_is_shut_down({d})", .{@intFromPtr(socket)});
                     return us_connecting_socket_is_shut_down(
                         comptime ssl_int,
                         socket,
@@ -1708,12 +1717,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn getError(this: ThisSocket) i32 {
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_get_error({d})", .{@intFromPtr(socket)});
                     return us_socket_get_error(
                         comptime ssl_int,
                         socket,
                     );
                 },
                 .connecting => |socket| {
+                    debug("us_connecting_socket_get_error({d})", .{@intFromPtr(socket)});
                     return us_connecting_socket_get_error(
                         comptime ssl_int,
                         socket,
@@ -1739,6 +1750,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn localPort(this: ThisSocket) i32 {
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_local_port({d})", .{@intFromPtr(socket)});
                     return us_socket_local_port(
                         comptime ssl_int,
                         socket,
@@ -1750,6 +1762,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         pub fn remoteAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
             switch (this.socket) {
                 .connected => |socket| {
+                    debug("us_socket_remote_address({d})", .{@intFromPtr(socket)});
                     return us_socket_remote_address(
                         comptime ssl_int,
                         socket,
@@ -2444,6 +2457,10 @@ pub const PosixLoop = extern struct {
     };
 
     const log = bun.Output.scoped(.Loop, false);
+
+    pub fn uncork(this: *PosixLoop) void {
+        uws_res_clear_corked_socket(this);
+    }
 
     pub fn iterationNumber(this: *const PosixLoop) u64 {
         return this.internal_loop_data.iteration_nr;
@@ -3159,6 +3176,41 @@ pub const AnyResponse = union(enum) {
     SSL: *NewApp(true).Response,
     TCP: *NewApp(false).Response,
 
+    pub fn socket(this: AnyResponse) *uws_res {
+        return switch (this) {
+            inline else => |resp| resp.downcast(),
+        };
+    }
+    pub fn getRemoteSocketInfo(this: AnyResponse) ?SocketAddress {
+        return switch (this) {
+            inline else => |resp| resp.getRemoteSocketInfo(),
+        };
+    }
+
+    pub fn getWriteOffset(this: AnyResponse) u64 {
+        return switch (this) {
+            inline else => |resp| resp.getWriteOffset(),
+        };
+    }
+
+    pub fn getBufferedAmount(this: AnyResponse) u64 {
+        return switch (this) {
+            inline else => |resp| resp.getBufferedAmount(),
+        };
+    }
+
+    pub fn writeContinue(this: AnyResponse) void {
+        return switch (this) {
+            inline else => |resp| resp.writeContinue(),
+        };
+    }
+
+    pub fn state(this: AnyResponse) State {
+        return switch (this) {
+            inline else => |resp| resp.state(),
+        };
+    }
+
     pub inline fn init(response: anytype) AnyResponse {
         return switch (@TypeOf(response)) {
             *NewApp(true).Response => .{ .SSL = response },
@@ -3169,77 +3221,81 @@ pub const AnyResponse = union(enum) {
 
     pub fn timeout(this: AnyResponse, seconds: u8) void {
         switch (this) {
-            .SSL => |resp| resp.timeout(seconds),
-            .TCP => |resp| resp.timeout(seconds),
+            inline else => |resp| resp.timeout(seconds),
         }
+    }
+
+    pub fn onData(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, []const u8, bool) void, optional_data: UserDataType) void {
+        return switch (this) {
+            inline .SSL, .TCP => |resp, ssl| resp.onData(UserDataType, struct {
+                pub fn onDataCallback(user_data: UserDataType, _: *uws.NewApp(ssl == .SSL).Response, data: []const u8, last: bool) void {
+                    @call(.always_inline, handler, .{ user_data, data, last });
+                }
+            }.onDataCallback, optional_data),
+        };
     }
 
     pub fn writeStatus(this: AnyResponse, status: []const u8) void {
         return switch (this) {
-            .SSL => |resp| resp.writeStatus(status),
-            .TCP => |resp| resp.writeStatus(status),
+            inline else => |resp| resp.writeStatus(status),
         };
     }
 
     pub fn writeHeader(this: AnyResponse, key: []const u8, value: []const u8) void {
         return switch (this) {
-            .SSL => |resp| resp.writeHeader(key, value),
-            .TCP => |resp| resp.writeHeader(key, value),
+            inline else => |resp| resp.writeHeader(key, value),
         };
     }
 
-    pub const write = @compileError("this function is not provided to discourage repeatedly checking the response type. use `switch(...) { inline else => ... }` so that multiple calls");
+    pub fn write(this: AnyResponse, data: []const u8) WriteResult {
+        return switch (this) {
+            inline else => |resp| resp.write(data),
+        };
+    }
 
     pub fn end(this: AnyResponse, data: []const u8, close_connection: bool) void {
         return switch (this) {
-            .SSL => |resp| resp.end(data, close_connection),
-            .TCP => |resp| resp.end(data, close_connection),
+            inline else => |resp| resp.end(data, close_connection),
         };
     }
 
     pub fn shouldCloseConnection(this: AnyResponse) bool {
         return switch (this) {
-            .SSL => |resp| resp.shouldCloseConnection(),
-            .TCP => |resp| resp.shouldCloseConnection(),
+            inline else => |resp| resp.shouldCloseConnection(),
         };
     }
 
     pub fn tryEnd(this: AnyResponse, data: []const u8, total_size: usize, close_connection: bool) bool {
         return switch (this) {
-            .SSL => |resp| resp.tryEnd(data, total_size, close_connection),
-            .TCP => |resp| resp.tryEnd(data, total_size, close_connection),
+            inline else => |resp| resp.tryEnd(data, total_size, close_connection),
         };
     }
 
     pub fn pause(this: AnyResponse) void {
         return switch (this) {
-            .SSL => |resp| resp.pause(),
-            .TCP => |resp| resp.pause(),
+            inline else => |resp| resp.pause(),
         };
     }
 
     pub fn @"resume"(this: AnyResponse) void {
         return switch (this) {
-            .SSL => |resp| resp.@"resume"(),
-            .TCP => |resp| resp.@"resume"(),
+            inline else => |resp| resp.@"resume"(),
         };
     }
 
     pub fn writeHeaderInt(this: AnyResponse, key: []const u8, value: u64) void {
         return switch (this) {
-            .SSL => |resp| resp.writeHeaderInt(key, value),
-            .TCP => |resp| resp.writeHeaderInt(key, value),
+            inline else => |resp| resp.writeHeaderInt(key, value),
         };
     }
 
     pub fn endWithoutBody(this: AnyResponse, close_connection: bool) void {
         return switch (this) {
-            .SSL => |resp| resp.endWithoutBody(close_connection),
-            .TCP => |resp| resp.endWithoutBody(close_connection),
+            inline else => |resp| resp.endWithoutBody(close_connection),
         };
     }
 
-    pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, opcional_data: UserDataType) void {
+    pub fn onWritable(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, u64, AnyResponse) bool, optional_data: UserDataType) void {
         const wrapper = struct {
             pub fn ssl_handler(user_data: UserDataType, offset: u64, resp: *NewApp(true).Response) bool {
                 return handler(user_data, offset, .{ .SSL = resp });
@@ -3250,8 +3306,24 @@ pub const AnyResponse = union(enum) {
             }
         };
         return switch (this) {
-            .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, opcional_data),
-            .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, opcional_data),
+            .SSL => |resp| resp.onWritable(UserDataType, wrapper.ssl_handler, optional_data),
+            .TCP => |resp| resp.onWritable(UserDataType, wrapper.tcp_handler, optional_data),
+        };
+    }
+
+    pub fn onTimeout(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType, AnyResponse) void, optional_data: UserDataType) void {
+        const wrapper = struct {
+            pub fn ssl_handler(user_data: UserDataType, resp: *NewApp(true).Response) void {
+                handler(user_data, .{ .SSL = resp });
+            }
+            pub fn tcp_handler(user_data: UserDataType, resp: *NewApp(false).Response) void {
+                handler(user_data, .{ .TCP = resp });
+            }
+        };
+
+        return switch (this) {
+            .SSL => |resp| resp.onTimeout(UserDataType, wrapper.ssl_handler, optional_data),
+            .TCP => |resp| resp.onTimeout(UserDataType, wrapper.tcp_handler, optional_data),
         };
     }
 
@@ -3272,54 +3344,62 @@ pub const AnyResponse = union(enum) {
 
     pub fn clearAborted(this: AnyResponse) void {
         return switch (this) {
-            .SSL => |resp| resp.clearAborted(),
-            .TCP => |resp| resp.clearAborted(),
+            inline else => |resp| resp.clearAborted(),
         };
     }
     pub fn clearTimeout(this: AnyResponse) void {
         return switch (this) {
-            .SSL => |resp| resp.clearTimeout(),
-            .TCP => |resp| resp.clearTimeout(),
+            inline else => |resp| resp.clearTimeout(),
         };
     }
 
     pub fn clearOnWritable(this: AnyResponse) void {
         return switch (this) {
-            .SSL => |resp| resp.clearOnWritable(),
-            .TCP => |resp| resp.clearOnWritable(),
+            inline else => |resp| resp.clearOnWritable(),
         };
     }
 
     pub fn clearOnData(this: AnyResponse) void {
         return switch (this) {
-            .SSL => |resp| resp.clearOnData(),
-            .TCP => |resp| resp.clearOnData(),
+            inline else => |resp| resp.clearOnData(),
         };
     }
 
     pub fn endStream(this: AnyResponse, close_connection: bool) void {
         return switch (this) {
-            .SSL => |resp| resp.endStream(close_connection),
-            .TCP => |resp| resp.endStream(close_connection),
+            inline else => |resp| resp.endStream(close_connection),
         };
     }
 
     pub fn corked(this: AnyResponse, comptime handler: anytype, args_tuple: anytype) void {
         return switch (this) {
-            .SSL => |resp| resp.corked(handler, args_tuple),
-            .TCP => |resp| resp.corked(handler, args_tuple),
+            inline else => |resp| resp.corked(handler, args_tuple),
         };
     }
 
-    pub fn runCorkedWithType(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType) void, opcional_data: UserDataType) void {
+    pub fn runCorkedWithType(this: AnyResponse, comptime UserDataType: type, comptime handler: fn (UserDataType) void, optional_data: UserDataType) void {
         return switch (this) {
-            .SSL => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
-            .TCP => |resp| resp.runCorkedWithType(UserDataType, handler, opcional_data),
+            inline else => |resp| resp.runCorkedWithType(UserDataType, handler, optional_data),
+        };
+    }
+
+    pub fn upgrade(
+        this: AnyResponse,
+        comptime Data: type,
+        data: Data,
+        sec_web_socket_key: []const u8,
+        sec_web_socket_protocol: []const u8,
+        sec_web_socket_extensions: []const u8,
+        ctx: ?*uws_socket_context_t,
+    ) *Socket {
+        return switch (this) {
+            inline else => |resp| resp.upgrade(Data, data, sec_web_socket_key, sec_web_socket_protocol, sec_web_socket_extensions, ctx),
         };
     }
 };
 pub fn NewApp(comptime ssl: bool) type {
-    return opaque {
+    // TODO: change to `opaque` when https://github.com/ziglang/zig/issues/22869 is fixed
+    return struct {
         pub const is_ssl = ssl;
         const ssl_flag: i32 = @intFromBool(ssl);
         const ThisApp = @This();
@@ -3375,7 +3455,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 return us_socket_local_port(ssl_flag, @as(*uws.Socket, @ptrCast(this)));
             }
 
-            pub fn socket(this: *@This()) NewSocketHandler(ssl) {
+            pub fn socket(this: *ThisApp.ListenSocket) NewSocketHandler(ssl) {
                 return NewSocketHandler(ssl).from(@ptrCast(this));
             }
         };
@@ -3608,7 +3688,7 @@ pub fn NewApp(comptime ssl: bool) type {
         }
 
         pub const Response = opaque {
-            inline fn castRes(res: *uws_res) *Response {
+            pub inline fn castRes(res: *uws_res) *Response {
                 return @as(*Response, @ptrCast(@alignCast(res)));
             }
 
@@ -3672,8 +3752,15 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn resetTimeout(res: *Response) void {
                 uws_res_reset_timeout(ssl_flag, res.downcast());
             }
-            pub fn write(res: *Response, data: []const u8) bool {
-                return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
+            pub fn getBufferedAmount(res: *Response) u64 {
+                return uws_res_get_buffered_amount(ssl_flag, res.downcast());
+            }
+            pub fn write(res: *Response, data: []const u8) WriteResult {
+                var len: usize = data.len;
+                return switch (uws_res_write(ssl_flag, res.downcast(), data.ptr, &len)) {
+                    true => .{ .want_more = len },
+                    false => .{ .backpressure = len },
+                };
             }
             pub fn getWriteOffset(res: *Response) u64 {
                 return uws_res_get_write_offset(ssl_flag, res.downcast());
@@ -3745,7 +3832,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     us_socket_mark_needs_more_not_ssl(res.downcast());
                 }
             }
-            pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
+            pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, optional_data: UserDataType) void {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
@@ -3755,13 +3842,13 @@ pub fn NewApp(comptime ssl: bool) type {
                         }
                     }
                 };
-                uws_res_on_aborted(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
+                uws_res_on_aborted(ssl_flag, res.downcast(), Wrapper.handle, optional_data);
             }
 
             pub fn clearAborted(res: *Response) void {
                 uws_res_on_aborted(ssl_flag, res.downcast(), null, null);
             }
-            pub fn onTimeout(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
+            pub fn onTimeout(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, optional_data: UserDataType) void {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
@@ -3771,7 +3858,7 @@ pub fn NewApp(comptime ssl: bool) type {
                         }
                     }
                 };
-                uws_res_on_timeout(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
+                uws_res_on_timeout(ssl_flag, res.downcast(), Wrapper.handle, optional_data);
             }
 
             pub fn clearTimeout(res: *Response) void {
@@ -3785,7 +3872,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 res: *Response,
                 comptime UserDataType: type,
                 comptime handler: fn (UserDataType, *Response, chunk: []const u8, last: bool) void,
-                opcional_data: UserDataType,
+                optional_data: UserDataType,
             ) void {
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, chunk_ptr: [*c]const u8, len: usize, last: bool, user_data: ?*anyopaque) callconv(.C) void {
@@ -3807,7 +3894,7 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 };
 
-                uws_res_on_data(ssl_flag, res.downcast(), Wrapper.handle, opcional_data);
+                uws_res_on_data(ssl_flag, res.downcast(), Wrapper.handle, optional_data);
             }
 
             pub fn endStream(res: *Response, close_connection: bool) void {
@@ -3835,7 +3922,7 @@ pub fn NewApp(comptime ssl: bool) type {
                 res: *Response,
                 comptime UserDataType: type,
                 comptime handler: fn (UserDataType) void,
-                opcional_data: UserDataType,
+                optional_data: UserDataType,
             ) void {
                 const Wrapper = struct {
                     pub fn handle(user_data: ?*anyopaque) callconv(.C) void {
@@ -3851,14 +3938,14 @@ pub fn NewApp(comptime ssl: bool) type {
                     }
                 };
 
-                uws_res_cork(ssl_flag, res.downcast(), opcional_data, Wrapper.handle);
+                uws_res_cork(ssl_flag, res.downcast(), optional_data, Wrapper.handle);
             }
 
             // pub fn onSocketWritable(
             //     res: *Response,
             //     comptime UserDataType: type,
             //     comptime handler: fn (UserDataType, fd: i32) void,
-            //     opcional_data: UserDataType,
+            //     optional_data: UserDataType,
             // ) void {
             //     const Wrapper = struct {
             //         pub fn handle(user_data: ?*anyopaque, fd: i32) callconv(.C) void {
@@ -3922,8 +4009,8 @@ pub fn NewApp(comptime ssl: bool) type {
                 sec_web_socket_protocol: []const u8,
                 sec_web_socket_extensions: []const u8,
                 ctx: ?*uws_socket_context_t,
-            ) void {
-                uws_res_upgrade(
+            ) *Socket {
+                return uws_res_upgrade(
                     ssl_flag,
                     res.downcast(),
                     data,
@@ -4097,20 +4184,21 @@ extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bo
 extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
 extern fn uws_res_timeout(ssl: i32, res: *uws_res, timeout: u8) void;
 extern fn uws_res_reset_timeout(ssl: i32, res: *uws_res) void;
-extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
+extern fn uws_res_get_buffered_amount(ssl: i32, res: *uws_res) u64;
+extern fn uws_res_write(ssl: i32, res: *uws_res, data: ?[*]const u8, length: *usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;
 extern fn uws_res_has_responded(ssl: i32, res: *uws_res) bool;
 extern fn uws_res_on_writable(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, u64, ?*anyopaque) callconv(.C) bool, user_data: ?*anyopaque) void;
 extern fn uws_res_clear_on_writable(ssl: i32, res: *uws_res) void;
-extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
-extern fn uws_res_on_timeout(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, opcional_data: ?*anyopaque) void;
+extern fn uws_res_on_aborted(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, optional_data: ?*anyopaque) void;
+extern fn uws_res_on_timeout(ssl: i32, res: *uws_res, handler: ?*const fn (*uws_res, ?*anyopaque) callconv(.C) void, optional_data: ?*anyopaque) void;
 
 extern fn uws_res_on_data(
     ssl: i32,
     res: *uws_res,
     handler: ?*const fn (*uws_res, [*c]const u8, usize, bool, ?*anyopaque) callconv(.C) void,
-    opcional_data: ?*anyopaque,
+    optional_data: ?*anyopaque,
 ) void;
 extern fn uws_res_upgrade(
     ssl: i32,
@@ -4123,7 +4211,7 @@ extern fn uws_res_upgrade(
     sec_web_socket_extensions: [*c]const u8,
     sec_web_socket_extensions_length: usize,
     ws: ?*uws_socket_context_t,
-) void;
+) *Socket;
 extern fn uws_res_cork(i32, res: *uws_res, ctx: *anyopaque, corker: *const (fn (?*anyopaque) callconv(.C) void)) void;
 extern fn uws_res_write_headers(i32, res: *uws_res, names: [*]const Api.StringPointer, values: [*]const Api.StringPointer, count: usize, buf: [*]const u8) void;
 pub const LIBUS_RECV_BUFFER_LENGTH = 524288;
@@ -4194,11 +4282,16 @@ pub const State = enum(u8) {
     HTTP_END_CALLED = 4,
     HTTP_RESPONSE_PENDING = 8,
     HTTP_CONNECTION_CLOSE = 16,
+    HTTP_WROTE_CONTENT_LENGTH_HEADER = 32,
 
     _,
 
     pub inline fn isResponsePending(this: State) bool {
         return @intFromEnum(this) & @intFromEnum(State.HTTP_RESPONSE_PENDING) != 0;
+    }
+
+    pub inline fn hasWrittenContentLengthHeader(this: State) bool {
+        return @intFromEnum(this) & @intFromEnum(State.HTTP_WROTE_CONTENT_LENGTH_HEADER) != 0;
     }
 
     pub inline fn isHttpEndCalled(this: State) bool {
@@ -4240,6 +4333,10 @@ pub const WindowsLoop = extern struct {
     is_default: c_int,
     pre: *uv.uv_prepare_t,
     check: *uv.uv_check_t,
+
+    pub fn uncork(this: *PosixLoop) void {
+        uws_res_clear_corked_socket(this);
+    }
 
     pub fn get() *WindowsLoop {
         return uws_get_loop_with_native(bun.windows.libuv.Loop.get());
@@ -4476,75 +4573,73 @@ pub const AnySocket = union(enum) {
 
 pub const udp = struct {
     pub const Socket = opaque {
-        const This = @This();
-
-        pub fn create(loop: *Loop, data_cb: *const fn (*This, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*This) callconv(.C) void, close_cb: *const fn (*This) callconv(.C) void, host: [*c]const u8, port: c_ushort, options: c_int, err: ?*c_int, user_data: ?*anyopaque) ?*This {
+        pub fn create(loop: *Loop, data_cb: *const fn (*udp.Socket, *PacketBuffer, c_int) callconv(.C) void, drain_cb: *const fn (*udp.Socket) callconv(.C) void, close_cb: *const fn (*udp.Socket) callconv(.C) void, host: [*c]const u8, port: c_ushort, options: c_int, err: ?*c_int, user_data: ?*anyopaque) ?*udp.Socket {
             return us_create_udp_socket(loop, data_cb, drain_cb, close_cb, host, port, options, err, user_data);
         }
 
-        pub fn send(this: *This, payloads: []const [*]const u8, lengths: []const usize, addresses: []const ?*const anyopaque) c_int {
+        pub fn send(this: *udp.Socket, payloads: []const [*]const u8, lengths: []const usize, addresses: []const ?*const anyopaque) c_int {
             bun.assert(payloads.len == lengths.len and payloads.len == addresses.len);
             return us_udp_socket_send(this, payloads.ptr, lengths.ptr, addresses.ptr, @intCast(payloads.len));
         }
 
-        pub fn user(this: *This) ?*anyopaque {
+        pub fn user(this: *udp.Socket) ?*anyopaque {
             return us_udp_socket_user(this);
         }
 
-        pub fn bind(this: *This, hostname: [*c]const u8, port: c_uint) c_int {
+        pub fn bind(this: *udp.Socket, hostname: [*c]const u8, port: c_uint) c_int {
             return us_udp_socket_bind(this, hostname, port);
         }
 
         /// Get the bound port in host byte order
-        pub fn boundPort(this: *This) c_int {
+        pub fn boundPort(this: *udp.Socket) c_int {
             return us_udp_socket_bound_port(this);
         }
 
-        pub fn boundIp(this: *This, buf: [*c]u8, length: *i32) void {
+        pub fn boundIp(this: *udp.Socket, buf: [*c]u8, length: *i32) void {
             return us_udp_socket_bound_ip(this, buf, length);
         }
 
-        pub fn remoteIp(this: *This, buf: [*c]u8, length: *i32) void {
+        pub fn remoteIp(this: *udp.Socket, buf: [*c]u8, length: *i32) void {
             return us_udp_socket_remote_ip(this, buf, length);
         }
 
-        pub fn close(this: *This) void {
+        pub fn close(this: *udp.Socket) void {
             return us_udp_socket_close(this);
         }
 
-        pub fn connect(this: *This, hostname: [*c]const u8, port: c_uint) c_int {
+        pub fn connect(this: *udp.Socket, hostname: [*c]const u8, port: c_uint) c_int {
             return us_udp_socket_connect(this, hostname, port);
         }
 
-        pub fn disconnect(this: *This) c_int {
+        pub fn disconnect(this: *udp.Socket) c_int {
             return us_udp_socket_disconnect(this);
         }
 
-        pub fn setBroadcast(this: *This, enabled: bool) c_int {
+        pub fn setBroadcast(this: *udp.Socket, enabled: bool) c_int {
             return us_udp_socket_set_broadcast(this, @intCast(@intFromBool(enabled)));
         }
 
-        pub fn setUnicastTTL(this: *This, ttl: i32) c_int {
+        pub fn setUnicastTTL(this: *udp.Socket, ttl: i32) c_int {
             return us_udp_socket_set_ttl_unicast(this, @intCast(ttl));
         }
 
-        pub fn setMulticastTTL(this: *This, ttl: i32) c_int {
+        pub fn setMulticastTTL(this: *udp.Socket, ttl: i32) c_int {
             return us_udp_socket_set_ttl_multicast(this, @intCast(ttl));
         }
 
-        pub fn setMulticastLoopback(this: *This, enabled: bool) c_int {
+        pub fn setMulticastLoopback(this: *udp.Socket, enabled: bool) c_int {
             return us_udp_socket_set_multicast_loopback(this, @intCast(@intFromBool(enabled)));
         }
 
-        pub fn setMulticastInterface(this: *This, iface: *const std.posix.sockaddr.storage) c_int {
+        pub fn setMulticastInterface(this: *udp.Socket, iface: *const std.posix.sockaddr.storage) c_int {
             return us_udp_socket_set_multicast_interface(this, iface);
         }
 
-        pub fn setMembership(this: *This, address: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
+        pub fn setMembership(this: *udp.Socket, address: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
             return us_udp_socket_set_membership(this, address, iface, @intFromBool(drop));
         }
 
-        pub fn setSourceSpecificMembership(this: *This, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
+        pub fn setSourceSpecificMembership(this: *udp.Socket, source: *const std.posix.sockaddr.storage, group: *const std.posix.sockaddr.storage, iface: ?*const std.posix.sockaddr.storage, drop: bool) c_int {
             return us_udp_socket_set_source_specific_membership(this, source, group, iface, @intFromBool(drop));
         }
     };
@@ -4590,7 +4685,7 @@ pub fn onThreadExit() void {
 }
 
 extern fn uws_app_clear_routes(ssl_flag: c_int, app: *uws_app_t) void;
-
+extern fn uws_res_clear_corked_socket(loop: *Loop) void;
 pub extern fn us_socket_upgrade_to_tls(s: *Socket, new_context: *SocketContext, sni: ?[*:0]const u8) ?*Socket;
 
 export fn BUN__warn__extra_ca_load_failed(filename: [*c]const u8, error_msg: [*c]const u8) void {

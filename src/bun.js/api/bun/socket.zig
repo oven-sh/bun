@@ -15,7 +15,7 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../../../which.zig");
 const uws = bun.uws;
 const ZigString = JSC.ZigString;
-const BoringSSL = bun.BoringSSL;
+const BoringSSL = bun.BoringSSL.c;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 const uv = bun.windows.libuv;
@@ -190,6 +190,7 @@ const Handlers = struct {
                 const listen_socket: *Listener = @fieldParentPtr("handlers", this);
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if (listen_socket.listener == .none) {
+                    listen_socket.poll_ref.unref(this.vm);
                     listen_socket.strong_self.deinit();
                 }
             } else {
@@ -798,15 +799,13 @@ pub const Listener = struct {
                 uws.us_socket_context_free(@intFromBool(ssl_enabled), socket_context);
             }
 
-            const err = globalObject.createErrorInstance(
-                "Failed to listen at {s}",
-                .{
-                    bun.span(hostname_or_unix.slice()),
-                },
-            );
+            const err = globalObject.createErrorInstance("Failed to listen at {s}", .{bun.span(hostname_or_unix.slice())});
             log("Failed to listen {d}", .{errno});
             if (errno != 0) {
+                err.put(globalObject, ZigString.static("syscall"), bun.String.createUTF8ForJS(globalObject, "listen"));
                 err.put(globalObject, ZigString.static("errno"), JSValue.jsNumber(errno));
+                err.put(globalObject, ZigString.static("address"), hostname_or_unix.toZigString().toJS(globalObject));
+                if (port) |p| err.put(globalObject, ZigString.static("port"), .jsNumber(p));
                 if (bun.C.SystemErrno.init(errno)) |str| {
                     err.put(globalObject, ZigString.static("code"), ZigString.init(@tagName(str)).toJS(globalObject));
                 }
@@ -959,9 +958,10 @@ pub const Listener = struct {
         const listener = this.listener;
         this.listener = .none;
 
-        this.poll_ref.unref(this.handlers.vm);
         // if we already have no active connections, we can deinit the context now
         if (this.handlers.active_connections == 0) {
+            this.poll_ref.unref(this.handlers.vm);
+
             this.handlers.unprotect();
             // deiniting the context will also close the listener
             if (this.socket_context) |ctx| {
@@ -1222,37 +1222,9 @@ pub const Listener = struct {
             if (ssl.?.server_name) |s| {
                 server_name = bun.default_allocator.dupe(u8, s[0..bun.len(s)]) catch bun.outOfMemory();
             }
-            uws.NewSocketHandler(true).configure(
-                socket_context,
-                true,
-                *TLSSocket,
-                struct {
-                    pub const onOpen = NewSocket(true).onOpen;
-                    pub const onClose = NewSocket(true).onClose;
-                    pub const onData = NewSocket(true).onData;
-                    pub const onWritable = NewSocket(true).onWritable;
-                    pub const onTimeout = NewSocket(true).onTimeout;
-                    pub const onConnectError = NewSocket(true).onConnectError;
-                    pub const onEnd = NewSocket(true).onEnd;
-                    pub const onHandshake = NewSocket(true).onHandshake;
-                },
-            );
+            uws.NewSocketHandler(true).configure(socket_context, true, *TLSSocket, NewSocket(true));
         } else {
-            uws.NewSocketHandler(false).configure(
-                socket_context,
-                true,
-                *TCPSocket,
-                struct {
-                    pub const onOpen = NewSocket(false).onOpen;
-                    pub const onClose = NewSocket(false).onClose;
-                    pub const onData = NewSocket(false).onData;
-                    pub const onWritable = NewSocket(false).onWritable;
-                    pub const onTimeout = NewSocket(false).onTimeout;
-                    pub const onConnectError = NewSocket(false).onConnectError;
-                    pub const onEnd = NewSocket(false).onEnd;
-                    pub const onHandshake = NewSocket(false).onHandshake;
-                },
-            );
+            uws.NewSocketHandler(false).configure(socket_context, true, *TCPSocket, NewSocket(false));
         }
 
         default_data.ensureStillAlive();
@@ -3541,7 +3513,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                 // If BoringSSL gave us an error code, let's use it.
                 if (err != 0 and !globalObject.hasException()) {
-                    return globalObject.throwValue(BoringSSL.ERR_toJS(globalObject, err));
+                    return globalObject.throwValue(bun.BoringSSL.ERR_toJS(globalObject, err));
                 }
 
                 // If BoringSSL did not give us an error code, let's throw a generic error.
@@ -3945,7 +3917,7 @@ pub const WindowsNamedPipeListeningContext = if (Environment.isWindows) struct {
         });
 
         if (ssl_config) |ssl_options| {
-            BoringSSL.load();
+            bun.BoringSSL.load();
 
             const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
             var err: uws.create_bun_socket_error_t = .none;

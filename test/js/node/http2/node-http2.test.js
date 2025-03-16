@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, nodeExe, isCI } from "harness";
 import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
@@ -957,21 +957,25 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
         ]);
       });
 
-      it("should not leak memory", () => {
-        const { stdout, exitCode } = Bun.spawnSync({
-          cmd: [bunExe(), "--smol", "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
-          env: {
-            ...bunEnv,
-            BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString("10"),
-            HTTP2_SERVER_INFO: JSON.stringify(nodeEchoServer_),
-            HTTP2_SERVER_TLS: JSON.stringify(TLS_OPTIONS),
-          },
-          stderr: "inherit",
-          stdin: "inherit",
-          stdout: "inherit",
-        });
-        expect(exitCode || 0).toBe(0);
-      }, 100000);
+      it.skipIf(!isCI)(
+        "should not leak memory",
+        () => {
+          const { stdout, exitCode } = Bun.spawnSync({
+            cmd: [bunExe(), "--smol", "run", path.join(import.meta.dir, "node-http2-memory-leak.js")],
+            env: {
+              ...bunEnv,
+              BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString("10"),
+              HTTP2_SERVER_INFO: JSON.stringify(nodeEchoServer_),
+              HTTP2_SERVER_TLS: JSON.stringify(TLS_OPTIONS),
+            },
+            stderr: "inherit",
+            stdin: "inherit",
+            stdout: "inherit",
+          });
+          expect(exitCode || 0).toBe(0);
+        },
+        100000,
+      );
 
       it("should receive goaway", async () => {
         const { promise, resolve, reject } = Promise.withResolvers();

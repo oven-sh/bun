@@ -294,22 +294,17 @@ pub fn build(b: *Build) !void {
             .name = "bun-test",
             .optimize = build_options.optimize,
             .root_source_file = b.path("src/unit_test.zig"),
-            // .root_source_file = b.path("root_test.zig"),
-            .test_runner = .{
-                .path = b.path("src/main_test.zig"),
-                .mode = .simple,
-            },
+            .test_runner = .{ .path = b.path("src/main_test.zig"), .mode = .simple },
             .target = build_options.target,
             .use_llvm = !build_options.no_llvm,
             .use_lld = if (build_options.os == .mac) false else !build_options.no_llvm,
-            // .pic = true,
             .omit_frame_pointer = false,
             .strip = false,
         });
         configureObj(b, &o, unit_tests);
-        // unit_tests.export_table = true;
         unit_tests.linker_allow_shlib_undefined = true;
-        // unit_tests.link_gc_sections = false;
+        unit_tests.link_function_sections = true;
+        unit_tests.link_data_sections = true;
 
         const bin = unit_tests.getEmittedBin();
         const obj = Build.LazyPath{ .generated = .{
@@ -318,7 +313,6 @@ pub fn build(b: *Build) !void {
             .sub_path = "bun-test.o",
         } };
         const cpy_obj = b.addInstallFile(obj, "bun-test.o");
-        step.dependOn(&unit_tests.step);
         step.dependOn(&cpy_obj.step);
     }
 

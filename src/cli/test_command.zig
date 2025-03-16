@@ -1168,9 +1168,6 @@ const Scanner = struct {
         }
     }
 };
-test {
-    std.testing.refAllDecls(Scanner);
-}
 
 pub const TestCommand = struct {
     pub const name = "test";

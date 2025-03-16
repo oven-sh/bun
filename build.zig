@@ -293,10 +293,10 @@ pub fn build(b: *Build) !void {
         var unit_tests = b.addTest(.{
             .name = "bun-test",
             .optimize = build_options.optimize,
-            .root_source_file = b.path("unit_test.zig"),
+            .root_source_file = b.path("src/unit_test.zig"),
             // .root_source_file = b.path("root_test.zig"),
             .test_runner = .{
-                .path = b.path("root_test.zig"),
+                .path = b.path("src/main_test.zig"),
                 .mode = .simple,
             },
             .target = build_options.target,

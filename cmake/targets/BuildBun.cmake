@@ -532,10 +532,6 @@ file(GLOB_RECURSE BUN_ZIG_SOURCES ${CONFIGURE_DEPENDS}
 
 list(APPEND BUN_ZIG_SOURCES
   ${CWD}/build.zig
-  ${CWD}/src/main.zig
-  ${CWD}/src/main_test.zig
-  ${CWD}/root_test.zig
-  ${CWD}/unit_test.zig
   ${BUN_BINDGEN_ZIG_OUTPUTS}
 )
 

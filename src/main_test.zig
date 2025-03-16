@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+pub const bun = @import("./bun.zig");
 const Output = bun.Output;
 const Environment = bun.Environment;
 const recover = @import("test/recover.zig");

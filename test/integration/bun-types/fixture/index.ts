@@ -299,7 +299,38 @@ Bun.fetch("", {
   },
 });
 
-const myRequest: Request = new Request("");
+const myHeaders: Headers = new Headers();
+myHeaders.append("x-bun", "is cool");
+myHeaders.get("x-bun");
+myHeaders.has("x-bun");
+myHeaders.set("x-bun", "is cool");
+myHeaders.delete("x-bun");
+myHeaders.getSetCookie();
+myHeaders.toJSON();
+myHeaders.count;
+myHeaders.getAll("set-cookie");
+myHeaders.getAll("Set-Cookie");
+
+// @ts-expect-error
+myHeaders.getAll("Should fail");
+
+const myRequest: Request = new Request("", {
+  headers: new Headers(myHeaders),
+  body: "",
+  method: "GET",
+  redirect: "follow",
+  credentials: "include",
+  mode: "cors",
+  referrer: "about:client",
+  referrerPolicy: "no-referrer",
+  window: null,
+});
+
+const myResponse: Response = new Response("", {
+  headers: new Headers([]),
+  status: 200,
+  statusText: "OK",
+});
 
 const myRequestInit: RequestInit = {
   body: "",

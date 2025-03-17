@@ -1,11 +1,6 @@
 declare module "bun" {
+  type HeadersInit = string[][] | Record<string, string | ReadonlyArray<string>> | Headers;
   type BodyInit = ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;
-  type HeadersInit = Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
-  type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
-
-  // Required to expose `Bun.RequestInit` & `Bun.ResponseInit`
-  interface ResponseInit extends Bun.__internal.LibOrFallbackResponseInit {}
-  interface RequestInit extends Bun.__internal.LibOrFallbackRequestInit {}
 
   namespace __internal {
     type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
@@ -14,7 +9,10 @@ declare module "bun" {
     type LibOrFallbackResponseInit = LibDomIsLoaded extends true ? {} : import("undici-types").ResponseInit;
     type LibOrFallbackRequestInit = LibDomIsLoaded extends true
       ? {}
-      : Omit<import("undici-types").RequestInit, "body"> & { body?: BodyInit | null | undefined };
+      : Omit<import("undici-types").RequestInit, "body" | "headers"> & {
+          body?: Bun.BodyInit | null | undefined;
+          headers?: Bun.HeadersInit;
+        };
 
     interface BunHeadersOverride extends LibOrFallbackHeaders {
       /**
@@ -63,8 +61,8 @@ declare module "bun" {
   }
 }
 
-interface RequestInit extends Bun.RequestInit {}
-interface ResponseInit extends Bun.ResponseInit {}
+interface RequestInit extends Bun.__internal.LibOrFallbackRequestInit {}
+interface ResponseInit extends Bun.__internal.LibOrFallbackResponseInit {}
 
 interface Headers extends Bun.__internal.BunHeadersOverride {}
 declare var Headers: Bun.__internal.UseLibDomIfAvailable<

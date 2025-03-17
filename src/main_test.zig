@@ -21,9 +21,6 @@ pub extern "C" var _environ: ?*anyopaque;
 pub extern "C" var environ: ?*anyopaque;
 
 pub fn main() void {
-    std.debug.print("tests are running\n", .{});
-    // bun.crash_handler.init();
-
     // This should appear before we make any calls at all to libuv.
     // So it's safest to put it very early in the main function.
     if (Environment.isWindows) {

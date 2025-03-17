@@ -1,6 +1,5 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const p = std.debug.print;
 
 const Build = std.Build;
 const Step = Build.Step;

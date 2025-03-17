@@ -38,27 +38,34 @@ pub fn JSPropertyIterator(comptime options: JSPropertyIteratorOptions) type {
         pub fn init(globalObject: *JSC.JSGlobalObject, object: JSC.JSValue) bun.JSError!@This() {
             const cell = object.toCell() orelse {
                 @branchHint(.unlikely);
+                // not great to surface JS errors from internal APIs, but its
+                // better than crashing (which is what was happening before)
                 return globalObject.throw("PropertyIterator expects an object", .{});
             };
             object.ensureStillAlive();
 
-            var iter = @This(){
-                .object = cell.toObject(globalObject),
-                .globalObject = globalObject,
-            };
-
-            iter.impl = try JSPropertyIteratorImpl.init(
+            var len: usize = 0;
+            const impl = try JSPropertyIteratorImpl.init(
                 globalObject,
                 cell.toObject(globalObject),
-                &iter.len,
+                &len,
                 options.own_properties_only,
                 options.only_non_index_properties,
             );
-
-            if (iter.len > 0) {
-                bun.debugAssert(iter.impl != null);
+            if (comptime bun.Environment.allow_assert) {
+                if (len > 0) {
+                    bun.assert(impl != null);
+                } else {
+                    bun.debugAssert(impl == null);
+                }
             }
-            return iter;
+
+            return .{
+                .object = cell.toObject(globalObject),
+                .globalObject = globalObject,
+                .impl = impl,
+                .len = len,
+            };
         }
 
         pub fn reset(this: *@This()) void {

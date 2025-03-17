@@ -20,7 +20,7 @@ describe.skipIf(!isLinux)("running files on a FUSE mount", () => {
 
       // wait for it to work
       let tries = 0;
-      while (!fs.existsSync(join(mountpoint, pathOnMount)) && tries < 50) {
+      while (!fs.existsSync(join(mountpoint, pathOnMount)) && tries < 250) {
         tries++;
         await Bun.sleep(5);
       }

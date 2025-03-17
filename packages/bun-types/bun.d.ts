@@ -3330,7 +3330,7 @@ declare module "bun" {
      *
      * @param ws The websocket that was closed
      * @param code The close code
-     * @param message The close message
+     * @param reason The close reason
      */
     close?(ws: ServerWebSocket<T>, code: number, reason: string): void | Promise<void>;
 
@@ -3731,6 +3731,9 @@ declare module "bun" {
     syscall?: string;
   }
 
+  /**
+   * Options for TLS connections
+   */
   interface TLSOptions {
     /**
      * Passphrase for the TLS key
@@ -4198,6 +4201,9 @@ declare module "bun" {
     readonly id: string;
   }
 
+  /**
+   * The type of options that can be passed to {@link serve}
+   */
   type Serve<WebSocketDataType = undefined> =
     | ServeOptions
     | TLSServeOptions
@@ -4208,6 +4214,9 @@ declare module "bun" {
     | UnixWebSocketServeOptions<WebSocketDataType>
     | UnixTLSWebSocketServeOptions<WebSocketDataType>;
 
+  /**
+   * The type of options that can be passed to {@link serve}, with support for `routes` and a safer requirement for `fetch`
+   */
   type ServeFunctionOptions<T, R extends { [K in keyof R]: RouterTypes.RouteValue<K & string> }> =
     | (DistributedOmit<Exclude<Serve<T>, WebSocketServeOptions<T>>, "fetch"> & {
         routes: R;
@@ -4240,7 +4249,6 @@ declare module "bun" {
    * parameters and method-specific handling.
    *
    * @param options - Server configuration options
-   * @param options.routes - Route definitions mapping paths to handlers
    *
    * @example Basic Usage
    * ```ts
@@ -4456,7 +4464,6 @@ declare module "bun" {
    *
    * @param path The path to the file as a byte buffer (the buffer is copied) if the path starts with `s3://` it will behave like {@link S3File}
    */
-
   function file(path: ArrayBufferLike | Uint8Array, options?: BlobPropertyBag): BunFile;
 
   /**
@@ -4473,7 +4480,6 @@ declare module "bun" {
    *
    * @param fileDescriptor The file descriptor of the file
    */
-
   function file(fileDescriptor: number, options?: BlobPropertyBag): BunFile;
 
   /**
@@ -4483,10 +4489,25 @@ declare module "bun" {
    */
   function allocUnsafe(size: number): Uint8Array;
 
+  /**
+   * Options for `Bun.inspect`
+   */
   interface BunInspectOptions {
+    /**
+     * Whether to colorize the output
+     */
     colors?: boolean;
+    /**
+     * The depth of the inspection
+     */
     depth?: number;
+    /**
+     * Whether to sort the properties of the object
+     */
     sorted?: boolean;
+    /**
+     * Whether to compact the output
+     */
     compact?: boolean;
   }
 
@@ -4495,7 +4516,8 @@ declare module "bun" {
    *
    * Supports JSX
    *
-   * @param args
+   * @param arg The value to inspect
+   * @param options Options for the inspection
    */
   function inspect(arg: any, options?: BunInspectOptions): string;
   namespace inspect {
@@ -4931,12 +4953,23 @@ declare module "bun" {
     digest(encoding: DigestEncoding): string;
 
     /**
+     * Finalize the hash and return a `Buffer`
+     */
+    digest(): Buffer;
+
+    /**
      * Finalize the hash
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
-    digest(): Buffer;
     digest(hashInto: NodeJS.TypedArray): NodeJS.TypedArray;
+
+    /**
+     * Run the hash over the given data
+     *
+     * @param input `string`, `Uint8Array`, or `ArrayBuffer` to hash. `Uint8Array` or `ArrayBuffer` is faster.
+     */
+    static hash(algorithm: SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer): Buffer;
 
     /**
      * Run the hash over the given data
@@ -4945,7 +4978,6 @@ declare module "bun" {
      *
      * @param hashInto `TypedArray` to write the hash into. Faster than creating a new one each time
      */
-    static hash(algorithm: SupportedCryptoAlgorithms, input: Bun.BlobOrStringOrBuffer): Buffer;
     static hash(
       algorithm: SupportedCryptoAlgorithms,
       input: Bun.BlobOrStringOrBuffer,

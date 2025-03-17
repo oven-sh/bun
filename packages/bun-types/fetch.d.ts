@@ -137,6 +137,9 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
   }
 >;
 
+/**
+ * Extends Bun.TLSOptions with extra properties that are only supported in `fetch(url, {tls: ...})`
+ */
 interface BunFetchRequestInitTLS extends Bun.TLSOptions {
   /**
    * Custom function to check the server identity

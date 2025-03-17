@@ -304,6 +304,7 @@ pub fn build(b: *Build) !void {
         unit_tests.linker_allow_shlib_undefined = true;
         unit_tests.link_function_sections = true;
         unit_tests.link_data_sections = true;
+        unit_tests.bundle_ubsan_rt = false;
 
         const bin = unit_tests.getEmittedBin();
         const obj = Build.LazyPath{ .generated = .{

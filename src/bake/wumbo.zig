@@ -79,6 +79,7 @@ pub fn onInitSetupResolve(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun
     if (!ctx.aborted) {
         ctx.resp.clearAborted();
         ctx.resp.corked(onHttp200, .{ ctx.resp, dev.relativePath(entry.key) });
+        dev.releaseRelativePathBuf();
     }
     dev.server.?.onStaticRequestComplete();
 

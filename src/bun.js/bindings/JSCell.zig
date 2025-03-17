@@ -27,7 +27,7 @@ pub const JSCell = extern struct {
     /// Statically casts cells that are already objects, otherwise mutates them
     /// into objects.
     pub fn toObject(this: *JSCell, global: *JSC.JSGlobalObject) *JSC.JSObject {
-        return shim.cppFn("toObject", .{this, global});
+        return shim.cppFn("toObject", .{ this, global });
     }
 
     pub fn getType(this: *JSCell) u8 {

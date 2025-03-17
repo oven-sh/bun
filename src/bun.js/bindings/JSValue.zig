@@ -1570,15 +1570,15 @@ pub const JSValue = enum(i64) {
     }
 
     /// Runtime conversion to an object. This can have side effects.
-    /// 
+    ///
     /// For values that are already objects, this is effectively a reinterpret
     /// cast.
     pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
         return cppFn("toObject", .{ this, globalThis });
     }
 
-    /// Statically cast a value to a JSObject. 
-    /// 
+    /// Statically cast a value to a JSObject.
+    ///
     /// Returns _null_ for non-objects. Use `toObject` to runtime-cast them instead.
     pub fn asObject(this: JSValue) ?*JSObject {
         if (this.isObject()) {

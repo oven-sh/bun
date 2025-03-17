@@ -181,6 +181,9 @@ const r = new Request("", {
 await fetch(r);
 await fetch("", {
   tls: {
+    key: Bun.file("key.pem"),
+    cert: Bun.file("cert.pem"),
+    ca: [Bun.file("ca.pem")],
     rejectUnauthorized: false,
   },
 });

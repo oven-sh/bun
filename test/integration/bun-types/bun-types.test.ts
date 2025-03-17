@@ -98,7 +98,7 @@ describe("@types/bun integration test", () => {
     `;
 
     const expectedOutput = [
-      "index.ts(269,29): error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.\n$ tsc --noEmit -p ./tsconfig.json\n",
+      "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.\n$ tsc --noEmit -p ./tsconfig.json\n",
     ].join("\n");
 
     expect(p.stdout.toString() + p.stderr.toString()).toEqual(expectedOutput);

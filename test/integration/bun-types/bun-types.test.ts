@@ -80,15 +80,13 @@ describe("@types/bun integration test", () => {
   test("checks without lib.dom.d.ts", async () => {
     const p = await $`
       cd ${FIXTURE_DIR}
-      # remove DOM from tsconfig.json
-      sed -i '' 's/"lib": \["ESNext", "DOM"\]/"lib": \["ESNext"\]/' tsconfig.json
       bun run check
     `;
 
     expect(p.exitCode).toBe(0);
   });
 
-  test("checks with default settings", async () => {
+  test("checks with lib.dom.d.ts", async () => {
     const tsconfig = Bun.file(join(FIXTURE_DIR, "tsconfig.json"));
     await tsconfig.write((await tsconfig.text()).replace(/"lib": \["ESNext"\]/, '"lib": ["ESNext", "DOM"]'));
 
@@ -98,10 +96,10 @@ describe("@types/bun integration test", () => {
     `;
 
     const expectedOutput = [
-      "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.\n$ tsc --noEmit -p ./tsconfig.json\n",
+      "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
     ].join("\n");
 
-    expect(p.stdout.toString() + p.stderr.toString()).toEqual(expectedOutput);
-    expect(p.exitCode).not.toBe(0);
+    expect(p.stdout.toString() + p.stderr.toString()).toContain(expectedOutput);
+    expect(p.exitCode).toBe(2);
   });
 });

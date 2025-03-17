@@ -1,62 +1,20 @@
-/**
- * Bun uses a customised version of `lib.dom.d.ts` that allows us to declare
- * certain types from within bun-types instead of the original DOM definitions.
- *
- * Our `lib.dom.d.ts` declares BunGlobalSymbolRegistry as an empty interface,
- * which we can then extend in `bun-types` with our own Bun-specific overrides.
- *
- * For example, the type `BodyInit` is implemented like this in Bun's lib.dom.d.ts:
- * ```ts
- * interface BunGlobalSymbolRegistry {};
- * // ... elsewhere ...
- * type BodyInit = BunGlobalSymbolRegistry extends {BodyInit: infer T} ? T : never;
- * ```
- *
- * While this solution works well, the ideal approach would be to define these types
- * entirely within bun-types without any declarations in lib.dom.d.ts. This isn't
- * done yet as as we need to determine how to make the TypeScript lib-dom
- * generator emit types for not-yet-existing definitions.
- */
-interface BunGlobalSymbolRegistry {
-  BodyInit: ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;
-  HeadersInit: Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
-}
-
 declare module "bun" {
-  type BodyInit = BunGlobalSymbolRegistry["BodyInit"];
-  type HeadersInit = BunGlobalSymbolRegistry["HeadersInit"];
-
+  type BodyInit = ReadableStream | Bun.XMLHttpRequestBodyInit | URLSearchParams;
+  type HeadersInit = Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
   type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
 
+  // Required to expose `Bun.RequestInit` & `Bun.ResponseInit`
+  interface ResponseInit extends Bun.__internal.LibOrFallbackResponseInit {}
+  interface RequestInit extends Bun.__internal.LibOrFallbackRequestInit {}
+
   namespace __internal {
-    /**
-     * @internal
-     */
     type LibOrFallbackHeaders = LibDomIsLoaded extends true ? {} : import("undici-types").Headers;
-
-    /**
-     * @internal
-     */
     type LibOrFallbackRequest = LibDomIsLoaded extends true ? {} : import("undici-types").Request;
-
-    /**
-     * @internal
-     */
     type LibOrFallbackResponse = LibDomIsLoaded extends true ? {} : import("undici-types").Response;
-
-    /**
-     * @internal
-     */
+    type LibOrFallbackResponseInit = LibDomIsLoaded extends true ? {} : import("undici-types").ResponseInit;
     type LibOrFallbackRequestInit = LibDomIsLoaded extends true
       ? {}
-      : Omit<import("undici-types").RequestInit, "body"> & {
-          body?: BodyInit | null | undefined;
-        };
-
-    /**
-     * @internal
-     */
-    type LibOrFallbackResponseInit = LibDomIsLoaded extends true ? {} : import("undici-types").ResponseInit;
+      : Omit<import("undici-types").RequestInit, "body"> & { body?: BodyInit | null | undefined };
 
     interface BunHeadersOverride extends LibOrFallbackHeaders {
       /**
@@ -69,10 +27,12 @@ declare module "bun" {
        * Does not preserve insertion order. Well-known header names are lowercased. Other header names are left as-is.
        */
       toJSON(): Record<string, string>;
+
       /**
        * Get the total number of headers
        */
       readonly count: number;
+
       /**
        * Get all headers matching the name
        *
@@ -101,13 +61,8 @@ declare module "bun" {
       headers: BunHeadersOverride;
     }
   }
-
-  // Required so that you can do `Bun.RequestInit` & `Bun.ResponseInit`...
-  interface RequestInit extends Bun.__internal.LibOrFallbackRequestInit {}
-  interface ResponseInit extends Bun.__internal.LibOrFallbackResponseInit {}
 }
 
-// ...but also exist here, so they get declared globally
 interface RequestInit extends Bun.RequestInit {}
 interface ResponseInit extends Bun.ResponseInit {}
 
@@ -121,7 +76,6 @@ declare var Headers: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 interface Request extends Bun.__internal.BunRequestOverride {}
-
 declare var Request: Bun.__internal.UseLibDomIfAvailable<
   "Request",
   {
@@ -133,57 +87,57 @@ declare var Request: Bun.__internal.UseLibDomIfAvailable<
 >;
 
 interface Response extends Bun.__internal.BunResponseOverride {}
+declare var Response: Bun.__internal.UseLibDomIfAvailable<
+  "Response",
+  {
+    new (body?: Bun.BodyInit | null | undefined, init?: ResponseInit | undefined): Response;
+    /**
+     * Create a new {@link Response} with a JSON body
+     *
+     * @param body - The body of the response
+     * @param options - options to pass to the response
+     *
+     * @example
+     *
+     * ```ts
+     * const response = Response.json({hi: "there"});
+     * console.assert(
+     *   await response.text(),
+     *   `{"hi":"there"}`
+     * );
+     * ```
+     * -------
+     *
+     * This is syntactic sugar for:
+     * ```js
+     *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
+     * ```
+     * @link https://github.com/whatwg/fetch/issues/1389
+     */
+    json(body?: any, init?: ResponseInit | number): Response;
 
-interface ResponseConstructor {
-  new (body?: Bun.BodyInit | null | undefined, init?: ResponseInit | undefined): Response;
-  /**
-   * Create a new {@link Response} with a JSON body
-   *
-   * @param body - The body of the response
-   * @param options - options to pass to the response
-   *
-   * @example
-   *
-   * ```ts
-   * const response = Response.json({hi: "there"});
-   * console.assert(
-   *   await response.text(),
-   *   `{"hi":"there"}`
-   * );
-   * ```
-   * -------
-   *
-   * This is syntactic sugar for:
-   * ```js
-   *  new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
-   * ```
-   * @link https://github.com/whatwg/fetch/issues/1389
-   */
-  json(body?: any, options?: ResponseInit | number): Response;
+    /**
+     * Create a new {@link Response} that redirects to url
+     *
+     * @param url - the URL to redirect to
+     * @param status - the HTTP status code to use for the redirect
+     */
+    redirect(url: string, status?: number): Response;
 
-  /**
-   * Create a new {@link Response} that redirects to url
-   *
-   * @param url - the URL to redirect to
-   * @param status - the HTTP status code to use for the redirect
-   */
-  redirect(url: string, status?: number): Response;
+    /**
+     * Create a new {@link Response} that redirects to url
+     *
+     * @param url - the URL to redirect to
+     * @param options - options to pass to the response
+     */
+    redirect(url: string, init?: ResponseInit): Response;
 
-  /**
-   * Create a new {@link Response} that redirects to url
-   *
-   * @param url - the URL to redirect to
-   * @param options - options to pass to the response
-   */
-  redirect(url: string, options?: Bun.ResponseInit): Response;
-
-  /**
-   * Create a new {@link Response} that has a network error
-   */
-  error(): Response;
-}
-
-declare var Response: ResponseConstructor;
+    /**
+     * Create a new {@link Response} that has a network error
+     */
+    error(): Response;
+  }
+>;
 
 interface BunFetchRequestInitTLS extends Bun.TLSOptions {
   /**

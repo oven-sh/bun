@@ -1,10 +1,12 @@
 import { fileURLToPath, $ as Shell } from "bun";
-import { beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { cp, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const BUN_REPO_ROOT = fileURLToPath(import.meta.resolve("../../../"));
 const BUN_TYPES_PACKAGE_ROOT = join(BUN_REPO_ROOT, "packages", "bun-types");
-const FIXTURE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
+const FIXTURE_SOURCE_DIR = fileURLToPath(import.meta.resolve("./fixture"));
 const TSCONFIG_SOURCE_PATH = join(BUN_REPO_ROOT, "src/cli/init/tsconfig.default.json");
 const BUN_TYPES_PACKAGE_JSON_PATH = join(BUN_TYPES_PACKAGE_ROOT, "package.json");
 const BUN_VERSION = (process.env.BUN_VERSION ?? Bun.version ?? process.versions.bun).replace(/^.*v/, "");
@@ -12,8 +14,18 @@ const BUN_TYPES_TARBALL_NAME = `types-bun-${BUN_VERSION}.tgz`;
 
 const $ = Shell.cwd(BUN_REPO_ROOT).nothrow();
 
-beforeEach(async () => {
+let TEMP_DIR: string;
+let FIXTURE_DIR: string;
+
+beforeAll(async () => {
+  TEMP_DIR = await mkdtemp(join(tmpdir(), "bun-types-test-"));
+  FIXTURE_DIR = join(TEMP_DIR, "fixture");
+
   try {
+    await $`mkdir -p ${FIXTURE_DIR}`;
+
+    await cp(FIXTURE_SOURCE_DIR, FIXTURE_DIR, { recursive: true });
+
     await $`
       cd ${BUN_TYPES_PACKAGE_ROOT}
       bun install
@@ -38,7 +50,7 @@ beforeEach(async () => {
 
       cd ${FIXTURE_DIR}
       cp ${TSCONFIG_SOURCE_PATH} tsconfig.json
-      bun uninstall @types/bun
+      bun uninstall @types/bun || true
       bun add @types/bun@${BUN_TYPES_TARBALL_NAME}
       rm ${BUN_TYPES_TARBALL_NAME}
     `;
@@ -51,23 +63,32 @@ beforeEach(async () => {
   }
 });
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
+beforeEach(async () => {
+  await $`
+    cd ${FIXTURE_DIR}
+    cp ${TSCONFIG_SOURCE_PATH} tsconfig.json
+  `;
+});
+
+afterAll(async () => {
+  if (TEMP_DIR) {
+    await rm(TEMP_DIR, { recursive: true, force: true });
+  }
 });
 
 describe("@types/bun integration test", () => {
-  test("it typechecks successfully without DOM lib", async () => {
+  test("checks without lib.dom.d.ts", async () => {
     const p = await $`
       cd ${FIXTURE_DIR}
-      # modify tsconfig.json to remove dom lib
-      sed -i 's/"lib": \["ESNext", "DOM"\]/"lib": \["ESNext"\]/' tsconfig.json
+      # remove DOM from tsconfig.json
+      sed -i '' 's/"lib": \["ESNext", "DOM"\]/"lib": \["ESNext"\]/' tsconfig.json
       bun run check
     `;
 
     expect(p.exitCode).toBe(0);
   });
 
-  test("it typechecks successfully with DOM lib", async () => {
+  test("checks with default settings", async () => {
     const p = await $`
       cd ${FIXTURE_DIR}
       bun run check

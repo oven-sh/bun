@@ -265,13 +265,18 @@ new File(["code"], "name.ts");
 Response.json("");
 Response.redirect("bun.sh", 300);
 Response.error();
+Response.redirect("bun.sh", 302);
 Response.redirect("bun.sh", {
   headers: {
     "x-bun": "is cool",
   },
 });
 
-Bun.fetch.preconnect;
+Bun.inspect.custom;
+Bun.inspect;
+
+fetch.preconnect("bun.sh");
+Bun.fetch.preconnect("bun.sh");
 
 new Uint8Array().toBase64();
 

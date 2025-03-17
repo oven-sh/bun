@@ -1,18 +1,28 @@
 {
-  "files": [],
-  "include": [],
   "compilerOptions": {
+    // Environment setup & latest features
+    "lib": ["ESNext", "DOM"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+
+    // Bundler mode
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
     "noEmit": true,
-    "skipLibCheck": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true
-  },
-  "references": [
-    //
-    { "path": "./src" },
-    { "path": "./src/bake" },
-    { "path": "./src/js" },
-    { "path": "./test" },
-    { "path": "./packages/bun-types" }
-  ]
+
+    // Best practices
+    "strict": true,
+    "skipLibCheck": false,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+
+    // Some stricter flags (disabled by default)
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noPropertyAccessFromIndexSignature": false
+  }
 }

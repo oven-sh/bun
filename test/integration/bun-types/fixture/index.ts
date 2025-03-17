@@ -266,11 +266,17 @@ URL.revokeObjectURL;
 declare const myBodyInit: Bun.BodyInit;
 declare const myHeadersInit: Bun.HeadersInit;
 
-new Blob().text();
-new Blob().json();
-new Blob().arrayBuffer();
-new Blob().bytes();
-new Blob().formData();
+await new Blob().text();
+await new Blob().json();
+await new Blob().arrayBuffer();
+await new Blob().bytes();
+await new Blob().formData();
+
+await Bun.file("test").text();
+await Bun.file("test").json();
+await Bun.file("test").arrayBuffer();
+await Bun.file("test").bytes();
+await Bun.file("test").formData();
 
 new MessagePort();
 

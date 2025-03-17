@@ -1864,7 +1864,7 @@ pub const Path = struct {
             if ((FileSystem.FilenameStore.instance.exists(this.text) or
                 FileSystem.DirnameStore.instance.exists(this.text)) and
                 (FileSystem.FilenameStore.instance.exists(this.pretty) or
-                FileSystem.DirnameStore.instance.exists(this.pretty)))
+                    FileSystem.DirnameStore.instance.exists(this.pretty)))
             {
                 return this.*;
             }

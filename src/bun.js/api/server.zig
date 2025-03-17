@@ -142,7 +142,7 @@ fn getContentType(headers: ?*JSC.FetchHeaders, blob: *const JSC.WebCore.AnyBlob,
             content
         else if (blob.wasString())
             MimeType.text
-            // TODO: should we get the mime type off of the Blob.Store if it exists?
+                // TODO: should we get the mime type off of the Blob.Store if it exists?
             // A little wary of doing this right now due to causing some breaking change
         else
             MimeType.other;
@@ -9638,7 +9638,7 @@ pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, tru
 pub const AnyServer = struct {
     ptr: Ptr,
 
-    const Ptr = bun.TaggedPointerUnion(.{
+    pub const Ptr = bun.TaggedPointerUnion(.{
         HTTPServer,
         HTTPSServer,
         DebugHTTPServer,
@@ -9846,6 +9846,16 @@ pub const AnyServer = struct {
             Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).dev_server,
             Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).dev_server,
             Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).dev_server,
+            else => bun.unreachablePanic("Invalid pointer tag", .{}),
+        };
+    }
+
+    pub fn jsValue(this: AnyServer) ?JSC.JSValue {
+        return switch (this.ptr.tag()) {
+            Ptr.case(HTTPServer) => this.ptr.as(HTTPServer).js_value.get(),
+            Ptr.case(HTTPSServer) => this.ptr.as(HTTPSServer).js_value.get(),
+            Ptr.case(DebugHTTPServer) => this.ptr.as(DebugHTTPServer).js_value.get(),
+            Ptr.case(DebugHTTPSServer) => this.ptr.as(DebugHTTPSServer).js_value.get(),
             else => bun.unreachablePanic("Invalid pointer tag", .{}),
         };
     }

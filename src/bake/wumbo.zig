@@ -28,11 +28,9 @@ fn onInit(dev: *DevServer, _: *Request, resp: AnyResponse) bun.JSOOM!void {
 
     const promise = JSBundlerPlugin__loadAndResolveEditPlugin(
         dev.vm.global,
-        switch (dev.server.?) {
-            inline else => |x| x.js_value.get() orelse brk: {
-                bun.debugAssert(false);
-                break :brk .undefined;
-            },
+        dev.server.?.jsValue() orelse brk: {
+            bun.debugAssert(false);
+            break :brk .undefined;
         },
         JSC.JSValue.fromPtr(dev),
         &entry_point_string,
@@ -117,13 +115,28 @@ fn addRoutes(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) bun.JSOOM!
     if (!routes.isObject()) {
         return global.throwInvalidArguments("Routes must be an object of functions", .{});
     }
-    switch (dev.server.?) {
-        inline else => |server| {
+    const any_server = dev.server.?;
+    const Ptr = JSC.API.AnyServer.Ptr;
+    switch (any_server.ptr.tag()) {
+        else => @panic("unexpected tag"),
+        inline Ptr.case(JSC.API.HTTPServer),
+        Ptr.case(JSC.API.HTTPSServer),
+        Ptr.case(JSC.API.DebugHTTPServer),
+        Ptr.case(JSC.API.DebugHTTPSServer),
+        => |tag| {
             var iter = try JSC.JSPropertyIterator(.{
                 .skip_empty_name = true,
                 .include_value = true,
             }).init(global, routes);
             defer iter.deinit();
+
+            const server = switch (tag) {
+                Ptr.case(JSC.API.HTTPServer) => any_server.ptr.as(JSC.API.HTTPServer),
+                Ptr.case(JSC.API.HTTPSServer) => any_server.ptr.as(JSC.API.HTTPSServer),
+                Ptr.case(JSC.API.DebugHTTPServer) => any_server.ptr.as(JSC.API.DebugHTTPServer),
+                Ptr.case(JSC.API.DebugHTTPSServer) => any_server.ptr.as(JSC.API.DebugHTTPSServer),
+                else => @compileError(unreachable),
+            };
 
             const start_len = server.plugin_routes.items.len;
             errdefer {

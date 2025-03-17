@@ -595,12 +595,11 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * @returns {Step}
  */
 function getZigTestBunStep(platform, options, testOptions = {}) {
-  const { os } = platform;
-  const { buildId, unifiedTests } = testOptions;
+  const { buildId } = testOptions;
 
   const depends = [];
   if (!buildId) {
-    depends.push(`${getTargetKey(platform)}-build-bun`);
+    depends.push(`${getTargetKey(platform)}-build-bun-zig-tests`);
   }
   const profile = platform.profile?.toLowerCase() ?? "release";
   return {
@@ -1130,6 +1129,13 @@ async function getPipeline(options = {}) {
     }
   }
 
+  /**
+   * @param {Platform} target
+   * @returns {boolean}
+   */
+  const targetWantsZigTest = target =>
+    Boolean(target.zigTests && (!(isMain || options.skipTests) || options.forceTests));
+
   if (!buildId) {
     steps.push(
       ...buildPlatforms
@@ -1148,7 +1154,7 @@ async function getPipeline(options = {}) {
                     getBuildCppStep(target, options),
                     getBuildZigStep(target, options),
                     getLinkBunStep(target, options),
-                    ...(target.zigTests && (!(isMain || options.skipTests) || options.forceTests)
+                    ...(targetWantsZigTest(target)
                       ? [getBuildZigTestsStep(target, options), getLinkBunStep(target, options, true)]
                       : []),
                   ],
@@ -1170,7 +1176,9 @@ async function getPipeline(options = {}) {
             group: getTargetLabel(target),
             steps: [
               getTestBunStep(target, options, { unifiedTests, testFiles, buildId }),
-              ...(target.zigTests ? [getZigTestBunStep(target, options, { unifiedTests, testFiles, buildId })] : []),
+              ...(targetWantsZigTest(target)
+                ? [getZigTestBunStep(target, options, { unifiedTests, testFiles, buildId })]
+                : []),
             ],
           })),
       );

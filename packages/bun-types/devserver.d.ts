@@ -1,13 +1,13 @@
 declare module "bun" {
   type HMREventNames =
-    | "bun:beforeUpdate"
-    | "bun:afterUpdate"
-    | "bun:beforeFullReload"
-    | "bun:beforePrune"
-    | "bun:invalidate"
-    | "bun:error"
-    | "bun:ws:disconnect"
-    | "bun:ws:connect";
+    | "beforeUpdate"
+    | "afterUpdate"
+    | "beforeFullReload"
+    | "beforePrune"
+    | "invalidate"
+    | "error"
+    | "ws:disconnect"
+    | "ws:connect";
 
   /**
    * The event names for the dev server

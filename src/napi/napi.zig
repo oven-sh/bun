@@ -383,7 +383,7 @@ pub export fn napi_create_string_latin1(env_: napi_env, str: ?[*]const u8, lengt
         if (str) |ptr| {
             if (NAPI_AUTO_LENGTH == length) {
                 break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(ptr)), 0);
-            } else if (length > std.math.maxInt(u32)) {
+            } else if (length > std.math.maxInt(i32)) {
                 return env.invalidArg();
             } else {
                 break :brk ptr[0..length];
@@ -424,7 +424,7 @@ pub export fn napi_create_string_utf8(env_: napi_env, str: ?[*]const u8, length:
         if (str) |ptr| {
             if (NAPI_AUTO_LENGTH == length) {
                 break :brk bun.sliceTo(@as([*:0]const u8, @ptrCast(str)), 0);
-            } else if (length > std.math.maxInt(u32)) {
+            } else if (length > std.math.maxInt(i32)) {
                 return env.invalidArg();
             } else {
                 break :brk ptr[0..length];
@@ -460,7 +460,7 @@ pub export fn napi_create_string_utf16(env_: napi_env, str: ?[*]const char16_t, 
         if (str) |ptr| {
             if (NAPI_AUTO_LENGTH == length) {
                 break :brk bun.sliceTo(@as([*:0]const u16, @ptrCast(str)), 0);
-            } else if (length > std.math.maxInt(u32)) {
+            } else if (length > std.math.maxInt(i32)) {
                 return env.invalidArg();
             } else {
                 break :brk ptr[0..length];

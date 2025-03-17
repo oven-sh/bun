@@ -14,8 +14,9 @@ const Test = @import("./test/jest.zig");
 const Router = @import("./api/filesystem_router.zig");
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 const uws = bun.uws;
-const TaggedPointerTypes = @import("../tagged_pointer.zig");
+const TaggedPointerTypes = @import("../ptr.zig");
 const TaggedPointerUnion = TaggedPointerTypes.TaggedPointerUnion;
+const JSError = bun.JSError;
 
 pub const ExceptionValueRef = [*c]js.JSValueRef;
 pub const JSValueRef = js.JSValueRef;
@@ -261,10 +262,25 @@ pub const ArrayBuffer = extern struct {
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
 
+    // require('buffer').kMaxLength.
+    // keep in sync with Bun::Buffer::kMaxLength
+    pub const max_size = std.math.maxInt(c_uint);
+
     extern fn JSBuffer__fromMmap(*JSC.JSGlobalObject, addr: *anyopaque, len: usize) JSC.JSValue;
 
     // 4 MB or so is pretty good for mmap()
     const mmap_threshold = 1024 * 1024 * 4;
+
+    pub fn bytesPerElement(this: *const ArrayBuffer) ?u8 {
+        return switch (this.typed_array_type) {
+            .ArrayBuffer, .DataView => null,
+            .Uint8Array, .Uint8ClampedArray, .Int8Array => 1,
+            .Uint16Array, .Int16Array, .Float16Array => 2,
+            .Uint32Array, .Int32Array, .Float32Array => 4,
+            .BigUint64Array, .BigInt64Array, .Float64Array => 8,
+            else => null,
+        };
+    }
 
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
@@ -410,13 +426,19 @@ pub const ArrayBuffer = extern struct {
     }
 
     extern "c" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSC.JSValue;
-    pub fn allocBuffer(globalThis: *JSC.JSGlobalObject, len: usize) struct { JSC.JSValue, []u8 } {
+    extern "c" fn Bun__allocArrayBufferForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSC.JSValue;
+
+    pub fn alloc(global: *JSC.JSGlobalObject, comptime kind: JSC.JSValue.JSType, len: u32) JSError!struct { JSC.JSValue, []u8 } {
         var ptr: [*]u8 = undefined;
-        const buffer = Bun__allocUint8ArrayForCopy(globalThis, len, @ptrCast(&ptr));
-        if (buffer.isEmpty()) {
-            return .{ buffer, &.{} };
+        const buf = switch (comptime kind) {
+            .Uint8Array => Bun__allocUint8ArrayForCopy(global, len, @ptrCast(&ptr)),
+            .ArrayBuffer => Bun__allocArrayBufferForCopy(global, len, @ptrCast(&ptr)),
+            else => @compileError("Not implemented yet"),
+        };
+        if (buf == .zero) {
+            return error.JSError;
         }
-        return .{ buffer, ptr[0..len] };
+        return .{ buf, ptr[0..len] };
     }
 
     extern "c" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSC.JSValue;
@@ -1458,8 +1480,9 @@ pub const MemoryReportingAllocator = struct {
     memory_cost: std.atomic.Value(usize) = std.atomic.Value(usize).init(0),
     const log = Output.scoped(.MEM, false);
 
-    fn alloc(this: *MemoryReportingAllocator, n: usize, log2_ptr_align: u8, return_address: usize) ?[*]u8 {
-        const result = this.child_allocator.rawAlloc(n, log2_ptr_align, return_address) orelse return null;
+    fn alloc(context: *anyopaque, n: usize, alignment: std.mem.Alignment, return_address: usize) ?[*]u8 {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        const result = this.child_allocator.rawAlloc(n, alignment, return_address) orelse return null;
         _ = this.memory_cost.fetchAdd(n, .monotonic);
         if (comptime Environment.allow_assert)
             log("malloc({d}) = {d}", .{ n, this.memory_cost.raw });
@@ -1472,8 +1495,9 @@ pub const MemoryReportingAllocator = struct {
             log("discard({d}) = {d}", .{ buf.len, this.memory_cost.raw });
     }
 
-    fn resize(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
-        if (this.child_allocator.rawResize(buf, buf_align, new_len, ret_addr)) {
+    fn resize(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        if (this.child_allocator.rawResize(buf, alignment, new_len, ret_addr)) {
             _ = this.memory_cost.fetchAdd(new_len -| buf.len, .monotonic);
             if (comptime Environment.allow_assert)
                 log("resize() = {d}", .{this.memory_cost.raw});
@@ -1483,8 +1507,9 @@ pub const MemoryReportingAllocator = struct {
         }
     }
 
-    fn free(this: *MemoryReportingAllocator, buf: []u8, buf_align: u8, ret_addr: usize) void {
-        this.child_allocator.rawFree(buf, buf_align, ret_addr);
+    fn free(context: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const this: *MemoryReportingAllocator = @alignCast(@ptrCast(context));
+        this.child_allocator.rawFree(buf, alignment, ret_addr);
 
         if (comptime Environment.allow_assert) {
             // check for overflow, racily
@@ -1532,9 +1557,10 @@ pub const MemoryReportingAllocator = struct {
     }
 
     pub const VTable = std.mem.Allocator.VTable{
-        .alloc = @ptrCast(&MemoryReportingAllocator.alloc),
-        .resize = @ptrCast(&MemoryReportingAllocator.resize),
-        .free = @ptrCast(&MemoryReportingAllocator.free),
+        .alloc = &MemoryReportingAllocator.alloc,
+        .resize = &MemoryReportingAllocator.resize,
+        .remap = &std.mem.Allocator.noRemap,
+        .free = &MemoryReportingAllocator.free,
     };
 };
 

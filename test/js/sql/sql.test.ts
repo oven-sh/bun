@@ -11120,4 +11120,19 @@ CREATE TABLE ${table_name} (
       expect(() => sql`DELETE FROM ${sql(random_name)} ${sql(users, "id")}`.execute()).toThrow(SyntaxError);
     });
   });
+
+  describe("connection options", () => {
+    test("connection", async () => {
+      await using sql = postgres({ ...options, max: 1, connection: { search_path: "information_schema" } });
+      const [item] = await sql`SELECT COUNT(*)::INT FROM columns LIMIT 1`.values();
+      expect(item[0]).toBeGreaterThan(0);
+    });
+    test("query string", async () => {
+      await using sql = postgres(process.env.DATABASE_URL + "?search_path=information_schema", {
+        max: 1,
+      });
+      const [item] = await sql`SELECT COUNT(*)::INT FROM columns LIMIT 1`.values();
+      expect(item[0]).toBeGreaterThan(0);
+    });
+  });
 }

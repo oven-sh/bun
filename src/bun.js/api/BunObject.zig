@@ -44,6 +44,7 @@ pub const BunObject = struct {
 
     // --- Getters ---
     pub const CryptoHasher = toJSGetter(Crypto.CryptoHasher.getter);
+    pub const CSRF = toJSGetter(Bun.getCSRFObject);
     pub const FFI = toJSGetter(Bun.FFIObject.getter);
     pub const FileSystemRouter = toJSGetter(Bun.getFileSystemRouter);
     pub const Glob = toJSGetter(Bun.getGlobConstructor);
@@ -101,6 +102,7 @@ pub const BunObject = struct {
 
         // --- Getters ---
         @export(&BunObject.CryptoHasher, .{ .name = getterName("CryptoHasher") });
+        @export(&BunObject.CSRF, .{ .name = getterName("CSRF") });
         @export(&BunObject.FFI, .{ .name = getterName("FFI") });
         @export(&BunObject.FileSystemRouter, .{ .name = getterName("FileSystemRouter") });
         @export(&BunObject.MD4, .{ .name = getterName("MD4") });
@@ -1802,7 +1804,10 @@ pub const Crypto = struct {
                     }
 
                     const hash_options = pwhash.bcrypt.HashOptions{
-                        .params = pwhash.bcrypt.Params{ .rounds_log = cost },
+                        .params = pwhash.bcrypt.Params{
+                            .rounds_log = cost,
+                            .silently_truncate_password = true,
+                        },
                         .allocator = allocator,
                         .encoding = .crypt,
                     };
@@ -1860,7 +1865,10 @@ pub const Crypto = struct {
                         sha_512.final(&outbuf);
                         password_to_use = &outbuf;
                     }
-                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{ .allocator = allocator }) catch |err| {
+                    pwhash.bcrypt.strVerify(previous_hash, password_to_use, .{
+                        .allocator = allocator,
+                        .silently_truncate_password = true,
+                    }) catch |err| {
                         if (err == error.PasswordVerificationFailed) {
                             return false;
                         }
@@ -3432,7 +3440,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
         if (try opts.get(globalThis, "offset")) |value| {
             offset = @as(usize, @intCast(value.toInt64()));
-            offset = std.mem.alignBackwardAnyAlign(usize, offset, std.mem.page_size);
+            offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
         }
     }
 
@@ -3446,7 +3454,7 @@ pub fn mmapFile(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.
 
     return JSC.C.JSObjectMakeTypedArrayWithBytesNoCopy(globalThis, JSC.C.JSTypedArrayType.kJSTypedArrayTypeUint8Array, @as(?*anyopaque, @ptrCast(map.ptr)), map.len, struct {
         pub fn x(ptr: ?*anyopaque, size: ?*anyopaque) callconv(.C) void {
-            _ = bun.sys.munmap(@as([*]align(std.mem.page_size) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
+            _ = bun.sys.munmap(@as([*]align(std.heap.page_size_min) u8, @ptrCast(@alignCast(ptr)))[0..@intFromPtr(size)]);
         }
     }.x, @as(?*anyopaque, @ptrFromInt(map.len)), null).?.value();
 }
@@ -4422,6 +4430,30 @@ pub fn stringWidth(str: bun.String, opts: gen.StringWidthOptions) usize {
 
 /// EnvironmentVariables is runtime defined.
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
+pub fn getCSRFObject(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) JSC.JSValue {
+    return CSRFObject.create(globalObject);
+}
+
+const CSRFObject = struct {
+    pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const object = JSValue.createEmptyObject(globalThis, 2);
+
+        object.put(
+            globalThis,
+            ZigString.static("generate"),
+            JSC.createCallback(globalThis, ZigString.static("generate"), 1, @import("../../csrf.zig").csrf__generate),
+        );
+
+        object.put(
+            globalThis,
+            ZigString.static("verify"),
+            JSC.createCallback(globalThis, ZigString.static("verify"), 1, @import("../../csrf.zig").csrf__verify),
+        );
+
+        return object;
+    }
+};
+
 // This is aliased to Bun.env
 pub const EnvironmentVariables = struct {
     pub export fn Bun__getEnvCount(globalObject: *JSC.JSGlobalObject, ptr: *[*][]const u8) usize {
@@ -4504,10 +4536,10 @@ pub const JSZlib = struct {
         const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
-            arguments[1]
-        else if (arguments.len > 1 and !arguments[1].isUndefined()) {
-            return globalThis.throwInvalidArguments("Expected options to be an object", .{});
-        } else null;
+                arguments[1]
+            else if (arguments.len > 1 and !arguments[1].isUndefined()) {
+                return globalThis.throwInvalidArguments("Expected options to be an object", .{});
+            } else null;
 
         if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
             return .{ buffer, options_val };
@@ -4797,6 +4829,7 @@ const InternalTestingAPIs = struct {
 
 comptime {
     _ = Crypto.JSPasswordObject.JSPasswordObject__create;
+    _ = @import("../../btjs.zig").dumpBtjsTrace;
     BunObject.exportAll();
 }
 

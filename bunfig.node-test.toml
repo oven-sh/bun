@@ -2,3 +2,7 @@
 # https://github.com/oven-sh/bun/issues/16289
 [test]
 preload = ["./test/js/node/harness.ts", "./test/preload.ts"]
+
+[install]
+# Node.js never auto-installs modules.
+auto = "disable"

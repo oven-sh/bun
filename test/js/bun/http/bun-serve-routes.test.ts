@@ -193,7 +193,7 @@ describe("route precedence", () => {
     expect(await res.text()).toBe("api catchall");
   });
 
-  it.todo("matches root wildcard as last resort", async () => {
+  it("matches root wildcard as last resort", async () => {
     const res = await fetch(`${server.url}unknown`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("root catchall");

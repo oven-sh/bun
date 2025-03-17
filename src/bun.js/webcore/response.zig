@@ -111,6 +111,58 @@ pub const Response = struct {
         return &this.body.value;
     }
 
+    pub export fn jsFunctionRequestOrResponseHasBodyValue(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        _ = globalObject; // autofix
+        const arguments = callframe.arguments_old(1);
+        const this_value = arguments.ptr[0];
+        if (this_value.isEmptyOrUndefinedOrNull()) {
+            return .false;
+        }
+
+        if (this_value.as(Response)) |response| {
+            return JSC.JSValue.jsBoolean(!response.body.value.isDefinitelyEmpty());
+        } else if (this_value.as(Request)) |request| {
+            return JSC.JSValue.jsBoolean(!request.body.value.isDefinitelyEmpty());
+        }
+
+        return .false;
+    }
+
+    pub export fn jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.arguments_old(1);
+        const this_value = arguments.ptr[0];
+        if (this_value.isEmptyOrUndefinedOrNull()) {
+            return .undefined;
+        }
+
+        const body: *Body.Value = brk: {
+            if (this_value.as(Response)) |response| {
+                break :brk &response.body.value;
+            } else if (this_value.as(Request)) |request| {
+                break :brk &request.body.value;
+            }
+
+            return .undefined;
+        };
+
+        // Get the body if it's available synchronously.
+        switch (body.*) {
+            .Used, .Empty, .Null => return .undefined,
+            .Blob => |*blob| {
+                if (blob.isBunFile()) {
+                    return .undefined;
+                }
+                defer body.* = .{ .Used = {} };
+                return blob.toArrayBuffer(globalObject, .transfer) catch return .zero;
+            },
+            .WTFStringImpl, .InternalBlob => {
+                var any_blob = body.useAsAnyBlob();
+                return any_blob.toArrayBufferTransfer(globalObject) catch return .zero;
+            },
+            .Error, .Locked => return .undefined,
+        }
+    }
+
     pub fn getFetchHeaders(
         this: *Response,
     ) ?*FetchHeaders {

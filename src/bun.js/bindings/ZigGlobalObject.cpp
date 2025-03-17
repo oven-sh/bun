@@ -33,7 +33,6 @@
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMicrotask.h"
-
 #include "JavaScriptCore/JSModuleLoader.h"
 #include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
@@ -164,6 +163,9 @@
 #include "JSVerify.h"
 #include "JSHmac.h"
 #include "JSHash.h"
+#include "JSDiffieHellman.h"
+#include "JSDiffieHellmanGroup.h"
+#include "JSECDH.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -1149,7 +1151,10 @@ using namespace WebCore;
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm));
+    Zig::GlobalObject* shadow = Zig::GlobalObject::create(
+        vm,
+        Zig::GlobalObject::createStructure(vm),
+        ScriptExecutionContext::generateIdentifier());
     shadow->setConsole(shadow);
 
     return shadow;
@@ -1890,6 +1895,24 @@ extern "C" JSC__JSValue Bun__allocUint8ArrayForCopy(JSC::JSGlobalObject* globalO
     *ptr = array->vector();
 
     return JSValue::encode(array);
+}
+
+extern "C" JSC__JSValue Bun__allocArrayBufferForCopy(JSC::JSGlobalObject* lexicalGlobalObject, size_t len, void** ptr)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    auto* subclassStructure = globalObject->JSBufferSubclassStructure();
+    auto buf = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, subclassStructure, len);
+
+    if (UNLIKELY(!buf)) {
+        return {};
+    }
+
+    *ptr = buf->vector();
+
+    return JSValue::encode(buf);
 }
 
 extern "C" JSC__JSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, bool isBuffer)
@@ -2833,6 +2856,10 @@ void GlobalObject::finishCreation(VM& vm)
     m_http2_commongStrings.initialize();
 
     Bun::addNodeModuleConstructorProperties(vm, this);
+    m_JSNodeHTTPServerSocketStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::createNodeHTTPServerSocketStructure(init.vm, init.owner));
+        });
 
     m_JSDirentClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
@@ -2851,6 +2878,21 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSVerifyClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupJSVerifyClassStructure(init);
+        });
+
+    m_JSDiffieHellmanClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupDiffieHellmanClassStructure(init);
+        });
+
+    m_JSDiffieHellmanGroupClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupDiffieHellmanGroupClassStructure(init);
+        });
+
+    m_JSECDHClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            Bun::setupECDHClassStructure(init);
         });
 
     m_JSHmacClassStructure.initLater(
@@ -3985,6 +4027,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSBufferClassStructure.visit(visitor);
     thisObject->m_JSBufferListClassStructure.visit(visitor);
     thisObject->m_JSBufferSubclassStructure.visit(visitor);
+    thisObject->m_JSNodeHTTPServerSocketStructure.visit(visitor);
     thisObject->m_JSResizableOrGrowableSharedBufferSubclassStructure.visit(visitor);
     thisObject->m_JSCryptoKey.visit(visitor);
     thisObject->m_lazyStackCustomGetterSetter.visit(visitor);
@@ -4051,6 +4094,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSX509CertificateClassStructure.visit(visitor);
     thisObject->m_JSSignClassStructure.visit(visitor);
     thisObject->m_JSVerifyClassStructure.visit(visitor);
+    thisObject->m_JSDiffieHellmanClassStructure.visit(visitor);
+    thisObject->m_JSDiffieHellmanGroupClassStructure.visit(visitor);
+    thisObject->m_JSECDHClassStructure.visit(visitor);
     thisObject->m_JSHmacClassStructure.visit(visitor);
     thisObject->m_JSHashClassStructure.visit(visitor);
     thisObject->m_statValues.visit(visitor);
@@ -4561,6 +4607,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onRejectEntryPointResult;
+    } else if (handler == Bun__NodeHTTPRequest__onResolve) {
+        return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onResolve;
+    } else if (handler == Bun__NodeHTTPRequest__onReject) {
+        return GlobalObject::PromiseFunctions::Bun__NodeHTTPRequest__onReject;
     } else if (handler == Bun__FetchTasklet__onResolveRequestStream) {
         return GlobalObject::PromiseFunctions::Bun__FetchTasklet__onResolveRequestStream;
     } else if (handler == Bun__FetchTasklet__onRejectRequestStream) {

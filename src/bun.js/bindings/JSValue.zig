@@ -491,6 +491,18 @@ pub const JSValue = enum(i64) {
         return result;
     }
 
+    // https://tc39.es/ecma262/#sec-number.issafeinteger
+    pub fn isSafeInteger(this: JSValue) bool {
+        if (this.isInt32()) {
+            return true;
+        }
+        if (!this.isDouble()) {
+            return false;
+        }
+        const d = this.asDouble();
+        return @trunc(d) == d and @abs(d) <= JSC.MAX_SAFE_INTEGER;
+    }
+
     pub fn coerce(this: JSValue, comptime T: type, globalThis: *JSC.JSGlobalObject) T {
         return switch (T) {
             bool => this.toBoolean(),
@@ -611,6 +623,18 @@ pub const JSValue = enum(i64) {
             args.len,
             args.ptr,
         ).unwrap();
+    }
+
+    pub fn callNextTick(function: JSValue, global: *JSGlobalObject, args: anytype) void {
+        if (Environment.isDebug) {
+            bun.assert(function.isCallable(global.vm()));
+        }
+        const num_args = @typeInfo(@TypeOf(args)).array.len;
+        switch (num_args) {
+            1 => JSC.Bun__Process__queueNextTick1(@ptrCast(global), function, args[0]),
+            2 => JSC.Bun__Process__queueNextTick2(@ptrCast(global), function, args[0], args[1]),
+            else => @compileError("needs more copy paste"),
+        }
     }
 
     /// The value cannot be empty. Check `!this.isEmpty()` before calling this function
@@ -2685,3 +2709,4 @@ const JSHostFunctionType = JSC.JSHostFunctionType;
 extern "c" fn AsyncContextFrame__withAsyncContextIfNeeded(global: *JSGlobalObject, callback: JSValue) JSValue;
 extern "c" fn Bun__JSValue__isAsyncContextFrame(value: JSValue) bool;
 const FetchHeaders = JSC.FetchHeaders;
+const Environment = bun.Environment;

@@ -51,12 +51,23 @@ const Stats = struct {
     fail: u32 = 0,
     leak: u32 = 0,
     panic: u32 = 0,
+    start: i64,
 
-    pub fn total(this: *const Stats) u32 {
+    fn init() Stats {
+        return Stats{ .start = std.time.milliTimestamp() };
+    }
+
+    /// Time elapsed since start in milliseconds
+    fn elapsed(this: *const Stats) i64 {
+        return std.time.milliTimestamp() - this.start;
+    }
+
+    /// Total number of tests run
+    fn total(this: *const Stats) u32 {
         return this.pass + this.fail + this.leak + this.panic;
     }
 
-    pub fn exitCode(this: *const Stats) u8 {
+    fn exitCode(this: *const Stats) u8 {
         var result: u8 = 0;
         if (this.fail > 0) result |= 1;
         if (this.leak > 0) result |= 2;
@@ -66,8 +77,7 @@ const Stats = struct {
 };
 
 fn runTests() u8 {
-    var stats = Stats{};
-    const all_start = std.time.milliTimestamp();
+    var stats = Stats.init();
     var stderr = std.io.getStdErr();
 
     for (builtin.test_functions) |t| {
@@ -109,7 +119,7 @@ fn runTests() u8 {
     }
 
     const total = stats.total();
-    const total_time = std.time.milliTimestamp() - all_start;
+    const total_time = stats.elapsed();
 
     if (total == stats.pass) {
         Output.pretty("<green>All tests passed</r>\n", .{});
@@ -123,7 +133,7 @@ fn runTests() u8 {
         if (stats.panic > 0) Output.pretty(", <magenta>{d}</r> panicked", .{stats.panic});
     }
 
-    Output.pretty("\n\n\tRan {d} tests in {d}ms\n", .{ total, total_time });
+    Output.pretty("\n\n\tRan {d} tests in {d}ms\n\n", .{ total, total_time });
     return stats.exitCode();
 }
 

@@ -1,7 +1,7 @@
 //! Originally, we tried using LIEF to inject the module graph into a MachO segment
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const Schema = bun.Schema.Api;
 const strings = bun.strings;

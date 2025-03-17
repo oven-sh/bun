@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
 const headers = @import("./headers.zig");

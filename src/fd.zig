@@ -1,7 +1,7 @@
 const std = @import("std");
 const posix = std.posix;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const environment = bun.Environment;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

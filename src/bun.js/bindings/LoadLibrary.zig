@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 /// Returns null on error. Use windows API to lookup the actual error.

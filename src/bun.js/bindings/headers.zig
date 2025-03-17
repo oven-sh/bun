@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const bindings = bun.JSC;
 pub const struct_JSC__CallFrame = bindings.CallFrame;
 pub const struct_JSC__StringPrototype = bindings.StringPrototype;

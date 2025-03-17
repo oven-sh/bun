@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const NodePath = JSC.Node.Path;
 const WebSocketHTTPClient = JSC.WebSocketHTTPClient;

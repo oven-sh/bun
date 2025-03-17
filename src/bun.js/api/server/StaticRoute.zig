@@ -338,7 +338,7 @@ pub fn onWithMethod(this: *StaticRoute, method: bun.http.Method, resp: AnyRespon
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const Api = @import("../../../api/schema.zig").Api;
 const JSC = bun.JSC;

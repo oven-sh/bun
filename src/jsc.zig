@@ -113,7 +113,7 @@ pub const GeneratedClassesList = @import("./bun.js/bindings/generated_classes_li
 pub const RuntimeTranspilerCache = @import("./bun.js/RuntimeTranspilerCache.zig").RuntimeTranspilerCache;
 
 /// The calling convention used for JavaScript functions <> Native
-const bun = @import("root").bun;
+const bun = @import("bun");
 pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
     std.builtin.CallingConvention.SysV
 else

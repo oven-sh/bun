@@ -1,7 +1,7 @@
 // @link "../deps/libarchive.a"
 
 pub const lib = @import("./libarchive-bindings.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

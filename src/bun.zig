@@ -2,7 +2,7 @@
 //
 // Do not import this file directly!
 //   To import it:
-//      @import("root").bun
+//      @import("bun")
 //
 // Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
 const builtin = @import("builtin");
@@ -1628,7 +1628,7 @@ pub fn asByteSlice(buffer: anytype) []const u8 {
 comptime {
     if (fast_debug_build_cmd != .RunCommand and fast_debug_build_mode) {
         _ = @import("./bun.js/node/buffer.zig").BufferVectorized.fill;
-        _ = @import("./cli/upgrade_command.zig").Version;
+        _ = CLI.UpgradeCommand.Version;
     }
 }
 

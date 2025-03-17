@@ -12,7 +12,7 @@ const posix = std.posix;
 const Dir = std.fs.Dir;
 const JSC = bun.JSC;
 const PathString = JSC.PathString;
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const IteratorError = error{ AccessDenied, SystemResources } || posix.UnexpectedError;
 const mem = std.mem;

@@ -277,10 +277,23 @@ pub fn build(b: *Build) !void {
         .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
     };
 
+    const bun_module = b.addModule("bun", Module.CreateOptions{
+        .root_source_file = b.path("src/bun.zig"),
+        .target = build_options.target,
+        .optimize = build_options.optimize,
+
+        // https://github.com/ziglang/zig/issues/17430
+        .pic = true,
+
+        .omit_frame_pointer = false,
+        .strip = false, // stripped at the end
+    });
+    bun_module.addImport("bun", bun_module);
+
     // zig build obj
     {
         var step = b.step("obj", "Build Bun's Zig code as a .o file");
-        var bun_obj = addBunObject(b, &build_options);
+        var bun_obj = addBunObject(b, bun_module, &build_options);
         step.dependOn(&bun_obj.step);
         step.dependOn(addInstallObjectFile(b, bun_obj, "bun-zig", obj_format));
     }
@@ -296,7 +309,7 @@ pub fn build(b: *Build) !void {
     // zig build check
     {
         var step = b.step("check", "Check for semantic analysis errors");
-        var bun_check_obj = addBunObject(b, &build_options);
+        var bun_check_obj = addBunObject(b, bun_module, &build_options);
         bun_check_obj.generated_bin = null;
         step.dependOn(&bun_check_obj.step);
 
@@ -410,8 +423,20 @@ pub fn addMultiCheck(
                 .no_llvm = root_build_options.no_llvm,
                 .enable_asan = root_build_options.enable_asan,
             };
+            const bun_module = b.createModule(Module.CreateOptions{
+                .root_source_file = b.path("src/bun.zig"),
+                .target = check_target,
+                .optimize = mode,
 
-            var obj = addBunObject(b, &options);
+                // https://github.com/ziglang/zig/issues/17430
+                .pic = true,
+
+                .omit_frame_pointer = false,
+                .strip = false, // stripped at the end
+            });
+            bun_module.addImport("bun", bun_module);
+
+            var obj = addBunObject(b, bun_module, &options);
             obj.generated_bin = null;
             parent_step.dependOn(&obj.step);
         }
@@ -437,24 +462,27 @@ fn getTranslateC(b: *Build, target: std.Build.ResolvedTarget, optimize: std.buil
     return translate_c;
 }
 
-pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
-    const obj = b.addObject(.{
-        .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
+pub fn addBunObject(b: *Build, bun_module: *Module, opts: *BunBuildOptions) *Compile {
+    const root_module = b.createModule(Module.CreateOptions{
         .root_source_file = switch (opts.os) {
             .wasm => b.path("root_wasm.zig"),
             else => b.path("src/main.zig"),
-            // else => b.path("root_css.zig"),
         },
         .target = opts.target,
         .optimize = opts.optimize,
-        .use_llvm = !opts.no_llvm,
-        .use_lld = if (opts.os == .mac) false else !opts.no_llvm,
 
         // https://github.com/ziglang/zig/issues/17430
         .pic = true,
 
         .omit_frame_pointer = false,
         .strip = false, // stripped at the end
+    });
+    root_module.addImport("bun", bun_module);
+    const obj = b.addObject(.{
+        .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
+        .root_module = root_module,
+        .use_llvm = !opts.no_llvm,
+        .use_lld = if (opts.os == .mac) false else !opts.no_llvm,
     });
     if (opts.enable_asan) {
         if (@hasField(Build.Module, "sanitize_address")) {
@@ -489,11 +517,13 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
             obj.root_module.valgrind = true;
         }
     }
-    addInternalPackages(b, obj, opts);
-    obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
+    addInternalPackages(b, bun_module, opts);
+    const build_options_module = opts.buildOptionsModule(b);
+    bun_module.addImport("build_options", build_options_module);
 
     const translate_c = getTranslateC(b, opts.target, opts.optimize);
-    obj.root_module.addImport("translated-c-headers", translate_c.createModule());
+    const translate_c_module = translate_c.createModule();
+    bun_module.addImport("translated-c-headers", translate_c_module);
 
     return obj;
 }
@@ -529,7 +559,7 @@ fn exists(path: []const u8) bool {
     return true;
 }
 
-fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
+fn addInternalPackages(b: *Build, bun_module: *Module, opts: *BunBuildOptions) void {
     const os = opts.os;
 
     const zlib_internal_path = switch (os) {
@@ -538,7 +568,7 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         else => null,
     };
     if (zlib_internal_path) |path| {
-        obj.root_module.addAnonymousImport("zlib-internal", .{
+        bun_module.addAnonymousImport("zlib-internal", .{
             .root_source_file = b.path(path),
         });
     }
@@ -548,9 +578,11 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .windows => "src/async/windows_event_loop.zig",
         else => "src/async/stub_event_loop.zig",
     };
-    obj.root_module.addAnonymousImport("async", .{
+    const async_module = b.createModule(.{
         .root_source_file = b.path(async_path),
     });
+    bun_module.addImport("async", async_module);
+    async_module.addImport("bun", bun_module);
 
     // Generated code exposed as individual modules.
     inline for (.{
@@ -596,9 +628,12 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
                 entry.import
             else
                 entry.file;
-            obj.root_module.addAnonymousImport(import_path, .{
+
+            const mod = b.createModule(.{
                 .root_source_file = .{ .cwd_relative = path },
             });
+            bun_module.addImport(import_path, mod);
+            mod.addImport("bun", bun_module);
         }
     }
     inline for (.{
@@ -606,13 +641,13 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .{ .import = "completions-zsh", .file = b.path("completions/bun.zsh") },
         .{ .import = "completions-fish", .file = b.path("completions/bun.fish") },
     }) |entry| {
-        obj.root_module.addAnonymousImport(entry.import, .{
+        bun_module.addAnonymousImport(entry.import, .{
             .root_source_file = entry.file,
         });
     }
 
     if (os == .windows) {
-        obj.root_module.addAnonymousImport("bun_shim_impl.exe", .{
+        bun_module.addAnonymousImport("bun_shim_impl.exe", .{
             .root_source_file = opts.windowsShim(b).exe.getEmittedBin(),
         });
     }

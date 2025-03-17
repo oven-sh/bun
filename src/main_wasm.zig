@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const JSAst = bun.JSAst;

@@ -19,7 +19,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const string = []const u8;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const posix = std.posix;
 const Arena = std.heap.ArenaAllocator;
 const Allocator = std.mem.Allocator;

@@ -1,6 +1,6 @@
 const ThreadPool = bun.ThreadPool;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;

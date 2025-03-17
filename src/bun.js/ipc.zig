@@ -1,5 +1,5 @@
 const uws = @import("../deps/uws.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;

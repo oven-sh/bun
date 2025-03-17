@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 
 const eqlComptime = @import("../string_immutable.zig").eqlComptime;
 const expect = std.testing.expect;

@@ -487,7 +487,7 @@ const string = []const u8;
 const FileDescriptorType = bun.FileDescriptor;
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const Fs = bun.fs;
 const Loader = @import("./options.zig").Loader;

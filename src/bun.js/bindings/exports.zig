@@ -1,6 +1,6 @@
 const JSC = bun.JSC;
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const strings = bun.strings;
 const default_allocator = bun.default_allocator;

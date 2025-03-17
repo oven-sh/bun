@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -47,76 +47,6 @@ pub fn initializeStore() void {
     js_ast.Expr.Data.Store.create();
     js_ast.Stmt.Data.Store.create();
 }
-
-pub const Version = struct {
-    zip_url: string,
-    tag: string,
-    buf: MutableString,
-    size: u32 = 0,
-
-    pub fn name(this: Version) ?string {
-        if (this.tag.len <= "bun-v".len or !strings.hasPrefixComptime(this.tag, "bun-v")) {
-            if (strings.eqlComptime(this.tag, "canary")) {
-                const Cli = @import("../cli.zig");
-
-                return std.fmt.allocPrint(
-                    bun.default_allocator,
-                    "bun-canary-timestamp-{any}",
-                    .{
-                        bun.fmt.hexIntLower(
-                            bun.hash(
-                                std.mem.asBytes(&Cli.start_time),
-                            ),
-                        ),
-                    },
-                ) catch bun.outOfMemory();
-            }
-            return this.tag;
-        }
-
-        return this.tag["bun-v".len..];
-    }
-
-    pub const platform_label = switch (Environment.os) {
-        .mac => "darwin",
-        .linux => "linux",
-        .windows => "windows",
-        else => @compileError("Unsupported OS for Bun Upgrade"),
-    };
-
-    pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
-    pub const triplet = platform_label ++ "-" ++ arch_label;
-    const suffix_abi = if (Environment.isMusl) "-musl" else "";
-    const suffix_cpu = if (Environment.baseline) "-baseline" else "";
-    const suffix = suffix_abi ++ suffix_cpu;
-    pub const folder_name = "bun-" ++ triplet ++ suffix;
-    pub const baseline_folder_name = "bun-" ++ triplet ++ "-baseline";
-    pub const zip_filename = folder_name ++ ".zip";
-    pub const baseline_zip_filename = baseline_folder_name ++ ".zip";
-
-    pub const profile_folder_name = "bun-" ++ triplet ++ suffix ++ "-profile";
-    pub const profile_zip_filename = profile_folder_name ++ ".zip";
-
-    const current_version: string = "bun-v" ++ Global.package_json_version;
-
-    pub export const Bun__githubURL: [*:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/releases/download/bun-v{s}/{s}", .{
-        Global.package_json_version,
-        zip_filename,
-    });
-
-    pub const Bun__githubBaselineURL: [:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/releases/download/bun-v{s}/{s}", .{
-        Global.package_json_version,
-        baseline_zip_filename,
-    });
-
-    pub fn isCurrent(this: Version) bool {
-        return strings.eqlComptime(this.tag, current_version);
-    }
-
-    comptime {
-        _ = Bun__githubURL;
-    }
-};
 
 pub const UpgradeCheckerThread = struct {
     pub fn spawn(env_loader: *DotEnv.Loader) void {
@@ -974,6 +904,76 @@ pub const UpgradeCommand = struct {
             }
         }
     }
+
+    pub const Version = struct {
+        zip_url: string,
+        tag: string,
+        buf: MutableString,
+        size: u32 = 0,
+
+        pub fn name(this: Version) ?string {
+            if (this.tag.len <= "bun-v".len or !strings.hasPrefixComptime(this.tag, "bun-v")) {
+                if (strings.eqlComptime(this.tag, "canary")) {
+                    const Cli = @import("../cli.zig");
+
+                    return std.fmt.allocPrint(
+                        bun.default_allocator,
+                        "bun-canary-timestamp-{any}",
+                        .{
+                            bun.fmt.hexIntLower(
+                                bun.hash(
+                                    std.mem.asBytes(&Cli.start_time),
+                                ),
+                            ),
+                        },
+                    ) catch bun.outOfMemory();
+                }
+                return this.tag;
+            }
+
+            return this.tag["bun-v".len..];
+        }
+
+        pub const platform_label = switch (Environment.os) {
+            .mac => "darwin",
+            .linux => "linux",
+            .windows => "windows",
+            else => @compileError("Unsupported OS for Bun Upgrade"),
+        };
+
+        pub const arch_label = if (Environment.isAarch64) "aarch64" else "x64";
+        pub const triplet = platform_label ++ "-" ++ arch_label;
+        const suffix_abi = if (Environment.isMusl) "-musl" else "";
+        const suffix_cpu = if (Environment.baseline) "-baseline" else "";
+        const suffix = suffix_abi ++ suffix_cpu;
+        pub const folder_name = "bun-" ++ triplet ++ suffix;
+        pub const baseline_folder_name = "bun-" ++ triplet ++ "-baseline";
+        pub const zip_filename = folder_name ++ ".zip";
+        pub const baseline_zip_filename = baseline_folder_name ++ ".zip";
+
+        pub const profile_folder_name = "bun-" ++ triplet ++ suffix ++ "-profile";
+        pub const profile_zip_filename = profile_folder_name ++ ".zip";
+
+        const current_version: string = "bun-v" ++ Global.package_json_version;
+
+        pub export const Bun__githubURL: [*:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/releases/download/bun-v{s}/{s}", .{
+            Global.package_json_version,
+            zip_filename,
+        });
+
+        pub const Bun__githubBaselineURL: [:0]const u8 = std.fmt.comptimePrint("https://github.com/oven-sh/bun/releases/download/bun-v{s}/{s}", .{
+            Global.package_json_version,
+            baseline_zip_filename,
+        });
+
+        pub fn isCurrent(this: Version) bool {
+            return strings.eqlComptime(this.tag, current_version);
+        }
+
+        comptime {
+            _ = Bun__githubURL;
+        }
+    };
 };
 
 pub const upgrade_js_bindings = struct {

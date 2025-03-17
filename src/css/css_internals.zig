@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const builtin = @import("builtin");
 const Arena = @import("../allocators/mimalloc_arena.zig").Arena;

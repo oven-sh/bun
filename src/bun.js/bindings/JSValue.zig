@@ -2672,7 +2672,7 @@ pub const JSValue = enum(i64) {
 pub const JSValueReprInt = JSC.JSValueReprInt;
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const C_API = bun.JSC.C;

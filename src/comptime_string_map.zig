@@ -1,6 +1,6 @@
 const JSC = bun.JSC;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const mem = std.mem;
 const strings = @import("./string_immutable.zig");
 

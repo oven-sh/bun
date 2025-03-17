@@ -1,5 +1,5 @@
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const JSC = bun.JSC;
 const picohttp = JSC.WebCore.picohttp;
 const S3Error = @import("./error.zig").S3Error;

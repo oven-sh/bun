@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Maybe = bun.JSC.Maybe;
 
 const WORD = c_ushort;

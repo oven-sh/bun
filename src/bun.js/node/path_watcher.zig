@@ -6,7 +6,7 @@ const Fs = @import("../../fs.zig");
 const Mutex = bun.Mutex;
 const FSEvents = @import("./fs_events.zig");
 
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Output = bun.Output;
 const Environment = bun.Environment;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;

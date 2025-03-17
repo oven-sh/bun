@@ -1125,7 +1125,7 @@ const cpp = new CodeWriter();
 const cppInternal = new CodeWriter();
 const headers = new Set<string>();
 
-zig.line('const bun = @import("root").bun;');
+zig.line('const bun = @import("bun");');
 zig.line("const JSC = bun.JSC;");
 zig.line("const JSHostFunctionType = JSC.JSHostFunctionType;\n");
 
@@ -1485,7 +1485,7 @@ zigInternal.line("};");
 zigInternal.line();
 zigInternal.line("comptime {");
 zigInternal.line(`    if (bun.Environment.export_cpp_apis) {`);
-zigInternal.line("        for (@typeInfo(binding_internals).@\"struct\".decls) |decl| {");
+zigInternal.line('        for (@typeInfo(binding_internals).@"struct".decls) |decl| {');
 zigInternal.line("            _ = &@field(binding_internals, decl.name);");
 zigInternal.line("        }");
 zigInternal.line("    }");

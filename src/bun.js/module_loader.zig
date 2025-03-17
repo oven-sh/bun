@@ -1,6 +1,6 @@
 const std = @import("std");
 const StaticExport = @import("./bindings/static_export.zig");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

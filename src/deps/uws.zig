@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Api = bun.ApiSchema;
 const std = @import("std");
 const Environment = bun.Environment;

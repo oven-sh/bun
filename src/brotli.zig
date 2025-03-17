@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 pub const c = struct {
     pub usingnamespace @import("./deps/brotli_decoder.zig");

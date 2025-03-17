@@ -1,5 +1,5 @@
 const fs = bun.fs;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const logger = bun.logger;
 const std = @import("std");
 const Ref = @import("ast/base.zig").Ref;

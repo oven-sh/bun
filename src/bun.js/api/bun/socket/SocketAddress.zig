@@ -613,7 +613,7 @@ comptime {
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const ares = bun.c_ares;
 const net = std.net;
 const Environment = bun.Environment;

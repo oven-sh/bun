@@ -37,7 +37,7 @@
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 
 /// Returns the optimal static bit set type for the specified number

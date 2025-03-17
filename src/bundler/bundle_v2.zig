@@ -42,7 +42,7 @@
 //     make mimalloc-debug
 //
 const Transpiler = bun.Transpiler;
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 const Output = bun.Output;
 const Global = bun.Global;

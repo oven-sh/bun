@@ -314,7 +314,7 @@ pub fn watchEventFromInotifyEvent(event: *align(1) const INotifyWatcher.Event, i
 }
 
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const Environment = bun.Environment;
 const Output = bun.Output;
 const Futex = bun.Futex;

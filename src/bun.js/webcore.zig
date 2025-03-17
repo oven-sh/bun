@@ -9,7 +9,7 @@ pub usingnamespace @import("./webcore/body.zig");
 pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
 const JSC = bun.JSC;
 const std = @import("std");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 pub const JSValue = @import("./bindings/bindings.zig").JSValue;

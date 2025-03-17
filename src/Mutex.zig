@@ -24,7 +24,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const bun = @import("root").bun;
+const bun = @import("bun");
 const assert = bun.assert;
 const testing = std.testing;
 const Thread = std.Thread;

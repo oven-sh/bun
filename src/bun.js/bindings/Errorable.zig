@@ -1,4 +1,4 @@
-const bun = @import("root").bun;
+const bun = @import("bun");
 const std = @import("std");
 const ZigErrorType = @import("ZigErrorType.zig").ZigErrorType;
 const ErrorCode = @import("ErrorCode.zig").ErrorCode;

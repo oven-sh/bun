@@ -1,4 +1,5 @@
 import { readdir } from "fs/promises";
+import { join } from "path";
 
 // prettier-ignore
 const words: Record<string, { reason: string; limit?: number; regex?: boolean }> = {
@@ -27,7 +28,7 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
 const words_keys = [...Object.keys(words)];
 
 let counts: Record<string, [number, string][]> = {};
-const files = await readdir("src", { recursive: true, withFileTypes: true });
+const files = await readdir(join(__dirname, "../../src"), { recursive: true, withFileTypes: true });
 for (const file of files) {
   if (file.isDirectory()) continue;
   if (!file.name.endsWith(".zig")) continue;

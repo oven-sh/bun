@@ -24,7 +24,4 @@
 
 // @ts-ignore Must disable this so it doesn't conflict with the DOM onmessage type, but still
 // allows us to declare our own globals that Node's types can "see" and not conflict with
-/**
- * @private
- */
 declare var onmessage: never;

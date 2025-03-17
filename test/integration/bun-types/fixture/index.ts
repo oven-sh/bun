@@ -227,6 +227,12 @@ req1.headers;
 req1.headers.toJSON();
 
 new ReadableStream({});
+new ReadableStream({
+  type: "direct",
+  async pull(controller) {
+    controller.write(new TextEncoder().encode("Hello, world!"));
+  },
+});
 
 const body = await fetch(req1);
 

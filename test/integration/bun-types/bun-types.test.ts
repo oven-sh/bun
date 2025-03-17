@@ -97,9 +97,13 @@ describe("@types/bun integration test", () => {
 
     const expectedOutput = [
       "error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.",
-    ].join("\n");
+      "error TS2339: Property 'write' does not exist on type 'ReadableByteStreamController'.",
+    ];
 
-    expect(p.stdout.toString() + p.stderr.toString()).toContain(expectedOutput);
+    for (const expected of expectedOutput) {
+      expect(p.stdout.toString() + p.stderr.toString()).toContain(expected);
+    }
+
     expect(p.exitCode).toBe(2);
   });
 });

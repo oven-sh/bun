@@ -1325,6 +1325,13 @@ declare var URL: Bun.__internal.UseLibDomIfAvailable<
      * @param url - The URL to revoke.
      */
     revokeObjectURL(url: string): void;
+    /**
+     * Parse a URL.
+     *
+     * @param url - The URL to parse.
+     * @param base - The base URL to use.
+     */
+    parse(url: string, base?: string): URL | null;
   }
 >;
 
@@ -1448,3 +1455,7 @@ declare var MessagePort: Bun.__internal.UseLibDomIfAvailable<
     new (): MessagePort;
   }
 >;
+
+interface ErrorConstructor {
+  isError(value: unknown): value is Error;
+}

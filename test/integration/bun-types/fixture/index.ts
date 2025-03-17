@@ -243,14 +243,19 @@ Bun.serve({
   port: 3000,
   fetch: () => new Response("ok"),
 
-  key: Bun.file(""),
-  cert: Bun.file(""),
+  // don't do this, use the `tls: {}` options instead
+  key: Bun.file(""), // dont do it!
+  cert: Bun.file(""), // dont do it!
 
   tls: {
-    key: Bun.file(""),
-    cert: Bun.file(""),
+    key: Bun.file(""), // do this!
+    cert: Bun.file(""), // do this!
   },
 });
+
+import type { BinaryLike } from "node:crypto";
+declare function asIs(value: BinaryLike): BinaryLike;
+asIs(Buffer.from("Hey", "utf-8"));
 
 new URL("", "");
 const myUrl: URL = new URL("");
@@ -264,6 +269,10 @@ declare const myHeadersInit: Bun.HeadersInit;
 new MessagePort();
 
 new File(["code"], "name.ts");
+
+URL.parse("bun.sh");
+URL.parse("bun.sh", "bun.sh");
+Error.isError(new Error());
 
 Response.json("");
 Response.redirect("bun.sh", 300);

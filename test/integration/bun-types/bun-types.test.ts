@@ -89,10 +89,11 @@ describe("@types/bun integration test", () => {
   });
 
   test("checks with default settings", async () => {
-    const p = await $`
+    const tsconfig = Bun.file(join(FIXTURE_DIR, "tsconfig.json"));
+    await tsconfig.write((await tsconfig.text()).replace(/"lib": \["ESNext"\]/, '"lib": ["ESNext", "DOM"]'));
+
+    const p = await $` 
       cd ${FIXTURE_DIR}
-      # Ensure DOM is in tsconfig.json
-      sed -i '' 's/"lib": \["ESNext"\]/"lib": \["ESNext", "DOM"\]/' tsconfig.json
       bun run check
     `;
 

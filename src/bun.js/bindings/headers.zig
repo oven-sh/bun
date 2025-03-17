@@ -99,6 +99,7 @@ pub extern fn WebCore__DOMFormData__fromJS(JSValue0: JSC__JSValue) ?*bindings.DO
 pub extern fn SystemError__toErrorInstance(arg0: [*c]const SystemError, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSCell__getObject(arg0: [*c]bindings.JSCell) [*c]bindings.JSObject;
 pub extern fn JSC__JSCell__getType(arg0: [*c]bindings.JSCell) u8;
+pub extern fn JSC__JSCell__toObject(arg0: [*c]bindings.JSCell, arg1: *bindings.JSGlobalObject) [*c]bindings.JSObject;
 pub extern fn JSC__JSString__eql(arg0: [*c]const JSC__JSString, arg1: *bindings.JSGlobalObject, arg2: [*c]bindings.JSString) bool;
 pub extern fn JSC__JSString__is8Bit(arg0: [*c]const JSC__JSString) bool;
 pub extern fn JSC__JSString__iterator(arg0: [*c]bindings.JSString, arg1: *bindings.JSGlobalObject, arg2: ?*anyopaque) void;

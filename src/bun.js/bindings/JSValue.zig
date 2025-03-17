@@ -1394,8 +1394,18 @@ pub const JSValue = enum(i64) {
         return JSC.ZigString.init(slice_).withEncoding().toJS(globalObject);
     }
 
+    /// Calling this on a non-cell is safety-checked undefined behavior.
     pub fn asCell(this: JSValue) *JSCell {
+        // NOTE: asCell already asserts this, but since we're crossing an FFI
+        // boundary, that assertion is opaque to the Zig compiler. By asserting
+        // it twice we let Zig possibly optimize out other checks.
+        bun.unsafeAssert(this.isCell());
         return cppFn("asCell", .{this});
+    }
+
+    /// Statically cast a value to a cell. Returns `null` for non-cells.
+    pub fn toCell(this: JSValue) ?*JSCell {
+        return if (this.isCell()) this.asCell() else null;
     }
 
     pub fn isCallable(this: JSValue, vm: *VM) bool {
@@ -1559,8 +1569,24 @@ pub const JSValue = enum(i64) {
         };
     }
 
+    /// Runtime conversion to an object. This can have side effects.
+    /// 
+    /// For values that are already objects, this is effectively a reinterpret
+    /// cast.
     pub fn toObject(this: JSValue, globalThis: *JSGlobalObject) *JSObject {
         return cppFn("toObject", .{ this, globalThis });
+    }
+
+    /// Statically cast a value to a JSObject. 
+    /// 
+    /// Returns _null_ for non-objects. Use `toObject` to runtime-cast them instead.
+    pub fn asObject(this: JSValue) ?*JSObject {
+        if (this.isObject()) {
+            const from_cell = this.asCell().getObject();
+            bun.debugAssert(from_cell != null);
+            return from_cell;
+        }
+        return null;
     }
 
     pub fn getPrototype(this: JSValue, globalObject: *JSGlobalObject) JSValue {

@@ -202,6 +202,7 @@ CPP_DECL JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0, JSC_
 
 CPP_DECL JSC__JSObject* JSC__JSCell__getObject(JSC__JSCell* arg0);
 CPP_DECL unsigned char JSC__JSCell__getType(JSC__JSCell* arg0);
+CPP_DECL JSC__JSObject* JSC__JSCell__toObject(JSC__JSCell* cell, JSC__JSGlobalObject* globalObject);
 
 #pragma mark - JSC::JSString
 

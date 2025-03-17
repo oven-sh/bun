@@ -7,6 +7,6 @@
     "noEmit": false,
     "declarationDir": "out"
   },
-  "include": ["**/*.ts"],
+  "include": ["./*.d.ts"],
   "exclude": ["dist", "node_modules"]
 }

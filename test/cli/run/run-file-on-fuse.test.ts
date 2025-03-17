@@ -4,8 +4,6 @@ import { describe, expect, test, beforeAll } from "bun:test";
 import { join } from "node:path";
 import fs from "node:fs";
 
-const VENV = "/opt/fuse-python-venv";
-
 describe.skipIf(!isLinux)("running files on a FUSE mount", () => {
   async function doTest(pathOnMount: string): Promise<void> {
     const mountpoint = tmpdirSync();
@@ -14,9 +12,7 @@ describe.skipIf(!isLinux)("running files on a FUSE mount", () => {
     try {
       // setup FUSE filesystem
       pythonProcess = spawn({
-        cmd: fs.existsSync(VENV)
-          ? ["sh", "-c", `source ${join(VENV, "bin/activate")} && exec python3 fuse-fs.py -f ${mountpoint}`]
-          : ["python3", "fuse-fs.py", "-f", mountpoint],
+        cmd: ["python3", "fuse-fs.py", "-f", mountpoint],
         cwd: __dirname,
         stdout: "pipe",
         stderr: "pipe",

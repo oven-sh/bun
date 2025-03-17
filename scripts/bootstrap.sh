@@ -1133,18 +1133,24 @@ install_fuse_python() {
 	# only linux needs this
 	case "$pm" in
 	apk)
-		# Alpine doesn't have fuse-python in their own repos, and installing it from source doesn't work
-		# (https://github.com/libfuse/python-fuse/issues/92), so instead we set up a venv which the test
-		# that uses FUSE will run inside
+		# Build and install from source (https://github.com/libfuse/python-fuse/blob/master/INSTALL)
 		install_packages \
 			python3-dev \
 			fuse-dev \
-			pkgconf
-		execute_sudo python3 -m venv /opt/fuse-python-venv
-		execute_sudo sh -c "source /opt/fuse-python-venv/bin/activate && pip install fuse-python"
-		grant_to_user /opt/fuse-python-venv
+			pkgconf \
+			py3-setuptools
+		python_fuse_version="1.0.9"
+		python_fuse_tarball=$(download_file "https://github.com/libfuse/python-fuse/archive/refs/tags/v$python_fuse_version.tar.gz")
+		python_fuse_tmpdir="$(dirname "$python_fuse_tarball")"
+		execute tar -xzf "$python_fuse_tarball" -C "$python_fuse_tmpdir"
+		execute sh -c "cd '$python_fuse_tmpdir/python-fuse-$python_fuse_version' && python setup.py build"
+		execute_sudo sh -c "cd '$python_fuse_tmpdir/python-fuse-$python_fuse_version' && python setup.py install"
+
 		# For Alpine we also need to make sure the kernel module is automatically loaded
 		execute_sudo sh -c "echo fuse >> /etc/modules-load.d/fuse.conf"
+
+		# Check that it was actually installed
+		execute python -c 'import fuse'
 		;;
 	apt | dnf | yum)
 		install_packages python3-fuse

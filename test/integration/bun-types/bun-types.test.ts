@@ -91,9 +91,16 @@ describe("@types/bun integration test", () => {
   test("checks with default settings", async () => {
     const p = await $`
       cd ${FIXTURE_DIR}
+      # Ensure DOM is in tsconfig.json
+      sed -i '' 's/"lib": \["ESNext"\]/"lib": \["ESNext", "DOM"\]/' tsconfig.json
       bun run check
     `;
 
-    expect(p.exitCode).toBe(0);
+    const expectedOutput = [
+      "index.ts(269,29): error TS2345: Argument of type '{ headers: { \"x-bun\": string; }; }' is not assignable to parameter of type 'number'.\n$ tsc --noEmit -p ./tsconfig.json\n",
+    ].join("\n");
+
+    expect(p.stdout.toString() + p.stderr.toString()).toEqual(expectedOutput);
+    expect(p.exitCode).not.toBe(0);
   });
 });

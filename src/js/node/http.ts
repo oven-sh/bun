@@ -2209,6 +2209,7 @@ const ServerResponsePrototype = {
       throw ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
+    socket.off("close", onServerResponseClose);
     socket.once("close", onServerResponseClose);
     this.socket = socket;
     this.emit("socket", socket);

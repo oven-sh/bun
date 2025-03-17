@@ -383,7 +383,7 @@ pub fn Printer(comptime Writer: type) type {
                 } else {
                     const ref = ident.asRef().?;
                     const symbol = this.symbols.get(ref) orelse return this.addFmtError();
-                    return css.serializer.serializeIdentifier(symbol.original_name, this);
+                    return css.serializer.serializeIdentifier(symbol.original_name, this) catch return this.addFmtError();
                 }
             }
 

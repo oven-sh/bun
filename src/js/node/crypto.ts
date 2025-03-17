@@ -48,7 +48,7 @@ const {
   pbkdf2: _pbkdf2,
   pbkdf2Sync: _pbkdf2Sync,
   timingSafeEqual: _timingSafeEqual,
-  randomInt: _randomInt,
+  randomInt,
   randomUUID: _randomUUID,
   randomBytes: _randomBytes,
   randomFillSync,
@@ -2532,23 +2532,6 @@ for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
     enumerable: false,
     configurable: true,
   });
-}
-
-function randomInt(min, max, callback) {
-  let res;
-  if (typeof max === "undefined" || typeof max === "function") {
-    callback = max;
-    res = _randomInt(min, callback);
-  } else {
-    res = _randomInt(min, max, callback);
-  }
-
-  if (callback !== undefined) {
-    // Crypto random promise job is guaranteed to resolve.
-    process.nextTick(callback, undefined, res);
-  }
-
-  return res;
 }
 
 crypto_exports.randomInt = randomInt;

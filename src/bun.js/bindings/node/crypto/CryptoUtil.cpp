@@ -441,7 +441,7 @@ JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, Throw
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!maybeEncoding && !defaultBufferEncoding) {
-            throwError(globalObject, scope, Bun::ErrorCode::ERR_UNKNOWN_ENCODING, "Invalid encoding"_s);
+            ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
             return {};
         }
 

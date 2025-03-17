@@ -19,17 +19,17 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.14.0-dev.2987+183bb8b08";
+const recommended_zig_version = "0.14.0";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
         @compileError(
             "" ++
-                "Bun requires Zig version " ++ recommended_zig_version ++ " (found " ++
-                builtin.zig_version_string ++ "). This is " ++
-                "automatically configured via Bun's CMake setup. You likely meant to run " ++
-                "`bun setup`. If you are trying to upgrade the Zig compiler, " ++
-                "run `./scripts/download-zig.sh master` or comment this message out.",
+                "Bun requires Zig version " ++ recommended_zig_version ++ ", but you have " ++
+                builtin.zig_version_string ++ ". This is automatically configured via Bun's " ++
+                "CMake setup. You likely meant to run `bun run build`. If you are trying to " ++
+                "upgrade the Zig compiler, edit ZIG_COMMIT in cmake/tools/SetupZig.cmake or " ++
+                "comment this error out.",
         );
     }
 }

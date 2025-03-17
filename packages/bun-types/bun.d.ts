@@ -6373,7 +6373,8 @@ declare module "bun" {
        * This is useful for aborting a subprocess when some other part of the
        * program is aborted, such as a `fetch` response.
        *
-       * Internally, this works by calling `subprocess.kill(1)`.
+       * If the signal is aborted, the process will be killed with the signal
+       * specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
        * ```ts
@@ -6392,6 +6393,41 @@ declare module "bun" {
        * ```
        */
       signal?: AbortSignal;
+
+      /**
+       * The maximum amount of time the process is allowed to run in milliseconds.
+       *
+       * If the timeout is reached, the process will be killed with the signal
+       * specified by `killSignal` (defaults to SIGTERM).
+       *
+       * @example
+       * ```ts
+       * // Kill the process after 5 seconds
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "10"],
+       *   timeout: 5000,
+       * });
+       * await subprocess.exited; // Will resolve after 5 seconds
+       * ```
+       */
+      timeout?: number;
+
+      /**
+       * The signal to use when killing the process after a timeout or when the AbortSignal is aborted.
+       *
+       * @default "SIGTERM" (signal 15)
+       *
+       * @example
+       * ```ts
+       * // Kill the process with SIGKILL after 5 seconds
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "10"],
+       *   timeout: 5000,
+       *   killSignal: "SIGKILL",
+       * });
+       * ```
+       */
+      killSignal?: string | number;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =

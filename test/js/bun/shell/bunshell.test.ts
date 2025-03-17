@@ -95,7 +95,7 @@ describe("bunshell", () => {
       ]);
     });
   });
-  test("js_obj_test", async () => {
+  describe("js_obj_test", async () => {
     function runTest(name: string, builder: TestBuilder) {
       test(`js_obj_test_name_${name}`, async () => {
         await builder.run();
@@ -654,7 +654,7 @@ booga"
       });
     }
 
-    test("concatenated", () => {
+    describe("concatenated", () => {
       doTest("{a,b,c}{d,e,f}", "ad ae af bd be bf cd ce cf");
     });
 

@@ -74,16 +74,17 @@ pub fn allocator(scope: *AllocationScope) Allocator {
 const vtable: Allocator.VTable = .{
     .alloc = alloc,
     .resize = resize,
+    .remap = remap,
     .free = free,
 };
 
-fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
+fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
     const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
     scope.state.mutex.lock();
     defer scope.state.mutex.unlock();
     scope.state.allocations.ensureUnusedCapacity(scope.parent, 1) catch
         return null;
-    const result = scope.parent.vtable.alloc(scope.parent.ptr, len, ptr_align, ret_addr) orelse
+    const result = scope.parent.vtable.alloc(scope.parent.ptr, len, alignment, ret_addr) orelse
         return null;
     const trace = StoredTrace.capture(ret_addr);
     scope.state.allocations.putAssumeCapacityNoClobber(result, .{
@@ -94,12 +95,17 @@ fn alloc(ctx: *anyopaque, len: usize, ptr_align: u8, ret_addr: usize) ?[*]u8 {
     return result;
 }
 
-fn resize(ctx: *anyopaque, buf: []u8, buf_align: u8, new_len: usize, ret_addr: usize) bool {
+fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
     const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
-    return scope.parent.vtable.resize(scope.parent.ptr, buf, buf_align, new_len, ret_addr);
+    return scope.parent.vtable.resize(scope.parent.ptr, buf, alignment, new_len, ret_addr);
 }
 
-fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
+fn remap(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+    const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
+    return scope.parent.vtable.remap(scope.parent.ptr, buf, alignment, new_len, ret_addr);
+}
+
+fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
     const scope: *AllocationScope = @ptrCast(@alignCast(ctx));
     scope.state.mutex.lock();
     defer scope.state.mutex.unlock();
@@ -137,7 +143,7 @@ fn free(ctx: *anyopaque, buf: []u8, buf_align: u8, ret_addr: usize) void {
         // sanitizer does not catch the invalid free.
     }
 
-    scope.parent.vtable.free(scope.parent.ptr, buf, buf_align, ret_addr);
+    scope.parent.vtable.free(scope.parent.ptr, buf, alignment, ret_addr);
 
     // If asan did not catch the free, panic now.
     if (invalid) @panic("Invalid free");

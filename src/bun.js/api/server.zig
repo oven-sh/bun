@@ -8706,7 +8706,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             const result: JSValue = onNodeHTTPRequestFn(
-                @bitCast(AnyServer.from(this)),
+                @intFromPtr(AnyServer.from(this).ptr.ptr()),
                 globalThis,
                 thisObject,
                 this.config.onNodeHTTPRequest,
@@ -9610,7 +9610,7 @@ pub const HTTPServer = NewServer(JSC.Codegen.JSHTTPServer, false, false);
 pub const HTTPSServer = NewServer(JSC.Codegen.JSHTTPSServer, true, false);
 pub const DebugHTTPServer = NewServer(JSC.Codegen.JSDebugHTTPServer, false, true);
 pub const DebugHTTPSServer = NewServer(JSC.Codegen.JSDebugHTTPSServer, true, true);
-pub const AnyServer = packed struct {
+pub const AnyServer = struct {
     ptr: Ptr,
 
     const Ptr = bun.TaggedPointerUnion(.{
@@ -9862,7 +9862,7 @@ comptime {
 }
 
 extern fn NodeHTTPServer__onRequest_http(
-    any_server: u64,
+    any_server: usize,
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,
@@ -9873,7 +9873,7 @@ extern fn NodeHTTPServer__onRequest_http(
 ) JSC.JSValue;
 
 extern fn NodeHTTPServer__onRequest_https(
-    any_server: u64,
+    any_server: usize,
     globalThis: *JSC.JSGlobalObject,
     this: JSC.JSValue,
     callback: JSC.JSValue,

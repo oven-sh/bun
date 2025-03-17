@@ -23,9 +23,9 @@ public:
         return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSECDH* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::ECKeyPointer&& key)
+    static JSECDH* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::ECKeyPointer&& key, const EC_GROUP* group)
     {
-        JSECDH* instance = new (NotNull, JSC::allocateCell<JSECDH>(vm)) JSECDH(vm, structure, WTFMove(key));
+        JSECDH* instance = new (NotNull, JSC::allocateCell<JSECDH>(vm)) JSECDH(vm, structure, WTFMove(key), group);
         instance->finishCreation(vm, globalObject);
         return instance;
     }
@@ -43,20 +43,24 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForJSECDH = std::forward<decltype(space)>(space); });
     }
 
-    const ncrypto::ECKeyPointer& key() const { return m_key; }
-    void setKey(ncrypto::ECKeyPointer&& key) { m_key = WTFMove(key); }
+    ncrypto::ECKeyPointer m_key;
+    const EC_GROUP* m_group;
+
+    JSC::EncodedJSValue getPublicKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue encodingValue, JSC::JSValue formatValue);
+
+    static point_conversion_form_t getFormat(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue formatValue);
 
 private:
-    JSECDH(JSC::VM& vm, JSC::Structure* structure, ncrypto::ECKeyPointer&& key)
+    JSECDH(JSC::VM& vm, JSC::Structure* structure, ncrypto::ECKeyPointer&& key, const EC_GROUP* group)
         : Base(vm, structure)
         , m_key(WTFMove(key))
+        , m_group(group)
     {
+        ASSERT(m_group);
     }
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
     static void destroy(JSC::JSCell* cell) { static_cast<JSECDH*>(cell)->~JSECDH(); }
-
-    ncrypto::ECKeyPointer m_key;
 };
 
 void setupECDHClassStructure(JSC::LazyClassStructure::Initializer&);

@@ -7,6 +7,6 @@
   "type": "module",
   "dependencies": {
     "@types/bun": "types-bun-1.2.6.tgz",
-    "typescript": "^5.8.2"
+    "typescript": "latest"
   }
 }

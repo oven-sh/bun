@@ -612,7 +612,7 @@ function getZigTestBunStep(platform, options, testOptions = {}) {
     cancel_on_build_failing: isMergeQueue(),
     // TODO: run tests in parallel
     // parallelism: unifiedTests ? undefined : os === "darwin" ? 2 : 10,
-    command: `./build/${profile}/bun-test`
+    command: `./build/${profile}/bun-test`,
   };
 }
 
@@ -1169,11 +1169,8 @@ async function getPipeline(options = {}) {
             key: getTargetKey(target),
             group: getTargetLabel(target),
             steps: [
-              getTestBunStep(target, options, { unifiedTests, testFiles, buildId })
-              ...(target.zigTests ? [
-
-              getZigTestBunStep(target, options, { unifiedTests, testFiles, buildId })
-              ]: [])
+              getTestBunStep(target, options, { unifiedTests, testFiles, buildId }),
+              ...(target.zigTests ? [getZigTestBunStep(target, options, { unifiedTests, testFiles, buildId })] : []),
             ],
           })),
       );

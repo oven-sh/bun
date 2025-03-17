@@ -1,6 +1,6 @@
 import { fileURLToPath, $ as Shell } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { cp, mkdtemp } from "node:fs/promises";
+import { cp, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -72,8 +72,7 @@ beforeEach(async () => {
 
 afterAll(async () => {
   if (TEMP_DIR) {
-    console.log("TEMP_DIR", TEMP_DIR);
-    // await rm(TEMP_DIR, { recursive: true, force: true });
+    await rm(TEMP_DIR, { recursive: true, force: true });
   }
 });
 

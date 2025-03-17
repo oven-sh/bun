@@ -16365,7 +16365,10 @@ fn NewParser_(
                                 var props: std.ArrayListUnmanaged(G.Property) = e_.properties.list();
 
                                 const maybe_key_value: ?ExprNodeIndex =
-                                    if (e_.key_prop_index > -1) props.orderedRemove(@intCast(e_.key_prop_index)).value else null;
+                                    if (e_.key_prop_index > -1)
+                                    props.orderedRemove(@intCast(e_.key_prop_index)).value
+                                else
+                                    null;
 
                                 // arguments needs to be like
                                 // {
@@ -16442,17 +16445,37 @@ fn NewParser_(
                                     // is the return type of the first child an array?
                                     // It's dynamic
                                     // Else, it's static
-                                    args[3] = Expr{
+                                    args[3] = .{
                                         .loc = expr.loc,
                                         .data = .{
-                                            .e_boolean = .{
-                                                .value = is_static_jsx,
-                                            },
+                                            .e_boolean = .{ .value = is_static_jsx },
                                         },
                                     };
 
-                                    args[4] = p.newExpr(E.Undefined{}, expr.loc);
-                                    args[5] = Expr{ .data = Prefill.Data.This, .loc = expr.loc };
+                                    args[4] = if (p.options.features.hot_module_reloading)
+                                        // This object is kind of silly. Maybe we add a new AST node for printing line + column + fileName
+                                        p.newExpr(E.Object{
+                                            .properties = G.Property.List.fromSlice(p.allocator, &.{
+                                                .{
+                                                    .key = p.newExpr(E.String{ .data = "fileName" }, expr.loc),
+                                                    .value = p.newExpr(E.Dot{
+                                                        .target = Expr.initIdentifier(p.hmr_api_ref, expr.loc),
+                                                        .name = "id",
+                                                        .name_loc = expr.loc,
+                                                    }, expr.loc),
+                                                },
+                                                // Parser does not know line and column numbers, only an offset
+                                                // As a workaround, we temporarily emit this namespaced nonstandard
+                                                // field. We can clean this up if the experiment succeeds.
+                                                .{
+                                                    .key = p.newExpr(E.String{ .data = "bunByteOffset" }, expr.loc),
+                                                    .value = p.newExpr(E.Number{ .value = @floatFromInt(expr.loc.start) }, expr.loc),
+                                                },
+                                            }) catch bun.outOfMemory(),
+                                        }, expr.loc)
+                                    else
+                                        .{ .data = .{ .e_undefined = .{} }, .loc = expr.loc };
+                                    args[5] = .{ .data = .{ .e_this = .{} }, .loc = expr.loc };
                                 }
 
                                 return p.newExpr(E.Call{

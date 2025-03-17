@@ -3029,8 +3029,8 @@ pub const Parser = struct {
                 // - require("foo")
                 import_record.is_unused = import_record.is_unused or
                     (import_record.kind == .stmt and
-                    !import_record.was_originally_bare_import and
-                    !import_record.calls_runtime_re_export_fn);
+                        !import_record.was_originally_bare_import and
+                        !import_record.calls_runtime_re_export_fn);
             }
 
             var iter = scan_pass.used_symbols.iterator();
@@ -5224,7 +5224,7 @@ fn NewParser_(
                     // we must also unwrap requires into imports.
                     const should_unwrap_require = p.options.features.unwrap_commonjs_to_esm and
                         (p.unwrap_all_requires or
-                        if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
+                            if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false) and
                         // We cannot unwrap a require wrapped in a try/catch because
                         // import statements cannot be wrapped in a try/catch and
                         // require cannot return a promise.
@@ -6911,14 +6911,14 @@ fn NewParser_(
                                             var notes = allocator.alloc(logger.Data, 1) catch unreachable;
                                             notes[0] =
                                                 logger.rangeData(
-                                                p.source,
-                                                r,
-                                                std.fmt.allocPrint(
-                                                    allocator,
-                                                    "{s} was originally declared here",
-                                                    .{name},
-                                                ) catch unreachable,
-                                            );
+                                                    p.source,
+                                                    r,
+                                                    std.fmt.allocPrint(
+                                                        allocator,
+                                                        "{s} was originally declared here",
+                                                        .{name},
+                                                    ) catch unreachable,
+                                                );
 
                                             p.log.addRangeErrorFmtWithNotes(p.source, js_lexer.rangeOfIdentifier(p.source, member_in_scope.loc), allocator, notes, "{s} has already been declared", .{name}) catch unreachable;
                                         } else if (_scope == scope.parent) {
@@ -7765,7 +7765,7 @@ fn NewParser_(
                 p.panic("Internal error", .{});
             }
 
-            _ = children.popOrNull();
+            _ = children.pop();
         }
 
         fn parseFn(p: *P, name: ?js_ast.LocRef, opts: FnOrArrowDataParse) anyerror!G.Fn {
@@ -9289,7 +9289,6 @@ fn NewParser_(
             try p.symbols.append(Symbol{
                 .kind = kind,
                 .original_name = identifier,
-                .debug_mode_source_index = if (comptime Environment.allow_assert) p.source.index.get() else 0,
             });
 
             if (is_typescript_enabled) {
@@ -12167,11 +12166,11 @@ fn NewParser_(
             }
 
             if (!p.lexer.has_newline_before and (
-            // Import Assertions are deprecated.
-            // Import Attributes are the new way to do this.
-            // But some code may still use "assert"
-            // We support both and treat them identically.
-            // Once Prettier & TypeScript support import attributes, we will add runtime support
+                // Import Assertions are deprecated.
+                // Import Attributes are the new way to do this.
+                // But some code may still use "assert"
+                // We support both and treat them identically.
+                // Once Prettier & TypeScript support import attributes, we will add runtime support
                 p.lexer.isContextualKeyword("assert") or p.lexer.token == .t_with))
             {
                 try p.lexer.next();
@@ -13358,7 +13357,7 @@ fn NewParser_(
                         if ((p.fn_or_arrow_data_parse.allow_await != .allow_ident and
                             strings.eqlComptime(name, "await")) or
                             (p.fn_or_arrow_data_parse.allow_yield != .allow_ident and
-                            strings.eqlComptime(name, "yield")))
+                                strings.eqlComptime(name, "yield")))
                         {
                             if (strings.eqlComptime(name, "await")) {
                                 p.log.addRangeError(p.source, name_range, "Cannot use \"await\" here") catch unreachable;
@@ -16232,6 +16231,8 @@ fn NewParser_(
                             // `module.exports` -> `exports` optimization.
                             p.commonjs_module_exports_assigned_deoptimized = true;
                         }
+
+                        p.symbols.items[result.ref.innerIndex()].has_been_assigned_to = true;
                     }
 
                     var original_name: ?string = null;
@@ -16595,7 +16596,7 @@ fn NewParser_(
                     // Process all binary operations from the deepest-visited node back toward
                     // our original top-level binary operation.
                     while (p.binary_expression_stack.items.len > stack_bottom) {
-                        v = p.binary_expression_stack.pop();
+                        v = p.binary_expression_stack.pop().?;
                         v.e.left = current;
                         current = v.visitRightAndFinish(p);
                     }
@@ -17130,10 +17131,11 @@ fn NewParser_(
                                 in.assign_target == .none and
                                 key.data.isStringValue() and
                                 strings.eqlComptime(
-                                // __proto__ is utf8, assume it lives in refs
-                                key.data.e_string.slice(p.allocator),
-                                "__proto__",
-                            )) {
+                                    // __proto__ is utf8, assume it lives in refs
+                                    key.data.e_string.slice(p.allocator),
+                                    "__proto__",
+                                ))
+                            {
                                 if (has_proto) {
                                     const r = js_lexer.rangeOfIdentifier(p.source, key.loc);
                                     p.log.addRangeError(p.source, r, "Cannot specify the \"__proto__\" property more than once per object") catch unreachable;
@@ -17249,9 +17251,10 @@ fn NewParser_(
                             if (e_.optional_chain == null and
                                 target_was_identifier_before_visit and
                                 strings.eqlComptime(
-                                p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name,
-                                "eval",
-                            )) {
+                                    p.symbols.items[e_.target.data.e_identifier.ref.inner_index].original_name,
+                                    "eval",
+                                ))
+                            {
                                 e_.is_direct_eval = true;
 
                                 // Pessimistically assume that if this looks like a CommonJS module
@@ -17318,7 +17321,7 @@ fn NewParser_(
                             p.method_call_must_be_replaced_with_undefined = false;
                             switch (e_.target.data) {
                                 // If we're removing this call, don't count any arguments as symbol uses
-                                .e_index, .e_dot => {
+                                .e_index, .e_dot, .e_identifier => {
                                     p.is_control_flow_dead = true;
                                 },
                                 // Special case from `import.meta.hot.*` functions.
@@ -17909,18 +17912,18 @@ fn NewParser_(
                 .e_if => |ex| {
                     return p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.test_) and
                         (p.isSideEffectFreeUnboundIdentifierRef(
-                        ex.yes,
-                        ex.test_,
-                        true,
-                    ) or
-                        p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.yes)) and
+                            ex.yes,
+                            ex.test_,
+                            true,
+                        ) or
+                            p.exprCanBeRemovedIfUnusedWithoutDCECheck(&ex.yes)) and
                         (p.isSideEffectFreeUnboundIdentifierRef(
-                        ex.no,
-                        ex.test_,
-                        false,
-                    ) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(
-                        &ex.no,
-                    ));
+                            ex.no,
+                            ex.test_,
+                            false,
+                        ) or p.exprCanBeRemovedIfUnusedWithoutDCECheck(
+                            &ex.no,
+                        ));
                 },
                 .e_array => |ex| {
                     for (ex.items.slice()) |*item| {
@@ -18341,13 +18344,6 @@ fn NewParser_(
         }
 
         fn selectLocalKind(p: *P, kind: S.Local.Kind) S.Local.Kind {
-            // When using Kit's HMR implementation, we need to preserve the local kind
-            // if possible, as more efficient code can be generated if something is known
-            // not to be an ESM live binding.
-            if (p.options.features.hot_module_reloading) {
-                return kind;
-            }
-
             // Use "var" instead of "let" and "const" if the variable declaration may
             // need to be separated from the initializer. This allows us to safely move
             // this declaration into a nested scope.
@@ -18539,13 +18535,14 @@ fn NewParser_(
                                         // just not module.exports = { bar: function() {}  }
                                         // just not module.exports = { bar() {}  }
                                         switch (prop.value.?.data) {
-                                        .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
-                                        .e_call => |call| switch (call.target.data) {
                                             .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
-                                            else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
-                                        },
-                                        else => !prop.value.?.isPrimitiveLiteral(),
-                                    }) {
+                                            .e_call => |call| switch (call.target.data) {
+                                                .e_commonjs_export_identifier, .e_import_identifier, .e_identifier => false,
+                                                else => |call_target| !@as(Expr.Tag, call_target).isPrimitiveLiteral(),
+                                            },
+                                            else => !prop.value.?.isPrimitiveLiteral(),
+                                        })
+                                    {
                                         p.deoptimizeCommonJSNamedExports();
                                         return null;
                                     }
@@ -23038,7 +23035,7 @@ fn NewParser_(
                 if (stmt.data == .s_local and
                     // Need to re-check lower_using for the k_using case in case lower_await is true
                     ((stmt.data.s_local.kind == .k_using and p.options.features.lower_using) or
-                    (stmt.data.s_local.kind == .k_await_using)))
+                        (stmt.data.s_local.kind == .k_await_using)))
                 {
                     return true;
                 }
@@ -23734,8 +23731,8 @@ fn NewParser_(
 
                 const preserve_strict_mode = p.module_scope.strict_mode == .explicit_strict_mode and
                     !(parts.items.len > 0 and
-                    parts.items[0].stmts.len > 0 and
-                    parts.items[0].stmts[0].data == .s_directive);
+                        parts.items[0].stmts.len > 0 and
+                        parts.items[0].stmts[0].data == .s_directive);
 
                 total_stmts_count += @as(usize, @intCast(@intFromBool(preserve_strict_mode)));
 
@@ -24285,9 +24282,9 @@ const ReactRefresh = struct {
         return id.len >= 4 and
             strings.hasPrefixComptime(id, "use") and
             switch (id[3]) {
-            'A'...'Z' => true,
-            else => false,
-        };
+                'A'...'Z' => true,
+                else => false,
+            };
     }
 
     pub const built_in_hooks = bun.ComptimeEnumMap(enum {
@@ -24322,7 +24319,6 @@ pub const ConvertESMExportsForHmr = struct {
     export_star_props: std.ArrayListUnmanaged(G.Property) = .{},
     export_props: std.ArrayListUnmanaged(G.Property) = .{},
     stmts: std.ArrayListUnmanaged(Stmt) = .{},
-    can_implicitly_accept: bool = true,
 
     const ImportRef = struct {
         /// Index into ConvertESMExportsForHmr.stmts
@@ -24332,66 +24328,56 @@ pub const ConvertESMExportsForHmr = struct {
     fn convertStmt(ctx: *ConvertESMExportsForHmr, p: anytype, stmt: Stmt) !void {
         const new_stmt = switch (stmt.data) {
             else => brk: {
-                ctx.can_implicitly_accept = false;
                 break :brk stmt;
             },
             .s_local => |st| stmt: {
                 if (!st.is_export) {
-                    ctx.can_implicitly_accept = false;
                     break :stmt stmt;
                 }
 
                 st.is_export = false;
 
-                if (st.kind.isReassignable()) {
-                    ctx.can_implicitly_accept = false;
-                    for (st.decls.slice()) |decl| {
-                        try ctx.visitBindingToExport(p, decl.binding, true);
-                    }
-                } else {
-                    var new_len: usize = 0;
-                    for (st.decls.slice()) |*decl_ptr| {
-                        const decl = decl_ptr.*; // explicit copy to avoid aliasinng
-                        bun.assert(decl.value != null); // const must be initialized
+                var new_len: usize = 0;
+                for (st.decls.slice()) |*decl_ptr| {
+                    const decl = decl_ptr.*; // explicit copy to avoid aliasinng
+                    const value = decl.value orelse {
+                        st.decls.mut(new_len).* = decl;
+                        new_len += 1;
+                        try ctx.visitBindingToExport(p, decl.binding);
+                        continue;
+                    };
 
-                        switch (decl.binding.data) {
-                            .b_missing => {},
+                    switch (decl.binding.data) {
+                        .b_missing => {},
 
-                            .b_identifier => |id| {
-                                const symbol = p.symbols.items[id.ref.inner_index];
+                        .b_identifier => |id| {
+                            const symbol = p.symbols.items[id.ref.inner_index];
 
-                                if (ctx.can_implicitly_accept) switch (decl.value.?.data) {
-                                    .e_function, .e_arrow => {},
-                                    else => ctx.can_implicitly_accept = false,
-                                };
-
-                                // if the symbol is not used, we don't need to preserve
-                                // a binding in this scope. we can move it to the exports object.
-                                if (symbol.use_count_estimate == 0 and decl.value.?.canBeMoved()) {
-                                    try ctx.export_props.append(p.allocator, .{
-                                        .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
-                                        .value = decl.value,
-                                    });
-                                } else {
-                                    st.decls.mut(new_len).* = decl;
-                                    new_len += 1;
-                                    try ctx.visitBindingToExport(p, decl.binding, false);
-                                }
-                            },
-
-                            else => {
-                                ctx.can_implicitly_accept = false;
+                            // if the symbol is not used, we don't need to preserve
+                            // a binding in this scope. we can move it to the exports object.
+                            if (symbol.use_count_estimate == 0 and value.canBeMoved()) {
+                                try ctx.export_props.append(p.allocator, .{
+                                    .key = Expr.init(E.String, .{ .data = symbol.original_name }, decl.binding.loc),
+                                    .value = value,
+                                });
+                            } else {
                                 st.decls.mut(new_len).* = decl;
                                 new_len += 1;
-                                try ctx.visitBindingToExport(p, decl.binding, false);
-                            },
-                        }
+                                try ctx.visitBindingToExport(p, decl.binding);
+                            }
+                        },
+
+                        else => {
+                            st.decls.mut(new_len).* = decl;
+                            new_len += 1;
+                            try ctx.visitBindingToExport(p, decl.binding);
+                        },
                     }
-                    if (new_len == 0) {
-                        return;
-                    }
-                    st.decls.len = @intCast(new_len);
                 }
+                if (new_len == 0) {
+                    return;
+                }
+                st.decls.len = @intCast(new_len);
 
                 break :stmt stmt;
             },
@@ -24414,11 +24400,6 @@ pub const ConvertESMExportsForHmr = struct {
                     }
                     // All other functions can be properly moved.
                 }
-
-                if (ctx.can_implicitly_accept and
-                    !((st.value == .stmt and st.value.stmt.data == .s_function) or
-                    (st.value == .expr and st.value.expr.data == .e_arrow)))
-                    ctx.can_implicitly_accept = false;
 
                 // Try to move the export default expression to the end.
                 const can_be_moved_to_inner_scope = switch (st.value) {
@@ -24484,7 +24465,6 @@ pub const ConvertESMExportsForHmr = struct {
                 }
             },
             .s_class => |st| stmt: {
-                ctx.can_implicitly_accept = false;
 
                 // Strip the "export" keyword
                 if (!st.is_export) {
@@ -24509,13 +24489,13 @@ pub const ConvertESMExportsForHmr = struct {
 
                 st.func.flags.remove(.is_export);
 
-                // Export as CommonJS
-                try ctx.export_props.append(p.allocator, .{
-                    .key = Expr.init(E.String, .{
-                        .data = p.symbols.items[st.func.name.?.ref.?.inner_index].original_name,
-                    }, stmt.loc),
-                    .value = Expr.initIdentifier(st.func.name.?.ref.?, stmt.loc),
-                });
+                try ctx.visitRefToExport(
+                    p,
+                    st.func.name.?.ref.?,
+                    null,
+                    stmt.loc,
+                    false,
+                );
 
                 break :stmt stmt;
             },
@@ -24523,21 +24503,11 @@ pub const ConvertESMExportsForHmr = struct {
                 for (st.items) |item| {
                     const ref = item.name.ref.?;
                     try ctx.visitRefToExport(p, ref, item.alias, item.name.loc, false);
-
-                    if (ctx.can_implicitly_accept) {
-                        const symbol: *Symbol = &p.symbols.items[ref.inner_index];
-                        switch (symbol.kind) {
-                            .hoisted_function, .generator_or_async_function => {},
-                            else => ctx.can_implicitly_accept = false,
-                        }
-                    }
                 }
 
                 return; // do not emit a statement here
             },
             .s_export_from => |st| {
-                ctx.can_implicitly_accept = false;
-
                 const namespace_ref = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,
@@ -24577,8 +24547,6 @@ pub const ConvertESMExportsForHmr = struct {
                 return;
             },
             .s_export_star => |st| {
-                ctx.can_implicitly_accept = false;
-
                 const namespace_ref = try ctx.deduplicatedImport(
                     p,
                     st.import_record_index,
@@ -24688,25 +24656,20 @@ pub const ConvertESMExportsForHmr = struct {
         return namespace_ref;
     }
 
-    fn visitBindingToExport(
-        ctx: *ConvertESMExportsForHmr,
-        p: anytype,
-        binding: Binding,
-        is_live_binding: bool,
-    ) !void {
+    fn visitBindingToExport(ctx: *ConvertESMExportsForHmr, p: anytype, binding: Binding) !void {
         switch (binding.data) {
             .b_missing => {},
             .b_identifier => |id| {
-                try ctx.visitRefToExport(p, id.ref, null, binding.loc, is_live_binding);
+                try ctx.visitRefToExport(p, id.ref, null, binding.loc, false);
             },
             .b_array => |array| {
                 for (array.items) |item| {
-                    try ctx.visitBindingToExport(p, item.binding, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.binding);
                 }
             },
             .b_object => |object| {
                 for (object.properties) |item| {
-                    try ctx.visitBindingToExport(p, item.value, is_live_binding);
+                    try ctx.visitBindingToExport(p, item.value);
                 }
             },
         }
@@ -24725,9 +24688,7 @@ pub const ConvertESMExportsForHmr = struct {
             Expr.init(E.ImportIdentifier, .{ .ref = ref }, loc)
         else
             Expr.initIdentifier(ref, loc);
-        if (is_live_binding_source or (symbol.kind == .import and !ctx.is_in_node_modules)) {
-            ctx.can_implicitly_accept = false;
-
+        if (is_live_binding_source or (symbol.kind == .import and !ctx.is_in_node_modules) or symbol.has_been_assigned_to) {
             // TODO (2024-11-24) instead of requiring getters for live-bindings,
             // a callback propagation system should be considered.  mostly
             // because here, these might not even be live bindings, and
@@ -24749,7 +24710,6 @@ pub const ConvertESMExportsForHmr = struct {
             try ctx.last_part.symbol_uses.putNoClobber(p.allocator, arg1, .{ .count_estimate = 1 });
             try p.current_scope.generated.push(p.allocator, arg1);
 
-            // Live bindings need to update the value internally and externally.
             // 'get abc() { return abc }'
             try ctx.export_props.append(p.allocator, .{
                 .kind = .get,
@@ -24794,38 +24754,24 @@ pub const ConvertESMExportsForHmr = struct {
                 .properties = G.Property.List.fromList(ctx.export_props),
             }, logger.Loc.Empty);
 
-            if (ctx.can_implicitly_accept) {
-                // `hmr.implicitlyAccept(...)`
-                try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
-                    .value = Expr.init(E.Call, .{
-                        .target = Expr.init(E.Dot, .{
-                            .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
-                            .name = "implicitlyAccept",
-                            .name_loc = logger.Loc.Empty,
-                        }, logger.Loc.Empty),
-                        .args = try .fromSlice(p.allocator, &.{obj}),
+            // `hmr.exports = ...`
+            try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
+                .value = Expr.assign(
+                    Expr.init(E.Dot, .{
+                        .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
+                        .name = "exports",
+                        .name_loc = logger.Loc.Empty,
                     }, logger.Loc.Empty),
-                }, logger.Loc.Empty));
-            } else {
-                // `hmr.exports = ...`
-                try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
-                    .value = Expr.assign(
-                        Expr.init(E.Dot, .{
-                            .target = Expr.initIdentifier(p.hmr_api_ref, logger.Loc.Empty),
-                            .name = "exports",
-                            .name_loc = logger.Loc.Empty,
-                        }, logger.Loc.Empty),
-                        obj,
-                    ),
-                }, logger.Loc.Empty));
-            }
+                    obj,
+                ),
+            }, logger.Loc.Empty));
 
             // mark a dependency on module_ref so it is renamed
             try ctx.last_part.symbol_uses.put(p.allocator, p.module_ref, .{ .count_estimate = 1 });
             try ctx.last_part.declared_symbols.append(p.allocator, .{ .ref = p.module_ref, .is_top_level = true });
         }
 
-        if (p.options.features.react_fast_refresh and p.react_refresh.register_used and !ctx.can_implicitly_accept) {
+        if (p.options.features.react_fast_refresh and p.react_refresh.register_used) {
             try ctx.stmts.append(p.allocator, Stmt.alloc(S.SExpr, .{
                 .value = Expr.init(E.Call, .{
                     .target = Expr.init(E.Dot, .{

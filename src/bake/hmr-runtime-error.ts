@@ -6,6 +6,7 @@
 // This is embedded in `DevServer.sendSerializedFailures`. SSR is
 // left unused for simplicity; a flash of unstyled content is
 // stopped by the fact this script runs synchronously.
+import './debug';
 import { decodeAndAppendServerError, onServerErrorPayload, updateErrorOverlay } from "./client/overlay";
 import { DataViewReader } from "./client/data-view";
 import { initWebSocket } from "./client/websocket";

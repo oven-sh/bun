@@ -79,7 +79,7 @@ const Watcher = bun.Watcher;
 const ModuleLoader = JSC.ModuleLoader;
 const FetchFlags = JSC.FetchFlags;
 
-const TaggedPointerUnion = @import("../tagged_pointer.zig").TaggedPointerUnion;
+const TaggedPointerUnion = @import("../ptr.zig").TaggedPointerUnion;
 const Task = JSC.Task;
 
 pub const Buffer = MarkedArrayBuffer;
@@ -418,7 +418,8 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
-pub extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick1(*ZigGlobalObject, func: JSValue, JSValue) void;
+pub extern fn Bun__Process__queueNextTick2(*ZigGlobalObject, func: JSValue, JSValue, JSValue) void;
 
 comptime {
     const Bun__Process__send = JSC.toJSHostFunction(Bun__Process__send_);
@@ -723,7 +724,7 @@ const AutoKiller = struct {
 
     fn killProcesses(this: *AutoKiller) u32 {
         var count: u32 = 0;
-        while (this.processes.popOrNull()) |process| {
+        while (this.processes.pop()) |process| {
             if (!process.key.hasExited()) {
                 log("process.kill {d}", .{process.key.pid});
                 count += @as(u32, @intFromBool(process.key.kill(@intFromEnum(bun.SignalCode.default)) == .result));
@@ -1032,9 +1033,9 @@ pub const VirtualMachine = struct {
     pub fn isEventLoopAliveExcludingImmediates(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
-            vm.active_tasks +
-            vm.event_loop.tasks.count +
-            @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
+                vm.active_tasks +
+                vm.event_loop.tasks.count +
+                @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
@@ -2520,7 +2521,7 @@ pub const VirtualMachine = struct {
             return;
         } else if (jsc_vm.module_loader.eval_source != null and
             (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
-            strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
+                strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
         {
             ret.result = null;
             ret.path = specifier;
@@ -3552,7 +3553,7 @@ pub const VirtualMachine = struct {
         error_instance.toZigException(this.global, exception);
         const enable_source_code_preview = allow_source_code_preview and
             !(bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or
-            bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
+                bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
 
         defer {
             if (Environment.isDebug) {
@@ -4185,13 +4186,13 @@ pub const VirtualMachine = struct {
                             // + 1 to ensure the message is a non-empty string.
                             break :has_prefix msg_chars.len > code.len + ": ".len + 1 and
                                 (if (is_utf16)
-                                // there is no existing function to perform this slice comparison
-                                // []const u16, []const u8
-                                for (code, msg_chars[0..code.len]) |a, b| {
-                                    if (a != b) break false;
-                                } else true
-                            else
-                                bun.strings.eqlLong(msg_chars[0..code.len], code, false)) and
+                                    // there is no existing function to perform this slice comparison
+                                    // []const u16, []const u8
+                                    for (code, msg_chars[0..code.len]) |a, b| {
+                                        if (a != b) break false;
+                                    } else true
+                                else
+                                    bun.strings.eqlLong(msg_chars[0..code.len], code, false)) and
                                 msg_chars[code.len] == ':' and
                                 msg_chars[code.len + 1] == ' ';
                         },

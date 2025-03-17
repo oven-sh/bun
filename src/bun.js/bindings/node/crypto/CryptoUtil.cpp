@@ -1,4 +1,4 @@
-#include "util.h"
+#include "CryptoUtil.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <openssl/err.h>
 #include "ErrorCode.h"
@@ -6,6 +6,7 @@
 #include "BunString.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
+#include "JSBufferEncodingType.h"
 #include "JSCryptoKey.h"
 #include "CryptoKeyRSA.h"
 #include "AsymmetricKeyValue.h"
@@ -89,6 +90,23 @@ EncodedJSValue encode(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, st
     }
 }
 
+}
+
+WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObject, ThrowScope& scope, JSValue encodingValue)
+{
+    BufferEncodingType res = BufferEncodingType::buffer;
+    if (encodingValue.isUndefinedOrNull() || !encodingValue.isString()) {
+        return res;
+    }
+
+    WTF::String encodingString = encodingValue.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, res);
+
+    if (encodingString == "buffer"_s) {
+        return res;
+    }
+
+    return parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
 }
 
 std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue)
@@ -250,7 +268,7 @@ void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, unsi
     RETURN_IF_EXCEPTION(scope, void());
 
     // Create error object with the message
-    JSC::JSObject* errorObject = createTypeError(globalObject);
+    JSC::JSObject* errorObject = createError(globalObject, errorMessage);
     RETURN_IF_EXCEPTION(scope, void());
 
     PutPropertySlot messageSlot(errorObject, false);
@@ -383,21 +401,62 @@ NodeCryptoKeys::DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSValu
     return {};
 }
 
-JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue)
+JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding)
 {
     if (value.isString()) {
         JSString* dataString = value.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        auto encoding = parseEnumeration<WebCore::BufferEncodingType>(*globalObject, encodingValue).value_or(WebCore::BufferEncodingType::utf8);
+        auto dataView = dataString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (encoding == WebCore::BufferEncodingType::hex && dataString->length() % 2 != 0) {
+        encoding = encoding == BufferEncodingType::buffer ? BufferEncodingType::utf8 : encoding;
+        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, encoding));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
+        if (!view) {
+            Bun::ERR::INVALID_ARG_INSTANCE(scope, globalObject, argName, "Buffer, TypedArray, or DataView"_s, value);
+            return {};
+        }
+
+        if (view->isDetached()) {
+            throwTypeError(globalObject, scope, "Buffer is detached"_s);
+            return {};
+        }
+
+        return view;
+    }
+
+    return getArrayBufferOrView(globalObject, scope, value, argName, jsUndefined());
+}
+
+JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding)
+{
+    if (value.isString()) {
+        JSString* dataString = value.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto maybeEncoding = encodingValue.pureToBoolean() == TriState::True ? WebCore::parseEnumerationAllowBuffer(*globalObject, encodingValue) : std::optional<BufferEncodingType> { BufferEncodingType::utf8 };
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (!maybeEncoding && !defaultBufferEncoding) {
+            ERR::UNKNOWN_ENCODING(scope, globalObject, encodingValue);
+            return {};
+        }
+
+        auto encoding = maybeEncoding.has_value() ? maybeEncoding.value() : BufferEncodingType::buffer;
+
+        if (encoding == BufferEncodingType::hex && dataString->length() % 2 != 0) {
             Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "encoding"_s, encodingValue, makeString("is invalid for data of length "_s, dataString->length()));
             return {};
         }
 
-        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataString, encoding));
+        auto dataView = dataString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        encoding = encoding == BufferEncodingType::buffer ? BufferEncodingType::utf8 : encoding;
+        JSValue buf = JSValue::decode(WebCore::constructFromEncoding(globalObject, dataView, encoding));
         RETURN_IF_EXCEPTION(scope, {});
 
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buf);
@@ -683,6 +742,41 @@ std::optional<ncrypto::EVPKeyPointer> preparePrivateKey(JSGlobalObject* lexicalG
     return std::nullopt;
 }
 
+bool isArrayBufferOrView(JSValue value)
+{
+    if (value.isCell()) {
+        auto type = value.asCell()->type();
+        if (type >= Int8ArrayType && type <= DataViewType) {
+            return true;
+        }
+        if (type == ArrayBufferType) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey)
+{
+    if (!group || !privateKey)
+        return false;
+
+    // Private keys must be in the range [1, n-1]
+    // where n is the order of the curve
+    if (privateKey < ncrypto::BignumPointer::One())
+        return false;
+
+    auto order = ncrypto::BignumPointer::New();
+    if (!order)
+        return false;
+
+    if (!EC_GROUP_get_order(group, order.get(), nullptr))
+        return false;
+
+    return privateKey < order;
+}
+
 // takes a key value and encoding value
 // - if key is string, returns the key as a vector of bytes, using encoding if !isUndefined
 // - if key is isAnyArrayBuffer, return the bytes
@@ -745,8 +839,11 @@ void prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, Vector<ui
             encoding = WebCore::BufferEncodingType::utf8;
         }
 
+        auto keyView = keyString->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, );
+
         // TODO(dylan-conway): add a way to do this with just the Vector. no need to create a buffer
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyString, encoding));
+        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, encoding));
         auto* view = jsDynamicCast<JSC::JSArrayBufferView*>(buffer);
         out.append(std::span { reinterpret_cast<const uint8_t*>(view->vector()), view->byteLength() });
         return;

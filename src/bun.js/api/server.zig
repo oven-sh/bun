@@ -1684,7 +1684,7 @@ pub const ServerConfig = struct {
                     } else {
                         const ty = try global.determineSpecificType(onRequest_);
                         defer ty.deref();
-                        return global.throwInvalidArgumentType("Expected 'fetch()' to be a function, got {s}", .{ty});
+                        return global.throwInvalidArguments("Expected 'fetch()' to be a function, got {s}", .{ty});
                     }
                 }
                 const onRequest = onRequest_.withAsyncContextIfNeeded(global);

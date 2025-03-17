@@ -266,6 +266,12 @@ URL.revokeObjectURL;
 declare const myBodyInit: Bun.BodyInit;
 declare const myHeadersInit: Bun.HeadersInit;
 
+new Blob().text();
+new Blob().json();
+new Blob().arrayBuffer();
+new Blob().bytes();
+new Blob().formData();
+
 new MessagePort();
 
 new File(["code"], "name.ts");

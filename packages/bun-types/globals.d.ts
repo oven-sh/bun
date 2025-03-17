@@ -1236,6 +1236,7 @@ interface Blob {
    */
   // eslint-disable-next-line @definitelytyped/no-unnecessary-generics
   json(): Promise<any>;
+
   /**
    * Read the data from the blob as a {@link FormData} object.
    *
@@ -1249,6 +1250,15 @@ interface Blob {
    * closely to the `BodyMixin` API.
    */
   formData(): Promise<FormData>;
+
+  /**
+   * Returns a promise that resolves to the contents of the blob as a string
+   */
+  text(): Promise<string>;
+
+  /**
+   * Returns a promise that resolves to the contents of the blob as an ArrayBuffer
+   */
   arrayBuffer(): Promise<ArrayBuffer>;
   /**
    * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`

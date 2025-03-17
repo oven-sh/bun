@@ -1777,10 +1777,6 @@ declare module "bun:test" {
   type MatcherContext = MatcherUtils & MatcherState;
 }
 
-declare module "test" {
-  export type * from "bun:test";
-}
-
 declare namespace JestMock {
   /**
    * Copyright (c) Meta Platforms, Inc. and affiliates.

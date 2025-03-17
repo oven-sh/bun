@@ -45,6 +45,9 @@ declare module "bun" {
   type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
   type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
 
+  /**
+   * @private
+   */
   namespace __internal {
     type LibDomIsLoaded = typeof globalThis extends { onabort: any } ? true : false;
 
@@ -4592,6 +4595,11 @@ declare module "bun" {
     | number
     | { toString(): string };
 
+  /**
+   * Converts formats of colors
+   * @param input A value that could possibly be a color
+   * @param outputFormat An optional output format
+   */
   function color(
     input: ColorInput,
     outputFormat?: /**
@@ -4645,53 +4653,52 @@ declare module "bun" {
       | "rgba",
   ): string | null;
 
-  function color(
-    input: ColorInput,
-    /**
-     * An array of numbers representing the RGB color
-     * @example [100, 200, 200]
-     */
-    outputFormat: "[rgb]",
-  ): [number, number, number] | null;
-  function color(
-    input: ColorInput,
-    /**
-     * An array of numbers representing the RGBA color
-     * @example [100, 200, 200, 255]
-     */
-    outputFormat: "[rgba]",
-  ): [number, number, number, number] | null;
-  function color(
-    input: ColorInput,
-    /**
-     * An object representing the RGB color
-     * @example { r: 100, g: 200, b: 200 }
-     */
-    outputFormat: "{rgb}",
-  ): { r: number; g: number; b: number } | null;
-  function color(
-    input: ColorInput,
-    /**
-     * An object representing the RGBA color
-     * @example { r: 100, g: 200, b: 200, a: 0.5 }
-     */
-    outputFormat: "{rgba}",
-  ): { r: number; g: number; b: number; a: number } | null;
+  /**
+   * Convert any color input to rgb
+   * @param input Any color input
+   * @param outputFormat Specify `[rgb]` to output as an array with `r`, `g`, and `b` properties
+   */
+  function color(input: ColorInput, outputFormat: "[rgb]"): [number, number, number] | null;
+  /**
+   * Convert any color input to rgba
+   * @param input Any color input
+   * @param outputFormat Specify `[rgba]` to output as an array with `r`, `g`, `b`, and `a` properties
+   */
+  function color(input: ColorInput, outputFormat: "[rgba]"): [number, number, number, number] | null;
+  /**
+   * Convert any color input to a number
+   * @param input Any color input
+   * @param outputFormat Specify `{rgb}` to output as an object with `r`, `g`, and `b` properties
+   */
+  function color(input: ColorInput, outputFormat: "{rgb}"): { r: number; g: number; b: number } | null;
+  /**
+   * Convert any color input to rgba
+   * @param input Any color input
+   * @param outputFormat Specify {rgba} to output as an object with `r`, `g`, `b`, and `a` properties
+   */
+  function color(input: ColorInput, outputFormat: "{rgba}"): { r: number; g: number; b: number; a: number } | null;
+  /**
+   * Convert any color input to a number
+   * @param input Any color input
+   * @param outputFormat Specify `number` to output as a number
+   */
   function color(input: ColorInput, outputFormat: "number"): number | null;
 
-  interface Semver {
+  /**
+   * Bun.semver provides a fast way to parse and compare version numbers.
+   */
+  var semver: {
     /**
      * Test if the version satisfies the range. Stringifies both arguments. Returns `true` or `false`.
      */
-    satisfies(version: StringLike, range: StringLike): boolean;
+    satisfies: (version: StringLike, range: StringLike) => boolean;
 
     /**
      * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
      * Throws an error if either version is invalid.
      */
-    order(this: void, v1: StringLike, v2: StringLike): -1 | 0 | 1;
-  }
-  var semver: Semver;
+    order: (v1: StringLike, v2: StringLike) => -1 | 0 | 1;
+  };
 
   interface Unsafe {
     /**

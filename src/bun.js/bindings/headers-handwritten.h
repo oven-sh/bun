@@ -390,6 +390,9 @@ extern "C" size_t Bun__encoding__byteLengthUTF16AsUTF8(const UChar* ptr, size_t 
 extern "C" int64_t Bun__encoding__constructFromLatin1(void*, const unsigned char* ptr, size_t len, Encoding encoding);
 extern "C" int64_t Bun__encoding__constructFromUTF16(void*, const UChar* ptr, size_t len, Encoding encoding);
 
+extern "C" void Bun__EventLoop__runCallback1(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1);
+extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject* global, JSC::EncodedJSValue callback, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2);
+
 /// @note throws a JS exception and returns false if a stack overflow occurs
 template<bool isStrict, bool enableAsymmetricMatchers>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JSValue v2, JSC::MarkedArgumentBuffer&, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, JSC::ThrowScope* scope, bool addToStack);

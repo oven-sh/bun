@@ -245,7 +245,7 @@ const Handlers = struct {
         };
         inline for (pairs) |pair| {
             if (try opts.getTruthyComptime(globalObject, pair.@"1")) |callback_value| {
-                if (!callback_value.isCell() or !callback_value.isCallable(globalObject.vm())) {
+                if (!callback_value.isCell() or !callback_value.isCallable()) {
                     return globalObject.throwInvalidArguments("Expected \"{s}\" callback to be a function", .{pair[1]});
                 }
 

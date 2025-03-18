@@ -88,7 +88,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_HTTP2_HEADERS_SENT", Error],
   ["ERR_HTTP2_INFO_STATUS_NOT_ALLOWED", RangeError],
   ["ERR_HTTP2_INVALID_HEADER_VALUE", TypeError],
-  ["ERR_HTTP2_INVALID_HEADERS", Error],
   ["ERR_HTTP2_INVALID_INFO_STATUS", RangeError],
   ["ERR_HTTP2_INVALID_ORIGIN", TypeError],
   ["ERR_HTTP2_INVALID_PSEUDOHEADER", TypeError],

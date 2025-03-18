@@ -7355,8 +7355,8 @@ declare module "bun" {
    * const scannedFiles = await Array.fromAsync(glob.scan({ cwd: './src' }))
    * ```
    */
-  export interface Glob {
-    new (pattern: string);
+  export class Glob {
+    constructor(pattern: string);
 
     /**
      * Scan a root directory recursively for files that match this glob pattern. Returns an async iterator.

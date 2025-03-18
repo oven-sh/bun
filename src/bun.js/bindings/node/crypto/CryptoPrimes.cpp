@@ -215,7 +215,22 @@ void GeneratePrimeJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (m_bigint) {
-        // TODO: implement bigint!@!!!!
+        ncrypto::DataPointer primeHex = m_prime.toHex();
+        if (!primeHex) {
+            JSObject* err = createOutOfMemoryError(lexicalGlobalObject, "could not generate prime"_s);
+            Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(m_callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
+            return;
+        }
+
+        JSValue result = JSBigInt::parseInt(lexicalGlobalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
+        if (result.isEmpty()) {
+            JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "could not generate prime"_s);
+            Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(m_callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
+            return;
+        }
+
+        Bun__EventLoop__runCallback2(lexicalGlobalObject, JSValue::encode(m_callback), JSValue::encode(jsUndefined()), JSValue::encode(jsUndefined()), JSValue::encode(result));
+        return;
     }
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -473,15 +488,14 @@ JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimeSync, (JSC::JSGlobalObject * lexicalGlob
     });
 
     if (bigint) {
-        WTF::Vector<uint8_t> primeBuf;
-        if (!primeBuf.tryGrow(prime.byteLength())) {
+        ncrypto::DataPointer primeHex = prime.toHex();
+        if (!primeHex) {
             throwOutOfMemoryError(lexicalGlobalObject, scope, "could not generate prime"_s);
             return JSValue::encode({});
         }
 
-        ncrypto::BignumPointer::EncodePaddedInto(prime.get(), primeBuf.data(), primeBuf.size());
-
-        return JSValue::encode(JSBigInt::parseInt(lexicalGlobalObject, vm, primeBuf.span(), 16, JSBigInt::ErrorParseMode::ThrowExceptions, JSBigInt::ParseIntSign::Unsigned));
+        return JSValue::encode(JSBigInt::parseInt(lexicalGlobalObject, vm, primeHex.span(), 16, JSBigInt::ErrorParseMode::ThrowExceptions,
+            JSBigInt::ParseIntSign::Unsigned));
     }
 
     JSC::JSUint8Array* result = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), prime.byteLength());

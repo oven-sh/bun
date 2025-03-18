@@ -141,9 +141,15 @@ describe("Script", () => {
       const originalToString = Object.prototype.toString;
       const before = globalThis.withHacked;
 
+      const parsingContext = vm.createContext({});
+
       try {
         vm.compileFunction(
           "with(Object.prototype) { toString = function() { globalThis.withHacked = true; }; } return 'test';",
+          [],
+          {
+            parsingContext,
+          },
         )();
 
         // Check that Object.prototype.toString wasn't modified
@@ -162,8 +168,10 @@ describe("Script", () => {
     test("Eval attack should be contained", () => {
       const before = globalThis.evalHacked;
 
+      const parsingContext = vm.createContext({});
+
       try {
-        vm.compileFunction("return eval('globalThis.evalHacked = true;');")();
+        vm.compileFunction("return eval('globalThis.evalHacked = true;');", [], { parsingContext })();
         expect(globalThis.evalHacked).toBe(before);
       } catch (e) {
         expect(globalThis.evalHacked).toBe(before);

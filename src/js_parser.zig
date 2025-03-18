@@ -16367,9 +16367,9 @@ fn NewParser_(
 
                                 const maybe_key_value: ?ExprNodeIndex =
                                     if (e_.key_prop_index > -1)
-                                    props.orderedRemove(@intCast(e_.key_prop_index)).value
-                                else
-                                    null;
+                                        props.orderedRemove(@intCast(e_.key_prop_index)).value
+                                    else
+                                        null;
 
                                 // arguments needs to be like
                                 // {

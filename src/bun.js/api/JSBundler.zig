@@ -853,7 +853,7 @@ pub const JSBundler = struct {
             } else {
                 const loader: Api.Loader = @enumFromInt(loader_as_int.to(u8));
                 const source_code = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(this.bv2.plugins.?.globalObject(), source_code_value, bun.default_allocator) catch
-                // TODO:
+                    // TODO:
                     @panic("Unexpected: source_code is not a string");
                 this.value = .{
                     .success = .{

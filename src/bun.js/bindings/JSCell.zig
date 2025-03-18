@@ -7,10 +7,6 @@ const GetterSetter = @import("GetterSetter.zig").GetterSetter;
 const CustomGetterSetter = @import("CustomGetterSetter.zig").CustomGetterSetter;
 
 pub const JSCell = opaque {
-    pub const name = "JSC::JSCell";
-    pub const namespace = "JSC";
-    pub const include = "JavaScriptCore/JSCell.h";
-
     pub fn getObject(this: *JSCell) *JSC.JSObject {
         return JSC__JSCell__getObject(this);
     }

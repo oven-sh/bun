@@ -452,9 +452,6 @@ pub const ZigString = extern struct {
         }
     };
 
-    pub const name = "ZigString";
-    pub const namespace = "";
-
     pub inline fn is16Bit(this: *const ZigString) bool {
         return (@intFromPtr(this._unsafe_ptr_do_not_use) & (1 << 63)) != 0;
     }

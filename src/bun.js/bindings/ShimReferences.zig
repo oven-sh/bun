@@ -52,4 +52,9 @@ pub fn addShimReferences() void {
 
     _ = @import("LoadLibrary.zig").Bun__LoadLibraryBunString;
     _ = &JSC.NodeModuleModule__findPath;
+
+    WebSocketClient.exportAll();
+    WebSocketClientTLS.exportAll();
+    WebSocketHTTPClient.exportAll();
+    WebSocketHTTPSClient.exportAll();
 }

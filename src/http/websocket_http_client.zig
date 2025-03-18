@@ -2004,10 +2004,3 @@ pub const WebSocketHTTPClient = NewHTTPUpgradeClient(false);
 pub const WebSocketHTTPSClient = NewHTTPUpgradeClient(true);
 pub const WebSocketClient = NewWebSocketClient(false);
 pub const WebSocketClientTLS = NewWebSocketClient(true);
-
-comptime {
-    WebSocketClient.exportAll();
-    WebSocketClientTLS.exportAll();
-    WebSocketHTTPClient.exportAll();
-    WebSocketHTTPSClient.exportAll();
-}

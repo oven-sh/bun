@@ -106,9 +106,6 @@ pub fn PATH_SIZE(comptime T: type) usize {
     return if (T == u16) PATH_MIN_WIDE else bun.MAX_PATH_BYTES;
 }
 
-pub const name = "Bun__Path";
-pub const include = "Path.h";
-pub const namespace = "Bun";
 pub const sep_posix = CHAR_FORWARD_SLASH;
 pub const sep_windows = CHAR_BACKWARD_SLASH;
 pub const sep_str_posix = CHAR_STR_FORWARD_SLASH;

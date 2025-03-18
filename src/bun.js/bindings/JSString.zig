@@ -8,10 +8,6 @@ const ZigString = @import("ZigString.zig").ZigString;
 const JSError = bun.JSError;
 
 pub const JSString = opaque {
-    pub const include = "JavaScriptCore/JSString.h";
-    pub const name = "JSC::JSString";
-    pub const namespace = "JSC";
-
     extern fn JSC__JSString__toObject(this: *JSString, global: *JSGlobalObject) ?*JSObject;
     extern fn JSC__JSString__toZigString(this: *JSString, global: *JSGlobalObject, zig_str: *JSC.ZigString) void;
     extern fn JSC__JSString__eql(this: *const JSString, global: *JSGlobalObject, other: *JSString) bool;

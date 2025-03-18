@@ -1623,13 +1623,30 @@ declare function fetch(url: string | URL | Request, init?: BunFetchRequestInit):
  */
 declare function fetch(input: string | URL | Request, init?: BunFetchRequestInit): Promise<Response>;
 
+/**
+ * Bun's extensions of the `fetch` API
+ *
+ * @see {@link fetch} The `fetch` function itself
+ */
 declare namespace fetch {
+  /**
+   * Preconnect to a URL. This can be used to improve performance by pre-resolving the DNS and establishing a TCP connection before the request is made.
+   *
+   * This is a custom property that is not part of the Fetch API specification.
+   *
+   * @param url - The URL to preconnect to
+   * @param options - Options for the preconnect
+   */
   export function preconnect(
     url: string | URL,
     options?: {
+      /** Preconnect to the DNS of the URL */
       dns?: boolean;
+      /** Preconnect to the TCP connection of the URL */
       tcp?: boolean;
+      /** Preconnect to the HTTP connection of the URL */
       http?: boolean;
+      /** Preconnect to the HTTPS connection of the URL */
       https?: boolean;
     },
   ): void;

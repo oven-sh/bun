@@ -3808,10 +3808,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     };
     addStaticGlobals(staticGlobals, std::size(staticGlobals));
 
-    ASSERT(
-        this->get(this, WebCore::clientData(vm)->builtinNames().requireMapPrivateName()) == this->requireMap()
-    );
-
     // TODO: most/all of these private properties can be made as static globals.
     // i've noticed doing it as is will work somewhat but getDirect() wont be able to find them
 

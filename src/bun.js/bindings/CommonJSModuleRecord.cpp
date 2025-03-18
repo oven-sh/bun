@@ -1276,17 +1276,21 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                 if (entry) {
                     if (auto* moduleObject = jsDynamicCast<JSCommonJSModule*>(entry)) {
                         if (!moduleObject->hasEvaluated) {
-                            auto scope = DECLARE_CATCH_SCOPE(vm);
+                            auto scope = DECLARE_THROW_SCOPE(vm);
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,
                                 moduleObject,
                                 moduleObject->m_dirname.get(),
                                 moduleObject->m_filename.get());
-                            if (scope.exception()) {
+                            if (auto exception = scope.exception()) {
+                                scope.clearException();
+
                                 // On error, remove the module from the require map
                                 // so that it can be re-evaluated on the next require.
                                 globalObject->requireMap()->remove(globalObject, moduleObject->id());
+
+                                scope.throwException(globalObject, exception);
                                 return;
                             }
                         }

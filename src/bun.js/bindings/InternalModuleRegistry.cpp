@@ -76,10 +76,10 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
 }
 
 JSC::JSValue generateNativeModule(
-    JSC::JSGlobalObject* globalObject, 
+    JSC::JSGlobalObject* globalObject,
     JSC::VM& vm,
-    const SyntheticSourceProvider::SyntheticSourceGenerator& generator
-) {
+    const SyntheticSourceProvider::SyntheticSourceGenerator& generator)
+{
     Vector<JSC::Identifier, 4> propertyNames;
     JSC::MarkedArgumentBuffer arguments;
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -87,8 +87,7 @@ JSC::JSValue generateNativeModule(
         globalObject,
         JSC::Identifier::EmptyIdentifier, // Our generators do not do anything with the key
         propertyNames,
-        arguments
-    );
+        arguments);
     RETURN_IF_EXCEPTION(throwScope, {});
     // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
     // assigns the `default` export first.

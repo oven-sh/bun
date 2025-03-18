@@ -1121,7 +1121,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 
     if (auto exception = throwScope.exception()) {
         throwScope.clearException();
-        
+
         // On error, remove the module from the require map/
         // so that it can be re-evaluated on the next require.
         bool wasRemoved = globalObject->requireMap()->remove(globalObject, specifierValue);
@@ -1186,8 +1186,7 @@ void JSCommonJSModule::evaluate(
             source.source_code = Bun::toStringRef(makeString(
                 wrapperStart,
                 string.substring(trimStart, string.length() - trimStart - 4),
-                wrapperEnd
-            ));
+                wrapperEnd));
             source.needsDeref = true;
         }
     }
@@ -1237,8 +1236,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             auto concat = makeString(
                 globalObject->m_moduleWrapperStart,
                 source.source_code.toWTFString(BunString::ZeroCopy),
-                globalObject->m_moduleWrapperEnd
-            );
+                globalObject->m_moduleWrapperEnd);
             source.source_code.deref();
             source.source_code = Bun::toStringRef(concat);
         }

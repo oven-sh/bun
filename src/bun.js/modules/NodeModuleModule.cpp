@@ -644,7 +644,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalOb
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-
 JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
     (JSGlobalObject * global,
         EncodedJSValue thisValue,

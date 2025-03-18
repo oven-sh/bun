@@ -117,7 +117,6 @@ JSValue fetchCommonJSModule(
 JSValue fetchBuiltinModule(
     Zig::GlobalObject* globalObject,
     BunString* specifier,
-    ErrorableResolvedSource* res
-);
+    ErrorableResolvedSource* res);
 
 } // namespace Bun

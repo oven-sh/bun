@@ -285,8 +285,6 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     bool isESM = callFrame->argument(2).asBoolean();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
 
-
-
     RETURN_IF_EXCEPTION(scope, {});
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {

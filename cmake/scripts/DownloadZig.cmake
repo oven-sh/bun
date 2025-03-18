@@ -28,7 +28,6 @@ else()
   message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
 endif()
 
-optionx(ZIG_COMPILER_SAFE BOOL "Download a ReleaseSafe build of the Zig compiler. Only availble on macos aarch64." DEFAULT OFF)
 set(ZIG_NAME bootstrap-${ZIG_ARCH}-${ZIG_OS_ABI})
 if(ZIG_COMPILER_SAFE)
   set(ZIG_NAME ${ZIG_NAME}-ReleaseSafe)

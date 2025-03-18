@@ -61,7 +61,6 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
-const kConnectionEmitted = Symbol("connectionEmitted");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -325,7 +324,6 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   [kHandle];
   server: Server;
   _httpMessage;
-  [kConnectionEmitted] = false;
 
   constructor(server: Server, handle, encrypted) {
     super();
@@ -961,8 +959,7 @@ const ServerPrototype = {
             }
           }
 
-          if (isSocketNew && !reachedRequestsLimit && !socket[kConnectionEmitted]) {
-            socket[kConnectionEmitted] = true;
+          if (isSocketNew && !reachedRequestsLimit) {
             server.emit("connection", socket);
           }
 

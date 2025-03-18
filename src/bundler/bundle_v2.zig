@@ -426,7 +426,7 @@ fn genericPathWithPrettyInitialized(path: Fs.Path, target: options.Target, top_l
     const is_node = bun.strings.eqlComptime(path.namespace, "node");
     if (is_node and
         (bun.strings.hasPrefixComptime(path.text, NodeFallbackModules.import_path) or
-        !std.fs.path.isAbsolute(path.text)))
+            !std.fs.path.isAbsolute(path.text)))
     {
         return path;
     }
@@ -3060,42 +3060,41 @@ pub const BundleV2 = struct {
             }
 
             const transpiler, const bake_graph: bake.Graph, const target =
-                if (import_record.tag == .bake_resolve_to_ssr_graph)
-            brk: {
-                if (this.framework == null) {
-                    this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
-                        source,
-                        import_record.range.loc,
-                        this.graph.allocator,
-                        "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
-                        .{},
-                    ) catch @panic("unexpected log error");
-                    continue;
-                }
+                if (import_record.tag == .bake_resolve_to_ssr_graph) brk: {
+                    if (this.framework == null) {
+                        this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
+                            source,
+                            import_record.range.loc,
+                            this.graph.allocator,
+                            "The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle",
+                            .{},
+                        ) catch @panic("unexpected log error");
+                        continue;
+                    }
 
-                const is_supported = this.framework.?.server_components != null and
-                    this.framework.?.server_components.?.separate_ssr_graph;
-                if (!is_supported) {
-                    this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
-                        source,
-                        import_record.range.loc,
-                        this.graph.allocator,
-                        "Framework does not have a separate SSR graph to put this import into",
-                        .{},
-                    ) catch @panic("unexpected log error");
-                    continue;
-                }
+                    const is_supported = this.framework.?.server_components != null and
+                        this.framework.?.server_components.?.separate_ssr_graph;
+                    if (!is_supported) {
+                        this.logForResolutionFailures(source.path.text, .ssr).addErrorFmt(
+                            source,
+                            import_record.range.loc,
+                            this.graph.allocator,
+                            "Framework does not have a separate SSR graph to put this import into",
+                            .{},
+                        ) catch @panic("unexpected log error");
+                        continue;
+                    }
 
-                break :brk .{
-                    this.ssr_transpiler,
-                    .ssr,
-                    .bake_server_components_ssr,
+                    break :brk .{
+                        this.ssr_transpiler,
+                        .ssr,
+                        .bake_server_components_ssr,
+                    };
+                } else .{
+                    this.transpilerForTarget(ast.target),
+                    ast.target.bakeGraph(),
+                    ast.target,
                 };
-            } else .{
-                this.transpilerForTarget(ast.target),
-                ast.target.bakeGraph(),
-                ast.target,
-            };
 
             var had_busted_dir_cache = false;
             var resolve_result = inner: while (true) break transpiler.resolver.resolveWithFramework(
@@ -5086,7 +5085,7 @@ pub const ParseTask = struct {
             this.ctx.framework.?.server_components.?.separate_ssr_graph) or
             // set the target to the client when bundling client-side files
             ((transpiler.options.server_components or transpiler.options.dev_server != null) and
-            task.known_target == .browser))
+                task.known_target == .browser))
         {
             transpiler = this.ctx.client_transpiler;
             resolver = &transpiler.resolver;
@@ -5102,9 +5101,9 @@ pub const ParseTask = struct {
 
         const target = (if (task.source_index.get() == 1) targetFromHashbang(entry.contents) else null) orelse
             if (task.known_target == .bake_server_components_ssr and transpiler.options.framework.?.server_components.?.separate_ssr_graph)
-            .bake_server_components_ssr
-        else
-            transpiler.options.target;
+                .bake_server_components_ssr
+            else
+                transpiler.options.target;
 
         const output_format = transpiler.options.output_format;
 
@@ -9089,9 +9088,9 @@ pub const LinkerContext = struct {
                                     //
                                     if (kind != .require and
                                         (kind != .stmt or
-                                        record.contains_import_star or
-                                        record.contains_default_alias or
-                                        record.contains_es_module_alias))
+                                            record.contains_import_star or
+                                            record.contains_default_alias or
+                                            record.contains_es_module_alias))
                                     {
                                         record.wrap_with_to_esm = true;
                                         to_esm_uses += 1;
@@ -9603,7 +9602,7 @@ pub const LinkerContext = struct {
         const exports_ref = c.graph.ast.items(.exports_ref)[id];
         const all_export_stmts: []js_ast.Stmt = stmts.head[0 .. @as(usize, @intFromBool(needs_exports_variable)) +
             @as(usize, @intFromBool(properties.items.len > 0) +
-            @as(usize, @intFromBool(force_include_exports_for_entry_point)))];
+                @as(usize, @intFromBool(force_include_exports_for_entry_point)))];
         stmts.head = stmts.head[all_export_stmts.len..];
         var remaining_stmts = all_export_stmts;
         defer bun.assert(remaining_stmts.len == 0); // all must be used
@@ -15777,8 +15776,8 @@ pub const LinkerContext = struct {
             // perform tree-shaking on the runtime even if tree-shaking is disabled.
             if (!can_be_removed_if_unused or
                 (!part.force_tree_shaking and
-                !c.options.tree_shaking and
-                entry_point_kinds[source_index].isEntryPoint()))
+                    !c.options.tree_shaking and
+                    entry_point_kinds[source_index].isEntryPoint()))
             {
                 c.markPartLiveForTreeShaking(
                     @intCast(part_index),
@@ -16294,9 +16293,9 @@ pub const LinkerContext = struct {
             // TODO: investigate if this is a bug
             // It implies there are imports being added without being resolved
             return .{
-            .value = .{},
-            .status = .external,
-        };
+                .value = .{},
+                .status = .external,
+            };
 
         // Is this an external file?
         const record: *const ImportRecord = import_records.at(named_import.import_record_index);

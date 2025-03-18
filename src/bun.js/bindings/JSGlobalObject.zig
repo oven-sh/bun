@@ -491,8 +491,11 @@ pub const JSGlobalObject = opaque {
             // you most likely need to run
             //   make clean-jsc-bindings
             //   make bindings -j10
-            const assertion = this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(JSC.VirtualMachine.get()));
-            bun.assert(assertion);
+            if (JSC.VirtualMachine.VMHolder.vm) |vm_| {
+                bun.assert(this.bunVMUnsafe() == @as(*anyopaque, @ptrCast(vm_)));
+            } else {
+                @panic("This thread lacks a Bun VM");
+            }
         }
         return @as(*JSC.VirtualMachine, @ptrCast(@alignCast(this.bunVMUnsafe())));
     }

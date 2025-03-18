@@ -20,35 +20,34 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 'use strict';
-require('../common');
-const assert = require('assert');
-const fs = require('fs');
-const fixtures = require('../common/fixtures');
 
-// A module with an error in it should throw
-assert.throws(() => {
-  require(fixtures.path('/throws_error'));
-}, /^Error: blah$/);
+require('../../common');
 
-// Requiring the same module again should throw as well
-assert.throws(() => {
-  require(fixtures.path('/throws_error'));
-}, /^Error: blah$/);
+const spawn = require('child_process').spawn;
 
-// Requiring a module that does not exist should throw an
-// error with its `code` set to MODULE_NOT_FOUND
-assert.throws(
-  () => require('/DOES_NOT_EXIST'),
-  { code: 'MODULE_NOT_FOUND' }
-);
-
-assertExists('/module-require/not-found/trailingSlash.js');
-assertExists('/module-require/not-found/node_modules/module1/package.json');
-assert.throws(
-  () => require('/module-require/not-found/trailingSlash'),
-  { code: 'MODULE_NOT_FOUND' }
-);
-
-function assertExists(fixture) {
-  assert(fs.existsSync(fixtures.path(fixture)));
+function run(cmd, strict, cb) {
+  const args = [];
+  if (strict) args.push('--use_strict');
+  args.push('-pe', cmd);
+  const child = spawn(process.execPath, args);
+  child.stdout.pipe(process.stdout);
+  child.stderr.pipe(process.stdout);
+  child.on('close', cb);
 }
+
+const queue =
+  [ 'with(this){__filename}',
+    '42',
+    'throw new Error("hello")',
+    'var x = 100; y = x;',
+    'var ______________________________________________; throw 10' ];
+
+function go() {
+  const c = queue.shift();
+  if (!c) return console.log('done');
+  run(c, false, function() {
+    run(c, true, go);
+  });
+}
+
+go();

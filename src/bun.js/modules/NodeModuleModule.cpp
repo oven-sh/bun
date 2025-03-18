@@ -905,6 +905,9 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     exportNames.reserveCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
     exportValues.ensureCapacity(Bun::countof(Bun::nodeModuleObjectTableValues) + 1);
 
+    exportNames.append(vm.propertyNames->defaultKeyword);
+    exportValues.append(constructor);
+
     for (unsigned i = 0; i < Bun::countof(Bun::nodeModuleObjectTableValues);
          ++i) {
         const auto& entry = Bun::nodeModuleObjectTableValues[i];
@@ -922,9 +925,6 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
         exportNames.append(property);
         exportValues.append(value);
     }
-
-    exportNames.append(vm.propertyNames->defaultKeyword);
-    exportValues.append(constructor);
 }
 
 } // namespace Zig

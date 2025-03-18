@@ -92,6 +92,7 @@ JSC::JSValue generateNativeModule(
     RETURN_IF_EXCEPTION(throwScope, {});
     // This goes off of the assumption that you only call this `evaluate` using a generator that explicitly
     // assigns the `default` export first.
+    ASSERT(propertyNames.at(0) == vm.propertyNames->defaultKeyword);
     JSValue defaultValue = arguments.at(0);
     ASSERT(defaultValue);
     return defaultValue;

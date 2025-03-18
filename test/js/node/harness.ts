@@ -379,8 +379,22 @@ if (normalized.includes("node/test/parallel")) {
     };
   }
 
+  // Previously, we patched require.cache["node:test"] to be a mock. However,
+  // #18266 fixed a bug where that patching was not supposed to work.
+  // Patch via replacing the require function itself.
+  const Module = require("node:module");
+  const originalRequire = Module.prototype.require;
+  let test: any = null;
+  Module.prototype.require = function (...args: any[]) {
+    if (args[0] === "node:test") {
+      return test ??= createMockNodeTestModule();
+    }
+    return originalRequire.apply(this, args);
+  };
   require.cache["node:test"] ??= {
-    exports: createMockNodeTestModule(),
+    get exports() {
+      return test ??= createMockNodeTestModule();
+    },
     loaded: true,
     isPreloading: false,
     id: "node:test",

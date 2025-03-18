@@ -1,4 +1,4 @@
-import { generatePrime, checkPrime, generatePrimeSync, checkPrimeSync } from "node:crypto";
+import { checkPrime, checkPrimeSync, generatePrime, generatePrimeSync } from "node:crypto";
 import { bench, run } from "../runner.mjs";
 
 const prime512 = generatePrimeSync(512);

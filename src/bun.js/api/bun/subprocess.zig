@@ -1598,9 +1598,9 @@ pub fn onProcessExit(this: *Subprocess, process: *Process, status: bun.spawn.Sta
         if (this.on_exit_callback.trySwap()) |callback| {
             const waitpid_value: JSValue =
                 if (status == .err)
-                status.err.toJSC(globalThis)
-            else
-                .undefined;
+                    status.err.toJSC(globalThis)
+                else
+                    .undefined;
 
             const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
             this_value.ensureStillAlive();

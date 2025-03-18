@@ -6165,6 +6165,7 @@ pub const NodeHTTPResponse = struct {
     finished: bool = false,
     ended: bool = false,
     upgraded: bool = false,
+    hasCustomOnData: bool = false,
     is_request_pending: bool = true,
     body_read_state: BodyReadState = .none,
     body_read_ref: JSC.Ref = .{},
@@ -6346,7 +6347,7 @@ pub const NodeHTTPResponse = struct {
     pub fn maybeStopReadingBody(this: *NodeHTTPResponse, vm: *JSC.VirtualMachine) void {
         this.upgrade_context.deinit(); // we can discard the upgrade context now
 
-        if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and !this.onDataCallback.has()) {
+        if ((this.aborted or this.ended) and (this.body_read_ref.has or this.body_read_state == .pending) and (!this.hasCustomOnData or !this.onDataCallback.has())) {
             const had_ref = this.body_read_ref.has;
             this.response.clearOnData();
             this.body_read_ref.unref(vm);
@@ -6975,7 +6976,7 @@ pub const NodeHTTPResponse = struct {
         if (is_end) {
             // Discard the body read ref if it's pending and no onData callback is set at this point.
             // This is the equivalent of req._dump().
-            if (this.body_read_ref.has and this.body_read_state == .pending and !this.onDataCallback.has()) {
+            if (this.body_read_ref.has and this.body_read_state == .pending and (!this.hasCustomOnData or !this.onDataCallback.has())) {
                 this.body_read_ref.unref(JSC.VirtualMachine.get());
                 this.deref();
                 this.body_read_state = .none;
@@ -7032,15 +7033,20 @@ pub const NodeHTTPResponse = struct {
     pub fn setOnAbort(this: *NodeHTTPResponse, globalObject: *JSC.JSGlobalObject, value: JSValue) bool {
         if (this.isDone() or value == .undefined) {
             this.onAbortedCallback.clearWithoutDeallocation();
-            return true;
+        } else {
+            this.onAbortedCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
         }
 
-        this.onAbortedCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
         return true;
     }
 
     pub fn getOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
         return this.onDataCallback.get() orelse .undefined;
+    }
+
+    pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) bool {
+        this.hasCustomOnData = value.toBoolean();
+        return true;
     }
 
     fn clearOnDataCallback(this: *NodeHTTPResponse) void {
@@ -7079,6 +7085,7 @@ pub const NodeHTTPResponse = struct {
         }
 
         this.onDataCallback.set(globalObject, value.withAsyncContextIfNeeded(globalObject));
+        this.hasCustomOnData = true;
         this.response.onData(*NodeHTTPResponse, onData, this);
         this.is_data_buffered_during_pause = false;
 

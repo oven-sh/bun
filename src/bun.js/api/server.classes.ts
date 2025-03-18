@@ -164,6 +164,9 @@ export default [
         getter: "getOnAbort",
         setter: "setOnAbort",
       },
+      hasCustomOnData: {
+        setter: "setHasCustomOnData",
+      },
       // ontimeout: {
       //   getter: "getOnTimeout",
       //   setter: "setOnTimeout",

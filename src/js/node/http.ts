@@ -1375,6 +1375,7 @@ const IncomingMessagePrototype = {
 
       if (!internalRequest.ondata) {
         internalRequest.ondata = onDataIncomingMessage.bind(this);
+        internalRequest.hasCustomOnData = false;
       }
 
       return true;

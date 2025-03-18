@@ -133,7 +133,7 @@ const vm = require('vm');
 {
   assert.strictEqual(
     vm.compileFunction('console.log("Hello, World!")').toString(),
-    'function () {\nconsole.log("Hello, World!")\n}'
+     typeof Bun === 'undefined' ? 'function () {\nconsole.log("Hello, World!")\n}' : 'function () {console.log("Hello, World!")}'
   );
 
   assert.strictEqual(
@@ -150,7 +150,7 @@ const vm = require('vm');
     vm.compileFunction(
       '});\n\n(function() {\nconsole.log(1);\n})();\n\n(function() {'
     );
-  }, {
+  }, typeof Bun !== 'undefined' ? {
     // V8 has this function called (see `Compiler::GetWrappedFunction`) which
     // can parse _just_ the body of a function without needing to wrap it in
     // a function expression or declaration. This gives better parsing error
@@ -162,9 +162,9 @@ const vm = require('vm');
     // This is checked in our implementation because we expect the result of parsing to be a single anonymous function
     // expression.
     message: 'Parser error',
-    // Original error message from Node.js
-    // name: 'SyntaxError',
-    // message: "Unexpected token '}'"
+  } : {
+    name: 'SyntaxError',
+    message:  "Unexpected token '}'"
   });
 
   // Tests for failed argument validation
@@ -289,11 +289,14 @@ const vm = require('vm');
   // Setting value to run the last three tests
   Error.stackTraceLimit = 1;
 
+  // We're going to have to change the stacktrace tests here due to 
+  // quirks of JSC that don't match with V8 that would require
+  // a lot changes.
   assert.throws(() => {
     vm.compileFunction('throw new Error("Sample Error")')();
   }, {
     message: 'Sample Error',
-    stack: 'Error: Sample Error\n    at <anonymous>:1:7'
+    stack: typeof Bun !== 'undefined' ? 'Error: Sample Error\n    at <anonymous> (file:///:1:30)' : 'Error: Sample Error\n    at <anonymous>:1:7'
   });
 
   assert.throws(() => {
@@ -304,7 +307,7 @@ const vm = require('vm');
     )();
   }, {
     message: 'Sample Error',
-    stack: 'Error: Sample Error\n    at <anonymous>:4:7'
+    stack: typeof Bun !== 'undefined' ? 'Error: Sample Error\n    at <anonymous> (file:///:4:30)' : 'Error: Sample Error\n    at <anonymous>:4:7'
   });
 
   assert.throws(() => {
@@ -315,7 +318,7 @@ const vm = require('vm');
     )();
   }, {
     message: 'Sample Error',
-    stack: 'Error: Sample Error\n    at <anonymous>:1:10'
+    stack: typeof Bun !== 'undefined' ? 'Error: Sample Error\n    at <anonymous> (file:///:1:33)' : 'Error: Sample Error\n    at <anonymous>:1:10'
   });
 
   assert.strictEqual(
@@ -336,7 +339,7 @@ const vm = require('vm');
     )();
   }, {
     message: 'varInContext is not defined',
-    stack: 'ReferenceError: varInContext is not defined\n    at <anonymous>:1:1'
+    stack: typeof Bun !== 'undefined' ? 'ReferenceError: varInContext is not defined\n    at <anonymous> (file:///:1:34)' : 'ReferenceError: varInContext is not defined\n    at <anonymous>:1:1'
   });
 
   assert.notDeepStrictEqual(

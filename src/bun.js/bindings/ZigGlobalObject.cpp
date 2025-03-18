@@ -602,7 +602,7 @@ WTF::String Bun::formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0) {
+            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
 

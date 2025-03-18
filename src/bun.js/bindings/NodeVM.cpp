@@ -49,8 +49,9 @@ using namespace WebCore;
 ///
 /// This code is adapted/inspired from JSC::constructFunction, which is used for function declarations.
 static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, const String& fileName = String(), JSC::SourceTaintedOrigin sourceTaintOrigin = JSC::SourceTaintedOrigin::Untainted, TextPosition position = TextPosition(), JSC::JSScope* scope = nullptr);
-static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const String& body, ThrowScope& scope);
-static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope);
+static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
+
+NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox);
 
 class NodeVMScriptConstructor final : public JSC::InternalFunction {
 public:
@@ -708,7 +709,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     JSValue optionsArg = callFrame->argument(2);
     ScriptOptions options;
     bool didThrow = false;
-    NodeVMGlobalObject* parsingContext = nullptr;
+    JSGlobalObject* parsingContext = globalObject;
     JSValue contextExtensionsValue = jsUndefined();
 
     if (!optionsArg.isUndefined()) {
@@ -785,7 +786,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!parsingContextValue.isUndefined() && !parsingContextValue.isEmpty()) {
-            if (!parsingContextValue.isNull() || !parsingContextValue.isObject())
+            if (parsingContextValue.isNull() || !parsingContextValue.isObject())
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 
             JSObject* context = asObject(parsingContextValue);
@@ -793,11 +794,11 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
             JSValue scopeValue = zigGlobalObject->vmModuleContextMap()->get(context);
 
             if (scopeValue.isUndefined())
-                return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.parsingContext"_s, context, "must be a contextified object"_s);
+                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 
             parsingContext = jsDynamicCast<NodeVMGlobalObject*>(scopeValue);
             if (!parsingContext)
-                return ERR::INVALID_ARG_VALUE(scope, globalObject, "options.parsingContext"_s, context, "must be a contextified object"_s);
+                return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
         }
 
         // Handle contextExtensions option
@@ -829,11 +830,6 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
         // - importModuleDynamically (function)
     }
 
-    // Step 2: Create a new NodeVMGlobalObject context or use the one passed in options.parsingContext
-    if (!parsingContext) {
-        parsingContext = NodeVMGlobalObject::create(vm, defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure());
-    }
-
     // Step 3: Create a new function
     // Prepare the function code by combining the parameters and body
     String sourceString = codeArg.toWTFString(globalObject);
@@ -854,7 +850,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleCompileFunction, (JSGlobalObject * globalObject
     SourceOrigin sourceOrigin = JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename));
 
     // Process contextExtensions if they exist
-    JSScope* functionScope = parsingContext;
+    JSScope* functionScope = !!parsingContext ? parsingContext : globalObject;
 
     if (!contextExtensionsValue.isUndefinedOrNull() && !contextExtensionsValue.isEmpty() && contextExtensionsValue.isObject() && isArray(globalObject, contextExtensionsValue)) {
         auto* contextExtensionsArray = jsCast<JSArray*>(contextExtensionsValue);
@@ -931,6 +927,21 @@ Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
     return NodeVMGlobalObject::createStructure(vm, jsNull());
 }
 
+NodeVMGlobalObject* createContextImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSObject* sandbox)
+{
+    auto* targetContext = NodeVMGlobalObject::create(vm,
+        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure());
+
+    // Set sandbox as contextified object
+    targetContext->setContextifiedObject(sandbox);
+
+    // Store context in WeakMap for isContext checks
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
+
+    return targetContext;
+}
+
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -975,16 +986,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSObject* sandbox = asObject(contextArg);
 
-    // Create new VM context global object
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        defaultGlobalObject(globalObject)->NodeVMGlobalObjectStructure());
-
-    // Set sandbox as contextified object
-    targetContext->setContextifiedObject(sandbox);
-
-    // Store context in WeakMap for isContext checks
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
+    auto _ = createContextImpl(vm, globalObject, sandbox);
 
     return JSValue::encode(sandbox);
 }
@@ -1220,11 +1222,13 @@ static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalOb
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     // wrap the arguments in an anonymous function expression
-    String code = stringifyAnonymousFunction(globalObject, args, throwScope);
+    int startOffset = 0;
+    String code = stringifyAnonymousFunction(globalObject, args, throwScope, &startOffset);
     EXCEPTION_ASSERT(!!throwScope.exception() == code.isNull());
 
+    position.m_column = OrdinalNumber::fromZeroBasedInt(position.m_column.zeroBasedInt());
     SourceCode sourceCode(
-        JSC::StringSourceProvider::create(code, sourceOrigin, fileName, sourceTaintOrigin, position),
+        JSC::StringSourceProvider::create(code, sourceOrigin, fileName, sourceTaintOrigin, position, SourceProviderSourceType::Program),
         position.m_line.oneBasedInt(), position.m_column.oneBasedInt());
 
     LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? TaintedByWithScopeLexicallyScopedFeature : NoLexicallyScopedFeatures;
@@ -1281,6 +1285,8 @@ static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalOb
     if (!metadata)
         return nullptr;
 
+    // metadata->setStartOffset(startOffset);
+
     ConstructAbility constructAbility = constructAbilityForParseMode(metadata->parseMode());
     UnlinkedFunctionExecutable* unlinkedFunctionExecutable = UnlinkedFunctionExecutable::create(
         vm,
@@ -1299,7 +1305,7 @@ static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalOb
 
     unlinkedFunctionExecutable->recordParse(program->features(), metadata->lexicallyScopedFeatures(), /* hasCapturedVariables */ false);
 
-    FunctionExecutable* functionExecutable = unlinkedFunctionExecutable->link(vm, nullptr, sourceCode, -1);
+    FunctionExecutable* functionExecutable = unlinkedFunctionExecutable->link(vm, nullptr, sourceCode, std::nullopt);
 
     JSScope* functionScope = scope ? scope : globalObject->globalScope();
 
@@ -1309,32 +1315,26 @@ static JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalOb
     return function;
 }
 
-static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const String& body, ThrowScope& scope)
-{
-    // Create an anonymous function expression with the provided body
-    String program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
-
-    if (UNLIKELY(!program)) {
-        throwOutOfMemoryError(globalObject, scope);
-        return {};
-    }
-
-    return program;
-}
-
 // Helper function to create an anonymous function expression with parameters
-static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope)
+static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset)
 {
     // How we stringify functions is important for creating anonymous function expressions
     String program;
     if (args.isEmpty()) {
         // No arguments, just an empty function body
         program = "(function () {\n\n})"_s;
+        // program = "(function () {})"_s;
     } else if (args.size() == 1) {
         // Just the function body
         auto body = args.at(0).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
+        // program = tryMakeString("(function () {\n"_s, body, "\n})"_s);
+        // *outOffset = "(function () {\n"_s.length();
+
+        program = tryMakeString("(function () {"_s, body, "})"_s);
+        *outOffset = "(function () {"_s.length();
+
+        // program = tryMakeString("(function () {"_s, body, "\n})"_s);
         if (UNLIKELY(!program)) {
             throwOutOfMemoryError(globalObject, scope);
             return {};
@@ -1357,7 +1357,14 @@ static String stringifyAnonymousFunction(JSGlobalObject* globalObject, const Arg
         auto body = args.at(parameterCount).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
+        // program = tryMakeString("(function ("_s, paramString.toString(), ") {\n"_s, body, "\n})"_s);
+        // *outOffset = "(function () {\n"_s.length() + paramString.length();
+
+        // program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "})"_s);
+        // program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "\n})"_s);
+        program = tryMakeString("(function ("_s, paramString.toString(), ") {"_s, body, "})"_s);
+        *outOffset = "(function ("_s.length() + paramString.length() + ") {"_s.length();
+
         if (UNLIKELY(!program)) {
             throwOutOfMemoryError(globalObject, scope);
             return {};

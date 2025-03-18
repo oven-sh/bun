@@ -2310,7 +2310,7 @@ function getOrigin(origin: any, isAltSvc: boolean): string {
       if (isAltSvc) {
         throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
       } else {
-        throw $ERR_HTTP2_INVALID_ORIGIN();
+        throw $ERR_INVALID_URL(origin);
       }
     }
   } else if (origin != null && typeof origin === "object") {

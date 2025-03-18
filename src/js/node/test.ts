@@ -416,6 +416,10 @@ function afterEach(arg0: unknown, arg1: unknown) {
   afterEach(fn);
 }
 
+function isBuiltinModule(filePath: string) {
+  return filePath.startsWith("node:") || filePath.startsWith("bun:") || filePath.startsWith("[native code]");
+}
+
 function callerSourceOrigin(): string {
   const error = new Error();
   const originalPrepareStackTrace = Error.prepareStackTrace;
@@ -424,7 +428,7 @@ function callerSourceOrigin(): string {
     origin = stack
       .find(s => {
         const filePath = s.getFileName();
-        if (filePath?.startsWith("/")) {
+        if (filePath && !isBuiltinModule(filePath)) {
           return filePath;
         }
         return undefined;

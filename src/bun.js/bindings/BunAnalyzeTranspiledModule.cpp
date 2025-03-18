@@ -203,7 +203,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
 
-#if BUN_DEBUG
+#if true
     RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleKey, sourceCode, promise, moduleRecord));
 #else
     promise->fulfillWithNonPromise(globalObject, moduleRecord);
@@ -241,14 +241,14 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
     if (resultValue != nullptr) {
         auto actual = dumpRecordInfo(resultValue);
         auto expected = dumpRecordInfo(moduleRecord);
-        if (actual != expected) {
+        if (actual != expected or true) {
             dataLog("\n\n\n\n\n\n\x1b[95mBEGIN analyzeTranspiledModule\x1b(B\x1b[m\n  --- module key ---\n", moduleKey.utf8().data(), "\n  --- code ---\n\n", sourceCode.toUTF8().data(), "\n");
             dataLog("  ------", "\n");
             dataLog("  BunAnalyzeTranspiledModule:", "\n");
 
             zig__renderDiff(expected.utf8().data(), expected.utf8().length(), actual.utf8().data(), actual.utf8().length(), globalObject);
 
-            RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("Imports different between parseFromSourceCode and fallbackParse")))));
+            if (actual != expected) RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("Imports different between parseFromSourceCode and fallbackParse")))));
         }
     }
 

@@ -274,7 +274,7 @@ pub fn build(b: *Build) !void {
 
         .tracy_callstack_depth = b.option(u16, "tracy_callstack_depth", "") orelse 10,
         .enable_logs = b.option(bool, "enable_logs", "Enable logs in release") orelse false,
-        .enable_asan = b.option(bool, "enable_asan", "Enable asan") orelse false,
+        .enable_asan = true,
     };
 
     // zig build obj

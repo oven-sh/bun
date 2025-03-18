@@ -27,7 +27,6 @@ const vm = require('vm');
 for (const valToTest of [
   'string', null, undefined, 8.9, Symbol('sym'), true,
 ]) {
-  console.log('ooga', valToTest)
   assert.throws(() => {
     vm.isContext(valToTest);
   }, {

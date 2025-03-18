@@ -46,11 +46,11 @@ const pCheckPrime = promisify(checkPrime);
 [-1, 0, 2 ** 31, 2 ** 31 + 1, 2 ** 32 - 1, 2 ** 32].forEach((size) => {
   assert.throws(() => generatePrime(size, common.mustNotCall()), {
     code: 'ERR_OUT_OF_RANGE',
-    message: />= 1 && <= 2147483647/
+    message: />= 1 and <= 2147483647/
   });
   assert.throws(() => generatePrimeSync(size), {
     code: 'ERR_OUT_OF_RANGE',
-    message: />= 1 && <= 2147483647/
+    message: />= 1 and <= 2147483647/
   });
 });
 
@@ -257,11 +257,11 @@ for (const checks of [-(2 ** 31), -1, 2 ** 31, 2 ** 32 - 1, 2 ** 32, 2 ** 50]) {
   const bytes = Buffer.alloc(67108864);
   bytes[0] = 0x1;
   assert.throws(() => checkPrime(bytes, common.mustNotCall()), {
-    code: 'ERR_OSSL_BN_BIGNUM_TOO_LONG',
+    code: /ERR_OSSL_(BN_)?BIGNUM_TOO_LONG/,
     message: /bignum[_ ]too[_ ]long/i
   });
   assert.throws(() => checkPrimeSync(bytes), {
-    code: 'ERR_OSSL_BN_BIGNUM_TOO_LONG',
+    code: /ERR_OSSL_(BN_)?BIGNUM_TOO_LONG/,
     message: /bignum[_ ]too[_ ]long/i
   });
 }

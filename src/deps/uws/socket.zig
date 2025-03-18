@@ -27,12 +27,12 @@ pub const Socket = opaque {
     }
 
     pub fn pause(this: *Socket, ssl: bool) void {
-        debug("us_socket_pause({d})", .{ @intFromPtr(this) });
+        debug("us_socket_pause({d})", .{@intFromPtr(this)});
         us_socket_pause(@intFromBool(ssl), this);
     }
 
     pub fn @"resume"(this: *Socket, ssl: bool) void {
-        debug("us_socket_resume({d})", .{ @intFromPtr(this) });
+        debug("us_socket_resume({d})", .{@intFromPtr(this)});
         us_socket_resume(@intFromBool(ssl), this);
     }
 
@@ -42,7 +42,7 @@ pub const Socket = opaque {
     }
 
     pub fn shutdown(this: *Socket, ssl: bool) void {
-        debug("us_socket_shutdown({d})", .{ @intFromPtr(this) });
+        debug("us_socket_shutdown({d})", .{@intFromPtr(this)});
         us_socket_shutdown(@intFromBool(ssl), this);
     }
 
@@ -63,7 +63,7 @@ pub const Socket = opaque {
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set
-    pub fn localAddress(this: *Socket, ssl: bool, buf: []u8) error {LocalAddress}![]const u8 {
+    pub fn localAddress(this: *Socket, ssl: bool, buf: []u8) error{LocalAddress}![]const u8 {
         var length: i32 = @intCast(buf.len); // todo: check us_socket_local_address reads length
         us_socket_local_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) return error.LocalAddress;
@@ -71,7 +71,7 @@ pub const Socket = opaque {
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set
-    pub fn remoteAddress(this: *Socket, ssl: bool, buf: [*]u8) error {RemoteAddress}![]const u8 {
+    pub fn remoteAddress(this: *Socket, ssl: bool, buf: [*]u8) error{RemoteAddress}![]const u8 {
         var length: i32 = 0;
         us_socket_remote_address(@intFromBool(ssl), this, buf, &length);
         if (length < 0) return error.RemoteAddress;
@@ -86,7 +86,7 @@ pub const Socket = opaque {
         us_socket_long_timeout(@intFromBool(ssl), this, @intCast(minutes));
     }
 
-    pub fn setNodelay(this: *Socket,  enabled: bool) void {
+    pub fn setNodelay(this: *Socket, enabled: bool) void {
         us_socket_nodelay(this, @intFromBool(enabled));
     }
 
@@ -109,7 +109,7 @@ pub const Socket = opaque {
     }
 
     pub fn write(this: *Socket, ssl: bool, data: []const u8, msg_more: bool) i32 {
-        debug("us_socket_write({d}, {d})", .{  @intFromPtr(this), data.len });
+        debug("us_socket_write({d}, {d})", .{ @intFromPtr(this), data.len });
         return us_socket_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
     }
 
@@ -120,7 +120,7 @@ pub const Socket = opaque {
     }
 
     pub fn rawWrite(this: *Socket, ssl: bool, data: []const u8, msg_more: bool) i32 {
-        debug("us_socket_raw_write({d}, {d})", .{ @intFromPtr(this), data.len  });
+        debug("us_socket_raw_write({d}, {d})", .{ @intFromPtr(this), data.len });
         return us_socket_raw_write(@intFromBool(ssl), this, data.ptr, @intCast(data.len), @intFromBool(msg_more));
     }
 

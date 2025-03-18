@@ -359,6 +359,7 @@ if (!debug) {
 namespace Bun {
 namespace InternalModuleRegistryConstants {
   ${moduleList
+    .slice(0, nativeStartIndex)
     .map((id, n) => {
       const out = outputs.get(id.slice(0, -3).replaceAll("/", path.sep));
       if (!out) {
@@ -379,7 +380,7 @@ namespace InternalModuleRegistryConstants {
 
 namespace Bun {
 namespace InternalModuleRegistryConstants {
-  ${moduleList.map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
+  ${moduleList.slice(0, nativeStartIndex).map((id, n) => `${declareASCIILiteral(`${idToEnumName(id)}Code`, "")}`).join("\n")}
 }
 }`,
   );

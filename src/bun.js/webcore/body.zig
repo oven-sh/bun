@@ -1356,7 +1356,7 @@ pub fn BodyMixin(comptime Type: type) type {
             if (value.* == .Locked) {
                 if (value.Locked.action != .none or
                     ((this_value != .zero and value.Locked.isDisturbed(Type, globalObject, this_value)) or
-                    (this_value == .zero and value.Locked.readable.isDisturbed(globalObject))))
+                        (this_value == .zero and value.Locked.readable.isDisturbed(globalObject))))
                 {
                     return handleBodyAlreadyUsed(globalObject);
                 }

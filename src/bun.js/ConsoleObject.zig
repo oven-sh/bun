@@ -3129,15 +3129,15 @@ pub const Formatter = struct {
                                 }
 
                                 if (!this.single_line and (
-                                // count_without_children is necessary to prevent printing an extra newline
-                                // if there are children and one prop and the child prop is the last prop
+                                    // count_without_children is necessary to prevent printing an extra newline
+                                    // if there are children and one prop and the child prop is the last prop
                                     props_iter.i + 1 < count_without_children and
-                                    // 3 is arbitrary but basically
-                                    //  <input type="text" value="foo" />
-                                    //  ^ should be one line
-                                    // <input type="text" value="foo" bar="true" baz={false} />
-                                    //  ^ should be multiple lines
-                                    props_iter.i > 3))
+                                        // 3 is arbitrary but basically
+                                        //  <input type="text" value="foo" />
+                                        //  ^ should be one line
+                                        // <input type="text" value="foo" bar="true" baz={false} />
+                                        //  ^ should be multiple lines
+                                        props_iter.i > 3))
                                 {
                                     writer.writeAll("\n");
                                     this.writeIndent(Writer, writer_) catch unreachable;

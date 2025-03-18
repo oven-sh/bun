@@ -44,7 +44,7 @@ ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalO
 std::optional<ncrypto::EVPKeyPointer::PKEncodingType> parseKeyType(JSC::JSGlobalObject* globalObject, JSValue typeValue, bool required, WTF::StringView keyType, std::optional<bool> isPublic, WTF::ASCIILiteral optionName);
 bool isArrayBufferOrView(JSValue value);
 std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue input);
-void throwCryptoError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, unsigned long err, const char* message = nullptr);
+void throwCryptoError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, uint32_t err, const char* message = nullptr);
 void throwCryptoOperationFailed(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope);
 std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSValue options, WTF::ASCIILiteral name);
 int32_t getPadding(JSC::JSGlobalObject* globalObject, JSValue options, const ncrypto::EVPKeyPointer& pkey);

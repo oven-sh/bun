@@ -342,7 +342,6 @@ pub const FSWatcher = struct {
         verbose: bool,
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice) bun.JSError!Arguments {
-            const vm = ctx.vm();
             const path = try PathLike.fromJS(ctx, arguments) orelse {
                 return ctx.throwInvalidArguments("filename must be a string or TypedArray", .{});
             };
@@ -397,13 +396,13 @@ pub const FSWatcher = struct {
 
                     // listener
                     if (arguments.nextEat()) |callable| {
-                        if (!callable.isCell() or !callable.isCallable(vm)) {
+                        if (!callable.isCell() or !callable.isCallable()) {
                             return ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
                         }
                         listener = callable;
                     }
                 } else {
-                    if (!options_or_callable.isCell() or !options_or_callable.isCallable(vm)) {
+                    if (!options_or_callable.isCell() or !options_or_callable.isCallable()) {
                         return ctx.throwInvalidArguments("Expected \"listener\" callback to be a function", .{});
                     }
                     listener = options_or_callable;

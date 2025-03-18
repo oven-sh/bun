@@ -44,186 +44,12 @@
 #include "JSVerify.h"
 #include "JSHmac.h"
 #include "JSHash.h"
+#include "CryptoPrimes.h"
 
 using namespace JSC;
 using namespace Bun;
 
 namespace WebCore {
-
-JSC_DEFINE_HOST_FUNCTION(jsCheckPrimeSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue candidateValue = callFrame->argument(0);
-
-    if (candidateValue.isBigInt()) {
-        candidateValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, candidateValue, "candidate"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    auto* candidateView = getArrayBufferOrView(lexicalGlobalObject, scope, candidateValue, "candidate"_s, jsUndefined());
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue optionsValue = callFrame->argument(1);
-    if (!optionsValue.isUndefined()) {
-        V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    int32_t checks = 0;
-    if (optionsValue.isObject()) {
-        JSObject* options = optionsValue.getObject();
-        JSValue checksValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "checks"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!checksValue.isUndefined()) {
-            V::validateInt32(scope, lexicalGlobalObject, checksValue, "options.checks"_s, jsNumber(0), jsUndefined(), &checks);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-    }
-
-    ncrypto::BignumPointer candidate = ncrypto::BignumPointer(reinterpret_cast<const uint8_t*>(candidateView->vector()), candidateView->byteLength());
-    if (!candidate) {
-        throwCryptoError(lexicalGlobalObject, scope, ERR_get_error(), "BignumPointer"_s);
-        return JSValue::encode({});
-    }
-
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    auto res = candidate.isPrime(checks, [globalObject](int32_t a, int32_t b) -> bool {
-        return !globalObject->isShuttingDown();
-    });
-
-    return JSValue::encode(jsBoolean(res != 0));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsGeneratePrimePrime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = lexicalGlobalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSValue sizeValue = callFrame->argument(0);
-    int32_t size = 0;
-    V::validateInt32(scope, lexicalGlobalObject, sizeValue, "size"_s, jsNumber(1), jsUndefined(), &size);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    JSValue optionsValue = callFrame->argument(1);
-    if (!optionsValue.isUndefined()) {
-        V::validateObject(scope, lexicalGlobalObject, optionsValue, "options"_s);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    bool safe = false;
-    bool bigint = false;
-    JSValue addValue = jsUndefined();
-    JSValue remValue = jsUndefined();
-    if (optionsValue.isObject()) {
-        JSObject* options = optionsValue.getObject();
-
-        JSValue safeValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "safe"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue bigintValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "bigint"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        addValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "add"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-        remValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "rem"_s));
-        RETURN_IF_EXCEPTION(scope, {});
-
-        if (!safeValue.isUndefined()) {
-            V::validateBoolean(scope, lexicalGlobalObject, safeValue, "options.safe"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            safe = safeValue.asBoolean();
-        }
-
-        if (!bigintValue.isUndefined()) {
-            V::validateBoolean(scope, lexicalGlobalObject, bigintValue, "options.bigint"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-            bigint = bigintValue.asBoolean();
-        }
-    }
-
-    ncrypto::ClearErrorOnReturn clear;
-
-    ncrypto::BignumPointer add;
-    if (!addValue.isUndefined()) {
-        if (addValue.isBigInt()) {
-            addValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, addValue, "options.add"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        auto* addView = jsDynamicCast<JSC::JSArrayBufferView*>(addValue);
-        if (!addView) {
-            return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.add"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, addValue);
-        }
-
-        add.reset(reinterpret_cast<const uint8_t*>(addView->vector()), addView->byteLength());
-        if (!add) {
-            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
-        }
-    }
-
-    ncrypto::BignumPointer rem;
-    if (!remValue.isUndefined()) {
-        if (remValue.isBigInt()) {
-            remValue = unsignedBigIntToBuffer(lexicalGlobalObject, scope, remValue, "options.rem"_s);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        auto* remView = jsDynamicCast<JSC::JSArrayBufferView*>(remValue);
-        if (!remView) {
-            return ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "options.rem"_s, "ArrayBuffer, Buffer, TypedArray, DataView, or bigint"_s, remValue);
-        }
-
-        rem.reset(reinterpret_cast<const uint8_t*>(remView->vector()), remView->byteLength());
-        if (!rem) {
-            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
-        }
-    }
-
-    if (add) {
-        if (UNLIKELY(ncrypto::BignumPointer::GetBitCount(add.get()) > size)) {
-            throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.add"_s);
-            return JSValue::encode({});
-        }
-
-        if (UNLIKELY(rem && add <= rem)) {
-            throwError(lexicalGlobalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, "invalid options.rem"_s);
-            return JSValue::encode({});
-        }
-    }
-
-    ncrypto::BignumPointer prime = ncrypto::BignumPointer::NewSecure();
-    if (!prime) {
-        return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "could not generate prime"_s);
-    }
-
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-
-    prime.generate({ .bits = size, .safe = safe, .add = add, .rem = rem }, [globalObject](int32_t a, int32_t b) -> bool {
-        return !globalObject->isShuttingDown();
-    });
-
-    if (bigint) {
-        WTF::Vector<uint8_t> primeBuf;
-        if (!primeBuf.tryGrow(prime.byteLength())) {
-            throwOutOfMemoryError(lexicalGlobalObject, scope, "could not generate prime"_s);
-            return JSValue::encode({});
-        }
-
-        ncrypto::BignumPointer::EncodePaddedInto(prime.get(), primeBuf.data(), primeBuf.size());
-
-        return JSValue::encode(JSBigInt::parseInt(lexicalGlobalObject, vm, primeBuf.span(), 16, JSBigInt::ErrorParseMode::ThrowExceptions, JSBigInt::ParseIntSign::Unsigned));
-    }
-
-    JSC::JSUint8Array* result = JSC::JSUint8Array::createUninitialized(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), prime.byteLength());
-    if (!result) {
-        throwOutOfMemoryError(lexicalGlobalObject, scope, "could not generate prime"_s);
-        return JSValue::encode({});
-    }
-
-    ncrypto::BignumPointer::EncodePaddedInto(prime.get(), reinterpret_cast<uint8_t*>(result->vector()), result->byteLength());
-
-    return JSValue::encode(result);
-}
 
 JSC_DEFINE_HOST_FUNCTION(jsStatelessDH, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
@@ -589,8 +415,12 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "DiffieHellmanGroup"_s)),
         globalObject->m_JSDiffieHellmanGroupClassStructure.constructor(globalObject));
 
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generatePrime"_s)),
+        JSFunction::create(vm, globalObject, 3, "generatePrime"_s, jsGeneratePrime, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "generatePrimeSync"_s)),
-        JSFunction::create(vm, globalObject, 2, "generatePrimeSync"_s, jsGeneratePrimePrime, ImplementationVisibility::Public, NoIntrinsic), 0);
+        JSFunction::create(vm, globalObject, 2, "generatePrimeSync"_s, jsGeneratePrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrime"_s)),
+        JSFunction::create(vm, globalObject, 3, "checkPrime"_s, jsCheckPrime, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "checkPrimeSync"_s)),
         JSFunction::create(vm, globalObject, 2, "checkPrimeSync"_s, jsCheckPrimeSync, ImplementationVisibility::Public, NoIntrinsic), 0);
 

@@ -42,7 +42,9 @@ const {
   ECDH,
   DiffieHellman: _DiffieHellman,
   DiffieHellmanGroup: _DiffieHellmanGroup,
+  checkPrime,
   checkPrimeSync,
+  generatePrime,
   generatePrimeSync,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
@@ -51,13 +53,13 @@ const {
   pbkdf2Sync: _pbkdf2Sync,
   timingSafeEqual: _timingSafeEqual,
   randomInt,
-  randomUUID: _randomUUID,
-  randomBytes: _randomBytes,
+  randomUUID,
+  randomBytes,
   randomFillSync,
-  randomFill: _randomFill,
+  randomFill,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
-const { validateObject, validateString, validateInt32 } = require("internal/validators");
+const { validateObject, validateString } = require("internal/validators");
 
 const kHandle = Symbol("kHandle");
 
@@ -2363,7 +2365,6 @@ crypto_exports.getFips = function getFips() {
   return 0;
 };
 
-crypto_exports.randomUUID = _randomUUID;
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
@@ -2515,18 +2516,16 @@ crypto_exports.createVerify = createVerify;
   };
 }
 
-function randomBytes(size, callback) {
-  if (callback === undefined) {
-    return _randomBytes(size);
-  }
-
-  // Crypto random promise job is guaranteed to resolve.
-  _randomBytes(size, callback).then(buf => {
-    callback(null, buf);
-  });
-}
-
+crypto_exports.randomInt = randomInt;
+crypto_exports.randomFill = randomFill;
+crypto_exports.randomFillSync = randomFillSync;
 crypto_exports.randomBytes = randomBytes;
+crypto_exports.randomUUID = randomUUID;
+
+crypto_exports.checkPrime = checkPrime;
+crypto_exports.checkPrimeSync = checkPrimeSync;
+crypto_exports.generatePrime = generatePrime;
+crypto_exports.generatePrimeSync = generatePrimeSync;
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
@@ -2535,31 +2534,6 @@ for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
     configurable: true,
   });
 }
-
-crypto_exports.randomInt = randomInt;
-
-function randomFill(buf, offset, size, callback) {
-  if (!isAnyArrayBuffer(buf) && !isArrayBufferView(buf)) {
-    throw $ERR_INVALID_ARG_TYPE("buf", ["ArrayBuffer", "ArrayBufferView"], buf);
-  }
-
-  if (typeof offset === "function") {
-    callback = offset;
-    offset = 0;
-    size = buf.length;
-  } else if (typeof size === "function") {
-    callback = size;
-    size = buf.length - offset;
-  }
-
-  // Crypto random promise job is guaranteed to resolve.
-  _randomFill(buf, offset, size, callback).then(() => {
-    callback(null, buf);
-  });
-}
-
-crypto_exports.randomFill = randomFill;
-crypto_exports.randomFillSync = randomFillSync;
 
 export default crypto_exports;
 /*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
@@ -2607,6 +2581,3 @@ crypto_exports.ECDH = ECDH;
 crypto_exports.createECDH = function createECDH(curve) {
   return new ECDH(curve);
 };
-
-crypto_exports.checkPrimeSync = checkPrimeSync;
-crypto_exports.generatePrimeSync = generatePrimeSync;

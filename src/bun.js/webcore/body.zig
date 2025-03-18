@@ -1724,21 +1724,11 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    pub const shim = JSC.Shimmer("Bun", "BodyValueBufferer", @This());
-    pub const name = "Bun__BodyValueBufferer";
-    pub const include = "";
-    pub const namespace = shim.namespace;
-
-    pub const Export = shim.exportFunctions(.{
-        .onResolveStream = onResolveStream,
-        .onRejectStream = onRejectStream,
-    });
-
     comptime {
         const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-        @export(&jsonResolveStream, .{ .name = Export[0].symbol_name });
+        @export(&jsonResolveStream, .{ .name = "Bun__BodyValueBufferer__onResolveStream" });
         const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-        @export(&jsonRejectStream, .{ .name = Export[1].symbol_name });
+        @export(&jsonRejectStream, .{ .name = "Bun__BodyValueBufferer__onRejectStream" });
     }
 };
 

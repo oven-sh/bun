@@ -6,27 +6,18 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const GetterSetter = @import("GetterSetter.zig").GetterSetter;
 const CustomGetterSetter = @import("CustomGetterSetter.zig").CustomGetterSetter;
 
-pub const JSCell = extern struct {
-    pub const shim = JSC.Shimmer("JSC", "JSCell", @This());
-    bytes: shim.Bytes,
-    const cppFn = shim.cppFn;
-    pub const include = "JavaScriptCore/JSCell.h";
+pub const JSCell = opaque {
     pub const name = "JSC::JSCell";
     pub const namespace = "JSC";
-
-    const CellType = enum(u8) { _ };
+    pub const include = "JavaScriptCore/JSCell.h";
 
     pub fn getObject(this: *JSCell) *JSC.JSObject {
-        return shim.cppFn("getObject", .{this});
+        return JSC__JSCell__getObject(this);
     }
 
     pub fn getType(this: *JSCell) u8 {
-        return shim.cppFn("getType", .{
-            this,
-        });
+        return JSC__JSCell__getType(this);
     }
-
-    pub const Extern = [_][]const u8{ "getObject", "getType" };
 
     pub fn getGetterSetter(this: *JSCell) *GetterSetter {
         if (comptime bun.Environment.allow_assert) {
@@ -41,4 +32,7 @@ pub const JSCell = extern struct {
         }
         return @as(*CustomGetterSetter, @ptrCast(@alignCast(this)));
     }
+
+    extern fn JSC__JSCell__getObject(this: *JSCell) *JSC.JSObject;
+    extern fn JSC__JSCell__getType(this: *JSCell) u8;
 };

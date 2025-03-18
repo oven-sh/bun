@@ -1033,9 +1033,9 @@ pub const VirtualMachine = struct {
     pub fn isEventLoopAliveExcludingImmediates(vm: *const VirtualMachine) bool {
         return vm.unhandled_error_counter == 0 and
             (@intFromBool(vm.event_loop_handle.?.isActive()) +
-                vm.active_tasks +
-                vm.event_loop.tasks.count +
-                @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
+            vm.active_tasks +
+            vm.event_loop.tasks.count +
+            @intFromBool(vm.event_loop.hasPendingRefs()) > 0);
     }
 
     pub fn isEventLoopAlive(vm: *const VirtualMachine) bool {
@@ -2521,7 +2521,7 @@ pub const VirtualMachine = struct {
             return;
         } else if (jsc_vm.module_loader.eval_source != null and
             (strings.endsWithComptime(specifier, bun.pathLiteral("/[eval]")) or
-                strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
+            strings.endsWithComptime(specifier, bun.pathLiteral("/[stdin]"))))
         {
             ret.result = null;
             ret.path = specifier;
@@ -3307,13 +3307,13 @@ pub const VirtualMachine = struct {
                 current_exception_list: ?*ExceptionList = null,
                 formatter: *ConsoleObject.Formatter,
 
-                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn iteratorWithColor(_vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, true);
                 }
-                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn iteratorWithOutColor(_vm: *VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
-                inline fn iterator(_: [*c]VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                inline fn iterator(_: *VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                     VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, this_.formatter, Writer, this_.writer, color, allow_side_effects);
                 }
@@ -3553,7 +3553,7 @@ pub const VirtualMachine = struct {
         error_instance.toZigException(this.global, exception);
         const enable_source_code_preview = allow_source_code_preview and
             !(bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or
-                bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
+            bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW"));
 
         defer {
             if (Environment.isDebug) {
@@ -4186,13 +4186,13 @@ pub const VirtualMachine = struct {
                             // + 1 to ensure the message is a non-empty string.
                             break :has_prefix msg_chars.len > code.len + ": ".len + 1 and
                                 (if (is_utf16)
-                                    // there is no existing function to perform this slice comparison
-                                    // []const u16, []const u8
-                                    for (code, msg_chars[0..code.len]) |a, b| {
-                                        if (a != b) break false;
-                                    } else true
-                                else
-                                    bun.strings.eqlLong(msg_chars[0..code.len], code, false)) and
+                                // there is no existing function to perform this slice comparison
+                                // []const u16, []const u8
+                                for (code, msg_chars[0..code.len]) |a, b| {
+                                    if (a != b) break false;
+                                } else true
+                            else
+                                bun.strings.eqlLong(msg_chars[0..code.len], code, false)) and
                                 msg_chars[code.len] == ':' and
                                 msg_chars[code.len + 1] == ' ';
                         },

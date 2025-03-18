@@ -106,11 +106,9 @@ pub fn PATH_SIZE(comptime T: type) usize {
     return if (T == u16) PATH_MIN_WIDE else bun.MAX_PATH_BYTES;
 }
 
-const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
-pub const shim = Shimmer("Bun", "Path", @This());
 pub const name = "Bun__Path";
 pub const include = "Path.h";
-pub const namespace = shim.namespace;
+pub const namespace = "Bun";
 pub const sep_posix = CHAR_FORWARD_SLASH;
 pub const sep_windows = CHAR_BACKWARD_SLASH;
 pub const sep_str_posix = CHAR_STR_FORWARD_SLASH;
@@ -475,10 +473,6 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
     }
     defer if (suffixZSlice) |_s| _s.deinit();
     return basenameJS_T(u8, globalObject, isWindows, pathZSlice.slice(), if (suffixZSlice) |_s| _s.slice() else null);
-}
-
-pub fn create(globalObject: *JSC.JSGlobalObject, isWindows: bool) callconv(JSC.conv) JSC.JSValue {
-    return shim.cppFn("create", .{ globalObject, isWindows });
 }
 
 /// Based on Node v21.6.1 path.posix.dirname:
@@ -2972,8 +2966,6 @@ pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args
     defer pathZSlice.deinit();
     return toNamespacedPathJS_T(u8, globalObject, allocator, isWindows, pathZSlice.slice());
 }
-
-pub const Extern = [_][]const u8{"create"};
 
 comptime {
     @export(&Path.basename, .{ .name = "Bun__Path__basename" });

@@ -44,30 +44,11 @@ export fn ZigString__free_global(ptr: [*]const u8, len: usize) void {
 }
 
 pub fn addShimReferences() void {
-    WebSocketHTTPClient.shim.ref();
-    WebSocketHTTPSClient.shim.ref();
-    WebSocketClient.shim.ref();
-    WebSocketClientTLS.shim.ref();
-
-    HTTPServerRequestContext.shim.ref();
-    HTTPSSLServerRequestContext.shim.ref();
-    HTTPDebugServerRequestContext.shim.ref();
-    HTTPDebugSSLServerRequestContext.shim.ref();
-
     _ = Process.getTitle;
     _ = Process.setTitle;
-    NodePath.shim.ref();
-    JSArrayBufferSink.shim.ref();
-    JSHTTPResponseSink.shim.ref();
-    JSHTTPSResponseSink.shim.ref();
-    JSNetworkSink.shim.ref();
-    JSFileSink.shim.ref();
-    JSFileSink.shim.ref();
+
     _ = &ZigString__free;
     _ = &ZigString__free_global;
-
-    TestScope.shim.ref();
-    BodyValueBuffererContext.shim.ref();
 
     _ = @import("LoadLibrary.zig").Bun__LoadLibraryBunString;
     _ = &JSC.NodeModuleModule__findPath;

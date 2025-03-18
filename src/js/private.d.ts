@@ -160,6 +160,7 @@ interface CommonJSModuleRecord {
   path: string;
   paths: string[];
   require: typeof require;
+  filename: string;
 }
 
 /**

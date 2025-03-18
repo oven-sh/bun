@@ -55,6 +55,10 @@ export function overridableRequire(this: CommonJSModuleRecord, originalId: strin
     return $internalRequire(id);
   }
 
+  if (id === "bun:test") {
+    return Bun.jest(this.filename);
+  }
+
   // To handle import/export cycles, we need to create a module object and put
   // it into the map before we import it.
   const mod = $createCommonJSModule(id, {}, false, this);

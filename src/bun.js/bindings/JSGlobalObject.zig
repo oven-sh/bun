@@ -707,7 +707,7 @@ pub const JSGlobalObject = opaque {
 
     pub fn resolve(res: *ErrorableString, global: *JSGlobalObject, specifier: *bun.String, source: *bun.String, query: *ZigString) callconv(.C) void {
         JSC.markBinding(@src());
-        return JSC.VirtualMachine.resolve(res, global, specifier.*, source.*, query, false) catch {
+        return JSC.VirtualMachine.resolve(res, global, specifier.*, source.*, query, true) catch {
             bun.debugAssert(res.success == false);
         };
     }

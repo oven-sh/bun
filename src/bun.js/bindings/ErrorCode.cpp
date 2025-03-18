@@ -2035,7 +2035,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
     }
     }
 
-#if DEBUG
+#if BUN_DEBUG
     ASSERT(false, "Improper use of @makeError! Add error function to ErrorCode.cpp and builtins.d.ts");
 #endif
 

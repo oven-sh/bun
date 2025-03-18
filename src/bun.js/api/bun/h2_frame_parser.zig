@@ -2320,8 +2320,8 @@ pub const H2FrameParser = struct {
         const callback = this.handlers.onStreamStart;
         if (callback != .zero) {
             // we assume that onStreamStart will never mutate the stream hash map
-            const global = this.handlers.globalObject;
-            global.bunVM().eventLoop().runCallback(callback, global, ctx_value, &.{ ctx_value, JSValue.jsNumber(streamIdentifier) });
+            _ = callback.call(this.handlers.globalObject, ctx_value, &[_]JSC.JSValue{ ctx_value, JSC.JSValue.jsNumber(streamIdentifier) }) catch |err|
+                this.handlers.globalObject.reportActiveExceptionAsUnhandled(err);
         }
         return entry.value_ptr;
     }

@@ -61,6 +61,7 @@ const kInternalSocketData = Symbol.for("::bunternal::");
 const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
+const kConnectionEmitted = Symbol("connectionEmitted");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -324,6 +325,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   [kHandle];
   server: Server;
   _httpMessage;
+  [kConnectionEmitted] = false;
 
   constructor(server: Server, handle, encrypted) {
     super();
@@ -959,7 +961,8 @@ const ServerPrototype = {
             }
           }
 
-          if (isSocketNew && !reachedRequestsLimit) {
+          if (isSocketNew && !reachedRequestsLimit && !socket[kConnectionEmitted]) {
+            socket[kConnectionEmitted] = true;
             server.emit("connection", socket);
           }
 
@@ -2215,7 +2218,6 @@ const ServerResponsePrototype = {
       throw $ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
-    socket.off("close", onServerResponseClose);
     socket.once("close", onServerResponseClose);
     this.socket = socket;
     this.emit("socket", socket);
@@ -2491,12 +2493,12 @@ function ClientRequest(input, options, cb) {
   };
 
   let writeCount = 0;
-  let resolveNextChunk = () => {};
+  let resolveNextChunk: ((end: boolean) => void) | undefined = end => {};
 
   const pushChunk = chunk => {
     this[kBodyChunks].push(chunk);
     startFetch();
-    resolveNextChunk?.();
+    resolveNextChunk?.(false);
   };
 
   const write_ = (chunk, encoding, callback) => {
@@ -2815,7 +2817,7 @@ function ClientRequest(input, options, cb) {
   };
 
   let onEnd = () => {};
-  let handleResponse = () => {};
+  let handleResponse: (() => void) | undefined = () => {};
 
   const send = () => {
     this.finished = true;

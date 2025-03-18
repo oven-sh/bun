@@ -952,7 +952,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
-            var iter = this.pending_sockets.used.iterator(.{ .kind = .unset });
+            var iter = this.pending_sockets.used.iterator(.{ .kind = .set });
 
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));

@@ -159,6 +159,7 @@ const errors: ErrorCodeMapping = [
 
   // HTTP
   ["ERR_UNESCAPED_CHARACTERS", TypeError],
+  ["ERR_HTTP_SOCKET_ASSIGNED", Error],
 
   // AsyncHooks
   ["ERR_ASYNC_TYPE", TypeError],

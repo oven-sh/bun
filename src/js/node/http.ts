@@ -148,10 +148,6 @@ const validateHeaderValue = (name, value) => {
   }
 };
 
-function ERR_HTTP_SOCKET_ASSIGNED() {
-  return new Error(`ServerResponse has an already assigned socket`);
-}
-
 // TODO: add primordial for URL
 // Importing from node:url is unnecessary
 const { URL, WebSocket, CloseEvent, MessageEvent } = globalThis;
@@ -999,18 +995,14 @@ const ServerPrototype = {
           if (capturedError) {
             handle = undefined;
             http_res.removeListener("close", onClose);
-            if (socket._httpMessage === http_res) {
-              socket._httpMessage = null;
-            }
+            http_res.detachSocket(socket);
             throw capturedError;
           }
 
           if (handle.finished || didFinish) {
             handle = undefined;
             http_res.removeListener("close", onClose);
-            if (socket._httpMessage === http_res) {
-              socket._httpMessage = null;
-            }
+            http_res.detachSocket(socket);
             return;
           }
 
@@ -1991,6 +1983,7 @@ const ServerResponsePrototype = {
     if (hasServerResponseFinished(this, chunk, callback)) {
       return this;
     }
+
     if (chunk && !this._hasBody) {
       if (this.req?.method === "HEAD") {
         chunk = undefined;
@@ -1999,62 +1992,67 @@ const ServerResponsePrototype = {
       }
     }
 
-    if (handle) {
-      const headerState = this[headerStateSymbol];
-      callWriteHeadIfObservable(this, headerState);
-
-      if (headerState !== NodeHTTPHeaderState.sent) {
-        handle.cork(() => {
-          handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
-
-          // If handle.writeHead throws, we don't want headersSent to be set to true.
-          // So we set it here.
-          this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-
-          // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
-          this._contentLength = handle.end(chunk, encoding);
-        });
-      } else {
-        // If there's no data but you already called end, then you're done.
-        // We can ignore it in that case.
-        if (!(!chunk && handle.ended) && !handle.aborted) {
-          handle.end(chunk, encoding);
-        }
+    if (!handle) {
+      if (typeof callback === "function") {
+        process.nextTick(callback);
       }
-      this._header = " ";
-      const req = this.req;
-      const socket = req.socket;
-      if (!req._consuming && !req?._readableState?.resumeScheduled) {
-        req._dump();
+      return this;
+    }
+
+    const headerState = this[headerStateSymbol];
+    callWriteHeadIfObservable(this, headerState);
+
+    if (headerState !== NodeHTTPHeaderState.sent) {
+      handle.cork(() => {
+        handle.writeHead(this.statusCode, this.statusMessage, this[headersSymbol]);
+
+        // If handle.writeHead throws, we don't want headersSent to be set to true.
+        // So we set it here.
+        this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/_http_outgoing.js#L987
+        this._contentLength = handle.end(chunk, encoding);
+      });
+    } else {
+      // If there's no data but you already called end, then you're done.
+      // We can ignore it in that case.
+      if (!(!chunk && handle.ended) && !handle.aborted) {
+        handle.end(chunk, encoding);
       }
-      this.detachSocket(socket);
-      this.finished = true;
-      this.emit("prefinish");
-      this._callPendingCallbacks();
+    }
+    this._header = " ";
+    const req = this.req;
+    const socket = req.socket;
+    if (!req._consuming && !req?._readableState?.resumeScheduled) {
+      req._dump();
+    }
+    this.detachSocket(socket);
+    this.finished = true;
+    this.emit("prefinish");
+    this._callPendingCallbacks();
 
-      if (callback) {
-        process.nextTick(
-          function (callback, self) {
-            // In Node.js, the "finish" event triggers the "close" event.
-            // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
-            self.emit("finish");
-            try {
-              callback();
-            } catch (err) {
-              self.emit("error", err);
-            }
-
-            process.nextTick(emitCloseNT, self);
-          },
-          callback,
-          this,
-        );
-      } else {
-        process.nextTick(function (self) {
+    if (callback) {
+      process.nextTick(
+        function (callback, self) {
+          // In Node.js, the "finish" event triggers the "close" event.
+          // So it shouldn't become closed === true until after "finish" is emitted and the callback is called.
           self.emit("finish");
+          try {
+            callback();
+          } catch (err) {
+            self.emit("error", err);
+          }
+
           process.nextTick(emitCloseNT, self);
-        }, this);
-      }
+        },
+        callback,
+        this,
+      );
+    } else {
+      process.nextTick(function (self) {
+        self.emit("finish");
+        process.nextTick(emitCloseNT, self);
+      }, this);
     }
 
     return this;
@@ -2088,6 +2086,14 @@ const ServerResponsePrototype = {
 
     const headerState = this[headerStateSymbol];
     callWriteHeadIfObservable(this, headerState);
+
+    if (!handle) {
+      if (this.socket) {
+        return this.socket.write(chunk, encoding, callback);
+      } else {
+        return OutgoingMessagePrototype.write.$call(this, chunk, encoding, callback);
+      }
+    }
 
     if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
       handle.cork(() => {
@@ -2206,7 +2212,7 @@ const ServerResponsePrototype = {
 
   assignSocket(socket) {
     if (socket._httpMessage) {
-      throw ERR_HTTP_SOCKET_ASSIGNED();
+      throw $ERR_HTTP_SOCKET_ASSIGNED();
     }
     socket._httpMessage = this;
     socket.off("close", onServerResponseClose);

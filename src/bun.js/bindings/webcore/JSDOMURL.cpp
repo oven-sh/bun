@@ -68,6 +68,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString);
+static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom);
 
 BUN_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
 BUN_DECLARE_HOST_FUNCTION(Bun__revokeObjectURL);
@@ -234,6 +235,13 @@ void JSDOMURLPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSDOMURL::info(), JSDOMURLPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    auto& builtinNames = WebCore::builtinNames(vm);
+    const auto& inspectCustomPublicName = builtinNames.inspectCustomPublicName();
+
+    auto* fn = JSC::JSFunction::create(vm, globalObject(), 0, "[nodejs.util.inspect.custom]"_s, jsDOMURLPrototypeFunction_inspectCustom, JSC::ImplementationVisibility::Public, JSC::NoIntrinsic);
+
+    this->putDirect(vm, inspectCustomPublicName, fn, JSC::PropertyAttribute::DontEnum | 0);
 }
 
 const ClassInfo JSDOMURL::s_info = { "URL"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSDOMURL) };
@@ -770,6 +778,21 @@ static inline JSC::EncodedJSValue jsDOMURLPrototypeFunction_toStringBody(JSC::JS
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSDOMURL>::call<jsDOMURLPrototypeFunction_toStringBody>(*lexicalGlobalObject, *callFrame, "toString");
+}
+
+static inline JSC::EncodedJSValue jsDOMURLPrototypeFunction_inspectCustomBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSDOMURL>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.href())));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSDOMURL>::call<jsDOMURLPrototypeFunction_inspectCustomBody>(*lexicalGlobalObject, *callFrame, "[nodejs.util.inspect.custom]");
 }
 
 JSC::GCClient::IsoSubspace* JSDOMURL::subspaceForImpl(JSC::VM& vm)

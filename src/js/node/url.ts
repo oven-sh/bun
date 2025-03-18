@@ -1,39 +1,80 @@
 /// <reference path="../builtins.d.ts" />
 
-/*
- * Copyright Joyent, Inc. and other Node contributors.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the
- * "Software"), to deal in the Software without restriction, including
- * without limitation the rights to use, copy, modify, merge, publish,
- * distribute, sublicense, and/or sell copies of the Software, and to permit
- * persons to whom the Software is furnished to do so, subject to the
- * following conditions:
- *
- * The above copyright notice and this permission notice shall be included
- * in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
- * NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
- * DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
- * OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
- * USE OR OTHER DEALINGS IN THE SOFTWARE.
- */
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
 
-const { URL, URLSearchParams } = globalThis;
+const { Array, Int8Array, SafeSet, uncurryThis } = require("internal/primordials");
+
+const ObjectKeys = Object.keys;
+const ObjectAssign = Object.assign;
+const NumberPrototypeToString = uncurryThis(Number.prototype.toString);
+const StringPrototypeCharCodeAt = uncurryThis(String.prototype.charCodeAt);
+const StringPrototypeSlice = uncurryThis(String.prototype.slice);
+const StringPrototypeToUpperCase = uncurryThis(String.prototype.toUpperCase);
+
+let lazyQuerystring: typeof import("node:querystring") | undefined;
+function querystring() {
+  return (lazyQuerystring ||= require("node:querystring"));
+}
+
 const [domainToASCII, domainToUnicode] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
 const { urlToHttpOptions } = require("internal/url");
-const { validateString } = require("internal/validators");
+const { validateString, validateObject } = require("internal/validators");
 
-var _lazyUtil;
-function lazyUtil(): (typeof import("internal/util"))["default"] {
-  return (_lazyUtil ||= require("internal/util"));
-}
+// Protocols that can allow "unsafe" and "unwise" chars.
+// prettier-ignore
+const unsafeProtocol = new SafeSet([
+  "javascript",
+  "javascript:",
+]);
+
+// Protocols that never have a hostname.
+// prettier-ignore
+const hostlessProtocol = unsafeProtocol;
+
+// Protocols that always contain a // bit.
+// prettier-ignore
+const slashedProtocol = new SafeSet([
+  "http",
+  "http:",
+  "https",
+  "https:",
+  "ftp",
+  "ftp:",
+  "gopher",
+  "gopher:",
+  "file",
+  "file:",
+  "ws",
+  "ws:",
+  "wss",
+  "wss:",
+]);
+
+// Original url.parse() API
+type Url = import("node:url").Url;
+type UrlObject = Url | URL;
+type UrlLike = string | UrlObject;
 
 function Url() {
   this.protocol = null;
@@ -49,87 +90,118 @@ function Url() {
   this.path = null;
   this.href = null;
 }
+
 Url.prototype = {};
 
 // Reference: RFC 3986, RFC 1808, RFC 2396
 
-/*
- * define these here so at least they only have to be
- * compiled once on the first module load.
+// define these here so at least they only have to be
+// compiled once on the first module load.
+const protocolPattern = /^[a-z0-9.+-]+:/i;
+const portPattern = /:[0-9]*$/;
+const hostPattern = /^\/\/[^@/]+@[^@/]+/;
+
+// Special case for a simple path URL
+const simplePathPattern = /^(\/\/?(?!\/)[^?\s]*)(\?[^\s]*)?$/;
+
+const hostnameMaxLen = 255;
+
+/**
+ * Add new characters as needed from
+ * [here](https://github.com/nodejs/node/blob/main/lib/internal/constants.js).
+ *
+ * @note Do not move to another file, otherwise const enums will be imported as an object
+ *      instead of being inlined.
  */
-var protocolPattern = /^([a-z0-9.+-]+:)/i,
-  portPattern = /:[0-9]*$/,
-  // Special case for a simple path URL
-  simplePathPattern = /^(\/\/?(?!\/)[^?\s]*)(\?[^\s]*)?$/,
-  /*
-   * RFC 2396: characters reserved for delimiting URLs.
-   * We actually just auto-escape these.
-   */
-  delims = ["<", ">", '"', "`", " ", "\r", "\n", "\t"],
-  // RFC 2396: characters not allowed for various reasons.
-  unwise = ["{", "}", "|", "\\", "^", "`"].concat(delims),
-  // Allowed by RFCs, but cause of XSS attacks.  Always escape these.
-  autoEscape = ["'"].concat(unwise),
-  /*
-   * Characters that are never ever allowed in a hostname.
-   * Note that any invalid chars are also handled, but these
-   * are the ones that are *expected* to be seen, so we fast-path
-   * them.
-   */
-  nonHostChars = ["%", "/", "?", ";", "#"].concat(autoEscape),
-  hostEndingChars = ["/", "?", "#"],
-  hostnameMaxLen = 255,
-  hostnamePartPattern = /^[+a-z0-9A-Z_-]{0,63}$/,
-  hostnamePartStart = /^([+a-z0-9A-Z_-]{0,63})(.*)$/,
-  // protocols that can allow "unsafe" and "unwise" chars.
-  unsafeProtocol = {
-    javascript: true,
-    "javascript:": true,
-  },
-  // protocols that never have a hostname.
-  hostlessProtocol = {
-    javascript: true,
-    "javascript:": true,
-  },
-  // protocols that always contain a // bit.
-  slashedProtocol = {
-    http: true,
-    https: true,
-    ftp: true,
-    gopher: true,
-    file: true,
-    "http:": true,
-    "https:": true,
-    "ftp:": true,
-    "gopher:": true,
-    "file:": true,
-  };
+// prettier-ignore
+const enum Char {
+  // Alphabet chars.
+  CHAR_UPPERCASE_A = 65, /* A */
+  CHAR_LOWERCASE_A = 97, /* a */
+  CHAR_UPPERCASE_Z = 90, /* Z */
+  CHAR_LOWERCASE_Z = 122, /* z */
+  CHAR_UPPERCASE_C = 67, /* C */
+  CHAR_LOWERCASE_B = 98, /* b */
+  CHAR_LOWERCASE_E = 101, /* e */
+  CHAR_LOWERCASE_N = 110, /* n */
 
-function urlParse(
-  url: string | URL | Url, // really has unknown type but intellisense is nice
-  parseQueryString?: boolean,
-  slashesDenoteHost?: boolean,
-) {
-  if ($isObject(url) && url instanceof Url) return url;
+  // Non-alphabetic chars.
+  CHAR_DOT = 46, /* . */
+  CHAR_FORWARD_SLASH = 47, /* / */
+  CHAR_BACKWARD_SLASH = 92, /* \ */
+  CHAR_VERTICAL_LINE = 124, /* | */
+  CHAR_COLON = 58, /* : */
+  CHAR_QUESTION_MARK = 63, /* ? */
+  CHAR_UNDERSCORE = 95, /* _ */
+  CHAR_LINE_FEED = 10, /* \n */
+  CHAR_CARRIAGE_RETURN = 13, /* \r */
+  CHAR_TAB = 9, /* \t */
+  CHAR_FORM_FEED = 12, /* \f */
+  CHAR_EXCLAMATION_MARK = 33, /* ! */
+  CHAR_HASH = 35, /* # */
+  CHAR_SPACE = 32, /*   */
+  CHAR_NO_BREAK_SPACE = 160, /* \u00A0 */
+  CHAR_ZERO_WIDTH_NOBREAK_SPACE = 65279, /* \uFEFF */
+  CHAR_LEFT_SQUARE_BRACKET = 91, /* [ */
+  CHAR_RIGHT_SQUARE_BRACKET = 93, /* ] */
+  CHAR_LEFT_ANGLE_BRACKET = 60, /* < */
+  CHAR_RIGHT_ANGLE_BRACKET = 62, /* > */
+  CHAR_LEFT_CURLY_BRACKET = 123, /* { */
+  CHAR_RIGHT_CURLY_BRACKET = 125, /* } */
+  CHAR_HYPHEN_MINUS = 45, /* - */
+  CHAR_PLUS = 43, /* + */
+  CHAR_DOUBLE_QUOTE = 34, /* " */
+  CHAR_SINGLE_QUOTE = 39, /* ' */
+  CHAR_PERCENT = 37, /* % */
+  CHAR_SEMICOLON = 59, /* ; */
+  CHAR_CIRCUMFLEX_ACCENT = 94, /* ^ */
+  CHAR_GRAVE_ACCENT = 96, /* ` */
+  CHAR_AT = 64, /* @ */
+  CHAR_AMPERSAND = 38, /* & */
+  CHAR_EQUAL = 61, /* = */
 
-  var u = new Url();
-  try {
-    u.parse(url, parseQueryString, slashesDenoteHost);
-  } catch (e) {
-    $putByIdDirect(e, "input", url);
-    throw e;
-  }
-  return u;
+  // Digits
+  CHAR_0 = 48, /* 0 */
+  CHAR_9 = 57, /* 9 */
 }
 
-Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, slashesDenoteHost?: boolean) {
+function urlParse(url: UrlLike, parseQueryString?: boolean, slashesDenoteHost?: boolean): Url {
+  if (url instanceof Url) return url;
+
+  const urlObject = new Url();
+  urlObject.parse(url, parseQueryString, slashesDenoteHost);
+  return urlObject;
+}
+
+function isIpv6Hostname(hostname: string): boolean {
+  return (
+    StringPrototypeCharCodeAt(hostname, 0) === Char.CHAR_LEFT_SQUARE_BRACKET &&
+    StringPrototypeCharCodeAt(hostname, hostname.length - 1) === Char.CHAR_RIGHT_SQUARE_BRACKET
+  );
+}
+
+// This prevents some common spoofing bugs due to our use of IDNA toASCII. For
+// compatibility, the set of characters we use here is the *intersection* of
+// "forbidden host code point" in the WHATWG URL Standard [1] and the
+// characters in the host parsing loop in Url.prototype.parse, with the
+// following additions:
+//
+// - ':' since this could cause a "protocol spoofing" bug
+// - '@' since this could cause parts of the hostname to be confused with auth
+// - '[' and ']' since this could cause a non-IPv6 hostname to be interpreted
+//   as IPv6 by isIpv6Hostname above
+//
+// [1]: https://url.spec.whatwg.org/#forbidden-host-code-point
+const forbiddenHostChars = /[\0\t\n\r #%/:<>?@[\\\]^|]/;
+// For IPv6, permit '[', ']', and ':'.
+const forbiddenHostCharsIpv6 = /[\0\t\n\r #%/<>?@\\^|]/;
+
+Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, slashesDenoteHost?: boolean): Url {
   validateString(url, "url");
 
-  /*
-   * Copy chrome, IE, opera backslash-handling behavior.
-   * Back slashes before the query string get converted to forward slashes
-   * See: https://code.google.com/p/chromium/issues/detail?id=25916
-   */
+  // Copy chrome, IE, opera backslash-handling behavior.
+  // Back slashes before the query string get converted to forward slashes
+  // See: https://code.google.com/p/chromium/issues/detail?id=25916
   let hasHash = false;
   let hasAt = false;
   let start = -1;
@@ -137,10 +209,10 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   let rest = "";
   let lastPos = 0;
   for (let i = 0, inWs = false, split = false; i < url.length; ++i) {
-    const code = url.$charCodeAt(i);
+    const code = url.charCodeAt(i);
 
     // Find first and last non-whitespace characters for trimming
-    const isWs = code < 33 || code === Char.NO_BREAK_SPACE || code === Char.ZERO_WIDTH_NOBREAK_SPACE;
+    const isWs = code < 33 || code === Char.CHAR_NO_BREAK_SPACE || code === Char.CHAR_ZERO_WIDTH_NOBREAK_SPACE;
     if (start === -1) {
       if (isWs) continue;
       lastPos = start = i;
@@ -157,22 +229,22 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     // Only convert backslashes while we haven't seen a split character
     if (!split) {
       switch (code) {
-        case Char.AT:
+        case Char.CHAR_AT:
           hasAt = true;
           break;
-        case Char.HASH:
+        case Char.CHAR_HASH:
           hasHash = true;
         // Fall through
-        case Char.QUESTION_MARK:
+        case Char.CHAR_QUESTION_MARK:
           split = true;
           break;
-        case Char.BACKWARD_SLASH:
+        case Char.CHAR_BACKWARD_SLASH:
           if (i - lastPos > 0) rest += url.slice(lastPos, i);
           rest += "/";
           lastPos = i + 1;
           break;
       }
-    } else if (!hasHash && code === Char.HASH) {
+    } else if (!hasHash && code === Char.CHAR_HASH) {
       hasHash = true;
     }
   }
@@ -207,7 +279,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
       if (simplePath[2]) {
         this.search = simplePath[2];
         if (parseQueryString) {
-          this.query = new URLSearchParams(this.search.slice(1)).toJSON();
+          this.query = querystring().parse(this.search.slice(1));
         } else {
           this.query = this.search.slice(1);
         }
@@ -219,116 +291,109 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     }
   }
 
-  var proto: any = protocolPattern.exec(rest);
+  let proto = protocolPattern.exec(rest);
+  let lowerProto: string | undefined;
   if (proto) {
-    proto = proto[0];
-    var lowerProto = proto.toLowerCase();
+    lowerProto = proto[0].toLowerCase();
     this.protocol = lowerProto;
-    rest = rest.substring(proto.length);
+    rest = rest.slice(lowerProto.length);
   }
 
-  /*
-   * figure out if it's got a host
-   * user@server is *always* interpreted as a hostname, and url
-   * resolution will treat //foo/bar as host=foo,path=bar because that's
-   * how the browser resolves relative URLs.
-   */
-  if (slashesDenoteHost || proto || rest.match(/^\/\/[^@/]+@[^@/]+/)) {
-    var slashes = rest.substring(0, 2) === "//";
-    if (slashes && !(proto && hostlessProtocol[proto])) {
-      rest = rest.substring(2);
+  // Figure out if it's got a host
+  // user@server is *always* interpreted as a hostname, and url
+  // resolution will treat //foo/bar as host=foo,path=bar because that's
+  // how the browser resolves relative URLs.
+  let slashes: boolean | undefined;
+  if (slashesDenoteHost || proto || hostPattern.test(rest)) {
+    slashes = rest.charCodeAt(0) === Char.CHAR_FORWARD_SLASH && rest.charCodeAt(1) === Char.CHAR_FORWARD_SLASH;
+    if (slashes && !(proto && hostlessProtocol.has(lowerProto))) {
+      rest = rest.slice(2);
       this.slashes = true;
     }
   }
 
-  if (!hostlessProtocol[proto] && (slashes || (proto && !slashedProtocol[proto]))) {
-    /*
-     * there's a hostname.
-     * the first instance of /, ?, ;, or # ends the host.
-     *
-     * If there is an @ in the hostname, then non-host chars *are* allowed
-     * to the left of the last @ sign, unless some host-ending character
-     * comes *before* the @-sign.
-     * URLs are obnoxious.
-     *
-     * ex:
-     * http://a@b@c/ => user:a@b host:c
-     * http://a@b?@c => user:a host:c path:/?@c
-     */
+  if (!hostlessProtocol.has(lowerProto) && (slashes || (proto && !slashedProtocol.has(proto)))) {
+    // there's a hostname.
+    // the first instance of /, ?, ;, or # ends the host.
+    //
+    // If there is an @ in the hostname, then non-host chars *are* allowed
+    // to the left of the last @ sign, unless some host-ending character
+    // comes *before* the @-sign.
+    // URLs are obnoxious.
+    //
+    // ex:
+    // http://a@b@c/ => user:a@b host:c
+    // http://a@b?@c => user:a host:b path:/?@c
 
-    /*
-     * v0.12 TODO(isaacs): This is not quite how Chrome does things.
-     * Review our test case against browsers more comprehensively.
-     */
-
-    // find the first instance of any hostEndingChars
-    var hostEnd = -1;
-    for (var i = 0; i < hostEndingChars.length; i++) {
-      var hec = rest.indexOf(hostEndingChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd)) {
-        hostEnd = hec;
+    let hostEnd = -1;
+    let atSign = -1;
+    let nonHost = -1;
+    for (let i = 0; i < rest.length; ++i) {
+      switch (rest.charCodeAt(i)) {
+        case Char.CHAR_TAB:
+        case Char.CHAR_LINE_FEED:
+        case Char.CHAR_CARRIAGE_RETURN:
+          // WHATWG URL removes tabs, newlines, and carriage returns. Let's do that too.
+          rest = rest.slice(0, i) + rest.slice(i + 1);
+          i -= 1;
+          break;
+        case Char.CHAR_SPACE:
+        case Char.CHAR_DOUBLE_QUOTE:
+        case Char.CHAR_PERCENT:
+        case Char.CHAR_SINGLE_QUOTE:
+        case Char.CHAR_SEMICOLON:
+        case Char.CHAR_LEFT_ANGLE_BRACKET:
+        case Char.CHAR_RIGHT_ANGLE_BRACKET:
+        case Char.CHAR_BACKWARD_SLASH:
+        case Char.CHAR_CIRCUMFLEX_ACCENT:
+        case Char.CHAR_GRAVE_ACCENT:
+        case Char.CHAR_LEFT_CURLY_BRACKET:
+        case Char.CHAR_VERTICAL_LINE:
+        case Char.CHAR_RIGHT_CURLY_BRACKET:
+          // Characters that are never ever allowed in a hostname from RFC 2396
+          if (nonHost === -1) nonHost = i;
+          break;
+        case Char.CHAR_HASH:
+        case Char.CHAR_FORWARD_SLASH:
+        case Char.CHAR_QUESTION_MARK:
+          // Find the first instance of any host-ending characters
+          if (nonHost === -1) nonHost = i;
+          hostEnd = i;
+          break;
+        case Char.CHAR_AT:
+          // At this point, either we have an explicit point where the
+          // auth portion cannot go past, or the last @ char is the decider.
+          atSign = i;
+          nonHost = -1;
+          break;
       }
+      if (hostEnd !== -1) break;
     }
-
-    /*
-     * at this point, either we have an explicit point where the
-     * auth portion cannot go past, or the last @ char is the decider.
-     */
-    var auth: string | undefined, atSign: number;
-    if (hostEnd === -1) {
-      // atSign can be anywhere.
-      atSign = rest.lastIndexOf("@");
-    } else {
-      /*
-       * atSign must be in auth portion.
-       * http://a@b/c@d => host:b auth:a path:/c@d
-       */
-      atSign = rest.lastIndexOf("@", hostEnd);
-    }
-
-    /*
-     * Now we have a portion which is definitely the auth.
-     * Pull that off.
-     */
+    start = 0;
     if (atSign !== -1) {
-      auth = rest.slice(0, atSign);
-      rest = rest.slice(atSign + 1);
-      this.auth = decodeURIComponent(auth);
+      this.auth = decodeURIComponent(rest.slice(0, atSign));
+      start = atSign + 1;
     }
-
-    // the host is the remaining to the left of the first non-host char
-    hostEnd = -1;
-    for (var i = 0; i < nonHostChars.length; i++) {
-      var hec = rest.indexOf(nonHostChars[i]);
-      if (hec !== -1 && (hostEnd === -1 || hec < hostEnd)) {
-        hostEnd = hec;
-      }
+    if (nonHost === -1) {
+      this.host = rest.slice(start);
+      rest = "";
+    } else {
+      this.host = rest.slice(start, nonHost);
+      rest = rest.slice(nonHost);
     }
-    // if we still have not hit it, then the entire thing is a host.
-    if (hostEnd === -1) {
-      hostEnd = rest.length;
-    }
-
-    this.host = rest.slice(0, hostEnd);
-    rest = rest.slice(hostEnd);
 
     // pull out port.
     this.parseHost();
 
-    /*
-     * we've indicated that there is a hostname,
-     * so even if it's empty, it has to be present.
-     */
-    if (typeof this.hostname !== "string") {
-      this.hostname = "";
-    }
+    // We've indicated that there is a hostname,
+    // so even if it's empty, it has to be present.
+    if (typeof this.hostname !== "string") this.hostname = "";
+
     const hostname = this.hostname;
 
-    /*
-     * if hostname begins with [ and ends with ]
-     * assume that it's an IPv6 address.
-     */
-    var ipv6Hostname = isIpv6Hostname(this.hostname);
+    // If hostname begins with [ and ends with ]
+    // assume that it's an IPv6 address.
+    const ipv6Hostname = isIpv6Hostname(hostname);
 
     // validate a little.
     if (!ipv6Hostname) {
@@ -338,29 +403,43 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     if (this.hostname.length > hostnameMaxLen) {
       this.hostname = "";
     } else {
-      // hostnames are always lower case.
+      // Hostnames are always lower case.
       this.hostname = this.hostname.toLowerCase();
     }
 
-    /*
-     * IDNA Support: Returns a punycoded representation of "domain".
-     * It only converts parts of the domain name that
-     * have non-ASCII characters, i.e. it doesn't matter if
-     * you call it with a domain that already is ASCII-only.
-     */
-    if (this.hostname) {
-      this.hostname = new URL("http://" + this.hostname).hostname;
+    if (this.hostname !== "") {
+      if (ipv6Hostname) {
+        if (forbiddenHostCharsIpv6.test(this.hostname)) {
+          throw $ERR_INVALID_URL(url);
+        }
+      } else {
+        // IDNA Support: Returns a punycoded representation of "domain".
+        // It only converts parts of the domain name that
+        // have non-ASCII characters, i.e. it doesn't matter if
+        // you call it with a domain that already is ASCII-only.
+        this.hostname = domainToASCII(this.hostname);
+
+        // Prevent two potential routes of hostname spoofing.
+        // 1. If this.hostname is empty, it must have become empty due to toASCII
+        //    since we checked this.hostname above.
+        // 2. If any of forbiddenHostChars appears in this.hostname, it must have
+        //    also gotten in due to toASCII. This is since getHostname would have
+        //    filtered them out otherwise.
+        // Rather than trying to correct this by moving the non-host part into
+        // the pathname as we've done in getHostname, throw an exception to
+        // convey the severity of this issue.
+        if (this.hostname === "" || forbiddenHostChars.test(this.hostname)) {
+          throw $ERR_INVALID_URL(url);
+        }
+      }
     }
 
-    var p = this.port ? ":" + this.port : "";
-    var h = this.hostname || "";
+    const p = this.port ? ":" + this.port : "";
+    const h = this.hostname || "";
     this.host = h + p;
-    this.href += this.host;
 
-    /*
-     * strip [ and ] from the hostname
-     * the host field still retains them, though
-     */
+    // strip [ and ] from the hostname
+    // the host field still retains them, though
     if (ipv6Hostname) {
       this.hostname = this.hostname.slice(1, -1);
       if (rest[0] !== "/") {
@@ -369,92 +448,84 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     }
   }
 
-  /*
-   * now rest is set to the post-host stuff.
-   * chop off any delim chars.
-   */
-  if (!unsafeProtocol[lowerProto]) {
-    /*
-     * First, make 100% sure that any "autoEscape" chars get
-     * escaped, even if encodeURIComponent doesn't think they
-     * need to be.
-     */
-    for (var i = 0, l = autoEscape.length; i < l; i++) {
-      var ae = autoEscape[i];
-      if (rest.indexOf(ae) === -1) {
-        continue;
-      }
-      var esc = encodeURIComponent(ae);
-      if (esc === ae) {
-        esc = escape(ae);
-      }
-      rest = rest.split(ae).join(esc);
+  // Now rest is set to the post-host stuff.
+  // Chop off any delim chars.
+  if (!unsafeProtocol.has(lowerProto)) {
+    // First, make 100% sure that any "autoEscape" chars get
+    // escaped, even if encodeURIComponent doesn't think they
+    // need to be.
+    rest = autoEscapeStr(rest);
+  }
+
+  let questionIdx = -1;
+  let hashIdx = -1;
+  for (let i = 0; i < rest.length; ++i) {
+    const code = rest.charCodeAt(i);
+    if (code === Char.CHAR_HASH) {
+      this.hash = rest.slice(i);
+      hashIdx = i;
+      break;
+    } else if (code === Char.CHAR_QUESTION_MARK && questionIdx === -1) {
+      questionIdx = i;
     }
   }
 
-  // chop off from the tail first.
-  var hash = rest.indexOf("#");
-  if (hash !== -1) {
-    // got a fragment string.
-    this.hash = rest.substring(hash);
-    rest = rest.slice(0, hash);
-  }
-  var qm = rest.indexOf("?");
-  if (qm !== -1) {
-    this.search = rest.substring(qm);
-    this.query = rest.substring(qm + 1);
-    if (parseQueryString) {
-      const query = this.query;
-      this.query = new URLSearchParams(query).toJSON();
+  if (questionIdx !== -1) {
+    if (hashIdx === -1) {
+      this.search = rest.slice(questionIdx);
+      this.query = rest.slice(questionIdx + 1);
+    } else {
+      this.search = rest.slice(questionIdx, hashIdx);
+      this.query = rest.slice(questionIdx + 1, hashIdx);
     }
-    rest = rest.slice(0, qm);
+    if (parseQueryString) {
+      this.query = querystring().parse(this.query);
+    }
   } else if (parseQueryString) {
-    // no query string, but parseQueryString still requested
+    // No query string, but parseQueryString still requested
     this.search = null;
-    this.query = {};
+    this.query = { __proto__: null };
   }
-  if (rest) {
-    this.pathname = rest;
+
+  const useQuestionIdx = questionIdx !== -1 && (hashIdx === -1 || questionIdx < hashIdx);
+  const firstIdx = useQuestionIdx ? questionIdx : hashIdx;
+  if (firstIdx === -1) {
+    if (rest.length > 0) this.pathname = rest;
+  } else if (firstIdx > 0) {
+    this.pathname = rest.slice(0, firstIdx);
   }
-  if (slashedProtocol[lowerProto] && this.hostname && !this.pathname) {
+  if (slashedProtocol.has(lowerProto) && this.hostname && !this.pathname) {
     this.pathname = "/";
   }
 
-  // to support http.request
+  // To support http.request
   if (this.pathname || this.search) {
-    var p = this.pathname || "";
-    var s = this.search || "";
+    const p = this.pathname || "";
+    const s = this.search || "";
     this.path = p + s;
   }
 
-  // finally, reconstruct the href based on what has been validated.
+  // Finally, reconstruct the href based on what has been validated.
   this.href = this.format();
   return this;
 };
 
-function isIpv6Hostname(hostname: string) {
-  return (
-    hostname.$charCodeAt(0) === Char.LEFT_SQUARE_BRACKET &&
-    hostname.$charCodeAt($toLength(hostname.length - 1)) === Char.RIGHT_SQUARE_BRACKET
-  );
-}
-
 let warnInvalidPort = true;
-function getHostname(self, rest, hostname: string, url) {
+function getHostname(self: Url, rest: string, hostname: string, url: string) {
   for (let i = 0; i < hostname.length; ++i) {
-    const code = hostname.$charCodeAt(i);
+    const code = hostname.charCodeAt(i);
     const isValid =
-      code !== Char.FORWARD_SLASH &&
-      code !== Char.BACKWARD_SLASH &&
-      code !== Char.HASH &&
-      code !== Char.QUESTION_MARK &&
-      code !== Char.COLON;
+      code !== Char.CHAR_FORWARD_SLASH &&
+      code !== Char.CHAR_BACKWARD_SLASH &&
+      code !== Char.CHAR_HASH &&
+      code !== Char.CHAR_QUESTION_MARK &&
+      code !== Char.CHAR_COLON;
 
     if (!isValid) {
       // If leftover starts with :, then it represents an invalid port.
       // But url.parse() is lenient about it for now.
       // Issue a warning and continue.
-      if (warnInvalidPort && code === Char.COLON) {
+      if (warnInvalidPort && code === Char.CHAR_COLON) {
         const detail = `The URL ${url} is invalid. Future versions of Node.js will throw an error.`;
         process.emitWarning(detail, "DeprecationWarning", "DEP0170");
         warnInvalidPort = false;
@@ -466,18 +537,62 @@ function getHostname(self, rest, hostname: string, url) {
   return rest;
 }
 
-// format a parsed object into a url string
-declare function urlFormat(urlObject: string | URL | Url): string;
-function urlFormat(urlObject: unknown) {
-  /*
-   * ensure it's an object, and not a string url.
-   * If it's an obj, this is a no-op.
-   * this way, you can call url_format() on strings
-   * to clean up potentially wonky urls.
-   */
+// Escaped characters. Use empty strings to fill up unused entries.
+// Using Array is faster than Object/Map
+// prettier-ignore
+const escapedCodes = [
+  /* 0 - 9 */ '', '', '', '', '', '', '', '', '', '%09',
+  /* 10 - 19 */ '%0A', '', '', '%0D', '', '', '', '', '', '',
+  /* 20 - 29 */ '', '', '', '', '', '', '', '', '', '',
+  /* 30 - 39 */ '', '', '%20', '', '%22', '', '', '', '', '%27',
+  /* 40 - 49 */ '', '', '', '', '', '', '', '', '', '',
+  /* 50 - 59 */ '', '', '', '', '', '', '', '', '', '',
+  /* 60 - 69 */ '%3C', '', '%3E', '', '', '', '', '', '', '',
+  /* 70 - 79 */ '', '', '', '', '', '', '', '', '', '',
+  /* 80 - 89 */ '', '', '', '', '', '', '', '', '', '',
+  /* 90 - 99 */ '', '', '%5C', '', '%5E', '', '%60', '', '', '',
+  /* 100 - 109 */ '', '', '', '', '', '', '', '', '', '',
+  /* 110 - 119 */ '', '', '', '', '', '', '', '', '', '',
+  /* 120 - 125 */ '', '', '', '%7B', '%7C', '%7D',
+];
+
+// Automatically escape all delimiters and unwise characters from RFC 2396.
+// Also escape single quotes in case of an XSS attack.
+// Return the escaped string.
+function autoEscapeStr(rest: string): string {
+  let escaped = "";
+  let lastEscapedPos = 0;
+  for (let i = 0; i < rest.length; ++i) {
+    // `escaped` contains substring up to the last escaped character.
+    const escapedChar = escapedCodes[rest.charCodeAt(i)];
+    if (escapedChar) {
+      // Concat if there are ordinary characters in the middle.
+      if (i > lastEscapedPos) escaped += rest.slice(lastEscapedPos, i);
+      escaped += escapedChar;
+      lastEscapedPos = i + 1;
+    }
+  }
+  if (lastEscapedPos === 0)
+    // Nothing has been escaped.
+    return rest;
+
+  // There are ordinary characters at the end.
+  if (lastEscapedPos < rest.length) escaped += rest.slice(lastEscapedPos);
+
+  return escaped;
+}
+
+// Format a parsed object into a url string
+function urlFormat(
+  urlObject: UrlLike,
+  options?: { fragment?: boolean; unicode?: boolean; search?: boolean; auth?: boolean },
+): string {
+  // Ensure it's an object, and not a string url.
+  // If it's an object, this is a no-op.
+  // this way, you can call urlParse() on strings
+  // to clean up potentially wonky urls.
   if (typeof urlObject === "string") {
     urlObject = urlParse(urlObject);
-    // NOTE: $isObject returns true for functions
   } else if (typeof urlObject !== "object" || urlObject === null) {
     throw $ERR_INVALID_ARG_TYPE("urlObject", ["Object", "string"], urlObject);
   }
@@ -488,123 +603,151 @@ function urlFormat(urlObject: unknown) {
   return urlObject.format();
 }
 
-Url.prototype.format = function format() {
-  var auth: string = this.auth || "";
+// These characters do not need escaping:
+// ! - . _ ~
+// ' ( ) * :
+// digits
+// alpha (uppercase)
+// alpha (lowercase)
+// prettier-ignore
+const noEscapeAuth = new Int8Array([
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x00 - 0x0F
+  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x10 - 0x1F
+  0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, // 0x20 - 0x2F
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, // 0x30 - 0x3F
+  0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x40 - 0x4F
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, // 0x50 - 0x5F
+  0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, // 0x60 - 0x6F
+  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0, // 0x70 - 0x7F
+]);
+
+Url.prototype.format = function format(): string {
+  let auth = this.auth || "";
   if (auth) {
-    auth = encodeURIComponent(auth);
-    auth = auth.replace(/%3A/i, ":");
+    auth = encodeStr(auth, noEscapeAuth, hexTable);
     auth += "@";
   }
 
-  var protocol: string = this.protocol || "",
-    pathname: string = this.pathname || "",
-    hash: string = this.hash || "",
-    host = "",
-    query = "";
+  let protocol = this.protocol || "";
+  let pathname = this.pathname || "";
+  let hash = this.hash || "";
+  let host = "";
+  let query = "";
 
   if (this.host) {
     host = auth + this.host;
   } else if (this.hostname) {
-    host = auth + (this.hostname.indexOf(":") === -1 ? this.hostname : "[" + this.hostname + "]");
+    host =
+      auth +
+      (this.hostname.includes(":") && !isIpv6Hostname(this.hostname) ? "[" + this.hostname + "]" : this.hostname);
     if (this.port) {
       host += ":" + this.port;
     }
   }
 
-  if (this.query && typeof this.query === "object" && Object.keys(this.query).length) {
+  if (this.query !== null && typeof this.query === "object") {
+    // Use URLSearchParams instead of querystring to avoid loading the module
+    // Node.js does: querystring().stringify(this.query);
     query = new URLSearchParams(this.query).toString();
   }
 
-  var search = this.search || (query && "?" + query) || "";
+  let search = this.search || (query && "?" + query) || "";
 
-  if (protocol && protocol.substr(-1) !== ":") {
-    protocol += ":";
-  }
+  if (protocol && protocol.charCodeAt(protocol.length - 1) !== 58 /* : */) protocol += ":";
 
-  /*
-   * only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
-   * unless they had them to begin with.
-   */
-  if (this.slashes || ((!protocol || slashedProtocol[protocol]) && host.length > 0)) {
-    host = "//" + (host || "");
-    if (pathname && pathname.charAt(0) !== "/") {
-      pathname = "/" + pathname;
+  let newPathname = "";
+  let lastPos = 0;
+  for (let i = 0; i < pathname.length; ++i) {
+    switch (pathname.charCodeAt(i)) {
+      case Char.CHAR_HASH:
+        if (i - lastPos > 0) newPathname += pathname.slice(lastPos, i);
+        newPathname += "%23";
+        lastPos = i + 1;
+        break;
+      case Char.CHAR_QUESTION_MARK:
+        if (i - lastPos > 0) newPathname += pathname.slice(lastPos, i);
+        newPathname += "%3F";
+        lastPos = i + 1;
+        break;
     }
-  } else if (!host) {
-    host = "";
+  }
+  if (lastPos > 0) {
+    if (lastPos !== pathname.length) pathname = newPathname + pathname.slice(lastPos);
+    else pathname = newPathname;
   }
 
-  if (hash && hash.charAt(0) !== "#") {
-    hash = "#" + hash;
-  }
-  if (search && search.charAt(0) !== "?") {
-    search = "?" + search;
+  // Only the slashedProtocols get the //.  Not mailto:, xmpp:, etc.
+  // unless they had them to begin with.
+  if (this.slashes || slashedProtocol.has(protocol)) {
+    if (this.slashes || host) {
+      if (pathname && pathname.charCodeAt(0) !== Char.CHAR_FORWARD_SLASH) pathname = "/" + pathname;
+      host = "//" + host;
+    } else if (
+      protocol.length >= 4 &&
+      protocol.charCodeAt(0) === 102 /* f */ &&
+      protocol.charCodeAt(1) === 105 /* i */ &&
+      protocol.charCodeAt(2) === 108 /* l */ &&
+      protocol.charCodeAt(3) === 101 /* e */
+    ) {
+      host = "//";
+    }
   }
 
-  pathname = pathname.replace(/[?#]/g, function (match) {
-    return encodeURIComponent(match);
-  });
-  search = search.replace("#", "%23");
+  search = search.replaceAll("#", "%23");
+
+  if (hash && hash.charCodeAt(0) !== Char.CHAR_HASH) hash = "#" + hash;
+  if (search && search.charCodeAt(0) !== Char.CHAR_QUESTION_MARK) search = "?" + search;
 
   return protocol + host + pathname + search + hash;
 };
 
-function urlResolve(source: string | URL | Url, relative: string | URL | Url) {
+function urlResolve(source: UrlLike, relative: UrlLike): UrlLike {
   return urlParse(source, false, true).resolve(relative);
 }
 
-Url.prototype.resolve = function resolve(relative: string | URL | Url) {
+Url.prototype.resolve = function resolve(relative: UrlLike): UrlLike {
   return this.resolveObject(urlParse(relative, false, true)).format();
 };
 
-function urlResolveObject(source, relative) {
-  if (!source) {
-    return relative;
-  }
+function urlResolveObject(source: UrlLike, relative: UrlLike): UrlLike {
+  if (!source) return relative;
   return urlParse(source, false, true).resolveObject(relative);
 }
 
-Url.prototype.resolveObject = function resolveObject(relative) {
+Url.prototype.resolveObject = function resolveObject(relative: UrlLike): UrlLike {
   if (typeof relative === "string") {
-    var rel = new Url();
+    const rel = new Url();
     rel.parse(relative, false, true);
     relative = rel;
   }
 
-  var result = new Url();
-  var tkeys = Object.keys(this);
-  for (var tk = 0; tk < tkeys.length; tk++) {
-    var tkey = tkeys[tk];
-    result[tkey] = this[tkey];
-  }
+  const result = new Url();
+  ObjectAssign(result, this);
 
-  /*
-   * hash is always overridden, no matter what.
-   * even href="" will remove it.
-   */
+  // Hash is always overridden, no matter what.
+  // even href="" will remove it.
   result.hash = relative.hash;
 
-  // if the relative url is empty, then there's nothing left to do here.
+  // If the relative url is empty, then there's nothing left to do here.
   if (relative.href === "") {
     result.href = result.format();
     return result;
   }
 
-  // hrefs like //foo/bar always cut to the protocol.
+  // Hrefs like //foo/bar always cut to the protocol.
   if (relative.slashes && !relative.protocol) {
-    // take everything except the protocol from relative
-    var rkeys = Object.keys(relative);
-    for (var rk = 0; rk < rkeys.length; rk++) {
-      var rkey = rkeys[rk];
-      if (rkey !== "protocol") {
-        result[rkey] = relative[rkey];
+    // Take everything except the protocol from relative
+    const relativeWithoutProtocol = ObjectKeys(relative).reduce((acc, key) => {
+      if (key !== "protocol") {
+        acc[key] = relative[key];
       }
-    }
+      return acc;
+    }, {});
+    ObjectAssign(result, relativeWithoutProtocol);
 
     // urlParse appends trailing / to urls like http://www.example.com
-    if (slashedProtocol[result.protocol] && result.hostname && !result.pathname) {
-      result.pathname = "/";
-      result.path = result.pathname;
+    if (slashedProtocol.has(result.protocol) && result.hostname && !result.pathname) {
+      result.path = result.pathname = "/";
     }
 
     result.href = result.format();
@@ -612,39 +755,28 @@ Url.prototype.resolveObject = function resolveObject(relative) {
   }
 
   if (relative.protocol && relative.protocol !== result.protocol) {
-    /*
-     * if it's a known url protocol, then changing
-     * the protocol does weird things
-     * first, if it's not file:, then we MUST have a host,
-     * and if there was a path
-     * to begin with, then we MUST have a path.
-     * if it is file:, then the host is dropped,
-     * because that's known to be hostless.
-     * anything else is assumed to be absolute.
-     */
-    if (!slashedProtocol[relative.protocol]) {
-      var keys = Object.keys(relative);
-      for (var v = 0; v < keys.length; v++) {
-        var k = keys[v];
-        result[k] = relative[k];
-      }
+    // If it's a known url protocol, then changing
+    // the protocol does weird things
+    // first, if it's not file:, then we MUST have a host,
+    // and if there was a path
+    // to begin with, then we MUST have a path.
+    // if it is file:, then the host is dropped,
+    // because that's known to be hostless.
+    // anything else is assumed to be absolute.
+    if (!slashedProtocol.has(relative.protocol)) {
+      ObjectAssign(result, relative);
       result.href = result.format();
       return result;
     }
 
     result.protocol = relative.protocol;
-    if (
-      !relative.host &&
-      !(relative.protocol === "file" || relative.protocol === "file:") &&
-      !hostlessProtocol[relative.protocol]
-    ) {
-      let relPath = (relative.pathname || "").split("/");
-      while (relPath.length && !(relative.host = relPath.shift())) {}
+    if (!relative.host && !/^file:?$/.test(relative.protocol) && !hostlessProtocol.has(relative.protocol)) {
+      const relPath = (relative.pathname || "").split("/");
+      while (relPath.length && !(relative.host = relPath.shift()));
       relative.host ||= "";
       relative.hostname ||= "";
       if (relPath[0] !== "") relPath.unshift("");
       if (relPath.length < 2) relPath.unshift("");
-
       result.pathname = relPath.join("/");
     } else {
       result.pathname = relative.pathname;
@@ -655,13 +787,13 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     result.auth = relative.auth;
     result.hostname = relative.hostname || relative.host;
     result.port = relative.port;
-    // to support http.request
+    // To support http.request
     if (result.pathname || result.search) {
-      var p = result.pathname || "";
-      var s = result.search || "";
+      const p = result.pathname || "";
+      const s = result.search || "";
       result.path = p + s;
     }
-    result.slashes = result.slashes || relative.slashes;
+    result.slashes ||= relative.slashes;
     result.href = result.format();
     return result;
   }
@@ -672,16 +804,14 @@ Url.prototype.resolveObject = function resolveObject(relative) {
   const removeAllDots = mustEndAbs;
   let srcPath = (result.pathname && result.pathname.split("/")) || [];
   const relPath = (relative.pathname && relative.pathname.split("/")) || [];
-  const psychotic = result.protocol && !slashedProtocol[result.protocol];
+  const noLeadingSlashes = result.protocol && !slashedProtocol.has(result.protocol);
 
-  /*
-   * if the url is a non-slashed url, then relative
-   * links like ../.. should be able
-   * to crawl up to the hostname, as well.  This is strange.
-   * result.protocol has already been set by now.
-   * Later on, put the first path part into the host field.
-   */
-  if (psychotic) {
+  // If the url is a non-slashed url, then relative
+  // links like ../.. should be able
+  // to crawl up to the hostname, as well.  This is strange.
+  // result.protocol has already been set by now.
+  // Later on, put the first path part into the host field.
+  if (noLeadingSlashes) {
     result.hostname = "";
     result.port = null;
     if (result.host) {
@@ -694,11 +824,8 @@ Url.prototype.resolveObject = function resolveObject(relative) {
       relative.port = null;
       result.auth = null;
       if (relative.host) {
-        if (relPath[0] === "") {
-          relPath[0] = relative.host;
-        } else {
-          relPath.unshift(relative.host);
-        }
+        if (relPath[0] === "") relPath[0] = relative.host;
+        else relPath.unshift(relative.host);
       }
       relative.host = null;
     }
@@ -719,55 +846,44 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     result.search = relative.search;
     result.query = relative.query;
     srcPath = relPath;
-    // fall through to the dot-handling below.
+    // Fall through to the dot-handling below.
   } else if (relPath.length) {
-    /*
-     * it's relative
-     * throw away the existing file, and take the new path instead.
-     */
+    // it's relative
+    // throw away the existing file, and take the new path instead.
     srcPath ||= [];
     srcPath.pop();
     srcPath = srcPath.concat(relPath);
     result.search = relative.search;
     result.query = relative.query;
-  } else if (relative.search != null && relative.search !== undefined) {
-    /*
-     * just pull out the search.
-     * like href='?foo'.
-     * Put this after the other two cases because it simplifies the booleans
-     */
-    if (psychotic) {
+  } else if (relative.search !== null && relative.search !== undefined) {
+    // Just pull out the search.
+    // like href='?foo'.
+    // Put this after the other two cases because it simplifies the booleans
+    if (noLeadingSlashes) {
       result.hostname = result.host = srcPath.shift();
-      /*
-       * occationaly the auth can get stuck only in host
-       * this especially happens in cases like
-       * url.resolveObject('mailto:local1@domain1', 'local2@domain2')
-       */
-      var authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
+      // Occasionally the auth can get stuck only in host.
+      // This especially happens in cases like
+      // url.resolveObject('mailto:local1@domain1', 'local2@domain2')
+      const authInHost = result.host && result.host.indexOf("@") > 0 && result.host.split("@");
       if (authInHost) {
         result.auth = authInHost.shift();
-        result.hostname = result.host = authInHost.shift();
+        result.host = result.hostname = authInHost.shift();
       }
     }
     result.search = relative.search;
     result.query = relative.query;
-    // to support http.request
+    // To support http.request
     if (result.pathname !== null || result.search !== null) {
-      result.path =
-        (result.pathname ? result.pathname : "") + // force line break
-        (result.search ? result.search : "");
+      result.path = (result.pathname ? result.pathname : "") + (result.search ? result.search : "");
     }
     result.href = result.format();
     return result;
   }
 
   if (!srcPath.length) {
-    /*
-     * no path at all.  easy.
-     * we've already handled the other stuff above.
-     */
+    // No path at all. All other things were already handled above.
     result.pathname = null;
-    // to support http.request
+    // To support http.request
     if (result.search) {
       result.path = "/" + result.search;
     } else {
@@ -777,38 +893,32 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     return result;
   }
 
-  /*
-   * if a url ENDs in . or .., then it must get a trailing slash.
-   * however, if it ends in anything else non-slashy,
-   * then it must NOT get a trailing slash.
-   */
-  var last = srcPath.slice(-1)[0];
-  // prettier-ignore
-  var hasTrailingSlash = (
-    ((result.host || relative.host || srcPath.length > 1) &&
-    (last === "." || last === "..")) || last === "");
+  // If a url ENDs in . or .., then it must get a trailing slash.
+  // however, if it ends in anything else non-slashy,
+  // then it must NOT get a trailing slash.
+  let last = srcPath.slice(-1)[0];
+  const hasTrailingSlash =
+    ((result.host || relative.host || srcPath.length > 1) && (last === "." || last === "..")) || last === "";
 
-  /*
-   * strip single dots, resolve double dots to parent dir
-   * if the path tries to go above the root, `up` ends up > 0
-   */
-  var up = 0;
-  for (var i = srcPath.length; i >= 0; i--) {
+  // Strip single dots, resolve double dots to parent dir
+  // if the path tries to go above the root, `up` ends up > 0
+  let up = 0;
+  for (let i = srcPath.length - 1; i >= 0; i--) {
     last = srcPath[i];
     if (last === ".") {
-      srcPath.splice(i, 1);
+      spliceOne(srcPath, i);
     } else if (last === "..") {
-      srcPath.splice(i, 1);
+      spliceOne(srcPath, i);
       up++;
     } else if (up) {
-      srcPath.splice(i, 1);
+      spliceOne(srcPath, i);
       up--;
     }
   }
 
-  // if the path is allowed to go above the root, restore leading ..s
+  // If the path is allowed to go above the root, restore leading ..s
   if (!mustEndAbs && !removeAllDots) {
-    for (; up--; up) {
+    while (up--) {
       srcPath.unshift("..");
     }
   }
@@ -817,25 +927,22 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     srcPath.unshift("");
   }
 
-  if (hasTrailingSlash && srcPath.join("/").substr(-1) !== "/") {
+  if (hasTrailingSlash && srcPath.join("/").slice(-1) !== "/") {
     srcPath.push("");
   }
 
-  var isAbsolute = srcPath[0] === "" || (srcPath[0] && srcPath[0].charAt(0) === "/");
+  const isAbsolute = srcPath[0] === "" || (srcPath[0] && srcPath[0].charAt(0) === "/");
 
   // put the host back
-  if (psychotic) {
-    result.hostname = isAbsolute ? "" : srcPath.length ? srcPath.shift() : "";
-    result.host = result.hostname;
-    /*
-     * occationaly the auth can get stuck only in host
-     * this especially happens in cases like
-     * url.resolveObject('mailto:local1@domain1', 'local2@domain2')
-     */
-    var authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
+  if (noLeadingSlashes) {
+    result.hostname = result.host = isAbsolute ? "" : srcPath.length ? srcPath.shift() : "";
+    // Occasionally the auth can get stuck only in host.
+    // This especially happens in cases like
+    // url.resolveObject('mailto:local1@domain1', 'local2@domain2')
+    const authInHost = result.host && result.host.indexOf("@") > 0 ? result.host.split("@") : false;
     if (authInHost) {
       result.auth = authInHost.shift();
-      result.hostname = result.host = authInHost.shift();
+      result.host = result.hostname = authInHost.shift();
     }
   }
 
@@ -845,30 +952,28 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     srcPath.unshift("");
   }
 
-  if (srcPath.length > 0) {
-    result.pathname = srcPath.join("/");
-  } else {
+  if (!srcPath.length) {
     result.pathname = null;
     result.path = null;
+  } else {
+    result.pathname = srcPath.join("/");
   }
 
-  // to support request.http
+  // To support request.http
   if (result.pathname !== null || result.search !== null) {
-    // prettier-ignore
-    result.path = (result.pathname ? result.pathname : "") +
-                  (result.search   ? result.search   : "");
+    result.path = (result.pathname ? result.pathname : "") + (result.search ? result.search : "");
   }
   result.auth = relative.auth || result.auth;
-  result.slashes = result.slashes || relative.slashes;
+  result.slashes ||= relative.slashes;
   result.href = result.format();
   return result;
 };
 
 Url.prototype.parseHost = function parseHost() {
-  var host = this.host;
-  var port = portPattern.exec(host);
-  if (port) {
-    port = port[0];
+  let host = this.host;
+  const portMatch = portPattern.exec(host);
+  if (portMatch) {
+    const port = portMatch[0];
     if (port !== ":") {
       this.port = port.slice(1);
     }
@@ -877,67 +982,94 @@ Url.prototype.parseHost = function parseHost() {
   if (host) this.hostname = host;
 };
 
-"".charCodeAt;
-// function fileURLToPath(...args) {
-//   // Since we use WTF::URL::fileSystemPath directly in Bun.fileURLToPath, we don't get invalid windows
-//   // path checking. We patch this in to `node:url` for compatibility. Note that
-//   // this behavior is missing from WATWG URL.
-//   if (process.platform === "win32") {
-//     var url: string;
-//     if ($isObject(args[0]) && args[0] instanceof Url) {
-//       url = (args[0] as { href: string }).href;
-//     } else if (typeof args[0] === "string") {
-//       url = args[0];
-//     } else {
-//       throw $ERR_INVALID_ARG_TYPE("url", ["string", "URL"], args[0]);
-//     }
+const hexTable = new Array(256);
+for (let i = 0; i < 256; ++i)
+  hexTable[i] = "%" + StringPrototypeToUpperCase((i < 16 ? "0" : "") + NumberPrototypeToString(i, 16));
 
-//     for (var i = 0; i < url.length; i++) {
-//       if (url.charCodeAt(i) === Char.PERCENT && (i + 1) < url.length) {
-//         switch (url.charCodeAt(i + 1)) {
-//         break;
-//       }
-//     }
-//   }
-//   return Bun.fileURLToPath.$call(args);
-// }
+function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
+  const len = str.length;
+  if (len === 0) return "";
 
-/**
- * Add new characters as needed from
- * [here](https://github.com/nodejs/node/blob/main/lib/internal/constants.js).
- *
- * @note Do not move to another file, otherwise const enums will be imported as an object
- *      instead of being inlined.
- */
-// prettier-ignore
-const enum Char {
-  // non-alphabetic characters
-  AT = 64,                   // @
-  COLON = 58,                // :
-  BACKWARD_SLASH = 92,       // \
-  FORWARD_SLASH = 47,        // /
-  HASH = 35,                 // #
-  QUESTION_MARK = 63,        // ?
-  PERCENT = 37,              // %
-  LEFT_SQUARE_BRACKET = 91,  // [
-  RIGHT_SQUARE_BRACKET = 93, // ]
+  let out = "";
+  let lastPos = 0;
+  let i = 0;
 
-  // whitespace
-  NO_BREAK_SPACE = 160,             // \u00A0
-  ZERO_WIDTH_NOBREAK_SPACE = 65279, // \uFEFF
+  outer: for (; i < len; i++) {
+    let c = StringPrototypeCharCodeAt(str, i);
+
+    // ASCII
+    while (c < 0x80) {
+      if (noEscapeTable[c] !== 1) {
+        if (lastPos < i) out += StringPrototypeSlice(str, lastPos, i);
+        lastPos = i + 1;
+        out += hexTable[c];
+      }
+
+      if (++i === len) break outer;
+
+      c = StringPrototypeCharCodeAt(str, i);
+    }
+
+    if (lastPos < i) out += StringPrototypeSlice(str, lastPos, i);
+
+    // Multi-byte characters ...
+    if (c < 0x800) {
+      lastPos = i + 1;
+      out += hexTable[0xc0 | (c >> 6)] + hexTable[0x80 | (c & 0x3f)];
+      continue;
+    }
+    if (c < 0xd800 || c >= 0xe000) {
+      lastPos = i + 1;
+      out += hexTable[0xe0 | (c >> 12)] + hexTable[0x80 | ((c >> 6) & 0x3f)] + hexTable[0x80 | (c & 0x3f)];
+      continue;
+    }
+    // Surrogate pair
+    ++i;
+
+    // This branch should never happen because all URLSearchParams entries
+    // should already be converted to USVString. But, included for
+    // completion's sake anyway.
+    if (i >= len) throw $ERR_INVALID_URI("URI malformed");
+
+    const c2 = StringPrototypeCharCodeAt(str, i) & 0x3ff;
+
+    lastPos = i + 1;
+    c = 0x10000 + (((c & 0x3ff) << 10) | c2);
+    out +=
+      hexTable[0xf0 | (c >> 18)] +
+      hexTable[0x80 | ((c >> 12) & 0x3f)] +
+      hexTable[0x80 | ((c >> 6) & 0x3f)] +
+      hexTable[0x80 | (c & 0x3f)];
+  }
+  if (lastPos === 0) return str;
+  if (lastPos < len) return out + StringPrototypeSlice(str, lastPos);
+  return out;
+}
+
+// As of V8 6.6, depending on the size of the array, this is anywhere
+// between 1.5-10x faster than the two-arg version of Array#splice()
+function spliceOne(list: string[], index: number) {
+  for (; index + 1 < list.length; index++) list[index] = list[index + 1];
+  list.pop();
 }
 
 export default {
+  // Original API
+  Url,
   parse: urlParse,
   resolve: urlResolve,
   resolveObject: urlResolveObject,
   format: urlFormat,
-  Url,
-  URLSearchParams,
+
+  // WHATWG API
   URL,
+  // URLPattern,
+  URLSearchParams,
+  domainToASCII,
+  domainToUnicode,
+
+  // Utilities
   pathToFileURL: Bun.pathToFileURL,
   fileURLToPath: Bun.fileURLToPath,
   urlToHttpOptions,
-  domainToASCII,
-  domainToUnicode,
 };

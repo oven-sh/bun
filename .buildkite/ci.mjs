@@ -1154,9 +1154,11 @@ async function getPipeline(options = {}) {
                     getBuildCppStep(target, options),
                     getBuildZigStep(target, options),
                     getLinkBunStep(target, options),
-                    ...(targetWantsZigTest(target)
-                      ? [getBuildZigTestsStep(target, options), getLinkBunStep(target, options, true)]
-                      : []),
+                    // TODO: blocked by https://github.com/ziglang/zig/issues/23281
+                    // un-comment once fixed.
+                    // ...(targetWantsZigTest(target)
+                    //   ? [getBuildZigTestsStep(target, options), getLinkBunStep(target, options, true)]
+                    //   : []),
                   ],
             },
             imagePlatforms.has(imageKey) ? `${imageKey}-build-image` : undefined,
@@ -1176,9 +1178,11 @@ async function getPipeline(options = {}) {
             group: getTargetLabel(target),
             steps: [
               getTestBunStep(target, options, { unifiedTests, testFiles, buildId }),
-              ...(targetWantsZigTest(target)
-                ? [getZigTestBunStep(target, options, { unifiedTests, testFiles, buildId })]
-                : []),
+              // TODO: blocked by https://github.com/ziglang/zig/issues/23281
+              // un-comment once fixed.
+              // ...(targetWantsZigTest(target)
+              //   ? [getZigTestBunStep(target, options, { unifiedTests, testFiles, buildId })]
+              //   : []),
             ],
           })),
       );

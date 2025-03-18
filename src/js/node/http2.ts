@@ -254,13 +254,13 @@ function connectionHeaderMessageWarn() {
 
 function assertValidHeader(name, value) {
   if (name === "" || typeof name !== "string" || StringPrototypeIncludes.$call(name, " ")) {
-    throw $ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`);
+    throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
   }
   if (isPseudoHeader(name)) {
-    throw $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED("Cannot set HTTP/2 pseudo-headers");
+    throw $ERR_HTTP2_PSEUDOHEADER_NOT_ALLOWED();
   }
   if (value === undefined || value === null) {
-    throw $ERR_HTTP2_INVALID_HEADER_VALUE(`Invalid value "${value}" for header "${name}"`);
+    throw $ERR_HTTP2_INVALID_HEADER_VALUE(value, name);
   }
   if (!isConnectionHeaderAllowed(name, value)) {
     connectionHeaderMessageWarn();
@@ -270,6 +270,14 @@ function assertValidHeader(name, value) {
 hideFromStack(assertValidHeader);
 
 class Http2ServerRequest extends Readable {
+  [kState];
+  [kHeaders];
+  [kRawHeaders];
+  [kTrailers];
+  [kRawTrailers];
+  [kStream];
+  [kAborted];
+
   constructor(stream, headers, options, rawHeaders) {
     super({ autoDestroy: false, ...options });
     this[kState] = {
@@ -388,7 +396,12 @@ class Http2ServerRequest extends Readable {
   }
 }
 class Http2ServerResponse extends Stream {
-  constructor(stream, options) {
+  [kState];
+  [kHeaders];
+  [kTrailers];
+  [kStream];
+
+  constructor(stream, options?) {
     super(options);
     this[kState] = {
       closed: false,
@@ -478,9 +491,8 @@ class Http2ServerResponse extends Stream {
 
   set statusCode(code) {
     code |= 0;
-    if (code >= 100 && code < 200)
-      throw $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED("Informational status codes cannot be used");
-    if (code < 100 || code > 599) throw $ERR_HTTP2_STATUS_INVALID(`Invalid status code: ${code}`);
+    if (code >= 100 && code < 200) throw $ERR_HTTP2_INFO_STATUS_NOT_ALLOWED();
+    if (code < 100 || code > 599) throw $ERR_HTTP2_STATUS_INVALID(code);
     this[kState].statusCode = code;
   }
 
@@ -523,7 +535,7 @@ class Http2ServerResponse extends Stream {
 
   removeHeader(name) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
     name = StringPrototypeToLowerCase.$call(StringPrototypeTrim.$call(name));
 
@@ -538,7 +550,7 @@ class Http2ServerResponse extends Stream {
 
   setHeader(name, value) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
     this[kSetHeader](name, value);
   }
@@ -552,15 +564,14 @@ class Http2ServerResponse extends Stream {
     }
 
     if (name[0] === ":") assertValidPseudoHeader(name);
-    else if (!checkIsHttpToken(name))
-      this.destroy($ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`));
+    else if (!checkIsHttpToken(name)) this.destroy($ERR_INVALID_HTTP_TOKEN("Header name", name));
 
     this[kHeaders][name] = value;
   }
 
   appendHeader(name, value) {
     validateString(name, "name");
-    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
     this[kAppendHeader](name, value);
   }
@@ -574,8 +585,7 @@ class Http2ServerResponse extends Stream {
     }
 
     if (name[0] === ":") assertValidPseudoHeader(name);
-    else if (!checkIsHttpToken(name))
-      this.destroy($ERR_INVALID_HTTP_TOKEN(`The arguments Header name is invalid. Received ${name}`));
+    else if (!checkIsHttpToken(name)) this.destroy($ERR_INVALID_HTTP_TOKEN("Header name", name));
 
     // Handle various possible cases the same as OutgoingMessage.appendHeader:
     const headers = this[kHeaders];
@@ -612,11 +622,11 @@ class Http2ServerResponse extends Stream {
     if (!state.closed && !this[kStream].headersSent) this.writeHead(state.statusCode);
   }
 
-  writeHead(statusCode, statusMessage, headers) {
+  writeHead(statusCode, statusMessage?, headers?) {
     const state = this[kState];
 
     if (state.closed || this.stream.destroyed) return this;
-    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+    if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
     if (typeof statusMessage === "string") statusMessageWarn();
 
@@ -684,7 +694,7 @@ class Http2ServerResponse extends Stream {
     this[kStream].uncork();
   }
 
-  write(chunk, encoding, cb) {
+  write(chunk, encoding, cb?) {
     const state = this[kState];
 
     if (typeof encoding === "function") {
@@ -694,9 +704,9 @@ class Http2ServerResponse extends Stream {
 
     let err;
     if (state.ending) {
-      err = $ERR_STREAM_WRITE_AFTER_END(`The stream has ended`);
+      err = $ERR_STREAM_WRITE_AFTER_END();
     } else if (state.closed) {
-      err = $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+      err = $ERR_HTTP2_INVALID_STREAM();
     } else if (state.destroyed) {
       return false;
     }
@@ -764,7 +774,7 @@ class Http2ServerResponse extends Stream {
   createPushResponse(headers, callback) {
     validateFunction(callback, "callback");
     if (this[kState].closed) {
-      const error = $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+      const error = $ERR_HTTP2_INVALID_STREAM();
       process.nextTick(callback, error);
       return;
     }
@@ -875,13 +885,11 @@ const proxySocketHandler = {
       case "setEncoding":
       case "setKeepAlive":
       case "setNoDelay":
-        throw $ERR_HTTP2_NO_SOCKET_MANIPULATION(
-          "HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
-        );
+        throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
       default: {
         const socket = session[bunHTTP2Socket];
         if (!socket) {
-          throw $ERR_HTTP2_SOCKET_UNBOUND("The socket has been disconnected from the Http2Session");
+          throw $ERR_HTTP2_SOCKET_UNBOUND();
         }
         const value = socket[prop];
         return typeof value === "function" ? FunctionPrototypeBind.$call(value, socket) : value;
@@ -891,7 +899,7 @@ const proxySocketHandler = {
   getPrototypeOf(session) {
     const socket = session[bunHTTP2Socket];
     if (!socket) {
-      throw $ERR_HTTP2_SOCKET_UNBOUND("The socket has been disconnected from the Http2Session");
+      throw $ERR_HTTP2_SOCKET_UNBOUND();
     }
     return ReflectGetPrototypeOf(socket);
   },
@@ -912,13 +920,11 @@ const proxySocketHandler = {
       case "setEncoding":
       case "setKeepAlive":
       case "setNoDelay":
-        throw $ERR_HTTP2_NO_SOCKET_MANIPULATION(
-          "HTTP/2 sockets should not be directly manipulated (e.g. read and written)",
-        );
+        throw $ERR_HTTP2_NO_SOCKET_MANIPULATION();
       default: {
         const socket = session[bunHTTP2Socket];
         if (!socket) {
-          throw $ERR_HTTP2_SOCKET_UNBOUND("The socket has been disconnected from the Http2Session");
+          throw $ERR_HTTP2_SOCKET_UNBOUND();
         }
         socket[prop] = value;
         return true;
@@ -1485,7 +1491,7 @@ const kSingleValueHeaders = new SafeSet([
 
 function assertValidPseudoHeader(key) {
   if (!kValidPseudoHeaders.has(key)) {
-    throw $ERR_HTTP2_INVALID_PSEUDOHEADER(`"${key}" is an invalid pseudoheader or is used incorrectly`);
+    throw $ERR_HTTP2_INVALID_PSEUDOHEADER(key);
   }
 }
 hideFromStack(assertValidPseudoHeader);
@@ -1509,22 +1515,22 @@ class Http2Session extends EventEmitter {
 
 function streamErrorFromCode(code: number) {
   if (code === 0xe) {
-    return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK("Maximum number of pending settings acknowledgements");
+    return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK();
   }
-  return $ERR_HTTP2_STREAM_ERROR(`Stream closed with error code ${nameForErrorCode[code] || code}`);
+  return $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[code] || code);
 }
 hideFromStack(streamErrorFromCode);
 function sessionErrorFromCode(code: number) {
   if (code === 0xe) {
-    return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK("Maximum number of pending settings acknowledgements");
+    return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK();
   }
-  return $ERR_HTTP2_SESSION_ERROR(`Session closed with error code ${nameForErrorCode[code] || code}`);
+  return $ERR_HTTP2_SESSION_ERROR(nameForErrorCode[code] || code);
 }
 hideFromStack(sessionErrorFromCode);
 
 function assertSession(session) {
   if (!session) {
-    throw $ERR_HTTP2_INVALID_SESSION(`The session has been destroyed`);
+    throw $ERR_HTTP2_INVALID_SESSION();
   }
 }
 hideFromStack(assertSession);
@@ -1623,24 +1629,22 @@ class Http2Stream extends Duplex {
     const session = this[bunHTTP2Session];
 
     if (this.destroyed || this.closed) {
-      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+      throw $ERR_HTTP2_INVALID_STREAM();
     }
 
     if (this.#sentTrailers) {
-      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
+      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
     assertSession(session);
 
     if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0) {
-      throw $ERR_HTTP2_TRAILERS_NOT_READY(
-        "Trailing headers cannot be sent until after the wantTrailers event is emitted",
-      );
+      throw $ERR_HTTP2_TRAILERS_NOT_READY();
     }
 
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
+      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
     }
@@ -1897,9 +1901,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       options.length >= 0 ||
       isDirectory
     ) {
-      const err = isDirectory
-        ? $ERR_HTTP2_SEND_FILE("Directories cannot be sent")
-        : $ERR_HTTP2_SEND_FILE_NOSEEK("Offset or length can only be specified for regular files");
+      const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
       tryClose(fd);
       if (onError) onError(err);
       else {
@@ -1915,7 +1917,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
   if (this.destroyed || this.closed) {
     tryClose(fd);
-    const error = $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+    const error = $ERR_HTTP2_INVALID_STREAM();
     this.respond(headers, options);
     this.destroy(error);
     return;
@@ -1995,19 +1997,19 @@ class ServerHttp2Stream extends Http2Stream {
     super(streamId, session, headers);
   }
   pushStream() {
-    throw $ERR_HTTP2_PUSH_DISABLED("HTTP/2 client has disabled push streams");
+    throw $ERR_HTTP2_PUSH_DISABLED();
   }
 
   respondWithFile(path, headers, options) {
     if (this.destroyed || this.closed) {
-      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+      throw $ERR_HTTP2_INVALID_STREAM();
     }
-    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
+      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
     }
@@ -2025,7 +2027,7 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest
     ) {
-      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
+      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
     }
 
     if (options.offset !== undefined && typeof options.offset !== "number") {
@@ -2041,14 +2043,14 @@ class ServerHttp2Stream extends Http2Stream {
   }
   respondWithFD(fd, headers, options) {
     if (this.destroyed || this.closed) {
-      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+      throw $ERR_HTTP2_INVALID_STREAM();
     }
-    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
+      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
     }
@@ -2065,7 +2067,7 @@ class ServerHttp2Stream extends Http2Stream {
       statusCode === HTTP_STATUS_NOT_MODIFIED ||
       this.headRequest
     ) {
-      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
+      throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
     }
     options = { ...options };
     if (options.offset !== undefined && typeof options.offset !== "number") {
@@ -2085,26 +2087,27 @@ class ServerHttp2Stream extends Http2Stream {
   }
   additionalHeaders(headers) {
     if (this.destroyed || this.closed) {
-      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+      throw $ERR_HTTP2_INVALID_STREAM();
     }
 
     if (this.sentTrailers) {
-      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
+      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
-    if (this.headersSent)
-      throw $ERR_HTTP2_HEADERS_AFTER_RESPOND("Cannot specify additional headers after response initiated");
+    if (this.headersSent) {
+      throw $ERR_HTTP2_HEADERS_AFTER_RESPOND();
+    }
 
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
+      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
     }
 
     for (const name in headers) {
       if (name.startsWith(":") && name !== HTTP2_HEADER_STATUS) {
-        throw $ERR_HTTP2_INVALID_PSEUDOHEADER(`"${name}" is an invalid pseudoheader or is used incorrectly`);
+        throw $ERR_HTTP2_INVALID_PSEUDOHEADER(name);
       }
     }
 
@@ -2126,10 +2129,9 @@ class ServerHttp2Stream extends Http2Stream {
     }
     const statusCode = headers[HTTP2_HEADER_STATUS];
     if (hasStatus) {
-      if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS)
-        throw $ERR_HTTP2_STATUS_101("HTTP status code 101 (Switching Protocols) is forbidden in HTTP/2");
+      if (statusCode === HTTP_STATUS_SWITCHING_PROTOCOLS) throw $ERR_HTTP2_STATUS_101();
       if (statusCode < 100 || statusCode >= 200) {
-        throw $ERR_HTTP2_INVALID_INFO_STATUS(`Invalid informational status code: ${statusCode}`);
+        throw $ERR_HTTP2_INVALID_INFO_STATUS(statusCode);
       }
 
       // Payload/DATA frames are not permitted in these cases
@@ -2139,7 +2141,7 @@ class ServerHttp2Stream extends Http2Stream {
         statusCode === HTTP_STATUS_NOT_MODIFIED ||
         this.headRequest
       ) {
-        throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(`Responses with ${statusCode} status must not have a payload`);
+        throw $ERR_HTTP2_PAYLOAD_FORBIDDEN(statusCode);
       }
     }
     const session = this[bunHTTP2Session];
@@ -2154,20 +2156,20 @@ class ServerHttp2Stream extends Http2Stream {
   }
   respond(headers: any, options?: any) {
     if (this.destroyed || this.closed) {
-      throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+      throw $ERR_HTTP2_INVALID_STREAM();
     }
 
     const session = this[bunHTTP2Session];
     assertSession(session);
-    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT("Response has already been initiated.");
+    if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
     if (this.sentTrailers) {
-      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
+      throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
 
     if (headers == undefined) {
       headers = {};
     } else if (!$isObject(headers)) {
-      throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
+      throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
     }
@@ -2306,9 +2308,9 @@ function getOrigin(origin: any, isAltSvc: boolean): string {
       origin = new URL(origin).origin;
     } catch (e) {
       if (isAltSvc) {
-        throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN("HTTP/2 ALTSVC frames require a valid origin");
+        throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
       } else {
-        throw $ERR_INVALID_URL("HTTP/2 ORIGIN frames require a valid origin");
+        throw $ERR_HTTP2_INVALID_ORIGIN();
       }
     }
   } else if (origin != null && typeof origin === "object") {
@@ -2317,9 +2319,9 @@ function getOrigin(origin: any, isAltSvc: boolean): string {
   validateString(origin, "origin");
   if (!origin || origin === "null") {
     if (isAltSvc) {
-      throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN("HTTP/2 ALTSVC frames require a valid origin");
+      throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
     } else {
-      throw $ERR_HTTP2_INVALID_ORIGIN("HTTP/2 ORIGIN frames require a valid origin");
+      throw $ERR_HTTP2_INVALID_ORIGIN();
     }
   }
 
@@ -2563,7 +2565,7 @@ class ServerHttp2Session extends Http2Session {
   altsvc(alt: string, originOrStream) {
     const MAX_LENGTH = 16382;
     const parser = this.#parser;
-    if (this.destroyed || !parser) throw $ERR_HTTP2_INVALID_SESSION(`The session has been destroyed`);
+    if (this.destroyed || !parser) throw $ERR_HTTP2_INVALID_SESSION();
     let stream = 0;
     let origin;
 
@@ -2585,7 +2587,7 @@ class ServerHttp2Session extends Http2Session {
       if (typeof origin !== "string") {
         throw $ERR_INVALID_ARG_TYPE("originOrStream", ["string", "number", "URL", "object"], originOrStream);
       } else if (!origin) {
-        throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN("HTTP/2 ALTSVC frames require a valid origin");
+        throw $ERR_HTTP2_ALTSVC_INVALID_ORIGIN();
       } else {
         origin = getOrigin(origin, true);
       }
@@ -2594,17 +2596,17 @@ class ServerHttp2Session extends Http2Session {
     validateString(alt, "alt");
 
     if (!kQuotedString.test(alt)) {
-      throw $ERR_INVALID_CHAR("Invalid character in alt");
+      throw $ERR_INVALID_CHAR("alt");
     }
     origin = origin || "";
     if (Buffer.byteLength(origin) + Buffer.byteLength(alt) > MAX_LENGTH) {
-      throw $ERR_HTTP2_ALTSVC_LENGTH("HTTP/2 ALTSVC frames are limited to 16382 bytes");
+      throw $ERR_HTTP2_ALTSVC_LENGTH();
     }
     parser.altsvc(origin, alt, stream);
   }
   origin(...origins) {
     const parser = this.#parser;
-    if (this.destroyed || !parser) throw $ERR_HTTP2_INVALID_SESSION(`The session has been destroyed`);
+    if (this.destroyed || !parser) throw $ERR_HTTP2_INVALID_SESSION();
     let length = origins.length;
     if (length === 0) {
       return;
@@ -2728,7 +2730,7 @@ class ServerHttp2Session extends Http2Session {
       payload = payload || Buffer.alloc(8);
     }
     if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      throw $ERR_INVALID_ARG_TYPE("payload must be a Buffer or TypedArray");
+      throw $ERR_INVALID_ARG_TYPE("payload", ["Buffer", "TypedArray"], payload);
     }
     const parser = this.#parser;
     if (!parser) return false;
@@ -2736,7 +2738,7 @@ class ServerHttp2Session extends Http2Session {
 
     if (typeof callback === "function") {
       if (payload.byteLength !== 8) {
-        const error = $ERR_HTTP2_PING_LENGTH("HTTP2 ping payload must be 8 bytes");
+        const error = $ERR_HTTP2_PING_LENGTH();
         callback(error, 0, payload);
         return;
       }
@@ -2746,7 +2748,7 @@ class ServerHttp2Session extends Http2Session {
         this.#pingCallbacks = [[callback, Date.now()]];
       }
     } else if (payload.byteLength !== 8) {
-      throw $ERR_HTTP2_PING_LENGTH("HTTP2 ping payload must be 8 bytes");
+      throw $ERR_HTTP2_PING_LENGTH();
     }
 
     parser.ping(payload);
@@ -3133,7 +3135,7 @@ class ClientHttp2Session extends Http2Session {
       payload = payload || Buffer.alloc(8);
     }
     if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      throw $ERR_INVALID_ARG_TYPE("payload must be a Buffer or TypedArray");
+      throw $ERR_INVALID_ARG_TYPE("payload", ["Buffer", "TypedArray"], payload);
     }
     const parser = this.#parser;
     if (!parser) return false;
@@ -3141,7 +3143,7 @@ class ClientHttp2Session extends Http2Session {
 
     if (typeof callback === "function") {
       if (payload.byteLength !== 8) {
-        const error = $ERR_HTTP2_PING_LENGTH("HTTP2 ping payload must be 8 bytes");
+        const error = $ERR_HTTP2_PING_LENGTH();
         callback(error, 0, payload);
         return;
       }
@@ -3151,7 +3153,7 @@ class ClientHttp2Session extends Http2Session {
         this.#pingCallbacks = [[callback, Date.now()]];
       }
     } else if (payload.byteLength !== 8) {
-      throw $ERR_HTTP2_PING_LENGTH("HTTP2 ping payload must be 8 bytes");
+      throw $ERR_HTTP2_PING_LENGTH();
     }
 
     parser.ping(payload);
@@ -3193,7 +3195,7 @@ class ClientHttp2Session extends Http2Session {
       url = new URL(url);
     }
     if (!(url instanceof URL)) {
-      throw $ERR_INVALID_ARG_TYPE("Invalid URL");
+      throw $ERR_INVALID_ARG_TYPE("url", "URL", url);
     }
     if (typeof options === "function") {
       listener = options;
@@ -3296,17 +3298,17 @@ class ClientHttp2Session extends Http2Session {
   request(headers: any, options?: any) {
     try {
       if (this.destroyed || this.closed) {
-        throw $ERR_HTTP2_INVALID_STREAM(`The stream has been destroyed`);
+        throw $ERR_HTTP2_INVALID_STREAM();
       }
 
       if (this.sentTrailers) {
-        throw $ERR_HTTP2_TRAILERS_ALREADY_SENT(`Trailing headers have already been sent`);
+        throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
       }
 
       if (headers == undefined) {
         headers = {};
       } else if (!$isObject(headers)) {
-        throw $ERR_HTTP2_INVALID_HEADERS("headers must be an object");
+        throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
       } else {
         headers = { ...headers };
       }
@@ -3367,7 +3369,7 @@ class ClientHttp2Session extends Http2Session {
       const req = new ClientHttp2Stream(stream_id, this, headers);
       req.authority = authority;
       if (stream_id < 0) {
-        const error = $ERR_HTTP2_OUT_OF_STREAMS("No stream ID is available because maximum stream ID has been reached");
+        const error = $ERR_HTTP2_OUT_OF_STREAMS();
         this.emit("error", error);
         return null;
       }
@@ -3479,7 +3481,7 @@ class Http2Server extends net.Server {
     } else if (options == null || typeof options == "object") {
       options = { ...options };
     } else {
-      throw $ERR_INVALID_ARG_TYPE("options must be an object");
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
     super(options, connectionListener);
     this.setMaxListeners(0);
@@ -3518,7 +3520,7 @@ class Http2SecureServer extends tls.Server {
     } else if (options == null || typeof options == "object") {
       options = { ...options, ALPNProtocols: ["h2"] };
     } else {
-      throw $ERR_INVALID_ARG_TYPE("options must be an object");
+      throw $ERR_INVALID_ARG_TYPE("options", "object", options);
     }
     super(options, connectionListener);
     this.setMaxListeners(0);

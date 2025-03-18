@@ -2595,7 +2595,7 @@ crypto_exports.diffieHellman = function diffieHellman(options) {
   const privateType = privateKey.asymmetricKeyType;
   const publicType = publicKey.asymmetricKeyType;
   if (privateType !== publicType || !["dh", "ec", "x448", "x25519"].includes(privateType)) {
-    throw $ERR_CRYPTO_INCOMPATIBLE_KEY(`Incompatible key types for Diffie-Hellman: ${privateType} and ${publicType}`);
+    throw $ERR_CRYPTO_INCOMPATIBLE_KEY("key types for Diffie-Hellman", `${privateType} and ${publicType}`);
   }
 
   return statelessDH(privateKey.$bunNativePtr, publicKey.$bunNativePtr);

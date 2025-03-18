@@ -3,6 +3,7 @@
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
+const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
 
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 const ObjectAssign = Object.assign;
@@ -34,8 +35,6 @@ declare namespace Internal {
   function printSimpleMyersDiff(...args: any[]): any;
 }
 
-const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
-
 const kReadableOperator = {
   deepStrictEqual: "Expected values to be strictly deep-equal:",
   strictEqual: "Expected values to be strictly equal:",
@@ -55,7 +54,6 @@ const kMaxLongStringLength = 512;
 function copyError(source) {
   const target = ObjectAssign({ __proto__: ObjectGetPrototypeOf(source) }, source);
   ObjectDefineProperty(target, "message", {
-    __proto__: null,
     value: source.message,
   });
   if (ObjectPrototypeHasOwnProperty.$call(source, "cause")) {
@@ -65,7 +63,7 @@ function copyError(source) {
       cause = copyError(cause);
     }
 
-    ObjectDefineProperty(target, "cause", { __proto__: null, value: cause });
+    ObjectDefineProperty(target, "cause", { value: cause });
   }
   return target;
 }
@@ -242,6 +240,11 @@ function addEllipsis(string) {
 }
 
 class AssertionError extends Error {
+  generatedMessage;
+  actual;
+  expected;
+  operator;
+
   constructor(options) {
     validateObject(options, "options");
     const {
@@ -353,7 +356,6 @@ class AssertionError extends Error {
 
     this.generatedMessage = !message;
     ObjectDefineProperty(this, "name", {
-      __proto__: null,
       value: "AssertionError [ERR_ASSERTION]",
       enumerable: false,
       writable: true,
@@ -361,9 +363,6 @@ class AssertionError extends Error {
     });
     this.code = "ERR_ASSERTION";
     if (details) {
-      this.actual = undefined;
-      this.expected = undefined;
-      this.operator = undefined;
       for (let i = 0; i < details.length; i++) {
         this["message " + i] = details[i].message;
         this["actual " + i] = details[i].actual;

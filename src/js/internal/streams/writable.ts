@@ -169,7 +169,6 @@ ObjectDefineProperties(WritableState.prototype, {
   // is disabled we need a way to tell whether the stream has failed.
   // This is/should be a cold path.
   errored: {
-    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kErrored) !== 0 ? this[kErroredValue] : null;
@@ -185,7 +184,6 @@ ObjectDefineProperties(WritableState.prototype, {
   },
 
   writable: {
-    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kHasWritable) !== 0 ? (this[kState] & kWritable) !== 0 : undefined;
@@ -203,7 +201,6 @@ ObjectDefineProperties(WritableState.prototype, {
   },
 
   defaultEncoding: {
-    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kDefaultUTF8Encoding) !== 0 ? "utf8" : this[kDefaultEncodingValue];
@@ -220,7 +217,6 @@ ObjectDefineProperties(WritableState.prototype, {
 
   // The callback that the user supplies to write(chunk, encoding, cb).
   writecb: {
-    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kWriteCb) !== 0 ? this[kWriteCbValue] : nop;
@@ -238,7 +234,6 @@ ObjectDefineProperties(WritableState.prototype, {
   // Storage for data passed to the afterWrite() callback in case of
   // synchronous _write() completion.
   afterWriteTickInfo: {
-    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kAfterWriteTickInfo) !== 0 ? this[kAfterWriteTickInfoValue] : null;
@@ -254,7 +249,6 @@ ObjectDefineProperties(WritableState.prototype, {
   },
 
   buffered: {
-    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kBuffered) !== 0 ? this[kBufferedValue] : [];
@@ -340,7 +334,6 @@ WritableState.prototype.getBuffer = function getBuffer() {
 };
 
 ObjectDefineProperty(WritableState.prototype, "bufferedRequestCount", {
-  __proto__: null,
   get() {
     return (this[kState] & kBuffered) === 0 ? 0 : this[kBufferedValue].length - this.bufferedIndex;
   },
@@ -399,7 +392,6 @@ $toClass(Writable, "Writable", Stream);
 Writable.WritableState = WritableState;
 
 ObjectDefineProperty(Writable, SymbolHasInstance, {
-  __proto__: null,
   value: function (object) {
     if (FunctionPrototypeSymbolHasInstance.$call(this, object)) return true;
     if (this !== Writable) return false;
@@ -948,14 +940,12 @@ function callFinishedCallbacks(state, err) {
 
 ObjectDefineProperties(Writable.prototype, {
   closed: {
-    __proto__: null,
     get() {
       return this._writableState ? (this._writableState[kState] & kClosed) !== 0 : false;
     },
   },
 
   destroyed: {
-    __proto__: null,
     get() {
       return this._writableState ? (this._writableState[kState] & kDestroyed) !== 0 : false;
     },
@@ -969,7 +959,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writable: {
-    __proto__: null,
     get() {
       const w = this._writableState;
       // w.writable === false means that this is part of a Duplex stream
@@ -987,7 +976,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableFinished: {
-    __proto__: null,
     get() {
       const state = this._writableState;
       return state ? (state[kState] & kFinished) !== 0 : false;
@@ -995,7 +983,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableObjectMode: {
-    __proto__: null,
     get() {
       const state = this._writableState;
       return state ? (state[kState] & kObjectMode) !== 0 : false;
@@ -1003,7 +990,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableBuffer: {
-    __proto__: null,
     get() {
       const state = this._writableState;
       return state && state.getBuffer();
@@ -1011,7 +997,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableEnded: {
-    __proto__: null,
     get() {
       const state = this._writableState;
       return state ? (state[kState] & kEnding) !== 0 : false;
@@ -1019,7 +1004,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableNeedDrain: {
-    __proto__: null,
     get() {
       const state = this._writableState;
       return state ? (state[kState] & (kDestroyed | kEnding | kNeedDrain)) === kNeedDrain : false;
@@ -1027,7 +1011,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableHighWaterMark: {
-    __proto__: null,
     get() {
       const state = this._writableState;
       return state?.highWaterMark;
@@ -1035,7 +1018,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableCorked: {
-    __proto__: null,
     get() {
       const state = this._writableState;
       return state ? state.corked : 0;
@@ -1043,7 +1025,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableLength: {
-    __proto__: null,
     get() {
       const state = this._writableState;
       return state?.length;
@@ -1051,7 +1032,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   errored: {
-    __proto__: null,
     enumerable: false,
     get() {
       const state = this._writableState;
@@ -1060,7 +1040,6 @@ ObjectDefineProperties(Writable.prototype, {
   },
 
   writableAborted: {
-    __proto__: null,
     get: function () {
       const state = this._writableState;
       return (

@@ -6418,32 +6418,6 @@ extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalO
     return JSValue::encode(slot.getPureResult());
 }
 
-using StackCodeType = JSC::StackVisitor::Frame::CodeType;
-CPP_DECL bool Bun__util__isInsideNodeModules(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
-    auto& vm = JSC::getVM(globalObject);
-    bool inNodeModules = false;
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor) || visitor->isNativeCalleeFrame()) {
-            return WTF::IterationStatus::Continue;
-        }
-
-        if (visitor->hasLineAndColumnInfo()) {
-            String sourceURL = Zig::sourceURL(visitor);
-            if (sourceURL.startsWith("node:"_s) || sourceURL.startsWith("bun:"_s))
-                return WTF::IterationStatus::Continue;
-            if (sourceURL.contains("node_modules"_s))
-                inNodeModules = true;
-
-            return WTF::IterationStatus::Done;
-        }
-
-        return WTF::IterationStatus::Continue;
-    });
-
-    return inNodeModules;
-}
-
 #if BUN_DEBUG
 CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 {

@@ -16,7 +16,6 @@ domain.createDomain = domain.create = function () {
     if (typeof e === "object") {
       e.domainEmitter = this;
       ObjectDefineProperty(e, "domain", {
-        __proto__: null,
         configurable: true,
         enumerable: false,
         value: domain,

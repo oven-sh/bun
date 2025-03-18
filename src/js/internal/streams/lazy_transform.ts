@@ -24,7 +24,6 @@ function makeGetter(name) {
 function makeSetter(name) {
   return function (val) {
     ObjectDefineProperty(this, name, {
-      __proto__: null,
       value: val,
       enumerable: true,
       configurable: true,
@@ -35,14 +34,12 @@ function makeSetter(name) {
 
 ObjectDefineProperties(LazyTransform.prototype, {
   _readableState: {
-    __proto__: null,
     get: makeGetter("_readableState"),
     set: makeSetter("_readableState"),
     configurable: true,
     enumerable: true,
   },
   _writableState: {
-    __proto__: null,
     get: makeGetter("_writableState"),
     set: makeSetter("_writableState"),
     configurable: true,

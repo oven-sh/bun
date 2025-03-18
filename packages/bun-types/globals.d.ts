@@ -76,6 +76,17 @@ declare global {
       revision: string;
       reallyExit(code?: number): never;
       dlopen(module: { exports: any }, filename: string, flags?: number): void;
+      _exiting: boolean;
+      noDeprecation: boolean;
+
+      binding(m: string): object;
+      binding(m: "constants"): {
+        os: typeof import("node:os").constants;
+        fs: typeof import("node:fs").constants;
+        crypto: typeof import("node:crypto").constants;
+        zlib: typeof import("node:zlib").constants;
+        trace: typeof import("node:trace").constants;
+      };
     }
   }
 

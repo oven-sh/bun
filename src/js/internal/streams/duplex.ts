@@ -97,19 +97,21 @@ Duplex.prototype.destroy = Writable.prototype.destroy;
 }
 
 ObjectDefineProperties(Duplex.prototype, {
-  writable: { ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writable") },
+  writable: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writable") },
   writableHighWaterMark: {
+    __proto__: null,
     ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableHighWaterMark"),
   },
-  writableObjectMode: { ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableObjectMode") },
-  writableBuffer: { ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableBuffer") },
-  writableLength: { ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableLength") },
-  writableFinished: { ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableFinished") },
-  writableCorked: { ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableCorked") },
-  writableEnded: { ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableEnded") },
-  writableNeedDrain: { ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableNeedDrain") },
+  writableObjectMode: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableObjectMode") },
+  writableBuffer: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableBuffer") },
+  writableLength: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableLength") },
+  writableFinished: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableFinished") },
+  writableCorked: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableCorked") },
+  writableEnded: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableEnded") },
+  writableNeedDrain: { __proto__: null, ...ObjectGetOwnPropertyDescriptor(Writable.prototype, "writableNeedDrain") },
 
   destroyed: {
+    __proto__: null,
     get() {
       if (this._readableState === undefined || this._writableState === undefined) {
         return false;

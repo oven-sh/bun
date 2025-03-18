@@ -172,6 +172,7 @@ ObjectDefineProperties(ReadableState.prototype, {
   // since when autoDestroy is disabled we need a way to tell whether the
   // stream has failed.
   errored: {
+    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kErrored) !== 0 ? this[kErroredValue] : null;
@@ -187,6 +188,7 @@ ObjectDefineProperties(ReadableState.prototype, {
   },
 
   defaultEncoding: {
+    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kDefaultUTF8Encoding) !== 0 ? "utf8" : this[kDefaultEncodingValue];
@@ -202,6 +204,7 @@ ObjectDefineProperties(ReadableState.prototype, {
   },
 
   decoder: {
+    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kDecoder) !== 0 ? this[kDecoderValue] : null;
@@ -217,6 +220,7 @@ ObjectDefineProperties(ReadableState.prototype, {
   },
 
   encoding: {
+    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kEncoding) !== 0 ? this[kEncodingValue] : null;
@@ -232,6 +236,7 @@ ObjectDefineProperties(ReadableState.prototype, {
   },
 
   flowing: {
+    __proto__: null,
     enumerable: false,
     get() {
       return (this[kState] & kHasFlowing) !== 0 ? (this[kState] & kFlowing) !== 0 : null;
@@ -1301,6 +1306,7 @@ async function* createAsyncIterator(stream, options) {
 // userland will fail.
 ObjectDefineProperties(Readable.prototype, {
   readable: {
+    __proto__: null,
     get() {
       const r = this._readableState;
       // r.readable === false means that this is part of a Duplex stream
@@ -1318,6 +1324,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableDidRead: {
+    __proto__: null,
     enumerable: false,
     get: function () {
       return this._readableState.dataEmitted;
@@ -1325,6 +1332,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableAborted: {
+    __proto__: null,
     enumerable: false,
     get: function () {
       return !!(
@@ -1336,6 +1344,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableHighWaterMark: {
+    __proto__: null,
     enumerable: false,
     get: function () {
       return this._readableState.highWaterMark;
@@ -1343,6 +1352,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableBuffer: {
+    __proto__: null,
     enumerable: false,
     get: function () {
       return this._readableState?.buffer;
@@ -1350,6 +1360,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableFlowing: {
+    __proto__: null,
     enumerable: false,
     get: function () {
       return this._readableState.flowing;
@@ -1362,6 +1373,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableLength: {
+    __proto__: null,
     enumerable: false,
     get() {
       return this._readableState.length;
@@ -1369,6 +1381,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableObjectMode: {
+    __proto__: null,
     enumerable: false,
     get() {
       return this._readableState ? this._readableState.objectMode : false;
@@ -1376,6 +1389,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableEncoding: {
+    __proto__: null,
     enumerable: false,
     get() {
       return this._readableState ? this._readableState.encoding : null;
@@ -1383,6 +1397,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   errored: {
+    __proto__: null,
     enumerable: false,
     get() {
       return this._readableState ? this._readableState.errored : null;
@@ -1390,12 +1405,14 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   closed: {
+    __proto__: null,
     get() {
       return this._readableState ? this._readableState.closed : false;
     },
   },
 
   destroyed: {
+    __proto__: null,
     enumerable: false,
     get() {
       return this._readableState ? this._readableState.destroyed : false;
@@ -1414,6 +1431,7 @@ ObjectDefineProperties(Readable.prototype, {
   },
 
   readableEnded: {
+    __proto__: null,
     enumerable: false,
     get() {
       return this._readableState ? this._readableState.endEmitted : false;
@@ -1424,6 +1442,7 @@ ObjectDefineProperties(Readable.prototype, {
 ObjectDefineProperties(ReadableState.prototype, {
   // Legacy getter for `pipesCount`.
   pipesCount: {
+    __proto__: null,
     get() {
       return this.pipes.length;
     },
@@ -1431,6 +1450,7 @@ ObjectDefineProperties(ReadableState.prototype, {
 
   // Legacy property for `paused`.
   paused: {
+    __proto__: null,
     get() {
       return (this[kState] & kPaused) !== 0;
     },

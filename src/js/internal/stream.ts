@@ -32,9 +32,10 @@ for (let i = 0; i < streamKeys.length; i++) {
     }
     return Stream.Readable.from(op.$apply(this, args));
   }
-  ObjectDefineProperty(fn, "name", { value: op.name });
-  ObjectDefineProperty(fn, "length", { value: op.length });
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
   ObjectDefineProperty(Stream.Readable.prototype, key, {
+    __proto__: null,
     value: fn,
     enumerable: false,
     configurable: true,
@@ -51,9 +52,10 @@ for (let i = 0; i < promiseKeys.length; i++) {
     }
     return Promise.resolve().then(() => op.$apply(this, args));
   }
-  ObjectDefineProperty(fn, "name", { value: op.name });
-  ObjectDefineProperty(fn, "length", { value: op.length });
+  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
+  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
   ObjectDefineProperty(Stream.Readable.prototype, key, {
+    __proto__: null,
     value: fn,
     enumerable: false,
     configurable: true,
@@ -75,6 +77,7 @@ Stream.setDefaultHighWaterMark = setDefaultHighWaterMark;
 Stream.getDefaultHighWaterMark = getDefaultHighWaterMark;
 
 ObjectDefineProperty(Stream, "promises", {
+  __proto__: null,
   configurable: true,
   enumerable: true,
   get() {
@@ -83,6 +86,7 @@ ObjectDefineProperty(Stream, "promises", {
 });
 
 ObjectDefineProperty(pipeline, customPromisify, {
+  __proto__: null,
   enumerable: true,
   get() {
     return promises.pipeline;
@@ -90,6 +94,7 @@ ObjectDefineProperty(pipeline, customPromisify, {
 });
 
 ObjectDefineProperty(eos, customPromisify, {
+  __proto__: null,
   enumerable: true,
   get() {
     return promises.finished;

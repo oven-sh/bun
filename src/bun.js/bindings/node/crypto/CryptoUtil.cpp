@@ -374,6 +374,7 @@ extern "C" EncodedJSValue Bun__NodeCrypto__createCryptoError(JSC::JSGlobalObject
 void throwCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, uint32_t err, const char* message)
 {
     JSValue errorObject = createCryptoError(globalObject, scope, err, message);
+    RETURN_IF_EXCEPTION(scope, void());
     throwException(globalObject, scope, errorObject);
 }
 

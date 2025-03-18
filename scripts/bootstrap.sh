@@ -1,5 +1,5 @@
 #!/bin/sh
-# Version: 9
+# Version: 10
 
 # A script that installs the dependencies needed to build and test Bun.
 # This should work on macOS and Linux with a POSIX shell.
@@ -919,10 +919,7 @@ install_llvm() {
 			"llvm$(llvm_version)" \
 			"clang$(llvm_version)" \
 			"scudo-malloc" \
-			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/main"
-		install_packages \
-			"lld$(llvm_version)" \
-			--repository "http://dl-cdn.alpinelinux.org/alpine/edge/community"
+			"lld$(llvm_version)"
 		;;
 	esac
 }
@@ -1132,6 +1129,35 @@ install_tailscale() {
 	esac
 }
 
+install_fuse_python() {
+	# only linux needs this
+	case "$pm" in
+	apk)
+		# Build and install from source (https://github.com/libfuse/python-fuse/blob/master/INSTALL)
+		install_packages \
+			python3-dev \
+			fuse-dev \
+			pkgconf \
+			py3-setuptools
+		python_fuse_version="1.0.9"
+		python_fuse_tarball=$(download_file "https://github.com/libfuse/python-fuse/archive/refs/tags/v$python_fuse_version.tar.gz")
+		python_fuse_tmpdir="$(dirname "$python_fuse_tarball")"
+		execute tar -xzf "$python_fuse_tarball" -C "$python_fuse_tmpdir"
+		execute sh -c "cd '$python_fuse_tmpdir/python-fuse-$python_fuse_version' && python setup.py build"
+		execute_sudo sh -c "cd '$python_fuse_tmpdir/python-fuse-$python_fuse_version' && python setup.py install"
+
+		# For Alpine we also need to make sure the kernel module is automatically loaded
+		execute_sudo sh -c "echo fuse >> /etc/modules-load.d/fuse.conf"
+
+		# Check that it was actually installed
+		execute python -c 'import fuse'
+		;;
+	apt | dnf | yum)
+		install_packages python3-fuse
+		;;
+	esac
+}
+
 create_buildkite_user() {
 	if ! [ "$ci" = "1" ] || ! [ "$os" = "linux" ]; then
 		return
@@ -1323,6 +1349,7 @@ main() {
 	install_common_software
 	install_build_essentials
 	install_chromium
+	install_fuse_python
 	clean_system
 }
 

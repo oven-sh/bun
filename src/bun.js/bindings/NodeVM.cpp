@@ -995,9 +995,12 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, Cal
 {
     ArgList args(callFrame);
     JSValue contextArg = callFrame->argument(0);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool isContext;
     if (!contextArg || !contextArg.isObject()) {
         isContext = false;
+        return ERR::INVALID_ARG_TYPE(scope, globalObject, "object"_s, "object"_s, contextArg);
     } else {
         auto* zigGlobalObject = defaultGlobalObject(globalObject);
         isContext = zigGlobalObject->vmModuleContextMap()->has(asObject(contextArg));

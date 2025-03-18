@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const Output = @import("./output.zig");
+const Output = bun.Output;
 
 const strings = bun.strings;
 const meta = bun.meta;

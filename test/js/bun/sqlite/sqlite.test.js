@@ -503,6 +503,60 @@ it("supports serialize/deserialize", () => {
   expect(Database.deserialize(input)).toBeInstanceOf(Database);
 });
 
+it("Database.deserialize should support strict mode", () => {
+  const db1 = new Database(":memory:");
+  db1.run("CREATE TABLE test (name TEXT)");
+  db1.run("INSERT INTO test VALUES (:name)", { ":name": "test1" });
+
+  // Deserialize the database with strict mode
+  const serialized = db1.serialize();
+  const db2 = Database.deserialize(serialized, {
+    strict: true,
+    readonly: false,
+  });
+
+  // Use strict mode
+  db2.run("CREATE TABLE test2 (name TEXT)");
+  db2.run("INSERT INTO test2 VALUES ($name)", { name: "test2" });
+
+  // Verify the data was inserted correctly
+  const result = db2.query("SELECT * FROM test2").all();
+  expect(result).toEqual([{ name: "test2" }]);
+
+  // Also verify we can access the data from the original database
+  const result1 = db2.query("SELECT * FROM test").all();
+  expect(result1).toEqual([{ name: "test1" }]);
+});
+
+it("Database.deserialize should support readonly when passed as a flag or boolean", () => {
+  expect.assertions(2);
+
+  const db1 = new Database(":memory:");
+  db1.run("CREATE TABLE test (name TEXT)");
+  db1.run("INSERT INTO test VALUES (:name)", { ":name": "test1" });
+
+  // Deserialize the database with readonly as flag
+  const serialized = db1.serialize();
+  const db2 = Database.deserialize(serialized, {
+    readonly: true,
+  });
+  // Create another table
+  // It should fail because it is readonly.
+  try {
+    db2.run("CREATE TABLE test2 (name TEXT)");
+  } catch (e) {
+    expect(e.message).toContain("attempt to write a readonly database");
+  }
+
+  // Deserialize the database with readonly as boolean
+  const db3 = Database.deserialize(serialized, true);
+  try {
+    db3.run("CREATE TABLE test2 (name TEXT)");
+  } catch (e) {
+    expect(e.message).toContain("attempt to write a readonly database");
+  }
+});
+
 it("db.query()", () => {
   const db = Database.open(":memory:");
   db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
@@ -687,33 +741,31 @@ it("strict: true", () => {
 describe("does not throw missing parameter error in", () => {
   for (let method of ["all", "get", "values", "run"]) {
     it(`${method}()`, () => {
-      it(`${method}()`, () => {
-        const db = Database.open(":memory:");
+      const db = Database.open(":memory:");
 
-        db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
+      db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, age INTEGER)");
 
-        expect(() => {
-          const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
-          const result = query[method]({
-            "@name": "Joey",
-          });
-          switch (method) {
-            case "all":
-              expect(result).toHaveLength(1);
-              expect(result[0]).toStrictEqual({ name: "Joey" });
-              break;
-            case "get":
-              expect(result).toStrictEqual({ name: "Joey" });
-              break;
-            case "values":
-              expect(result).toStrictEqual([["Joey"]]);
-              break;
-            case "run":
-              expect(result).toEqual({ changes: 1, lastInsertRowid: 1 });
-              break;
-          }
-        }).not.toThrow();
-      });
+      expect(() => {
+        const query = db.query("INSERT INTO cats (name, age) VALUES (@name, @age) RETURNING name");
+        const result = query[method]({
+          "@name": "Joey",
+        });
+        switch (method) {
+          case "all":
+            expect(result).toHaveLength(1);
+            expect(result[0]).toStrictEqual({ name: "Joey" });
+            break;
+          case "get":
+            expect(result).toStrictEqual({ name: "Joey" });
+            break;
+          case "values":
+            expect(result).toStrictEqual([["Joey"]]);
+            break;
+          case "run":
+            expect(result).toEqual({ changes: 1, lastInsertRowid: 1 });
+            break;
+        }
+      }).not.toThrow();
     });
   }
 });

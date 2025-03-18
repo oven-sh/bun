@@ -1,4 +1,5 @@
 import { readdir } from "fs/promises";
+import { join } from "path";
 
 // prettier-ignore
 const words: Record<string, { reason: string; limit?: number; regex?: boolean }> = {
@@ -18,12 +19,20 @@ const words: Record<string, { reason: string; limit?: number; regex?: boolean }>
   "std.StringHashMap(": { reason: "bun.StringHashMap has a faster `eql`" },
   "std.enums.tagName(": { reason: "Use bun.tagName instead", limit: 2 },
   "std.unicode": { reason: "Use bun.strings instead", limit: 36 },
+  "allocator.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
+  "allocator.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior", limit: 1 },
+  "== allocator.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
+  "!= allocator.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
+  "alloc.ptr ==": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
+  "alloc.ptr !=": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
+  "== alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
+  "!= alloc.ptr": { reason: "The std.mem.Allocator context pointer can be undefined, which makes this comparison undefined behavior" },
   [String.raw`: [a-zA-Z0-9_\.\*\?\[\]\(\)]+ = undefined,`]: { reason: "Do not default a struct field to undefined", limit: 251, regex: true },
 };
 const words_keys = [...Object.keys(words)];
 
 let counts: Record<string, [number, string][]> = {};
-const files = await readdir("src", { recursive: true, withFileTypes: true });
+const files = await readdir(join(__dirname, "../../src"), { recursive: true, withFileTypes: true });
 for (const file of files) {
   if (file.isDirectory()) continue;
   if (!file.name.endsWith(".zig")) continue;

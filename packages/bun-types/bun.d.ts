@@ -1,74 +1,3 @@
-declare class _ShellError extends Error implements ShellOutput {
-  readonly stdout: Buffer;
-  readonly stderr: Buffer;
-  readonly exitCode: number;
-
-  /**
-   * Read from stdout as a string
-   *
-   * @param encoding - The encoding to use when decoding the output
-   * @returns Stdout as a string with the given encoding
-   * @example
-   *
-   * ## Read as UTF-8 string
-   *
-   * ```ts
-   * const output = await $`echo hello`;
-   * console.log(output.text()); // "hello\n"
-   * ```
-   *
-   * ## Read as base64 string
-   *
-   * ```ts
-   * const output = await $`echo ${atob("hello")}`;
-   * console.log(output.text("base64")); // "hello\n"
-   * ```
-   *
-   */
-  text(encoding?: BufferEncoding): string;
-
-  /**
-   * Read from stdout as a JSON object
-   *
-   * @returns Stdout as a JSON object
-   * @example
-   *
-   * ```ts
-   * const output = await $`echo '{"hello": 123}'`;
-   * console.log(output.json()); // { hello: 123 }
-   * ```
-   *
-   */
-  json(): any;
-
-  /**
-   * Read from stdout as an ArrayBuffer
-   *
-   * @returns Stdout as an ArrayBuffer
-   * @example
-   *
-   * ```ts
-   * const output = await $`echo hello`;
-   * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
-   * ```
-   */
-  arrayBuffer(): ArrayBuffer;
-
-  /**
-   * Read from stdout as a Blob
-   *
-   * @returns Stdout as a blob
-   * @example
-   * ```ts
-   * const output = await $`echo hello`;
-   * console.log(output.blob()); // Blob { size: 6, type: "" }
-   * ```
-   */
-  blob(): Blob;
-
-  bytes(): Uint8Array;
-}
-
 /**
  * Bun.js runtime APIs
  *
@@ -184,6 +113,77 @@ declare module "bun" {
     | SpawnOptions.Readable
     | SpawnOptions.Writable
     | ReadableStream;
+
+  class ShellError extends Error implements ShellOutput {
+    readonly stdout: Buffer;
+    readonly stderr: Buffer;
+    readonly exitCode: number;
+
+    /**
+     * Read from stdout as a string
+     *
+     * @param encoding - The encoding to use when decoding the output
+     * @returns Stdout as a string with the given encoding
+     * @example
+     *
+     * ## Read as UTF-8 string
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.text()); // "hello\n"
+     * ```
+     *
+     * ## Read as base64 string
+     *
+     * ```ts
+     * const output = await $`echo ${atob("hello")}`;
+     * console.log(output.text("base64")); // "hello\n"
+     * ```
+     *
+     */
+    text(encoding?: BufferEncoding): string;
+
+    /**
+     * Read from stdout as a JSON object
+     *
+     * @returns Stdout as a JSON object
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo '{"hello": 123}'`;
+     * console.log(output.json()); // { hello: 123 }
+     * ```
+     *
+     */
+    json(): any;
+
+    /**
+     * Read from stdout as an ArrayBuffer
+     *
+     * @returns Stdout as an ArrayBuffer
+     * @example
+     *
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.arrayBuffer()); // ArrayBuffer { byteLength: 6 }
+     * ```
+     */
+    arrayBuffer(): ArrayBuffer;
+
+    /**
+     * Read from stdout as a Blob
+     *
+     * @returns Stdout as a blob
+     * @example
+     * ```ts
+     * const output = await $`echo hello`;
+     * console.log(output.blob()); // Blob { size: 6, type: "" }
+     * ```
+     */
+    blob(): Blob;
+
+    bytes(): Uint8Array;
+  }
 
   class ShellPromise extends Promise<ShellOutput> {
     get stdin(): WritableStream;
@@ -304,12 +304,12 @@ declare module "bun" {
     new (): Shell;
   }
 
-  type ShellError = _ShellError;
-
   export interface Shell {
     (strings: TemplateStringsArray, ...expressions: ShellExpression[]): ShellPromise;
 
-    readonly ShellError: typeof _ShellError;
+    readonly Shell: ShellConstructor;
+    readonly ShellError: typeof ShellError;
+    readonly ShellPromise: typeof ShellPromise;
 
     /**
      * Perform bash-like brace expansion on the given pattern.
@@ -362,9 +362,6 @@ declare module "bun" {
      * Configure whether or not the shell should throw an exception on non-zero exit codes.
      */
     throws(shouldThrow: boolean): this;
-
-    readonly ShellPromise: typeof ShellPromise;
-    readonly Shell: ShellConstructor;
   }
 
   export interface ShellOutput {
@@ -6702,7 +6699,8 @@ declare module "bun" {
        * This is useful for aborting a subprocess when some other part of the
        * program is aborted, such as a `fetch` response.
        *
-       * Internally, this works by calling `subprocess.kill(1)`.
+       * If the signal is aborted, the process will be killed with the signal
+       * specified by `killSignal` (defaults to SIGTERM).
        *
        * @example
        * ```ts
@@ -6721,6 +6719,41 @@ declare module "bun" {
        * ```
        */
       signal?: AbortSignal;
+
+      /**
+       * The maximum amount of time the process is allowed to run in milliseconds.
+       *
+       * If the timeout is reached, the process will be killed with the signal
+       * specified by `killSignal` (defaults to SIGTERM).
+       *
+       * @example
+       * ```ts
+       * // Kill the process after 5 seconds
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "10"],
+       *   timeout: 5000,
+       * });
+       * await subprocess.exited; // Will resolve after 5 seconds
+       * ```
+       */
+      timeout?: number;
+
+      /**
+       * The signal to use when killing the process after a timeout or when the AbortSignal is aborted.
+       *
+       * @default "SIGTERM" (signal 15)
+       *
+       * @example
+       * ```ts
+       * // Kill the process with SIGKILL after 5 seconds
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "10"],
+       *   timeout: 5000,
+       *   killSignal: "SIGKILL",
+       * });
+       * ```
+       */
+      killSignal?: string | number;
     }
 
     type OptionsToSubprocess<Opts extends OptionsObject> =

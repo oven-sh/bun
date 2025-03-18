@@ -255,7 +255,7 @@ DEFAULT_LINKER_FLAGS= -pthread -ldl
 endif
 ifeq ($(OS_NAME),darwin)
     _MIMALLOC_OBJECT_FILE = 0
-	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
+	JSC_BUILD_STEPS += jsc-build-mac
 	JSC_BUILD_STEPS_DEBUG += jsc-build-mac-debug
 	_MIMALLOC_FILE = libmimalloc.a
 	_MIMALLOC_INPUT_PATH = libmimalloc.a
@@ -924,7 +924,7 @@ bun-codesign-release-local-debug:
 
 
 .PHONY: jsc
-jsc: jsc-build jsc-copy-headers jsc-bindings
+jsc: jsc-build
 .PHONY: jsc-debug
 jsc-debug: jsc-build-debug
 .PHONY: jsc-build

@@ -23,7 +23,7 @@ const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;
 pub const validators = @import("./util/validators.zig");
-
+const JSError = bun.JSError;
 pub const Path = @import("./path.zig");
 
 fn typeBaseNameT(comptime T: type) []const u8 {
@@ -383,14 +383,14 @@ pub const BlobOrStringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?BlobOrStringOrBuffer {
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) JSError!?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
                 store.ref();
             }
             return .{ .blob = blob.* };
         }
-        return .{ .string_or_buffer = StringOrBuffer.fromJS(global, allocator, value) orelse return null };
+        return .{ .string_or_buffer = try StringOrBuffer.fromJS(global, allocator, value) orelse return null };
     }
 
     pub fn fromJSWithEncodingValue(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding_value: JSC.JSValue) bun.JSError!?BlobOrStringOrBuffer {
@@ -482,7 +482,7 @@ pub const StringOrBuffer = union(enum) {
             return try allocator.dupe(u8, array_buffer.byteSlice());
         }
 
-        const str = try bun.String.fromJS2(value, globalObject);
+        const str = try bun.String.fromJS(value, globalObject);
         defer str.deref();
 
         const result = try str.toOwnedSlice(allocator);
@@ -545,7 +545,7 @@ pub const StringOrBuffer = union(enum) {
         }
     }
 
-    pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool, allow_string_object: bool) ?StringOrBuffer {
+    pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool, allow_string_object: bool) JSError!?StringOrBuffer {
         return switch (value.jsType()) {
             .String,
             .StringObject,
@@ -554,7 +554,7 @@ pub const StringOrBuffer = union(enum) {
                 if (!allow_string_object and str_type != .String) {
                     return null;
                 }
-                const str = bun.String.fromJS(value, global);
+                const str = try bun.String.fromJS(value, global);
 
                 if (is_async) {
                     defer str.deref();
@@ -591,7 +591,7 @@ pub const StringOrBuffer = union(enum) {
         };
     }
 
-    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?StringOrBuffer {
+    pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) JSError!?StringOrBuffer {
         return fromJSMaybeAsync(global, allocator, value, false, true);
     }
 
@@ -609,7 +609,7 @@ pub const StringOrBuffer = union(enum) {
         }
 
         if (value.isString()) {
-            var str = try bun.String.fromJS2(value, global);
+            var str = try bun.String.fromJS(value, global);
             defer str.deref();
             if (str.isEmpty()) {
                 return fromJSMaybeAsync(global, allocator, value, is_async, allow_string_object);
@@ -628,7 +628,7 @@ pub const StringOrBuffer = union(enum) {
         const encoding: Encoding = brk: {
             if (!encoding_value.isCell())
                 break :brk .utf8;
-            break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
+            break :brk try Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
 
         return fromJSWithEncoding(global, allocator, value, encoding);
@@ -638,7 +638,7 @@ pub const StringOrBuffer = union(enum) {
         const encoding: Encoding = brk: {
             if (!encoding_value.isCell())
                 break :brk .utf8;
-            break :brk Encoding.fromJS(encoding_value, global) orelse .utf8;
+            break :brk try Encoding.fromJS(encoding_value, global) orelse .utf8;
         };
         return fromJSWithEncodingMaybeAsync(global, allocator, value, encoding, maybe_async, allow_string_object);
     }
@@ -688,7 +688,7 @@ pub const Encoding = enum(u8) {
         };
     }
 
-    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject) ?Encoding {
+    pub fn fromJS(value: JSC.JSValue, global: *JSC.JSGlobalObject) JSError!?Encoding {
         return map.fromJSCaseInsensitive(global, value);
     }
 
@@ -710,7 +710,7 @@ pub const Encoding = enum(u8) {
     }
 
     pub fn fromJSWithDefaultOnEmpty(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, default: Encoding) bun.JSError!?Encoding {
-        const str = try bun.String.fromJS2(value, globalObject);
+        const str = try bun.String.fromJS(value, globalObject);
         defer str.deref();
         if (str.isEmpty()) {
             return default;

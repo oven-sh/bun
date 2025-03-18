@@ -835,7 +835,7 @@ pub const ServerConfig = struct {
                 var sliced = try key_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.key_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.key_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.key_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Unable to access keyFile path", .{});
                     }
@@ -848,16 +848,16 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = try bun.default_allocator.dupeZ(u8, sliced);
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -891,7 +891,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("key", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.key = native_array;
                         result.key_count = 1;
@@ -902,12 +902,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.key = native_array;
@@ -927,7 +927,7 @@ pub const ServerConfig = struct {
                 var sliced = try cert_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.cert_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.cert_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.cert_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Unable to access certFile path", .{});
                     }
@@ -937,11 +937,11 @@ pub const ServerConfig = struct {
             }
 
             if (try obj.getTruthy(global, "ALPNProtocols")) |protocols| {
-                if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
+                if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), protocols)) |sb| {
                     defer sb.deinit();
                     const sliced = sb.slice();
                     if (sliced.len > 0) {
-                        result.protos = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                        result.protos = try bun.default_allocator.dupeZ(u8, sliced);
                         result.protos_len = sliced.len;
                     }
 
@@ -956,16 +956,16 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
-                                    native_array[valid_count] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                                    native_array[valid_count] = try bun.default_allocator.dupeZ(u8, sliced);
                                     valid_count += 1;
                                     any = true;
                                     result.requires_custom_request_ctx = true;
@@ -999,7 +999,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("cert", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.cert = native_array;
                         result.cert_count = 1;
@@ -1010,12 +1010,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.cert = native_array;
@@ -1053,7 +1053,7 @@ pub const ServerConfig = struct {
                 var sliced = try ssl_ciphers.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.ssl_ciphers = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.ssl_ciphers = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     any = true;
                     result.requires_custom_request_ctx = true;
                 }
@@ -1063,7 +1063,7 @@ pub const ServerConfig = struct {
                 var sliced = try server_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.server_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.server_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     any = true;
                     result.requires_custom_request_ctx = true;
                 }
@@ -1073,12 +1073,12 @@ pub const ServerConfig = struct {
                 if (js_obj.jsType().isArray()) {
                     const count = js_obj.getLength(global);
                     if (count > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, count) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, count);
 
                         var valid_count: u32 = 0;
                         for (0..count) |i| {
                             const item = js_obj.getIndex(global, @intCast(i));
-                            if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
+                            if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), item)) |sb| {
                                 defer sb.deinit();
                                 const sliced = sb.slice();
                                 if (sliced.len > 0) {
@@ -1116,7 +1116,7 @@ pub const ServerConfig = struct {
                     }
                 } else if (try BlobFileContentResult.init("ca", js_obj, global)) |content| {
                     if (content.data.len > 0) {
-                        const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
+                        const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
                         native_array[0] = content.data.ptr;
                         result.ca = native_array;
                         result.ca_count = 1;
@@ -1127,12 +1127,12 @@ pub const ServerConfig = struct {
                         return null;
                     }
                 } else {
-                    const native_array = bun.default_allocator.alloc([*c]const u8, 1) catch unreachable;
-                    if (JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
+                    const native_array = try bun.default_allocator.alloc([*c]const u8, 1);
+                    if (try JSC.Node.StringOrBuffer.fromJS(global, arena.allocator(), js_obj)) |sb| {
                         defer sb.deinit();
                         const sliced = sb.slice();
                         if (sliced.len > 0) {
-                            native_array[0] = bun.default_allocator.dupeZ(u8, sliced) catch unreachable;
+                            native_array[0] = try bun.default_allocator.dupeZ(u8, sliced);
                             any = true;
                             result.requires_custom_request_ctx = true;
                             result.ca = native_array;
@@ -1152,7 +1152,7 @@ pub const ServerConfig = struct {
                 var sliced = try ca_file_name.toSlice(global, bun.default_allocator);
                 defer sliced.deinit();
                 if (sliced.len > 0) {
-                    result.ca_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                    result.ca_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     if (std.posix.system.access(result.ca_file_name, std.posix.F_OK) != 0) {
                         return global.throwInvalidArguments("Invalid caFile path", .{});
                     }
@@ -1182,7 +1182,7 @@ pub const ServerConfig = struct {
                     var sliced = try dh_params_file_name.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
-                        result.dh_params_file_name = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        result.dh_params_file_name = try bun.default_allocator.dupeZ(u8, sliced.slice());
                         if (std.posix.system.access(result.dh_params_file_name, std.posix.F_OK) != 0) {
                             return global.throwInvalidArguments("Invalid dhParamsFile path", .{});
                         }
@@ -1193,7 +1193,7 @@ pub const ServerConfig = struct {
                     var sliced = try passphrase.toSlice(global, bun.default_allocator);
                     defer sliced.deinit();
                     if (sliced.len > 0) {
-                        result.passphrase = bun.default_allocator.dupeZ(u8, sliced.slice()) catch unreachable;
+                        result.passphrase = try bun.default_allocator.dupeZ(u8, sliced.slice());
                     }
                 }
 
@@ -6947,12 +6947,12 @@ pub const NodeHTTPResponse = struct {
                     return globalObject.throwInvalidArgumentTypeValue("encoding", "string", encoding_value);
                 }
 
-                encoding = JSC.Node.Encoding.fromJS(encoding_value, globalObject) orelse {
+                encoding = try JSC.Node.Encoding.fromJS(encoding_value, globalObject) orelse {
                     return globalObject.throwInvalidArguments("Invalid encoding", .{});
                 };
             }
 
-            const result = JSC.Node.StringOrBuffer.fromJSWithEncoding(globalObject, bun.default_allocator, input_value, encoding) catch |err| return err;
+            const result = try JSC.Node.StringOrBuffer.fromJSWithEncoding(globalObject, bun.default_allocator, input_value, encoding);
             break :brk result orelse {
                 return globalObject.throwInvalidArgumentTypeValue("input", "string or buffer", input_value);
             };

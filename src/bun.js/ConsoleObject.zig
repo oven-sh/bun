@@ -2107,7 +2107,7 @@ pub const Formatter = struct {
             },
             .String => {
                 // This is called from the '%s' formatter, so it can actually be any value
-                const str: bun.String = try bun.String.fromJS2(value, this.globalThis);
+                const str: bun.String = try bun.String.fromJS(value, this.globalThis);
                 defer str.deref();
                 this.addForNewLine(str.length());
 
@@ -2904,7 +2904,7 @@ pub const Formatter = struct {
                     break :brk JSValue.undefined;
                 };
 
-                const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                const event_type = switch (try EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
                     .MessageEvent, .ErrorEvent => |evt| evt,
                     else => {
                         return try this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);

@@ -50,8 +50,10 @@ const {
 
 const {
   pbkdf2: _pbkdf2,
-  pbkdf2Sync: _pbkdf2Sync,
-  timingSafeEqual: _timingSafeEqual,
+  pbkdf2Sync,
+  hkdf,
+  hkdfSync,
+  timingSafeEqual,
   randomInt,
   randomUUID,
   randomBytes,
@@ -438,10 +440,6 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
   }
 
   promise.then(() => {});
-}
-
-function pbkdf2Sync(password, salt, iterations, keylen, digest) {
-  return _pbkdf2Sync(password, salt, iterations, keylen, digest);
 }
 
 // node_modules/des.js/lib/des/utils.js
@@ -2365,11 +2363,14 @@ crypto_exports.getFips = function getFips() {
   return 0;
 };
 
+crypto_exports.hkdf = hkdf;
+crypto_exports.hkdfSync = hkdfSync;
+
 crypto_exports.getCurves = getCurves;
 crypto_exports.getCipherInfo = getCipherInfo;
 crypto_exports.scrypt = scrypt;
 crypto_exports.scryptSync = scryptSync;
-crypto_exports.timingSafeEqual = _timingSafeEqual;
+crypto_exports.timingSafeEqual = timingSafeEqual;
 crypto_exports.webcrypto = webcrypto;
 crypto_exports.subtle = _subtle;
 crypto_exports.X509Certificate = X509Certificate;

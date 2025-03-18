@@ -1422,7 +1422,7 @@ pub const Crypto = struct {
                     }
 
                     invalid: {
-                        switch (EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse break :invalid) {
+                        switch (try EVP.Algorithm.map.fromJSCaseInsensitive(globalThis, arguments[4]) orelse break :invalid) {
                             .shake128, .shake256, .@"sha3-224", .@"sha3-256", .@"sha3-384", .@"sha3-512" => break :invalid,
                             else => |alg| break :brk alg,
                         }
@@ -1452,7 +1452,7 @@ pub const Crypto = struct {
                 }
 
                 const allow_string_object = true;
-                out.salt = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async, allow_string_object) orelse {
+                out.salt = try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[1], is_async, allow_string_object) orelse {
                     return globalThis.throwInvalidArgumentTypeValue("salt", "string or buffer", arguments[1]);
                 };
 
@@ -1460,11 +1460,8 @@ pub const Crypto = struct {
                     return globalThis.throwInvalidArguments("salt is too long", .{});
                 }
 
-                out.password = JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async, allow_string_object) orelse {
-                    if (!globalThis.hasException()) {
-                        return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
-                    }
-                    return error.JSError;
+                out.password = try JSC.Node.StringOrBuffer.fromJSMaybeAsync(globalThis, bun.default_allocator, arguments[0], is_async, allow_string_object) orelse {
+                    return globalThis.throwInvalidArgumentTypeValue("password", "string or buffer", arguments[0]);
                 };
 
                 if (out.password.slice().len > std.math.maxInt(i32)) {
@@ -2092,12 +2089,12 @@ pub const Crypto = struct {
                 algorithm = try PasswordObject.Algorithm.Value.fromJS(globalObject, arguments[1]);
             }
 
-            const password_to_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch {
-                if (!globalObject.hasException()) {
-                    return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-                }
-                return error.JSError;
-            };
+            // TODO: this most likely should error like `hashSync` instead of stringifying.
+            //
+            // fromJS(...) orelse {
+            //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+            // }
+            const password_to_hash = try JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator);
             errdefer bun.default_allocator.free(password_to_hash);
 
             if (password_to_hash.len == 0) {
@@ -2122,11 +2119,8 @@ pub const Crypto = struct {
                 algorithm = try PasswordObject.Algorithm.Value.fromJS(globalObject, arguments[1]);
             }
 
-            var string_or_buffer = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
-                if (!globalObject.hasException()) {
-                    return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
-                }
-                return error.JSError;
+            var string_or_buffer = try JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+                return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
             };
             defer string_or_buffer.deinit();
 
@@ -2253,15 +2247,21 @@ pub const Crypto = struct {
                 };
             }
 
-            const owned_password = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch {
-                if (!globalObject.hasException()) return globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
-                return error.JSError;
-            };
+            // TODO: this most likely should error like `verifySync` instead of stringifying.
+            //
+            // fromJS(...) orelse {
+            //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+            // }
+            const owned_password = try JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator);
 
-            const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.default_allocator) catch {
+            // TODO: this most likely should error like `verifySync` instead of stringifying.
+            //
+            // fromJS(...) orelse {
+            //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+            // }
+            const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.default_allocator) catch |err| {
                 bun.default_allocator.free(owned_password);
-                if (!globalObject.hasException()) return globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
-                return error.JSError;
+                return err;
             };
 
             if (owned_hash.len == 0) {
@@ -2303,19 +2303,13 @@ pub const Crypto = struct {
                 };
             }
 
-            var password = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
-                if (!globalObject.hasException()) {
-                    return globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
-                }
-                return .zero;
+            var password = try JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
+                return globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
             };
 
-            var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
+            var hash_ = try JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
                 password.deinit();
-                if (!globalObject.hasException()) {
-                    return globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
-                }
-                return .zero;
+                return globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
             };
 
             defer password.deinit();
@@ -2591,7 +2585,7 @@ pub const Crypto = struct {
             }
 
             if (!hmac_value.isEmptyOrUndefinedOrNull()) {
-                hmac_key = JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, hmac_value) orelse {
+                hmac_key = try JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, hmac_value) orelse {
                     return globalThis.throwInvalidArguments("key must be a string or buffer", .{});
                 };
             }
@@ -3101,7 +3095,7 @@ pub const Crypto = struct {
                 }
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
-                const buffer = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
+                const buffer = try JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
                     return globalThis.throwInvalidArguments("expected blob or string or buffer", .{});
                 };
                 defer buffer.deinit();
@@ -4541,7 +4535,7 @@ pub const JSZlib = struct {
                 return globalThis.throwInvalidArguments("Expected options to be an object", .{});
             } else null;
 
-        if (JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
+        if (try JSC.Node.StringOrBuffer.fromJS(globalThis, bun.default_allocator, buffer_value)) |buffer| {
             return .{ buffer, options_val };
         }
 
@@ -4604,7 +4598,7 @@ pub const JSZlib = struct {
                     return globalThis.throwInvalidArguments("Expected library to be a string", .{});
                 }
 
-                library = Library.map.fromJS(globalThis, library_value) orelse {
+                library = try Library.map.fromJS(globalThis, library_value) orelse {
                     return globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
                 };
             }
@@ -4716,7 +4710,7 @@ pub const JSZlib = struct {
                     return globalThis.throwInvalidArguments("Expected library to be a string", .{});
                 }
 
-                library = Library.map.fromJS(globalThis, library_value) orelse {
+                library = try Library.map.fromJS(globalThis, library_value) orelse {
                     return globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
                 };
             }

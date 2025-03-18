@@ -583,7 +583,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
             return ActiveSocket.init(&dead_socket);
         }
 
-        pending_sockets: HiveArray(PooledSocket, pool_size) = .empty,
+        pub const PooledSocketHiveAllocator = bun.HiveArray(PooledSocket, pool_size);
+
+        pending_sockets: PooledSocketHiveAllocator,
         us_socket_context: *uws.SocketContext,
 
         const Context = @This();
@@ -950,7 +952,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
             if (hostname.len > MAX_KEEPALIVE_HOSTNAME)
                 return null;
 
-            var iter = this.pending_sockets.available.iterator(.{ .kind = .unset });
+            var iter = this.pending_sockets.used.iterator(.{ .kind = .unset });
 
             while (iter.next()) |pending_socket_index| {
                 var socket = this.pending_sockets.at(@as(u16, @intCast(pending_socket_index)));
@@ -1202,9 +1204,11 @@ pub const HTTPThread = struct {
             .loop = undefined,
             .http_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(false).PooledSocketHiveAllocator.empty,
             },
             .https_context = .{
                 .us_socket_context = undefined,
+                .pending_sockets = NewHTTPContext(true).PooledSocketHiveAllocator.empty,
             },
             .timer = std.time.Timer.start() catch unreachable,
         };

@@ -31,8 +31,6 @@
 // IN THE SOFTWARE.
 
 
-console.log('M', Object.keys(require("node:module")));
-
 const { pathToFileURL } = require("node:url");
 let BufferModule;
 

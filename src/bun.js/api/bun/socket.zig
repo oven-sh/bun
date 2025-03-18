@@ -2110,7 +2110,7 @@ fn NewSocket(comptime ssl: bool) type {
             var buf: [64]u8 = [_]u8{0} ** 64;
             var text_buf: [512]u8 = undefined;
 
-            const address_bytes: []const u8 = this.socket.remoteAddress(&buf);
+            const address_bytes: []const u8 = this.socket.remoteAddress(&buf) orelse return JSValue.jsUndefined();
             const address: std.net.Address = switch (address_bytes.len) {
                 4 => std.net.Address.initIp4(address_bytes[0..4].*, 0),
                 16 => std.net.Address.initIp6(address_bytes[0..16].*, 0, 0, 0),

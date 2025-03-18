@@ -1660,10 +1660,12 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .pipe, .upgradedDuplex, .connecting, .detached => 0,
             };
         }
-        pub fn remoteAddress(this: ThisSocket, buf: [*]u8) []const u8 {
+
+        /// `buf` cannot be longer than 2^31 bytes long.
+        pub fn remoteAddress(this: ThisSocket, buf: []u8) ?[]const u8 {
             return switch (this.socket) {
                 .connected => |sock| sock.remoteAddress(is_ssl, buf) catch unreachable, // fixme
-                .pipe, .upgradedDuplex, .connecting, .detached => &[_]u8{},
+                .pipe, .upgradedDuplex, .connecting, .detached => null,
             };
         }
 

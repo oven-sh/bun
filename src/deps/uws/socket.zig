@@ -64,17 +64,23 @@ pub const Socket = opaque {
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set
     pub fn localAddress(this: *Socket, ssl: bool, buf: []u8) error{LocalAddress}![]const u8 {
-        var length: i32 = @intCast(buf.len); // todo: check us_socket_local_address reads length
+        var length: i32 = @intCast(buf.len);
+
         us_socket_local_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) return error.LocalAddress;
+        bun.unsafeAssert(buf.len >= length);
+
         return buf[0..@intCast(length)];
     }
 
     /// Returned slice is a view into `buf`. On error, `errno` should be set
-    pub fn remoteAddress(this: *Socket, ssl: bool, buf: [*]u8) error{RemoteAddress}![]const u8 {
-        var length: i32 = 0;
-        us_socket_remote_address(@intFromBool(ssl), this, buf, &length);
+    pub fn remoteAddress(this: *Socket, ssl: bool, buf: []u8) error{RemoteAddress}![]const u8 {
+        var length: i32 = @intCast(buf.len);
+
+        us_socket_remote_address(@intFromBool(ssl), this, buf.ptr, &length);
         if (length < 0) return error.RemoteAddress;
+        bun.unsafeAssert(buf.len >= length);
+
         return buf[0..@intCast(length)];
     }
 

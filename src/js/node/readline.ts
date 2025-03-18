@@ -1251,22 +1251,6 @@ ObjectSetPrototypeOf(InterfaceConstructor.prototype, EventEmitter.prototype);
 // ObjectSetPrototypeOf(InterfaceConstructor, EventEmitter);
 
 var _Interface = class Interface extends InterfaceConstructor {
-  line;
-  cursor;
-  input;
-  output;
-  paused;
-  terminal;
-  closed;
-  history;
-  historySize;
-  historyIndex;
-  removeHistoryDuplicates;
-  prevRows;
-  crlfDelay;
-  completer;
-  isCompletionEnabled;
-
   // eslint-disable-next-line no-useless-constructor
   constructor(input, output, completer, terminal) {
     super(input, output, completer, terminal);

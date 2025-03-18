@@ -11,6 +11,10 @@ const generic = opaque {
     pub fn value(this: *const generic) cpp.JSValue {
         return @as(cpp.JSValue, @enumFromInt(@as(cpp.JSValueReprInt, @bitCast(@intFromPtr(this)))));
     }
+
+    pub inline fn bunVM(this: *generic) *bun.JSC.VirtualMachine {
+        return this.ptr().bunVM();
+    }
 };
 pub const Private = anyopaque;
 pub const struct_OpaqueJSContextGroup = generic;

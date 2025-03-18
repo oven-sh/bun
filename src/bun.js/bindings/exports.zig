@@ -13,7 +13,6 @@ const JestPrettyFormat = @import("../test/pretty_format.zig").JestPrettyFormat;
 
 // Re-export all the split-out types
 pub const Exception = @import("Exception.zig").Exception;
-pub const ZigGlobalObject = @import("ZigGlobalObject.zig").ZigGlobalObject;
 pub const ErrorCode = @import("ErrorCode.zig").ErrorCode;
 pub const ZigErrorType = @import("ZigErrorType.zig").ZigErrorType;
 pub const NodePath = JSC.Node.Path;

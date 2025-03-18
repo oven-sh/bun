@@ -1,3 +1,4 @@
+#include "ErrorCode.h"
 #include "root.h"
 #include "headers.h"
 
@@ -80,7 +81,7 @@ static JSC::EncodedJSValue functionRequireResolve(JSC::JSGlobalObject* globalObj
             }
 
             BunString from = Bun::toString(fromStr);
-            auto result = Bun__resolveSyncWithSource(globalObject, JSC::JSValue::encode(moduleName), &from, false);
+            auto result = Bun__resolveSyncWithSource(globalObject, JSC::JSValue::encode(moduleName), &from, false, true);
             RETURN_IF_EXCEPTION(scope, {});
 
             if (!JSC::JSValue::decode(result).isString()) {
@@ -259,7 +260,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         }
     }
 
-    auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM);
+    auto result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), from, isESM, false);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {
@@ -282,12 +283,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     JSC::JSValue moduleName = callFrame->argument(0);
     JSValue from = callFrame->argument(1);
     bool isESM = callFrame->argument(2).asBoolean();
+    bool isRequireDotResolve = callFrame->argument(3).isTrue();
 
-    if (moduleName.isUndefinedOrNull()) {
-        JSC::throwTypeError(lexicalGlobalObject, scope, "expected module name as a string"_s);
-        scope.release();
-        return {};
-    }
+
 
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -304,7 +302,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     if (!isESM) {
         if (LIKELY(globalObject)) {
-            if (UNLIKELY(globalObject->hasOverridenModuleResolveFilenameFunction)) {
+            if (UNLIKELY(globalObject->hasOverriddenModuleResolveFilenameFunction)) {
                 auto overrideHandler = jsCast<JSObject*>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
                 if (UNLIKELY(overrideHandler)) {
                     ASSERT(overrideHandler->isCallable());
@@ -330,7 +328,13 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         }
     }
 
-    auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM);
+    if (!moduleName.isString()) {
+        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "id"_s, "string"_s, moduleName);
+        scope.release();
+        return {};
+    }
+
+    auto result = Bun__resolveSync(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!JSC::JSValue::decode(result).isString()) {

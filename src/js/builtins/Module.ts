@@ -12,28 +12,43 @@ export function require(this: CommonJSModuleRecord, id: string) {
 // overridableRequire can be overridden by setting `Module.prototype.require`
 $overriddenName = "require";
 $visibility = "Private";
-export function overridableRequire(this: CommonJSModuleRecord, id: string) {
-  const existing = $requireMap.$get(id) || $requireMap.$get((id = $resolveSync(id, this.id, false)));
-  if (existing) {
-    // Scenario where this is necessary:
-    //
-    // In an ES Module, we have:
-    //
-    //    import "react-dom/server"
-    //    import "react"
-    //
-    // Synchronously, the "react" import is created first, and then the
-    // "react-dom/server" import is created. Then, at ES Module link time, they
-    // are evaluated. The "react-dom/server" import is evaluated first, and
-    // require("react") was previously created as an ESM module, so we wait
-    // for the ESM module to load
-    //
-    // ...and then when this code is reached, unless
-    // we evaluate it "early", we'll get an empty object instead of the module
-    // exports.
-    //
-    $evaluateCommonJSModule(existing);
-    return existing.exports;
+export function overridableRequire(this: CommonJSModuleRecord, originalId: string) {
+  const id = $resolveSync(originalId, this.id, false);
+  if (id.startsWith('node:')) {
+    if (id !== originalId) {
+      // A terrible special case where Node.js allows non-prefixed built-ins to
+      // read the require cache. Though they never write to it, which is so silly.
+      const existing = $requireMap.$get(originalId);
+      if (existing) {
+        $evaluateCommonJSModule(existing);
+        return existing.exports;
+      }
+    }
+    
+    return this.$requireNativeModule(id);
+  } else {
+    const existing = $requireMap.$get(id);
+    if (existing) {
+      // Scenario where this is necessary:
+      //
+      // In an ES Module, we have:
+      //
+      //    import "react-dom/server"
+      //    import "react"
+      //
+      // Synchronously, the "react" import is created first, and then the
+      // "react-dom/server" import is created. Then, at ES Module link time, they
+      // are evaluated. The "react-dom/server" import is evaluated first, and
+      // require("react") was previously created as an ESM module, so we wait
+      // for the ESM module to load
+      //
+      // ...and then when this code is reached, unless
+      // we evaluate it "early", we'll get an empty object instead of the module
+      // exports.
+      //
+      $evaluateCommonJSModule(existing);
+      return existing.exports;
+    }
   }
 
   if (id.endsWith(".node")) {
@@ -48,18 +63,34 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
   // This is where we load the module. We will see if Module._load and
   // Module._compile are actually important for compatibility.
   //
-  // Note: we do not need to wrap this in a try/catch, if it throws the C++ code will
-  // clear the module from the map.
+  // Note: we do not need to wrap this in a try/catch for release, if it throws
+  // the C++ code will clear the module from the map.
   //
-  var out = this.$require(
-    id,
-    mod,
-    // did they pass a { type } object?
-    $argumentCount(),
-    // the object containing a "type" attribute, if they passed one
-    // maybe this will be "paths" in the future too.
-    arguments[1],
-  );
+  if (IS_BUN_DEVELOPMENT) {
+    $assert(mod.id === id);
+    try {
+      var out = this.$require(
+        id,
+        mod,
+        // did they pass a { type } object?
+        $argumentCount(),
+        // the object containing a "type" attribute, if they passed one
+        // maybe this will be "paths" in the future too.
+        arguments[1],
+      );
+    } catch (E) {
+      $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should no longer be in the map");
+      throw E;
+    }
+    $assert($requireMap.$get(id) === mod);
+  } else {
+    var out = this.$require(
+      id,
+      mod,
+      $argumentCount(),
+      arguments[1],
+    );
+  }
 
   // -1 means we need to lookup the module from the ESM registry.
   if (out === -1) {
@@ -91,7 +122,7 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
         }
       }
 
-      return (mod.exports = namespace);
+      return (mod.exports = namespace["module.exports"] ?? namespace);
     }
   }
 
@@ -101,7 +132,7 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
 
 $visibility = "Private";
 export function requireResolve(this: string | { id: string }, id: string) {
-  return $resolveSync(id, typeof this === "string" ? this : this?.id, false);
+  return $resolveSync(id, typeof this === "string" ? this : this?.id, false, true);
 }
 
 $visibility = "Private";
@@ -112,4 +143,26 @@ export function requireNativeModule(id: string) {
     return exports.default;
   }
   return $requireESM(id).default;
+}
+
+type WrapperMutate = (start: string, end: string) => void;
+export function getWrapperArrayProxy(onMutate: WrapperMutate) {
+  const wrapper = ["(function(exports,require,module,__filename,__dirname){", "})"];
+  return new Proxy(wrapper, {
+    set(target, prop, value, receiver) {
+      Reflect.set(target, prop, value, receiver);
+      onMutate(wrapper[0], wrapper[1]);
+      return true;
+    },
+    defineProperty(target, prop, descriptor) {
+      Reflect.defineProperty(target, prop, descriptor);
+      onMutate(wrapper[0], wrapper[1]);
+      return true;
+    },
+    deleteProperty(target, prop) {
+      Reflect.deleteProperty(target, prop);
+      onMutate(wrapper[0], wrapper[1]);
+      return true;
+    },
+  });
 }

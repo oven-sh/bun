@@ -25,18 +25,29 @@ pub const ResolveMessage = struct {
     pub fn getCode(this: *ResolveMessage, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         switch (this.msg.metadata) {
             .resolve => |resolve| {
-                const label: []const u8 = brk: {
-                    if (resolve.import_kind.isCommonJS()) {
-                        break :brk "MODULE_NOT_FOUND";
+                const code: []const u8 = brk: {
+                    const specifier = this.msg.metadata.resolve.specifier.slice(this.msg.data.text);
+                    if (bun.strings.hasPrefixComptime(specifier, "node:")) {
+                        break :brk "ERR_UNKNOWN_BUILTIN_MODULE";
                     }
-
                     break :brk switch (resolve.import_kind) {
+                        // Match Node.js error codes. CommonJS is historic
+                        // before they started prefixing with 'ERR_'
+                        .require, .require_resolve => "MODULE_NOT_FOUND",
                         .stmt, .dynamic => "ERR_MODULE_NOT_FOUND",
-                        else => "RESOLVE_ERROR",
+
+                        .entry_point_run,
+                        .entry_point_build,
+                        .at,
+                        .at_conditional,
+                        .url,
+                        .internal,
+                        .composes,
+                        => "RESOLVE_ERROR",
                     };
                 };
 
-                var atom = bun.String.createAtomASCII(label);
+                var atom = bun.String.createAtomASCII(code);
                 defer atom.deref();
                 return atom.toJS(globalObject);
             },
@@ -75,6 +86,13 @@ pub const ResolveMessage = struct {
             },
             error.InvalidDataURL => {
                 return try std.fmt.allocPrint(allocator, "Cannot resolve invalid data URL '{s}' from '{s}'", .{ specifier, referrer });
+            },
+            error.InvalidURL => {
+                if (bun.strings.hasPrefixComptime(specifier, "node:")) {
+                    // This matches Node.js exactly.
+                    return try std.fmt.allocPrint(allocator, "No such built-in module: {s}", .{specifier});
+                }
+                return try std.fmt.allocPrint(allocator, "Cannot resolve invalid URL '{s}' from '{s}'", .{ specifier, referrer });
             },
             else => {
                 if (Resolver.isPackagePath(specifier)) {

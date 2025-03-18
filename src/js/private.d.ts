@@ -151,6 +151,7 @@ declare interface Error {
 
 interface CommonJSModuleRecord {
   $require(id: string, mod: any, args_count: number, args: Array): any;
+  $requireNativeModule(id: string): any;
   children: CommonJSModuleRecord[];
   exports: any;
   id: string;

@@ -2617,12 +2617,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_availableMemory, (JSGlobalObject * globalObject
 
 inline JSValue processBindingUtil(Zig::GlobalObject* globalObject, JSC::VM& vm)
 {
-    auto& builtinNames = WebCore::builtinNames(vm);
-    auto fn = globalObject->getDirect(vm, builtinNames.requireNativeModulePrivateName());
-    auto callData = JSC::getCallData(fn);
-    JSC::MarkedArgumentBuffer args;
-    args.append(jsString(vm, String("util/types"_s)));
-    return JSC::profiledCall(globalObject, ProfilingReason::API, fn, callData, globalObject, args);
+    return globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::NodeUtilTypes);
 }
 
 inline JSValue processBindingConfig(Zig::GlobalObject* globalObject, JSC::VM& vm)

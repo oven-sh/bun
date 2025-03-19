@@ -3130,10 +3130,10 @@ pub const Resolver = struct {
             //     }
             //
             if (r.opts.mark_builtins_as_external or r.opts.target.isBun()) {
-                if (JSC.HardcodedModule.Alias.has(esm_resolution.path, r.opts.target)) {
+                if (JSC.HardcodedModule.Alias.get(esm_resolution.path, r.opts.target)) |alias| {
                     return .{
                         .success = .{
-                            .path_pair = .{ .primary = bun.fs.Path.init(esm_resolution.path) },
+                            .path_pair = .{ .primary = bun.fs.Path.init(alias.path) },
                             .is_external = true,
                         },
                     };

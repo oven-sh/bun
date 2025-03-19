@@ -33,7 +33,6 @@ const kEmitState = Symbol("emitState");
 
 const abortedSymbol = Symbol("aborted");
 const bodyStreamSymbol = Symbol("bodyStream");
-const closedSymbol = Symbol("closed");
 const controllerSymbol = Symbol("controller");
 const runSymbol = Symbol("run");
 const deferredSymbol = Symbol("deferred");
@@ -54,7 +53,6 @@ const tlsSymbol = Symbol("tls");
 const typeSymbol = Symbol("type");
 const webRequestOrResponse = Symbol("FetchAPI");
 const statusCodeSymbol = Symbol("statusCode");
-const kEndCalled = Symbol.for("kEndCalled");
 const kAbortController = Symbol.for("kAbortController");
 const statusMessageSymbol = Symbol("statusMessage");
 const kInternalSocketData = Symbol.for("::bunternal::");
@@ -68,11 +66,16 @@ const { kDeprecatedReplySymbol } = require("internal/http");
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Stream } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE, ERR_INVALID_PROTOCOL } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { kAutoDestroyed } = require("internal/shared");
 const { urlToHttpOptions } = require("internal/url");
-const { validateFunction, checkIsHttpToken, validateLinkHeaderValue, validateObject } = require("internal/validators");
+const {
+  validateFunction,
+  checkIsHttpToken,
+  validateLinkHeaderValue,
+  validateObject,
+  validateNumber,
+} = require("internal/validators");
 const { isIPv6 } = require("node:net");
 const ObjectKeys = Object.keys;
 
@@ -160,14 +163,11 @@ const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const fetch = Bun.fetch;
 const nop = () => {};
+// Timeout values > TIMEOUT_MAX are set to 1.
+const TIMEOUT_MAX = 2 ** 31 - 1;
 
 // Primordials
-const StringPrototypeSlice = String.prototype.slice;
-const StringPrototypeStartsWith = String.prototype.startsWith;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
-const StringPrototypeIndexOf = String.prototype.indexOf;
-const StringPrototypeIncludes = String.prototype.includes;
-const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ObjectAssign = Object.assign;
 
@@ -177,7 +177,7 @@ const NODE_HTTP_WARNING =
 
 const kEmptyBuffer = Buffer.alloc(0);
 
-function isValidTLSArray(obj) {
+function isValidTLSArray(obj): obj is ArrayBuffer | Blob | NodeJS.TypedArray {
   if (typeof obj === "string" || isTypedArray(obj) || isArrayBuffer(obj) || $inheritsBlob(obj)) return true;
   if (Array.isArray(obj)) {
     for (var i = 0; i < obj.length; i++) {
@@ -187,14 +187,6 @@ function isValidTLSArray(obj) {
     return true;
   }
   return false;
-}
-
-function validateMsecs(numberlike: any, field: string) {
-  if (typeof numberlike !== "number" || numberlike < 0) {
-    throw $ERR_INVALID_ARG_TYPE(field, "number", numberlike);
-  }
-
-  return numberlike;
 }
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
@@ -1463,6 +1455,9 @@ const IncomingMessagePrototype = {
   get connection() {
     return (this[fakeSocketSymbol] ??= new FakeSocket());
   },
+  set connection(value) {
+    this[fakeSocketSymbol] = value;
+  },
   get statusCode() {
     return this[statusCodeSymbol];
   },
@@ -1693,10 +1688,10 @@ const OutgoingMessagePrototype = {
     throw new Error("not implemented");
   },
 
-  setTimeout(msecs, callback) {
+  setTimeout(msecs: number, callback) {
     if (this.destroyed) return this;
 
-    this.timeout = msecs = validateMsecs(msecs, "msecs");
+    this.timeout = msecs = getTimerDuration(msecs, "msecs");
 
     // Attempt to clear an existing timer in both cases -
     //  even if it will be rescheduled we don't want to leak an existing timer.
@@ -2438,7 +2433,6 @@ const kMethod = Symbol("method");
 const kHost = Symbol("host");
 const kProtocol = Symbol("protocol");
 const kAgent = Symbol("agent");
-const kStream = Symbol("stream");
 const kFetchRequest = Symbol("fetchRequest");
 const kTls = Symbol("tls");
 const kUseDefaultPort = Symbol("useDefaultPort");
@@ -2529,7 +2523,7 @@ function ClientRequest(input, options, cb) {
 
   const oldEnd = this.end;
 
-  this.end = function (chunk, encoding, callback) {
+  this.end = function end(chunk, encoding, callback) {
     oldEnd?.$call(this, chunk, encoding, callback);
 
     if ($isCallable(chunk)) {
@@ -2572,7 +2566,7 @@ function ClientRequest(input, options, cb) {
     return this;
   };
 
-  this.destroy = function (err?: Error) {
+  this.destroy = function destroy(err?: Error) {
     if (this.destroyed) return this;
     this.destroyed = true;
 
@@ -3068,9 +3062,11 @@ function ClientRequest(input, options, cb) {
   this[kHost] = host;
   this[kProtocol] = protocol;
 
-  const timeout = options.timeout;
+  var timeout = options.timeout;
   if (timeout !== undefined && timeout !== 0) {
-    this.setTimeout(timeout, undefined);
+    // NOTE: ClientRequest constructor in node allows `timeout` to be 0. Would
+    // allowing this introduce a bug in our code?
+    this.timeout = getTimerDuration(timeout, "timeout");
   }
 
   const { headers } = options;
@@ -3159,10 +3155,10 @@ function ClientRequest(input, options, cb) {
     this.emit("timeout");
   };
 
-  this.setTimeout = (msecs, callback) => {
+  this.setTimeout = (msecs: number, callback: Function) => {
     if (this.destroyed) return this;
 
-    this.timeout = msecs = validateMsecs(msecs, "msecs");
+    this.timeout = msecs = getTimerDuration(msecs, "msecs");
 
     // Attempt to clear an existing timer in both cases -
     //  even if it will be rescheduled we don't want to leak an existing timer.
@@ -3183,9 +3179,23 @@ function ClientRequest(input, options, cb) {
         this.once("timeout", callback);
       }
     }
+    if (this.socket) {
+      setSocketTimeout(this.socket, msecs);
+    } else {
+      this.once("socket", socket => setSocketTimeout(socket, msecs));
+    }
 
     return this;
   };
+}
+function setSocketTimeout(socket, msecs: number) {
+  if (socket.connecting) {
+    socket.once("connect", function setTimeoutOnSocketConnect() {
+      socket.setTimeout(msecs);
+    });
+  } else {
+    socket.setTimeout(msecs);
+  }
 }
 
 const ClientRequestPrototype = {
@@ -3195,27 +3205,41 @@ const ClientRequestPrototype = {
   get path() {
     return this[kPath];
   },
+  set path(newPath) {
+    this[kPath] = newPath;
+  },
 
   get port() {
     return this[kPort];
+  },
+  set port(newPort) {
+    this[kPort] = newPort;
   },
 
   get method() {
     return this[kMethod];
   },
+  set method(newMethod) {
+    this[kMethod] = newMethod;
+  },
 
   get host() {
     return this[kHost];
+  },
+  set host(newHost) {
+    this[kHost] = newHost;
   },
 
   get protocol() {
     return this[kProtocol];
   },
+  set protocol(newProtocol) {
+    this[kProtocol] = newProtocol;
+  },
 
   get agent() {
     return this[kAgent];
   },
-
   set agent(value) {
     this[kAgent] = value;
   },
@@ -3223,7 +3247,6 @@ const ClientRequestPrototype = {
   get aborted() {
     return this[abortedSymbol] || this[kSignal]?.aborted || !!this[kAbortController]?.signal?.aborted;
   },
-
   set aborted(value) {
     this[abortedSymbol] = value;
   },
@@ -3241,6 +3264,25 @@ function validateHost(host, name) {
     throw $ERR_INVALID_ARG_TYPE(`options.${name}`, ["string", "undefined", "null"], host);
   }
   return host;
+}
+
+const NumberIsFinite = Number.isFinite.bind(Number);
+function getTimerDuration(msecs: unknown, name: string): number {
+  validateNumber(msecs, name);
+  if ((msecs as number) < 0 || !NumberIsFinite(msecs)) {
+    throw $ERR_OUT_OF_RANGE(name, "a non-negative finite number", msecs);
+  }
+
+  // Ensure that msecs fits into signed int32
+  if ((msecs as number) > TIMEOUT_MAX) {
+    process.emitWarning(
+      `${msecs} does not fit into a 32-bit signed integer.` + `\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
+      "TimeoutOverflowWarning",
+    );
+    return TIMEOUT_MAX;
+  }
+
+  return msecs as number;
 }
 
 // Copyright Joyent, Inc. and other Node contributors.

@@ -1,13 +1,8 @@
 const bun = @import("root").bun;
 const JSC = bun.JSC;
-const Shimmer = @import("./shimmer.zig").Shimmer;
 const JSValue = JSC.JSValue;
 
 pub const ResolvedSource = extern struct {
-    pub const shim = Shimmer("Zig", "ResolvedSource", @This());
-    pub const name = "ResolvedSource";
-    pub const namespace = shim.namespace;
-
     /// Specifier's lifetime is the caller from C++
     /// https://github.com/oven-sh/bun/issues/9521
     specifier: bun.String = bun.String.empty,

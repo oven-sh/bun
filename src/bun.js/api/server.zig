@@ -8237,10 +8237,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             if (this.cached_hostname.isEmpty()) {
                 if (this.listener) |listener| {
                     var buf: [1024]u8 = [_]u8{0} ** 1024;
-                    var len: i32 = 1024;
-                    listener.socket().remoteAddress(&buf, &len);
-                    if (len > 0) {
-                        this.cached_hostname = bun.String.createUTF8(buf[0..@as(usize, @intCast(len))]);
+
+                    if (listener.socket().remoteAddress(buf[0..1024])) |addr| {
+                        if (addr.len > 0) {
+                            this.cached_hostname = bun.String.createUTF8(addr);
+                        }
                     }
                 }
 

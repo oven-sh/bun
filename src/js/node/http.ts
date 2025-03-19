@@ -1747,7 +1747,7 @@ const OutgoingMessagePrototype = {
     clearTimeout(this[timeoutTimerSymbol]);
 
     if (callback) {
-      this.on('timeout', callback);
+      this.on("timeout", callback);
     }
 
     if (msecs === 0) {
@@ -1762,7 +1762,7 @@ const OutgoingMessagePrototype = {
 
       // Node.js compatibility: also delegate to socket if available
       if (!this[fakeSocketSymbol]) {
-        this.once('socket', function socketSetTimeoutOnConnect(socket) {
+        this.once("socket", function socketSetTimeoutOnConnect(socket) {
           socket.setTimeout(msecs);
         });
       } else {
@@ -1786,7 +1786,7 @@ const OutgoingMessagePrototype = {
     const prev = this[fakeSocketSymbol];
     this[fakeSocketSymbol] = value;
     if (!prev && value) {
-      this.emit('socket', value);
+      this.emit("socket", value);
     }
   },
 
@@ -2048,6 +2048,12 @@ const ServerResponsePrototype = {
       }
     }
 
+    // Update bytesWritten on the socket to ensure res.connection.bytesWritten works
+    if (chunk && this.socket) {
+      const byteLength = chunk instanceof Buffer ? chunk.length : Buffer.byteLength(chunk, encoding || "utf8");
+      this.socket.bytesWritten += byteLength;
+    }
+
     if (handle) {
       const headerState = this[headerStateSymbol];
       callWriteHeadIfObservable(this, headerState);
@@ -2152,6 +2158,12 @@ const ServerResponsePrototype = {
       result = handle.write(chunk, encoding);
     }
 
+    // Update bytesWritten on the socket to ensure res.connection.bytesWritten works
+    if (chunk && this.socket) {
+      const byteLength = chunk instanceof Buffer ? chunk.length : Buffer.byteLength(chunk, encoding || "utf8");
+      this.socket.bytesWritten += byteLength;
+    }
+
     if (result < 0) {
       if (callback) {
         // The write was buffered due to backpressure.
@@ -2240,6 +2252,13 @@ const ServerResponsePrototype = {
       });
     } else {
       handle.write(data, encoding, callback);
+    }
+
+    // Update bytesWritten on the socket to ensure res.connection.bytesWritten works
+    if (data && this.socket) {
+      const dataByteLength =
+        byteLength || (data instanceof Buffer ? data.length : Buffer.byteLength(data, encoding || "utf8"));
+      this.socket.bytesWritten += dataByteLength;
     }
   },
 

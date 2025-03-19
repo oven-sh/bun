@@ -2697,8 +2697,8 @@ pub const PackageManager = struct {
     pending_pre_calc_hashes: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_tasks: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     total_tasks: u32 = 0,
-    preallocated_network_tasks: PreallocatedNetworkTasks = .init(bun.default_allocator),
-    preallocated_resolve_tasks: PreallocatedTaskStore = .init(bun.default_allocator),
+    preallocated_network_tasks: PreallocatedNetworkTasks,
+    preallocated_resolve_tasks: PreallocatedTaskStore,
 
     /// items are only inserted into this if they took more than 500ms
     lifecycle_script_time_log: LifecycleScriptTimeLog = .{},
@@ -8960,6 +8960,8 @@ pub const PackageManager = struct {
         // var progress = Progress{};
         // var node = progress.start(name: []const u8, estimated_total_items: usize)
         manager.* = PackageManager{
+            .preallocated_network_tasks = .init(bun.default_allocator),
+            .preallocated_resolve_tasks = .init(bun.default_allocator),
             .options = options,
             .active_lifecycle_scripts = .{
                 .context = manager,
@@ -9127,6 +9129,8 @@ pub const PackageManager = struct {
         @memcpy(original_package_json_path[top_level_dir_no_trailing_slash.len..][0.."/package.json".len], "/package.json");
 
         manager.* = PackageManager{
+            .preallocated_network_tasks = .init(bun.default_allocator),
+            .preallocated_resolve_tasks = .init(bun.default_allocator),
             .options = .{
                 .max_concurrent_lifecycle_scripts = cli.concurrent_scripts orelse cpu_count * 2,
             },
@@ -14898,7 +14902,7 @@ pub const PackageManager = struct {
             manager.lockfile.initEmpty(manager.allocator);
 
             if (manager.options.enable.frozen_lockfile and load_result != .not_found) {
-                if (comptime log_level != .silent) {
+                if (log_level != .silent) {
                     Output.prettyErrorln("<r><red>error<r>: lockfile had changes, but lockfile is frozen", .{});
                 }
                 Global.crash();
@@ -14942,9 +14946,9 @@ pub const PackageManager = struct {
                 _ = manager.getTemporaryDirectory();
             }
 
-            if (comptime log_level.showProgress()) {
+            if (log_level.showProgress()) {
                 manager.startProgressBar();
-            } else if (comptime log_level != .silent) {
+            } else if (log_level != .silent) {
                 Output.prettyErrorln("Resolving dependencies", .{});
                 Output.flush();
             }

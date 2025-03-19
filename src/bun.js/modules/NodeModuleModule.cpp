@@ -115,6 +115,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "worker_threads"_s,
     "ws"_s,
     "zlib"_s,
+    "node:test"_s,
 };
 
 template<std::size_t N, class T> consteval std::size_t countof(T (&)[N])

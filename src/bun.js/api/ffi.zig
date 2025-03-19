@@ -818,7 +818,7 @@ pub const FFI = struct {
             return JSC.toInvalidArguments("Expected object", .{}, globalThis);
         }
 
-        if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable(globalThis.vm())) {
+        if (js_callback.isEmptyOrUndefinedOrNull() or !js_callback.isCallable()) {
             return JSC.toInvalidArguments("Expected callback function", .{}, globalThis);
         }
 

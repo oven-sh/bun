@@ -412,7 +412,7 @@ pub fn which(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSE
 pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) bun.JSError!JSC.JSValue {
     var args_buf = callframe.argumentsUndef(5);
     var all_arguments = args_buf.mut();
-    if (all_arguments[0].isUndefined() or all_arguments[0].isNull())
+    if (all_arguments[0].isUndefinedOrNull() or !all_arguments[0].isObject())
         return bun.String.empty.toJS(globalThis);
 
     for (all_arguments) |arg| {
@@ -425,6 +425,7 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     }
 
     var arguments = all_arguments[0..];
+    const value = arguments[0];
 
     if (!arguments[1].isArray()) {
         arguments[2] = arguments[1];
@@ -443,7 +444,6 @@ pub fn inspectTable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) 
     if (arguments[2].isObject()) {
         try formatOptions.fromJS(globalThis, arguments[2..]);
     }
-    const value = arguments[0];
 
     // very stable memory address
     var array = MutableString.init(getAllocator(globalThis), 0) catch bun.outOfMemory();
@@ -587,7 +587,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return globalObject.throwInvalidArguments("Internal error registering macros: invalid id", .{});
     }
 
-    if (!arguments[1].isCell() or !arguments[1].isCallable(globalObject.vm())) {
+    if (!arguments[1].isCell() or !arguments[1].isCallable()) {
         // TODO: add "toTypeOf" helper
         return globalObject.throw("Macro must be a function", .{});
     }

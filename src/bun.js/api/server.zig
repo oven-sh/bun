@@ -7044,6 +7044,10 @@ pub const NodeHTTPResponse = struct {
         return this.onDataCallback.get() orelse .undefined;
     }
 
+    pub fn getHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject) JSC.JSValue {
+        return JSC.jsBoolean(this.hasCustomOnData);
+    }
+
     pub fn setHasCustomOnData(this: *NodeHTTPResponse, _: *JSC.JSGlobalObject, value: JSValue) bool {
         this.hasCustomOnData = value.toBoolean();
         return true;

@@ -43,3 +43,9 @@ Reflect.set(
         });
     }
 );
+
+Uint8Array.prototype.toHex = function (): string {
+    return Array.from(this)
+        .map(byte => byte.toString(16).padStart(2, '0')) // Convert each byte to hex and pad with zeros
+        .join('');
+};

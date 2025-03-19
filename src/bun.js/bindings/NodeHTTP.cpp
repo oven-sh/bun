@@ -887,7 +887,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
         auto* thisSocket = jsCast<JSNodeHTTPServerSocket*>(currentSocketDataPtr);
         thisSocket->currentResponseObject.set(vm, thisSocket, nodeHTTPResponseObject);
         args.append(thisSocket);
-        args.append(jsBoolean(true));
+        args.append(jsBoolean(false));
         if (thisSocket->m_duplex) {
             args.append(thisSocket->m_duplex.get());
         } else {
@@ -905,7 +905,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
         response->getHttpResponseData()->socketData = socket;
 
         args.append(socket);
-        args.append(jsBoolean(false));
+        args.append(jsBoolean(true));
         args.append(jsUndefined());
     }
 

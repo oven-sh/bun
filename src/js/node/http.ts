@@ -16,9 +16,9 @@ const enum NodeHTTPIncomingRequestType {
   NodeHTTPResponse,
 }
 const enum NodeHTTPHeaderState {
-  none,
-  assigned,
-  sent,
+  none = 0,
+  assigned = 1 << 0,
+  sent = 1 << 1,
 }
 const enum NodeHTTPBodyReadState {
   none,
@@ -198,7 +198,7 @@ function validateMsecs(numberlike: any, field: string) {
   if (numberlike > TIMEOUT_MAX) {
     process.emitWarning(
       `${numberlike} does not fit into a 32-bit signed integer.` + `\nTimer duration was truncated to ${TIMEOUT_MAX}.`,
-      "TimeoutOverflowWarning"
+      "TimeoutOverflowWarning",
     );
     return TIMEOUT_MAX;
   }
@@ -1668,7 +1668,7 @@ const OutgoingMessagePrototype = {
   },
 
   removeHeader(name) {
-    if (this[headerStateSymbol] === NodeHTTPHeaderState.sent) {
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
       throw $ERR_HTTP_HEADERS_SENT("Cannot remove header after headers have been sent.");
     }
     const headers = this[headersSymbol];
@@ -1680,6 +1680,41 @@ const OutgoingMessagePrototype = {
     validateHeaderName(name);
     const headers = (this[headersSymbol] ??= new Headers());
     setHeader(headers, name, value);
+    return this;
+  },
+
+  setHeaders(headers) {
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+
+    if (!headers || Array.isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);
+    }
+
+    // Headers object joins multiple cookies with a comma when using
+    // the getter to retrieve the value,
+    // unless iterating over the headers directly.
+    // We also cannot safely split by comma.
+    // To avoid setHeader overwriting the previous value we push
+    // set-cookie values in array and set them all at once.
+    const cookies = [];
+
+    for (const [key, value] of headers) {
+      if (key === "set-cookie") {
+        if (Array.isArray(value)) {
+          cookies.push(...value);
+        } else {
+          cookies.push(value);
+        }
+        continue;
+      }
+      this.setHeader(key, value);
+    }
+    if (cookies.length) {
+      this.setHeader("set-cookie", cookies);
+    }
+
     return this;
   },
 
@@ -1930,9 +1965,7 @@ const ServerResponsePrototype = {
   _removedContLen: false,
   _hasBody: true,
   get headersSent() {
-    return (
-      this[headerStateSymbol] === NodeHTTPHeaderState.sent || this[headerStateSymbol] === NodeHTTPHeaderState.assigned
-    );
+    return this[headerStateSymbol] >= NodeHTTPHeaderState.assigned;
   },
   set headersSent(value) {
     this[headerStateSymbol] = value ? NodeHTTPHeaderState.sent : NodeHTTPHeaderState.none;
@@ -2203,6 +2236,41 @@ const ServerResponsePrototype = {
       _writeHead(statusCode, statusMessage, headers, this);
       updateHasBody(this, statusCode);
       this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
+    }
+
+    return this;
+  },
+
+  setHeaders(headers) {
+    if (this[headerStateSymbol] >= NodeHTTPHeaderState.assigned) {
+      throw $ERR_HTTP_HEADERS_SENT("set");
+    }
+
+    if (!headers || Array.isArray(headers) || typeof headers.keys !== "function" || typeof headers.get !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("headers", ["Headers", "Map"], headers);
+    }
+
+    // Headers object joins multiple cookies with a comma when using
+    // the getter to retrieve the value,
+    // unless iterating over the headers directly.
+    // We also cannot safely split by comma.
+    // To avoid setHeader overwriting the previous value we push
+    // set-cookie values in array and set them all at once.
+    const cookies = [];
+
+    for (const [key, value] of headers) {
+      if (key === "set-cookie") {
+        if (Array.isArray(value)) {
+          cookies.push(...value);
+        } else {
+          cookies.push(value);
+        }
+        continue;
+      }
+      this.setHeader(key, value);
+    }
+    if (cookies.length) {
+      this.setHeader("set-cookie", cookies);
     }
 
     return this;

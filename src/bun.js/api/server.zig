@@ -2174,9 +2174,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // It costs about 655,632 bytes.
         pub const RequestContextStackAllocator = bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback;
 
-        pub const name = "HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
-        pub const shim = JSC.Shimmer("Bun", name, @This());
-
         server: ?*ThisServer,
         resp: ?*App.Response,
         /// thread-local default heap allocator
@@ -4541,22 +4538,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return false;
         }
 
-        pub const Export = shim.exportFunctions(.{
-            .onResolve = onResolve,
-            .onReject = onReject,
-            .onResolveStream = onResolveStream,
-            .onRejectStream = onRejectStream,
-        });
-
         comptime {
+            const export_prefix = "Bun__HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
             const jsonResolve = JSC.toJSHostFunction(onResolve);
-            @export(&jsonResolve, .{ .name = Export[0].symbol_name });
+            @export(&jsonResolve, .{ .name = export_prefix ++ "__onResolve" });
             const jsonReject = JSC.toJSHostFunction(onReject);
-            @export(&jsonReject, .{ .name = Export[1].symbol_name });
+            @export(&jsonReject, .{ .name = export_prefix ++ "__onReject" });
             const jsonResolveStream = JSC.toJSHostFunction(onResolveStream);
-            @export(&jsonResolveStream, .{ .name = Export[2].symbol_name });
+            @export(&jsonResolveStream, .{ .name = export_prefix ++ "__onResolveStream" });
             const jsonRejectStream = JSC.toJSHostFunction(onRejectStream);
-            @export(&jsonRejectStream, .{ .name = Export[3].symbol_name });
+            @export(&jsonRejectStream, .{ .name = export_prefix ++ "__onRejectStream" });
         }
     };
 }

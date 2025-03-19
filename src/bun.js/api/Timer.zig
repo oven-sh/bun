@@ -516,27 +516,14 @@ pub const All = struct {
         return JSValue.jsUndefined();
     }
 
-    const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
-
-    pub const shim = Shimmer("Bun", "Timer", @This());
-    pub const name = "Bun__Timer";
-    pub const include = "";
-    pub const namespace = shim.namespace;
-
-    pub const Export = shim.exportFunctions(.{
-        .setImmediate = setImmediate,
-        .setTimeout = setTimeout,
-        .setInterval = setInterval,
-        .clearImmediate = clearImmediate,
-        .clearTimeout = clearTimeout,
-        .clearInterval = clearInterval,
-        .getNextID = getNextID,
-    });
-
     comptime {
-        for (Export) |e| {
-            @export(&@field(e.Parent, e.local_name), .{ .name = e.symbol_name });
-        }
+        @export(&setImmediate, .{ .name = "Bun__Timer__setImmediate" });
+        @export(&setTimeout, .{ .name = "Bun__Timer__setTimeout" });
+        @export(&setInterval, .{ .name = "Bun__Timer__setInterval" });
+        @export(&clearImmediate, .{ .name = "Bun__Timer__clearImmediate" });
+        @export(&clearTimeout, .{ .name = "Bun__Timer__clearTimeout" });
+        @export(&clearInterval, .{ .name = "Bun__Timer__clearInterval" });
+        @export(&getNextID, .{ .name = "Bun__Timer__getNextID" });
     }
 };
 

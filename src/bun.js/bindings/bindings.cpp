@@ -3660,7 +3660,7 @@ void JSC__JSValue__forEach(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, voi
         });
 }
 
-bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1)
+bool JSC__JSValue__isCallable(JSC__JSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isCallable();
 }

@@ -587,7 +587,7 @@ pub fn registerMacro(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return globalObject.throwInvalidArguments("Internal error registering macros: invalid id", .{});
     }
 
-    if (!arguments[1].isCell() or !arguments[1].isCallable(globalObject.vm())) {
+    if (!arguments[1].isCell() or !arguments[1].isCallable()) {
         // TODO: add "toTypeOf" helper
         return globalObject.throw("Macro must be a function", .{});
     }

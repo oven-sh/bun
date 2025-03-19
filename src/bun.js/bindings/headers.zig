@@ -167,7 +167,7 @@ pub extern fn JSC__JSValue__isAnyError(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isAnyInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isBigInt32(JSValue0: JSC__JSValue) bool;
-pub extern fn JSC__JSValue__isCallable(JSValue0: JSC__JSValue, arg1: *bindings.VM) bool;
+pub extern fn JSC__JSValue__isCallable(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isClass(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) bool;
 pub extern fn JSC__JSValue__isConstructor(JSValue0: JSC__JSValue) bool;
 pub extern fn JSC__JSValue__isCustomGetterSetter(JSValue0: JSC__JSValue) bool;

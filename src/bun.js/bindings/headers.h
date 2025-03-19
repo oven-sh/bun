@@ -343,7 +343,7 @@ CPP_DECL bool JSC__JSValue__isAnyError(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isAnyInt(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isBigInt32(JSC__JSValue JSValue0);
-CPP_DECL bool JSC__JSValue__isCallable(JSC__JSValue JSValue0, JSC__VM* arg1);
+CPP_DECL bool JSC__JSValue__isCallable(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isClass(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL bool JSC__JSValue__isConstructor(JSC__JSValue JSValue0);
 CPP_DECL bool JSC__JSValue__isCustomGetterSetter(JSC__JSValue JSValue0);

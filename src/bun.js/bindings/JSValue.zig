@@ -627,7 +627,7 @@ pub const JSValue = enum(i64) {
 
     pub fn callNextTick(function: JSValue, global: *JSGlobalObject, args: anytype) void {
         if (Environment.isDebug) {
-            bun.assert(function.isCallable(global.vm()));
+            bun.assert(function.isCallable());
         }
         const num_args = @typeInfo(@TypeOf(args)).array.len;
         switch (num_args) {
@@ -1408,8 +1408,8 @@ pub const JSValue = enum(i64) {
         return if (this.isCell()) this.asCell() else null;
     }
 
-    pub fn isCallable(this: JSValue, vm: *VM) bool {
-        return cppFn("isCallable", .{ this, vm });
+    pub fn isCallable(this: JSValue) bool {
+        return cppFn("isCallable", .{this});
     }
 
     pub fn isException(this: JSValue, vm: *VM) bool {
@@ -1805,7 +1805,7 @@ pub const JSValue = enum(i64) {
             return false;
         const function = this.fastGet(global, BuiltinName.toString) orelse
             return false;
-        return function.isCell() and function.isCallable(global.vm());
+        return function.isCell() and function.isCallable();
     }
 
     // TODO: replace calls to this function with `getOptional`
@@ -2009,7 +2009,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (try this.getOptional(globalThis, property_name, JSValue)) |prop| {
-            if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
+            if (!prop.isCell() or !prop.isCallable()) {
                 return globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
             }
 
@@ -2021,7 +2021,7 @@ pub const JSValue = enum(i64) {
 
     pub fn getOwnFunction(this: JSValue, globalThis: *JSGlobalObject, comptime property_name: []const u8) JSError!?JSValue {
         if (getOwnTruthy(this, globalThis, property_name)) |prop| {
-            if (!prop.isCell() or !prop.isCallable(globalThis.vm())) {
+            if (!prop.isCell() or !prop.isCallable()) {
                 return globalThis.throwInvalidArguments(property_name ++ " must be a function", .{});
             }
 
